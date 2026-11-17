@@ -19,7 +19,8 @@ import {
 import { Goal } from "./goal";
 import { goal2nlsat } from "./goal2nlsat";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
-import { type Anum } from "./nlsat/algebraic";
+import { AlgebraicManager, type Anum } from "./nlsat/algebraic";
+import { PolynomialManager, PolynomialRef } from "./nlsat/polynomial";
 import { NlsatSolver } from "./nlsat/solver";
 import { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
@@ -97,10 +98,12 @@ export const isInNraFragment = (manager: AstManager, exprs: readonly number[]) =
   return true;
 };
 
-const getCoarseInterval = (solver: NlsatSolver, value: Anum): [Rational, Rational] => {
-  const am = solver.am;
-  const polynomial = solver.pm.fromCoeffs(am.getPolynomial(value), 0);
-  const roots = am.isolateRoots(solver.pm, polynomial, []);
+const getCoarseInterval = (am: AlgebraicManager, value: Anum): [Rational, Rational] => {
+  const pm = new PolynomialManager();
+  const p = new PolynomialRef(pm);
+  p.set(pm.toPolynomial(am.getPolynomial(value), 0));
+  const roots = am.isolateRoots(pm, p.get(), []);
+  p.reset();
   const index = roots.findIndex((root) => am.compare(root, value) === 0);
   const lower = index === 0 ? am.intLt(value) : am.select(roots[index - 1], value);
   const upper = index + 1 === roots.length ? am.intGt(value) : am.select(value, roots[index + 1]);
@@ -108,8 +111,7 @@ const getCoarseInterval = (solver: NlsatSolver, value: Anum): [Rational, Rationa
 };
 
 export const mkAlgebraicEq = (manager: AstManager, term: number, value: Anum) => {
-  const solver = new NlsatSolver();
-  const am = solver.am;
+  const am = new AlgebraicManager();
   if (am.isRational(value))
     return manager.mkApp(OP_EQ, [term, manager.mkRealNumeral(am.toRational(value))], SORT_BOOL);
   const coeffs = am.getPolynomial(value);
@@ -125,7 +127,7 @@ export const mkAlgebraicEq = (manager: AstManager, term: number, value: Anum) =>
             SORT_REAL,
           );
   }
-  const [lower, upper] = getCoarseInterval(solver, value);
+  const [lower, upper] = getCoarseInterval(am, value);
   return manager.mkApp(
     OP_AND,
     [
@@ -152,19 +154,24 @@ const isOccurring = (manager: AstManager, target: number, expr: number) => {
 const mkLowerBound = (solver: NlsatSolver, variable: number, value: Anum, isStrict: boolean) => {
   const am = solver.am;
   const pm = solver.pm;
+  const p = new PolynomialRef(pm);
   if (am.isRational(value)) {
     const rational = am.toRational(value);
-    const polynomial = pm.mkLinear([rational.den], [variable], -rational.num);
-    return isStrict
-      ? solver.mkIneqLiteral("GT", [polynomial], [false])
-      : solver.mkIneqLiteral("LT", [polynomial], [false]) ^ 1;
+    p.set(pm.mkLinear([rational.den], [variable], -rational.num));
+    const literal = isStrict
+      ? solver.mkIneqLiteral("GT", [p.get()], [false])
+      : solver.mkIneqLiteral("LT", [p.get()], [false]) ^ 1;
+    p.reset();
+    return literal;
   }
-  const polynomial = pm.fromCoeffs(am.getPolynomial(value), variable);
-  const index = am
-    .isolateRoots(pm, polynomial, [])
-    .findIndex((root) => am.compare(root, value) === 0);
-  if (index === -1) return null;
-  return 2 * solver.mkRootAtom(isStrict ? "ROOT_GT" : "ROOT_GE", variable, index + 1, polynomial);
+  p.set(pm.toPolynomial(am.getPolynomial(value), variable));
+  const index = am.isolateRoots(pm, p.get(), []).findIndex((root) => am.compare(root, value) === 0);
+  const literal =
+    index === -1
+      ? null
+      : 2 * solver.mkRootAtom(isStrict ? "ROOT_GT" : "ROOT_GE", variable, index + 1, p.get());
+  p.reset();
+  return literal;
 };
 
 const getBracket = (solver: NlsatSolver, value: Anum): [Rational, Rational] => {

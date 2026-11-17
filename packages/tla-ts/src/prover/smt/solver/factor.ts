@@ -18,7 +18,7 @@ import { runSimplifier } from "./dependent-expr-state";
 import { Expr2Polynomial } from "./expr2polynomial";
 import type { Goal } from "./goal";
 import { getLcm, Rational } from "./rational";
-import { PolynomialManager } from "./nlsat/polynomial";
+import { Factors, type Polynomial, PolynomialManager, PolynomialRef } from "./nlsat/polynomial";
 import type { Rewrite } from "./rewriter-tpl";
 import { RewriterTpl } from "./rewriter-tpl";
 
@@ -37,7 +37,13 @@ class FactorRewriter extends RewriterTpl {
     private isSplittingFactors: boolean,
   ) {
     super(manager);
-    this.expr2poly = new Expr2Polynomial(manager, new PolynomialManager());
+    let variableCount = 0;
+    this.expr2poly = new Expr2Polynomial(
+      manager,
+      new PolynomialManager(),
+      new Map(),
+      () => variableCount++,
+    );
   }
 
   private mkZeroFor(expr: number) {
@@ -51,20 +57,36 @@ class FactorRewriter extends RewriterTpl {
       : this.manager.mkApp(OP_MUL, args, this.manager.sorts[args[0]]);
   }
 
-  private factor(op: number, lhs: number, rhs: number): number {
-    const manager = this.manager;
+  private factor(op: number, lhs: number, rhs: number) {
     const pm = this.expr2poly.pm;
-    const first = this.expr2poly.toPolynomial(lhs);
-    const second = this.expr2poly.toPolynomial(rhs);
-    const lcm = getLcm(first.denominator, second.denominator);
-    const polynomial = pm.addmul(
-      lcm / first.denominator,
-      first.polynomial,
-      -(lcm / second.denominator),
-      second.polynomial,
+    const first = new PolynomialRef(pm);
+    const second = new PolynomialRef(pm);
+    const p = new PolynomialRef(pm);
+    const firstDenominator = this.expr2poly.toPolynomial(lhs, first);
+    const secondDenominator = this.expr2poly.toPolynomial(rhs, second);
+    const lcm = getLcm(firstDenominator, secondDenominator);
+    p.set(
+      pm.addmulTerms(
+        lcm / firstDenominator,
+        pm.unit,
+        first.get(),
+        -(lcm / secondDenominator),
+        pm.unit,
+        second.get(),
+      ),
     );
-    if (pm.isConst(polynomial)) return -1;
-    const factors = pm.factor(polynomial);
+    const factors = new Factors(pm);
+    const result = pm.isConst(p.get()) ? -1 : this.factorPolynomial(op, p.get(), factors);
+    factors.reset();
+    p.reset();
+    second.reset();
+    first.reset();
+    return result;
+  }
+
+  private factorPolynomial(op: number, polynomial: Polynomial, factors: Factors): number {
+    const manager = this.manager;
+    this.expr2poly.pm.factor(polynomial, factors);
     if (factors.factors.length === 1 && factors.degrees[0] === 1) return -1;
     const terms = factors.factors.map((factor) => this.expr2poly.toExpr(factor, true));
     if (op === OP_EQ) {

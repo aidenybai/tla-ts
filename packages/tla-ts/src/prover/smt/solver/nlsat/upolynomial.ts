@@ -4,7 +4,7 @@ import { getLog2, Mpbq, refineLower, refineUpper } from "./mpbq";
 
 export type Upolynomial = readonly bigint[];
 
-const BIG_PRIMES = [
+export const BIG_PRIMES = [
   39103, 39107, 39113, 39119, 39133, 39139, 39157, 39161, 39163, 39181, 39191, 39199, 39209, 39217,
   39227, 39229, 39233, 39239, 39241, 39251, 39293, 39301, 39313, 39317, 39323, 39341, 39343, 39359,
   39367, 39371, 39373, 39383, 39397, 39409, 39419, 39439, 39443, 39451, 39461, 39499, 39503, 39509,
@@ -31,7 +31,7 @@ export const floorDiv = (dividend: bigint, divisor: bigint) => {
   return dividend % divisor !== 0n && dividend < 0n !== divisor < 0n ? quotient - 1n : quotient;
 };
 
-const getExtendedGcd = (first: bigint, second: bigint) => {
+export const getExtendedGcd = (first: bigint, second: bigint) => {
   let [oldR, r] = [first, second];
   let [oldS, s] = [1n, 0n];
   let [oldT, t] = [0n, 1n];

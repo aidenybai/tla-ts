@@ -12,7 +12,13 @@ import { AtomTable, FALSE_LITERAL, ScopedLiterals, TRUE_LITERAL } from "./atoms"
 import { Evaluator } from "./evaluator";
 import { Explain } from "./explain";
 import type { IntervalSet } from "./interval-set";
-import { NULL_VAR, type Polynomial, PolynomialCache, PolynomialManager } from "./polynomial";
+import {
+  NULL_VAR,
+  type Polynomial,
+  PolynomialCache,
+  PolynomialManager,
+  PolynomialRef,
+} from "./polynomial";
 import { NlsatTranscendentals } from "./transcendentals";
 import { type Clause, type IneqAtom, type IneqKind, isIneqAtom, type RootKind } from "./types";
 
@@ -502,7 +508,7 @@ export class NlsatSolver {
   private gc() {
     if (this.learned.length <= 4 * this.clauses.length) return;
     this.resetWatches();
-    this.atoms.reinitCache();
+    this.atoms.reinitCache(this.clauses, this.learned);
     let kept = 0;
     for (const [index, clause] of this.learned.entries()) {
       if (index - kept < this.clauses.length && clause.literals.length > 1 && !clause.isActive)
@@ -569,12 +575,14 @@ export class NlsatSolver {
       }
       this.initSearch();
       for (const bound of bounds) {
+        const p = new PolynomialRef(this.pm);
         this.lemma.reset();
-        const below = this.pm.mkLinear([1n], [bound[0]], -bound[1].num);
-        this.lemma.push(this.mkIneqLiteral("GT", [below], [false]) ^ 1);
-        const above = this.pm.mkLinear([1n], [bound[0]], -bound[1].num - 1n);
-        this.lemma.push(this.mkIneqLiteral("LT", [above], [false]) ^ 1);
+        p.set(this.pm.mkLinear([1n], [bound[0]], -bound[1].num));
+        this.lemma.push(this.mkIneqLiteral("GT", [p.get()], [false]) ^ 1);
+        p.set(this.pm.mkLinear([1n], [bound[0]], -bound[1].num - 1n));
+        this.lemma.push(this.mkIneqLiteral("LT", [p.get()], [false]) ^ 1);
         this.mkClause(this.lemma.literals, true, null);
+        p.reset();
       }
     }
   }
@@ -702,11 +710,13 @@ export class NlsatSolver {
     try {
       if (limit !== null) {
         const isRational = this.am.isRational(limit);
-        const polynomial = this.pm.fromCoeffs(this.am.getPolynomial(limit), variable);
+        const p = new PolynomialRef(this.pm);
+        p.set(this.pm.toPolynomial(this.am.getPolynomial(limit), variable));
         const upper = isRational
-          ? this.mkIneqLiteral("LT", [polynomial], [false])
-          : 2 * this.mkRootAtom("ROOT_LT", variable, this.am.getRootIndex(limit), polynomial);
+          ? this.mkIneqLiteral("LT", [p.get()], [false])
+          : 2 * this.mkRootAtom("ROOT_LT", variable, this.am.getRootIndex(limit), p.get());
         this.mkExternalClause([upper], tag);
+        p.reset();
       }
       while (true) {
         this.checkpoint();
@@ -998,7 +1008,7 @@ export class NlsatSolver {
       else this.learned[kept++] = clause;
     }
     this.learned.length = kept;
-    this.atoms.reinitCache();
+    this.atoms.reinitCache(this.clauses, this.learned);
     this.resetWatches();
     const assignment: (Anum | undefined)[] = [];
     for (const [variable, value] of this.assignment.entries())
@@ -1011,15 +1021,9 @@ export class NlsatSolver {
     for (const [variable, isIntVariable] of isInt.entries())
       this.isInt[permutation[variable]] = isIntVariable;
     this.invPerm = invPerm;
-    const polynomials = new Set<Polynomial>();
-    for (const atom of this.atoms.atoms) {
-      if (atom === null) continue;
-      if (isIneqAtom(atom)) for (const polynomial of atom.polynomials) polynomials.add(polynomial);
-      else polynomials.add(atom.polynomial);
-    }
-    this.pm.rename(permutation, polynomials);
+    this.pm.rename(permutation);
     this.transcendentals.rename(permutation);
-    this.atoms.reinitCache();
+    this.atoms.reinitCache(this.clauses, this.learned);
     this.setAssignment(assignment);
     this.reattachArithClauses(this.clauses);
     this.reattachArithClauses(this.learned);

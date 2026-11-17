@@ -1,6 +1,3 @@
-// Deviation from Z3: ties between polynomials break by creation-order id, where Z3 recycles ids of
-// freed polynomials (id_gen in polynomial.cpp), so a cell bound can be another polynomial with the
-// same root.
 import { NlsatUnsupportedError } from "../../../../errors";
 import { Rational } from "../rational";
 import { type AlgebraicManager, type Anum, mergeSortIndices } from "./algebraic";
@@ -9,14 +6,26 @@ import {
   type Polynomial,
   type PolynomialCache,
   type PolynomialManager,
+  PolynomialRef,
+  PolynomialRefVector,
 } from "./polynomial";
 
-interface CellInterval {
-  isSection: boolean;
-  lower: Polynomial | null;
-  lowerIndex: number;
-  upper: Polynomial | null;
-  upperIndex: number;
+export class CellInterval {
+  isSection = false;
+  readonly lower: PolynomialRef;
+  lowerIndex = 0;
+  readonly upper: PolynomialRef;
+  upperIndex = 0;
+
+  constructor(pm: PolynomialManager) {
+    this.lower = new PolynomialRef(pm);
+    this.upper = new PolynomialRef(pm);
+  }
+
+  release() {
+    this.upper.reset();
+    this.lower.reset();
+  }
 }
 
 interface RootFunction {
@@ -32,98 +41,123 @@ const UNSET = -1;
 const BOTH_SIDES = 3;
 const SPANNING_TREE_THRESHOLD = 4;
 
+export const releaseIntervals = (intervals: readonly CellInterval[]) => {
+  for (let index = intervals.length; index-- > 0;) intervals[index].release();
+};
+
 export class TodoSet {
-  polynomials: Polynomial[] = [];
-  private inSet = new Set<number>();
+  readonly set: PolynomialRefVector;
+  private inSet: boolean[] = [];
 
   constructor(
-    private pm: PolynomialManager,
     private cache: PolynomialCache,
-  ) {}
+    private isCanonicalizing: boolean,
+  ) {
+    this.set = new PolynomialRefVector(cache.pm);
+  }
 
   get isEmpty() {
-    return this.polynomials.length === 0;
+    return this.set.size === 0;
   }
 
   reset() {
-    this.polynomials = [];
-    this.inSet.clear();
+    for (const polynomial of this.set.items) this.inSet[polynomial.id] = false;
+    this.set.reset();
   }
 
   insert(polynomial: Polynomial) {
-    if (this.inSet.has(polynomial.id)) return polynomial;
+    const pm = this.cache.pm;
+    if (this.inSet[polynomial.id] === true) return polynomial;
     if (this.cache.contains(polynomial)) {
-      this.inSet.add(polynomial.id);
-      this.polynomials.push(polynomial);
+      this.inSet[polynomial.id] = true;
+      this.set.push(polynomial);
       return polynomial;
     }
-    const primitive =
-      this.pm.isZero(polynomial) || this.pm.isConst(polynomial)
-        ? polynomial
-        : this.pm.pp(polynomial, this.pm.maxVar(polynomial));
-    const unique = this.cache.mkUnique(this.pm.flipSignIfLmNeg(primitive));
-    if (!this.inSet.has(unique.id)) {
-      this.inSet.add(unique.id);
-      this.polynomials.push(unique);
+    const pinned = new PolynomialRef(pm);
+    let p = polynomial;
+    if (this.isCanonicalizing) {
+      if (!pm.isZero(p) && !pm.isConst(p)) {
+        pinned.move(pm.pp(p, pm.maxVar(p)));
+        p = pinned.get();
+      } else pinned.set(p);
+      p = pm.flipSignIfLmNeg(p);
+      pinned.set(p);
     }
-    return unique;
+    p = this.cache.mkUnique(p);
+    if (this.inSet[p.id] !== true) {
+      this.inSet[p.id] = true;
+      this.set.push(p);
+    }
+    pinned.reset();
+    return p;
+  }
+
+  contains(polynomial: Polynomial) {
+    return this.inSet[polynomial.id] === true;
   }
 
   getMaxVar() {
-    return this.pm.getMaxVarOfPolys(this.polynomials);
+    return this.cache.pm.getMaxVarOfPolys(this.set.items);
   }
 
-  extractMaxPolys(out: Polynomial[]) {
-    out.length = 0;
+  extractMaxPolys(out: PolynomialRefVector) {
+    out.reset();
     const variable = this.getMaxVar();
     this.extractPolysAtLevel(variable, out);
     return variable;
   }
 
-  extractPolysAtLevel(variable: number, out: Polynomial[]) {
-    const kept: Polynomial[] = [];
-    for (const polynomial of this.polynomials) {
-      if (this.pm.maxVar(polynomial) !== variable) {
-        kept.push(polynomial);
-        continue;
-      }
-      out.push(polynomial);
-      this.inSet.delete(polynomial.id);
+  extractPolysAtLevel(variable: number, out: PolynomialRefVector) {
+    const pm = this.cache.pm;
+    let kept = 0;
+    for (let index = 0; index < this.set.size; index++) {
+      const polynomial = this.set.get(index);
+      if (pm.maxVar(polynomial) === variable) {
+        out.push(polynomial);
+        this.inSet[polynomial.id] = false;
+      } else this.set.set(kept++, polynomial);
     }
-    this.polynomials = kept;
+    this.set.shrink(kept);
   }
 }
 
-class Levelwise {
-  private intervals: CellInterval[];
-  private todo: TodoSet;
+export class Levelwise {
+  readonly intervals: CellInterval[] = [];
   private level = 0;
-  private levelPolys: Polynomial[] = [];
-  private witnesses: (Polynomial | null)[] = [];
-  private hasRoots: boolean[] = [];
-  private rootFunctions: RootFunction[] = [];
-  private pairs = new Map<string, [number, number]>();
-  private sideMask: number[] = [];
-  private isLcOmitted: boolean[] = [];
   private lowerRf = UNSET;
   private upperRf = UNSET;
+  private todo: TodoSet;
+  private levelPs: PolynomialRefVector;
+  private witnesses: PolynomialRef[] = [];
+  private polyHasRoots: boolean[] = [];
+  private pscTmp: PolynomialRefVector;
+  private sideMask: number[] = [];
+  private isLcOmitted: boolean[] = [];
+  private degInOrderGraph: number[] = [];
+  private rootFunctions: RootFunction[] = [];
+  private pairs = new Map<string, [number, number]>();
 
   constructor(
     private pm: PolynomialManager,
     private am: AlgebraicManager,
     private cache: PolynomialCache,
-    private sample: readonly (Anum | undefined)[],
+    private polynomials: PolynomialRefVector,
     private maxVar: number,
+    private sample: readonly (Anum | undefined)[],
     private isLinear: boolean,
   ) {
-    this.todo = new TodoSet(pm, cache);
-    this.intervals = Array.from({ length: maxVar }, () => ({
-      isSection: false,
-      lower: null,
-      lowerIndex: 0,
-      upper: null,
-      upperIndex: 0,
-    }));
+    this.todo = new TodoSet(cache, true);
+    this.levelPs = new PolynomialRefVector(pm);
+    this.pscTmp = new PolynomialRefVector(pm);
+    for (let index = 0; index < maxVar; index++) this.intervals.push(new CellInterval(pm));
+  }
+
+  release() {
+    this.pscTmp.reset();
+    this.clearWitnesses();
+    this.levelPs.reset();
+    this.todo.set.reset();
+    releaseIntervals(this.intervals);
   }
 
   private getSign(polynomial: Polynomial) {
@@ -134,93 +168,200 @@ class Levelwise {
     return this.sample.map((value, index) => (index === variable ? undefined : value));
   }
 
-  private requestFactorized(polynomial: Polynomial | null) {
-    if (polynomial === null || this.pm.isConst(polynomial)) return;
-    for (const factor of this.cache.factor(polynomial))
-      if (!this.pm.isConst(factor)) this.todo.insert(factor);
+  private clearWitnesses() {
+    for (let index = this.witnesses.length; index-- > 0;) this.witnesses[index].reset();
+    this.witnesses = [];
   }
 
-  private getFirstPsc(first: Polynomial, second: Polynomial, variable: number) {
-    for (const element of this.cache.pscChain(first, second, variable)) {
-      if (this.pm.isZero(element)) continue;
-      return this.pm.isConst(element) ? null : element;
+  private handleNullifiedPoly(p: Polynomial) {
+    const pm = this.pm;
+    const degree = pm.degree(p, this.level);
+    for (let power = 0; power <= degree; power++) {
+      const coeff = new PolynomialRef(pm);
+      coeff.set(pm.coeff(p, this.level, power));
+      if (!pm.isZero(coeff.get()) && !pm.isConst(coeff.get())) this.requestFactorized(coeff.get());
+      coeff.reset();
     }
-    return null;
-  }
-
-  private getPscDiscriminant(polynomial: Polynomial, variable: number) {
-    if (this.pm.isConst(polynomial) || this.pm.degree(polynomial, variable) < 2) return null;
-    return this.getFirstPsc(polynomial, this.pm.derivative(polynomial, variable), variable);
-  }
-
-  private handleNullifiedPoly(polynomial: Polynomial) {
-    const degree = this.pm.degree(polynomial, this.level);
-    for (let power = 0; power <= degree; power++)
-      this.requestFactorized(this.pm.coeff(polynomial, this.level, power));
-    let current = [{ polynomial, minVar: 0 }];
-    while (current.length > 0) {
-      const next: { polynomial: Polynomial; minVar: number }[] = [];
-      for (const entry of current) {
-        const maxVar = this.pm.maxVar(entry.polynomial);
-        if (maxVar === NULL_VAR) continue;
-        for (let variable = entry.minVar; variable <= maxVar; variable++) {
-          if (this.pm.degree(entry.polynomial, variable) === 0) continue;
-          const derivative = this.pm.derivative(entry.polynomial, variable);
-          if (this.pm.isConst(derivative)) continue;
-          if (this.getSign(derivative) !== 0) {
-            this.requestFactorized(derivative);
+    let curPolys = new PolynomialRefVector(pm);
+    let curMinVar: number[] = [];
+    curPolys.push(p);
+    curMinVar.push(0);
+    while (curPolys.size > 0) {
+      const nextPolys = new PolynomialRefVector(pm);
+      const nextMinVar: number[] = [];
+      for (let index = 0; index < curPolys.size; index++) {
+        const q = new PolynomialRef(pm);
+        q.set(curPolys.get(index));
+        const maxVar = pm.maxVar(q.get());
+        if (maxVar === NULL_VAR) {
+          q.reset();
+          continue;
+        }
+        for (let x = curMinVar[index]; x <= maxVar; x++) {
+          if (pm.degree(q.get(), x) === 0) continue;
+          const dq = new PolynomialRef(pm);
+          dq.set(pm.derivative(q.get(), x));
+          if (pm.isZero(dq.get()) || pm.isConst(dq.get())) {
+            dq.reset();
+            continue;
+          }
+          if (this.getSign(dq.get()) !== 0) {
+            this.requestFactorized(dq.get());
+            dq.reset();
+            q.reset();
+            nextPolys.reset();
+            curPolys.reset();
             return;
           }
-          next.push({ polynomial: derivative, minVar: variable });
+          nextPolys.push(dq.get());
+          nextMinVar.push(x);
+          dq.reset();
         }
+        q.reset();
       }
-      for (const entry of next) this.requestFactorized(entry.polynomial);
-      current = next;
+      for (let index = 0; index < nextPolys.size; index++) {
+        const dq = new PolynomialRef(pm);
+        dq.set(nextPolys.get(index));
+        this.requestFactorized(dq.get());
+        dq.reset();
+      }
+      curPolys.reset();
+      curPolys = nextPolys;
+      curMinVar = nextMinVar;
     }
   }
 
-  private chooseNonzeroCoeff(polynomial: Polynomial, variable: number) {
-    const degree = this.pm.degree(polynomial, variable);
-    for (let power = 0; power <= degree; power++) {
-      const coeff = this.pm.coeff(polynomial, variable, power);
-      if (!this.pm.isZero(coeff) && this.pm.isConst(coeff)) return coeff;
+  private resetInterval(interval: CellInterval) {
+    interval.isSection = false;
+    interval.lower.reset();
+    interval.upper.reset();
+    interval.lowerIndex = 0;
+    interval.upperIndex = 0;
+  }
+
+  private getFirstPsc(chain: PolynomialRefVector) {
+    const r = new PolynomialRef(this.pm);
+    for (let index = 0; index < chain.size; index++) {
+      r.set(chain.get(index));
+      if (this.pm.isZero(r.get())) continue;
+      if (this.pm.isConst(r.get())) {
+        r.reset();
+        return r;
+      }
+      return r;
     }
-    let best: Polynomial | null = null;
+    r.reset();
+    return r;
+  }
+
+  private pscDiscriminant(pIn: Polynomial, x: number) {
+    const pm = this.pm;
+    if (pm.isZero(pIn) || pm.isConst(pIn) || pm.degree(pIn, x) < 2) return new PolynomialRef(pm);
+    const p = new PolynomialRef(pm);
+    p.set(pIn);
+    const d = new PolynomialRef(pm);
+    d.set(pm.derivative(p.get(), x));
+    const chain = this.pscTmp;
+    chain.reset();
+    this.cache.pscChain(p.get(), d.get(), x, chain);
+    const disc = this.getFirstPsc(chain);
+    d.reset();
+    p.reset();
+    return disc;
+  }
+
+  private pscResultant(a: Polynomial, b: Polynomial, x: number) {
+    const pa = new PolynomialRef(this.pm);
+    pa.set(a);
+    const pb = new PolynomialRef(this.pm);
+    pb.set(b);
+    const chain = this.pscTmp;
+    chain.reset();
+    this.cache.pscChain(pa.get(), pb.get(), x, chain);
+    const r = this.getFirstPsc(chain);
+    pb.reset();
+    pa.reset();
+    return r;
+  }
+
+  private requestFactorized(polynomial: Polynomial | null) {
+    const pm = this.pm;
+    if (polynomial === null || pm.isZero(polynomial) || pm.isConst(polynomial)) return;
+    const factors = new PolynomialRefVector(pm);
+    this.cache.factor(polynomial, factors);
+    for (let index = 0; index < factors.size; index++) {
+      const f = new PolynomialRef(pm);
+      f.set(factors.get(index));
+      if (!pm.isZero(f.get()) && !pm.isConst(f.get())) this.todo.insert(f.get());
+      f.reset();
+    }
+    factors.reset();
+  }
+
+  private chooseNonzeroCoeff(p: Polynomial, x: number) {
+    const pm = this.pm;
+    const degree = pm.degree(p, x);
+    const coeff = new PolynomialRef(pm);
     for (let power = 0; power <= degree; power++) {
-      const coeff = this.pm.coeff(polynomial, variable, power);
-      if (this.pm.isZero(coeff) || this.getSign(coeff) === 0) continue;
-      const totalDegree = this.pm.totalDegree(coeff);
-      const bestDegree = best === null ? 0 : this.pm.totalDegree(best);
+      coeff.set(pm.coeff(p, x, power));
+      if (pm.isZero(coeff.get())) continue;
+      if (pm.isConst(coeff.get())) return coeff;
+    }
+    const best = new PolynomialRef(pm);
+    let bestTotalDegree = 0;
+    let bestSize = 0;
+    let bestMaxVar = NULL_VAR;
+    for (let power = 0; power <= degree; power++) {
+      coeff.set(pm.coeff(p, x, power));
+      const current = coeff.get();
+      if (pm.isZero(current) || this.getSign(current) === 0) continue;
+      const totalDegree = pm.totalDegree(current);
+      const size = current.size;
+      const maxVar = pm.maxVar(current);
       if (
-        best === null ||
-        totalDegree < bestDegree ||
-        (totalDegree === bestDegree &&
-          (coeff.size < best.size ||
-            (coeff.size === best.size && this.pm.maxVar(coeff) < this.pm.maxVar(best))))
-      )
-        best = coeff;
+        best.getOrNull() === null ||
+        totalDegree < bestTotalDegree ||
+        (totalDegree === bestTotalDegree &&
+          (size < bestSize ||
+            (size === bestSize && (bestMaxVar === NULL_VAR || maxVar < bestMaxVar))))
+      ) {
+        best.copy(coeff);
+        bestTotalDegree = totalDegree;
+        bestSize = size;
+        bestMaxVar = maxVar;
+      }
     }
+    coeff.reset();
     return best;
   }
 
   private addProjectionForPoly(
-    polynomial: Polynomial,
-    variable: number,
-    witness: Polynomial | null,
+    p: Polynomial,
+    x: number,
+    nonzeroCoeff: Polynomial | null,
     isLcAdded: boolean,
+    isDiscAdded: boolean,
   ) {
-    let isWitnessAdded = witness !== null && !this.pm.isConst(witness);
+    const pm = this.pm;
+    let isNonzeroCoeffAdded = nonzeroCoeff !== null && !pm.isConst(nonzeroCoeff);
     if (isLcAdded) {
-      const leadingCoeff = this.pm.lc(polynomial, variable);
-      this.requestFactorized(leadingCoeff);
-      if (isWitnessAdded && this.getSign(leadingCoeff) !== 0) isWitnessAdded = false;
+      const lc = new PolynomialRef(pm);
+      lc.set(pm.coeff(p, x, pm.degree(p, x)));
+      this.requestFactorized(lc.get());
+      if (isNonzeroCoeffAdded && this.getSign(lc.get()) !== 0) isNonzeroCoeffAdded = false;
+      lc.reset();
     }
-    const discriminant = this.getPscDiscriminant(polynomial, variable);
-    if (discriminant !== null) {
-      this.requestFactorized(discriminant);
-      if (isWitnessAdded && this.getSign(discriminant) !== 0) isWitnessAdded = false;
+    if (isDiscAdded) {
+      const disc = new PolynomialRef(pm);
+      disc.move(this.pscDiscriminant(p, x));
+      const value = disc.getOrNull();
+      if (value !== null) {
+        this.requestFactorized(value);
+        if (isNonzeroCoeffAdded && this.getSign(value) !== 0) isNonzeroCoeffAdded = false;
+      }
+      disc.reset();
     }
-    if (isWitnessAdded) this.requestFactorized(witness);
+    if (isNonzeroCoeffAdded) this.requestFactorized(nonzeroCoeff);
   }
 
   private addPair(first: number, second: number) {
@@ -242,7 +383,7 @@ class Levelwise {
 
   private computeSideMask() {
     if (this.lowerRf === UNSET) return;
-    while (this.sideMask.length < this.levelPolys.length) this.sideMask.push(0);
+    while (this.sideMask.length < this.levelPs.size) this.sideMask.push(0);
     this.rootFunctions.forEach((rootFunction, index) => {
       this.sideMask[rootFunction.psIndex] |= index <= this.lowerRf ? 1 : 2;
     });
@@ -252,20 +393,24 @@ class Levelwise {
     return rootFunctionIndex === UNSET ? UNSET : this.rootFunctions[rootFunctionIndex].psIndex;
   }
 
+  private computeResultantGraphDegree() {
+    this.degInOrderGraph = Array.from({ length: this.levelPs.size }, () => 0);
+    for (const pair of this.pairs.values()) {
+      this.degInOrderGraph[pair[0]]++;
+      this.degInOrderGraph[pair[1]]++;
+    }
+  }
+
   private computeOmitLcBothSides(isLeafRequired: boolean) {
-    this.isLcOmitted = this.levelPolys.map(() => false);
+    this.isLcOmitted = Array.from({ length: this.levelPs.size }, () => false);
     if (this.rootFunctions.length === 0 || this.pairs.size === 0 || this.sideMask.length === 0)
       return;
-    const degrees = this.levelPolys.map(() => 0);
-    for (const pair of this.pairs.values()) {
-      degrees[pair[0]]++;
-      degrees[pair[1]]++;
-    }
+    if (isLeafRequired) this.computeResultantGraphDegree();
     const lowerBound = this.getBoundIndex(this.lowerRf);
     const upperBound = this.getBoundIndex(this.upperRf);
-    for (let index = 0; index < this.levelPolys.length; index++) {
+    for (let index = 0; index < this.levelPs.size; index++) {
       if (this.sideMask[index] !== BOTH_SIDES) continue;
-      if (isLeafRequired && degrees[index] !== 1) continue;
+      if (isLeafRequired && this.degInOrderGraph[index] !== 1) continue;
       if (index === lowerBound || index === upperBound) continue;
       this.isLcOmitted[index] = true;
     }
@@ -281,26 +426,24 @@ class Levelwise {
   }
 
   private fillRelationSection() {
+    if (this.rootFunctions.length === 0) return;
     for (let index = 0; index < this.lowerRf; index++) this.addPair(index, this.lowerRf);
     for (let index = this.lowerRf + 1; index < this.rootFunctions.length; index++)
       this.addPair(this.lowerRf, index);
   }
 
   private buildBothSideSpanningTree() {
-    const lowerRfs = this.levelPolys.map(() => UNSET);
-    const upperRfs = this.levelPolys.map(() => UNSET);
+    const lowerRfs = Array.from({ length: this.levelPs.size }, () => UNSET);
+    const upperRfs = Array.from({ length: this.levelPs.size }, () => UNSET);
     for (let index = 0; index <= this.lowerRf; index++)
       lowerRfs[this.rootFunctions[index].psIndex] = index;
     for (let index = this.upperRf; index < this.rootFunctions.length; index++)
       upperRfs[this.rootFunctions[index].psIndex] = index;
-    const both = this.levelPolys
-      .map((_polynomial, psIndex) => ({
-        psIndex,
-        lowerRf: lowerRfs[psIndex],
-        upperRf: upperRfs[psIndex],
-      }))
-      .filter((info) => this.sideMask[info.psIndex] === BOTH_SIDES)
-      .sort((first, second) => first.lowerRf - second.lowerRf);
+    const both: { psIndex: number; lowerRf: number; upperRf: number }[] = [];
+    for (let psIndex = 0; psIndex < this.levelPs.size; psIndex++)
+      if (this.sideMask[psIndex] === BOTH_SIDES)
+        both.push({ psIndex, lowerRf: lowerRfs[psIndex], upperRf: upperRfs[psIndex] });
+    both.sort((first, second) => first.lowerRf - second.lowerRf);
     for (let first = 0; first < both.length - 1; first++) {
       let closest = first + 1;
       for (let index = first + 2; index < both.length; index++)
@@ -331,21 +474,21 @@ class Levelwise {
   }
 
   private isolateRootsAroundSample(
+    p: Polynomial,
     psIndex: number,
     value: Anum,
     lower: RootFunction[],
     upper: RootFunction[],
   ) {
-    const polynomial = this.levelPolys[psIndex];
     const values = this.getValuesWithout(this.level);
     const mkRootFunction = (root: Anum, index: number) => ({
       value: this.am.copy(root),
-      polynomial,
+      polynomial: p,
       index,
       psIndex,
     });
     if (value.value instanceof Rational) {
-      const closest = this.am.isolateRootsClosest(this.pm, polynomial, values, value.value);
+      const closest = this.am.isolateRootsClosest(this.pm, p, values, value.value);
       closest.roots.forEach((root, index) => {
         (this.am.compare(root, value) <= 0 ? lower : upper).push(
           mkRootFunction(root, closest.indices[index]),
@@ -353,7 +496,7 @@ class Levelwise {
       });
       return closest.roots.length > 0;
     }
-    const roots = this.am.isolateRoots(this.pm, polynomial, values);
+    const roots = this.am.isolateRoots(this.pm, p, values);
     let lowerIndex = UNSET;
     let upperIndex = UNSET;
     let isSection = false;
@@ -400,95 +543,115 @@ class Levelwise {
     if (middle === 0) {
       this.lowerRf = UNSET;
       this.upperRf = 0;
-      interval.upper = rootFunctions[0].polynomial;
+      interval.upper.set(rootFunctions[0].polynomial);
       interval.upperIndex = rootFunctions[0].index;
       return;
     }
     this.lowerRf = middle - 1;
     const lower = rootFunctions[middle - 1];
-    interval.lower = lower.polynomial;
-    interval.lowerIndex = lower.index;
     if (this.am.compare(lower.value, value) === 0) {
       interval.isSection = true;
+      interval.lower.set(lower.polynomial);
+      interval.lowerIndex = lower.index;
       this.upperRf = this.lowerRf;
       return;
     }
+    interval.lower.set(lower.polynomial);
+    interval.lowerIndex = lower.index;
     if (middle < rootFunctions.length) {
       this.upperRf = this.lowerRf + 1;
-      interval.upper = rootFunctions[middle].polynomial;
+      interval.upper.set(rootFunctions[middle].polynomial);
       interval.upperIndex = rootFunctions[middle].index;
     }
   }
 
-  private addLinearPolyFromRoot(root: Anum, isLower: boolean) {
-    const value = root.value as Rational;
-    const polynomial = this.pm.sub(
-      this.pm.mul(this.pm.mkConst(value.den), this.pm.mkVar(this.level)),
-      this.pm.mkConst(value.num),
-    );
+  private addLinearPolyFromRoot(root: Anum, isLower: boolean, p: PolynomialRef) {
+    const pm = this.pm;
+    const value = this.am.toRational(root);
+    p.set(pm.mkVar(this.level));
+    const scaled = new PolynomialRef(pm);
+    scaled.set(pm.mulConst(value.den, p.get()));
+    const constant = new PolynomialRef(pm);
+    constant.set(pm.mkConst(value.num));
+    const difference = new PolynomialRef(pm);
+    difference.set(pm.sub(scaled.get(), constant.get()));
+    constant.reset();
+    p.move(difference);
+    scaled.reset();
     const interval = this.intervals[this.level];
     if (isLower) {
-      interval.lower = polynomial;
+      interval.lower.copy(p);
       interval.lowerIndex = 1;
     } else {
-      interval.upper = polynomial;
+      interval.upper.copy(p);
       interval.upperIndex = 1;
     }
-    this.levelPolys.push(polynomial);
-    this.hasRoots.push(true);
-    this.witnesses.push(this.chooseNonzeroCoeff(polynomial, this.level));
-    return polynomial;
+    this.levelPs.push(p.get());
+    this.polyHasRoots.push(true);
+    const witness = this.chooseNonzeroCoeff(p.get(), this.level);
+    const copy = new PolynomialRef(pm);
+    copy.copy(witness);
+    this.witnesses.push(copy);
+    witness.reset();
   }
 
   private addLinearApproximations(value: Anum) {
+    const pLower = new PolynomialRef(this.pm);
+    const pUpper = new PolynomialRef(this.pm);
     const interval = this.intervals[this.level];
     const mkRootFunction = (polynomial: Polynomial, root: Anum) => ({
       value: this.am.copy(root),
       polynomial,
       index: 1,
-      psIndex: this.levelPolys.length - 1,
+      psIndex: this.levelPs.size - 1,
     });
     if (interval.isSection) {
       if (!this.am.isRational(value))
         throw new NlsatUnsupportedError("a linear cell around an irrational section");
-      if (this.pm.totalDegree(interval.lower!) > 1) {
-        const polynomial = this.addLinearPolyFromRoot(value, true);
-        this.rootFunctions.splice(this.lowerRf, 0, mkRootFunction(polynomial, value));
+      if (this.pm.totalDegree(interval.lower.get()) > 1) {
+        this.addLinearPolyFromRoot(value, true, pLower);
+        this.rootFunctions.splice(this.lowerRf, 0, mkRootFunction(pLower.get(), value));
       }
+      pUpper.reset();
+      pLower.reset();
       return;
     }
-    if (interval.lower !== null && this.pm.totalDegree(interval.lower) > 1) {
+    const lower = interval.lower.getOrNull();
+    if (lower !== null && this.pm.totalDegree(lower) > 1) {
       const between = this.am.select(this.rootFunctions[this.lowerRf].value, value);
-      const polynomial = this.addLinearPolyFromRoot(between, true);
-      this.rootFunctions.splice(this.lowerRf + 1, 0, mkRootFunction(polynomial, between));
+      this.addLinearPolyFromRoot(between, true, pLower);
+      this.rootFunctions.splice(this.lowerRf + 1, 0, mkRootFunction(pLower.get(), between));
       this.lowerRf++;
       if (this.upperRf !== UNSET) this.upperRf++;
     }
-    if (interval.upper !== null && this.pm.totalDegree(interval.upper) > 1) {
+    const upper = interval.upper.getOrNull();
+    if (upper !== null && this.pm.totalDegree(upper) > 1) {
       const between = this.am.select(value, this.rootFunctions[this.upperRf].value);
-      const polynomial = this.addLinearPolyFromRoot(between, false);
-      this.rootFunctions.splice(this.upperRf, 0, mkRootFunction(polynomial, between));
+      this.addLinearPolyFromRoot(between, false, pUpper);
+      this.rootFunctions.splice(this.upperRf, 0, mkRootFunction(pUpper.get(), between));
     }
+    pUpper.reset();
+    pLower.reset();
   }
 
   private buildInterval() {
     this.rootFunctions = [];
     this.pairs.clear();
-    Object.assign(this.intervals[this.level], {
-      isSection: false,
-      lower: null,
-      lowerIndex: 0,
-      upper: null,
-      upperIndex: 0,
-    });
+    this.resetInterval(this.intervals[this.level]);
     this.lowerRf = UNSET;
     this.upperRf = UNSET;
     const value = this.sample[this.level]!;
+    this.polyHasRoots = Array.from({ length: this.levelPs.size }, () => false);
     const lower: RootFunction[] = [];
     const upper: RootFunction[] = [];
-    this.hasRoots = this.levelPolys.map((_polynomial, psIndex) =>
-      this.isolateRootsAroundSample(psIndex, value, lower, upper),
-    );
+    for (let index = 0; index < this.levelPs.size; index++)
+      this.polyHasRoots[index] = this.isolateRootsAroundSample(
+        this.levelPs.get(index),
+        index,
+        value,
+        lower,
+        upper,
+      );
     if (lower.length === 0 && upper.length === 0) return false;
     this.rootFunctions = [
       ...this.sortRootFunctions(lower, true),
@@ -501,20 +664,27 @@ class Levelwise {
   }
 
   private addRelationResultants() {
-    for (const pair of this.getSortedPairs())
-      this.requestFactorized(
-        this.getFirstPsc(this.levelPolys[pair[0]], this.levelPolys[pair[1]], this.level),
+    for (const pair of this.getSortedPairs()) {
+      const res = this.pscResultant(
+        this.levelPs.get(pair[0]),
+        this.levelPs.get(pair[1]),
+        this.level,
       );
+      this.requestFactorized(res.getOrNull());
+      res.reset();
+    }
   }
 
   private addAdjacentRootResultants() {
+    this.polyHasRoots = Array.from({ length: this.levelPs.size }, () => false);
     const rootValues: { root: Anum; polynomial: Polynomial }[] = [];
     const values = this.getValuesWithout(this.maxVar);
-    this.hasRoots = this.levelPolys.map((polynomial) => {
+    for (let index = 0; index < this.levelPs.size; index++) {
+      const polynomial = this.levelPs.get(index);
       const roots = this.am.isolateRoots(this.pm, polynomial, values);
+      this.polyHasRoots[index] = roots.length > 0;
       for (const root of roots) rootValues.push({ root: this.am.copy(root), polynomial });
-      return roots.length > 0;
-    });
+    }
     if (rootValues.length < 2) return;
     const order = mergeSortIndices(
       rootValues.length,
@@ -529,32 +699,51 @@ class Levelwise {
       const key = `${low.id},${high.id}`;
       if (added.has(key)) continue;
       added.add(key);
-      this.requestFactorized(this.getFirstPsc(low, high, this.maxVar));
+      const res = this.pscResultant(low, high, this.maxVar);
+      this.requestFactorized(res.getOrNull());
+      res.reset();
     }
   }
 
   private addSectionProjections() {
-    const sectionPolynomial = this.intervals[this.level].lower;
+    const sectionPolynomial = this.intervals[this.level].lower.get();
     const withRoots = new Set(this.rootFunctions.map((rootFunction) => rootFunction.psIndex));
-    this.levelPolys.forEach((polynomial, index) => {
-      const isFull = polynomial === sectionPolynomial || !withRoots.has(index);
-      this.addProjectionForPoly(polynomial, this.level, this.witnesses[index], isFull);
-    });
+    for (let index = 0; index < this.levelPs.size; index++) {
+      const p = new PolynomialRef(this.pm);
+      p.set(this.levelPs.get(index));
+      const witness = new PolynomialRef(this.pm);
+      witness.copy(this.witnesses[index]);
+      const isFull = this.levelPs.get(index) === sectionPolynomial || !withRoots.has(index);
+      this.addProjectionForPoly(p.get(), this.level, witness.getOrNull(), isFull, true);
+      witness.reset();
+      p.reset();
+    }
   }
 
   private addSectorProjections() {
-    this.levelPolys.forEach((polynomial, index) => {
+    const pm = this.pm;
+    for (let index = 0; index < this.levelPs.size; index++) {
+      const p = new PolynomialRef(pm);
+      p.set(this.levelPs.get(index));
+      const lc = new PolynomialRef(pm);
+      lc.set(pm.coeff(p.get(), this.level, pm.degree(p.get(), this.level)));
       const isLcAdded = !(this.isLcOmitted[index] ?? false);
-      let witness = this.witnesses[index];
+      const witness = new PolynomialRef(pm);
+      witness.copy(this.witnesses[index]);
+      const value = witness.getOrNull();
       if (
         isLcAdded &&
-        witness !== null &&
-        !this.pm.isConst(witness) &&
-        this.getSign(this.pm.lc(polynomial, this.level)) !== 0
+        value !== null &&
+        !pm.isConst(value) &&
+        !pm.isZero(lc.get()) &&
+        this.getSign(lc.get()) !== 0
       )
-        witness = null;
-      this.addProjectionForPoly(polynomial, this.level, witness, isLcAdded);
-    });
+        witness.reset();
+      this.addProjectionForPoly(p.get(), this.level, witness.getOrNull(), isLcAdded, true);
+      witness.reset();
+      lc.reset();
+      p.reset();
+    }
   }
 
   private shouldUseSpanningTree() {
@@ -562,10 +751,17 @@ class Levelwise {
     if (this.lowerRf === UNSET || this.upperRf === UNSET) return false;
     if (this.getBoundIndex(this.lowerRf) === this.getBoundIndex(this.upperRf)) return false;
     let bothCount = 0;
-    for (let index = 0; index < this.levelPolys.length; index++)
+    for (let index = 0; index < this.levelPs.size; index++)
       if (this.sideMask[index] === BOTH_SIDES && ++bothCount >= SPANNING_TREE_THRESHOLD)
         return true;
     return false;
+  }
+
+  private clearLevelState() {
+    this.isLcOmitted = [];
+    this.pairs.clear();
+    this.sideMask = [];
+    this.degInOrderGraph = [];
   }
 
   private processLevelWithMode(mode: ProjectionMode, hasInterval: boolean) {
@@ -584,21 +780,23 @@ class Levelwise {
   }
 
   private collectNonNullWitnesses() {
-    this.witnesses = [];
-    for (let index = 0; index < this.levelPolys.length; index++) {
-      const polynomial = this.levelPolys[index];
-      const witness = this.chooseNonzeroCoeff(polynomial, this.level);
-      if (witness === null) this.handleNullifiedPoly(polynomial);
-      this.witnesses.push(witness);
-      if (index + 1 === this.levelPolys.length)
-        this.todo.extractPolysAtLevel(this.level, this.levelPolys);
+    this.clearWitnesses();
+    for (let index = 0; index < this.levelPs.size; index++) {
+      const p = new PolynomialRef(this.pm);
+      p.set(this.levelPs.get(index));
+      const witness = this.chooseNonzeroCoeff(p.get(), this.level);
+      if (witness.getOrNull() === null) this.handleNullifiedPoly(p.get());
+      const copy = new PolynomialRef(this.pm);
+      copy.copy(witness);
+      this.witnesses.push(copy);
+      if (index + 1 === this.levelPs.size) this.todo.extractPolysAtLevel(this.level, this.levelPs);
+      witness.reset();
+      p.reset();
     }
   }
 
   private processLevel() {
-    this.isLcOmitted = [];
-    this.pairs.clear();
-    this.sideMask = [];
+    this.clearLevelState();
     this.collectNonNullWitnesses();
     const hasInterval = this.buildInterval();
     this.processLevelWithMode(
@@ -612,39 +810,65 @@ class Levelwise {
   }
 
   private processTopLevel() {
+    const pm = this.pm;
     this.collectNonNullWitnesses();
     this.addAdjacentRootResultants();
-    this.levelPolys.forEach((polynomial, index) => {
-      const leadingCoeff = this.pm.lc(polynomial, this.maxVar);
-      const isLcAdded =
-        this.hasRoots[index] || this.pm.isZero(leadingCoeff) || this.getSign(leadingCoeff) === 0;
-      if (!isLcAdded) this.witnesses[index] = null;
-      this.addProjectionForPoly(polynomial, this.maxVar, this.witnesses[index], isLcAdded);
+    for (let index = 0; index < this.levelPs.size; index++) {
+      const p = new PolynomialRef(pm);
+      p.set(this.levelPs.get(index));
+      const lc = new PolynomialRef(pm);
+      lc.set(pm.coeff(p.get(), this.maxVar, pm.degree(p.get(), this.maxVar)));
+      let isLcAdded = true;
+      if (
+        !(this.polyHasRoots[index] ?? false) &&
+        !pm.isZero(lc.get()) &&
+        this.getSign(lc.get()) !== 0
+      ) {
+        isLcAdded = false;
+        this.witnesses[index].reset();
+      }
+      this.addProjectionForPoly(
+        p.get(),
+        this.maxVar,
+        this.witnesses[index].getOrNull(),
+        isLcAdded,
+        true,
+      );
+      lc.reset();
+      p.reset();
+    }
+  }
+
+  private copyIntervals() {
+    return this.intervals.map((interval) => {
+      const copy = new CellInterval(this.pm);
+      copy.isSection = interval.isSection;
+      copy.lower.copy(interval.lower);
+      copy.lowerIndex = interval.lowerIndex;
+      copy.upper.copy(interval.upper);
+      copy.upperIndex = interval.upperIndex;
+      return copy;
     });
   }
 
-  computeSingleCell(polynomials: readonly Polynomial[]) {
-    if (this.maxVar === 0) return this.intervals;
-    for (const polynomial of polynomials) this.requestFactorized(polynomial);
-    if (this.todo.isEmpty) return this.intervals;
+  singleCell() {
+    if (this.maxVar === 0) return this.copyIntervals();
+    this.todo.reset();
+    for (let index = 0; index < this.polynomials.size; index++) {
+      const p = new PolynomialRef(this.pm);
+      p.set(this.polynomials.get(index));
+      this.requestFactorized(p.get());
+      p.reset();
+    }
+    if (this.todo.isEmpty) return this.copyIntervals();
     if (this.todo.getMaxVar() === this.maxVar) {
-      this.level = this.todo.extractMaxPolys(this.levelPolys);
+      this.level = this.todo.extractMaxPolys(this.levelPs);
       this.processTopLevel();
     }
     while (!this.todo.isEmpty) {
-      this.level = this.todo.extractMaxPolys(this.levelPolys);
+      this.level = this.todo.extractMaxPolys(this.levelPs);
       this.processLevel();
     }
-    return this.intervals;
+    return this.copyIntervals();
   }
 }
-
-export const getSingleCell = (
-  pm: PolynomialManager,
-  am: AlgebraicManager,
-  cache: PolynomialCache,
-  polynomials: readonly Polynomial[],
-  maxVar: number,
-  sample: readonly (Anum | undefined)[],
-  isLinear: boolean,
-) => new Levelwise(pm, am, cache, sample, maxVar, isLinear).computeSingleCell(polynomials);

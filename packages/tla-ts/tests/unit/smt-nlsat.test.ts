@@ -8,7 +8,11 @@ import { AtomTable, ScopedLiterals } from "../../src/prover/smt/solver/nlsat/ato
 import { Evaluator } from "../../src/prover/smt/solver/nlsat/evaluator";
 import { Explain } from "../../src/prover/smt/solver/nlsat/explain";
 import type { IntervalSet } from "../../src/prover/smt/solver/nlsat/interval-set";
-import { getSingleCell } from "../../src/prover/smt/solver/nlsat/levelwise";
+import {
+  type CellInterval,
+  Levelwise,
+  releaseIntervals,
+} from "../../src/prover/smt/solver/nlsat/levelwise";
 import { Mpbq } from "../../src/prover/smt/solver/nlsat/mpbq";
 import {
   type Atom,
@@ -28,6 +32,8 @@ import {
   type Polynomial,
   PolynomialCache,
   PolynomialManager,
+  PolynomialRef,
+  PolynomialRefVector,
 } from "../../src/prover/smt/solver/nlsat/polynomial";
 
 const FIXTURES = join(import.meta.dirname, "../fixtures/nlsat");
@@ -55,7 +61,9 @@ const parsePolynomial = (polynomialManager: PolynomialManager, text: string) => 
       powers.map((power) => power[1]),
     );
   });
-  return polynomialManager.mkPolynomial(coefficients, monomials);
+  const polynomial = polynomialManager.mkPolynomial(coefficients, monomials);
+  polynomialManager.incRef(polynomial);
+  return polynomial;
 };
 
 const parsePolynomials = (polynomialManager: PolynomialManager, text: string) =>
@@ -80,21 +88,30 @@ const runPolynomialCommand = (input: string) => {
   const command = input.slice(0, input.indexOf(" "));
   const rest = input.slice(command.length + 1);
   if (command === "factor") {
-    const factors = cache.factor(parsePolynomial(polynomialManager, rest));
-    return `factors${factors.map((factor) => ` ${showPolynomial(factor)}`).join("")}`;
+    const factors = new PolynomialRefVector(polynomialManager);
+    cache.factor(parsePolynomial(polynomialManager, rest), factors);
+    return `factors${factors.items.map((factor) => ` ${showPolynomial(factor)}`).join("")}`;
   }
   if (command === "psc") {
     const variable = Number(rest.slice(0, rest.indexOf(" ")));
     const operands = rest.slice(rest.indexOf(" ") + 1).split(" ; ");
-    const chain = cache.pscChain(
+    const chain = new PolynomialRefVector(polynomialManager);
+    cache.pscChain(
       parsePolynomial(polynomialManager, operands[0]),
       parsePolynomial(polynomialManager, operands[1]),
       variable,
+      chain,
     );
-    return `psc${chain.map((element) => ` ${showPolynomial(element)}`).join("")}`;
+    return `psc${chain.items.map((element) => ` ${showPolynomial(element)}`).join("")}`;
   }
   const operands = rest.split(" ; ");
-  return `gcd ${showPolynomial(polynomialManager.gcd(parsePolynomial(polynomialManager, operands[0]), parsePolynomial(polynomialManager, operands[1])))}`;
+  const gcd = new PolynomialRef(polynomialManager);
+  polynomialManager.gcd(
+    parsePolynomial(polynomialManager, operands[0]),
+    parsePolynomial(polynomialManager, operands[1]),
+    gcd,
+  );
+  return `gcd ${showPolynomial(gcd.get())}`;
 };
 
 describe("nlsat polynomials", () => {
@@ -155,7 +172,7 @@ const runAnumProgram = (program: string) => {
       case "root": {
         const roots = algebraicManager.isolateRoots(
           polynomialManager,
-          polynomialManager.fromCoeffs(words.slice(3).map(BigInt), 0),
+          polynomialManager.toPolynomial(words.slice(3).map(BigInt), 0),
           [],
         );
         if (numbers[1] > roots.length) return " error";
@@ -352,7 +369,7 @@ const runEvaluatorProgram = (program: string, expected: string) => {
         while (coeffs[coeffs.length - 1] === 0n) coeffs.pop();
         registers[numbers[0]] = algebraicManager.isolateRoots(
           polynomialManager,
-          polynomialManager.fromCoeffs(coeffs, 0),
+          polynomialManager.toPolynomial(coeffs, 0),
           [],
         )[numbers[1] - 1];
         return showAnum(algebraicManager, registers[numbers[0]]);
@@ -413,6 +430,18 @@ const runEvaluatorProgram = (program: string, expected: string) => {
   return runProgram(program, runCommand);
 };
 
+const showBound = (polynomial: Polynomial | null, index: number, infinity: string) =>
+  polynomial === null ? infinity : `${showPolynomial(polynomial)}#${index}`;
+
+const showCell = (cell: readonly CellInterval[]) =>
+  cell
+    .map((interval) =>
+      interval.isSection
+        ? ` S${showBound(interval.lower.getOrNull(), interval.lowerIndex, "")}`
+        : ` (${showBound(interval.lower.getOrNull(), interval.lowerIndex, "-oo")},${showBound(interval.upper.getOrNull(), interval.upperIndex, "+oo")})`,
+    )
+    .join("");
+
 const runLevelwiseProgram = (program: string) => {
   const algebraicManager = new AlgebraicManager();
   const polynomialManager = new PolynomialManager();
@@ -420,8 +449,6 @@ const runLevelwiseProgram = (program: string) => {
   const sample: Anum[] = [];
   const registers: Anum[] = [];
   let variableCount = 0;
-  const showBound = (polynomial: Polynomial | null, index: number, infinity: string) =>
-    polynomial === null ? infinity : `${showPolynomial(polynomial)}#${index}`;
   const runCommand = (words: string[]) => {
     const numbers = words.slice(1).map(Number);
     switch (words[0]) {
@@ -434,7 +461,7 @@ const runLevelwiseProgram = (program: string) => {
       case "root":
         registers[numbers[0]] = algebraicManager.isolateRoots(
           polynomialManager,
-          polynomialManager.fromCoeffs(words.slice(3).map(BigInt), 0),
+          polynomialManager.toPolynomial(words.slice(3).map(BigInt), 0),
           [],
         )[numbers[1] - 1];
         return showAnum(algebraicManager, registers[numbers[0]]);
@@ -442,8 +469,10 @@ const runLevelwiseProgram = (program: string) => {
         sample[numbers[0]] = algebraicManager.copy(registers[numbers[1]]);
         return "";
       default: {
-        const polynomials = parsePolynomials(polynomialManager, words.slice(3).join(" "));
-        const cell = getSingleCell(
+        const polynomials = new PolynomialRefVector(polynomialManager);
+        for (const polynomial of parsePolynomials(polynomialManager, words.slice(3).join(" ")))
+          polynomials.push(polynomial);
+        const levelwise = new Levelwise(
           polynomialManager,
           algebraicManager,
           cache,
@@ -452,15 +481,14 @@ const runLevelwiseProgram = (program: string) => {
           sample,
           numbers[1] === 1,
         );
-        const intervals = cell.map((interval) =>
-          interval.isSection
-            ? ` S${showBound(interval.lower, interval.lowerIndex, "")}`
-            : ` (${showBound(interval.lower, interval.lowerIndex, "-oo")},${showBound(interval.upper, interval.upperIndex, "+oo")})`,
-        );
+        const cell = levelwise.singleCell();
+        const intervals = showCell(cell);
         const values = Array.from({ length: variableCount }, (_, variable) =>
           sample[variable] === undefined ? " _" : showAnum(algebraicManager, sample[variable]),
         );
-        return `${intervals.join("")} after${values.join("")}`;
+        releaseIntervals(cell);
+        levelwise.release();
+        return `${intervals} after${values.join("")}`;
       }
     }
   };
@@ -516,7 +544,7 @@ const runExplainProgram = (program: string) => {
       case "root":
         registers[numbers[0]] = algebraicManager.isolateRoots(
           polynomialManager,
-          polynomialManager.fromCoeffs(words.slice(3).map(BigInt), 0),
+          polynomialManager.toPolynomial(words.slice(3).map(BigInt), 0),
           [],
         )[numbers[1] - 1];
         return showAnum(algebraicManager, registers[numbers[0]]);
@@ -563,9 +591,36 @@ const runExplainProgram = (program: string) => {
   return runProgram(program, runCommand);
 };
 
+const getRecycledIdCell = (isFreeingTemporary: boolean) => {
+  const polynomialManager = new PolynomialManager();
+  const temporary = parsePolynomial(polynomialManager, "1:0^1,1^1");
+  const first = parsePolynomial(polynomialManager, "1:1^1 -1:");
+  if (isFreeingTemporary) polynomialManager.decRef(temporary);
+  const second = parsePolynomial(polynomialManager, "1:1^1 1:0^1 -1:");
+  const polynomials = new PolynomialRefVector(polynomialManager);
+  polynomials.push(first);
+  polynomials.push(second);
+  const levelwise = new Levelwise(
+    polynomialManager,
+    new AlgebraicManager(),
+    new PolynomialCache(polynomialManager),
+    polynomials,
+    2,
+    [new Anum(Rational.zero), new Anum(Rational.zero)],
+    false,
+  );
+  return `ids ${first.id} ${second.id} cell${showCell(levelwise.singleCell())}`;
+};
+
 describe("nlsat levelwise", () => {
   it.each(readCases("levelwise"))("%s", (program, expected) => {
     expect(runLevelwiseProgram(program)).toBe(expected);
+  });
+
+  it("breaks a root tie by the id Z3 recycles from a freed polynomial", () => {
+    expect(`freed ${getRecycledIdCell(true)}\nkept ${getRecycledIdCell(false)}`).toBe(
+      "freed ids 3 2 cell S[1:0^1]#1 (-oo,[1:1^1 1:0^1 -1:]#1)\nkept ids 3 4 cell S[1:0^1]#1 (-oo,[1:1^1 -1:]#1)",
+    );
   });
 });
 

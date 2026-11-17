@@ -1,7 +1,7 @@
 import { SmtInvariantError } from "../../../../errors";
 import { Rational } from "../rational";
 import { getLog2, Mpbq } from "./mpbq";
-import { PolynomialManager, type Polynomial, type ValueOps } from "./polynomial";
+import { PolynomialManager, type Polynomial, PolynomialRef, type ValueOps } from "./polynomial";
 import { UpolynomialManager, type Upolynomial } from "./upolynomial";
 import { factorUpolynomial, type FactorParams } from "./upolynomial-factorization";
 
@@ -528,29 +528,41 @@ export class AlgebraicManager {
   ): Anum[] {
     if (pm.isConst(polynomial)) return [];
     if (pm.isUnivariate(polynomial)) return this.isolateUnivariateRoots(pm.toCoeffs(polynomial));
-    const reduced = pm.substituteRational(polynomial, getRationalValues(values));
-    if (pm.isConst(reduced)) return [];
-    if (pm.isUnivariate(reduced)) {
-      if (values[pm.maxVar(reduced)] !== undefined) return [];
-      return this.isolateUnivariateRoots(pm.toCoeffs(reduced));
-    }
-    const xs = this.sortByDegree(pm.getVars(reduced), values);
-    const x = xs[xs.length - 1];
-    if (values[x] !== undefined) return [];
-    let q = reduced;
-    for (const y of xs.slice(0, -1)) {
-      q = pm.resultant(q, pm.fromCoeffs(getCell(values[y]).p, y), y);
-      if (q.size === 0) break;
-    }
-    if (q.size > 0) {
-      if (pm.isConst(q)) return [];
-      return this.isolateUnivariateRoots(pm.toCoeffs(q)).filter(
+    const pPrime = new PolynomialRef(pm);
+    const q = new PolynomialRef(pm);
+    const pY = new PolynomialRef(pm);
+    try {
+      pPrime.set(pm.substituteRational(polynomial, getRationalValues(values)));
+      const reduced = pPrime.get();
+      if (pm.isConst(reduced)) return [];
+      if (pm.isUnivariate(reduced)) {
+        if (values[pm.maxVar(reduced)] !== undefined) return [];
+        return this.isolateUnivariateRoots(pm.toCoeffs(reduced));
+      }
+      const xs = this.sortByDegree(pm.getVars(reduced), values);
+      const x = xs[xs.length - 1];
+      if (values[x] !== undefined) return [];
+      q.copy(pPrime);
+      for (let index = 0; index + 1 < xs.length; index++) {
+        const y = xs[index];
+        pY.set(pm.toPolynomial(getCell(values[y]).p, y));
+        pm.resultant(q.get(), pY.get(), y, q);
+        if (pm.isZero(q.get())) {
+          if (isNested)
+            throw new SmtInvariantError("resultant vanished during nested isolate_roots call");
+          break;
+        }
+      }
+      if (pm.isZero(q.get())) return this.isolateVanishedRoots(pm, reduced, values, xs, x);
+      if (pm.isConst(q.get())) return [];
+      return this.isolateUnivariateRoots(pm.toCoeffs(q.get())).filter(
         (root) => this.evalSignAt(pm, reduced, getExtended(values, x, root)) === 0,
       );
+    } finally {
+      pY.reset();
+      q.reset();
+      pPrime.reset();
     }
-    if (isNested)
-      throw new SmtInvariantError("resultant vanished during nested isolate_roots call");
-    return this.isolateVanishedRoots(pm, reduced, values, xs, x);
   }
 
   private isolateVanishedRoots(
@@ -564,26 +576,50 @@ export class AlgebraicManager {
       pm.evaluateWith(polynomial, this.anumOps, (variable) => getAssigned(values, variable));
     const degree = pm.degree(reduced, x);
     if (degree === 1) {
-      const constant = evaluate(pm.coeff(reduced, x, 0));
-      const leading = evaluate(pm.coeff(reduced, x, 1));
+      const c0 = new PolynomialRef(pm);
+      const c1 = new PolynomialRef(pm);
+      c0.set(pm.coeff(reduced, x, 0));
+      c1.set(pm.coeff(reduced, x, 1));
+      const constant = evaluate(c0.get());
+      const leading = evaluate(c1.get());
+      c1.reset();
+      c0.reset();
       if (this.isZero(leading)) return [];
       const root = this.div(constant, leading);
       this.neg(root);
       return [root];
     }
+    const c = new PolynomialRef(pm);
     let power = degree;
     let leading = new Anum(Rational.zero);
     for (; power >= 1; power--) {
-      leading = evaluate(pm.coeff(reduced, x, power));
+      c.set(pm.coeff(reduced, x, power));
+      leading = evaluate(c.get());
       if (!this.isZero(leading)) break;
     }
-    if (power === 0) return [];
+    if (power === 0) {
+      c.reset();
+      return [];
+    }
     const z = Math.max(...xs) + 1;
-    const q = this.pm.add(
-      this.pm.mul(this.pm.mkVar(z), this.pm.mkVar(x, power)),
-      this.convert(pm, reduced, x, power - 1),
-    );
-    return this.isolateRoots(this.pm, q, getExtended(values, z, leading), true);
+    const q2 = new PolynomialRef(this.pm);
+    const zP = new PolynomialRef(this.pm);
+    const xiP = new PolynomialRef(this.pm);
+    const product = new PolynomialRef(this.pm);
+    q2.set(this.convert(pm, reduced, x, power - 1));
+    xiP.set(this.pm.mkVar(x, power));
+    zP.set(this.pm.mkVar(z));
+    product.set(this.pm.mul(zP.get(), xiP.get()));
+    q2.set(this.pm.add(product.get(), q2.get()));
+    product.reset();
+    try {
+      return this.isolateRoots(this.pm, q2.get(), getExtended(values, z, leading), true);
+    } finally {
+      xiP.reset();
+      zP.reset();
+      q2.reset();
+      c.reset();
+    }
   }
 
   private convert(pm: PolynomialManager, polynomial: Polynomial, x = -1, maxDegree = Infinity) {
@@ -617,13 +653,20 @@ export class AlgebraicManager {
     if (pm.isConst(polynomial)) return result;
     if (pm.isUnivariate(polynomial))
       return this.isolateRootsClosestUnivariate(pm, polynomial, sample);
-    const reduced = pm.substituteRational(polynomial, getRationalValues(values));
-    if (pm.isConst(reduced)) return result;
-    if (pm.isUnivariate(reduced)) {
-      if (values[pm.maxVar(reduced)] !== undefined) return result;
-      return this.isolateRootsClosestUnivariate(pm, reduced, sample);
+    const pPrime = new PolynomialRef(pm);
+    let all: Anum[];
+    try {
+      pPrime.set(pm.substituteRational(polynomial, getRationalValues(values)));
+      const reduced = pPrime.get();
+      if (pm.isConst(reduced)) return result;
+      if (pm.isUnivariate(reduced)) {
+        if (values[pm.maxVar(reduced)] !== undefined) return result;
+        return this.isolateRootsClosestUnivariate(pm, reduced, sample);
+      }
+      all = this.isolateRoots(pm, polynomial, values);
+    } finally {
+      pPrime.reset();
     }
-    const all = this.isolateRoots(pm, polynomial, values);
     const sampleAnum = new Anum(sample);
     let lower = -1;
     let upper = -1;
@@ -671,37 +714,45 @@ export class AlgebraicManager {
   evalSignAt(pm: PolynomialManager, polynomial: Polynomial, values: readonly (Anum | undefined)[]) {
     while (true) {
       const rationalValues = getRationalValues(values);
+      // Z3's optimistic rational evaluation sorts p before it fails on an irrational value.
+      if (!pm.isConst(polynomial)) polynomial.lexSort();
       if (pm.getVars(polynomial).every((variable) => rationalValues[variable] !== undefined))
         return pm.getSign(polynomial, rationalValues);
-      const reduced = pm.substituteRational(polynomial, rationalValues);
-      if (reduced.size === 0) return 0;
-      if (pm.isConst(reduced)) return reduced.as[0] > 0n ? 1 : -1;
-      const xs = pm.getVars(reduced);
-      const getInterval = (variable: number) => {
-        const cell = getCell(values[variable]);
-        return { lower: cell.lower, upper: cell.upper };
-      };
-      const evaluate = () => pm.evaluateWith(reduced, INTERVAL_OPS, getInterval);
-      let interval = evaluate();
-      let isRestarted = false;
-      while (true) {
-        if (!containsZero(interval)) return interval.lower.isNeg ? -1 : 1;
-        let isRefined = false;
-        for (const variable of xs) {
-          const value = getAssigned(values, variable);
-          if (this.getCellMagnitude(getCell(value)) <= MIN_MAGNITUDE) continue;
-          if (!this.refine(value)) {
-            isRestarted = true;
-            break;
+      const pPrime = new PolynomialRef(pm);
+      try {
+        pPrime.set(pm.substituteRational(polynomial, rationalValues));
+        const reduced = pPrime.get();
+        if (reduced.size === 0) return 0;
+        if (pm.isConst(reduced)) return reduced.as[0] > 0n ? 1 : -1;
+        const xs = pm.getVars(reduced);
+        const getInterval = (variable: number) => {
+          const cell = getCell(values[variable]);
+          return { lower: cell.lower, upper: cell.upper };
+        };
+        const evaluate = () => pm.evaluateWith(reduced, INTERVAL_OPS, getInterval);
+        let interval = evaluate();
+        let isRestarted = false;
+        while (true) {
+          if (!containsZero(interval)) return interval.lower.isNeg ? -1 : 1;
+          let isRefined = false;
+          for (const variable of xs) {
+            const value = getAssigned(values, variable);
+            if (this.getCellMagnitude(getCell(value)) <= MIN_MAGNITUDE) continue;
+            if (!this.refine(value)) {
+              isRestarted = true;
+              break;
+            }
+            isRefined = true;
           }
-          isRefined = true;
+          if (!isRefined || isRestarted) break;
+          interval = evaluate();
         }
-        if (!isRefined || isRestarted) break;
-        interval = evaluate();
+        if (isRestarted) continue;
+        const sign = this.evalSignByResultant(pm, reduced, values, xs, interval, evaluate);
+        if (sign !== null) return sign;
+      } finally {
+        pPrime.reset();
       }
-      if (isRestarted) continue;
-      const sign = this.evalSignByResultant(pm, reduced, values, xs, interval, evaluate);
-      if (sign !== null) return sign;
     }
   }
 
@@ -714,14 +765,22 @@ export class AlgebraicManager {
     evaluate: () => BqInterval,
   ) {
     const sorted = this.sortByDegree(xs, values);
-    let resultant = this.pm.sub(this.pm.mkVar(Math.max(...xs) + 1), this.convert(pm, reduced));
-    for (const variable of sorted)
-      resultant = this.pm.resultant(
-        resultant,
-        this.pm.fromCoeffs(getCell(values[variable]).p, variable),
-        variable,
-      );
-    const k = this.um.nonzeroRootLowerBound(this.pm.toCoeffs(resultant));
+    const yp = new PolynomialRef(this.pm);
+    const pPrimeAux = new PolynomialRef(this.pm);
+    const r = new PolynomialRef(this.pm);
+    const qi = new PolynomialRef(this.pm);
+    yp.set(this.pm.mkVar(Math.max(...xs) + 1));
+    pPrimeAux.set(this.convert(pm, reduced));
+    r.set(this.pm.sub(yp.get(), pPrimeAux.get()));
+    for (const variable of sorted) {
+      qi.set(this.pm.toPolynomial(getCell(values[variable]).p, variable));
+      this.pm.resultant(r.get(), qi.get(), variable, r);
+    }
+    const k = this.um.nonzeroRootLowerBound(this.pm.toCoeffs(r.get()));
+    qi.reset();
+    r.reset();
+    pPrimeAux.reset();
+    yp.reset();
     const bound = Mpbq.of(1n, k);
     const isInsideBound = (interval: BqInterval) =>
       bound.neg().compare(interval.lower) < 0 && interval.upper.compare(bound) < 0;
@@ -889,10 +948,7 @@ export class AlgebraicManager {
   // Res_y(x^k - y, p(y)) has a^(1/k) as a root.
   private mkRoot(anum: Anum, k: number): Anum {
     const cell = getCell(anum);
-    const x = this.pm.sub(this.pm.mkVar(X, k), this.pm.mkVar(Y));
-    const factored = this.factor(
-      this.pm.toCoeffs(this.pm.resultant(x, this.pm.fromCoeffs(cell.p, Y), Y)),
-    );
+    const factored = this.factor(this.getResultantCoeffs(this.getVarDifference(k, 1), cell.p));
     const factors = factored.factors.factors;
     const sequences: (Upolynomial[] | null)[] = factors.map((factor) => this.um.sturmSeq(factor));
     const saved = this.saveInterval(anum);
@@ -940,14 +996,47 @@ export class AlgebraicManager {
     return (refined.isInterval ? refined.upper : refined.lower).toDecimal(precision);
   }
 
+  // Res_y(first(x, y), p(y)) as coefficients in x; releases first.
+  private getResultantCoeffs(first: PolynomialRef, p: Upolynomial) {
+    const q = new PolynomialRef(this.pm);
+    const r = new PolynomialRef(this.pm);
+    q.set(this.pm.toPolynomial(p, Y));
+    this.pm.resultant(first.get(), q.get(), Y, r);
+    const coeffs = this.pm.toCoeffs(r.get());
+    r.reset();
+    q.reset();
+    first.reset();
+    return coeffs;
+  }
+
+  private getVarDifference(xDegree: number, yDegree: number) {
+    const x = new PolynomialRef(this.pm);
+    const y = new PolynomialRef(this.pm);
+    const difference = new PolynomialRef(this.pm);
+    x.set(this.pm.mkVar(X, xDegree));
+    y.set(this.pm.mkVar(Y, yDegree));
+    difference.set(this.pm.sub(x.get(), y.get()));
+    y.reset();
+    x.reset();
+    return difference;
+  }
+
   private getSumPolynomial(first: AlgebraicCell, second: AlgebraicCell) {
-    const composed = this.pm.composeXMinusY(this.pm.fromCoeffs(first.p, X), Y);
-    return this.pm.toCoeffs(this.pm.resultant(composed, this.pm.fromCoeffs(second.p, Y), Y));
+    const p = new PolynomialRef(this.pm);
+    const composed = new PolynomialRef(this.pm);
+    p.set(this.pm.toPolynomial(first.p, X));
+    this.pm.composeXMinusY(p.get(), Y, composed);
+    p.reset();
+    return this.getResultantCoeffs(composed, second.p);
   }
 
   private getProductPolynomial(first: AlgebraicCell, second: AlgebraicCell) {
-    const composed = this.pm.composeXDivY(this.pm.fromCoeffs(first.p, X), Y);
-    return this.pm.toCoeffs(this.pm.resultant(composed, this.pm.fromCoeffs(second.p, Y), Y));
+    const p = new PolynomialRef(this.pm);
+    const composed = new PolynomialRef(this.pm);
+    p.set(this.pm.toPolynomial(first.p, X));
+    composed.set(this.pm.composeXDivY(p.get(), Y));
+    p.reset();
+    return this.getResultantCoeffs(composed, second.p);
   }
 
   private findIsolatingFactor(
@@ -1009,8 +1098,7 @@ export class AlgebraicManager {
   }
 
   private getPowerPolynomial(cell: AlgebraicCell, exponent: number) {
-    const x = this.pm.sub(this.pm.mkVar(X), this.pm.mkVar(Y, exponent));
-    return this.pm.toCoeffs(this.pm.resultant(x, this.pm.fromCoeffs(cell.p, Y), Y));
+    return this.getResultantCoeffs(this.getVarDifference(1, exponent), cell.p);
   }
 
   private mkPower(anum: Anum, exponent: number): Anum {

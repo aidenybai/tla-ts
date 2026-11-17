@@ -3,7 +3,7 @@ import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { Rational, getLcm } from "../rational";
 import { Anum } from "../nlsat/algebraic";
 import { NlsatSolver } from "../nlsat/solver";
-import type { Polynomial } from "../nlsat/polynomial";
+import { type Polynomial, PolynomialRef, PolynomialRefVector } from "../nlsat/polynomial";
 import { isIneqAtom } from "../nlsat/types";
 import {
   KIND_EQ,
@@ -115,53 +115,48 @@ export class NraSolver {
     const lra = core.lra;
     const solver = this.solver;
     const pm = solver.pm;
-    const definitions: (Polynomial | null)[] = [];
+    const definitions = new PolynomialRefVector(pm);
     const denominators: bigint[] = [];
+    const p = new PolynomialRef(pm);
+    const constant = new PolynomialRef(pm);
+    const product = new PolynomialRef(pm);
     for (let lpVar = 0; lpVar < lra.columns.length; lpVar++) {
       if (!isIncluded(lpVar)) {
-        definitions.push(null);
+        definitions.push(pm.zero);
         denominators.push(0n);
         continue;
       }
       const variable = solver.mkVar(lra.isInt(lpVar));
       this.lp2nl.set(lpVar, variable);
+      let denominator = 1n;
       if (core.emons.isMonicVar(lpVar)) {
-        let definition: Polynomial | null = null;
-        let denominator = 1n;
-        for (const factor of core.emons.get(lpVar).vars) {
+        for (const [index, factor] of core.emons.get(lpVar).vars.entries()) {
           denominator = denominators[factor] * denominator;
-          definition =
-            definition === null ? definitions[factor] : pm.mul(definition, definitions[factor]!);
+          p.set(index === 0 ? definitions.get(factor) : pm.mul(p.get(), definitions.get(factor)));
         }
-        definitions.push(definition ?? pm.mkVar(variable));
-        denominators.push(denominator);
-        continue;
-      }
-      if (lra.hasTerm(lpVar)) {
+      } else if (lra.hasTerm(lpVar)) {
         const term = [...lra.getTerm(lpVar).coeffs];
-        const denominator = term.reduce(
-          (result, entry) => getLcm(entry[1].div(Rational.of(denominators[entry[0]])).den, result),
-          1n,
-        );
-        let definition: Polynomial | null = null;
-        for (const entry of term) {
+        for (const entry of term)
+          denominator = getLcm(entry[1].div(Rational.of(denominators[entry[0]])).den, denominator);
+        for (const [index, entry] of term.entries()) {
           const coeff = entry[1].mul(Rational.of(denominator, denominators[entry[0]]));
-          const scaled = pm.mul(pm.mkConst(coeff.num), definitions[entry[0]]!);
-          definition = definition === null ? scaled : pm.add(definition, scaled);
+          constant.set(pm.mkConst(coeff.num));
+          product.set(pm.mul(constant.get(), definitions.get(entry[0])));
+          p.set(index === 0 ? product.get() : pm.add(p.get(), product.get()));
+          product.reset();
+          constant.reset();
         }
-        definitions.push(definition ?? pm.zero);
-        denominators.push(denominator);
-        continue;
-      }
-      definitions.push(pm.mkVar(variable));
-      denominators.push(1n);
+      } else p.set(pm.mkVar(variable));
+      definitions.push(p.getOrNull() ?? pm.zero);
+      denominators.push(denominator);
+      p.reset();
     }
     return { definitions, denominators };
   }
 
   private addConstraint(
     constraintIndex: number,
-    definitions: readonly (Polynomial | null)[],
+    definitions: PolynomialRefVector,
     denominators: readonly bigint[],
   ) {
     const lra = this.core.lra;
@@ -174,23 +169,32 @@ export class NraSolver {
       (result, entry) => getLcm(result, entry[1].div(Rational.of(denominators[entry[0]])).den),
       rhs.den,
     );
-    let polynomial = pm.mkConst(-(rhs.num * denominator) / rhs.den);
+    const p = new PolynomialRef(pm);
+    const poly = new PolynomialRef(pm);
+    const constant = new PolynomialRef(pm);
+    p.set(pm.mkConst(-(rhs.num * denominator) / rhs.den));
     for (const entry of coeffs) {
       const coeff = entry[1].mul(Rational.of(denominator, denominators[entry[0]]));
-      polynomial = pm.add(polynomial, pm.mul(definitions[entry[0]]!, pm.mkConst(coeff.num)));
+      poly.set(definitions.get(entry[0]));
+      constant.set(pm.mkConst(coeff.num));
+      poly.set(pm.mul(poly.get(), constant.get()));
+      constant.reset();
+      p.set(pm.add(p.get(), poly.get()));
+      poly.reset();
     }
     const kind = constraint.kind;
     const literal =
       kind === KIND_LE
-        ? solver.mkIneqLiteral("GT", [polynomial], [false]) ^ 1
+        ? solver.mkIneqLiteral("GT", [p.get()], [false]) ^ 1
         : kind === KIND_GE
-          ? solver.mkIneqLiteral("LT", [polynomial], [false]) ^ 1
+          ? solver.mkIneqLiteral("LT", [p.get()], [false]) ^ 1
           : solver.mkIneqLiteral(
               kind === KIND_LT ? "LT" : kind === KIND_GT ? "GT" : "EQ",
-              [polynomial],
+              [p.get()],
               [false],
             );
     solver.mkExternalClause([literal], constraintIndex);
+    p.reset();
     return literal;
   }
 
@@ -234,6 +238,7 @@ export class NraSolver {
       }
       this.addConstraint(constraintIndex, definitions.definitions, definitions.denominators);
     }
+    definitions.definitions.reset();
     this.registerTranscendentals();
     const result = this.solver.check();
     if (result === L_TRUE) {
@@ -344,6 +349,7 @@ export class NraSolver {
       );
       this.literal2constraint.set(literal, constraintIndex);
     }
+    definitions.definitions.reset();
     this.registerTranscendentals();
   }
 
