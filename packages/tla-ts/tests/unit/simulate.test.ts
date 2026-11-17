@@ -83,3 +83,22 @@ it("binds CounterExample to the alias of each state of a behavior that violates 
     '<< { <<1, [a |-> 0, n |-> 1]>>,\n     <<2, [a |-> 1, n |-> 2]>>,\n     <<3, [a |-> 2, n |-> 2]>> },\n   {<<1, "Next", 2>>, <<2, "Next", 3>>} >>',
   ]);
 });
+
+it("binds CounterExample to the lasso of a behavior that violates a temporal property", () => {
+  const property = "SPECIFICATION Spec\nPROPERTY Prop";
+  expect([
+    getCounterExample(
+      "A == x < 2 /\\ x' = x + 1\nB == x = 2 /\\ x' = 0\nNext == A \\/ B\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nProp == <>(x = 5)",
+      property,
+    ),
+    getCounterExample(
+      "Alias == [a |-> x, n |-> x + 1]\nNext == x' = 1 - x\nSpec == Init /\\ [][Next]_x\nProp == <>(x = 5)",
+      `${property}\nALIAS Alias`,
+    ),
+  ]).toEqual([
+    [
+      '<< {<<1, [x |-> 0]>>, <<2, [x |-> 1]>>, <<3, [x |-> 2]>>},\n   {<<1, "A", 2>>, <<2, "A", 3>>, <<3, "B", 1>>} >>',
+    ],
+    ['<<{<<1, [a |-> 0, n |-> 1]>>}, {<<1, "UnnamedAction", 1>>}>>'],
+  ]);
+});

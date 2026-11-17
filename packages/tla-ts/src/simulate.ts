@@ -29,7 +29,7 @@ import {
   withUnexpectedException,
 } from "./tlc/messages";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
-import { createCounterExample, createTlcRecord } from "./tlc/tlcext-operators";
+import { createActionRecord, createCounterExample, createTlcRecord } from "./tlc/tlcext-operators";
 import {
   computeLikeTlcOnFailure,
   createModelValue,
@@ -82,6 +82,7 @@ interface WorkerError {
   isException: boolean;
   isSummarized: boolean;
   violation?: Violation;
+  counterExample?: Value;
 }
 
 const FATAL_CODES = new Set<number>([
@@ -160,6 +161,7 @@ const findTemporalViolation = (
     fingerprints[length - 1] === getFingerprint(states[path[lasso.prefix.length]]);
   return {
     length,
+    isStuttering,
     loopStart: isStuttering ? length - 1 : cyclePosition - 1,
     properties: checker.getViolatedProperties(
       trace.slice(0, length).map((node) => node.state),
@@ -381,12 +383,16 @@ export const simulate = (options: SimulationOptions): number => {
               ),
       };
     });
-  // TLC's SimulationWorker binds CounterExample to the alias of each state.
-  const getCounterExample = (trace: TraceNode[]) =>
+  // TLC's SimulationWorker and LiveCheck1 bind CounterExample to the alias of each state.
+  const getCounterExample = (
+    trace: TraceNode[],
+    steps = toTraceSteps(trace),
+    loop?: { start: number; action: Value },
+  ) =>
     createCounterExample(
-      toTraceSteps(trace).map((step) => step.state),
+      steps.map((step) => step.state),
       trace.slice(1).map((node) => toActionValue(node.action)),
-      undefined,
+      loop,
     );
   // TLC's Simulator binds CounterExample to an initial state that violates an invariant, not to its alias.
   const getInitialCounterExample = (node: TraceNode) =>
@@ -587,7 +593,7 @@ export const simulate = (options: SimulationOptions): number => {
     runtime.getFingerprint,
     search.getReward,
   );
-  const getTemporalViolation = (last: TraceNode): Violation | undefined => {
+  const getTemporalViolation = (last: TraceNode): WorkerError | undefined => {
     if (temporalProperties.length === 0) return undefined;
     const trace = getTrace(last, search.getTlcOrder());
     // TLC's LiveCheck#checkTrace fingerprints each state, which sorts its records.
@@ -595,12 +601,24 @@ export const simulate = (options: SimulationOptions): number => {
     const found = findTemporalViolation(trace, runtime.getFingerprint, createTemporalChecker);
     if (!found) return undefined;
     const back = trace[found.length];
+    const lasso = trace.slice(0, found.length);
+    const steps = toTraceSteps(lasso);
+    const loopAction =
+      found.isStuttering || !back ? createActionRecord(undefined) : toActionValue(back.action);
     return {
-      name: found.properties[0],
-      properties: found.properties,
-      trace: toTraceSteps(trace.slice(0, found.length)),
-      loopStart: found.loopStart,
-      loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
+      ...toWorkerError(MESSAGE_CODE.temporalPropertyViolated, "", last),
+      isException: true,
+      violation: {
+        name: found.properties[0],
+        properties: found.properties,
+        trace: steps,
+        loopStart: found.loopStart,
+        loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
+      },
+      counterExample: getCounterExample(lasso, steps, {
+        start: found.loopStart,
+        action: loopAction,
+      }),
     };
   };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {
@@ -629,13 +647,7 @@ export const simulate = (options: SimulationOptions): number => {
     }
     if (runtime.isStopped) return "stopped";
     const violation = getTemporalViolation(currentNode);
-    if (violation) {
-      return {
-        ...toWorkerError(MESSAGE_CODE.temporalPropertyViolated, "", currentNode),
-        isException: true,
-        violation,
-      };
-    }
+    if (violation) return violation;
     const length = Math.min(traceDepth, currentNode.level);
     const delta = length - statistics.levelMean;
     statistics.levelMean += Math.trunc(delta / Math.max(statistics.traces, 1));
@@ -717,7 +729,10 @@ export const simulate = (options: SimulationOptions): number => {
   });
   const last = reported[reported.length - 1];
   const errorStatus = last ? getMessageExitStatus(last.code) : EXIT_STATUS.success;
-  if (last) runtime.counterExample = getCounterExample(getTrace(last.node, search.getTlcOrder()));
+  if (last) {
+    runtime.counterExample =
+      last.counterExample ?? getCounterExample(getTrace(last.node, search.getTlcOrder()));
+  }
   const postcondition = reportPostcondition(last !== undefined);
   const postconditionStatus = postcondition
     ? getMessageExitStatus(postcondition.code)
