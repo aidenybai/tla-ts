@@ -1140,7 +1140,11 @@ export const compile = (
   if (context.isEveryCollectionHeld) rejectSharing(shareable, context);
   rejectRegExpIndicesUses(roots, context);
   if (context.heap !== undefined) {
-    context.dispatch = createDispatch(findDispatchedCallees(reached, context), context);
+    context.dispatch = createDispatch(
+      findDispatchedCallees(reached, context),
+      context,
+      program.isStrictFunctionTypes,
+    );
     context.effects = findEffects(reached, context);
     context.changes = summarizeEffects(context);
   }
