@@ -5099,6 +5099,7 @@ ConvertWith(heap, ref, method) ==
           /\\ \\A position \\in DOMAIN ref : ref[position] = Null \\/ TypeOf(ref[position]) # "object"
           /\\ HoldsBuiltIn(heap, ref, "join", "Array.prototype.join") ->
             JoinValues(ref, ",")
+       [] IsTemporalConversion(path) -> TemporalConverted(heap, path, ref)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell what this method gives where it converts an object")
 
 \\* ToNumber of a primitive. tla-ts can't represent a string's fraction.

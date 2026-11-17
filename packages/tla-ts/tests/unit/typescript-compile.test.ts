@@ -50117,4 +50117,31 @@ describe("BigInts", () => {
       await expect(check(compile(wrong, path))).rejects.toThrow("seen 2,4,6");
     });
   });
+
+  describe("converts a Temporal object to a string through its toString", () => {
+    const getSource = (expected: string) => `
+      const date = Temporal.PlainDate.from({ year: 1350, month: 2, day: 1, calendar: "persian" });
+      const zoned = Temporal.ZonedDateTime.from({ year: 2020, month: 3, day: 1, hour: 12, timeZone: "UTC" });
+      const seen = [\`\${date}\`, String(Temporal.Duration.from({ hours: 3 })), \`\${zoned}\`].join(" ");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "1971-04-21[u-ca=persian] PT3H 2020-03-01T12:00:00+00:00[UTC]";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another text", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("PT3H", "PT180M")))).failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+
+    it("stops where valueOf throws", async () => {
+      const source = 'const seen = Temporal.PlainDate.from("2020-01-01") + "";';
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't throw the TypeError of Temporal.PlainDate.prototype.valueOf",
+      );
+    });
+  });
 });

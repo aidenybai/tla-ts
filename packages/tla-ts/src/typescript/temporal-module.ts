@@ -26,6 +26,30 @@ TemporalGetterValue(heap, path, receiver) ==
   IN IF "throwing" \in DOMAIN slots /\ TemporalGetterName(path) \in slots.throwing
      THEN Assert(FALSE, "tla-ts can't throw the RangeError of " \o SubSeq(path, 5, Len(path)) \o " here")
      ELSE slots.getters[TemporalGetterName(path)]
+
+RECURSIVE TemporalText(_, _, _)
+
+LOCAL TemporalConversionOwner(path) ==
+  CHOOSE kind \in {"Duration", "Instant", "PlainDate", "PlainTime", "PlainDateTime", "PlainYearMonth",
+                   "PlainMonthDay", "ZonedDateTime"} :
+    path \in {"Temporal." \o kind \o ".prototype.toString", "Temporal." \o kind \o ".prototype.valueOf"}
+
+\* Whether ToPrimitive calls a Temporal prototype's toString or valueOf.
+IsTemporalConversion(path) ==
+  \E kind \in {"Duration", "Instant", "PlainDate", "PlainTime", "PlainDateTime", "PlainYearMonth",
+               "PlainMonthDay", "ZonedDateTime"} :
+    path \in {"Temporal." \o kind \o ".prototype.toString", "Temporal." \o kind \o ".prototype.valueOf"}
+
+\* What a Temporal prototype's toString gives where ToPrimitive calls it, with no options. valueOf
+\* always throws a TypeError, as toString does on another receiver, where tla-ts stops.
+TemporalConverted(heap, path, receiver) ==
+  LET kind == TemporalConversionOwner(path)
+      given == TemporalText(heap, kind, receiver)
+  IN CASE path = "Temporal." \o kind \o ".prototype.valueOf" \/ TSlots(heap, receiver).kind # kind ->
+            Assert(FALSE, "tla-ts can't throw the TypeError of " \o path \o " where it converts an object")
+       [] given.error # "" ->
+            Assert(FALSE, "tla-ts can't throw the " \o given.error \o " of " \o path \o " where it converts an object")
+       [] OTHER -> given.value
 `;
 
 // The part of the JavaScript module that runs Temporal, over the ISO 8601 calendar, as the Temporal
@@ -3504,4 +3528,6 @@ TemporalMethod(heap, kind, method, receiver, arguments, prototype) ==
        [] kind \in {"PlainYearMonth", "PlainMonthDay"} ->
             TYearMonthOrMonthDayMethod(heap, slots, method, arguments, prototype)
        [] kind = "ZonedDateTime" -> TZonedMethod(heap, slots, method, arguments, prototype)
+
+TemporalText(heap, kind, receiver) == TemporalMethod(heap, kind, "toString", receiver, <<>>, Undefined)
 `;
