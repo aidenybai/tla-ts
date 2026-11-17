@@ -78,6 +78,7 @@ describe("typed tier matches TLC", () => {
     ["BagDifferences", 41],
     ["SparseSequences", 1063],
     ["LateSparseSequences", 1063],
+    ["SparseConstructions", 11],
     ["RecursiveOperators", 441],
     ["GameOfLife", 1024],
     ["LoopArguments", 31],

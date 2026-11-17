@@ -107,8 +107,9 @@ interface TupType {
 interface SeqType {
   kind: "Seq";
   element: Type;
-  // The sparse function a sequence becomes when it meets one in the sparse pass.
-  target?: MapType;
+  // The sequence it was unified with, or the sparse function it becomes when it meets one in the
+  // sparse pass.
+  target?: SeqType | MapType;
 }
 
 // A record of several shapes starts with the position of its shape.
@@ -529,6 +530,7 @@ const unify = (left: Type, right: Type): void => {
     return unify(leftType.values, rightType.values);
   }
   if (leftType.kind === "Seq" && rightType.kind === "Seq") {
+    rightType.target = leftType;
     return unify(leftType.element, rightType.element);
   }
   if (leftType.kind === "Set" && rightType.kind === "Set") {
