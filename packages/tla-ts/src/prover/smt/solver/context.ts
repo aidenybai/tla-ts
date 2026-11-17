@@ -212,8 +212,7 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this);
   }
 
-  // As in Z3, rereading the parameters drops the setup's tuning but for eliminate_term_ite,
-  // eliminate_bounds and relevancy.
+  // As in Z3, rereading the parameters drops the setup's tuning but for eliminate_term_ite, eliminate_bounds and relevancy.
   updateParams(params: KernelParams) {
     this.params.isMbqi = params.isMbqi;
     this.params.mbqiMaxIterations = params.mbqiMaxIterations;

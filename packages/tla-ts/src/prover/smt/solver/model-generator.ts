@@ -66,7 +66,6 @@ export const mkModel = (context: Context): GeneratedModel => {
       }
     } else procs.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
   }
-  // A fresh value comes after the roots of its sort that are not fresh, and differs from their values.
   const colors = new Map<Enode | ExtraFreshValue, number>();
   const traversedSorts = new Set<number>();
   const sortedSources: (Enode | ExtraFreshValue)[] = [];

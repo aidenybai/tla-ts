@@ -32,7 +32,6 @@ const DEFAULT_KERNEL_PARAMS: KernelParams = {
   isFindingMacros: false,
 };
 
-// Once the limit is spent, Z3 drops each formula it asserts and then stops.
 const assertForms = (context: Context, asserted: AssertedFormulas, forms: number[]) => {
   for (const form of forms) if (!context.checkCanceled()) asserted.assertExpr(form);
   return !context.checkCanceled();

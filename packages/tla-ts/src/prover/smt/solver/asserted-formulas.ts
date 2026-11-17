@@ -438,7 +438,6 @@ export class AssertedFormulas {
     formulas.reset();
   }
 
-  // A stop at the limit keeps the formulas as they were and answers false.
   private simplifyFormulas(simplify: (formula: number) => number) {
     const manager = this.manager;
     const formulas = new RefVector(manager);
