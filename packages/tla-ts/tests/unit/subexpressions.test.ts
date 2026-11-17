@@ -54,6 +54,15 @@ describe("subexpression references match TLC", () => {
     });
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 5 }]);
   });
+
+  it("selects an operand of a definition that selects a label through such an instance", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\n---- MODULE I ----\nEXTENDS Naturals\nL == l :: 2 + 3\n====\nJ == INSTANCE I\nQ == {J!L!l, 1}\nB == Q!1!1\nVARIABLE x\nInit == x = 0\nNext == x' = B\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 5 }]);
+  });
 });
 
 describe("subexpression references into theorems match SANY", () => {

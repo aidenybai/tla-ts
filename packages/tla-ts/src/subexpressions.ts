@@ -126,7 +126,7 @@ const createApplication = (selection: Selection, body: Expression): Expression =
   if (selection.params.length === 0) {
     // Each selection gets its own node, so its null checks don't overwrite another's.
     const copy = { ...body };
-    selectionSources.set(copy, body);
+    selectionSources.set(copy, selectionSources.get(body) ?? body);
     return copy;
   }
   if (selection.args.length === 0) {
