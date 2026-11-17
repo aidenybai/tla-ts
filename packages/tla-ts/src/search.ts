@@ -96,7 +96,6 @@ import {
 } from "./values";
 
 export interface StandardInput {
-  /** Reads a line of standard input for TLCExt!PickSuccessor, or undefined at its end. */
   readLine?: () => string | undefined;
 }
 
