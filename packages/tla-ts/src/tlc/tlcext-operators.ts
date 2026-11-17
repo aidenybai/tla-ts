@@ -264,6 +264,7 @@ export const createTlcExtOperators = (
     {
       ...defineLazyOperator("PickSuccessor", 1, (args, context) => {
         const next = context?.next ?? (context?.environment.variables ?? []).map(() => undefined);
+        // A simulation remembers no states, so TLC evaluates the guard before it looks at the successor.
         if (runtime.getSimulationValue === undefined) {
           // Deviation from TLC: TLCExt#pickSuccessor fingerprints a partial successor and fails, where TLCExt.tla promises TRUE.
           if (!isCompleteState(next)) return true;
