@@ -49353,6 +49353,30 @@ describe("BigInts", () => {
     });
   });
 
+  describe("reads an array that a variable declared without a type or a value holds", () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      function run() {
+        var list;
+        list = [0, 1, 2, 3];
+        list.length = 2;
+        return [5 in list, 1 in list, list.length, list[1]].join();
+      }
+      const seen = run();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,true,2,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects an element that the truncation removed", async () => {
+      expect((await checkModel(getSource("true,true,2,1"))).failure?.message).toContain(
+        "seen false,true,2,1",
+      );
+    });
+  });
+
   describe("gives the resolved options of Intl's objects of English or the default locale", () => {
     const getSource = (expected: string) => `
       const format = new Intl.ListFormat("en-us", { style: "short", type: "unit" });

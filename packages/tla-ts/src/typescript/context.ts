@@ -2402,6 +2402,31 @@ export const isMadeOnly = (symbol: ts.Symbol, context: Context) => {
   return written.length > 0 && written.every(isMadeWrite);
 };
 
+// The values that the assignments of a variable give it, where each write of it is a plain =
+// outside a pattern, or undefined where another write writes it.
+export const getAssignedValues = (symbol: ts.Symbol, context: Context) => {
+  const declaration = symbol.valueDeclaration;
+  if (declaration === undefined) return undefined;
+  const written = findNodes(declaration.getSourceFile(), (inner): inner is ts.Node => {
+    const target = getAssignedTarget(inner);
+    return target !== undefined && isWrittenBy(target, symbol, context);
+  }).flatMap((inner) =>
+    getWrittenNames(getAssignedTarget(inner) ?? inner).filter(
+      (name) => ts.isIdentifier(name) && getSymbol(name, context.checker) === symbol,
+    ),
+  );
+  const values = written.map((name) => {
+    const parent = name.parent;
+    return ts.isBinaryExpression(parent) &&
+      parent.left === name &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      !isPatternPart(parent)
+      ? skipCasts(parent.right)
+      : undefined;
+  });
+  return values.every((value) => value !== undefined) ? values : undefined;
+};
+
 // The names that a function reads from the functions around it, through the functions it names,
 // which a call of an enclosing function binds anew. A function that runs once that call returns
 // keeps the bindings where the script made it, which tla-ts follows only if nothing assigns them.

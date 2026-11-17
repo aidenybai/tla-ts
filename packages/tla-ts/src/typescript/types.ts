@@ -1,6 +1,7 @@
 import ts from "@typescript/typescript6";
 import type { ExceptPathStep, Expression, OperatorDefinition, OperatorParam } from "../ast";
 import {
+  getAssignedValues,
   type Context,
   findNodes,
   getCallee,
@@ -792,9 +793,23 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
     return isHeld(node.whenTrue, context) && isHeld(node.whenFalse, context);
   }
   const literal = getArraySource(node, context);
-  const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
-    : undefined;
+  const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  // A variable that a declaration without a type or a value types by what it's assigned holds what
+  // the heap holds where each assignment gives it an array literal that the heap holds.
+  const assigned =
+    symbol !== undefined && ts.isIdentifier(node) && isAutoTyped(node, context)
+      ? getAssignedValues(symbol, context)
+      : undefined;
+  if (
+    assigned !== undefined &&
+    assigned.length > 0 &&
+    assigned.every(
+      (value) => ts.isArrayLiteralExpression(value) && context.heapCollections.has(value),
+    )
+  ) {
+    return true;
+  }
   const fields = getAccessedFields(node, context.checker);
   const called = ts.isCallExpression(node)
     ? getSymbol(node.expression, context.checker)?.valueDeclaration
