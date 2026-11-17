@@ -68,6 +68,42 @@ export class PatternInferenceRw extends RewriterTpl {
   }
 }
 
+// Like Z3's, it keeps the definitions it made until a pop, and each reduce asserts them all again.
+class ElimTermIteRw extends RewriterTpl {
+  readonly definitions: RefVector;
+  private lims: number[] = [];
+
+  constructor(
+    manager: AstManager,
+    private names: DefinedNames,
+  ) {
+    super(manager);
+    this.definitions = new RefVector(manager);
+  }
+
+  reduceApp(decl: number, args: number[], sort: number) {
+    const manager = this.manager;
+    if (decl !== OP_ITE || sort === SORT_BOOL) return -1;
+    const ite = manager.mkApp(OP_ITE, args, sort);
+    manager.incRef(ite);
+    const named = this.names.mkName(ite);
+    manager.decRef(ite);
+    if (named.definition === -1) return -1;
+    this.definitions.push(named.definition);
+    manager.decRef(named.definition);
+    manager.incRef(named.name);
+    return named.name;
+  }
+
+  push() {
+    this.lims.push(this.definitions.size);
+  }
+
+  pop() {
+    this.definitions.shrink(this.lims.pop() ?? 0);
+  }
+}
+
 const isGreater = (manager: AstManager, left: number, right: number): boolean => {
   if (left === right) return false;
   const isLeftValue = manager.isValue(left);
@@ -156,7 +192,9 @@ export class AssertedFormulas {
   private isReducePending = true;
   private isNnfCnf = true;
   private isEq2Ineq = false;
+  private isEliminatingTermIte = false;
   private names: DefinedNames;
+  private termIteElim: ElimTermIteRw;
   private patternInference: PatternInferenceRw;
   private bvSharing: MaxBvSharing;
   hasQuantifiers = false;
@@ -177,6 +215,7 @@ export class AssertedFormulas {
     // string literals reach the seq theory as concatenations of units.
     this.rewriter = new Rewriter(manager, { ...KERNEL_REWRITER_OPTIONS, isCoalescingChars: false });
     this.names = new DefinedNames(manager);
+    this.termIteElim = new ElimTermIteRw(manager, this.names);
     this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));
     this.bvSharing = new MaxBvSharing(manager);
   }
@@ -196,6 +235,7 @@ export class AssertedFormulas {
     this.bvSharing.popScope();
     this.macros.popScope();
     this.names.pop();
+    this.termIteElim.pop();
     this.substitution.pop();
     this.formulas.shrink(scope.numFormulas);
     this.qhead = scope.numFormulas;
@@ -207,6 +247,7 @@ export class AssertedFormulas {
       this.substitution.push();
       this.scopes.push({ numFormulas: this.formulas.size, isInconsistent: this.isInconsistent });
       this.names.push();
+      this.termIteElim.push();
       this.macros.pushScope();
       this.bvSharing.pushScope();
     }
@@ -232,12 +273,14 @@ export class AssertedFormulas {
   setup(config: SmtConfig) {
     this.isNnfCnf = config.isNnfCnf;
     this.isEq2Ineq = config.isEq2Ineq;
+    this.isEliminatingTermIte = config.isEliminatingTermIte;
     this.isFindingMacros ||= config.isFindingMacros;
   }
 
   updateParams(config: SmtConfig) {
     this.isNnfCnf = config.isNnfCnf;
     this.isEq2Ineq = config.isEq2Ineq;
+    this.isEliminatingTermIte = config.isEliminatingTermIte;
     this.isFindingMacros = config.isFindingMacros;
     this.isReducePending = true;
   }
@@ -277,6 +320,10 @@ export class AssertedFormulas {
     this.setEliminateAnd(true);
     this.reduceAsserted();
     if (this.isInconsistent) return;
+    if (this.isEliminatingTermIte) {
+      this.elimTermIte();
+      if (this.isInconsistent) return;
+    }
     if (this.hasQuantifiers && this.simplifyFormulas((formula) => this.refineInjAxiom(formula)))
       this.isReducePending = true;
     if (this.isInconsistent) return;
@@ -335,6 +382,16 @@ export class AssertedFormulas {
     if (refined !== undefined) return refined;
     manager.incRef(formula);
     return formula;
+  }
+
+  private elimTermIte() {
+    const elim = this.termIteElim;
+    if (this.simplifyFormulas((formula) => elim.rewrite(formula))) this.isReducePending = true;
+    if (elim.definitions.size > 0) this.isReducePending = true;
+    for (const definition of elim.definitions.items) this.formulas.push(definition);
+    this.flushCache();
+    this.reduceAsserted();
+    elim.reset();
   }
 
   private findMacros() {

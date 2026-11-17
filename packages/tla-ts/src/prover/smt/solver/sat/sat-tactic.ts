@@ -24,7 +24,7 @@ export const createSatTactic =
     const unhandledFuns = goal2sat.euf?.unhandledFunctions ?? goal2sat.unhandledFuns;
     if (result === L_FALSE) goal.assert(manager.falseExpr);
     else if (result === L_TRUE && unhandledFuns.length === 0) {
-      const model = new ProtoModel(manager);
+      const model = new ProtoModel(manager).mkModel();
       for (const [expr, boolVar] of goal2sat.atoms) {
         if (!manager.isUninterpretedConst(expr)) continue;
         const value = solver.model[boolVar];
@@ -32,7 +32,7 @@ export const createSatTactic =
         else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
       }
       const euf = goal2sat.euf;
-      goal.model = (euf?.updateModel(model) ?? model).mkModel();
+      goal.model = euf?.updateModel(model) ?? model;
       euf?.validateModel(goal.model);
     } else {
       solver.popToBaseLevel();

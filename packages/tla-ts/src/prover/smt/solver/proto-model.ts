@@ -1037,10 +1037,8 @@ export class ProtoModel {
   copy() {
     const model = new ProtoModel(this.manager);
     model.isFinal = this.isFinal;
-    for (const decl of this.constDecls)
-      model.registerConst(decl, this.constInterps.get(decl) as number);
-    for (const decl of this.funcDecls)
-      model.registerFunc(decl, (this.funcInterps.get(decl) as FuncInterp).copy());
+    for (const entry of this.constInterps) model.registerConst(entry[0], entry[1]);
+    for (const entry of this.funcInterps) model.registerFunc(entry[0], entry[1].copy());
     for (const sort of this.getUninterpretedSorts())
       for (const value of this.getKnownUniverse(sort)) model.registerValue(value);
     for (const entry of this.universes) model.registerUsort(entry[0], entry[1].items);

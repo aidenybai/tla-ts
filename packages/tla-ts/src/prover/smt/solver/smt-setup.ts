@@ -102,6 +102,7 @@ export interface SmtConfig {
   isNnfCnf: boolean;
   isEq2Ineq: boolean;
   isFindingMacros: boolean;
+  isEliminatingTermIte: boolean;
 }
 
 const UNKNOWN_THEORIES = [
@@ -129,6 +130,7 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isNnfCnf: true,
   isEq2Ineq: false,
   isFindingMacros: false,
+  isEliminatingTermIte: false,
 };
 
 // setup_unknown(), which closes with setup_relevancy.
@@ -183,8 +185,11 @@ const setupQfLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
   if (features.maxIteTreeDepth > 50) {
     config.isEq2Ineq = false;
     config.relevancyLevel = 2;
-  } else if (features.numClauses === features.numUnits) config.relevancyLevel = 2;
-  else {
+  } else if (features.numClauses === features.numUnits) {
+    config.relevancyLevel = 2;
+    config.isEliminatingTermIte = true;
+  } else {
+    config.isEliminatingTermIte = true;
     config.isRestartAdaptive = false;
     config.restartStrategy = RS_GEOMETRIC;
     config.restartFactor = 1.5;
@@ -194,6 +199,7 @@ const setupQfLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 
 const setupQfLra = (config: SmtConfig) => {
   setupDiffLogicParams(config);
+  config.isEliminatingTermIte = true;
   config.phaseSelection = PS_THEORY;
   config.theories.push(FAMILY_ARITH);
 };
@@ -367,6 +373,7 @@ const setupAufLira = (config: SmtConfig) => {
 
 const setupLra = (config: SmtConfig) => {
   config.relevancyLevel = 0;
+  config.isEliminatingTermIte = true;
   config.theories.push(FAMILY_ARITH);
 };
 

@@ -1027,4 +1027,24 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ")",
     ]);
   });
+
+  it("names the if-then-else terms of an integer problem before the search", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> (* 2 (ite (< x 0) (- x) x)) (ite (> y x) y 5)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun x () Int",
+      "    (- 3))",
+      "  (define-fun y () Int",
+      "    (- 3))",
+      ")",
+    ]);
+  });
 });

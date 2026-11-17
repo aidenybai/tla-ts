@@ -487,6 +487,23 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
       "(\n  (define-fun x () Int\n    0)\n  (define-fun y () Int\n    (- 1))\n  (define-fun b () Bool\n    false)\n)",
     ]);
   });
+
+  it("copies the model of the tactic that decided the goal in the order of its table", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (! (= x (+ y 1)) :named a1))",
+        "(assert (! (> y 2) :named a2))",
+        "(check-sat-using smt)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(\n  (define-fun a2 () Bool\n    (> y 2))\n  (define-fun a1 () Bool\n    (= x (+ y 1)))\n  (define-fun y () Int\n    3)\n  (define-fun x () Int\n    4)\n)",
+    ]);
+  });
 });
 
 describe("hoist_ite, as Z3 5.3.2 simplifies", () => {

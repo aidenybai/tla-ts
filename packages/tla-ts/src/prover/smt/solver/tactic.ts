@@ -1972,8 +1972,9 @@ export const convertModel = (goal: Goal, model: ProtoModel) =>
     return converted;
   }, model);
 
+// model_converter2model: the model of the tactic that decided the goal is copied into a new model.
 const getConvertedModel = (goal: Goal) =>
-  convertModel(goal, goal.model ?? new ProtoModel(goal.manager).mkModel());
+  convertModel(goal, goal.model?.copy() ?? new ProtoModel(goal.manager).mkModel());
 
 export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
   const undecided = { status: L_UNDEF, model: undefined, core: undefined };
