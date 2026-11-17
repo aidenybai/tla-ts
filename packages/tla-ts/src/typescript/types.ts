@@ -659,7 +659,7 @@ export const isHeapArray = (node: ts.Expression, context: Context) => {
       !isSetType(type) &&
       !isMapType(type) &&
       isHeld(node, context)) ||
-    getRegExpIndicesPart(node, context) === "pair"
+    isRegExpIndicesPair(node, context)
   );
 };
 
@@ -890,45 +890,50 @@ const isRegExpGroups = (node: ts.Expression, context: Context): boolean => {
         );
 };
 
-// The part of the indices of a match that an expression gives, which the heap holds: the array of
-// them, the object of their groups, or a pair of a start and an end. TypeScript types a pair as
-// any pair of numbers, so a pair is an element of the indices, a group of them, or a constant that
-// holds one.
-export const getRegExpIndicesPart = (
-  node: ts.Expression,
-  context: Context,
-): "indices" | "groups" | "pair" | undefined => {
+// The part of the indices of a match that an expression's type tells: the array of them, or the
+// object of their groups.
+const getRegExpIndicesKind = (node: ts.Expression, context: Context) => {
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
   if (type.getSymbol()?.name === "RegExpIndicesArray") return "indices";
   const member = type.getSymbol()?.declarations?.at(0)?.parent;
-  if (
-    member !== undefined &&
+  return member !== undefined &&
     ts.isPropertySignature(member) &&
     ts.isInterfaceDeclaration(member.parent) &&
     member.parent.name.text === "RegExpIndicesArray"
-  ) {
-    return "groups";
-  }
+    ? "groups"
+    : undefined;
+};
+
+// Whether an expression gives a pair of a start and an end, which TypeScript types as any pair of
+// numbers: an element of the indices, a group of them, or a constant that holds one. Only the
+// expression that it reads a pair from needs its type.
+const isRegExpIndicesPair = (node: ts.Expression, context: Context): boolean => {
   if (ts.isNonNullExpression(node) || ts.isParenthesizedExpression(node)) {
-    return getRegExpIndicesPart(node.expression, context) === "pair" ? "pair" : undefined;
+    return isRegExpIndicesPair(node.expression, context);
+  }
+  if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+    const owner = getRegExpIndicesKind(node.expression, context);
+    return owner === "groups" || (owner === "indices" && ts.isElementAccessExpression(node));
   }
   const declaration = ts.isIdentifier(node)
     ? getSymbol(node, context.checker)?.valueDeclaration
     : undefined;
-  const owner =
-    ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)
-      ? getRegExpIndicesPart(node.expression, context)
-      : undefined;
-  return (declaration !== undefined &&
+  return (
+    declaration !== undefined &&
     ts.isVariableDeclaration(declaration) &&
     declaration.initializer !== undefined &&
     (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
-    getRegExpIndicesPart(declaration.initializer, context) === "pair") ||
-    (owner === "indices" && ts.isElementAccessExpression(node)) ||
-    owner === "groups"
-    ? "pair"
-    : undefined;
+    isRegExpIndicesPair(declaration.initializer, context)
+  );
 };
+
+// The part of the indices of a match that an expression gives, which the heap holds: the array of
+// them, the object of their groups, or a pair of a start and an end.
+export const getRegExpIndicesPart = (
+  node: ts.Expression,
+  context: Context,
+): "indices" | "groups" | "pair" | undefined =>
+  getRegExpIndicesKind(node, context) ?? (isRegExpIndicesPair(node, context) ? "pair" : undefined);
 
 export const ITERATOR_METHODS = ["keys", "values", "entries"];
 
