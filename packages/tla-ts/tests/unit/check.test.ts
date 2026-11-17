@@ -1008,6 +1008,20 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    ["no permutation", "{}", 2],
+    ["one permutation it names by a definition", "Swap", 1],
+  ])(
+    "checks a symmetry of %s, where TLC throws an IllegalArgumentException",
+    async (_title, symmetry, distinctStates) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSwap == {(a :> b @@ b :> a)}\nSym == ${symmetry}\n====`,
+        config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", distinctStates]);
+    },
+  );
+
   it("rejects substituting a constant with a state-level definition", async () => {
     await expect(checkModule("CONSTANT C\nFoo == x", "CONSTANT C <- Foo")).rejects.toThrow(
       TlaConfigError,
