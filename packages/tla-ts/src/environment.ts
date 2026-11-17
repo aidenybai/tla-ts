@@ -105,7 +105,6 @@ interface EnvironmentOptions {
 
 export interface RuntimeInvariant {
   name: string;
-  /** Undefined when the invariant names a definition of the root module. */
   module: string | undefined;
 }
 

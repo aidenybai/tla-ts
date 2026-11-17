@@ -61,7 +61,6 @@ export interface LiveGraph<State> {
     successors: LiveSuccessor<State>[],
   ) => number[] | undefined;
   storeState: (pending: number, index: number) => void;
-  // How many states the graph of each branch has, which TLC counts as the fingerprints of its nodes.
   getStateCounts: () => number[];
   findViolation: () => Lasso | undefined;
 }
@@ -637,7 +636,6 @@ export const createLiveGraph = <State>(
     writeToPool(behavior.lastNodes, state, [node]);
     return node;
   };
-  // TLC's table of tableau nodes has a state once the search expands it or it has a node.
   const hasState = (behavior: BehaviorGraph<State>, state: number) =>
     state < 0
       ? behavior.checks.nodes.some(
