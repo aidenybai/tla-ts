@@ -282,10 +282,13 @@ export const generateArgument = (
   argument: Expression,
   operatorLocation: SanyLocation,
 ): ExprOrOpArgNode => {
-  const isDefinition =
+  const params =
     operator.kind === "OpDef" &&
-    (operator.defKind === "UserDefined" || operator.defKind === "ModuleInstance");
-  const expectedArity = isDefinition ? (operator.params?.[index]?.arity ?? 0) : 0;
+    (operator.defKind === "UserDefined" || operator.defKind === "ModuleInstance")
+      ? (operator.params ?? [])
+      : undefined;
+  if (params !== undefined && params.length <= index) return createNullNode(generation);
+  const expectedArity = params?.[index]?.arity ?? 0;
   if (expectedArity === 0) return generateExpression(generation, argument);
   const span = getExpressionSpan(generation.file, argument);
   const location = getSpanLocation(generation.file, span);

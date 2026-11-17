@@ -505,6 +505,7 @@ Spec == Init /\\ [][Next]_x
     ["RECURSIVE F(_)\nF == 1\nA == F(1)", "line 5, col 6 to line 5, col 9", 1, 0],
     ["RECURSIVE F\nF(x) == 1\nA == F", "line 5, col 6 to line 5, col 6", 0, 1],
     ["RECURSIVE F(_, _)\nF(x) == x\nA == F(1, 2)", "line 5, col 6 to line 5, col 12", 2, 1],
+    ["RECURSIVE F(_, _)\nF == 1\nA == F(F(F, 1), 1)", "line 5, col 6 to line 5, col 18", 2, 0],
   ])("reports %j as given the wrong number of arguments", (body, range, given, required) => {
     const report = getReport({ M: `---- MODULE M ----\nEXTENDS Naturals\n${body}\n====\n` });
     expect(report.text).toContain("*** Errors: 2\n");
