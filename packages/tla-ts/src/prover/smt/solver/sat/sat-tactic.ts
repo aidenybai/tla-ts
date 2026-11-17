@@ -1,4 +1,4 @@
-import { SmtTacticError } from "../../../../errors";
+import { SmtCanceledError, SmtTacticError } from "../../../../errors";
 import type { AstManager } from "../ast";
 import type { ThSolverFactory } from "../euf/euf-solver";
 import { OVER, type Goal } from "../goal";
@@ -19,7 +19,14 @@ export const createSatTactic =
     const goal2sat = new Goal2Sat(manager, solver, params.get("ite_extra") !== false, mkThSolver);
     goal2sat.run(goal.forms.items);
     goal.reset();
-    const result = solver.check();
+    const result = (() => {
+      try {
+        return solver.check();
+      } catch (error) {
+        if (error instanceof SmtCanceledError) throw new SmtTacticError("canceled");
+        throw error;
+      }
+    })();
     if (result === L_UNDEF) goal.reasonUnknown = solver.reasonUnknown;
     const unhandledFuns = goal2sat.euf?.unhandledFunctions ?? goal2sat.unhandledFuns;
     if (result === L_FALSE) goal.assert(manager.falseExpr);
