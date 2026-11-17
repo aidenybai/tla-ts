@@ -550,8 +550,7 @@ export const runSmtlibScript = (
         return false;
       }
       if (error instanceof SmtDefaultError) {
-        optimizer.release();
-        setCheck(L_UNDEF, { isOptimizing: true, reasonUnknown: "unknown" });
+        setCheck(L_UNDEF, { isFromTactic: true, reasonUnknown: "unknown" });
         throw new SmtParseError(error.message, end);
       }
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;

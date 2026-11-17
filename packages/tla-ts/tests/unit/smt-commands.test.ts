@@ -374,6 +374,28 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("keeps the bounds of an optimization that fails, without a model", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-fun x () Int)",
+        "(assert (= x (mod 0 0)))",
+        "(assert-soft (> x 2) :weight 3 :id g)",
+        "(minimize x)",
+        "(check-sat)",
+        "(get-objectives)",
+        "(get-value (x))",
+      ]),
+    ).toEqual([
+      '(error "line 6 column 10: Benchmark contains uninterpreted function symbols, but specified logic does not support them.")',
+      "(objectives",
+      " (g  (interval 0 3))",
+      " (x  (interval (* (- 1) oo) oo))",
+      ")",
+      '(error "line 8 column 14: model is not available")',
+    ]);
+  });
+
   // sat_params reads the sat module's global parameters where using-params sets none.
   it("searches with the global sat parameters in the sat tactic", () => {
     expect(
