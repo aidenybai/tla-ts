@@ -6773,6 +6773,7 @@ DataViewSet(heap, ref, type, request, value, littleEndian) ==
       isLittle == ToBoolean(littleEndian)
       bytes == NumberBytes(type, number)
   IN CASE index = -1 -> Thrown(heap, "RangeError")
+       [] ElementError(type, value) # "" -> Thrown(heap, ElementError(type, value))
        [] number = number /\\ isLittle = isLittle /\\ IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
        [] index + ElementSize(type) > ViewLength(heap, view) -> Thrown(heap, "RangeError")
        [] OTHER ->

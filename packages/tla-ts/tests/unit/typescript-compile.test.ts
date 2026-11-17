@@ -50738,4 +50738,42 @@ describe("BigInts", () => {
       ).toContain("results 1,2,ok,TypeError,TypeError,TypeError");
     });
   });
+
+  describe("throws the error of a value that a DataView's set can't convert", () => {
+    const getSource = (expected: string) => `
+      const sample = new DataView(new ArrayBuffer(8), 0);
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(
+            error instanceof TypeError
+              ? "TypeError"
+              : error instanceof SyntaxError
+                ? "SyntaxError"
+                : "other",
+          );
+        }
+      };
+      // @ts-ignore
+      attempt(() => sample.setBigInt64(0));
+      attempt(() => sample.setBigInt64(0, "x" as any));
+      attempt(() => sample.setInt8(0, Symbol() as any));
+      attempt(() => sample.setBigInt64(0, 5n));
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,SyntaxError,TypeError,undefined"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect(
+        (await checkModel(getSource("TypeError,TypeError,TypeError,undefined"))).failure?.message,
+      ).toContain("results TypeError,SyntaxError,TypeError,undefined");
+    });
+  });
 });

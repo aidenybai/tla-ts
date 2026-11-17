@@ -3880,7 +3880,11 @@ const translateCallStatementBody = (
           ifThenElse(
             apply("=", [field(change, "error"), string("RangeError")]),
             throwError("RangeError", current, expression, context, frame),
-            throwTypeError(current, expression, context, frame),
+            ifThenElse(
+              apply("=", [field(change, "error"), string("SyntaxError")]),
+              throwError("SyntaxError", current, expression, context, frame),
+              throwTypeError(current, expression, context, frame),
+            ),
           ),
         ),
       );
