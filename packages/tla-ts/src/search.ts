@@ -460,6 +460,7 @@ const getSpecification = (
             binding: {
               kind: "Thunk",
               expression: item.expression,
+              site: undefined,
               scope: item.scope,
               state: undefined,
               next: undefined,

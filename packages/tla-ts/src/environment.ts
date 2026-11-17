@@ -1111,7 +1111,6 @@ export const createEnvironment = (
     definitionEvaluators: new WeakMap(),
     initRunners: new WeakMap(),
     nextRunners: new WeakMap(),
-    tailCalls: new WeakMap(),
   };
   const analyzer = createLevelAnalyzer({
     constants: new Set(constants.keys()),

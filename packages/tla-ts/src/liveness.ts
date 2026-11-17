@@ -10,6 +10,7 @@ import {
   describeNode,
   describeRange,
   bindDefinitions,
+  getLetSites,
   bindOperatorArguments,
   evaluate,
   forEachBinding,
@@ -330,7 +331,12 @@ const bindLetDefinitions = (
   scope: Scope | undefined,
   environment: Environment,
 ) => {
-  const bound = bindDefinitions(expression.definitions, getConstantContext(environment, scope));
+  const bound = bindDefinitions(
+    expression.definitions,
+    getConstantContext(environment, scope),
+    undefined,
+    getLetSites(expression.definitions),
+  );
   for (let current = bound; current && current !== scope; current = current.parent) {
     if (current.binding.kind === "Thunk") definitionThunks.add(current.binding);
   }

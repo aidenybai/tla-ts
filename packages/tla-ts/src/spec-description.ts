@@ -14,6 +14,7 @@ import type { InstanceAction } from "./environment";
 import { formatRange, TlaError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import {
   bindDefinitions,
+  getLetSites,
   bindOperatorArguments,
   describeNode,
   evaluate,
@@ -176,7 +177,12 @@ const unwrapBinding = (
   if (expression.kind === "Let") {
     return {
       expression: expression.body,
-      scope: bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
+      scope: bindDefinitions(
+        expression.definitions,
+        getConstantContext(environment, scope),
+        undefined,
+        getLetSites(expression.definitions),
+      ),
     };
   }
   const thunk = getThunk(expression, scope);
@@ -268,7 +274,12 @@ const getActions = (
     case "Let":
       return getActions(
         expression.body,
-        bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
+        bindDefinitions(
+          expression.definitions,
+          getConstantContext(environment, scope),
+          undefined,
+          getLetSites(expression.definitions),
+        ),
         closure,
         environment,
         instanceActions,
