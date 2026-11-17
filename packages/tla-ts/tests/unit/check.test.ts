@@ -1103,7 +1103,7 @@ ASSUME TLCFP(a) = -887695703
     const prints: string[] = [];
     await check({
       source:
-        "---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT G(_)\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == PrintT(G(\"level\"))\n====",
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT G(_)\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == PrintT(G("level"))\n====',
       config: "CONSTANT G <- TLCGet\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
       onPrint: (text) => prints.push(text),
     });
