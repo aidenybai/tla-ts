@@ -1293,14 +1293,26 @@ const parse = (
               location,
             };
     }
-    if (token.kind === "Operator" && isOperatorName(token.text) && isAt("(")) {
+    const isOperatorNamed =
+      token.kind === "Operator" && (isOperatorName(token.text) || (token.text === "'" && !isTlapm));
+    if (isOperatorNamed && isAt("(")) {
       const args = parseArguments();
       // Deviation from TLC: SANY's built-in \X has no definition for TLC to evaluate, a TLC bug.
-      return mode === "tlc" && token.text === "\\X" && args.length === 2
-        ? { kind: "Product", factors: args, location }
-        : { kind: "Apply", operator: token.text, spelling: token.spelling, args, location };
+      if (mode === "tlc" && token.text === "\\X" && args.length === 2) {
+        return { kind: "Product", factors: args, location };
+      }
+      return token.text === "'" && args.length === 1
+        ? { kind: "Prime", expression: args[0], location }
+        : {
+            kind: "Apply",
+            operator: token.text,
+            spelling: token.spelling,
+            args,
+            argumentsRange: lastArgumentsRange,
+            location,
+          };
     }
-    if (token.kind === "Operator" && isOperatorName(token.text) && !isTlapm) {
+    if (isOperatorNamed && !isTlapm) {
       return { kind: "Identifier", name: token.text, spelling: token.spelling, location };
     }
     switch (token.text) {

@@ -776,6 +776,16 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([4, 4, 4]);
   });
 
+  it("evaluates the prime applied as an operator as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ '(x) = x + 1\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("deadlock");
+    expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
+  });
+
   it("stops computing ENABLED at the first successor like TLC", async () => {
     const printed: string[] = [];
     const result = await check({
