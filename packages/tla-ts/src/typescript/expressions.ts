@@ -76,6 +76,7 @@ import {
   isDeclarationOnly,
   getClassStop,
   getValueDeclaration,
+  getRunMembers,
 } from "./context";
 import {
   getImportedCommonJs,
@@ -4433,7 +4434,7 @@ export const translateNode = (
     ts.isArrowFunction(thisOwner.initializer) &&
     ts.findAncestor(node.parent, ts.isArrowFunction) === thisOwner.initializer &&
     ts.isClassExpression(thisOwner.parent) &&
-    thisOwner.parent.members.every(
+    getRunMembers(thisOwner.parent).every(
       (member) =>
         !ts.isClassStaticBlockDeclaration(member) &&
         (member.name === undefined || !ts.isComputedPropertyName(member.name)) &&

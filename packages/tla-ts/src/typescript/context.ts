@@ -1334,7 +1334,7 @@ export const getUnresolvedRead = (
   if (ts.isClassLike(node)) {
     if (node.heritageClauses !== undefined) return undefined;
     return readInOrder(
-      node.members.flatMap((member) =>
+      getRunMembers(node).flatMap((member) =>
         member.name !== undefined && ts.isComputedPropertyName(member.name)
           ? [member.name.expression]
           : [],
@@ -1773,6 +1773,17 @@ export const getFunction = (node: ts.Node | undefined) => {
   const found = getAnyFunction(node);
   return found !== undefined && isPlain(found) ? found : undefined;
 };
+
+// The members of a class that run. TypeScript erases a method's or a constructor's signature
+// without a body, as an overload's or an abstract method's, which JavaScript never sees.
+export const getRunMembers = (node: ts.ClassLikeDeclaration) =>
+  node.members.filter(
+    (member) =>
+      !(
+        (ts.isMethodDeclaration(member) || ts.isConstructorDeclaration(member)) &&
+        member.body === undefined
+      ),
+  );
 
 // A class whose definition and instances run no code, so only its methods matter.
 const isInert = (node: ts.ClassLikeDeclaration) =>
@@ -2236,7 +2247,7 @@ export const isComputedField = (member: ts.PropertyDeclaration) =>
   ts.isComputedPropertyName(member.name) && !isLiteralKey(member.name.expression);
 
 export const getFieldKey = (member: ts.PropertyDeclaration, context: Context) =>
-  `${getBrand(member.parent, context)} key ${member.parent.members.indexOf(member)}`;
+  `${getBrand(member.parent, context)} key ${getRunMembers(member.parent).indexOf(member)}`;
 
 // An accessor with a body and a key that a property can have, which a computed name gives as it
 // evaluates.
@@ -3007,7 +3018,7 @@ export const getSettableSupers = (
   node !== undefined &&
   ts.isClassLike(node) &&
   hasExtends(node) &&
-  !node.members.some(ts.isConstructorDeclaration)
+  !getRunMembers(node).some(ts.isConstructorDeclaration)
     ? [
         ...(isPrototypeSettable(node, context) ? [node] : []),
         ...getSettableSupers(getBaseClass(node, context), context),
@@ -3017,11 +3028,11 @@ export const getSettableSupers = (
 // A class that extends null, whose constructor never reads this or super, or that nothing
 // constructs, as its constructor without a body throws. Its instance fields never initialize.
 const isNullSafe = (node: ts.ClassLikeDeclaration, context: Context) => {
-  const isFielded = node.members.some(
+  const isFielded = getRunMembers(node).some(
     (member) => ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
   );
   if (!isNullBased(node) || isFielded) return false;
-  const constructor = node.members.find(ts.isConstructorDeclaration);
+  const constructor = getRunMembers(node).find(ts.isConstructorDeclaration);
   // Its this is never initialized, which tla-ts follows as the constructor runs.
   if (constructor?.body !== undefined) {
     return (
@@ -3068,7 +3079,7 @@ export const getBuiltInBase = (
   | "Date"
   | Collection
   | undefined => {
-  const hasConstructor = node.members.some(ts.isConstructorDeclaration);
+  const hasConstructor = getRunMembers(node).some(ts.isConstructorDeclaration);
   const heritage = node.heritageClauses?.find(
     (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
   )?.types[0]?.expression;
@@ -3085,7 +3096,7 @@ export const getBuiltInBase = (
   // A collection's subclass may add only static members, as the heap reads its instances as the
   // collection's.
   if (name !== undefined && isNewTargetBase(name)) {
-    return node.members.some((member) =>
+    return getRunMembers(node).some((member) =>
       isCollectionName(name)
         ? !isStatic(member)
         : ts.isConstructorDeclaration(member) ||
@@ -3192,7 +3203,7 @@ export const getSuperCall = (constructor: ts.ConstructorDeclaration) => {
 // tla-ts gives as the new makes the instance.
 const hasComputedFields = (node: ts.ClassLikeDeclaration | undefined, context: Context): boolean =>
   node !== undefined &&
-  (node.members.some(
+  (getRunMembers(node).some(
     (member) =>
       ts.isPropertyDeclaration(member) &&
       !isStatic(member) &&
@@ -3238,10 +3249,10 @@ const isDerivedSafe = (
   base: ts.ClassLikeDeclaration,
   context: Context,
 ) => {
-  const constructor = node.members.find(ts.isConstructorDeclaration);
+  const constructor = getRunMembers(node).find(ts.isConstructorDeclaration);
   // A constructor defines the fields with plain names once super(...) returns.
   const isAdding =
-    node.members.some(
+    getRunMembers(node).some(
       (member) =>
         !isStatic(member) &&
         ((ts.isPropertyDeclaration(member) &&
@@ -3276,7 +3287,7 @@ export const isOnceField = (node: ts.ClassLikeDeclaration, context: Context) => 
     isStatic(field) ||
     !ts.isIdentifier(field.name) ||
     // Nothing runs the static elements of a class that a field makes.
-    node.members.some(
+    getRunMembers(node).some(
       (member) =>
         ts.isClassStaticBlockDeclaration(member) ||
         (ts.isPropertyDeclaration(member) && isStatic(member)),
@@ -3463,7 +3474,7 @@ export const isHeapClass = (node: ts.ClassLikeDeclaration, context: Context): bo
       isField ||
       getInPlaceNew(node) !== undefined) &&
     isOnce(node, context) &&
-    node.members.every(
+    getRunMembers(node).every(
       (member) =>
         ts.isSemicolonClassElement(member) ||
         (ts.isConstructorDeclaration(member) && member.body !== undefined) ||
@@ -3526,7 +3537,7 @@ export const isFunctionObject = (
     ts.isFunctionExpression(node) ||
     (ts.isClassExpression(node) &&
       node.heritageClauses === undefined &&
-      node.members.every(
+      getRunMembers(node).every(
         (member) =>
           ts.isSemicolonClassElement(member) ||
           (ts.isConstructorDeclaration(member) && member.body !== undefined) ||
@@ -5152,7 +5163,7 @@ export const getRunConstructor = (
   context: Context,
 ): ts.ConstructorDeclaration | HeapClass | undefined => {
   if (!ts.isClassLike(node)) return (node.body?.statements.length ?? 0) > 0 ? node : undefined;
-  const constructor = node.members.find(ts.isConstructorDeclaration);
+  const constructor = getRunMembers(node).find(ts.isConstructorDeclaration);
   const base = getBaseClass(node, context);
   const run =
     constructor === undefined
@@ -5176,7 +5187,7 @@ export const getRunConstructor = (
 // first that runs a constructor.
 export const getRunFields = (node: HeapClass, context: Context) => {
   if (!ts.isClassLike(node) || hasExtends(node)) return [];
-  const fields = node.members.filter(
+  const fields = getRunMembers(node).filter(
     (member): member is ts.PropertyDeclaration =>
       ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
   );
@@ -5203,14 +5214,14 @@ export const getRunFields = (node: HeapClass, context: Context) => {
 export const getFieldsAfterSuper = (node: HeapClass, context: Context) => {
   const base = ts.isClassLike(node) ? getBaseClass(node, context) : undefined;
   const constructor = ts.isClassLike(node)
-    ? node.members.find(ts.isConstructorDeclaration)
+    ? getRunMembers(node).find(ts.isConstructorDeclaration)
     : undefined;
   return ts.isClassLike(node) &&
     constructor !== undefined &&
     base !== undefined &&
     (getRunConstructor(base, context) !== undefined ||
       getDeferredSuperCalls(constructor, context) !== undefined)
-    ? node.members.filter(
+    ? getRunMembers(node).filter(
         (member): member is ts.PropertyDeclaration =>
           ts.isPropertyDeclaration(member) && !isStatic(member) && !isAmbient(member),
       )

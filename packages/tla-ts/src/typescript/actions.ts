@@ -167,6 +167,7 @@ import {
   getAssignedTarget,
   getClassStop,
   getValueDeclaration,
+  getRunMembers,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
@@ -503,6 +504,8 @@ export interface Path {
   // State variables and mutable locals, which assignments may change.
   mutable: Set<ts.Symbol>;
   isAssigned: boolean;
+  // A step of an exported function, which a path that changes nothing leaves disabled.
+  isAction?: boolean;
   isLast: boolean;
   isLooping: boolean;
   // The generator objects that the statements made, by name, with where each one's body suspended.
@@ -11315,7 +11318,7 @@ const getSuperConstructor = (
   const base = getBaseClass(node, context);
   return base === undefined
     ? undefined
-    : (base.members.find(ts.isConstructorDeclaration) ?? getSuperConstructor(base, context));
+    : (getRunMembers(base).find(ts.isConstructorDeclaration) ?? getSuperConstructor(base, context));
 };
 
 // A derived constructor's super(...), which runs the base's constructor on the instance that the
@@ -16299,8 +16302,20 @@ export const translateJoined = (
       : isSameEntries(pruned, path.generators)
         ? path.generators
         : pruned;
+  // An action is enabled on a path that assigns a state variable or changes the heap, which the
+  // operator can't tell from the heap it takes, so an action's exits join only where each is
+  // enabled, or none is and the operator doesn't take the heap.
+  const heapSymbol = context.heap;
+  const isEnabled = (exit: Path) =>
+    exit.isAssigned ||
+    (heapSymbol !== undefined &&
+      exit.scope.bindings.get(heapSymbol) !== path.scope.bindings.get(heapSymbol));
+  const isAllEnabled = exits.length > 0 && isEnabled(exits[0].path);
   const isJoinable = exits.every(
     (exit) =>
+      (path.isAction !== true ||
+        (isEnabled(exit.path) === isAllEnabled &&
+          (isAllEnabled || heapSymbol === undefined || !passed.includes(heapSymbol)))) &&
       changed.every((symbol) => exit.path.scope.bindings.has(symbol)) &&
       settled !== undefined &&
       (exit.path.generators === settled ||
@@ -16338,6 +16353,7 @@ export const translateJoined = (
   const rest = continueWith(
     {
       ...path,
+      isAssigned: path.isAction === true ? isAllEnabled : path.isAssigned,
       generators: settled ?? exits[0].path.generators,
       unboundThis: exits[0].path.unboundThis,
       scope: {
@@ -19219,7 +19235,7 @@ const getClassOperands = (node: ts.ClassLikeDeclaration): ts.Expression[] => [
       ? clause.types.map((type) => type.expression)
       : [],
   ),
-  ...node.members.flatMap((member) =>
+  ...getRunMembers(node).flatMap((member) =>
     member.name !== undefined && ts.isComputedPropertyName(member.name)
       ? [member.name.expression]
       : [],
@@ -20314,7 +20330,7 @@ const getHoistedAssignment = (statement: ts.Statement, path: Path, context: Cont
       : undefined;
   // A class evaluates its computed keys in order as the script defines it, before it makes its
   // objects, so a key that assigns runs first where each key before it is a literal or ran.
-  const key = defined?.members
+  const key = (defined === undefined ? [] : getRunMembers(defined))
     .map((member) => member.name)
     .find(
       (name): name is ts.ComputedPropertyName =>
@@ -21847,6 +21863,7 @@ export const translateAction = (
       scope,
       mutable: new Set(context.variables.keys()),
       isAssigned: false,
+      isAction: true,
       isLast: false,
       isLooping: false,
       generators: new Map(),

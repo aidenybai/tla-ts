@@ -922,8 +922,12 @@ export const compile = (
       ) &&
       ["Object", "Reflect"].includes(getBuiltIn(node.expression.expression, context) ?? "")) ||
     (ts.forEachChild(node, isDescribing) ?? false);
+  // A module whose code reads a module's namespace object holds it on the heap, as a script does.
   const isHeapFile =
-    isScript(sourceFile) || isSharing || (heap !== undefined && reached.some(isDescribing));
+    isScript(sourceFile) ||
+    isSharing ||
+    context.namespaces.size > 0 ||
+    (heap !== undefined && reached.some(isDescribing));
   context.hasOrderedCollections = isHeapFile && reached.some(usesOrder);
   const changedArrays = isHeapFile ? findChangedArrays(reached, context) : [];
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
