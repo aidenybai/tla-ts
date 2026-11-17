@@ -18,6 +18,7 @@ import {
   findNodes,
   type FunctionNode,
   getAnyFunction,
+  getCallee,
   getParameters,
   getSymbol,
   getUndefined,
@@ -253,6 +254,7 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
       }),
     ),
   );
+  context.functionNames = namedInside;
   const sharedState = [...context.variables.keys()].filter((symbol) => namedInside.has(symbol));
   // The units that the candidates and the callbacks run, each found once.
   const units = new Map<ts.Node, Unit>();
@@ -330,9 +332,14 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
   });
 };
 
+// Whether a call runs a function other than the one that its callee names, as a call through a
+// value does.
+const isThroughValue = (node: ts.Node, callee: FunctionNode, context: Context) =>
+  ts.isCallExpression(node) && getCallee(node.expression, context) !== callee;
+
 // Whether a statement's call of a helper may run as the helper's operator: a call by name with no
 // more arguments than the helper takes, but where a rest parameter takes them, none of which
-// spreads.
+// spreads. A helper reads no this, so a call through a value may run it with any receiver.
 export const isSharedCall = (
   node: ts.Node,
   callee: FunctionNode,
@@ -341,7 +348,7 @@ export const isSharedCall = (
   context: Context,
 ) =>
   context.sharedHelpers.has(callee) &&
-  receiver === undefined &&
+  (receiver === undefined || isThroughValue(node, callee, context)) &&
   ts.isCallExpression(node) &&
   argumentNodes === node.arguments &&
   !argumentNodes.some(ts.isSpreadElement) &&
@@ -645,14 +652,15 @@ export const translateSharedCall = (
   };
   const parameters = getParameters(callee);
   // A parameter whose type is a function takes the function that the call passes it, which the
-  // operator runs as the inlined body would.
+  // operator runs as the inlined body would. A call through a value, which may run any of several
+  // functions, may instead pass the value, which the body's calls through it branch on.
   const callbacks = new Map(getPassedCallbacks(parameters, argumentNodes, path, context));
   const shared = parameters.every((parameter) => {
     const symbol = getSymbol(parameter.name, context.checker);
+    const isFunction = context.checker.getTypeAtLocation(parameter).getCallSignatures().length > 0;
     return (
       symbol !== undefined &&
-      context.checker.getTypeAtLocation(parameter).getCallSignatures().length > 0 ===
-        callbacks.has(symbol)
+      (callbacks.has(symbol) ? isFunction : !isFunction || isThroughValue(node, callee, context))
     );
   })
     ? getSharedCall(callee, callbacks, path, context)

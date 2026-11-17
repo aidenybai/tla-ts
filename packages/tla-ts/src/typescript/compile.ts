@@ -7,7 +7,9 @@ import {
   createContext,
   findNodes,
   findFunctionCandidates,
+  findObjectTargets,
   findSharedFunctionCandidates,
+  isReached,
   findOnceFunctions,
   findValueEnums,
   findOnceLocals,
@@ -886,6 +888,7 @@ export const compile = (
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
+    context.objectTargets = findObjectTargets(program.files, context);
     context.storedBuiltIns = new Map(
       program.files.map((file) => [
         file,
@@ -896,14 +899,22 @@ export const compile = (
         ),
       ]),
     );
+    // The functions that a call through a value may run, found once for every call: those of
+    // each file that the model reaches.
     context.closures = new Map(
       program.files.map((file) => [
         file,
-        findNodes(file, (inner): inner is Closure => isClosure(inner, context)),
+        findNodes(
+          file,
+          (inner): inner is Closure => isClosure(inner, context) && isReached(inner, context),
+        ),
       ]),
     );
     context.functionCandidates = new Map(
-      program.files.map((file) => [file, findFunctionCandidates(file, context)]),
+      program.files.map((file) => [
+        file,
+        findFunctionCandidates(file, context).filter((candidate) => isReached(candidate, context)),
+      ]),
     );
     context.sharedFunctionCandidates = findSharedFunctionCandidates(
       context.functionCandidates,
