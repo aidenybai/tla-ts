@@ -79,6 +79,9 @@ export interface SharedHelper {
   changed: ts.Symbol[];
   // The variables that a function or a class of the script names, which its operator takes.
   state: ts.Symbol[];
+  // Whether its operator also takes the function's value, whose environment a closure reads its
+  // captures from, and its this, as a call through a value runs it.
+  isEntered: boolean;
 }
 
 export interface Passed {

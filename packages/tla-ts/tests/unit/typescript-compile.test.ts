@@ -49480,4 +49480,60 @@ describe("BigInts", () => {
       expect(getSize(8)).toBeLessThan(getSize(4) * 1.3);
     });
   });
+
+  describe("runs a closure that a call through a value runs as an operator that takes its environment", () => {
+    const getSource = (composed: number, expected: number) => `
+      function compose(f: any, g: any): any {
+        return function (x: any): any {
+          return f(g(x));
+        };
+      }
+      const increment = (x: number): number => x + 1;
+      let composite: any = increment;
+      ${Array.from({ length: composed }, () => "composite = compose(composite, increment);").join("\n")}
+      const result: number = composite(0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (composed: number) =>
+      printModule(compile(getSource(composed, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, 4))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(3, 5))).failure?.message).toContain("result 4");
+    });
+
+    it("grows by a statement for each closure that it composes", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 1.4);
+    });
+  });
+
+  describe("runs a function that reads its this, which a call through a value runs, as an operator that takes the this", () => {
+    const getSource = (expected: string) => `
+      function describe(this: any, prefix: string): string {
+        return prefix + this.name;
+      }
+      function sum(this: any, depth: number): number {
+        if (depth === 0) return this.base;
+        const rest: number = this.step(depth - 1);
+        return rest + depth;
+      }
+      const holder: any = { name: "h", run: describe };
+      const counter: any = { base: 10, step: sum };
+      const first: string = holder.run("a:");
+      const second: number = counter.step(3);
+      const results = [first, String(second)].join(",");
+      if (results !== "${expected}") throw new Error("results " + results);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a:h,16"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("a:h,17"))).failure?.message).toContain("results a:h,16");
+    });
+  });
 });
