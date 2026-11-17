@@ -34,7 +34,6 @@ import {
   type RuntimeInvariant,
 } from "./environment";
 import {
-  isStackOverflow,
   TlaConfigError,
   TlaEvaluationError,
   TlaModuleError,
@@ -212,14 +211,7 @@ const isLiteralDefinition = (definition: Definition) =>
 
 const getConstantValue = (name: string, definition: Definition, environment: Environment) => {
   if (environment.constants.has(name)) return environment.constants.get(name);
-  if (!isConstantLevel(definition, environment) || isLiteralDefinition(definition))
-    return undefined;
-  try {
-    return evaluate(createIdentifier(name), getContext(environment, undefined, undefined));
-  } catch (error) {
-    if (error instanceof TlaEvaluationError || isStackOverflow(error)) return undefined;
-    throw error;
-  }
+  return isLiteralDefinition(definition) ? undefined : getStartupValue(definition, environment);
 };
 
 const getConfigDefinition = (kind: string, name: string, environment: Environment) => {

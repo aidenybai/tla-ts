@@ -1449,6 +1449,18 @@ describe("initial predicate and next-state relation match TLC", () => {
     ).rejects.toThrow(new TlaConfigError("The constraint of C is equal to FALSE"));
   });
 
+  it("reads a constant invariant that failed at startup as TLC does, without evaluating it again", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == PrintT("p") /\\ (1 :> 2)[3] = 0\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(result.failure?.message).toContain("Attempted to apply function:\n<<2>>\nto argument 3");
+    expect(prints).toEqual(['"p"', '"p"']);
+  });
+
   it("warns about a state-level property before it reads the constraints", async () => {
     const warned: string[] = [];
     await expect(
