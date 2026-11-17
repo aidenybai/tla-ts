@@ -39,6 +39,7 @@ const getSteadyLines = (output: string) =>
   output
     .replace(/\d{4}-\d\d-\d\d \d\d:\d\d:\d\d/g, "_")
     .replace(/_TTrace_\d+/g, "_TTrace__")
+    .replace(/__Debugger(Expr|Module)__\d+/g, "__Debugger$1__")
     .replace(/ in \d\ds at /g, " in _ at ")
     .split("\n")
     .filter((line) => !STARTUP_LINE.test(line));
@@ -724,6 +725,151 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
       "Marking a state explored is unsupported by the current TLC mode. Is TLC running in simulation mode?",
       ask(1, 9),
       ask(2, 8),
+    ]);
+  });
+});
+
+describe("the CLI checks an invariant of -inv in a module of its own like TLC", () => {
+  const runInvariants = (name: string, args: string[]) =>
+    runCliWith("runtime-invariants", [`${name}.tla`, "-noGenerateSpecTE", ...args]);
+
+  it("leaves the invariant out of the coverage statistics", () => {
+    const result = runInvariants("InvParameterizedTest", [
+      "-coverage",
+      "1",
+      "-inv",
+      "~(small = 3 /\\ big = 0)",
+    ]);
+    expect(result.status).toBe(12);
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "Starting... (_)",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
+      "Error: Invariant __DebuggerExpr__ is violated.",
+      "Error: The behavior up to this point is:",
+      "State 1: <Initial predicate>",
+      "/\\ big = 0",
+      "/\\ small = 0",
+      "",
+      "State 2: <FillSmall line 12, col 14 to line 13, col 28 of module InvParameterizedTest>",
+      "/\\ big = 0",
+      "/\\ small = 3",
+      "",
+      "The coverage statistics at _ (see https://explain.tlapl.us/module-coverage-statistics for how to interpret the following statistics).",
+      "<big line 4, col 18 to line 4, col 20 of module InvParameterizedTest>: 0",
+      "<small line 4, col 11 to line 4, col 15 of module InvParameterizedTest>: 0",
+      "<Init line 9, col 1 to line 9, col 4 of module InvParameterizedTest>: 2:2",
+      "  line 9, col 9 to line 10, col 20 of module InvParameterizedTest: 2",
+      "<FillSmall line 12, col 1 to line 12, col 9 of module InvParameterizedTest>: 1:3",
+      "  line 12, col 17 to line 12, col 26 of module InvParameterizedTest: 2",
+      "  line 13, col 17 to line 13, col 28 of module InvParameterizedTest: 2",
+      "  |line 13, col 26 to line 13, col 28 of module InvParameterizedTest: 3",
+      "<FillBig line 15, col 1 to line 15, col 7 of module InvParameterizedTest>: 0:0",
+      "  line 15, col 15 to line 15, col 24 of module InvParameterizedTest: 0",
+      "  line 16, col 15 to line 16, col 28 of module InvParameterizedTest: 0",
+      "<EmptySmall line 18, col 1 to line 18, col 10 of module InvParameterizedTest>: 0:0",
+      "  line 18, col 18 to line 18, col 27 of module InvParameterizedTest: 0",
+      "  line 19, col 18 to line 19, col 29 of module InvParameterizedTest: 0",
+      "<EmptyBig line 21, col 1 to line 21, col 8 of module InvParameterizedTest>: 0:0",
+      "  line 21, col 16 to line 21, col 25 of module InvParameterizedTest: 0",
+      "  line 22, col 16 to line 22, col 29 of module InvParameterizedTest: 0",
+      "<SmallToBig line 24, col 1 to line 24, col 10 of module InvParameterizedTest>: 0:0",
+      "  line 25, col 24 to line 25, col 43 of module InvParameterizedTest: 0",
+      "  line 26, col 24 to line 26, col 33 of module InvParameterizedTest: 0",
+      "  line 27, col 24 to line 27, col 33 of module InvParameterizedTest: 0",
+      "  line 28, col 24 to line 28, col 49 of module InvParameterizedTest: 0",
+      "<BigToSmall line 30, col 1 to line 30, col 10 of module InvParameterizedTest>: 0:0",
+      "  line 31, col 24 to line 31, col 33 of module InvParameterizedTest: 0",
+      "  line 32, col 24 to line 32, col 43 of module InvParameterizedTest: 0",
+      "  line 33, col 24 to line 33, col 49 of module InvParameterizedTest: 0",
+      "  line 34, col 24 to line 34, col 33 of module InvParameterizedTest: 0",
+      "End of statistics.",
+      "2 states generated, 2 distinct states found, 0 states left on queue.",
+      "The depth of the complete state graph search is 2.",
+      "Finished in _ at (_)",
+      "",
+    ]);
+  });
+
+  it("locates an error in the invariant in the generated module", () => {
+    const result = runInvariants("InvParameterizedTest", [
+      "-inv",
+      "small = CHOOSE n \\in {} : TRUE",
+    ]);
+    expect(result.status).toBe(75);
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "Starting... (_)",
+      "Computing initial states...",
+      "Error: Attempted to compute the value of an expression of form",
+      "CHOOSE x \\in S: P, but no element of S satisfied P.",
+      "line 4, col 42 to line 4, col 63 of module __DebuggerModule__",
+      "While working on the initial state:",
+      "/\\ big = 0",
+      "/\\ small = 0",
+      "",
+      "Error: The error occurred when TLC was evaluating the nested",
+      "expressions at the following positions:",
+      "0. Line 9, column 9 to line 10, column 20 in InvParameterizedTest",
+      "1. Line 9, column 12 to line 9, column 20 in InvParameterizedTest",
+      "2. Line 10, column 12 to line 10, column 20 in InvParameterizedTest",
+      "3. Line 4, column 34 to line 4, column 63 in __DebuggerModule__",
+      "4. Line 4, column 42 to line 4, column 63 in __DebuggerModule__",
+      "",
+      "",
+      "1 states generated, 1 distinct states found, 1 states left on queue.",
+      "The depth of the complete state graph search is 1.",
+      "Finished in _ at (_)",
+      "",
+    ]);
+  });
+
+  it("leaves the invariants out of TLCGet and parses them after the spec", () => {
+    const result = runInvariants("RuntimeInvariants", ["-inv", "Small", "-inv", "[q |-> x].q < 4"]);
+    expect(result.status).toBe(11);
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "Starting... (_)",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
+      '<<{"p", "q"}, {}>>',
+      "Error: Deadlock reached.",
+      "Error: The behavior up to this point is:",
+      "State 1: <Initial predicate>",
+      "x = 0",
+      "",
+      '<<{"p", "q"}, {}>>',
+      "State 2: <Next line 5, col 9 to line 5, col 80 of module RuntimeInvariants>",
+      "x = 1",
+      "",
+      '<<{"p", "q"}, {}>>',
+      "2 states generated, 2 distinct states found, 0 states left on queue.",
+      "The depth of the complete state graph search is 2.",
+      "Finished in _ at (_)",
+      "",
+    ]);
+  });
+
+  it("evaluates the body of a named operator, even one that takes arguments", () => {
+    const result = runInvariants("RuntimeInvariants", ["-inv", "Below"]);
+    expect(result.status).toBe(75);
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "Starting... (_)",
+      "Computing initial states...",
+      "Error: In evaluation, the identifier n is either undefined or not an operator.",
+      "line 7, col 17 to line 7, col 17 of module RuntimeInvariants",
+      "While working on the initial state:",
+      "x = 0",
+      "",
+      "Error: The error occurred when TLC was evaluating the nested",
+      "expressions at the following positions:",
+      "0. Line 4, column 9 to line 4, column 13 in RuntimeInvariants",
+      "1. Line 7, column 13 to line 7, column 17 in RuntimeInvariants",
+      "2. Line 7, column 17 to line 7, column 17 in RuntimeInvariants",
+      "",
+      "",
+      "1 states generated, 1 distinct states found, 1 states left on queue.",
+      "The depth of the complete state graph search is 1.",
+      "Finished in _ at (_)",
+      "",
     ]);
   });
 });

@@ -484,6 +484,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     () => created.order.getDeclarationOrder("variable"),
     options.onProgress,
     specification.moduleOperators,
+    specification.runtimeInvariants,
   );
   const findViolatedAssumption = () =>
     findAssumptionViolation(specification.assumptions, environment);

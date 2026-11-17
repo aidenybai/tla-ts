@@ -29,7 +29,7 @@ import { EXIT_STATUS } from "../exit-codes";
 import { check } from "../parallel";
 import { extractModule, parseModule } from "../parser";
 import { simulate } from "../simulate";
-import type { StandardInput } from "../search";
+import type { CliSettings } from "../search";
 import type { StateDump } from "../state-graph";
 import {
   getSanyStandardModules,
@@ -49,7 +49,7 @@ import {
   type MessagePrinter,
   zeroPad,
 } from "../tlc/messages";
-import { addRuntimeInvariants } from "./runtime-invariants";
+import { getRuntimeInvariants } from "./runtime-invariants";
 import { parseTlcArguments, type TlcArguments } from "./tlc-arguments";
 import {
   getClassPath,
@@ -378,15 +378,14 @@ const checkSpec = async (
     }
     const userFile = args.userFile;
     const standardModules = getSanyStandardModules(version);
-    const invariants = addRuntimeInvariants(
+    const runtimeInvariants = getRuntimeInvariants(
       source,
       specification.root,
       args.invariants,
       (name) => loadModule(name) ?? standardModules.get(name) ?? extractModule(source, name),
       version,
     );
-    config.invariants.push(...invariants.names);
-    const options: CheckOptions & StandardInput = {
+    const options: CheckOptions & CliSettings = {
       workers: args.workers,
       livenessCheck:
         livenessCheck === "off"
@@ -410,11 +409,17 @@ const checkSpec = async (
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
       onPrint: userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
-      source: invariants.source,
+      source,
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
       readLine: readStandardInputLine,
-      loadModule,
+      runtimeInvariants: runtimeInvariants.map((invariant) => ({
+        name: invariant.name,
+        module: invariant.module,
+      })),
+      loadModule: (name) =>
+        runtimeInvariants.find((invariant) => invariant.module === name)?.source ??
+        loadModule(name),
       loadClass: (name) => {
         const classPath = getClassPath(directory, name);
         return existsSync(classPath) ? readFileSync(classPath) : undefined;

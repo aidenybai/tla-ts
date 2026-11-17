@@ -100,6 +100,13 @@ interface EnvironmentOptions {
   version?: TlcVersion;
   moduleOperators?: ModuleOperator[];
   readLine?: () => string | undefined;
+  runtimeInvariants?: RuntimeInvariant[];
+}
+
+export interface RuntimeInvariant {
+  name: string;
+  /** Undefined when the invariant names a definition of the root module. */
+  module: string | undefined;
 }
 
 export interface ResolvedModuleOperator extends ModuleOperator {
@@ -114,6 +121,7 @@ export interface Specification {
   startupDefinitions: Definition[];
   javaOverrides: JavaOverride[];
   moduleOperators: ResolvedModuleOperator[];
+  runtimeInvariants: RuntimeInvariant[];
   rootName: string;
 }
 
@@ -1031,6 +1039,15 @@ export const createEnvironment = (
   );
   linkOrder.push(...linkOrder.splice(linkOrder.indexOf(linkedRoot), 1));
   if (warnings.length > 0 && !options.isSanyReported) options.print(formatSanyWarnings(warnings));
+  const runtimeInvariants = options.runtimeInvariants ?? [];
+  runtimeInvariants.forEach((invariant) => {
+    if (invariant.module === undefined) return;
+    linkedModules.set(root.name, linkedRoot);
+    const linked = getLinkedModule(invariant.module, root.name);
+    linkOrder.splice(linkOrder.indexOf(linked), 1);
+    const definition = definitions.get(linked.visible.get(invariant.name)?.key ?? invariant.name);
+    if (definition) definitions.set(invariant.name, definition);
+  });
   linkedRoot.visible.forEach((symbol, name) => {
     const definition = definitions.get(symbol.key);
     if (definition && symbol.key !== name) definitions.set(name, definition);
@@ -1171,6 +1188,7 @@ export const createEnvironment = (
       ),
     javaOverrides: linkOrder.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
     moduleOperators,
+    runtimeInvariants,
     rootName: root.name,
   };
 };
