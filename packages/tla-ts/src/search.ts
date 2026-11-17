@@ -378,12 +378,20 @@ const getSpecification = (
   let isUntaggedFound = false;
   expandTemporal(definition.body, undefined, environment, false).forEach((item) => {
     const conjunct = item.expression;
-    if (isConstantTrue(item, environment, "spec")) return;
+    // TLC takes a state-level definition of the spec whole as an initial predicate.
+    const isInitial = item.path.some((name) => {
+      const expanded = getDefinition(name, environment);
+      return (
+        expanded?.kind === "Operator" &&
+        getLevel(expanded.body, undefined, environment) === VARIABLE_LEVEL
+      );
+    });
+    if (!isInitial && isConstantTrue(item, environment, "spec")) return;
     const variableIndex =
       conjunct.kind === "Identifier" && !isLocallyResolved(conjunct)
         ? environment.variableIndex.get(conjunct.name)
         : undefined;
-    if (conjunct.kind === "Identifier" && variableIndex !== undefined) {
+    if (!isInitial && conjunct.kind === "Identifier" && variableIndex !== undefined) {
       const range = variableLocations[variableIndex].range;
       throw new TlaConfigError(
         `The operator ${conjunct.name}, which equals ${range ? formatRange(range) : conjunct.name},\ncannot be used as a spec`,

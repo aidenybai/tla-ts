@@ -1059,6 +1059,17 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
+  it.each(["x = FALSE /\\ x", "x = 0 /\\ FALSE", "x = 0 /\\ C"])(
+    "takes a state-level Init of the specification whole, as TLC does: %s",
+    async (init) => {
+      const result = await check({
+        source: `---- MODULE M ----\nCONSTANT C\nVARIABLE x\nInit == ${init}\nNext == x' = x\nSpec == Init /\\ [][Next]_x\n====`,
+        config: "CONSTANT C = FALSE\nSPECIFICATION Spec",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 0]);
+    },
+  );
+
   it.each([
     "Prop == LET E == {x} IN [](\\A e \\in E : e < 1)",
     "Holds(S) == [](\\A e \\in S : e < 1)\nProp == Holds({x})",
