@@ -146,6 +146,7 @@ import {
 } from "./heap";
 import {
   getBuiltIn,
+  getBuiltInBinding,
   isBuiltInObject,
   translateBuiltInObject,
   translateIntrinsic,
@@ -169,7 +170,7 @@ import {
   useJavaScript,
 } from "./javascript";
 import { getNamespaceModule, getNamespaceName, getNamespaceRef, isBindingRead } from "./namespaces";
-import { getThisOwner, isBeforeDeclaration, rejectBeforeDeclaration, type Scope } from "./scope";
+import { getThisOwner, isBeforeDeclaration, isCaughtBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
 import {
   apply,
@@ -966,7 +967,7 @@ const translateBuiltInCall = (
     }
     return made;
   }
-  if (getBinding(node, context) !== undefined) {
+  if (getBinding(node, context) !== undefined || getBuiltInBinding(node, context) !== undefined) {
     const bound = scope.allocated.get(node);
     if (bound === undefined) {
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);
@@ -2845,7 +2846,8 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
     context.prelude.add("JavaScript");
     return identifier(node.text);
   }
-  rejectBeforeDeclaration(node, scope, context);
+  // A read that throws a ReferenceError inside try stops where it runs.
+  if (isCaughtBeforeDeclaration(node, scope, context)) return getUninitializedRead(node);
   const mapped = getMappedParameter(node, scope, context);
   if (mapped !== undefined) return mapped.value;
   const symbol = getSymbol(node, context.checker);
@@ -3224,8 +3226,12 @@ const translatePropertyAccess = (
     ts.isIdentifier(node.expression) &&
     getNamespaceModule(node.expression, context.checker) !== undefined
   ) {
-    rejectBeforeDeclaration(node.name, scope, context);
-    if (isBeforeDeclaration(node.name, property, scope)) return getUninitializedRead(node.name);
+    if (
+      isCaughtBeforeDeclaration(node.name, scope, context) ||
+      isBeforeDeclaration(node.name, property, scope)
+    ) {
+      return getUninitializedRead(node.name);
+    }
   }
   const binding = property === undefined ? undefined : scope.bindings.get(property);
   if (binding !== undefined) return binding;

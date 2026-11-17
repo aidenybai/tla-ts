@@ -13,7 +13,7 @@ import { check } from "../src/parallel";
 import { STRING_METHODS } from "../src/typescript/collections";
 import { getIndexedKind, INDEX_PARAMETERS, SET_LIKE_METHODS } from "../src/typescript/types";
 import { compile } from "../src/typescript/compile";
-import { CONFORMANCE_DIRECTORY, CORPORA_DIRECTORY, listFiles } from "./corpora";
+import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
 
 type Outcome = "pass" | "wrong" | "untranslatable" | "skipped";
 
@@ -33,8 +33,6 @@ interface Metadata {
 
 // tla-ts takes local time to be UTC, so Node's Date must too.
 process.env.TZ = "UTC";
-
-const TEST_DIRECTORY = join(CORPORA_DIRECTORY, "test262", "test");
 
 const HARNESS = readFileSync(join(CONFORMANCE_DIRECTORY, "test262-harness.ts"), "utf8");
 
@@ -4043,7 +4041,7 @@ vm.runInThisContext(require("node:fs").readFileSync(path, "utf8"), {
 });`;
 
 const getModulePath = (path: string) =>
-  join(MODULE_DIRECTORY, relative(TEST_DIRECTORY, path)).replace(/\.js$/, ".ts");
+  join(MODULE_DIRECTORY, relative(TEST262_DIRECTORY, path)).replace(/\.js$/, ".ts");
 
 // The fixtures that a test imports, by path, each through a static import of a relative path or
 // an import() of one, or undefined where a file imports statically another way, such as with
@@ -4123,7 +4121,7 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
 };
 
 const runTest = async (path: string): Promise<TestRun> => {
-  const id = relative(TEST_DIRECTORY, path);
+  const id = relative(TEST262_DIRECTORY, path);
   const read = readFileSync(path, "utf8");
   const metadata = getMetadata(read);
   const skipReason = NODE_CRASHES.has(id) ? "Node crashes" : getSkipReason(metadata);
@@ -4212,10 +4210,9 @@ const getReasonKind = (reason: string) =>
 
 const isVerbose = process.argv.includes("--verbose");
 const prefixes = process.argv.slice(2).filter((argument) => !argument.startsWith("--"));
-const paths = listFiles(TEST_DIRECTORY)
-  .filter((path) => path.endsWith(".js") && !path.includes("_FIXTURE"))
+const paths = listTest262Files()
   .filter((path) => {
-    const id = relative(TEST_DIRECTORY, path);
+    const id = relative(TEST262_DIRECTORY, path);
     return prefixes.length === 0 || prefixes.some((prefix) => id.startsWith(prefix));
   })
   .sort();

@@ -33,6 +33,7 @@ import {
   isStrictCode,
   skipCasts,
 } from "./context";
+import { getFileIndex } from "./program-nodes";
 import { TlaTypeScriptError } from "../errors";
 import { readsUninitialized } from "./aliasing";
 import { translateExpression } from "./expressions";
@@ -105,15 +106,23 @@ export const getFunctionCandidates = (value: ts.Expression, context: Context): F
   return isRunnable(candidate) ? [candidate] : [];
 };
 
-const written = new WeakMap<ts.SourceFile, Map<string, FunctionNode[]>>();
-
 // The functions that a script writes under a key, as methods and as getters, by key. A call of what
 // JavaScript reads under the key, as a protocol such as iteration does, branches on which of them
 // it is.
-export const getWrittenFunctions = (node: ts.Node, key: string, context: Context) => {
-  const file = node.getSourceFile();
-  const known = written.get(file);
-  if (known !== undefined) return known.get(key) ?? [];
+export const getWrittenFunctions = (
+  node: ts.Node,
+  key: string,
+  context: Context,
+): readonly FunctionNode[] => {
+  const index = context.heap === undefined ? -1 : getFileIndex(context.nodes, node);
+  const written =
+    index < 0 || index >= context.fileWritten.length
+      ? findWrittenFunctions(node.getSourceFile(), context)
+      : context.fileWritten[index];
+  return written.get(key) ?? [];
+};
+
+export const findWrittenFunctions = (file: ts.SourceFile, context: Context) => {
   const found = new Map<string, FunctionNode[]>();
   const add = (name: ts.Node, value: ts.Node) => {
     const role = getKey(name);
@@ -136,8 +145,7 @@ export const getWrittenFunctions = (node: ts.Node, key: string, context: Context
     }
     return false;
   });
-  written.set(file, found);
-  return found.get(key) ?? [];
+  return found;
 };
 
 // The methods that a script writes under a key, or that its getters there return, which are async
@@ -169,15 +177,15 @@ export const getRestExcluded = (target: ts.ObjectLiteralExpression) =>
 
 // The keys that an object pattern's rest element may copy through getters that the script writes,
 // which it runs where a statement assigns it.
-export const getRestGetterKeys = (target: ts.ObjectLiteralExpression) =>
+export const getRestGetterKeys = (target: ts.ObjectLiteralExpression, context: Context) =>
   target.properties.some(ts.isSpreadAssignment)
-    ? [...getGetterKeys(target)].filter((key) => !getRestExcluded(target).includes(key))
+    ? [...getGetterKeys(target, context)].filter((key) => !getRestExcluded(target).includes(key))
     : [];
 
 // The getters that the object rests of an assignment's target copy.
 export const getRestCopyGetters = (target: ts.Node, context: Context) =>
   findNodes(target, ts.isObjectLiteralExpression).flatMap((pattern) =>
-    getRestGetterKeys(pattern).flatMap((key) => getKeyGetters(pattern, key, context)),
+    getRestGetterKeys(pattern, context).flatMap((key) => getKeyGetters(pattern, key, context)),
   );
 
 export const isNullish = (value: Expression, context: Context) =>
@@ -470,7 +478,7 @@ const getGetterElements = (pattern: ts.BindingName, context: Context) => {
       (element.initializer !== undefined && !isInertValue(element.initializer)) ||
       isRunning(element.name),
   );
-  const keys = getGetterKeys(pattern);
+  const keys = getGetterKeys(pattern, context);
   return (running === -1 ? plain : plain.slice(0, running + 1)).filter((element) =>
     keys.has(getElementKey(element) ?? ""),
   );
@@ -496,7 +504,7 @@ const getRestGetter = (pattern: ts.BindingName, context: Context) => {
     return undefined;
   }
   const excluded = others.map(getElementKey);
-  const keys = [...getGetterKeys(pattern)].filter((key) => !excluded.includes(key));
+  const keys = [...getGetterKeys(pattern, context)].filter((key) => !excluded.includes(key));
   return keys.length > 0 ? { element, keys } : undefined;
 };
 
@@ -616,14 +624,9 @@ export const readPatternGetters = (
 // The fields that ToPropertyDescriptor reads, in the order it reads them.
 const DESCRIPTOR_FIELDS = ["enumerable", "configurable", "value", "writable", "get", "set"];
 
-const getterKeys = new WeakMap<ts.SourceFile, Set<string>>();
-
-// The keys that a script defines getters under, in object literals and classes or with
+// The keys that a file defines getters under, in object literals and classes or with
 // Object.defineProperty and Object.defineProperties.
-export const getGetterKeys = (node: ts.Node) => {
-  const file = node.getSourceFile();
-  const known = getterKeys.get(file);
-  if (known !== undefined) return known;
+export const findGetterKeys = (file: ts.SourceFile) => {
   const keys = new Set<string>();
   const hasGetter = (attributes: ts.Node | undefined) =>
     attributes !== undefined &&
@@ -671,8 +674,14 @@ export const getGetterKeys = (node: ts.Node) => {
     }
     return false;
   });
-  getterKeys.set(file, keys);
   return keys;
+};
+
+// The keys that a node's file defines getters under, which tla-ts finds for each of the program's
+// files before it compiles the code.
+export const getGetterKeys = (node: ts.Node, context: Context): ReadonlySet<string> => {
+  const index = getFileIndex(context.nodes, node);
+  return index < 0 ? findGetterKeys(node.getSourceFile()) : context.getterKeys[index];
 };
 
 // An Object.defineProperty or a Reflect.defineProperty whose descriptor may hold a getter that the
@@ -685,7 +694,7 @@ export const isDescriptorRead = (node: ts.Node, context: Context): node is ts.Ca
   ["Object", "Reflect"].includes(node.expression.expression.getText()) &&
   node.expression.name.text === "defineProperty" &&
   node.arguments.length >= 3 &&
-  DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node).has(key)) &&
+  DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node, context).has(key)) &&
   getFieldGetters(node, context).every((getter) => isRunnableGetter(getter, context));
 
 // The getters that reading a descriptor's fields may run.
@@ -709,7 +718,7 @@ export const isRunnableGetter = (getter: FunctionNode, context: Context) =>
 export const getElementGetters = (node: ts.Node, context: Context) => {
   const getters = [
     ...new Set(
-      [...getGetterKeys(node)]
+      [...getGetterKeys(node, context)]
         .filter((key) => /^(0|[1-9][0-9]*)$/.test(key))
         .flatMap((key) => getKeyGetters(node, key, context)),
     ),
@@ -723,7 +732,7 @@ export const getElementGetters = (node: ts.Node, context: Context) => {
 // defines one under that key and tla-ts can run each of them.
 export const getDefinedGetters = (node: ts.Node, key: string, context: Context) => {
   const getters = getKeyGetters(node, key, context);
-  return getGetterKeys(node).has(key) &&
+  return getGetterKeys(node, context).has(key) &&
     getters.every((getter) => isRunnableGetter(getter, context))
     ? getters
     : [];
@@ -1118,7 +1127,7 @@ export const readDescriptors = (
 
 // The getters that the script defines under any key, which reading an object's values may run.
 export const getOwnValueGetters = (node: ts.Node, context: Context) => [
-  ...new Set([...getGetterKeys(node)].flatMap((key) => getKeyGetters(node, key, context))),
+  ...new Set([...getGetterKeys(node, context)].flatMap((key) => getKeyGetters(node, key, context))),
 ];
 
 // The getters that reading an object's values may run, and the setters that Object.assign may run
@@ -1278,7 +1287,7 @@ export const isDescriptorsRead = (node: ts.Node, context: Context) =>
   node.arguments.length >= 2 &&
   !node.arguments.some(ts.isSpreadElement) &&
   (getLiteralKeys(node.arguments[1]) !== undefined
-    ? DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node).has(key))
+    ? DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node, context).has(key))
     : getReadGetters(node, context).some(
         (getter) => !getGetters(node, context).includes(getter),
       )) &&
@@ -1325,7 +1334,7 @@ export const isGetterRead = (
     return false;
   }
   const key = getAccessKey(node);
-  if (key === undefined || isWritten(node) || !getGetterKeys(node).has(key)) return false;
+  if (key === undefined || isWritten(node) || !getGetterKeys(node, context).has(key)) return false;
   if (getKind(node.expression, context) !== "object") return false;
   const pure = getGetters(node, context);
   const getters = getReadGetters(node, context);

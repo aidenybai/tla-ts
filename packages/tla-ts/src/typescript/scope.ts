@@ -251,7 +251,9 @@ export const isBeforeDeclaration = (name: ts.Identifier, symbol: ts.Symbol, scop
   );
 };
 
-export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, context: Context) => {
+// Whether a use of a let, a const, or a class inside try runs before its declaration, where it
+// throws a ReferenceError that the try catches.
+export const isCaughtBeforeDeclaration = (node: ts.Identifier, scope: Scope, context: Context) => {
   const symbol = getSymbol(node, context.checker);
   const declaration = symbol?.valueDeclaration;
   if (
@@ -266,16 +268,18 @@ export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, conte
         (declaration.parent.flags & ts.NodeFlags.BlockScoped) !== 0)
     )
   ) {
-    return;
+    return false;
   }
   // A function other than the one that declares the let may run after its declaration, wherever
   // its text is.
-  const isUninitialized =
-    isTopLevelLexical(declaration) ||
+  return isTopLevelLexical(declaration) ||
     ts.findAncestor(node, ts.isFunctionLike) !== ts.findAncestor(declaration, ts.isFunctionLike)
-      ? scope.uninitialized.has(symbol)
-      : node.getStart() < declaration.getStart();
-  if (isUninitialized) {
+    ? scope.uninitialized.has(symbol)
+    : node.getStart() < declaration.getStart();
+};
+
+export const rejectBeforeDeclaration = (node: ts.Identifier, scope: Scope, context: Context) => {
+  if (isCaughtBeforeDeclaration(node, scope, context)) {
     throw new TlaTypeScriptError(`Inside try, use ${node.text} after its declaration`, node);
   }
 };

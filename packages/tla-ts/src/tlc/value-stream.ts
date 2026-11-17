@@ -1,4 +1,3 @@
-import { gzipSync } from "node:zlib";
 import { defineStateOperator, getValue, overrideWithJava } from "../builtins";
 import type { Builtin } from "../evaluate";
 import { getPath, type FileSystem } from "../json";
@@ -124,7 +123,7 @@ const serializeValue = (value: Value) => {
     });
   };
   write(value);
-  return gzipSync(Uint8Array.from(bytes));
+  return process.getBuiltinModule("node:zlib").gzipSync(Uint8Array.from(bytes));
 };
 
 export const createTlcTraceOperators = (files: FileSystem): Builtin[] => [

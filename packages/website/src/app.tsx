@@ -2,6 +2,7 @@ import { Play } from "@phosphor-icons/react";
 import { BenchmarkChart } from "./components/benchmark-chart";
 import { GitHubIcon } from "./components/github-icon";
 import { Code, Example, Hero, Section } from "./components/parts";
+import { Prompt } from "./components/prompt";
 import { Reference } from "./components/reference";
 import { ThemeMenu } from "./components/theme-menu";
 import { InlineCode } from "./components/ui/inline-code";
@@ -22,10 +23,9 @@ export const App = () => (
           <Link href="https://lamport.azurewebsites.net/tla/tla.html">TLA+</Link>.
         </p>
         <div className="flex gap-2">
-          <Hero.Copy text={prompt}>Copy prompt</Hero.Copy>
           <a
             href="https://github.com/aidenybai/tla-ts"
-            className={cn(buttonVariants(), "text-foreground")}
+            className={buttonVariants({ variant: "primary" })}
           >
             <GitHubIcon />
             GitHub
@@ -55,6 +55,9 @@ export const App = () => (
       </Section.Root>
       <Section.Root>
         <Section.Title>Install</Section.Title>
+        <p className="text-pretty">Paste this prompt into your coding agent:</p>
+        <Prompt text={prompt} />
+        <p className="text-pretty">Or install it yourself:</p>
         <Code.Root source={install}>
           <Code.Content />
           <Code.Actions>
@@ -79,9 +82,8 @@ export const App = () => (
         </p>
         <BenchmarkChart />
         <p className="text-pretty">
-          TLA-ts currently maintains{" "}
-          {getTest262Percent(TEST262_RUNS[TEST262_RUNS.length - 1].passed)} conformance with{" "}
-          <Link href="https://github.com/tc39/test262">test262</Link>.
+          TLA-ts currently maintains {getTest262Percent(TEST262_RUNS[TEST262_RUNS.length - 1])}{" "}
+          conformance with <Link href="https://github.com/tc39/test262">test262</Link>.
         </p>
         <Test262Chart />
       </Section.Root>

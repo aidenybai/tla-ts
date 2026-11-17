@@ -884,6 +884,45 @@ const getDeclaringPrototype = (symbol: ts.Symbol) =>
     )
     .find((prototype) => Object.hasOwn(BUILT_INS, prototype));
 
+// A call of bind on what a read of a library method gives, as window.hasOwnProperty.bind(window),
+// with the built-in function that the read may give, by its path, such as
+// "Object.prototype.hasOwnProperty".
+export const getBuiltInBinding = (node: ts.Node, context: Context) => {
+  if (
+    context.heap === undefined ||
+    !ts.isCallExpression(node) ||
+    !ts.isPropertyAccessExpression(node.expression) ||
+    node.expression.name.text !== "bind" ||
+    node.arguments.some(ts.isSpreadElement)
+  ) {
+    return undefined;
+  }
+  const bind = getSymbol(node.expression, context.checker);
+  const read = skipCasts(node.expression.expression);
+  const symbol = ts.isPropertyAccessExpression(read) ? getSymbol(read, context.checker) : undefined;
+  if (
+    bind === undefined ||
+    !isLibrary(bind) ||
+    !ts.isPropertyAccessExpression(read) ||
+    symbol === undefined ||
+    !isLibrary(symbol)
+  ) {
+    return undefined;
+  }
+  const path = [getName(read.expression, context), getDeclaringPrototype(symbol)]
+    .flatMap((owner) =>
+      owner === undefined ? [] : (getBuiltInFunction(owner, read.name.text) ?? []),
+    )
+    .at(0);
+  return path === undefined ? undefined : { path, target: read, arguments: node.arguments };
+};
+
+// The built-in function that getBuiltInBinding finds.
+export const translateBoundBuiltIn = (path: string, node: ts.Node, context: Context) => {
+  context.builtIns.add(path);
+  return getBuiltInValue(path, node, context);
+};
+
 // The built-in object that should hold a library method that the engine tla-ts follows lacks, as one
 // that TypeScript declares before Node ships it, where a read finds it undefined unless a script
 // defines it.

@@ -1,5 +1,12 @@
 import ts from "@typescript/typescript6";
-import { findEffects, getWritten, getWrittenRoots, translateScript, writesState } from "./actions";
+import {
+  findEffects,
+  getWritten,
+  getWrittenRoots,
+  summarizeEffects,
+  translateScript,
+  writesState,
+} from "./actions";
 import { findSharing, getReached, isMakingObjects, rejectSharing } from "./aliasing";
 import {
   type Closure,
@@ -7,7 +14,11 @@ import {
   createContext,
   findNodes,
   findFunctionCandidates,
+  findFileAccessors,
+  findHeapCode,
+  findObjectTargets,
   findSharedFunctionCandidates,
+  isReached,
   findOnceFunctions,
   findValueEnums,
   findOnceLocals,
@@ -58,6 +69,7 @@ import {
   rejectRunningModules,
 } from "./namespaces";
 import { createProgram, isTypeImport } from "./program";
+import { findResolverHolders } from "./promises";
 import {
   getJsonPath,
   getRequires,
@@ -302,7 +314,9 @@ export const compile = (
     program.files,
     program.implicitGlobals,
     program.defaultLibraries,
+    program.nodes,
   );
+  context.resolverHolders = program.files.map((file) => findResolverHolders(file, context));
   if (isScript(program.sourceFile)) {
     const onceFunctions = findOnceFunctions(program.files, context);
     context.onceFunctions = new Set(onceFunctions);
@@ -895,6 +909,9 @@ export const compile = (
   const changedArrays = isHeapFile ? findChangedArrays(reached, context) : [];
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
     context.heap = heap;
+    context.objectTargets = findObjectTargets(program.files, context);
+    findHeapCode(context);
+    findFileAccessors(context);
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
     context.storedBuiltIns = new Map(
       program.files.map((file) => [
@@ -906,14 +923,22 @@ export const compile = (
         ),
       ]),
     );
+    // The functions that a call through a value may run, found once for every call: those of
+    // each file that the model reaches.
     context.closures = new Map(
       program.files.map((file) => [
         file,
-        findNodes(file, (inner): inner is Closure => isClosure(inner, context)),
+        findNodes(
+          file,
+          (inner): inner is Closure => isClosure(inner, context) && isReached(inner, context),
+        ),
       ]),
     );
     context.functionCandidates = new Map(
-      program.files.map((file) => [file, findFunctionCandidates(file, context)]),
+      program.files.map((file) => [
+        file,
+        findFunctionCandidates(file, context).filter((candidate) => isReached(candidate, context)),
+      ]),
     );
     context.sharedFunctionCandidates = findSharedFunctionCandidates(
       context.functionCandidates,
@@ -1105,7 +1130,10 @@ export const compile = (
   // shared, as the heap decided above found none otherwise.
   if (context.isEveryCollectionHeld) rejectSharing(shareable, context);
   rejectRegExpIndicesUses(roots, context);
-  if (context.heap !== undefined) context.effects = findEffects(reached, context);
+  if (context.heap !== undefined) {
+    context.effects = findEffects(reached, context);
+    context.changes = summarizeEffects(context);
+  }
   classifySharedHelpers(reached, context);
   // A using declaration disposes nothing where it holds only null or undefined.
   const isNothing = (node: ts.Expression | undefined) =>

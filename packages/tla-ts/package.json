@@ -75,6 +75,7 @@
     "conformance:record-statechart": "bun scripts/run.ts record-statechart",
     "conformance:record-proofs": "bun scripts/run.ts record-proofs",
     "conformance:record-tlapm": "bun scripts/run.ts record-tlapm",
+    "conformance:record-test262": "bun scripts/run.ts record-test262",
     "conformance:smt-encode": "bun scripts/run.ts smt-encode-conformance",
     "conformance:prove": "pnpm build && bun scripts/run.ts prove-conformance",
     "conformance:test262": "bun scripts/run.ts test262",

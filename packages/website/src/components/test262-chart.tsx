@@ -1,25 +1,29 @@
 import { useState, type PointerEvent } from "react";
 import { TextMorph } from "torph/react";
 import { cn } from "cn";
-import { getTest262Percent, TEST262_RUNS, TEST262_TOTAL } from "../test262";
+import { getTest262Percent, getTest262Share, TEST262_RUNS } from "../test262";
 
-const AXIS_MAX = 0.4;
+const TICK_PERCENT = 20;
 const MORPH_MS = 300;
-const TICKS = [0.4, 0.3, 0.2, 0.1, 0];
 const LAST_INDEX = TEST262_RUNS.length - 1;
+const AXIS_PERCENT =
+  Math.ceil((Math.max(...TEST262_RUNS.map(getTest262Share)) * 100) / TICK_PERCENT) * TICK_PERCENT;
+const TICKS = [...Array(AXIS_PERCENT / TICK_PERCENT + 1).keys()].map(
+  (index) => AXIS_PERCENT - index * TICK_PERCENT,
+);
 
-const getShare = (passed: number) => passed / TEST262_TOTAL;
 const getX = (index: number) => (index / LAST_INDEX) * 100;
-const getY = (passed: number) => 100 - (getShare(passed) / AXIS_MAX) * 100;
+const getY = (run: (typeof TEST262_RUNS)[number]) =>
+  100 - ((getTest262Share(run) * 100) / AXIS_PERCENT) * 100;
 
 const LINE = TEST262_RUNS.map((run, index) => {
-  if (index === 0) return `M0 ${getY(run.passed)}`;
+  if (index === 0) return `M0 ${getY(run)}`;
   const middle = (getX(index - 1) + getX(index)) / 2;
-  return `C${middle} ${getY(TEST262_RUNS[index - 1].passed)} ${middle} ${getY(run.passed)} ${getX(index)} ${getY(run.passed)}`;
+  return `C${middle} ${getY(TEST262_RUNS[index - 1])} ${middle} ${getY(run)} ${getX(index)} ${getY(run)}`;
 }).join(" ");
 
 const DATE_TICKS = TEST262_RUNS.flatMap((run, index) =>
-  run.date === TEST262_RUNS[index - 1]?.date ? [] : [{ date: run.date, index }],
+  run.label === TEST262_RUNS[index - 1]?.label ? [] : [{ label: run.label, index }],
 );
 
 export const Test262Chart = () => {
@@ -39,13 +43,13 @@ export const Test262Chart = () => {
           duration={MORPH_MS}
           className="text-lg font-medium text-foreground tabular-nums"
         >
-          {getTest262Percent(active.passed)}
+          {getTest262Percent(active)}
         </TextMorph>
         <TextMorph as="span" duration={MORPH_MS} className="text-muted-foreground tabular-nums">
-          {`(${active.passed.toLocaleString()} / ${TEST262_TOTAL.toLocaleString()} passing)`}
+          {`(${active.passed.toLocaleString()} / ${active.total.toLocaleString()} passing)`}
         </TextMorph>
         <TextMorph as="span" duration={MORPH_MS} className="ml-auto text-faint">
-          {active.date}
+          {active.label}
         </TextMorph>
       </figcaption>
       <div className="grid grid-cols-[auto_1fr] gap-x-3 text-xs text-faint tabular-nums">
@@ -53,10 +57,10 @@ export const Test262Chart = () => {
           {TICKS.map((tick) => (
             <span
               key={tick}
-              style={{ bottom: `${(tick / AXIS_MAX) * 100}%` }}
+              style={{ bottom: `${(tick / AXIS_PERCENT) * 100}%` }}
               className="absolute left-0 translate-y-1/2 leading-5"
             >
-              {tick * 100}%
+              {tick}%
             </span>
           ))}
         </div>
@@ -69,7 +73,7 @@ export const Test262Chart = () => {
           {TICKS.map((tick) => (
             <div
               key={tick}
-              style={{ bottom: `${(tick / AXIS_MAX) * 100}%` }}
+              style={{ bottom: `${(tick / AXIS_PERCENT) * 100}%` }}
               className={cn(
                 "absolute inset-x-0 border-t",
                 tick === 0 ? "border-input" : "border-muted",
@@ -106,14 +110,14 @@ export const Test262Chart = () => {
             )}
           />
           <div
-            style={{ left: `${getX(activeIndex)}%`, top: `${getY(active.passed)}%` }}
+            style={{ left: `${getX(activeIndex)}%`, top: `${getY(active)}%` }}
             className="absolute size-2 -translate-1/2 rounded-full bg-foreground ring-2 ring-background"
           />
         </div>
         <div className="relative col-start-2 mt-1 h-6">
           {DATE_TICKS.map((tick) => (
             <span
-              key={tick.date}
+              key={tick.label}
               style={{ left: `${getX(tick.index)}%` }}
               className="absolute top-0 flex flex-col gap-1"
             >
@@ -121,7 +125,7 @@ export const Test262Chart = () => {
               <span
                 className={cn("leading-5 whitespace-nowrap", tick.index > 0 && "-translate-x-1/2")}
               >
-                {tick.date}
+                {tick.label}
               </span>
             </span>
           ))}
@@ -138,10 +142,10 @@ export const Test262Chart = () => {
         </thead>
         <tbody>
           {TEST262_RUNS.map((run) => (
-            <tr key={run.passed}>
-              <td>{run.date}</td>
+            <tr key={run.date + run.passed}>
+              <td>{run.label}</td>
               <td>{run.passed.toLocaleString()}</td>
-              <td>{getTest262Percent(run.passed)}</td>
+              <td>{getTest262Percent(run)}</td>
             </tr>
           ))}
         </tbody>
