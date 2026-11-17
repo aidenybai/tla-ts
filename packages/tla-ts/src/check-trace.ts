@@ -2,7 +2,7 @@ import type { CheckOptions, OutputLine, TraceStep } from "./check";
 import type { ModelConfig } from "./config";
 import { TlaEvaluationError } from "./errors";
 import { isImpure, type Environment, type State } from "./evaluate";
-import { isSameState } from "./fingerprints";
+import { getStateHash, isSameState } from "./fingerprints";
 import type { Search } from "./search";
 import { getActionLabel, type SpecAction } from "./spec-description";
 import { getSuccessors, type Successor } from "./successors";
@@ -192,8 +192,15 @@ export const createTraceBuilder = (context: TraceContext) => {
       }
       return undefined;
     }).result;
-  const hasFingerprint = (state: Value[], index: number) =>
-    isSameState(getFingerprintState(state), context.fingerprintStates[index]);
+  // TLC's Tool#getState fingerprints each state it rebuilds, which sorts its records in place.
+  const hasFingerprint = (state: Value[], index: number) => {
+    const fingerprintState = getFingerprintState(state);
+    const stored = context.fingerprintStates[index];
+    return (
+      getStateHash(fingerprintState) === getStateHash(stored) &&
+      isSameState(fingerprintState, stored)
+    );
+  };
   const findSuccessorWithFingerprint = (state: Value[], index: number) =>
     findTraceSuccessor(state, (successor) => hasFingerprint(successor.state, index));
   const getPathStates = (path: number[], nextFailure: string) => {
