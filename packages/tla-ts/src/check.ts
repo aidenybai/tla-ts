@@ -879,7 +879,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       outDegrees: failureOptions.outDegrees,
     };
   };
-  // Deviation from TLC: TLC's Worker leaks an ArrayIndexOutOfBoundsException at an incomplete successor, so it skips the postconditions and, under -continue, goes on.
+  // Deviation from TLC: Worker#doPostCondition throws an ArrayIndexOutOfBoundsException at an incomplete successor, so TLC skips the postconditions and, under -continue, prints the exception.
   const reportIncompleteSuccessor = (
     index: number,
     error: TlaIncompleteSuccessorError,
@@ -1323,7 +1323,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         runtime.generatedStates++;
         runtime.initialStates++;
         const state = error.state.map((value) => value ?? createModelValue("null"));
-        // Deviation from TLC: CounterExample holds null for an unassigned variable, where TLC leaks a NullPointerException.
+        // Deviation from TLC: CounterExample holds a Java null for an unassigned variable and leaks a NullPointerException, where tla-ts binds the model value null.
         const checked = checkTracePostconditions(
           [{ action: undefined, label: undefined, state: toRecord(state) }],
           undefined,
@@ -1427,7 +1427,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       );
     }, 0);
   };
-  // Deviation from TLC: a FingerprintException in its rerun escapes TLC's Worker, which prints the behavior without the failure.
+  // Deviation from TLC: Worker#doNextCheckLiveness doesn't catch a FingerprintException from its rerun, so TLC prints the behavior without the failure.
   const getLiveCallStack = (index: number, liveSuccessors: LiveSuccessor[]) => {
     if (!liveness || is174) return undefined;
     const replay = getReplayFailure(environment, (tracing) =>
@@ -1464,7 +1464,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       { phase: "next" },
       counterExample,
     );
-  // Deviation from TLC: under -continue, TLC goes on after the failure, can report the state deadlocked, and reports the failure again as it replays it.
+  // Deviation from TLC: under -continue, TLC's Worker reports a state whose next-state relation failed as deadlocked and exits with the deadlock status.
   const reportNextStateFailure = (
     error: unknown,
     index: number,
