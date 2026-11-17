@@ -967,6 +967,32 @@ describe("the CLI checks an invariant of -inv in a module of its own like TLC", 
     ]);
   });
 
+  it("parses a module the invariant instances with the spec, which neither assumes its ASSUME nor declares its constant", () => {
+    const result = runInvariants("RuntimeInvariants", [
+      "-inv",
+      "LET I == INSTANCE Instanced WITH N <- 1 IN I!Positive",
+    ]);
+    expect(result.status).toBe(11);
+    expect(
+      result.stdout.split("\n").filter((line) => /^(Semantic processing|Linting) of /.test(line)),
+    ).toEqual([
+      "Semantic processing of module Naturals",
+      "Semantic processing of module Sequences",
+      "Semantic processing of module FiniteSets",
+      "Semantic processing of module TLC",
+      "Semantic processing of module Instanced",
+      "Semantic processing of module RuntimeInvariants",
+      "Linting of module Instanced",
+      "Linting of module RuntimeInvariants",
+    ]);
+    expect(getSteadyLines(result.stdout).slice(0, 4)).toEqual([
+      "Starting... (_)",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
+      '<<{"p", "q"}, {}>>',
+    ]);
+  });
+
   it("evaluates the body of a named operator, even one that takes arguments", () => {
     const result = runInvariants("RuntimeInvariants", ["-inv", "Below"]);
     expect(result.status).toBe(75);
