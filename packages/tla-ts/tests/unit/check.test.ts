@@ -12,6 +12,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
+import type { OutputLine } from "../../src/check";
 import { UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
 import { formatState } from "../../src/values";
@@ -1368,6 +1369,30 @@ ASSUME TLCFP(a) = -887695703
         ?.expressions.map((expression) => [expression.location, expression.count]),
     ).toEqual([["line 5, col 8 to line 5, col 9 of module M", 1]]);
   });
+
+  it.each([
+    ["an invariant", "INVARIANT P", "P == x # 1"],
+    ["an action property", "PROPERTY P", "P == [][x' # 1]_x"],
+  ])(
+    "prints the trace of %s it continues past without rebuilding it, as TLC's Worker does",
+    async (_name, config, property) => {
+      const outputs: OutputLine[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0 /\\ PrintT("i")\nNext == PrintT(<<"n", x>>) /\\ x < 2 /\\ x' = x + 1\n${property}\n====`,
+        config: `INIT Init\nNEXT Next\n${config}`,
+        isContinued: true,
+        onProgress: (progress) => {
+          if (progress.kind !== "violation") return;
+          const violation = progress.violation;
+          outputs.push(
+            ...violation.trace.flatMap((step) => step.output ?? []),
+            ...(violation.traceOutput ?? []),
+          );
+        },
+      });
+      expect(outputs).toEqual(['<<"n", 0>>']);
+    },
+  );
 
   it("counts the coverage of an action under ENABLED in an invariant", async () => {
     const result = await check({

@@ -944,7 +944,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       options.version,
     );
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
-    const trace = traces.getStateTrace(index, { incomplete: error.state, isPrintedOnly: true }).trace;
+    const trace = traces.getStateTrace(index, {
+      incomplete: error.state,
+      isPrintedOnly: true,
+    }).trace;
     const checked = checkFailedTrace(
       appendTraceOutput(
         {
@@ -1228,7 +1231,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (!found.isSeen) {
       try {
         const violated = search.findViolatedInvariant(successor.state, state);
-        const violation = violated && { name: violated.name, ...traces.getTrace(index, successor) };
+        const violation = violated && {
+          name: violated.name,
+          ...traces.getTrace(index, successor, { isPrintedOnly: options.isContinued }),
+        };
         if (violation && !options.isContinued) {
           return withOutDegrees(reportViolation("invariant-violation", violation));
         }
@@ -1247,7 +1253,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const violatedProperty = search.findViolatedActionProperty(state, successor.state);
     const propertyViolation = violatedProperty && {
       name: violatedProperty.name,
-      ...traces.getTrace(index, successor),
+      ...traces.getTrace(index, successor, { isPrintedOnly: options.isContinued }),
     };
     if (propertyViolation && !options.isContinued) {
       return withOutDegrees(reportViolation("liveness-violation", propertyViolation));
@@ -1509,7 +1515,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return { result, lines: [...live.lines, ...replay.lines] };
   };
   const getNextFailureTrace = (index: number, counterExample?: CounterExampleOptions) =>
-    checkFailedTrace(traces.getStateTrace(index, { isPrintedOnly: !counterExample }), counterExample);
+    checkFailedTrace(
+      traces.getStateTrace(index, { isPrintedOnly: !counterExample }),
+      counterExample,
+    );
   const reportNextStateOverflow = (index: number, counterExample?: CounterExampleOptions) => {
     const checked = getNextFailureTrace(index, counterExample);
     return createFailureResult(
