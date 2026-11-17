@@ -1078,7 +1078,14 @@ const resolveExpression = (
     case "Number":
     case "Decimal":
     case "String":
+      return;
     case "ExceptAt":
+      if (!unit.isInExcept && expression.location.range) {
+        unit.errors.push({
+          location: formatRange(expression.location.range),
+          message: "@ used where its meaning is not defined.",
+        });
+      }
       return;
     case "Identifier": {
       if (isInstanceArityReported(expression, scope, unit)) return;

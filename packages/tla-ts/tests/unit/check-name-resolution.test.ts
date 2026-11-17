@@ -183,6 +183,13 @@ describe("name resolution matches SANY", () => {
   it.each([
     ["f == g", [["line 2, col 6 to line 2, col 6", "Unknown operator: `g'."]]],
     [
+      "f == [i \\in {1} |-> i]\ng == <<@>> /\\ [f EXCEPT ![@] = LET h == @ IN [@ EXCEPT ![1] = @]]",
+      [
+        ["line 3, col 8 to line 3, col 8", "@ used where its meaning is not defined."],
+        ["line 3, col 27 to line 3, col 27", "@ used where its meaning is not defined."],
+      ],
+    ],
+    [
       "f == 1 + 1",
       [
         [
