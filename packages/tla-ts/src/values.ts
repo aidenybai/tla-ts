@@ -1840,6 +1840,7 @@ const someElementOfStream = (value: ObjectValue, visit: (element: Value) => bool
 
 export const isEmptySet = (value: Value): boolean => {
   if (typeof value !== "object" || !isSetValue(value)) {
+    setTrace.sets?.push(value);
     throw new TlaEvaluationError(`Shouldn't call isEmpty() on value ${formatValue(value)}`);
   }
   switch (value.kind) {
