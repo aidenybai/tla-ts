@@ -14,8 +14,8 @@ import {
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { isAllocation } from "./heap";
-import { getPosition } from "./program-nodes";
-import { forEachReachedName, holdsMaker, isReachBit, isSkippedForReach } from "./reach-graph";
+import { getPosition, hasBit } from "./program-nodes";
+import { forEachReachedName, holdsMaker, isSkippedForReach } from "./reach-graph";
 import { type Scope } from "./scope";
 import {
   getKind,
@@ -627,9 +627,9 @@ export const isMakingObjects = (node: ts.Node, context: Context) => {
   forEachReachedName(table, context.references, start, (declaration, position) => {
     if (position < 0) {
       if (!declaration.getSourceFile().isDeclarationFile) found.isElsewhere = true;
-    } else if (isReachBit(makers.makesObjects, position)) {
+    } else if (hasBit(makers.makesObjects, position)) {
       found.isMaking = true;
-    } else if (isReachBit(makers.reachesElsewhere, position)) {
+    } else if (hasBit(makers.reachesElsewhere, position)) {
       found.isElsewhere = true;
     }
   });

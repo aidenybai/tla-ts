@@ -142,6 +142,14 @@ export const createProgramNodes = (
   };
 };
 
+// Whether a bitset has an index's bit.
+export const hasBit = (bits: Uint32Array, index: number) =>
+  (bits[index >>> 5] & (1 << (index & 31))) !== 0;
+
+export const setBit = (bits: Uint32Array, index: number) => {
+  bits[index >>> 5] |= 1 << (index & 31);
+};
+
 // The index of the first of a sorted run's values at or past a value.
 export const getLowerBound = (
   sorted: Int32Array,

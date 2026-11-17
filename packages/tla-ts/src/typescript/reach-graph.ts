@@ -1,5 +1,5 @@
 import ts from "@typescript/typescript6";
-import { getPosition, type ProgramNodes, type References } from "./program-nodes";
+import { getPosition, hasBit, type ProgramNodes, type References, setBit } from "./program-nodes";
 
 // What a walk of each declaration that a name of the program's files names reaches by name, which
 // tla-ts finds once for the program: a run of the declarations that the walk of its subtree meets,
@@ -11,13 +11,6 @@ export interface ReachGraph {
   targets: Int32Array;
   elsewhere: ts.Node[];
 }
-
-const hasBit = (bits: Uint32Array, index: number) =>
-  (bits[index >>> 5] & (1 << (index & 31))) !== 0;
-
-const setBit = (bits: Uint32Array, index: number) => {
-  bits[index >>> 5] |= 1 << (index & 31);
-};
 
 // A type runs nothing, though a class's base, which TypeScript parses as one, runs.
 export const isSkippedForReach = (node: ts.Node) =>
@@ -97,8 +90,6 @@ export interface Makers {
 // Whether a subtree of the program's files holds a node that makes an object.
 export const holdsMaker = (table: ProgramNodes, makers: Makers, start: number) =>
   makers.counts[table.ends[start]] > makers.counts[start];
-
-export const isReachBit = hasBit;
 
 export const findMakers = (
   table: ProgramNodes,
