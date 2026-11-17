@@ -5524,8 +5524,146 @@ const resolve = (node: ts.Expression, context: Context) => {
     (declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? getFactoryCall(declaration.initializer, context)?.closure
       : undefined) ??
-    getMethod(node, context)
+    getMethod(node, context) ??
+    getObjectFunction(node, context)
   );
+};
+
+// The names of a symbol in every file of the program.
+const findProgramReferences = (symbol: ts.Symbol, context: Context) =>
+  [...context.nodes.fileStarts].flatMap((start) =>
+    findReferences(symbol, context.nodes.nodes[start], context),
+  );
+
+// Whether a node is the object of a property read that nothing writes or deletes through.
+const isReadReceiver = (node: ts.Node) => {
+  const access = node.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== node) return false;
+  const parent = access.parent;
+  const isWritten =
+    (ts.isBinaryExpression(parent) &&
+      parent.left === access &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+        parent.operator === ts.SyntaxKind.MinusMinusToken)) ||
+    ts.isDeleteExpression(parent);
+  return !isWritten;
+};
+
+// Whether every call of a function that takes no parameters only reads a property of what it gives,
+// and nothing else names the function.
+const isReadOnlyFactory = (factory: FunctionNode, context: Context) => {
+  const declaration = ts.isFunctionDeclaration(factory)
+    ? factory
+    : ts.isVariableDeclaration(factory.parent) && factory.parent.initializer === factory
+      ? factory.parent
+      : undefined;
+  const name = declaration?.name;
+  const symbol =
+    name !== undefined && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+  return (
+    factory.parameters.length === 0 &&
+    symbol !== undefined &&
+    findProgramReferences(symbol, context).every(
+      (use) =>
+        use === name ||
+        (ts.isCallExpression(use.parent) &&
+          use.parent.expression === use &&
+          use.parent.arguments.length === 0 &&
+          isReadReceiver(use.parent)),
+    )
+  );
+};
+
+// The expression that a function only returns, where its body runs nothing else.
+const getOnlyReturned = (factory: FunctionNode) => {
+  const body = factory.body;
+  if (body === undefined || !ts.isBlock(body)) return body;
+  const statement = body.statements.length === 1 ? body.statements[0] : undefined;
+  return statement !== undefined && ts.isReturnStatement(statement)
+    ? statement.expression
+    : undefined;
+};
+
+// The object literal that a const holds, where the script only reads its properties, directly or
+// through what a function that only returns the const gives at calls that only read a property of
+// it: no code changes the object, so each property holds what the literal writes.
+const getReadOnlyObject = (
+  node: ts.Expression,
+  context: Context,
+): ts.ObjectLiteralExpression | undefined => {
+  const inner = skipCasts(node);
+  if (ts.isCallExpression(inner)) {
+    const factory = getAnyFunction(
+      getValueDeclaration(getSymbol(skipCasts(inner.expression), context.checker), context),
+    );
+    const returned = factory === undefined ? undefined : getOnlyReturned(factory);
+    return factory !== undefined &&
+      returned !== undefined &&
+      inner.arguments.length === 0 &&
+      isReadOnlyFactory(factory, context)
+      ? getReadOnlyObject(returned, context)
+      : undefined;
+  }
+  if (!ts.isIdentifier(inner)) return undefined;
+  const symbol = getSymbol(inner, context.checker);
+  const declaration = getValueDeclaration(symbol, context);
+  if (
+    symbol === undefined ||
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0 ||
+    declaration.initializer === undefined
+  ) {
+    return undefined;
+  }
+  const initializer = skipCasts(declaration.initializer);
+  // A function that only returns the const, and whose calls only read its properties.
+  const isFactoryReturn = (use: ts.Identifier) => {
+    const factory = ts.findAncestor(use, ts.isFunctionLike);
+    const anyFactory = factory === undefined ? undefined : getAnyFunction(factory);
+    return (
+      anyFactory !== undefined &&
+      getOnlyReturned(anyFactory) === use &&
+      isReadOnlyFactory(anyFactory, context)
+    );
+  };
+  return ts.isObjectLiteralExpression(initializer) &&
+    findProgramReferences(symbol, context).every(
+      (use) => use === declaration.name || isReadReceiver(use) || isFactoryReturn(use),
+    )
+    ? initializer
+    : undefined;
+};
+
+// The function that a read of an object's property gives, where the object is one that only reads
+// of its properties reach, and the literal writes the function under the name, which reads no this.
+export const getObjectFunction = (node: ts.Expression, context: Context) => {
+  const inner = skipCasts(node);
+  if (!ts.isPropertyAccessExpression(inner)) return undefined;
+  const object = getReadOnlyObject(inner.expression, context);
+  const properties = (object?.properties ?? []).filter(
+    (property) =>
+      property.name !== undefined &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+      property.name.text === inner.name.text,
+  );
+  const property =
+    properties.length === 1 && object?.properties.every((other) => !ts.isSpreadAssignment(other))
+      ? properties[0]
+      : undefined;
+  const found =
+    property !== undefined && ts.isPropertyAssignment(property)
+      ? getAnyFunction(skipCasts(property.initializer))
+      : undefined;
+  return found !== undefined &&
+    (ts.isArrowFunction(found) ||
+      findNodes(found, (node): node is ts.Node => node.kind === ts.SyntaxKind.ThisKeyword)
+        .length === 0)
+    ? found
+    : undefined;
 };
 
 export const getCallee = (node: ts.Expression, context: Context) => {

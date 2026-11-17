@@ -27,6 +27,7 @@ import {
   getCalledMethod,
   getObjectGetter,
   getCallee,
+  getObjectFunction,
   getElement,
   getFunction,
   getFunctionCandidates,
@@ -1036,8 +1037,13 @@ const translateBuiltInCall = (
     );
   }
   const callee = isMethodCall(node) ? getCallee(node.expression, context) : undefined;
-  // A call of a method that super reads where TypeScript can't tell which, as in an object literal.
-  if ((callee !== undefined && ts.isMethodDeclaration(callee)) || isSuperAccess(node.expression)) {
+  // A call of a method that super reads where TypeScript can't tell which, as in an object literal,
+  // or of a function that an object holds that only reads of its properties reach.
+  if (
+    (callee !== undefined && ts.isMethodDeclaration(callee)) ||
+    isSuperAccess(node.expression) ||
+    (isMethodCall(node) && getObjectFunction(node.expression, context) !== undefined)
+  ) {
     return translateLocalCall(node, scope, context);
   }
   // A call of a function that a field holds, or that an object other than a module's namespace

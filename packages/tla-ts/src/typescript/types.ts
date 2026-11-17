@@ -2071,7 +2071,8 @@ export const getDomain = (type: ts.Type, node: ts.Node, context: Context) => {
 
 // A call that tla-ts can't compile, such as to a package or Math.random(), as any value of its type.
 // The exported function that makes the call chooses the value, so a call that may run more than
-// once per step, as in a callback or a helper, stays an error.
+// once per step, as in a callback or a helper, stays an error. A call that may run the program's
+// own code, whose value only that code tells, stays one too.
 export const translateUnknown = (
   node: ts.CallExpression | ts.NewExpression,
   message: string,
@@ -2079,7 +2080,10 @@ export const translateUnknown = (
 ) => {
   const unknowns = context.unknowns;
   const domain = findDomain(context.checker.getTypeAtLocation(node), context);
+  const declaration = context.checker.getResolvedSignature(node)?.getDeclaration();
   if (
+    declaration === undefined ||
+    !declaration.getSourceFile().isDeclarationFile ||
     unknowns === undefined ||
     ts.findAncestor(node.parent, ts.isFunctionLike) !== unknowns.owner ||
     isInfinite(domain)

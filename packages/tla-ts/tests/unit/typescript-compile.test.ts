@@ -51833,4 +51833,47 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("1.2ff"))).failure?.message).toContain("text 1.3ff");
     });
   });
+
+  describe("runs a function that a const object holds, read through a function that returns the object", () => {
+    const getSource = (expected: number) => `
+      const shapes = { area: (side: number) => side * side };
+      const pick = () => shapes;
+      const total = pick().area(3) + shapes.area(2);
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(13))).failure).toBeUndefined();
+    });
+
+    it("rejects another total", async () => {
+      expect((await checkModel(getSource(9))).failure?.message).toContain("total 13");
+    });
+
+    it("steps through the function's values in an action, as Node does", async () => {
+      const result = await checkModel(`
+        const shapes = { area: (side: number) => side * side };
+        const pick = () => shapes;
+        export let count = 0;
+        export const step = () => {
+          if (count < 4) count = pick().area(count + 1);
+        };
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+
+    it("stops where the object escapes, rather than choose the call's value", () => {
+      expect(() =>
+        compile(`
+          const shapes = { area: (side: number) => side * side };
+          const pick = () => shapes;
+          const held = [shapes];
+          export let count = 0;
+          export const step = () => {
+            if (count < 4) count = pick().area(count + 1);
+          };
+        `),
+      ).toThrow("Unsupported call: pick().area");
+    });
+  });
 });
