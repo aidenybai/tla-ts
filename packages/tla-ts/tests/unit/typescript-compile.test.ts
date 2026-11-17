@@ -51698,4 +51698,198 @@ describe("BigInts", () => {
       ).toContain("seen 9,18,4,constructor+area");
     });
   });
+
+  describe("leaves a function that the program only calls by name out of a call through a value", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const listeners = new Set<() => void>();
+      const callListener = (listener: (...values: unknown[]) => unknown) => {
+        try {
+          listener.apply(undefined, []);
+        } catch (error) {
+          seen.push("caught");
+        }
+      };
+      const getSize = (onActive?: () => void) => {
+        if (onActive !== undefined) listeners.add(onActive);
+        for (const listener of [...listeners]) callListener(listener);
+        return listeners.size;
+      };
+      const clear = () => {
+        seen.push("clear " + getSize(undefined));
+      };
+      getSize(() => seen.push("listener"));
+      clear();
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("listener,listener,clear 1"))).failure).toBeUndefined();
+    });
+
+    it("rejects other calls", async () => {
+      expect((await checkModel(getSource("listener,clear 1"))).failure?.message).toContain(
+        "seen listener,listener,clear 1",
+      );
+    });
+  });
+
+  describe("runs a generator method that makes an object's iterator for a for-of and a pattern", () => {
+    const getSource = (expected: string) => `
+      class Bag {
+        items = [1, 2, 3];
+        *[Symbol.iterator]() {
+          yield this.items[0] * 10;
+          yield this.items[1] * 10;
+          yield this.items[2] * 10;
+        }
+      }
+      const seen: number[] = [];
+      for (const value of new Bag()) {
+        if (value > 20) break;
+        seen.push(value);
+      }
+      const [first, second] = new Bag();
+      seen.push(first, second);
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,20,10,20"))).failure).toBeUndefined();
+    });
+
+    it("rejects other values", async () => {
+      expect((await checkModel(getSource("10,20,30,10,20"))).failure?.message).toContain(
+        "seen 10,20,10,20",
+      );
+    });
+  });
+
+  describe("iterates the generator object that a call of an object's Symbol.iterator method makes", () => {
+    const getSource = (expected: string) => `
+      class Bag {
+        items = [1, 2, 3];
+        *[Symbol.iterator]() {
+          yield this.items[0] * 10;
+          yield this.items[1] * 10;
+          yield this.items[2] * 10;
+        }
+      }
+      const seen: number[] = [];
+      const bag = new Bag();
+      for (const value of bag[Symbol.iterator]()) seen.push(value);
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,20,30"))).failure).toBeUndefined();
+    });
+
+    it("rejects other values", async () => {
+      expect((await checkModel(getSource("10,20"))).failure?.message).toContain("seen 10,20,30");
+    });
+  });
+
+  describe("destructures an array through the generator that a script put on Array.prototype", () => {
+    const getSource = (expected: number) => `
+      const box = { total: 0 };
+      Array.prototype[Symbol.iterator] = function* (this: number[]) {
+        if (this.length > 0) yield this[0];
+        if (this.length > 2) yield 42;
+      } as unknown as () => ArrayIterator<number>;
+      const take = ([first, second]: number[]) => {
+        box.total = first + second;
+      };
+      take([1, 2, 3]);
+      if (box.total !== ${expected}) throw new Error("total " + box.total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(43))).failure).toBeUndefined();
+    });
+
+    it("rejects the array's own elements", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain("total 43");
+    });
+  });
+
+  describe("calls a primitive prototype's method through a const that holds the prototype", () => {
+    const getSource = (expected: string) => `
+      const box = { text: "" };
+      const numbers = Number.prototype;
+      box.text = numbers.toFixed.call(1.25, 1) + numbers.toString.call(255, 16);
+      if (box.text !== "${expected}") throw new Error("text " + box.text);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1.3ff"))).failure).toBeUndefined();
+    });
+
+    it("rejects other text", async () => {
+      expect((await checkModel(getSource("1.2ff"))).failure?.message).toContain("text 1.3ff");
+    });
+  });
+
+  describe("runs a function that a const object holds, read through a function that returns the object", () => {
+    const getSource = (expected: number) => `
+      const shapes = { area: (side: number) => side * side };
+      const pick = () => shapes;
+      const total = pick().area(3) + shapes.area(2);
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(13))).failure).toBeUndefined();
+    });
+
+    it("rejects another total", async () => {
+      expect((await checkModel(getSource(9))).failure?.message).toContain("total 13");
+    });
+
+    it("steps through the function's values in an action, as Node does", async () => {
+      const result = await checkModel(`
+        const shapes = { area: (side: number) => side * side };
+        const pick = () => shapes;
+        export let count = 0;
+        export const step = () => {
+          if (count < 4) count = pick().area(count + 1);
+        };
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+
+    it("steps through the function's values where the heap holds objects, as Node does", async () => {
+      const result = await checkModel(`
+        const shapes = { area: (side: number) => side * side };
+        const pick = () => shapes;
+        const box = { size: 0 };
+        export let count = 0;
+        export const step = () => {
+          if (count < 4) {
+            count = pick().area(count + 1);
+            box.size = count;
+          }
+        };
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+
+    it("stops where the object escapes, rather than choose the call's value", () => {
+      expect(() =>
+        compile(`
+          const shapes = { area: (side: number) => side * side };
+          const pick = () => shapes;
+          const held = [shapes];
+          export let count = 0;
+          export const step = () => {
+            if (count < 4) count = pick().area(count + 1);
+          };
+        `),
+      ).toThrow("Unsupported call: pick().area");
+    });
+  });
 });

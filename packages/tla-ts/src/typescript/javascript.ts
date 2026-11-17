@@ -2957,6 +2957,14 @@ GeneratorPrototype(heap, ref) ==
      THEN Assert(FALSE, "tla-ts can't tell what a generator inherits from")
      ELSE prototype
 
+\\* The object that a generator object reads its next and return from: %GeneratorPrototype% where
+\\* tla-ts doesn't hold its function's prototype object, whose own keys no script then writes.
+GeneratorMethods(heap, ref, generatorPrototype) ==
+  LET prototype == heap.objects[ref[Ref]].prototype
+  IN IF ToString(prototype) = ToString(GeneratorObject.prototype)
+     THEN generatorPrototype
+     ELSE prototype
+
 \\* Whether a generator or an iterator helper inherits from a prototype.
 GeneratorInheritsFrom(heap, owner, ref) ==
   LET prototype == GeneratorPrototype(heap, ref)

@@ -641,7 +641,9 @@ export const translateHoldsMethod = (
             called.receiver.kind === ts.SyntaxKind.SuperKeyword
               ? getSuperLookup(called.receiver, scope, context).start
               : translateObjectValue(called.receiver, scope, context),
-            string(called.key),
+            called.symbol === undefined
+              ? string(called.key)
+              : useJavaScript("WellKnownSymbol", [string(called.symbol)], context),
           ],
           context,
         ),

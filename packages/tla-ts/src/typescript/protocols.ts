@@ -8,7 +8,9 @@ import {
   type Frame,
   inlineBody,
   inlineValues,
+  makeGenerator,
   type Path,
+  stepGenerator,
   throwError,
   throwFirstGetter,
   throwTypeError,
@@ -25,6 +27,7 @@ import {
   getCallee,
   getReturnedFunctions,
   getUndefined,
+  isAnyGenerator,
   isClosure,
   isInertValue,
   isMethodCall,
@@ -38,7 +41,7 @@ import { TlaTypeScriptError } from "../errors";
 import { readsUninitialized } from "./aliasing";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
-import { getBuiltIn } from "./intrinsics";
+import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import {
   getCandidateValue,
   getHeap,
@@ -100,6 +103,23 @@ const isRunnable = (node: ts.Node): node is FunctionNode =>
 const isAsync = (node: FunctionNode) =>
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) !== 0;
 
+// The key of the method that makes an object's iterator, Symbol.iterator, as protocols name it.
+const ITERATOR_KEY = "@@iterator";
+
+// The iterators that a generator method made as GetIterator called it, which are generator objects
+// that the path holds.
+export const madeIterators = new WeakSet<Expression>();
+
+const isSyncGenerator = (
+  node: ts.Node,
+): node is ts.FunctionDeclaration | ts.FunctionExpression | ts.MethodDeclaration =>
+  (ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isMethodDeclaration(node)) &&
+  node.body !== undefined &&
+  node.asteriskToken !== undefined &&
+  !isAsync(node);
+
 // The function that a value is, where it's one that a protocol can run.
 export const getFunctionCandidates = (value: ts.Expression, context: Context): FunctionNode[] => {
   const candidate = getCallee(skipCasts(value), context) ?? skipCasts(value);
@@ -126,11 +146,21 @@ export const findWrittenFunctions = (file: ts.SourceFile, context: Context) => {
   const found = new Map<string, FunctionNode[]>();
   const add = (name: ts.Node, value: ts.Node) => {
     const role = getKey(name);
-    const candidates = ts.isExpression(value)
-      ? getFunctionCandidates(value, context)
-      : isRunnable(value)
-        ? [value]
-        : [];
+    // GetIterator runs a generator method as it makes the iterator, a generator object.
+    const generators =
+      role === ITERATOR_KEY && ts.isExpression(value)
+        ? [getCallee(skipCasts(value), context) ?? skipCasts(value)]
+        : role === ITERATOR_KEY
+          ? [value]
+          : [];
+    const candidates = [
+      ...(ts.isExpression(value)
+        ? getFunctionCandidates(value, context)
+        : isRunnable(value)
+          ? [value]
+          : []),
+      ...generators.filter(isSyncGenerator),
+    ];
     if (role === undefined) return;
     candidates.forEach((candidate) => {
       const known = found.get(role) ?? [];
@@ -162,7 +192,7 @@ export const getMethods = (node: ts.Node, key: string, context: Context, isAwait
           )
         : [candidate],
     )
-    .filter((candidate) => isAwaited || !isAsync(candidate));
+    .filter((candidate) => (isAwaited || !isAsync(candidate)) && !isAnyGenerator(candidate));
 
 export const getKeyGetters = (node: ts.Node, key: string, context: Context) => [
   ...getWrittenFunctions(node, key, context).filter(ts.isGetAccessorDeclaration),
@@ -306,6 +336,9 @@ export const callValue = (
   );
 
 // Calls a method that the iterator protocol read, which throws a TypeError where it isn't callable.
+// A generator method that makes the iterator gives a generator object, whose next, return, and
+// throw resume it. Those go on past the join of the other calls, as the generators that they make
+// or resume can't join.
 export const callMethod = (
   site: ts.Node,
   key: string,
@@ -327,17 +360,74 @@ export const callMethod = (
     path,
     context,
     frame,
-    () =>
-      ifThenElse(
-        apply("=", [
-          useJavaScript("TypeOfIn", [getHeap(path.scope, site, context), value], context),
-          string("function"),
-        ]),
+    () => {
+      const heap = getHeap(path.scope, site, context);
+      const unknown = ifThenElse(
+        apply("=", [useJavaScript("TypeOfIn", [heap, value], context), string("function")]),
         leaf(
           apply("Assert", [boolean(false), string("tla-ts can't tell which function this calls")]),
         ),
         throwWith(path),
-      ),
+      );
+      const generators =
+        key === ITERATOR_KEY
+          ? getWrittenFunctions(site, key, context)
+              .filter(isSyncGenerator)
+              .filter(
+                (candidate) =>
+                  getCandidateValue(candidate, context) !== undefined &&
+                  !frame.inlining.has(candidate),
+              )
+          : [];
+      const made = generators.reduceRight(
+        (rest, generator) =>
+          ifThenElse(
+            apply("=", [
+              useJavaScript("CodeOf", [heap, value], context),
+              getCandidateValue(generator, context) ?? getUndefined(context),
+            ]),
+            makeGenerator(
+              site,
+              generator,
+              [],
+              { value: receiver, method: generator },
+              path,
+              context,
+              frame,
+              (after, result) => continueWith(after, result ?? getUndefined(context)),
+            ),
+            rest,
+          ),
+        unknown,
+      );
+      return ["next", "return", "throw"].includes(key) && madeIterators.has(receiver)
+        ? ifThenElse(
+            useJavaScript(
+              "SameValue",
+              [
+                value,
+                translateBuiltInValue(
+                  `%GeneratorFunction%.prototype.prototype.${key}`,
+                  site,
+                  context,
+                ),
+              ],
+              context,
+            ),
+            stepGenerator(
+              site,
+              receiver,
+              key,
+              values.length === 0 ? undefined : { value: values[0] },
+              path,
+              context,
+              frame,
+              (after, result) => continueWith(after, result ?? getUndefined(context)),
+            ),
+            made,
+          )
+        : made;
+    },
     continueWith,
   );
 

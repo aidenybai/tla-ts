@@ -3,7 +3,7 @@ import type { Expression, OperatorDefinition, OperatorParam, SourceLocation } fr
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS, HOST_GLOBAL_KEYS, NODE_GLOBALS } from "./built-ins";
 import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
-import { type Collection, getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
+import { type Collection, getBuiltIn, getBuiltInPath, isHeldBuiltInObject } from "./intrinsics";
 import {
   type BufferName,
   getArrayMethodCall,
@@ -5339,6 +5339,8 @@ export interface CalledMethod {
   method: ts.MethodDeclaration | ts.GetAccessorDeclaration;
   receiver: ts.Expression;
   key: string;
+  // The well-known symbol that keys the method, such as iterator for obj[Symbol.iterator].
+  symbol?: string;
   // A getter like `get method() { return this.#method; }` that the call reads the method through.
   getter?: ts.GetAccessorDeclaration;
 }
@@ -5355,10 +5357,25 @@ export const getCalledMethod = (
     (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node));
   if (!isAccess) return undefined;
   const name = ts.isPropertyAccessExpression(node) ? node.name : node.argumentExpression;
-  if (!ts.isIdentifier(name) && !ts.isPrivateIdentifier(name) && !ts.isStringLiteralLike(name)) {
-    return undefined;
-  }
-  const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
+  const symbol =
+    ts.isPropertyAccessExpression(name) && getBuiltInPath(name.expression, context) === "Symbol"
+      ? name.name.text
+      : undefined;
+  const text =
+    ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteralLike(name)
+      ? name.text
+      : undefined;
+  const key = symbol === undefined ? text : `@@${symbol}`;
+  if (key === undefined) return undefined;
+  // A method that a well-known symbol keys is the property of the receiver's type with its name.
+  const property =
+    symbol === undefined
+      ? getSymbol(name, context.checker)
+      : context.checker
+          .getTypeAtLocation(node.expression)
+          .getProperties()
+          .find((inner) => inner.escapedName.toString().startsWith(`__@${symbol}@`));
+  const declaration = getValueDeclaration(property, context);
   const getter =
     declaration !== undefined &&
     ts.isGetAccessorDeclaration(declaration) &&
@@ -5371,7 +5388,13 @@ export const getCalledMethod = (
   const method = getObjectMethod(returned ?? declaration, context);
   return method === undefined || !isKind(method)
     ? undefined
-    : { method, receiver: node.expression, key: name.text, getter };
+    : {
+        method,
+        receiver: node.expression,
+        key,
+        symbol,
+        getter,
+      };
 };
 
 // A value that a literal writes, which reads the same wherever it runs.
@@ -5501,8 +5524,148 @@ const resolve = (node: ts.Expression, context: Context) => {
     (declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? getFactoryCall(declaration.initializer, context)?.closure
       : undefined) ??
-    getMethod(node, context)
+    getMethod(node, context) ??
+    getObjectFunction(node, context)
   );
+};
+
+// The names of a symbol in every file of the program.
+const findProgramReferences = (symbol: ts.Symbol, context: Context) =>
+  [...context.nodes.fileStarts].flatMap((start) =>
+    findReferences(symbol, context.nodes.nodes[start], context),
+  );
+
+// Whether a node is the object of a property read that nothing writes or deletes through.
+const isReadReceiver = (node: ts.Node) => {
+  const access = node.parent;
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== node) return false;
+  const parent = access.parent;
+  const isWritten =
+    (ts.isBinaryExpression(parent) &&
+      parent.left === access &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+        parent.operator === ts.SyntaxKind.MinusMinusToken)) ||
+    ts.isDeleteExpression(parent);
+  return !isWritten;
+};
+
+// Whether every call of a function that takes no parameters only reads a property of what it gives,
+// and nothing else names the function.
+const isReadOnlyFactory = (factory: FunctionNode, context: Context) => {
+  const declaration = ts.isFunctionDeclaration(factory)
+    ? factory
+    : ts.isVariableDeclaration(factory.parent) && factory.parent.initializer === factory
+      ? factory.parent
+      : undefined;
+  const name = declaration?.name;
+  const symbol =
+    name !== undefined && ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
+  return (
+    factory.parameters.length === 0 &&
+    symbol !== undefined &&
+    findProgramReferences(symbol, context).every(
+      (use) =>
+        use === name ||
+        (ts.isCallExpression(use.parent) &&
+          use.parent.expression === use &&
+          use.parent.arguments.length === 0 &&
+          isReadReceiver(use.parent)),
+    )
+  );
+};
+
+// The expression that a function only returns, where its body runs nothing else.
+const getOnlyReturned = (factory: FunctionNode) => {
+  const body = factory.body;
+  if (body === undefined || !ts.isBlock(body)) return body;
+  const statement = body.statements.length === 1 ? body.statements[0] : undefined;
+  return statement !== undefined && ts.isReturnStatement(statement)
+    ? statement.expression
+    : undefined;
+};
+
+// The object literal that a const holds, where the script only reads its properties, directly or
+// through what a function that only returns the const gives at calls that only read a property of
+// it: no code changes the object, so each property holds what the literal writes.
+const getReadOnlyObject = (
+  node: ts.Expression,
+  context: Context,
+): ts.ObjectLiteralExpression | undefined => {
+  const inner = skipCasts(node);
+  if (ts.isCallExpression(inner)) {
+    const factory = getAnyFunction(
+      getValueDeclaration(getSymbol(skipCasts(inner.expression), context.checker), context),
+    );
+    const returned = factory === undefined ? undefined : getOnlyReturned(factory);
+    return factory !== undefined &&
+      returned !== undefined &&
+      inner.arguments.length === 0 &&
+      isReadOnlyFactory(factory, context)
+      ? getReadOnlyObject(returned, context)
+      : undefined;
+  }
+  if (!ts.isIdentifier(inner)) return undefined;
+  const symbol = getSymbol(inner, context.checker);
+  const declaration = getValueDeclaration(symbol, context);
+  if (
+    symbol === undefined ||
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0 ||
+    declaration.initializer === undefined
+  ) {
+    return undefined;
+  }
+  const initializer = skipCasts(declaration.initializer);
+  // A function that only returns the const, and whose calls only read its properties.
+  const isFactoryReturn = (use: ts.Identifier) => {
+    const factory = ts.findAncestor(use, ts.isFunctionLike);
+    const anyFactory = factory === undefined ? undefined : getAnyFunction(factory);
+    return (
+      anyFactory !== undefined &&
+      getOnlyReturned(anyFactory) === use &&
+      isReadOnlyFactory(anyFactory, context)
+    );
+  };
+  return ts.isObjectLiteralExpression(initializer) &&
+    findProgramReferences(symbol, context).every(
+      (use) => use === declaration.name || isReadReceiver(use) || isFactoryReturn(use),
+    )
+    ? initializer
+    : undefined;
+};
+
+// The function that a read of an object's property gives, in a script without a heap, where the
+// object is one that only reads of its properties reach, and the literal writes the function under
+// the name, which reads no this.
+export const getObjectFunction = (node: ts.Expression, context: Context) => {
+  const inner = skipCasts(node);
+  // A script whose heap holds its objects reads the function from the heap.
+  if (context.heap !== undefined || !ts.isPropertyAccessExpression(inner)) return undefined;
+  const object = getReadOnlyObject(inner.expression, context);
+  const properties = (object?.properties ?? []).filter(
+    (property) =>
+      property.name !== undefined &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+      property.name.text === inner.name.text,
+  );
+  const property =
+    properties.length === 1 && object?.properties.every((other) => !ts.isSpreadAssignment(other))
+      ? properties[0]
+      : undefined;
+  const found =
+    property !== undefined && ts.isPropertyAssignment(property)
+      ? getAnyFunction(skipCasts(property.initializer))
+      : undefined;
+  return found !== undefined &&
+    (ts.isArrowFunction(found) ||
+      findNodes(found, (node): node is ts.Node => node.kind === ts.SyntaxKind.ThisKeyword)
+        .length === 0)
+    ? found
+    : undefined;
 };
 
 export const getCallee = (node: ts.Expression, context: Context) => {
@@ -5625,6 +5788,46 @@ export const getEnclosingFunction = (node: ts.Node, context: Context) =>
     node.parent,
     (ancestor) => ts.isFunctionLike(ancestor) && !context.onceFunctions.has(ancestor),
   );
+
+// A function that no value holds, as the program names it only to call it: a function or a
+// variable that no other module may import, no global object property holds, and no block holds
+// outside strict mode, whose name the files call wherever they write it, at least once, and that
+// reads no arguments object, whose callee would hold it.
+export const isOnlyCalled = (candidate: FunctionNode, context: Context) => {
+  const declaration = ts.isFunctionDeclaration(candidate)
+    ? candidate
+    : (ts.isArrowFunction(candidate) ||
+          (ts.isFunctionExpression(candidate) && candidate.name === undefined)) &&
+        ts.isVariableDeclaration(candidate.parent) &&
+        candidate.parent.initializer === candidate
+      ? candidate.parent
+      : undefined;
+  const name = declaration?.name;
+  const parent = declaration?.parent;
+  const table = context.nodes;
+  const uses =
+    name !== undefined && ts.isIdentifier(name)
+      ? [...table.fileStarts].flatMap((start) =>
+          findNames(table, table.nodes[start], [name.text]).filter((use) => use !== name),
+        )
+      : [];
+  return (
+    declaration !== undefined &&
+    name !== undefined &&
+    ts.isIdentifier(name) &&
+    parent !== undefined &&
+    (!ts.isFunctionDeclaration(declaration) ||
+      ts.isSourceFile(parent) ||
+      ts.isModuleBlock(parent) ||
+      (ts.isBlock(parent) && ts.isFunctionLike(parent.parent))) &&
+    (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.ExportDefault) === 0 &&
+    (ts.isExternalModule(candidate.getSourceFile()) ||
+      ts.findAncestor(candidate.parent, ts.isFunctionLike) !== undefined) &&
+    (ts.isArrowFunction(candidate) || findNames(table, candidate, ["arguments"]).length === 0) &&
+    uses.length > 0 &&
+    uses.every((use) => ts.isCallExpression(use.parent) && use.parent.expression === use)
+  );
+};
 
 // The functions of a file that a value may hold where tla-ts can't tell which: those that no other
 // function encloses, or that a function makes each time it runs or as its var holds them outside

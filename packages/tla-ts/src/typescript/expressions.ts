@@ -27,6 +27,7 @@ import {
   getCalledMethod,
   getObjectGetter,
   getCallee,
+  getObjectFunction,
   getElement,
   getFunction,
   getFunctionCandidates,
@@ -151,6 +152,7 @@ import {
 import {
   getBuiltIn,
   getBuiltInBinding,
+  getBuiltInPath,
   isBuiltInObject,
   translateBuiltInObject,
   translateIntrinsic,
@@ -1035,8 +1037,13 @@ const translateBuiltInCall = (
     );
   }
   const callee = isMethodCall(node) ? getCallee(node.expression, context) : undefined;
-  // A call of a method that super reads where TypeScript can't tell which, as in an object literal.
-  if ((callee !== undefined && ts.isMethodDeclaration(callee)) || isSuperAccess(node.expression)) {
+  // A call of a method that super reads where TypeScript can't tell which, as in an object literal,
+  // or of a function that an object holds that only reads of its properties reach.
+  if (
+    (callee !== undefined && ts.isMethodDeclaration(callee)) ||
+    isSuperAccess(node.expression) ||
+    (isMethodCall(node) && getObjectFunction(node.expression, context) !== undefined)
+  ) {
     return translateLocalCall(node, scope, context);
   }
   // A call of a function that a field holds, or that an object other than a module's namespace
@@ -1691,7 +1698,7 @@ const translateBuiltInCall = (
   const calledMethod =
     method === "call" &&
     ts.isPropertyAccessExpression(receiver) &&
-    receiver.expression.getText() === "Object.prototype"
+    getBuiltInPath(receiver.expression, context) === "Object.prototype"
       ? receiver.name.text
       : undefined;
   const ownMethod =
@@ -3618,7 +3625,7 @@ const isNumericOperand = (node: ts.Expression, context: Context): boolean => {
     return (
       parent.arguments.includes(node) &&
       ts.isPropertyAccessExpression(parent.expression) &&
-      parent.expression.expression.getText() === "Math"
+      getBuiltInPath(parent.expression.expression, context) === "Math"
     );
   }
   if (!ts.isBinaryExpression(parent)) return false;
@@ -3715,7 +3722,7 @@ const isComputedNumber = (node: ts.Expression, context: Context, seen: Set<ts.Sy
     (ts.isPropertyAccessExpression(inner) && inner.name.text === "length") ||
     (ts.isCallExpression(inner) &&
       ts.isPropertyAccessExpression(inner.expression) &&
-      inner.expression.expression.getText() === "Math")
+      getBuiltInPath(inner.expression.expression, context) === "Math")
   );
 };
 

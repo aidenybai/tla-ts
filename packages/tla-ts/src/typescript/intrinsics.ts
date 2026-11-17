@@ -825,6 +825,7 @@ export const translateBuiltInValue = (
     | "%SetIteratorPrototype%"
     | "%GeneratorFunction%.prototype"
     | "%GeneratorFunction%.prototype.prototype"
+    | `%GeneratorFunction%.prototype.prototype.${string}`
     | "%AsyncFunction%.prototype"
     | "%AsyncGeneratorFunction%.prototype"
     | "%AsyncGeneratorFunction%.prototype.prototype"

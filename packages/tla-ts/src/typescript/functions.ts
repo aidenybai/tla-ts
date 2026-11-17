@@ -54,6 +54,7 @@ import { translateCondition, translateExpression, translateNegatedCondition } fr
 import { type Formula, ifThenElse, letIn, render, leaf } from "./formula";
 import { getAllocated, getCandidateValue, getSuperLookup, translateObjectValue } from "./heap";
 import { isComparable, mayBeNumber, useJavaScript } from "./javascript";
+import { getTakenValue, isTaken } from "./iterators";
 import {
   type Bound,
   bindNames,
@@ -402,7 +403,13 @@ export const getReceiver = (
 export const shareArguments = (values: Expression[], context: Context) => {
   const names =
     context.heap === undefined ? [] : values.map(() => context.names.getFresh("argument"));
-  const shared = context.heap === undefined ? values : names.map((name) => identifier(name));
+  // A name that holds what a pattern took from an iterator stays one that the pattern binds.
+  const shared =
+    context.heap === undefined
+      ? values
+      : names.map((name, position) =>
+          isTaken(values[position]) ? getTakenValue(identifier(name)) : identifier(name),
+        );
   return {
     shared,
     evaluate: (rest: Formula, otherwise: Formula) =>
