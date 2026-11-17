@@ -50810,4 +50810,21 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("writes a typed array's elements in the generic array methods", () => {
+    const getSource = (expected: string) => `
+      const sample = new Int8Array([1, 2, 3]);
+      Array.prototype.reverse.call(sample);
+      const joined = Array.prototype.join.call(sample, ",");
+      if (joined !== "${expected}") throw new Error("joined " + joined);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,2,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("1,2,3"))).failure?.message).toContain("joined 3,2,1");
+    });
+  });
 });

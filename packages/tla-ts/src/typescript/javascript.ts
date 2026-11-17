@@ -7303,10 +7303,14 @@ ArrayCopyWithin(heap, ref, target, start, end) ==
 
 \\* A write of an element or the length of an array that the heap holds, where a write that fails
 \\* throws a TypeError: the heap after, and whether it throws.
+\\* A typed array writes an element at a key that is a number, which never throws once the value
+\\* converts.
 LOCAL ArraySet(heap, ref, key, value) ==
   LET object == Lookup(heap, ref)
       written == DefineOwn(object, key, WriteDescriptor(object, key, value))
-  IN CASE ~CanPut(heap, ref, key) -> [heap |-> heap, isThrown |-> TRUE]
+  IN CASE IsTypedArray(heap, ref) /\\ TypedKey(key) # "property" ->
+            [heap |-> TypedSet(heap, ref, key, value), isThrown |-> FALSE]
+       [] ~CanPut(heap, ref, key) -> [heap |-> heap, isThrown |-> TRUE]
        [] AccessorOf(heap, ref, key) # Undefined ->
             [heap |-> SetProperty(heap, ref, key, value), isThrown |-> FALSE]
        [] written.isDone -> [heap |-> Update(heap, ref, written.object), isThrown |-> FALSE]
