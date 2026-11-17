@@ -132,9 +132,14 @@ export const createTraceBuilder = (context: TraceContext) => {
   ): Behavior => {
     const alias = config.alias;
     const known = traceOptions.known ?? 1;
-    // TLC's LiveWorker rebuilds the initial state of a counterexample even when it stutters.
+    const loopStart = traceOptions.loopStart;
+    const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
+    const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isFailed;
+    // TLC's LiveWorker rebuilds the initial state of a counterexample even when it stutters, but TLCTrace#printTrace keeps the initial state of a failed step.
     const initialOutput =
-      steps.length > 1 || known === 0 ? captureOutput(context.getInitialStates).lines : [];
+      known === 0 || (steps.length > 1 && (rebuilt > 0 || isRebuiltAgain || is174))
+        ? captureOutput(context.getInitialStates).lines
+        : [];
     const stepActions = steps.map((step, position) =>
       position === 0 || step.action === "Stuttering"
         ? { result: undefined, lines: [] }
@@ -148,9 +153,6 @@ export const createTraceBuilder = (context: TraceContext) => {
           ),
     );
     const outputs = stepActions.map((step) => step.lines);
-    const loopStart = traceOptions.loopStart;
-    const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
-    const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isFailed;
     if (environment.coverage && steps.length > 1) {
       if (rebuilt > 0 && isRebuiltAgain) captureOutput(context.getInitialStates);
       if (isRebuiltAgain) {

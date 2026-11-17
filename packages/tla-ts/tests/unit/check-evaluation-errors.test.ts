@@ -674,6 +674,20 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it("keeps the initial state of a failed step as it is, as TLC's TLCTrace prints it without generating the initial states again", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ TLCSet(1, 0)\nNext == \\E b \\in {1, 2} : TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<"n", b, TLCGet(1)>>) /\\ x\' = x + b\nC == IF x = 2 /\\ TLCGet(1) \\in {2, 6} THEN 1 \\in 2 ELSE TRUE\n====',
+      config: "INIT Init\nNEXT Next\nCONSTRAINT C",
+      onPrint: () => {},
+    });
+    expect([
+      result.failure?.trace.map((step) => step.output),
+      result.failure?.traceOutput,
+      result.failure?.exitCode,
+    ]).toEqual([[[], ['<<"n", 1, 3>>', '<<"n", 2, 4>>']], ['<<"n", 1, 5>>', '<<"n", 2, 6>>'], 75]);
+  });
+
   it("prints what the replay of a failed constraint prints after the trace", async () => {
     const result = await checkSteps(
       'C == PrintT(<<"c", x>>) /\\ (IF x = 2 THEN 1 \\in 2 ELSE TRUE)',
