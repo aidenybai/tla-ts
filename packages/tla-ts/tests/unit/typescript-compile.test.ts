@@ -52607,4 +52607,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("revives every value of a JSON text that a script writes", () => {
+    const text = JSON.stringify(
+      Array.from({ length: 6 }, (_, row) =>
+        Array.from({ length: 11 }, (_, column) => row * 11 + column),
+      ),
+    );
+    const getSource = (expected: string) => `
+      let count = 0;
+      let keys = "";
+      const parsed: unknown = JSON.parse("${text}", (key, value) => {
+        count += 1;
+        if (count >= 10 && count <= 13) keys += key + ";";
+        return typeof value === "number" ? value * 2 : value;
+      });
+      const result = [count, keys, JSON.stringify(parsed).length].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("73,9;10;0;0;,222"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("73,9;10;0;0;,221"))).failure?.message).toContain(
+        "73,9;10;0;0;,222",
+      );
+    });
+  });
 });
