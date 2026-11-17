@@ -2931,6 +2931,45 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each<[string, [string, string][]]>([
+    [
+      "G(F(_)) == F(1)\nOp(x) == {x}\nB == G(Op!1!3)",
+      [
+        [
+          "line 4, col 13 to line 4, col 13",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
+      "G(F(_)) == F(1)\nB == G(Nope!1)",
+      [["line 3, col 8 to line 3, col 11", "Unknown operator: `Nope'."]],
+    ],
+    [
+      "G(F(_)) == F(1)\nOp(x) == {Nope(x)}\nB == G(Op!1!1)",
+      [
+        ["line 3, col 11 to line 3, col 14", "Unknown operator: `Nope'."],
+        ["line 4, col 13 to line 4, col 13", noOperands],
+      ],
+    ],
+  ])(
+    "reports a failed selection in %j as an argument that is not an operator like SANY",
+    async (source, errors) => {
+      const line = source.split("\n").length + 1;
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          [
+            ...errors,
+            [
+              `line ${line}, col 6 to line ${line}, col 14`,
+              "Argument number 1 to operator 'G' \nshould be a 1-parameter operator.",
+            ],
+          ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(

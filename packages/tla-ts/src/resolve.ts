@@ -1210,6 +1210,7 @@ const matchArgument = (
   if (arg.kind === "Lambda") {
     if (selections.has(arg)) resolveExpression(arg, scope, unit);
     else resolveLambda(arg, scope, unit);
+    if (findNullError(nullSelections.get(arg))) return false;
     const isMatched = arg.params.length === expected;
     if (!isMatched && selections.has(arg)) {
       report(range, `Expected arity ${expected} but found operator of arity ${arg.params.length}.`);
@@ -1225,7 +1226,7 @@ const matchArgument = (
   }
   if (arg.kind === "Subexpression") {
     resolveExpression(arg, scope, unit);
-    return true;
+    return false;
   }
   if (reference !== arg) {
     const failed = findNullError(nullSelections.get(arg));
