@@ -3681,6 +3681,20 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     }
     case "Label":
       return compileValue(program, expression.body, frame);
+    // A set of functions or records is every element its enumeration gives, in TLC's order of sets.
+    case "FunctionSet":
+    case "RecordSet": {
+      const loop = compileBound(program, expression, frame);
+      const type: Type = { kind: "Set", element: loop.element };
+      const [result, element] = ["r", "e"].map((prefix) => getName(program, prefix));
+      return {
+        type,
+        emit: () =>
+          isMask(type, program.plains)
+            ? `(() => { let ${result} = 0; ${loop.header(element)} { ${result} |= H.bit(${element}); } return ${result}; })()`
+            : `(() => { const ${result} = []; ${loop.header(element)} { ${result}.push(${element}); } return H.normalize(${getComparerCode(program, loop.element)}, ${result}); })()`,
+      };
+    }
     default:
       return unsupported();
   }
