@@ -67,6 +67,8 @@ export interface CompiledSpec {
   // A script without exported actions ends where Node's process would exit, so its last states
   // are no deadlock.
   isScript: boolean;
+  // What the check leaves out, such as an exported function that the model calls nowhere.
+  notes: string[];
 }
 
 const getMagnitude = (value: Expression) =>
@@ -150,6 +152,7 @@ export const emit = (
   model: Model,
   sections: Sections,
   context: Context,
+  notes: string[],
 ): CompiledSpec => {
   if (sections.views.length > 1) throw new TlaTypeScriptError("Tag only one function @view");
   const location = getLocation(sourceFile);
@@ -339,6 +342,7 @@ export const emit = (
     preparedModules,
     regions: getRegions(source, sourceFile, model, context),
     isScript: model.exported.length === 0,
+    notes,
     variables: model.variables.map((variable) => {
       const declaration = variable.declaration;
       const type = context.checker.getTypeAtLocation(declaration.name ?? declaration);

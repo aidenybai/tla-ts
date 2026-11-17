@@ -8907,12 +8907,50 @@ describe("errors", () => {
     );
   });
 
-  it("rejects a parameter without a finite type", () => {
-    expect(() =>
-      compile(`let count = 0;\nexport const run = (step: () => number) => { count += step(); };`),
-    ).toThrow(
-      "spec.ts:2:21 tla-ts can't choose every value of the parameter step: () => number isn't finite",
-    );
+  describe("calls no exported function whose parameter takes values tla-ts can't list", () => {
+    const getSource = (expected: number) => `
+      let count = 0;
+      count += 2;
+      if (count !== ${expected}) throw new Error("count " + count);
+      export const run = (step: () => number) => {
+        count += step();
+      };
+      export const bump = (by: 1 | 2) => {
+        if (count < 4) count += by;
+      };
+    `;
+
+    it("notes the export that it calls nowhere", () => {
+      expect(compile(getSource(2)).notes).toEqual([
+        "tla-ts calls no run: its parameter step takes values it can't list",
+      ]);
+    });
+
+    it("checks the top level, and keeps an export with finite parameters as an action", async () => {
+      const result = await checkModel(getSource(2));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        4,
+      ]);
+    });
+
+    it("rejects another outcome of the top level", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain("count 2");
+    });
+
+    it("notes an exported function that throws on every call", async () => {
+      const source = `
+        export function cannotCoerce(): never {
+          throw new Error("Code fragments must be rendered by their module");
+        }
+        export const isPositive = (): boolean => 1 > 0;
+      `;
+      expect(compile(source).notes).toEqual([
+        "tla-ts calls no cannotCoerce: every call of it throws",
+      ]);
+      expect((await checkModel(source)).failure).toBeUndefined();
+    });
   });
 
   it("fails the check where an action writes past the end of an array", async () => {
@@ -48899,12 +48937,14 @@ describe("BigInts", () => {
       );
     });
 
-    it("stops at a parameter whose objects the heap would hold", () => {
-      expect(() =>
-        compile(`${getSource("made.items.length !== size")}
-          export const read = (box: Box) => box.items.length;
-        `),
-      ).toThrow("Box isn't finite: tla-ts can't list the objects that the heap holds");
+    it("calls no export with a parameter whose objects the heap would hold", async () => {
+      const source = `${getSource("made.items.length !== size")}
+        export const read = (box: Box) => box.items.length;
+      `;
+      expect(compile(source).notes).toEqual([
+        "tla-ts calls no read: its parameter box takes values it can't list",
+      ]);
+      expect((await checkModel(source)).failure).toBeUndefined();
     });
   });
 
@@ -50854,17 +50894,15 @@ describe("BigInts", () => {
   });
 
   describe("names what to do where an exported function's parameter has no finite model", () => {
-    it("stops at a type with no end", () => {
-      expect(() =>
+    it("calls no export whose parameter's type has no end", () => {
+      expect(
         compile(`
           let count = 0;
           export const add = (options: { amount?: 1 | 2 }) => {
             count += options.amount ?? 0;
           };
-        `),
-      ).toThrow(
-        "tla-ts can't choose every value of the parameter options: { amount?: 1 | 2 | undefined; } isn't finite: the optional field amount may be missing. Give options a finite type",
-      );
+        `).notes,
+      ).toEqual(["tla-ts calls no add: its parameter options takes values it can't list"]);
     });
 
     it("stops at a default", () => {
