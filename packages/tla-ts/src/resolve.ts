@@ -1372,14 +1372,14 @@ const resolveExpression = (
       unit.errors.push(failed);
       return;
     }
-    const source = selectionSources.get(expression);
-    if (source) {
-      Object.assign(expression, source);
-      const arity = renamedArities.get(source);
-      if (arity !== undefined) renamedArities.set(expression, arity);
-    }
     resolveExpression(expression, scope, { ...unit, isGenerated: true });
     return;
+  }
+  const source = selectionSources.get(expression);
+  if (source) {
+    Object.assign(expression, source);
+    const arity = renamedArities.get(source);
+    if (arity !== undefined) renamedArities.set(expression, arity);
   }
   const resolveAll = (expressions: Expression[]) =>
     expressions.forEach((child) => resolveExpression(child, scope, unit));

@@ -58,6 +58,15 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it("selects an operand that contains a reference to an operand that contains a reference", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nR == {5}\nQ == {R!1 + 2}\nOp == {Q!1 + 1, 2}\nVARIABLE x\nInit == x = 0\nNext == x' = Op!1\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 8 }]);
+  });
+
   it("selects a label through an instance whose operators the instancing module does not extend", async () => {
     const result = await check({
       source:
