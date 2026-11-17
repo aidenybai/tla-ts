@@ -2,7 +2,7 @@ import { FAMILY_BASIC, FAMILY_USER, SORT_BOOL } from "./ast";
 import type { Context } from "./context";
 import { Enode } from "./enode";
 import { FuncInterp, ProtoModel } from "./proto-model";
-import type { DependentValue } from "./theory";
+import type { DependentValue, ExtraFreshValue } from "./theory";
 
 export interface GeneratedModel {
   model: ProtoModel;
@@ -19,6 +19,9 @@ const isIncludedFuncInterp = (context: Context, decl: number) => {
   return context.getTheory(family)?.includeFuncInterp(decl) ?? true;
 };
 
+const GREY = 1;
+const BLACK = 2;
+
 export const mkModel = (context: Context): GeneratedModel => {
   const manager = context.manager;
   const model = new ProtoModel(manager);
@@ -34,58 +37,96 @@ export const mkModel = (context: Context): GeneratedModel => {
         context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr,
       );
   }
-  const root2value = new Map<Enode, number>();
-  const freshRoots: Enode[] = [];
-  const dependentValues = new Map<Enode, DependentValue>();
+  const roots: Enode[] = [];
+  const procs = new Map<Enode, number | DependentValue>();
+  const freshRoots = new Set<Enode>();
+  const extraFreshValues = new Set<ExtraFreshValue>();
   for (const node of context.enodes) {
     if (node.root !== node) continue;
     const expr = node.owner;
     if (!context.isRelevant(expr) && !manager.isValue(expr)) continue;
+    roots.push(node);
     const sort = manager.sorts[expr];
     const theory = context.getTheory(manager.getSortFamily(sort));
     if (sort === SORT_BOOL)
-      root2value.set(node, context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr);
-    else if (manager.isModelValue(expr)) root2value.set(node, expr);
+      procs.set(node, context.findAssignment(expr) > 0 ? manager.trueExpr : manager.falseExpr);
+    else if (manager.isModelValue(expr)) procs.set(node, expr);
     else if (theory !== undefined && theory.buildModels()) {
-      const value = node.getThVar(theory.id) < 0 ? undefined : theory.mkValue(node);
-      if (value === undefined) freshRoots.push(node);
-      else if (typeof value === "number")
-        root2value.set(node, manager.isValue(expr) ? expr : value);
-      else dependentValues.set(node, value);
-    } else {
-      const value = model.getFreshValue(sort) ?? model.getSomeValue(sort);
-      root2value.set(node, manager.isValue(expr) ? expr : value);
-    }
+      const proc = node.getThVar(theory.id) < 0 ? undefined : theory.mkValue(node);
+      if (proc === undefined) {
+        const freshValue: ExtraFreshValue = { sort, value: undefined };
+        freshRoots.add(node);
+        extraFreshValues.add(freshValue);
+        procs.set(node, { dependencies: [freshValue], mkValue: (values) => values[0] });
+      } else {
+        if (typeof proc !== "number")
+          for (const dependency of proc.dependencies)
+            if (!(dependency instanceof Enode)) extraFreshValues.add(dependency);
+        procs.set(node, proc);
+      }
+    } else procs.set(node, model.getFreshValue(sort) ?? model.getSomeValue(sort));
   }
-  for (const value of root2value.values()) model.registerValue(value);
-  // A value that depends on others comes after them, and before the fresh values of its sort.
-  const getFreshValue = (node: Enode) => {
-    const sort = manager.sorts[node.owner];
-    const freshValue = model.getFreshValue(sort) ?? model.getSomeValue(sort);
-    const value = manager.isValue(node.owner) ? node.owner : freshValue;
-    root2value.set(node, value);
-    return value;
+  // A fresh value comes after the roots of its sort that are not fresh, and differs from their values.
+  const colors = new Map<Enode | ExtraFreshValue, number>();
+  const traversedSorts = new Set<number>();
+  const sortedSources: (Enode | ExtraFreshValue)[] = [];
+  const todo: (Enode | ExtraFreshValue)[] = [];
+  const visitChild = (source: Enode | ExtraFreshValue) => {
+    if (!colors.has(source)) todo.push(source);
   };
-  const getDependentValue = (node: Enode): number => {
-    const existing = root2value.get(node);
-    if (existing !== undefined) return existing;
-    const dependent = dependentValues.get(node);
-    if (dependent === undefined) return getFreshValue(node);
-    dependentValues.delete(node);
-    const values = dependent.dependencies.map((dependency) => {
-      if (dependency instanceof Enode) return getDependentValue(dependency.root);
-      dependency.value ??=
-        model.getFreshValue(dependency.sort) ?? model.getSomeValue(dependency.sort);
-      return dependency.value;
-    });
-    // A class whose root is a value, such as a constant array, takes it after its dependencies.
-    const value = manager.isValue(node.owner) ? node.owner : dependent.mkValue(values);
+  const processSource = (source: Enode | ExtraFreshValue) => {
+    if (colors.get(source) === BLACK) return;
+    todo.push(source);
+    while (todo.length > 0) {
+      const current = todo[todo.length - 1];
+      const color = colors.get(current);
+      if (color === BLACK) todo.pop();
+      else if (color === GREY) {
+        colors.set(current, BLACK);
+        sortedSources.push(current);
+      } else {
+        colors.set(current, GREY);
+        if (current instanceof Enode) {
+          const proc = procs.get(current);
+          if (proc !== undefined && typeof proc !== "number")
+            for (const dependency of proc.dependencies)
+              visitChild(dependency instanceof Enode ? dependency.root : dependency);
+        } else if (!traversedSorts.has(current.sort)) {
+          for (const root of roots)
+            if (manager.sorts[root.owner] === current.sort && !freshRoots.has(root))
+              visitChild(root);
+          traversedSorts.add(current.sort);
+        }
+      }
+    }
+  };
+  for (const freshValue of extraFreshValues) processSource(freshValue);
+  for (const root of freshRoots) processSource(root);
+  for (const root of roots) processSource(root);
+  const root2value = new Map<Enode, number>();
+  for (const source of sortedSources) {
+    if (!(source instanceof Enode)) {
+      source.value = model.getFreshValue(source.sort) ?? undefined;
+      continue;
+    }
+    const expr = source.owner;
+    const sort = manager.sorts[expr];
+    const proc = procs.get(source) ?? model.getFreshValue(sort) ?? model.getSomeValue(sort);
+    const value = manager.isValue(expr)
+      ? expr
+      : typeof proc === "number"
+        ? proc
+        : proc.mkValue(
+            proc.dependencies.map((dependency) =>
+              dependency instanceof Enode
+                ? (root2value.get(dependency.root) ??
+                  model.getSomeValue(manager.sorts[dependency.owner]))
+                : (dependency.value ?? model.getSomeValue(dependency.sort)),
+            ),
+          );
     model.registerValue(value);
-    root2value.set(node, value);
-    return value;
-  };
-  for (const node of dependentValues.keys()) getDependentValue(node);
-  for (const node of freshRoots) if (!root2value.has(node)) getFreshValue(node);
+    root2value.set(source, value);
+  }
   const getValue = (node: Enode) =>
     root2value.get(node.root) ?? model.getSomeValue(manager.sorts[node.owner]);
   for (const node of context.enodes)

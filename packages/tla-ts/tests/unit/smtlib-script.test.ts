@@ -328,6 +328,27 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("takes the fresh values of a model in the order that their stubs were made", () => {
+    expect(
+      run([
+        "(declare-fun x0 () Int)",
+        "(declare-fun x1 () Int)",
+        "(declare-fun q (Int Int) Bool)",
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a2 (Array Int Int))",
+        "(assert (distinct (select (store a0 x0 x1) 1) (ite (= (ite (q 6 (- x0)) (- 2) x0) (select (store a2 x1 x1) x0)) x0 (- x0 x1))))",
+        "(check-sat)",
+        "(get-value (a0 a2))",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "((a0 ((as const (Array Int Int)) 2))",
+        " (a2 (store ((as const (Array Int Int)) 4) 1 (- 2))))",
+      ].join("\n"),
+    ]);
+  });
+
   it("completes the empty model of a goal that simplifies to true", () => {
     expect(
       run([
