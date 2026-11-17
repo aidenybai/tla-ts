@@ -152,6 +152,7 @@ export interface Environment {
   variableIndex: Map<string, number>;
   facts: DefinitionFacts;
   startupValues: (Value | undefined)[];
+  tlcEvalValues: WeakMap<Expression, Value>;
   substitutedDefinitions: Set<Definition>;
   instanceParams: Set<OperatorParam>;
   evaluators: WeakMap<Expression, Evaluator>;
@@ -1592,11 +1593,17 @@ const compileApply = (
     // Deviation from TLC: TLCEval#tlcEval evaluates an argument SANY takes for constant, such as Print(v, TRUE), in an empty state.
     const isCached =
       !contextualApplications.has(expression) && !isNonconstant(args[0], environment);
-    return (context) =>
-      global.evaluate(
-        getLazyArguments(args, context),
-        isCached && context.scope === undefined ? undefined : context,
-      );
+    const tlcEvalValues = environment.tlcEvalValues;
+    return (context) => {
+      if (!isCached || context.scope !== undefined) {
+        return global.evaluate(getLazyArguments(args, context), context);
+      }
+      const cached = tlcEvalValues.get(expression);
+      if (cached !== undefined) return cached;
+      const value = global.evaluate(getLazyArguments(args, context), undefined);
+      tlcEvalValues.set(expression, value);
+      return value;
+    };
   }
   if (global?.kind === "Builtin" && global.name === "\\subseteq" && args.length === 2) {
     const left = getEvaluator(args[0], environment);

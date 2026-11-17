@@ -119,6 +119,16 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     ]);
   });
 
+  it("draws once for a constant TLCEval in the next-state relation", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x, n\nInit == x = 0 /\\ n = 0\nNext == n < 3 /\\ n' = n + 1 /\\ x' = TLCEval(RandomElement(1..1000))\n====",
+      config: "INIT Init\nNEXT Next",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => step.state.x)).toEqual([0, 794, 794, 794]);
+  });
+
   it('reports the seed in TLCGet("config")', async () => {
     const result = await check({
       source:

@@ -1284,6 +1284,28 @@ describe("evaluation errors match TLC", () => {
     expect([result.status, prints]).toEqual(["success", ["0  TRUE"]]);
   });
 
+  it("evaluates a constant TLCEval argument once for every state", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == x >= 0 /\\ TLCEval(Print("b", TRUE))\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["deadlock", ['"b"  TRUE']]);
+  });
+
+  it("evaluates a constant TLCEval argument again under a bound name", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nASSUME \\A i \\in 1..3 : TLCEval(Print("a", 7)) = 7\n====',
+      config: "",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"a"  7', '"a"  7', '"a"  7']);
+  });
+
   it("rejects a mistyped membership outside an assumption", async () => {
     const result = await check({
       source:
