@@ -803,6 +803,16 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
   });
 
+  it("selects a subexpression of an operator symbol's definition as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\na ^# == a = 1\na (+) b == <<a, b + 1>>\nVARIABLE x\nInit == x = 0\nNext == x' = x\nASSUME ^#(2)!1 = 2\nASSUME (+)(1, 2)!>> = 3\nASSUME \\oplus(4, 5)!<< = 4\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("success");
+    expect([result.generatedStates, result.distinctStates]).toEqual([2, 1]);
+  });
+
   it("stops computing ENABLED at the first successor like TLC", async () => {
     const printed: string[] = [];
     const result = await check({

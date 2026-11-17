@@ -510,6 +510,37 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "f == '!x /\\ ^#!x /\\ \\cup!x /\\ -.!x /\\ ^+!x /\\ ^#(1)!x /\\ \\union!1 /\\ '(1)!1 /\\ \\X!1",
+      [
+        ["line 2, col 6 to line 2, col 6", "Cannot take subexpression of `''."],
+        ["line 2, col 13 to line 2, col 16", "Unknown operator: `^#!x'."],
+        ["line 2, col 21 to line 2, col 24", "Cannot take subexpression of `\\union'."],
+        ["line 2, col 31 to line 2, col 34", "Unknown operator: `-.!x'."],
+        ["line 2, col 39 to line 2, col 42", "Unknown operator: `^+!x'."],
+        ["line 2, col 47 to line 2, col 53", "Unknown operator: `^#!x'."],
+        ["line 2, col 58 to line 2, col 63", "Cannot take subexpression of `\\union'."],
+        ["line 2, col 70 to line 2, col 70", "Cannot take subexpression of `''."],
+        ["line 2, col 80 to line 2, col 81", "Cannot take subexpression of `\\times'."],
+      ],
+    ],
+    [
+      "a ^# == a = 1\nf == ^#!x /\\ ^#(2)!1 /\\ ^#!1",
+      [
+        ["line 3, col 6 to line 3, col 9", "The operator ^# requires 1 arguments."],
+        ["line 3, col 25 to line 3, col 28", "The operator ^# requires 1 arguments."],
+      ],
+    ],
+    [
+      "CONSTANT c\nOp(p) == p!1 /\\ c!x /\\ TRUE!1 /\\ zz!1 /\\ (\\A z \\in {1} : z!x)",
+      [
+        ["line 3, col 10 to line 3, col 10", "Cannot take subexpression of `p'."],
+        ["line 3, col 17 to line 3, col 17", "Cannot take subexpression of `c'."],
+        ["line 3, col 24 to line 3, col 27", "Cannot take subexpression of `TRUE'."],
+        ["line 3, col 34 to line 3, col 35", "Unknown operator: `zz'."],
+        ["line 3, col 58 to line 3, col 58", "Cannot take subexpression of `z'."],
+      ],
+    ],
+    [
       "CONSTANT _ <= _\na =< b == 1",
       [
         ["line 3, col 1 to line 3, col 11", "Operator \\leq already defined or declared."],

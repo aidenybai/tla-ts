@@ -282,6 +282,14 @@ const getFixity = (expression: Expression) => {
   return isBefore(expression.location, expression.args[0].location) ? "prefix" : "postfix";
 };
 
+const SELECTABLE_KINDS = new Set<SymbolKind>(["Definition", "Instance", "Theorem"]);
+
+const reportUnselectable = (name: string, range: SourceRange, unit: Unit) =>
+  unit.errors.push({
+    location: formatRange(range),
+    message: `Cannot take subexpression of \`${resolveSynonym(name)}'.`,
+  });
+
 const isOperatorSymbol = (name: string) => !/^[\p{L}\d_]/u.test(name);
 
 const isStepName = (name: string) =>
@@ -702,12 +710,18 @@ const getSymbolArity = (
     return symbol.arity;
   }
   const prefix = name.includes("!") ? name.slice(0, name.indexOf("!")) : "";
-  const isSelected =
-    prefix !== "" &&
-    (lookupLocal(scope, prefix) !== undefined ||
-      findSymbol(prefix, unit) !== undefined ||
-      unit.facts.has(prefix));
-  if (isSelected) {
+  const selected =
+    prefix === "" ? undefined : (lookupLocal(scope, prefix) ?? findSymbol(prefix, unit));
+  if (selected && !SELECTABLE_KINDS.has(selected.kind)) {
+    reportUnselectable(
+      prefix,
+      (expression.kind !== "OperatorReference" && expression.selectorRanges?.[0]) ||
+        getSpelledNameRange(expression, name),
+      unit,
+    );
+    return undefined;
+  }
+  if (selected || (prefix !== "" && unit.facts.has(prefix))) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
   const fixity = getFixity(expression);
@@ -1184,7 +1198,19 @@ const resolveExpression = (
       expression.selectors
         .flatMap((selector) => ("args" in selector ? selector.args : []))
         .forEach((arg) => resolveArgument(arg, scope, unit));
-      checkReference(expression, scope, unit, false);
+      if (checkReference(expression, scope, unit, false)) return;
+      const head = expression.selectors[0];
+      const range = expression.selectorRanges?.[0];
+      if (head.kind !== "Name" || expression.selectors[1].kind === "Name" || !range) return;
+      const binding = lookupLocal(scope, head.name) ?? findSymbol(head.name, unit);
+      if ((binding === undefined && !unit.facts.has(head.name)) || binding?.kind === "Instance") {
+        unit.errors.push({
+          location: formatRange(range),
+          message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
+        });
+      } else if (binding && !SELECTABLE_KINDS.has(binding.kind)) {
+        reportUnselectable(head.name, range, unit);
+      }
     }
   }
 };

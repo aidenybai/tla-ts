@@ -374,6 +374,7 @@ const resolveSubexpressions = (
           : undefined;
   const first = selectors?.[0];
   if (!selectors || (first?.kind === "Name" && isGoal(first.name))) return mapped;
+  if (first?.kind === "Name" && selectors[1].kind !== "Name" && !lookup(first.name)) return mapped;
   const selected = selectSubexpression(selectors, lookup, mapped, isOperator);
   if (selected !== mapped) selections.add(selected);
   return selected;
