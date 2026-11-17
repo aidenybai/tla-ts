@@ -7,6 +7,7 @@ import {
   isComponentErrorMade,
   summarizeFunctions,
 } from "./change-summaries";
+import { getPosition } from "./program-nodes";
 import { getModuleObjects } from "./common-js";
 import { isAmbientCode } from "./early-errors";
 import { BUILT_INS } from "./built-ins";
@@ -70,6 +71,7 @@ import {
   type HeapClass,
   type ChangeSummary,
   type Effects,
+  type NodeEffects,
   type Context,
   type FunctionNode,
   getAccessKey,
@@ -15445,15 +15447,27 @@ const getNodeEffects = (
   context: Context,
 ) =>
   (functions.size === 0 || !isCallingParameter(node, functions, context)
-    ? context.effects.get(node)
+    ? getFoundEffects(node, context.effects, context)
     : undefined) ?? getEffects(node, functions, context);
 
+const getFoundEffects = (node: ts.Node, effects: NodeEffects, context: Context) => {
+  const position = getPosition(context.nodes, node);
+  return position < 0 ? effects.elsewhere.get(node) : effects.positions[position];
+};
+
 // What each node of the model's code changes where no parameter holds a function.
-export const findEffects = (reached: readonly ts.Node[], context: Context) => {
-  const effects = new Map<ts.Node, Effects>();
+export const findEffects = (reached: readonly ts.Node[], context: Context): NodeEffects => {
+  const positions = new Array<Effects | undefined>(context.nodes.nodes.length).fill(undefined);
+  const elsewhere = new Map<ts.Node, Effects>();
+  const found: Effects[] = [];
+  const effects = { positions, elsewhere, found };
   const visit = (node: ts.Node) => {
-    if (effects.has(node)) return;
-    effects.set(node, getEffects(node, NO_FUNCTIONS, context));
+    if (getFoundEffects(node, effects, context) !== undefined) return;
+    const position = getPosition(context.nodes, node);
+    const own = getEffects(node, NO_FUNCTIONS, context);
+    if (position < 0) elsewhere.set(node, own);
+    else positions[position] = own;
+    found.push(own);
     ts.forEachChild(node, visit);
   };
   reached.forEach(visit);
@@ -15464,7 +15478,7 @@ export const findEffects = (reached: readonly ts.Node[], context: Context) => {
 // which tla-ts finds once, from what findEffects found, before it compiles the code.
 export const summarizeEffects = (context: Context) =>
   summarizeFunctions(
-    [...context.effects.values()].flatMap((effects) => effects.called),
+    context.effects.found.flatMap((effects) => effects.called),
     context.nodes,
     (node) => getNodeEffects(node, NO_FUNCTIONS, context),
   );

@@ -269,7 +269,15 @@ export interface Context {
   changes: ChangeTable | undefined;
   // What running each node of the model's code changes where no parameter holds a function, which
   // tla-ts finds once before it compiles the code.
-  effects: ReadonlyMap<ts.Node, Effects>;
+  effects: NodeEffects;
+}
+
+// The effects of the nodes of the program's files by their positions, and of the few nodes that no
+// file walks to, such as JSDoc's, with all of them in the order that findEffects found them.
+export interface NodeEffects {
+  positions: (Effects | undefined)[];
+  elsewhere: ReadonlyMap<ts.Node, Effects>;
+  found: Effects[];
 }
 
 // What running a node changes, apart from what the functions that it runs change.
@@ -657,7 +665,7 @@ export const createContext = (
     regExps: [],
     passed: new Map(),
     changes: undefined,
-    effects: new Map(),
+    effects: { positions: [], elsewhere: new Map(), found: [] },
     assignedNames: new Map(
       files.map((file) => [
         file,
