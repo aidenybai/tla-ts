@@ -1,6 +1,5 @@
 import {
   getChildren,
-  getFreeNames,
   getReferencedName,
   isLocallyResolved,
   type Bound,
@@ -1981,14 +1980,18 @@ export const getLazyFilter = (
     createFiltered(base, context, predicate, node);
 };
 
-// A predicate that can't tell the elements apart holds of every element or of none.
+const hasLocalName = (expression: Expression): boolean =>
+  isLocallyResolved(expression) ||
+  expression.kind === "OperatorReference" ||
+  getChildren(expression).some(hasLocalName);
+
 export const isUniformPredicate = (
   expression: Expression & { kind: "SetFilter" },
   environment: Environment,
 ) =>
   expression.bound.pattern.kind === "Name" &&
   !environment.coverage &&
-  !getFreeNames(expression.predicate).has(expression.bound.pattern.name) &&
+  !hasLocalName(expression.predicate) &&
   !isExpressionImpure([expression.predicate], environment, "varying");
 
 export const expectFilterPredicate = (

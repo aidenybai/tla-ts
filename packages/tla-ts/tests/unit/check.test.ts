@@ -525,6 +525,31 @@ describe("check matches TLC", () => {
     expect(prints).toEqual(['"p"', '"p"', '"p"', "<<{}, {1, 2, 3}, {1, 2, 3}, {}>>"]);
   });
 
+  it("filters a set by a predicate that calls an operator from outside it for every element like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nApply(F(_), v) == F(v)\nCall(F(_)) == {e \\in 1..3 : ~F("c")}\nPass(F(_)) == {e \\in 1..3 : ~Apply(F, "p")}\nInfix(_ \\prec _) == {e \\in 1..3 : ~(1 \\prec 2)}\nBin(a, b) == PrintT(<<a, b>>)\nASSUME PrintT(<<Call(PrintT), Pass(PrintT), Infix(Bin), LET P(a) == PrintT(a) IN {e \\in 1..3 : ~P("l")}>>)\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual([
+      '"c"',
+      '"c"',
+      '"c"',
+      '"p"',
+      '"p"',
+      '"p"',
+      "<<1, 2>>",
+      "<<1, 2>>",
+      "<<1, 2>>",
+      '"l"',
+      '"l"',
+      '"l"',
+      "<<{}, {}, {}, {}>>",
+    ]);
+  });
+
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
     const result = await check({
       source:
