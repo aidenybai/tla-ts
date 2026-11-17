@@ -49157,4 +49157,42 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("binds a built-in method that a read of a library method gives", () => {
+    const getSource = (expected: string) => `
+      const box: { seen: string[] } = { seen: [] };
+      const target: Record<string, unknown> = { own: 1 };
+      const original = target.hasOwnProperty.bind(target);
+      Object.defineProperty(target, "hasOwnProperty", {
+        configurable: true,
+        value: (key: PropertyKey) => key === "own",
+        writable: true,
+      });
+      const larger = Math.max.bind(null, 1);
+      box.seen.push(typeof original, original.name, String(original.length), larger.name);
+      box.seen.push(String(larger.length));
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("function,bound hasOwnProperty,1,bound max,1"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const result = await checkModel(getSource("function,bound hasOwnProperty,0,bound max,1"));
+      expect(result.failure?.message).toContain("seen function,bound hasOwnProperty,1,bound max,1");
+    });
+
+    it("stops where the read gives another function", async () => {
+      const result = await checkModel(`
+        const target: Record<string, unknown> = {};
+        Object.defineProperty(target, "hasOwnProperty", { value: () => true });
+        const original = target.hasOwnProperty.bind(target);
+        if (original.name !== "bound value") throw new Error(original.name);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't tell which function this bind binds");
+    });
+  });
 });

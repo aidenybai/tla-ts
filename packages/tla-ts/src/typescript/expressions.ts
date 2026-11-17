@@ -146,6 +146,7 @@ import {
 } from "./heap";
 import {
   getBuiltIn,
+  getBuiltInBinding,
   isBuiltInObject,
   translateBuiltInObject,
   translateIntrinsic,
@@ -966,7 +967,7 @@ const translateBuiltInCall = (
     }
     return made;
   }
-  if (getBinding(node, context) !== undefined) {
+  if (getBinding(node, context) !== undefined || getBuiltInBinding(node, context) !== undefined) {
     const bound = scope.allocated.get(node);
     if (bound === undefined) {
       throw new TlaTypeScriptError("Make objects only where a statement always runs", node);

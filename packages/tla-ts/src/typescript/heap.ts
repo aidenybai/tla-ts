@@ -90,7 +90,9 @@ import {
 } from "./expressions";
 import {
   getBuiltIn,
+  getBuiltInBinding,
   getGeneratorPrototypeRef,
+  translateBoundBuiltIn,
   isBuiltInObject,
   translateBuiltInObject,
   translateBuiltInValue,
@@ -1569,6 +1571,82 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     );
   }
 
+  const builtInBinding = getBuiltInBinding(node, context);
+  if (builtInBinding !== undefined) {
+    const properties = BUILT_INS[builtInBinding.path];
+    const getProperty = (key: string) =>
+      properties[3].find((property) => property[0] === key && property.length === 3)?.[2];
+    const length = getProperty("length");
+    const name = getProperty("name");
+    if (length?.startsWith("n") !== true || name?.startsWith("s") !== true) {
+      throw new TlaTypeScriptError(`tla-ts can't bind ${builtInBinding.path}`, node);
+    }
+    const targetLength = Number(length.slice(1));
+    return share(
+      translateExpression(builtInBinding.target, scope, context),
+      "target",
+      context,
+      (target) =>
+        ifExpression(
+          junction("And", [
+            useJavaScript(
+              "SameValue",
+              [target, translateBoundBuiltIn(builtInBinding.path, node, context)],
+              context,
+            ),
+            useJavaScript(
+              "HoldsBuiltIn",
+              [heap, target, string("bind"), string("Function.prototype.bind")],
+              context,
+            ),
+            useJavaScript(
+              "SameValue",
+              [
+                useJavaScript("Get", [heap, target, string("length")], context),
+                number(targetLength),
+              ],
+              context,
+            ),
+            useJavaScript(
+              "SameValue",
+              [
+                useJavaScript("Get", [heap, target, string("name")], context),
+                string(name.slice(1)),
+              ],
+              context,
+            ),
+            // The receiver and the arguments that bind binds run, though only a call reads them.
+            ...builtInBinding.arguments.map((argument) => {
+              const value = translateExpression(argument, scope, context);
+              return apply("=", [value, value]);
+            }),
+          ]),
+          useJavaScript(
+            "Allocate",
+            [
+              heap,
+              useJavaScript(
+                "BoundFunctionObject",
+                [
+                  useJavaScript("Prototype", [heap, target], context),
+                  string(name.slice(1)),
+                  number(
+                    Math.max(0, targetLength - Math.max(0, builtInBinding.arguments.length - 1)),
+                  ),
+                  boolean(properties[4]),
+                ],
+                context,
+              ),
+            ],
+            context,
+          ),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which function this bind binds"),
+          ]),
+        ),
+    );
+  }
   const binding = getBinding(node, context);
   if (binding !== undefined) {
     const targetLength = getFunctionLength(getParameters(binding.target));
@@ -2506,6 +2584,7 @@ const getOrderedSetMethod = (node: ts.Node, context: Context) =>
 
 export const isAllocation = (node: ts.Node, context: Context) =>
   getBinding(node, context) !== undefined ||
+  getBuiltInBinding(node, context) !== undefined ||
   (ts.isCallExpression(node) &&
     (isDescription(node, context) ||
       isDescriptionOfAll(node, context) ||
