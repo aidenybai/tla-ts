@@ -563,6 +563,29 @@ describe("blast-term-ite, as Z3 5.3.2 lifts the term if-then-elses", () => {
   });
 });
 
+describe("the arithmetic probes, as Z3 5.3.2 measures a goal", () => {
+  it("measure both sides of each comparison and each numeral", () => {
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-const x Int)",
+        "(declare-const y Real)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const b Bool)",
+        "(assert (> (* x x (f x)) 3))",
+        "(assert (= (* 2.5 y y y) (/ 7.0 3.0)))",
+        "(assert (forall ((z Int)) (<= (* z x) (- 300))))",
+        "(assert (= b (> x 1000000)))",
+        '(apply (and-then (echo "max-deg " arith-max-deg " avg-deg " arith-avg-deg) (echo "max-bw " arith-max-bw " avg-bw " arith-avg-bw) (fail-if (> arith-avg-deg 1))))',
+      ]),
+    ).toEqual([
+      "max-deg 3 avg-deg 1.25",
+      "max-bw 20 avg-bw 6.83333",
+      '(error "tactic failed: fail-if tactic")',
+    ]);
+  });
+});
+
 describe("if-no-models, as Z3 5.3.2 runs it", () => {
   it("runs its tactic when the goal produces no models", () => {
     expect(
