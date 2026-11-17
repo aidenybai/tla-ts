@@ -49377,4 +49377,30 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("iterates an array while the loop deletes a set's keys", () => {
+    const getSource = (expected: string) => `
+      const listeners = new Set<{ name: string }>([{ name: "a" }, { name: "b" }]);
+      const remove = (listener: { name: string }) => {
+        listeners.delete(listener);
+      };
+      const notify = (pending = [...listeners]) => {
+        for (const listener of pending) {
+          listener.name = listener.name + "!";
+          remove(listener);
+        }
+        return pending.map((listener) => listener.name).join("+");
+      };
+      const seen = [notify(), listeners.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a!+b!,0"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("a!,1"))).failure?.message).toContain("seen a!+b!,0");
+    });
+  });
 });

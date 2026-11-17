@@ -17364,7 +17364,11 @@ const translateIterations = (
   // entries, where an entry that the loop adds comes last, which reading its entries again at each
   // step matches while no key leaves it.
   const isLive = isHeapIteration && changesObjects(loop, path, context);
-  if (isLive && isKeyDeleted(loop, iterated?.expression, path.scope.functions, context)) {
+  if (
+    isLive &&
+    ordered !== undefined &&
+    isKeyDeleted(loop, iterated?.expression, path.scope.functions, context)
+  ) {
     throw new TlaTypeScriptError(
       "Unsupported loop: tla-ts can't iterate a set or a map while the loop changes objects and the script deletes keys",
       iterated?.expression,
