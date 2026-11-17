@@ -154,6 +154,17 @@ export class Rewriter extends RewriterTpl {
     super.release();
   }
 
+  // A rewrite that the spent resource limit stops answers its input instead of failing.
+  rewrite(expr: number) {
+    try {
+      return super.rewrite(expr);
+    } catch (error) {
+      if (this.manager.limit.inc()) throw error;
+      this.manager.incRef(expr);
+      return expr;
+    }
+  }
+
   private reduceTo(expr: number, depth: number): number {
     const manager = this.manager;
     const frames: ReduceFrame[] = [];

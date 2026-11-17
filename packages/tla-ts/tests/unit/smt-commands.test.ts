@@ -702,6 +702,19 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "unknown")', "unknown", '(:reason-unknown "unknown")']);
   });
 
+  it("leaves a goal as it is when the limit stops simplify", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        ...BV_GOAL_LINES,
+        "(check-sat-using simplify)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (then simplify simplify))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "unknown")', "unknown", '(:reason-unknown "unknown")']);
+  });
+
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
   // the smt kernel keeps for its later checks and reports while its last search did not fail.
   it("prints the reason of a check that timed out", () => {
