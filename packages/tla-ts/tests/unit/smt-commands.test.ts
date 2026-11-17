@@ -751,6 +751,17 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("reports the limit that the smt tactic spends asserting its goal as a cancel", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(assert false)",
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "canceled")']);
+  });
+
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
   // the smt kernel keeps for its later checks and reports while its last search did not fail.
   it("prints the reason of a check that timed out", () => {

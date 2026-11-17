@@ -9,7 +9,7 @@ import type { DecideOptions, Verdict } from "../../verdict";
 import { AssertedFormulas } from "./asserted-formulas";
 import { AstManager } from "./ast";
 import { Context, MBQI_MAX_ITERATIONS } from "./context";
-import { L_FALSE, L_TRUE } from "./lbool";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { applyUfniaTactic } from "./quant-tactics";
 import { ResourceLimit } from "./rlimit";
 import { parseSmtlib } from "./smtlib-parser";
@@ -32,6 +32,12 @@ const DEFAULT_KERNEL_PARAMS: KernelParams = {
   isFindingMacros: false,
 };
 
+// Once the limit is spent, Z3 drops each formula it asserts and then stops.
+const assertForms = (context: Context, asserted: AssertedFormulas, forms: number[]) => {
+  for (const form of forms) if (!context.checkCanceled()) asserted.assertExpr(form);
+  return !context.checkCanceled();
+};
+
 interface SmtCheck {
   verdict: Verdict;
   numInstances: number;
@@ -47,7 +53,10 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     relevancyLevel: 2,
     randomSeed: params.randomSeed,
   });
-  for (const form of forms) asserted.assertExpr(form);
+  if (!assertForms(context, asserted, forms)) {
+    manager.limit.release();
+    return { result: L_UNDEF, context, reasonUnknown: "canceled" };
+  }
   context.setupContext(params.setup, true, asserted);
   context.internalizeAssertions(asserted);
   const theoryAssumptions: number[] = [];
@@ -86,7 +95,10 @@ export const solveAssuming = (
     relevancyLevel: 2,
     randomSeed: params.randomSeed,
   });
-  for (const assertion of assertions) asserted.assertExpr(assertion);
+  if (!assertForms(context, asserted, assertions)) {
+    manager.limit.release();
+    return { result: L_UNDEF, context, reasonUnknown: "canceled" };
+  }
   context.setupContext(params.setup, false, asserted);
   context.internalizeAssertions(asserted);
   const result = context.checkResearching(asserted, assumptions);

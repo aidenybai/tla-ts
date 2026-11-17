@@ -363,7 +363,8 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
       ? solveGoal(manager, goal.forms.items, kernelParams)
       : solveAssuming(manager, extracted.clauses.items, extracted.assumptions, kernelParams);
   extracted.clauses.reset();
-  if (solved.result === L_UNDEF) throw new SmtTacticError(getSmtTacticFailure(solved.context));
+  if (solved.result === L_UNDEF)
+    throw new SmtTacticError(solved.reasonUnknown ?? getSmtTacticFailure(solved.context));
   goal.reset();
   if (solved.result === L_FALSE)
     goal.assert(environment.manager.falseExpr, mkCoreDependency(solved.context.unsatCore));
