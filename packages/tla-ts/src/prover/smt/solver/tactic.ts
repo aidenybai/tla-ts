@@ -1578,7 +1578,7 @@ const runOrElse = (tactics: Tactic[]) => (goal: Goal) => {
     try {
       return tactic(goal);
     } catch (error) {
-      if (!(error instanceof SmtTacticError)) throw error;
+      if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
     }
     goal.resetAll();
     goal.copyFrom(original);

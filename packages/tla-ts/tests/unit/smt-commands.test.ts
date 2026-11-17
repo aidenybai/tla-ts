@@ -236,6 +236,13 @@ const RESTART_MODEL = [
 
 const getName = (literal: number) => `x${Math.abs(literal) - 1}`;
 
+const BV_GOAL_LINES = [
+  "(declare-const a (_ BitVec 8))",
+  "(declare-const b (_ BitVec 8))",
+  "(assert (= (bvadd a b) #x10))",
+  "(assert (bvult a b))",
+];
+
 // One more pigeon than holes, where pI_J puts pigeon I in hole J: unsatisfiable, and too hard for
 // either solver to refute within the limits of these tests.
 const getPigeonholeLines = (holeCount: number) => {
@@ -680,6 +687,19 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "unknown",
       '(:reason-unknown "canceled")',
     ]);
+  });
+
+  it("tries the next tactic of or-else once the limit stops a rewriter", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        ...BV_GOAL_LINES,
+        "(check-sat-using (or-else (then bit-blast sat) skip))",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (or-else bit-blast skip))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "unknown")', "unknown", '(:reason-unknown "unknown")']);
   });
 
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
