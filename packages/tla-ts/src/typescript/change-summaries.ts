@@ -107,10 +107,13 @@ export const getOwnEffects = (
 ) => {
   const index = getFunctionIndex(table, nodes, node);
   if (index < 0) return undefined;
-  for (let own = table.calledStarts[index]; own < table.calledStarts[index + 1]; own += 1) {
-    const id = table.ownCalled[own];
-    if (boundIds[getLowerBound(boundIds, 0, boundIds.length, id)] === id) return undefined;
-  }
+  const start = table.calledStarts[index];
+  const end = table.calledStarts[index + 1];
+  const isNamed = boundIds.some((id) => {
+    const at = getLowerBound(table.ownCalled, start, end, id);
+    return at < end && table.ownCalled[at] === id;
+  });
+  if (isNamed) return undefined;
   return {
     changed: table.ownChanged.slice(table.changedStarts[index], table.changedStarts[index + 1]),
     isErrorMade: hasBit(table.ownErrors, index),
@@ -436,7 +439,11 @@ export const summarizeFunctions = (
     edgeStarts: Int32Array.from(edgeStarts),
     edges: Int32Array.from(edges),
     calledStarts: Int32Array.from(calledStarts),
-    ownCalled: Int32Array.from(ownCalled),
+    // Each function's run of ids in order, which a search for a bound symbol's id reads.
+    ownCalled: calledStarts.reduce((sorted, start, index) => {
+      sorted.subarray(start, calledStarts[index + 1]).sort();
+      return sorted;
+    }, Int32Array.from(ownCalled)),
     marks: new Int32Array(componentCount),
     generation: 0,
   };
