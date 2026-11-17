@@ -451,6 +451,77 @@ describe("tseitin-cnf, as Z3 5.3.2 composes it", () => {
   });
 });
 
+describe("elim-term-ite, as Z3 5.3.2 names the term if-then-elses", () => {
+  it("defines a numbered name for each and hides the names from the model", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const b Bool)",
+        "(assert (> (+ (ite b x y) (ite (> x y) x 2)) (ite b x y)))",
+        "(apply elim-term-ite)",
+        "(check-sat-using (then elim-term-ite smt))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (> (+ k!0 k!1) k!0)\n  (or (not b) (= k!0 x))\n  (or b (= k!0 y))\n  (or (not (> x y)) (= k!1 x))\n  (or (> x y) (= k!1 2))\n  :precision precise :depth 1)\n)",
+      "sat",
+      "(\n  (define-fun b () Bool\n    false)\n  (define-fun x () Int\n    2)\n  (define-fun y () Int\n    3)\n)",
+    ]);
+  });
+
+  it("names a term under a quantifier by its bound variables", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const x Int)",
+        "(assert (forall ((z Int)) (> (f (ite (> z 0) z x)) 0)))",
+        "(apply elim-term-ite)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (forall ((z Int)) (> (f (k!0 z)) 0))\n  (forall ((x!1 Int))\n    (! (or (not (> x!1 0)) (= (k!0 x!1) x!1)) :pattern ((k!0 x!1))))\n  (forall ((x!1 Int)) (! (or (> x!1 0) (= (k!0 x!1) x)) :pattern ((k!0 x!1))))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+
+  it("asserts the definitions without dependencies", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const b Bool)",
+        "(assert (! (> (ite b x 3) 5) :named a1))",
+        "(assert (! (< x 0) :named a2))",
+        "(assert (! b :named a3))",
+        "(check-sat-using (then elim-term-ite smt))",
+        "(get-unsat-core)",
+        "(apply (then elim-term-ite elim-term-ite))",
+      ]),
+    ).toEqual([
+      "unsat",
+      "(a3 a1 a2)",
+      "(goals\n(goal\n  (> k!1 5)\n  (< x 0)\n  b\n  (or (not b) (= k!1 x))\n  (or b (= k!1 3))\n  :precision precise :depth 2)\n)",
+    ]);
+  });
+
+  it("lets nlsat decide a nonlinear problem with term if-then-elses", () => {
+    expect(
+      run([
+        "(set-logic QF_NRA)",
+        "(declare-const x Real)",
+        "(declare-const y Real)",
+        "(declare-const b Bool)",
+        "(assert (= (* (ite b x 3.0) x) 2.0))",
+        "(assert (> (* y y) (ite (> x 0.0) x 1.0)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(\n  (define-fun y () Real\n    (- 1.0))\n  (define-fun b () Bool\n    false)\n  (define-fun x () Real\n    (/ 2.0 3.0))\n)",
+    ]);
+  });
+});
+
 describe("if-no-models, as Z3 5.3.2 runs it", () => {
   it("runs its tactic when the goal produces no models", () => {
     expect(

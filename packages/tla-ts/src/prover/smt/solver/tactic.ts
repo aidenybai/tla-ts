@@ -5,16 +5,7 @@ import {
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
-import {
-  type AstManager,
-  KIND_APP,
-  OP_DIV0,
-  OP_IDIV0,
-  OP_ITE,
-  OP_MOD0,
-  OP_POWER0,
-  SORT_BOOL,
-} from "./ast";
+import { type AstManager, OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0, SORT_BOOL } from "./ast";
 import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tactic";
 import { AssertedFormulas } from "./asserted-formulas";
 import { createAigTactic } from "./aig-tactic";
@@ -45,6 +36,7 @@ import { createSatTactic } from "./sat/sat-tactic";
 import { mkThSolver } from "./euf/th-solvers";
 import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
+import { runElimTermIte } from "./elim-term-ite-tactic";
 import { rewriteUfbv } from "./demodulator";
 import { distributeForall } from "./distribute-forall";
 import { createDt2BvTactic } from "./dt2bv-tactic";
@@ -717,21 +709,9 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "elim-term-ite",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [["max_memory", PARAM_UINT, UINT_MAX, true]]),
-      build: (environment) =>
-        inPlace((goal) => {
-          const manager = environment.manager;
-          const seen = new Set<number>();
-          const todo = [...goal.forms.items];
-          for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
-            if (seen.has(expr) || manager.kinds[expr] !== KIND_APP) continue;
-            seen.add(expr);
-            if (manager.getOp(expr) === OP_ITE && manager.sorts[expr] !== SORT_BOOL)
-              throw new SmtUnsupportedError("elim-term-ite on a goal it changes");
-            manager.pushArgs(expr, todo);
-          }
-          goal.depth++;
-        }),
+      build: (environment) => runElimTermIte(environment.manager),
     },
   ],
   [
