@@ -2254,7 +2254,7 @@ export const createSmtlibReader = (
     manager.incRef(expr);
     lastNamed.name = name;
     lastNamed.expr = expr;
-    manager.mkMacro(name, expr);
+    declare(funcs, name, [...(funcs.get(name) ?? []), manager.mkMacro(name, expr)]);
     declare(macros, name, { domain: [], range: manager.sorts[expr], body: expr });
   };
 

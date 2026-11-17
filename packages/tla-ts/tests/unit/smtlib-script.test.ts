@@ -260,6 +260,51 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("qualifies a constant that a named term of the same name overloads", () => {
+    expect(
+      run([
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const x Int)",
+        "(assert (! (= a0 (store a0 x 1)) :named a0))",
+        "(simplify a0)",
+        "(simplify (! (> x 2) :named x))",
+        "(simplify (x 1))",
+        "(apply skip)",
+        "(reset)",
+        "(declare-const y Int)",
+        "(assert (! (> y 2) :named n))",
+        "(declare-const p Bool)",
+        "(assert (! (not p) :named q))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(= (as a0 (Array Int Int)) (store (as a0 (Array Int Int)) x 1))",
+      "(not (<= (as x Int) 2))",
+      '(error "line 6 column 14: ambiguous constant reference, more than one constant with the same sort, use a qualified expression (as <symbol> <sort>) to disambiguate x")',
+      [
+        "(goals",
+        "(goal",
+        "  (= (as a0 (Array Int Int)) (store (as a0 (Array Int Int)) (as x Int) 1))",
+        "  :precision precise :depth 0)",
+        ")",
+      ].join("\n"),
+      "sat",
+      [
+        "(",
+        "  (define-fun y () Int",
+        "    3)",
+        "  (define-fun p () Bool",
+        "    false)",
+        "  (define-fun q () Bool",
+        "    (not p))",
+        "  (define-fun n () Bool",
+        "    (> y 2))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("prints the names of an unsat core, as in z3test's t10.smt2", () => {
     expect(
       run([

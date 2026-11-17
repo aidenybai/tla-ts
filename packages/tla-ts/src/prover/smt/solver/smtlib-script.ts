@@ -1508,6 +1508,7 @@ export const runSmtlibScript = (
           const funcDecl = manager.funcDecls[decl];
           if (
             funcDecl.family !== FAMILY_USER ||
+            manager.macros.has(decl) ||
             model.constInterps.has(decl) ||
             model.funcInterps.has(decl)
           )
