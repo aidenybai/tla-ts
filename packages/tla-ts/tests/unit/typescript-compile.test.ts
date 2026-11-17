@@ -49288,6 +49288,33 @@ describe("BigInts", () => {
     });
   });
 
+  describe("reads a time value in a script without objects only where it fits a TLC integer", () => {
+    it("agrees with Node on a time value that fits", async () => {
+      const result = await checkModel(`
+        const parsed = Date.parse("1970-01-01T00:00:00.005Z");
+        if (parsed + Date.UTC(1970, 0) !== 5) throw new Error("parsed " + parsed);
+      `);
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another time value", async () => {
+      await expect(
+        checkModel(`
+          const parsed = Date.parse("1970-01-01T00:00:00.005Z");
+          if (parsed !== 6) throw new Error("parsed " + parsed);
+        `),
+      ).rejects.toThrow("parsed 5");
+    });
+
+    it("stops at a time value past 32 bits", async () => {
+      await expect(
+        checkModel(`
+          if (Date.UTC(2000, 0) < 0) throw new Error("negative");
+        `),
+      ).rejects.toThrow("tla-ts can't represent");
+    });
+  });
+
   describe("gives the resolved options of Intl's objects of English or the default locale", () => {
     const getSource = (expected: string) => `
       const format = new Intl.ListFormat("en-us", { style: "short", type: "unit" });

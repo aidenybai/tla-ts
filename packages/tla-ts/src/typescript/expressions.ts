@@ -1151,11 +1151,12 @@ const translateBuiltInCall = (
     method === "UTC" &&
     areDateFields(node.arguments, context)
   ) {
-    return useJavaScript(
+    const time = useJavaScript(
       "TimeNumber",
       [translateDateFields(node, node.arguments, scope, context)],
       context,
     );
+    return context.hasSpecialNumbers ? time : useJavaScript("PlainNumber", [time], context);
   }
   if (
     getBuiltIn(receiver, context) === "Date" &&
@@ -1163,7 +1164,7 @@ const translateBuiltInCall = (
     node.arguments.length === 1 &&
     isDateText(node.arguments[0], context)
   ) {
-    const parsed = useJavaScript(
+    const time = useJavaScript(
       "TimeNumber",
       [
         useJavaScript(
@@ -1174,6 +1175,8 @@ const translateBuiltInCall = (
       ],
       context,
     );
+    // A script without special numbers holds no time value past 32 bits or NaN.
+    const parsed = context.hasSpecialNumbers ? time : useJavaScript("PlainNumber", [time], context);
     return context.heap === undefined
       ? parsed
       : ifExpression(
