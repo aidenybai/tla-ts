@@ -2439,7 +2439,6 @@ const findKeyIndexLikeTlc = (
   return computeLikeTlcOnFailure(findDomainIndex, failKeyLikeTlc, functionValue, argument);
 };
 
-// Deviation from TLC: FcnLambdaValue#apply indexes past an argument tuple shorter than the bounds and ignores a longer one, where this rejects the list.
 const describeBoundArgument = (
   functionValue: LazyFunctionValue,
   position: string,
@@ -2458,6 +2457,7 @@ const createArgumentListError = (functionValue: LazyFunctionValue, argument: Val
     ),
   );
 
+// Deviation from TLC: FcnLambdaValue#apply indexes past an argument tuple shorter than the bounds and ignores a longer one, where this rejects the list.
 const checkBoundArguments = (
   functionValue: LazyFunctionValue,
   tupleLengths: (number | undefined)[],
@@ -2465,22 +2465,20 @@ const checkBoundArguments = (
 ) => {
   const domain = functionValue.domain;
   const elements = getSequenceElements(argument);
-  const describe = (position: string, shown: Value, problem: string) =>
-    describeBoundArgument(functionValue, position, shown, problem);
-  const createListError = () => createArgumentListError(functionValue, argument);
-  if (elements === undefined) throw createListError();
+  if (elements === undefined) throw createArgumentListError(functionValue, argument);
   if (typeof domain !== "object" || domain.kind !== "ProductSet") {
     throw new TlaEvaluationError(
       `Attempted to apply a function to ${formatValue(argument)}, which is not in its domain`,
     );
   }
   tupleLengths.forEach((tupleLength, index) => {
-    if (index >= elements.length) throw createListError();
+    if (index >= elements.length) throw createArgumentListError(functionValue, argument);
     const element = elements[index];
     const position = `argument number ${index + 1}`;
     if (!isElementOf(element, domain.factors[index])) {
       throw new TlaEvaluationError(
-        describe(
+        describeBoundArgument(
+          functionValue,
           position,
           element,
           tupleLength === undefined
@@ -2491,11 +2489,18 @@ const checkBoundArguments = (
     }
     if (tupleLength !== undefined && getSequenceElements(element)?.length !== tupleLength) {
       throw new TlaEvaluationError(
-        describe(position, element, "does not match its formal parameter"),
+        describeBoundArgument(
+          functionValue,
+          position,
+          element,
+          "does not match its formal parameter",
+        ),
       );
     }
   });
-  if (elements.length > tupleLengths.length) throw createListError();
+  if (elements.length > tupleLengths.length) {
+    throw createArgumentListError(functionValue, argument);
+  }
 };
 
 const isOutsideLambdaDomain = (functionValue: FunctionValue, argument: Value) =>

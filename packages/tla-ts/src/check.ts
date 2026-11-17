@@ -109,7 +109,11 @@ import {
   walkSuccessors,
 } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
-import { createActionRecord, createCounterExample } from "./tlc/tlcext-operators";
+import {
+  createActionRecord,
+  createCounterExample,
+  type CounterExampleLoop,
+} from "./tlc/tlcext-operators";
 import type { TlcVersion } from "./tlc/version";
 import { runTypedSearch, type TypedResult } from "./typed-tier";
 import {
@@ -328,6 +332,10 @@ interface ReportedViolation extends Omit<Violation, "loopStart"> {
   loopStart?: number;
 }
 
+interface CounterExampleOptions {
+  isConsole: boolean;
+}
+
 const appendTraceOutput = <Traced extends Behavior>(behavior: Traced, lines: OutputLine[]) => ({
   ...behavior,
   traceOutput: [...(behavior.traceOutput ?? []), ...lines],
@@ -530,7 +538,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   const checkTracePostconditions = (
     trace: TraceStep[],
-    loop: { start: number; action: Value } | undefined,
+    loop: CounterExampleLoop | undefined,
     getState: (step: TraceStep) => Record<string, Value>,
     isConsole = true,
   ) => {
@@ -842,7 +850,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     failed: unknown,
     behavior: Behavior,
     failureOptions: FailureOptions = {},
-    counterExample?: { isConsole: boolean },
+    counterExample?: CounterExampleOptions,
   ) => {
     const error = isStackOverflow(failed) ? new TlaStackOverflowError() : failed;
     if (!(error instanceof TlaEvaluationError)) throw error;
@@ -882,10 +890,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     runtime.generatedStates++;
     const found = captureOutput(() => {
       try {
-        const action = nextActions.find((item) =>
-          hasIncompleteSuccessor(item.expression, states[index], environment, item.scope),
-        );
-        return { action, traceFailure: undefined };
+        return {
+          action: nextActions.find((item) =>
+            hasIncompleteSuccessor(item.expression, states[index], environment, item.scope),
+          ),
+          traceFailure: undefined,
+        };
       } catch (failed) {
         if (!(failed instanceof TlaEvaluationError)) throw failed;
         return { action: undefined, traceFailure: getTraceFailure(failed) };
@@ -1447,11 +1457,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const replay = captureOutput(() => replayNext(index));
     return { result: replay.result, lines: [...live.lines, ...replay.lines] };
   };
-  const getNextFailureTrace = (index: number, counterExample?: { isConsole: boolean }) => {
+  const getNextFailureTrace = (index: number, counterExample?: CounterExampleOptions) => {
     const behavior = traces.getStateTrace(index);
     return counterExample ? behavior : { trace: behavior.trace };
   };
-  const reportNextStateOverflow = (index: number, counterExample?: { isConsole: boolean }) =>
+  const reportNextStateOverflow = (index: number, counterExample?: CounterExampleOptions) =>
     createFailureResult(
       createStackOverflowError(),
       getNextFailureTrace(index, counterExample),

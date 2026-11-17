@@ -29,7 +29,12 @@ import {
   withUnexpectedException,
 } from "./tlc/messages";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
-import { createActionRecord, createCounterExample, createTlcRecord } from "./tlc/tlcext-operators";
+import {
+  createActionRecord,
+  createCounterExample,
+  createTlcRecord,
+  type CounterExampleLoop,
+} from "./tlc/tlcext-operators";
 import {
   computeLikeTlcOnFailure,
   createModelValue,
@@ -399,7 +404,7 @@ export const simulate = (options: SimulationOptions): number => {
   const getCounterExample = (
     trace: TraceNode[],
     steps = toTraceSteps(trace),
-    loop?: { start: number; action: Value },
+    loop?: CounterExampleLoop,
   ) =>
     createCounterExample(
       steps.map((step) => step.state),

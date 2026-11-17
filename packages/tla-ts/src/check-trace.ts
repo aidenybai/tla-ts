@@ -258,8 +258,10 @@ export const createTraceBuilder = (context: TraceContext) => {
     const traceOutput = is174 ? [] : captureOutput(context.getInitialStates).lines;
     const state = states[index];
     if (incomplete !== undefined) {
-      const trace = toTrace([{ state, action: undefined }], [index], { incomplete }).trace;
-      return { trace, traceOutput };
+      return {
+        trace: toTrace([{ state, action: undefined }], [index], { incomplete }).trace,
+        traceOutput,
+      };
     }
     const step = { action: undefined, label: undefined, state: toRecord(state) };
     const alias = config.alias;

@@ -82,10 +82,15 @@ const createCounterExampleRecord = (action: Value[], states: Value[], isConsole 
   return counterExample;
 };
 
+export interface CounterExampleLoop {
+  start: number;
+  action: Value;
+}
+
 export const createCounterExample = (
   stateRecords: Record<string, Value>[],
   actions: Value[],
-  loop: { start: number; action: Value } | undefined,
+  loop: CounterExampleLoop | undefined,
   isConsole = true,
 ) => {
   const states = stateRecords.map((state, index) =>
