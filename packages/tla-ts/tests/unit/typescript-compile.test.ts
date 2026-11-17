@@ -49230,4 +49230,34 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs an optional call of a method that a class declares, as a statement", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      class Base {
+        method() {
+          box.seen.push(this instanceof Child ? "child" : "base");
+        }
+      }
+      class Child extends Base {
+        method() {
+          super.method?.();
+          box.seen.push("after");
+        }
+      }
+      new Child().method();
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("child,after"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("base,after"))).failure?.message).toContain(
+        "seen child,after",
+      );
+    });
+  });
 });

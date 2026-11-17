@@ -2365,6 +2365,18 @@ export const translateCallStatement = (
   // An optional call gives undefined where the function it reads is undefined or null, before any
   // argument runs.
   if (expression.questionDotToken !== undefined && path.scope.checked?.has(expression) !== true) {
+    const checked = {
+      ...path,
+      scope: { ...path.scope, checked: new Set([...(path.scope.checked ?? []), expression]) },
+    };
+    // A method that a class declares is the function that the call runs, which the call checks
+    // its object still holds.
+    const method = ts.isIdentifier(expression.expression)
+      ? undefined
+      : getCalledMethod(expression.expression, context);
+    if (method !== undefined && method.getter === undefined) {
+      return translateCallStatement(expression, checked, context, frame, continueWith);
+    }
     if (!ts.isIdentifier(expression.expression)) {
       throw new TlaTypeScriptError("Optional calls aren't supported", expression);
     }
@@ -2378,19 +2390,7 @@ export const translateCallStatement = (
         ifThenElse(
           apply("\\in", [identifier(name), set([getUndefined(context), identifier("Null")])]),
           next(path, getUndefined(context)),
-          translateCallStatement(
-            expression,
-            {
-              ...path,
-              scope: {
-                ...path.scope,
-                checked: new Set([...(path.scope.checked ?? []), expression]),
-              },
-            },
-            context,
-            frame,
-            next,
-          ),
+          translateCallStatement(expression, checked, context, frame, next),
         ),
       ),
     );
