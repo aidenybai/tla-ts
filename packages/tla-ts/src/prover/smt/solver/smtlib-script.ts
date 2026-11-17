@@ -1429,6 +1429,7 @@ export const runSmtlibScript = (
         if (isPrintingDependencies && !builder.isTrackingDependencies && hasNames())
           throw new SmtUnsupportedError("the dependencies of a tactic that drops dependencies");
         state.manager.limit.restart(Date.now() + options.timeLimitMs);
+        state.manager.limit.push(settings.rlimit);
         const goals = (() => {
           try {
             return applyTactic(tactic, input);
@@ -1436,6 +1437,8 @@ export const runSmtlibScript = (
             if (!(error instanceof SmtTacticError)) throw error;
             print(`(error "tactic failed: ${error.message}")`);
             return undefined;
+          } finally {
+            state.manager.limit.pop();
           }
         })();
         // apply_tactic_cmd releases the result goals and then the input goal.

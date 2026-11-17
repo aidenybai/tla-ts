@@ -1447,4 +1447,27 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       '(error "line 10 column 14: model is not available")',
     ]);
   });
+
+  it("bounds the tactic of apply by the rlimit", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (and (> (+ x y) 3) (or p (< (* 2 x) y)) (=> p (= x (+ y 1)))))",
+        "(set-option :rlimit 8)",
+        "(apply simplify)",
+        "(apply bit-blast)",
+      ]),
+    ).toEqual([
+      "(goals",
+      "(goal",
+      "  (not (<= (+ x y) 3))",
+      "  (or p (< (* 2 x) y))",
+      "  (=> p (= x (+ y 1)))",
+      "  :precision precise :depth 1)",
+      ")",
+      '(error "tactic failed: max. resource limit exceeded")',
+    ]);
+  });
 });

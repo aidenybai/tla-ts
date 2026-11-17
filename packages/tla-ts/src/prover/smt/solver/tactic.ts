@@ -2124,7 +2124,8 @@ export const applyTactic = (tactic: Tactic, goal: Goal) => {
   try {
     return tactic(goal);
   } catch (error) {
-    if (error instanceof SmtCanceledError) throw new SmtTacticError("canceled");
+    if (error instanceof SmtCanceledError)
+      throw new SmtTacticError(goal.manager.limit.getCancelMessage());
     throw error;
   }
 };
