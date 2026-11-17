@@ -1093,17 +1093,44 @@ LOCAL TParseISO(text, goal) ==
                   ELSE TDateTimeAt(text, FALSE, "offset", FALSE)
   IN IF parsed.ok /\ ~parsed.isRejected THEN TOk(parsed) ELSE TFail("RangeError")
 
-\* The calendars other than the ISO 8601 calendar that Node 26 takes, by their ASCII-lowercase forms,
-\* aliases included.
+\* The calendars other than the ISO 8601 calendar that Node 26 takes and tla-ts doesn't run, by
+\* their ASCII-lowercase forms, aliases included.
 LOCAL TOtherCalendars ==
-  {"buddhist", "chinese", "coptic", "dangi", "ethioaa", "ethiopic", "ethiopic-amete-alem", "gregory",
-   "hebrew", "indian", "islamic-civil", "islamic-tbla", "islamic-umalqura", "islamicc", "japanese",
-   "persian", "roc"}
+  {"chinese", "coptic", "dangi", "ethioaa", "ethiopic", "ethiopic-amete-alem", "hebrew", "indian",
+   "islamic-civil", "islamic-tbla", "islamic-umalqura", "islamicc", "japanese", "persian"}
 
-\* CanonicalizeCalendar, which tla-ts runs for the ISO 8601 calendar alone. Another calendar that
-\* Node takes stops, as tla-ts holds none of its data, and one that it doesn't throws a RangeError.
+\* The calendars with eras that tla-ts runs, whose months and days are the ISO 8601 calendar's and
+\* whose eras start at the start of a year: the Gregorian calendar, and two whose years count from
+\* another year.
+LOCAL TEraCalendars == {"gregory", "buddhist", "roc"}
+
+\* What a calendar's arithmetic year adds to the ISO year.
+LOCAL TYearOffset(calendar) == CASE calendar = "buddhist" -> 543 [] calendar = "roc" -> -1911 [] OTHER -> 0
+
+\* CanonicalizeEraInCalendar, or "" where the calendar has no such era.
+LOCAL TEraOf(calendar, era) ==
+  CASE calendar = "gregory" /\ era \in {"ce", "ad"} -> "ce"
+    [] calendar = "gregory" /\ era \in {"bce", "bc"} -> "bce"
+    [] calendar = "buddhist" /\ era = "be" -> "be"
+    [] calendar = "roc" /\ era \in {"roc", "broc"} -> era
+    [] OTHER -> ""
+
+\* CalendarDateArithmeticYearForEraYear, of BigInts, where an era of the negative kind counts back
+\* from the year before its epoch.
+LOCAL TEraArithmeticYear(era, eraYear) ==
+  IF era \in {"bce", "broc"} THEN BigIntSubtract(Big :> 1, eraYear) ELSE eraYear
+
+\* CalendarDateEra and CalendarDateEraYear, of an arithmetic year.
+LOCAL TEraOfYear(calendar, year) ==
+  CASE calendar = "buddhist" -> <<"be", year>>
+    [] year >= 1 -> <<IF calendar = "gregory" THEN "ce" ELSE "roc", year>>
+    [] OTHER -> <<IF calendar = "gregory" THEN "bce" ELSE "broc", 1 - year>>
+
+\* CanonicalizeCalendar, which tla-ts runs for the ISO 8601 calendar and the calendars with eras that
+\* it runs. Another calendar that Node takes stops, as tla-ts holds none of its data, and one that it
+\* doesn't throws a RangeError.
 LOCAL TCalendar(text) ==
-  CASE TLowercase(text) = "iso8601" -> TOk("iso8601")
+  CASE TLowercase(text) \in {"iso8601"} \cup TEraCalendars -> TOk(TLowercase(text))
     [] TLowercase(text) \in TOtherCalendars -> Assert(FALSE, "tla-ts can't use the calendar " \o text)
     [] OTHER -> TFail("RangeError")
 
@@ -1166,8 +1193,10 @@ LOCAL TMonthCodeOf(value) ==
 
 \* The property keys of the fields, in the order that PrepareCalendarFields reads them.
 LOCAL TFieldKeys ==
-  <<"day", "hour", "microsecond", "millisecond", "minute", "month", "monthCode", "nanosecond", "offset",
-    "second", "timeZone", "year">>
+  <<"day", "era", "eraYear", "hour", "microsecond", "millisecond", "minute", "month", "monthCode",
+    "nanosecond", "offset", "second", "timeZone", "year">>
+
+LOCAL TFieldKeySet == {TFieldKeys[index] : index \in DOMAIN TFieldKeys}
 
 LOCAL TDateTimeKeys ==
   {"day", "hour", "microsecond", "millisecond", "minute", "month", "monthCode", "nanosecond", "second", "year"}
@@ -1183,11 +1212,12 @@ LOCAL TOffsetString(value) ==
 
 LOCAL TTimeKeys == {"hour", "minute", "second", "millisecond", "microsecond", "nanosecond"}
 
-\* PrepareCalendarFields for the ISO 8601 calendar, of the keys in names, as a record of each field's
-\* value, or Undefined where it's unset. required is the set of keys that must be there, or any one
-\* must where isPartial.
-LOCAL TPrepareFields(heap, item, names, required, isPartial) ==
-  LET keys == SelectSeq(TFieldKeys, LAMBDA key : key \in names)
+\* PrepareCalendarFields, of the keys in names and the era and the era year that a calendar with eras
+\* adds to a year, as a record of each field's value, or Undefined where it's unset. required is the
+\* set of keys that must be there, or any one must where isPartial.
+LOCAL TPrepareFields(heap, item, calendar, names, required, isPartial) ==
+  LET extra == IF "year" \in names /\ calendar \in TEraCalendars THEN {"era", "eraYear"} ELSE {}
+      keys == SelectSeq(TFieldKeys, LAMBDA key : key \in names \cup extra)
       read == [index \in DOMAIN keys |-> TGet(heap, item, keys[index])]
       converted ==
         [index \in DOMAIN keys |->
@@ -1197,6 +1227,7 @@ LOCAL TPrepareFields(heap, item, names, required, isPartial) ==
                      IF ~isPartial /\ key \in required THEN TFail("TypeError") ELSE TOk(Undefined)
                 [] key \in {"month", "day"} -> TPositive(value)
                 [] key = "monthCode" -> TMonthCodeOf(value)
+                [] key = "era" -> TToString(value)
                 [] key = "offset" -> TOffsetString(value)
                 [] key = "timeZone" -> TTimeZone(heap, value)
                 [] OTHER -> TTruncated(value)]
@@ -1208,16 +1239,17 @@ LOCAL TPrepareFields(heap, item, names, required, isPartial) ==
       defaulted(key) == IF ~isPartial /\ key \in TTimeKeys /\ valueOf(key) = Undefined THEN Big :> 0 ELSE valueOf(key)
   IN CASE error # "" -> TFail(error)
        [] isPartial /\ \A index \in DOMAIN keys : read[index] = Undefined -> TFail("TypeError")
-       [] OTHER -> TOk([key \in {TFieldKeys[index] : index \in 1..12} |-> defaulted(key)])
+       [] OTHER -> TOk([key \in TFieldKeySet |-> defaulted(key)])
 
-\* The fields of a date, as PrepareCalendarFields gives them, with a time's fields where hasTime.
-LOCAL TDateFields(date, time, hasTime) ==
-  [key \in {TFieldKeys[index] : index \in 1..12} |->
-     CASE key = "year" -> TBig(date[1])
+\* The fields of a date in a calendar, as PrepareCalendarFields gives them, with a time's fields
+\* where hasTime.
+LOCAL TDateFields(date, time, hasTime, calendar) ==
+  [key \in TFieldKeySet |->
+     CASE key = "year" -> TBig(date[1] + TYearOffset(calendar))
        [] key = "month" -> TBig(date[2])
        [] key = "monthCode" -> [month |-> date[2], isLeap |-> FALSE]
        [] key = "day" -> TBig(date[3])
-       [] ~hasTime \/ key \in {"offset", "timeZone"} -> Undefined
+       [] ~hasTime \/ key \in {"era", "eraYear", "offset", "timeZone"} -> Undefined
        [] key = "hour" -> TBig(time[1])
        [] key = "minute" -> TBig(time[2])
        [] key = "second" -> TBig(time[3])
@@ -1225,30 +1257,62 @@ LOCAL TDateFields(date, time, hasTime) ==
        [] key = "microsecond" -> TBig(time[5])
        [] OTHER -> TBig(time[6])]
 
-\* CalendarMergeFields for the ISO 8601 calendar, where month and monthCode replace each other.
+\* CalendarMergeFields, where month and monthCode replace each other, and so do a year and an era
+\* with its era year, which only a calendar with eras reads.
 LOCAL TMergeFields(fields, additional) ==
   LET isMonthGiven == additional["month"] # Undefined \/ additional["monthCode"] # Undefined
+      isYearGiven == \E key \in {"era", "eraYear", "year"} : additional[key] # Undefined
   IN [key \in DOMAIN fields |->
         CASE additional[key] # Undefined -> additional[key]
           [] key \in {"month", "monthCode"} /\ isMonthGiven -> Undefined
+          [] key \in {"era", "eraYear", "year"} /\ isYearGiven -> Undefined
           [] OTHER -> fields[key]]
 
-\* CalendarResolveFields for the ISO 8601 calendar, as the month that the fields give, of a type:
-\* "date", "year-month", or "month-day".
-LOCAL TResolveMonth(fields, type) ==
+\* CalendarResolveFields, of a type: "date", "year-month", or "month-day", as the ISO year that the
+\* fields give, a BigInt or Undefined, and the month. A calendar with eras runs NonISOResolveFields,
+\* which reads the era and the era year.
+LOCAL TResolveFields(fields, type, calendar) ==
   LET code == fields["monthCode"]
-  IN CASE type \in {"date", "year-month"} /\ fields["year"] = Undefined -> TFail("TypeError")
-       [] type \in {"date", "month-day"} /\ fields["day"] = Undefined -> TFail("TypeError")
-       [] fields["month"] = Undefined /\ code = Undefined -> TFail("TypeError")
-       [] code = Undefined -> TOk(TFieldOf(fields["month"]))
-       [] code.isLeap \/ code.month > 12 -> TFail("RangeError")
-       [] fields["month"] # Undefined /\ TFieldOf(fields["month"]) # code.month -> TFail("RangeError")
-       [] OTHER -> TOk(code.month)
+      era == fields["era"]
+      eraYear == fields["eraYear"]
+      year == fields["year"]
+      canonical == IF era = Undefined THEN "" ELSE TEraOf(calendar, era)
+      arithmetic == IF eraYear = Undefined THEN year ELSE TEraArithmeticYear(canonical, eraYear)
+      resolved(month) ==
+        TOk([year |-> IF arithmetic = Undefined
+                      THEN Undefined
+                      ELSE BigIntSubtract(arithmetic, TBig(TYearOffset(calendar))),
+             month |-> month])
+      needsYear ==
+        type \in {"date", "year-month"} \/ code = Undefined \/ fields["month"] # Undefined
+      isMonthWrong ==
+        fields["month"] # Undefined /\ code # Undefined /\ TFieldOf(fields["month"]) # code.month
+  IN IF calendar = "iso8601"
+     THEN CASE type \in {"date", "year-month"} /\ year = Undefined -> TFail("TypeError")
+            [] type \in {"date", "month-day"} /\ fields["day"] = Undefined -> TFail("TypeError")
+            [] fields["month"] = Undefined /\ code = Undefined -> TFail("TypeError")
+            [] code = Undefined -> resolved(TFieldOf(fields["month"]))
+            [] code.isLeap \/ code.month > 12 -> TFail("RangeError")
+            [] isMonthWrong -> TFail("RangeError")
+            [] OTHER -> resolved(code.month)
+     ELSE CASE needsYear /\ year = Undefined /\ (era = Undefined \/ eraYear = Undefined) ->
+                 TFail("TypeError")
+            [] era # Undefined /\ eraYear = Undefined -> TFail("TypeError")
+            [] eraYear # Undefined /\ era = Undefined -> TFail("TypeError")
+            [] type \in {"date", "month-day"} /\ fields["day"] = Undefined -> TFail("TypeError")
+            [] fields["month"] = Undefined /\ code = Undefined -> TFail("TypeError")
+            [] eraYear # Undefined /\ canonical = "" -> TFail("RangeError")
+            [] eraYear # Undefined /\ year # Undefined /\ TCompare(year, arithmetic) # 0 ->
+                 TFail("RangeError")
+            [] code # Undefined /\ (code.isLeap \/ code.month > 12) -> TFail("RangeError")
+            [] arithmetic # Undefined /\ isMonthWrong -> TFail("RangeError")
+            [] code = Undefined -> resolved(TFieldOf(fields["month"]))
+            [] OTHER -> resolved(code.month)
 
-\* CalendarDateFromFields for the ISO 8601 calendar.
-LOCAL TDateFromFields(fields, overflow) ==
-  LET month == TResolveMonth(fields, "date")
-      date == TRegulateDate(TYearOf(fields["year"]), month.value, TFieldOf(fields["day"]), overflow)
+\* CalendarDateFromFields.
+LOCAL TDateFromFields(fields, overflow, calendar) ==
+  LET month == TResolveFields(fields, "date", calendar)
+      date == TRegulateDate(TYearOf(month.value.year), month.value.month, TFieldOf(fields["day"]), overflow)
   IN CASE month.error # "" -> month
        [] date.error # "" -> date
        [] ~TDateWithinLimits(date.value) -> TFail("RangeError")
@@ -1303,7 +1367,7 @@ LOCAL TToTime(heap, item, options) ==
       resolved == TOptions(heap, options)
       overflow == TOverflowOption(heap, resolved.value)
       checked(time) == CASE resolved.error # "" -> resolved [] overflow.error # "" -> overflow [] OTHER -> TOk(time)
-      fields == TPrepareFields(heap, item, TTimeKeys, {}, FALSE)
+      fields == TPrepareFields(heap, item, "iso8601", TTimeKeys, {}, FALSE)
       timeKeys == SelectSeq(TFieldKeys, LAMBDA key : key \in TTimeKeys)
       anyTime == \E index \in DOMAIN timeKeys : TGet(heap, item, timeKeys[index]) # Undefined
       parsed == TParseISO(item, "Time")
@@ -1330,8 +1394,8 @@ LOCAL TToDate(heap, item, options) ==
           [] overflow.error # "" -> overflow
           [] OTHER -> TOk([date |-> date, calendar |-> calendar])
       calendar == TCalendarOfBag(heap, item)
-      fields == TPrepareFields(heap, item, {"year", "month", "monthCode", "day"}, {}, FALSE)
-      made == TDateFromFields(fields.value, overflow.value)
+      fields == TPrepareFields(heap, item, calendar.value, {"year", "month", "monthCode", "day"}, {}, FALSE)
+      made == TDateFromFields(fields.value, overflow.value, calendar.value)
       parsed == TParseISO(item, "DateTime")
       parsedCalendar == IF parsed.value.calendar = "" THEN TOk("iso8601") ELSE TCalendar(parsed.value.calendar)
   IN CASE slots.kind \in {"PlainDate", "PlainDateTime", "ZonedDateTime"} -> checked(slots.date, slots.calendar)
@@ -1360,8 +1424,8 @@ LOCAL TToDateTime(heap, item, options) ==
           [] ~TDateTimeWithinLimits(date, time) -> TFail("RangeError")
           [] OTHER -> TOk([date |-> date, time |-> time, calendar |-> calendar])
       calendar == TCalendarOfBag(heap, item)
-      fields == TPrepareFields(heap, item, TDateTimeKeys, {}, FALSE)
-      madeDate == TDateFromFields(fields.value, overflow.value)
+      fields == TPrepareFields(heap, item, calendar.value, TDateTimeKeys, {}, FALSE)
+      madeDate == TDateFromFields(fields.value, overflow.value, calendar.value)
       madeTime == TRegulateTime(TTimeOfFields(fields.value), overflow.value)
       parsed == TParseISO(item, "DateTime")
       parsedCalendar == IF parsed.value.calendar = "" THEN TOk("iso8601") ELSE TCalendar(parsed.value.calendar)
@@ -1680,8 +1744,9 @@ LOCAL TToZoned(heap, item, options) ==
       overflow == TOverflowOption(heap, resolved.value)
       optionsError == TFirstError(<<resolved, disambiguation, offsetOption, overflow>>)
       calendar == TCalendarOfBag(heap, item)
-      fields == TPrepareFields(heap, item, TDateTimeKeys \cup {"offset", "timeZone"}, {"timeZone"}, FALSE)
-      date == TDateFromFields(fields.value, overflow.value)
+      fields == TPrepareFields(heap, item, calendar.value, TDateTimeKeys \cup {"offset", "timeZone"},
+                               {"timeZone"}, FALSE)
+      date == TDateFromFields(fields.value, overflow.value, calendar.value)
       time == TRegulateTime(TTimeOfFields(fields.value), overflow.value)
       bagNs == TInterpretOffset(date.value, time.value, TRUE,
                                 IF fields.value["offset"] = Undefined THEN "wall" ELSE "option",
@@ -1858,14 +1923,14 @@ LOCAL TZonedToString(heap, slots, value) ==
 \* Temporal.ZonedDateTime.prototype.with, as the epoch nanoseconds.
 LOCAL TZonedWith(heap, slots, like, options) ==
   LET local == TLocal(slots.zone, slots.ns)
-      partial == TPrepareFields(heap, like, TDateTimeKeys \cup {"offset"}, {}, TRUE)
-      fields == [TDateFields(local.date, local.time, TRUE) EXCEPT !["offset"] = slots.zone.offset]
+      partial == TPrepareFields(heap, like, slots.calendar, TDateTimeKeys \cup {"offset"}, {}, TRUE)
+      fields == [TDateFields(local.date, local.time, TRUE, slots.calendar) EXCEPT !["offset"] = slots.zone.offset]
       merged == TMergeFields(fields, partial.value)
       resolved == TOptions(heap, options)
       disambiguation == TDisambiguationOption(heap, resolved.value)
       offsetOption == TOffsetOption(heap, resolved.value, "prefer")
       overflow == TOverflowOption(heap, resolved.value)
-      date == TDateFromFields(merged, overflow.value)
+      date == TDateFromFields(merged, overflow.value, slots.calendar)
       time == TRegulateTime(TTimeOfFields(merged), overflow.value)
   IN CASE ~TIsPartial(heap, like) -> TFail("TypeError")
        [] partial.error # "" -> partial
@@ -1887,8 +1952,8 @@ LOCAL TRelativeTo(heap, options) ==
   LET value == TOption(heap, options, "relativeTo")
       slots == TSlots(heap, value)
       calendar == TCalendarOfBag(heap, value)
-      fields == TPrepareFields(heap, value, TDateTimeKeys \cup {"offset", "timeZone"}, {}, FALSE)
-      date == TDateFromFields(fields.value, "constrain")
+      fields == TPrepareFields(heap, value, calendar.value, TDateTimeKeys \cup {"offset", "timeZone"}, {}, FALSE)
+      date == TDateFromFields(fields.value, "constrain", calendar.value)
       time == TRegulateTime(TTimeOfFields(fields.value), "constrain")
       bagNs == TInterpretOffset(date.value, time.value, TRUE,
                                 IF fields.value["offset"] = Undefined THEN "wall" ELSE "option",
@@ -2113,7 +2178,7 @@ LOCAL TTimeTextOptions(heap, value, isCalendar) ==
 
 \* Temporal.PlainTime.prototype.with.
 LOCAL TTimeWith(heap, time, like, options) ==
-  LET partial == TPrepareFields(heap, like, TTimeKeys, {}, TRUE)
+  LET partial == TPrepareFields(heap, like, "iso8601", TTimeKeys, {}, TRUE)
       merged == [key \in DOMAIN partial.value |->
                    IF partial.value[key] # Undefined THEN partial.value[key]
                    ELSE CASE key = "hour" -> TBig(time[1]) [] key = "minute" -> TBig(time[2])
@@ -2219,23 +2284,24 @@ LOCAL TDateTimeRound(heap, date, time, roundTo) ==
        [] OTHER -> TOk([date |-> roundedDate, time |-> rounded.time])
 
 \* Temporal.PlainDate.prototype.with, as the date.
-LOCAL TDateWith(heap, date, like, options) ==
-  LET partial == TPrepareFields(heap, like, {"year", "month", "monthCode", "day"}, {}, TRUE)
+LOCAL TDateWith(heap, date, calendar, like, options) ==
+  LET partial == TPrepareFields(heap, like, calendar, {"year", "month", "monthCode", "day"}, {}, TRUE)
       resolved == TOptions(heap, options)
       overflow == TOverflowOption(heap, resolved.value)
   IN CASE ~TIsPartial(heap, like) -> TFail("TypeError")
        [] partial.error # "" -> partial
        [] resolved.error # "" -> resolved
        [] overflow.error # "" -> overflow
-       [] OTHER -> TDateFromFields(TMergeFields(TDateFields(date, TMidnight, FALSE), partial.value), overflow.value)
+       [] OTHER -> TDateFromFields(TMergeFields(TDateFields(date, TMidnight, FALSE, calendar), partial.value),
+                                   overflow.value, calendar)
 
 \* Temporal.PlainDateTime.prototype.with, as the date and the time.
-LOCAL TDateTimeWith(heap, date, time, like, options) ==
-  LET partial == TPrepareFields(heap, like, TDateTimeKeys, {}, TRUE)
+LOCAL TDateTimeWith(heap, date, time, calendar, like, options) ==
+  LET partial == TPrepareFields(heap, like, calendar, TDateTimeKeys, {}, TRUE)
       resolved == TOptions(heap, options)
       overflow == TOverflowOption(heap, resolved.value)
-      merged == TMergeFields(TDateFields(date, time, TRUE), partial.value)
-      madeDate == TDateFromFields(merged, overflow.value)
+      merged == TMergeFields(TDateFields(date, time, TRUE, calendar), partial.value)
+      madeDate == TDateFromFields(merged, overflow.value, calendar)
       madeTime == TRegulateTime(TTimeOfFields(merged), overflow.value)
   IN CASE ~TIsPartial(heap, like) -> TFail("TypeError")
        [] partial.error # "" -> partial
@@ -2357,25 +2423,30 @@ LOCAL TYearMonthWithinLimits(date) ==
   /\ date[1] = -271821 => date[2] >= 4
   /\ date[1] = 275760 => date[2] <= 9
 
-\* CalendarYearMonthFromFields for the ISO 8601 calendar.
-LOCAL TYearMonthFromFields(fields, overflow) ==
-  LET month == TResolveMonth(fields, "year-month")
-      date == TRegulateDate(TYearOf(fields["year"]), month.value, 1, overflow)
+\* CalendarYearMonthFromFields.
+LOCAL TYearMonthFromFields(fields, overflow, calendar) ==
+  LET month == TResolveFields(fields, "year-month", calendar)
+      date == TRegulateDate(TYearOf(month.value.year), month.value.month, 1, overflow)
   IN CASE month.error # "" -> month
        [] date.error # "" -> date
        [] ~TYearMonthWithinLimits(date.value) -> TFail("RangeError")
        [] OTHER -> date
 
-\* CalendarMonthDayFromFields for the ISO 8601 calendar, whose year, where the fields give one, only
-\* decides whether February has a 29th.
-LOCAL TMonthDayFromFields(fields, overflow) ==
-  LET month == TResolveMonth(fields, "month-day")
-      isLeap == fields["year"] = Undefined \/ TIsLeapBig(fields["year"])
+\* CalendarMonthDayFromFields, whose year, where the fields give one, only decides whether February
+\* has a 29th, and must be within the limits in a calendar other than the ISO 8601 calendar. Each
+\* calendar that tla-ts runs takes 1972 as the reference year.
+LOCAL TMonthDayFromFields(fields, overflow, calendar) ==
+  LET resolved == TResolveFields(fields, "month-day", calendar)
+      month == IF resolved.error # "" THEN resolved ELSE TOk(resolved.value.month)
+      year == resolved.value.year
+      isLeap == year = Undefined \/ TIsLeapBig(year)
       day == TFieldOf(fields["day"])
       daysInMonth == IF month.value = 2 THEN (IF isLeap THEN 29 ELSE 28) ELSE TDaysInMonth(1972, month.value)
       clampedMonth == IF month.value < 1 THEN 1 ELSE IF month.value > 12 THEN 12 ELSE month.value
       clampedDays == IF clampedMonth = 2 THEN (IF isLeap THEN 29 ELSE 28) ELSE TDaysInMonth(1972, clampedMonth)
   IN CASE month.error # "" -> month
+       [] calendar # "iso8601" /\ year # Undefined /\
+          (TLess(year, TBig(-271821)) \/ TLess(TBig(275760), year)) -> TFail("RangeError")
        [] overflow = "constrain" ->
             TOk(<<1972, clampedMonth, IF day < 1 THEN 1 ELSE IF day > clampedDays THEN clampedDays ELSE day>>)
        [] month.value < 1 \/ month.value > 12 \/ day < 1 \/ day > daysInMonth -> TFail("RangeError")
@@ -2387,8 +2458,8 @@ LOCAL TToYearMonth(heap, item, options) ==
       resolved == TOptions(heap, options)
       overflow == TOverflowOption(heap, resolved.value)
       calendar == TCalendarOfBag(heap, item)
-      fields == TPrepareFields(heap, item, {"year", "month", "monthCode"}, {}, FALSE)
-      made == TYearMonthFromFields(fields.value, overflow.value)
+      fields == TPrepareFields(heap, item, calendar.value, {"year", "month", "monthCode"}, {}, FALSE)
+      made == TYearMonthFromFields(fields.value, overflow.value, calendar.value)
       parsed == TParseISO(item, "YearMonth")
       parsedCalendar == IF parsed.value.calendar = "" THEN TOk("iso8601") ELSE TCalendar(parsed.value.calendar)
       checked(next) == CASE resolved.error # "" -> resolved [] overflow.error # "" -> overflow [] OTHER -> next
@@ -2414,8 +2485,8 @@ LOCAL TToMonthDay(heap, item, options) ==
       resolved == TOptions(heap, options)
       overflow == TOverflowOption(heap, resolved.value)
       calendar == TCalendarOfBag(heap, item)
-      fields == TPrepareFields(heap, item, {"year", "month", "monthCode", "day"}, {}, FALSE)
-      made == TMonthDayFromFields(fields.value, overflow.value)
+      fields == TPrepareFields(heap, item, calendar.value, {"year", "month", "monthCode", "day"}, {}, FALSE)
+      made == TMonthDayFromFields(fields.value, overflow.value, calendar.value)
       parsed == TParseISO(item, "MonthDay")
       parsedCalendar == IF parsed.value.calendar = "" THEN TOk("iso8601") ELSE TCalendar(parsed.value.calendar)
       checked(next) == CASE resolved.error # "" -> resolved [] overflow.error # "" -> overflow [] OTHER -> next
@@ -2433,7 +2504,8 @@ LOCAL TToMonthDay(heap, item, options) ==
        [] OTHER -> checked(TOk([date |-> <<1972, parsed.value.date[2], parsed.value.date[3]>>, calendar |-> parsedCalendar.value]))
 
 \* The first day of a year-month as a date, which may be before the limits.
-LOCAL TFirstOfMonth(date) == TDateFromFields(TDateFields(<<date[1], date[2], 1>>, TMidnight, FALSE), "constrain")
+LOCAL TFirstOfMonth(date) ==
+  TDateFromFields(TDateFields(<<date[1], date[2], 1>>, TMidnight, FALSE, "iso8601"), "constrain", "iso8601")
 
 \* AddDurationToYearMonth, as the date.
 LOCAL TYearMonthAdd(heap, date, other, options, isSubtract) ==
@@ -2443,7 +2515,7 @@ LOCAL TYearMonthAdd(heap, date, other, options, isSubtract) ==
       overflow == TOverflowOption(heap, resolved.value)
       first == TFirstOfMonth(date)
       added == TDateAdd(first.value, <<fields[1], fields[2], Big :> 0, Big :> 0>>, overflow.value)
-      made == TYearMonthFromFields(TDateFields(added.value, TMidnight, FALSE), overflow.value)
+      made == TYearMonthFromFields(TDateFields(added.value, TMidnight, FALSE, "iso8601"), overflow.value, "iso8601")
   IN CASE converted.error # "" -> converted
        [] resolved.error # "" -> resolved
        [] overflow.error # "" -> overflow
@@ -2495,13 +2567,22 @@ LOCAL TTimeGetters(time) ==
   [hour |-> time[1], minute |-> time[2], second |-> time[3], millisecond |-> time[4],
    microsecond |-> time[5], nanosecond |-> time[6]]
 
+\* The getters of a year and a month in a calendar: its era, era year, and arithmetic year.
+LOCAL TYearGetters(date, calendar) ==
+  LET year == date[1] + TYearOffset(calendar)
+      era == TEraOfYear(calendar, year)
+      isISO == calendar = "iso8601"
+  IN [calendarId |-> calendar, era |-> IF isISO THEN Undefined ELSE era[1],
+      eraYear |-> IF isISO THEN Undefined ELSE era[2], year |-> year, month |-> date[2],
+      monthCode |-> TMonthCode(date[2]), daysInMonth |-> TDaysInMonth(date[1], date[2]),
+      daysInYear |-> TDaysInYear(date[1]), monthsInYear |-> 12, inLeapYear |-> TIsLeapYear(date[1])]
+
+\* The getters of a date, whose week of the year only the ISO 8601 calendar numbers.
 LOCAL TDateGetters(date, calendar) ==
-  LET week == TWeekOfYear(date)
-  IN [calendarId |-> calendar, era |-> Undefined, eraYear |-> Undefined, year |-> date[1],
-      month |-> date[2], monthCode |-> TMonthCode(date[2]), day |-> date[3], dayOfWeek |-> TDayOfWeek(date),
-      dayOfYear |-> TDayOfYear(date), weekOfYear |-> week[1], yearOfWeek |-> week[2], daysInWeek |-> 7,
-      daysInMonth |-> TDaysInMonth(date[1], date[2]), daysInYear |-> TDaysInYear(date[1]),
-      monthsInYear |-> 12, inLeapYear |-> TIsLeapYear(date[1])]
+  LET week == IF calendar = "iso8601" THEN TWeekOfYear(date) ELSE <<Undefined, Undefined>>
+  IN TYearGetters(date, calendar)
+       @@ [day |-> date[3], dayOfWeek |-> TDayOfWeek(date), dayOfYear |-> TDayOfYear(date),
+           weekOfYear |-> week[1], yearOfWeek |-> week[2], daysInWeek |-> 7]
 
 \* The slots of a Temporal object of a kind, from what a step gives: a duration's fields, a time, or
 \* a record of a date, a time, and a calendar.
@@ -2520,11 +2601,7 @@ LOCAL TSlotsOf(kind, value) ==
                        epochNanoseconds |-> value]]
     [] kind = "PlainYearMonth" ->
          [kind |-> kind, date |-> value.date, calendar |-> value.calendar,
-          getters |-> [calendarId |-> value.calendar, era |-> Undefined, eraYear |-> Undefined,
-                       year |-> value.date[1], month |-> value.date[2], monthCode |-> TMonthCode(value.date[2]),
-                       daysInYear |-> TDaysInYear(value.date[1]),
-                       daysInMonth |-> TDaysInMonth(value.date[1], value.date[2]), monthsInYear |-> 12,
-                       inLeapYear |-> TIsLeapYear(value.date[1])]]
+          getters |-> TYearGetters(value.date, value.calendar)]
     [] kind = "ZonedDateTime" ->
          LET local == TLocal(value.zone, value.ns)
              today == TZonedNs(value.zone, local.date, TMidnight)
@@ -2714,9 +2791,10 @@ LOCAL TInstantMethod(heap, slots, method, arguments, prototype) ==
             IN TMakes(heap, prototype, "ZonedDateTime",
                       IF zone.error # "" THEN zone ELSE TOk([ns |-> ns, zone |-> zone.value, calendar |-> "iso8601"]))
 
-\* The fields of a year-month or a month-day, without the day or the year.
-LOCAL TPartFields(date, isYearMonth) ==
-  [TDateFields(date, TMidnight, FALSE) EXCEPT ![IF isYearMonth THEN "day" ELSE "year"] = Undefined]
+\* ISODateToFields of a year-month or a month-day: its month code, and its year or its day.
+LOCAL TPartFields(date, isYearMonth, calendar) ==
+  [TDateFields(date, TMidnight, FALSE, calendar) EXCEPT
+     ![IF isYearMonth THEN "day" ELSE "year"] = Undefined, !["month"] = Undefined]
 
 \* A call of Temporal.PlainYearMonth.prototype's or Temporal.PlainMonthDay.prototype's method.
 LOCAL TYearMonthOrMonthDayMethod(heap, slots, method, arguments, prototype) ==
@@ -2728,21 +2806,25 @@ LOCAL TYearMonthOrMonthDayMethod(heap, slots, method, arguments, prototype) ==
       other == IF isYearMonth THEN TToYearMonth(heap, first, Undefined) ELSE TToMonthDay(heap, first, Undefined)
       options == TOptions(heap, first)
       show == TCalendarNameOption(heap, options.value)
+      isFull(showing) == showing \in {"always", "critical"} \/ calendar # "iso8601"
       text(showing) ==
         IF isYearMonth
         THEN TYearText(date[1]) \o "-" \o TTwoDigits(date[2])
-               \o (IF showing \in {"always", "critical"} THEN "-" \o TTwoDigits(date[3]) ELSE "")
+               \o (IF isFull(showing) THEN "-" \o TTwoDigits(date[3]) ELSE "")
                \o TCalendarText(calendar, showing)
-        ELSE (IF showing \in {"always", "critical"} THEN TYearText(date[1]) \o "-" ELSE "")
+        ELSE (IF isFull(showing) THEN TYearText(date[1]) \o "-" ELSE "")
                \o TTwoDigits(date[2]) \o "-" \o TTwoDigits(date[3]) \o TCalendarText(calendar, showing)
       names == IF isYearMonth THEN {"year", "month", "monthCode"} ELSE {"year", "month", "monthCode", "day"}
-      partial == TPrepareFields(heap, first, names, {}, TRUE)
+      partial == TPrepareFields(heap, first, calendar, names, {}, TRUE)
       resolved == TOptions(heap, second)
       overflow == TOverflowOption(heap, resolved.value)
-      merged == TMergeFields(TPartFields(date, isYearMonth), partial.value)
-      withMade == IF isYearMonth THEN TYearMonthFromFields(merged, overflow.value) ELSE TMonthDayFromFields(merged, overflow.value)
-      input == TPrepareFields(heap, first, IF isYearMonth THEN {"day"} ELSE {"year"}, {}, FALSE)
-      dated == TDateFromFields(TMergeFields(TPartFields(date, isYearMonth), input.value), "constrain")
+      merged == TMergeFields(TPartFields(date, isYearMonth, calendar), partial.value)
+      withMade == IF isYearMonth
+                  THEN TYearMonthFromFields(merged, overflow.value, calendar)
+                  ELSE TMonthDayFromFields(merged, overflow.value, calendar)
+      input == TPrepareFields(heap, first, calendar, IF isYearMonth THEN {"day"} ELSE {"year"}, {}, FALSE)
+      dated == TDateFromFields(TMergeFields(TPartFields(date, isYearMonth, calendar), input.value), "constrain",
+                               calendar)
   IN CASE method \in {"add", "subtract"} ->
             TMakes(heap, prototype, "PlainYearMonth",
                    TDateOf(TYearMonthAdd(heap, date, first, second, method = "subtract"), calendar))
@@ -2887,7 +2969,7 @@ LOCAL TDateMethod(heap, slots, method, arguments, prototype) ==
             TMakes(heap, prototype, "PlainDate", TDateOf(TDateAddDuration(heap, date, first, second, FALSE), calendar))
        [] method = "subtract" ->
             TMakes(heap, prototype, "PlainDate", TDateOf(TDateAddDuration(heap, date, first, second, TRUE), calendar))
-       [] method = "with" -> TMakes(heap, prototype, "PlainDate", TDateOf(TDateWith(heap, date, first, second), calendar))
+       [] method = "with" -> TMakes(heap, prototype, "PlainDate", TDateOf(TDateWith(heap, date, calendar, first, second), calendar))
        [] method = "withCalendar" ->
             TMakes(heap, prototype, "PlainDate",
                    IF withCalendar.error # "" THEN withCalendar ELSE TOk([date |-> date, calendar |-> withCalendar.value]))
@@ -2925,10 +3007,12 @@ LOCAL TDateMethod(heap, slots, method, arguments, prototype) ==
                         [] OTHER -> TOk([ns |-> ns.value, zone |-> zone.value, calendar |-> calendar]))
        [] method = "toPlainYearMonth" ->
             TMakes(heap, prototype, "PlainYearMonth",
-                   TDateOf(TYearMonthFromFields(TDateFields(date, TMidnight, FALSE), "constrain"), calendar))
+                   TDateOf(TYearMonthFromFields(TDateFields(date, TMidnight, FALSE, "iso8601"), "constrain", "iso8601"),
+                           calendar))
        [] method = "toPlainMonthDay" ->
             TMakes(heap, prototype, "PlainMonthDay",
-                   TDateOf(TMonthDayFromFields(TDateFields(date, TMidnight, FALSE), "constrain"), calendar))
+                   TDateOf(TMonthDayFromFields(TDateFields(date, TMidnight, FALSE, "iso8601"), "constrain", "iso8601"),
+                           calendar))
 
 \* A call of Temporal.PlainDateTime.prototype's method.
 LOCAL TDateTimeMethod(heap, slots, method, arguments, prototype) ==
@@ -2953,7 +3037,7 @@ LOCAL TDateTimeMethod(heap, slots, method, arguments, prototype) ==
             TMakes(heap, prototype, "PlainDateTime",
                    TWithCalendar(TDateTimeAddDuration(heap, date, time, first, second, TRUE), calendar))
        [] method = "with" ->
-            TMakes(heap, prototype, "PlainDateTime", TWithCalendar(TDateTimeWith(heap, date, time, first, second), calendar))
+            TMakes(heap, prototype, "PlainDateTime", TWithCalendar(TDateTimeWith(heap, date, time, calendar, first, second), calendar))
        [] method = "withPlainTime" ->
             TMakes(heap, prototype, "PlainDateTime",
                    CASE newTime.error # "" -> newTime

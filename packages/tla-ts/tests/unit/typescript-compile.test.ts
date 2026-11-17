@@ -49145,4 +49145,37 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't parse the date");
     });
   });
+
+  describe("runs Temporal in the Gregorian, Buddhist, and Republic of China calendars", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          return String(run());
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const buddhist = Temporal.PlainDate.from({ calendar: "buddhist", year: 2543, monthCode: "M02", day: 29 });
+      const gregory = Temporal.PlainDate.from({ calendar: "gregory", era: "bc", eraYear: 5, month: 2, day: 29 });
+      const seen = [
+        buddhist.toString(),
+        buddhist.era,
+        gregory.year,
+        thrown(() => gregory.with({ eraYear: 5 })),
+        Temporal.PlainYearMonth.from({ calendar: "roc", era: "broc", eraYear: 2, month: 2 }).toString(),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "2000-02-29[u-ca=buddhist],be,-4,TypeError,1910-02-01[u-ca=roc]";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a year of the era before the epoch that counts from 0", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace(",-4,", ",-5,")))).failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
 });
