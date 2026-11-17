@@ -206,7 +206,7 @@ export type CheckProgress =
       branches: number;
       /** Whether TLC checks the complete state graph. */
       isComplete: boolean;
-      /** How many states the graph of each branch has, averaged over the branches. */
+      /** How many states the graphs of all branches have together. */
       states: number;
       statistics: SearchStatistics;
     }
@@ -1209,7 +1209,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         branches: liveness.branches,
         isComplete: true,
         // The tier stores and expands every successor, so the graph of each branch has every state.
-        states: typed.distinctStates,
+        states: liveness.branches * typed.distinctStates,
         statistics,
       });
       options.onProgress?.({ kind: "liveness-finished" });
@@ -1606,7 +1606,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   };
   // TLC counts the states of the graphs of all branches, which can differ.
   const getGraphStates = (checker: LivenessChecker) =>
-    checker.getStateCounts().reduce((sum, count) => sum + count, 0) / checker.branches;
+    checker.getStateCounts().reduce((sum, count) => sum + count, 0);
   const findPeriodicViolation = (checker: LivenessChecker) => {
     const now = performance.now();
     const counts = checker.getStateCounts();
@@ -1772,7 +1772,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       branches: finalLiveness.branches,
       isComplete: true,
       // The tier that found the lasso stored and expanded every successor, so each graph has every state.
-      states: typedLasso ? runtime.distinctStates : getGraphStates(finalLiveness),
+      states: typedLasso
+        ? finalLiveness.branches * runtime.distinctStates
+        : getGraphStates(finalLiveness),
       statistics: createResult("success"),
     });
   }
