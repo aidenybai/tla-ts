@@ -378,6 +378,13 @@ const selectSubexpression = (
     }
     const binder = getBinder(current);
     if (binder && (selector.kind === "Bound" || selector.kind === "At")) {
+      if (selector.kind === "Bound" && selector.args.length !== binder.names.length) {
+        report(
+          range,
+          `Selector with ${selector.args.length} argument(s) used for quantifier with ${binder.names.length} bound identifier(s).`,
+        );
+        return;
+      }
       selection.params.push(...binder.names.map((name) => ({ name, arity: 0 })));
       if (selector.kind === "Bound") {
         selection.args.push(...selector.args);

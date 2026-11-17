@@ -546,6 +546,8 @@ const checkSelection = (
     isGoal: true,
     isSufficesOpen: goal.isSuffices,
   };
+  let params = 0;
+  let args = 0;
   for (const [offset, selector] of selectors.slice(1).entries()) {
     const index = offset + 1;
     const node = state.node;
@@ -630,8 +632,22 @@ const checkSelection = (
       if (isEmptyExpression(expression)) {
         return report(index, `Choosing operand \`${operand}' of subexpression with no operands.`);
       }
-      const sets = getBinder(expression)?.sets;
-      if (sets && selector.kind !== "Operand") return node;
+      const binder = getBinder(expression);
+      if (binder && selector.kind !== "Operand") {
+        const count = selector.kind === "Bound" ? selector.args.length : 0;
+        if (selector.kind === "Bound" && count !== binder.names.length) {
+          return report(
+            index,
+            `Selector with ${count} argument(s) used for quantifier with ${binder.names.length} bound identifier(s).`,
+          );
+        }
+        params += binder.names.length;
+        args += count;
+        state.node = binder.body;
+        state.isGoal = false;
+        continue;
+      }
+      const sets = binder?.sets;
       const operands =
         expression.kind === "Identifier"
           ? []
@@ -672,13 +688,15 @@ const checkSelection = (
       return report(index, unexpectedNull);
     }
   }
-  if (isFact) return state.node;
   if (state.node.kind === "AssumeProve") {
-    return report(undefined, "Selected ASSUME/PROVE instead of expression.");
+    return isFact ? state.node : report(undefined, "Selected ASSUME/PROVE instead of expression.");
   }
   if (state.node.kind === "NewSymbol") {
-    return report(undefined, "Selected a NEW declaration as an expression or operator.");
+    return isFact
+      ? state.node
+      : report(undefined, "Selected a NEW declaration as an expression or operator.");
   }
+  if (params !== args) return report(undefined, `Expected ${params} arguments but found ${args}.`);
   return state.node;
 };
 

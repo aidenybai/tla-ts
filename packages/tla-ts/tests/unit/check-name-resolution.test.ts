@@ -942,6 +942,22 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "THEOREM T == \\A a \\in {1} : \\E b \\in {2} : a = b\nUSE T!@\nA == T!(1)!(2) /\\ T!@!@ /\\ T!(1)!@ /\\ T!(1)!(2, 3)\nOp == \\A a \\in {1}, b \\in {2} : a = b\nB == Op!(1) /\\ Op!(1, 2)!1",
+      [
+        ["line 3, col 5 to line 3, col 7", "Expected 1 arguments but found 0."],
+        ["line 4, col 19 to line 4, col 23", "Expected 2 arguments but found 0."],
+        ["line 4, col 28 to line 4, col 34", "Expected 2 arguments but found 1."],
+        [
+          "line 4, col 45 to line 4, col 50",
+          "Selector with 2 argument(s) used for quantifier with 1 bound identifier(s).",
+        ],
+        [
+          "line 6, col 9 to line 6, col 11",
+          "Selector with 1 argument(s) used for quantifier with 2 bound identifier(s).",
+        ],
+      ],
+    ],
+    [
       "VARIABLE y\nASSUME AS == TRUE\nOp == {y, y', AS}\nA == Op!1!1 /\\ Op!2!1!1 /\\ Op!3!1\nTHEOREM T == TRUE\n<1>1. TRUE OBVIOUS\n<1>2. {<1>1, 1} OBVIOUS\n<1>3. <1>2!1!1 OBVIOUS\n<1>4. QED",
       [
         ["line 5, col 11 to line 5, col 11", noOperands],
