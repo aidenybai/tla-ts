@@ -49064,4 +49064,34 @@ describe("BigInts", () => {
       expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
     });
   });
+
+  describe("writes a Date's time value as text", () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const dates = [new Date(0), new Date(-62198755200000), new Date(8.64e15), new Date(NaN)];
+      const result = dates
+        .map((date) =>
+          [date.toString(), date.toDateString(), date.toTimeString(), date.toUTCString()].join("|"),
+        )
+        .join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = [
+      "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)|Thu Jan 01 1970|00:00:00 GMT+0000 (Coordinated Universal Time)|Thu, 01 Jan 1970 00:00:00 GMT",
+      "Fri Jan 01 -0001 00:00:00 GMT+0000 (Coordinated Universal Time)|Fri Jan 01 -0001|00:00:00 GMT+0000 (Coordinated Universal Time)|Fri, 01 Jan -0001 00:00:00 GMT",
+      "Sat Sep 13 275760 00:00:00 GMT+0000 (Coordinated Universal Time)|Sat Sep 13 275760|00:00:00 GMT+0000 (Coordinated Universal Time)|Sat, 13 Sep 275760 00:00:00 GMT",
+      "Invalid Date|Invalid Date|Invalid Date|Invalid Date",
+    ].join(";");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another text", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("Fri Jan 01 -0001", "Fri Jan 01 -001"))))
+          .failure?.message,
+      ).toContain("Fri Jan 01 -0001");
+    });
+  });
 });

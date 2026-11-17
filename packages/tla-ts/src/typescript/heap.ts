@@ -2838,6 +2838,14 @@ export const DATE_FIELDS = new Map<string, string>([
 // The methods that give a Date's time value.
 export const TIME_METHODS = new Set(["getTime", "valueOf"]);
 
+// The methods that give a Date's time value as text, which DateText writes.
+export const DATE_TEXT_METHODS = new Set([
+  "toString",
+  "toDateString",
+  "toTimeString",
+  "toUTCString",
+]);
+
 // The Date setters, by the position of the first field each sets, the year at 1 and the
 // milliseconds at 7, or 0 for setTime and setYear, and how many numbers each takes.
 const DATE_SETTERS = new Map<string, { position: number; arity: number }>([
@@ -2870,7 +2878,8 @@ export const getDateCall = (node: ts.Node, context: Context) => {
     method !== undefined &&
     (DATE_SETTERS.has(method) ||
       method === "toISOString" ||
-      (isCall && (DATE_FIELDS.has(method) || TIME_METHODS.has(method))));
+      (isCall &&
+        (DATE_FIELDS.has(method) || TIME_METHODS.has(method) || DATE_TEXT_METHODS.has(method))));
   if (!isKnown || (!isCall && !isDateType(callee, context))) return undefined;
   if (isCall && !ts.isExpressionStatement(node.parent)) return undefined;
   return {

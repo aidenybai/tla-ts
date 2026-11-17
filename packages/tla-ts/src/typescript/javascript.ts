@@ -5560,6 +5560,32 @@ ISOString(time) ==
        \\o "T" \\o pad(time.ms \\div 3600000, 2) \\o ":" \\o pad((time.ms \\div 60000) % 60, 2)
        \\o ":" \\o pad((time.ms \\div 1000) % 60, 2) \\o "." \\o pad(time.ms % 1000, 3) \\o "Z"
 
+LOCAL WeekdayNames == <<"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat">>
+
+LOCAL MonthNames ==
+  <<"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec">>
+
+\\* What toString, toDateString, toTimeString, or toUTCString gives for a time value, in local time,
+\\* which tla-ts takes to be UTC, with the name that Node gives that time zone.
+DateText(time, method) ==
+  LET year == YearOf(time)
+      pad(value, width) ==
+        LET text == ToString(value) IN SubSeq("0000", 1, width - Len(text)) \\o text
+      weekday == WeekdayNames[((time.day + 4) % 7) + 1]
+      month == MonthNames[MonthOf(time) + 1]
+      yearText == (IF year < 0 THEN "-" ELSE "") \\o pad(IF year < 0 THEN -year ELSE year, 4)
+      clock == pad(time.ms \\div 3600000, 2) \\o ":" \\o pad((time.ms \\div 60000) % 60, 2) \\o ":"
+                 \\o pad((time.ms \\div 1000) % 60, 2) \\o " GMT"
+      date == weekday \\o " " \\o month \\o " " \\o pad(DateOf(time), 2) \\o " " \\o yearText
+      zone == "+0000 (Coordinated Universal Time)"
+  IN CASE time = NaN -> "Invalid Date"
+       [] method = "toDateString" -> date
+       [] method = "toTimeString" -> clock \\o zone
+       [] method = "toUTCString" ->
+            weekday \\o ", " \\o pad(DateOf(time), 2) \\o " " \\o month \\o " " \\o yearText \\o " "
+              \\o clock
+       [] OTHER -> date \\o " " \\o clock \\o zone
+
 \\* The time value of a Date that reads the clock, which tla-ts doesn't read.
 Clock == [clock |-> TRUE]
 
