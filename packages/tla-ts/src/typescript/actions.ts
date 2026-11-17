@@ -19459,6 +19459,16 @@ const findLeadingCall = (
       );
       return found.call !== undefined || found.isBlocked ? found : blocked;
     }
+    // A compound assignment to a name reads the name first, which keeps the value it had then
+    // where its right operand runs a call first.
+    if (isCompoundAssignment(node) && ts.isIdentifier(node.left)) {
+      const read = [...before, node.left];
+      const right = findLeadingCall(node.right, read, path, context);
+      if (right.call !== undefined) {
+        before.push(...read.slice(before.length));
+        return right;
+      }
+    }
     if (isAssignment) {
       const right = isCompoundAssignment(node)
         ? findLeadingCall(node.right, [], path, context)
@@ -19575,7 +19585,10 @@ const findLeadingCall = (
     const found = thenConverted(inOrder(node.arguments));
     if (found.call !== undefined || found.isBlocked) return found;
     if (isGeneratorType(node, context)) return blocked;
-    return isStatementCall(node, path, context) || isRemoving(node, context)
+    // A call that may throw inside try runs as a statement, whose throw the try catches.
+    return isStatementCall(node, path, context) ||
+      isRemoving(node, context) ||
+      (path.scope.isCatching && mayThrow(node, context))
       ? { call: node, isBlocked: false }
       : evaluate(node);
   }

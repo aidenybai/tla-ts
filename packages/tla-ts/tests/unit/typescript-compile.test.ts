@@ -48624,8 +48624,8 @@ describe("BigInts", () => {
 
     // Node gives 9, but a compound assignment runs the call inside its expression, which can't
     // keep d in the state for the function that the call makes.
-    it("stops where an expression calls it", () => {
-      const source = `
+    it("runs it as a statement where a compound assignment calls it", async () => {
+      const getSource = (expected: number) => `
         const results: any = {};
         var total = 0;
         total += (function (d: number) {
@@ -48633,11 +48633,10 @@ describe("BigInts", () => {
             return d;
           };
         })(9)();
-        if (total !== 9) throw new Error("seen " + total);
+        if (total !== ${expected}) throw new Error("seen " + total);
       `;
-      expect(() => checkModel(source)).toThrow(
-        "tla-ts can't call inside an expression a function that runs once and makes a function that reads its locals",
-      );
+      expect((await checkModel(getSource(9))).failure).toBeUndefined();
+      expect((await checkModel(getSource(8))).failure?.message).toContain("seen 9");
     });
   });
 
@@ -50749,6 +50748,63 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("after1,then1,then2,after2"))).failure?.message).toContain(
         "A promise rejected with no handler",
       );
+    });
+  });
+
+  describe("catches what a call on the right of a compound assignment throws inside try", () => {
+    const getSource = (expected: string) => `
+      let output = "a";
+      const change = (text: string): string => {
+        if (text === "") throw new Error("empty");
+        output = "changed";
+        return text;
+      };
+      const run = (text: string) => {
+        try {
+          output += change(text);
+        } catch {
+          output += "!";
+        }
+        return output;
+      };
+      const seen = [run("b"), run("")].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab,ab!"))).failure).toBeUndefined();
+    });
+
+    it("rejects the value that the call wrote", async () => {
+      expect((await checkModel(getSource("changedb,ab!"))).failure?.message).toContain(
+        "seen ab,ab!",
+      );
+    });
+  });
+
+  describe("catches in an action what a call inside a compound assignment throws", () => {
+    const getSource = (start: number) => `
+      let count = ${start};
+      export const step = () => {
+        const getChecked = (): number => {
+          throw new Error("no");
+        };
+        try {
+          count += getChecked();
+        } catch {
+          count = 0;
+        }
+      };
+      export const isZeroAfterStep = () => count === 0 || count === ${start};
+      export const isStart = () => count === ${start};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(0))).failure).toBeUndefined();
+    });
+
+    it("rejects a count that the catch didn't reset", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("invariant-violation");
     });
   });
 });
