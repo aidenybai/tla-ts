@@ -5586,6 +5586,131 @@ DateText(time, method) ==
               \\o clock
        [] OTHER -> date \\o " " \\o clock \\o zone
 
+\\* A string with each ASCII digit as 9, so that a format's shape compares to it.
+RECURSIVE DateShape(_)
+LOCAL DateShape(text) ==
+  IF text = ""
+  THEN ""
+  ELSE (IF IsDigitText(SubSeq(text, 1, 1)) THEN "9" ELSE SubSeq(text, 1, 1))
+         \\o DateShape(Tail(text))
+
+\\* The characters of a string from a position on, as many as it has up to a count.
+LOCAL DateSlice(text, from, count) ==
+  IF from > Len(text)
+  THEN ""
+  ELSE SubSeq(text, from, IF from + count - 1 > Len(text) THEN Len(text) ELSE from + count - 1)
+
+LOCAL DateNumberAt(text, from, count) == ParseDigits(SubSeq(text, from, from + count - 1), 10)
+
+RECURSIVE DateNinesAt(_, _)
+LOCAL DateNinesAt(shape, from) ==
+  IF DateSlice(shape, from, 1) = "9" THEN 1 + DateNinesAt(shape, from + 1) ELSE 0
+
+\\* The time value of fields in their ranges, less an offset in minutes.
+LOCAL DateOfFields(year, month, day, hour, minute, second, ms, offset) ==
+  LET time == MakeDate(MakeDay(year, month - 1, day), MakeTime(hour, minute, second, ms))
+  IN TimeClip(TimeValue(time.day, time.ms - offset * 60000))
+
+\\* What a reading of a date gives where its string isn't of the format it reads.
+LOCAL DateFailed == [ok |-> FALSE]
+
+\\* A string in the date time string format, which V8 reads as the spec does where each field is in
+\\* its range, but a day up to 31 in any month.
+LOCAL ISODate(text, shape) ==
+  LET yearEnd == IF DateSlice(shape, 1, 1) \\in {"+", "-"} THEN 7 ELSE 4
+      year == IF yearEnd = 4
+              THEN DateNumberAt(text, 1, 4)
+              ELSE (IF DateSlice(text, 1, 1) = "-" THEN -1 ELSE 1) * DateNumberAt(text, 2, 6)
+      hasMonth == DateSlice(shape, yearEnd + 1, 3) = "-99"
+      monthEnd == IF hasMonth THEN yearEnd + 3 ELSE yearEnd
+      hasDay == hasMonth /\\ DateSlice(shape, monthEnd + 1, 3) = "-99"
+      dayEnd == IF hasDay THEN monthEnd + 3 ELSE monthEnd
+      hasTime == DateSlice(shape, dayEnd + 1, 6) = "T99:99"
+      minuteEnd == IF hasTime THEN dayEnd + 6 ELSE dayEnd
+      hasSeconds == hasTime /\\ DateSlice(shape, minuteEnd + 1, 3) = ":99"
+      secondEnd == IF hasSeconds THEN minuteEnd + 3 ELSE minuteEnd
+      digits == IF hasSeconds /\\ DateSlice(shape, secondEnd + 1, 1) = "."
+                THEN DateNinesAt(shape, secondEnd + 2)
+                ELSE 0
+      fractionEnd == IF digits > 0 THEN secondEnd + 1 + digits ELSE secondEnd
+      zone == DateSlice(shape, fractionEnd + 1, Len(shape))
+      field(isPresent, end, absent) == IF isPresent THEN DateNumberAt(text, end - 1, 2) ELSE absent
+      month == field(hasMonth, monthEnd, 1)
+      day == field(hasDay, dayEnd, 1)
+      hour == field(hasTime, minuteEnd - 3, 0)
+      minute == field(hasTime, minuteEnd, 0)
+      second == field(hasSeconds, secondEnd, 0)
+      fraction == IF digits = 0
+                  THEN 0
+                  ELSE DateNumberAt(text, secondEnd + 2, IF digits < 3 THEN digits ELSE 3)
+      ms == fraction * (CASE digits = 1 -> 100 [] digits = 2 -> 10 [] OTHER -> 1)
+      isZeroFraction ==
+        \\A position \\in (secondEnd + 2)..fractionEnd : SubSeq(text, position, position) = "0"
+      offsetSign == IF DateSlice(text, fractionEnd + 1, 1) = "-" THEN -1 ELSE 1
+      hasOffset == zone \\in {"+99:99", "-99:99"}
+      offsetHour == IF hasOffset THEN DateNumberAt(text, fractionEnd + 2, 2) ELSE 0
+      offsetMinute == IF hasOffset THEN DateNumberAt(text, fractionEnd + 5, 2) ELSE 0
+  IN CASE ~(DateSlice(shape, 1, yearEnd) \\in {"9999", "+999999", "-999999"}) -> DateFailed
+       [] ~(zone \\in {"", "Z", "+99:99", "-99:99"}) \\/ (zone # "" /\\ ~hasTime) -> DateFailed
+       [] DateSlice(text, 1, 7) = "-000000" ->
+            IF hasTime THEN [ok |-> TRUE, time |-> NaN] ELSE DateFailed
+       [] \\/ month < 1 \\/ month > 12 \\/ day < 1 \\/ day > 31 \\/ hour > 24 \\/ minute > 59
+          \\/ second > 59 \\/ offsetHour > 23 \\/ offsetMinute > 59
+          \\/ (hour = 24 /\\ (minute # 0 \\/ second # 0 \\/ ~isZeroFraction)) -> DateFailed
+       [] OTHER -> [ok |-> TRUE,
+                    time |-> DateOfFields(year, month, day, hour, minute, second, ms,
+                                          offsetSign * (offsetHour * 60 + offsetMinute))]
+
+\\* A string that toString or toUTCString writes for a year from 100 on, which V8 reads with its
+\\* legacy parser, which reads a year before 100 otherwise.
+LOCAL WrittenDate(text, shape) ==
+  LET isUTC == DateSlice(text, 4, 1) = ","
+      yearAt == IF isUTC THEN 13 ELSE 12
+      isYearOf(length) == DateSlice(shape, yearAt, length + 1) = SubSeq("999999", 1, length) \\o " "
+      yearLength == CASE isYearOf(6) -> 6 [] isYearOf(5) -> 5 [] isYearOf(4) -> 4 [] OTHER -> 0
+      clockAt == yearAt + yearLength + 1
+      monthText == IF isUTC THEN DateSlice(text, 9, 3) ELSE DateSlice(text, 5, 3)
+      day == DateNumberAt(text, IF isUTC THEN 6 ELSE 9, 2)
+      year == DateNumberAt(text, yearAt, yearLength)
+      hour == DateNumberAt(text, clockAt, 2)
+      minute == DateNumberAt(text, clockAt + 3, 2)
+      second == DateNumberAt(text, clockAt + 6, 2)
+      zoneAt == clockAt + 12
+      zone == DateSlice(text, zoneAt, Len(text))
+      offsetSign == IF DateSlice(text, zoneAt, 1) = "-" THEN -1 ELSE 1
+      offsetHour == DateNumberAt(text, zoneAt + 1, 2)
+      offsetMinute == DateNumberAt(text, zoneAt + 3, 2)
+      isZone == IF isUTC
+                THEN zone = ""
+                ELSE /\\ DateSlice(shape, zoneAt, 5) \\in {"+9999", "-9999"}
+                     /\\ DateSlice(text, zoneAt + 5, Len(text))
+                          \\in {"", " (Coordinated Universal Time)"}
+  IN IF /\\ DateSlice(text, 1, 3) \\in {WeekdayNames[position] : position \\in 1..7}
+        /\\ IF isUTC
+           THEN DateSlice(shape, 4, 5) = ", 99 " /\\ DateSlice(text, 12, 1) = " "
+           ELSE DateSlice(text, 4, 1) = " " /\\ DateSlice(shape, 8, 4) = " 99 "
+        /\\ monthText \\in {MonthNames[position] : position \\in 1..12}
+        /\\ yearLength > 0
+        /\\ DateSlice(shape, clockAt - 1, 13) = " 99:99:99 GMT"
+        /\\ isZone
+        /\\ year >= 100 /\\ day >= 1 /\\ day <= 31 /\\ hour <= 23 /\\ minute <= 59 /\\ second <= 59
+        /\\ (isUTC \\/ (offsetHour <= 23 /\\ offsetMinute <= 59))
+     THEN [ok |-> TRUE,
+           time |-> DateOfFields(year,
+                                 CHOOSE position \\in 1..12 : MonthNames[position] = monthText,
+                                 day, hour, minute, second, 0,
+                                 IF isUTC THEN 0 ELSE offsetSign * (offsetHour * 60 + offsetMinute))]
+     ELSE DateFailed
+
+\\* The time value that Date.parse and new Date read from a string: one in the date time string
+\\* format, or one that toString or toUTCString writes. V8 reads another string with a legacy parser
+\\* of its own, so it stops.
+DateParse(text) ==
+  LET shape == DateShape(text)
+      iso == ISODate(text, shape)
+      parsed == IF iso.ok THEN iso ELSE WrittenDate(text, shape)
+  IN IF parsed.ok THEN parsed.time ELSE Assert(FALSE, "tla-ts can't parse the date " \\o text)
+
 \\* The time value of a Date that reads the clock, which tla-ts doesn't read.
 Clock == [clock |-> TRUE]
 

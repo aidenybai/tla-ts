@@ -131,6 +131,7 @@ import {
   isEmptyLocalesCall,
   translateIntlKept,
   areDateFields,
+  isDateText,
   translateDateFields,
   getMethodValue,
   getAnonymousName,
@@ -1155,6 +1156,43 @@ const translateBuiltInCall = (
       [translateDateFields(node, node.arguments, scope, context)],
       context,
     );
+  }
+  if (
+    getBuiltIn(receiver, context) === "Date" &&
+    method === "parse" &&
+    node.arguments.length === 1 &&
+    isDateText(node.arguments[0], context)
+  ) {
+    const parsed = useJavaScript(
+      "TimeNumber",
+      [
+        useJavaScript(
+          "DateParse",
+          [translateExpression(node.arguments[0], scope, context)],
+          context,
+        ),
+      ],
+      context,
+    );
+    return context.heap === undefined
+      ? parsed
+      : ifExpression(
+          useJavaScript(
+            "HoldsBuiltIn",
+            [
+              getHeap(scope, node, context),
+              translateBuiltInValue("Date", node, context),
+              string(method),
+              string("Date.parse"),
+            ],
+            context,
+          ),
+          parsed,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't call Date.parse where a script replaced it"),
+          ]),
+        );
   }
   // ArrayBuffer.isView tells whether a value has a [[ViewedArrayBuffer]], which only a typed array
   // or a DataView on the heap has.

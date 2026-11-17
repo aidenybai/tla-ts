@@ -2029,20 +2029,22 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
               [heap, translateExpression(values[0], scope, context)],
               context,
             )
-          : (getLiteralTime(values[0]) ??
-            useJavaScript(
-              "TimeFromNumber",
-              [
-                translateConverted(
-                  values[0],
-                  translateToNumber(values[0], node, scope, context),
-                  "number",
-                  scope,
-                  context,
-                ),
-              ],
-              context,
-            ));
+          : isDateText(values[0], context)
+            ? useJavaScript("DateParse", [translateExpression(values[0], scope, context)], context)
+            : (getLiteralTime(values[0]) ??
+              useJavaScript(
+                "TimeFromNumber",
+                [
+                  translateConverted(
+                    values[0],
+                    translateToNumber(values[0], node, scope, context),
+                    "number",
+                    scope,
+                    context,
+                  ),
+                ],
+                context,
+              ));
     // The constructor, which the prototype's constructor property holds.
     context.builtIns.add("Date");
     // A class that extends Date gives its instance the class's prototype.
@@ -2588,9 +2590,8 @@ export const getNewWrapper = (node: ts.Node, context: Context) => {
 export const isDateType = (node: ts.Expression, context: Context) =>
   context.checker.getTypeAtLocation(node).getSymbol()?.name === "Date";
 
-// new Date of a time value, of another Date, or of a year and a month and the rest, whose
-// arguments convert to numbers without running code. tla-ts doesn't read the clock or parse
-// dates.
+// new Date of a time value, of another Date, of a string, or of a year and a month and the rest,
+// whose arguments convert to numbers without running code. tla-ts doesn't read the clock.
 export const isNewDate = (node: ts.Node, context: Context): node is ts.NewExpression => {
   const construction = getConstruction(node, context);
   if (
@@ -2603,7 +2604,9 @@ export const isNewDate = (node: ts.Node, context: Context): node is ts.NewExpres
   }
   const values = node.arguments ?? [];
   return values.length === 1
-    ? isNumeric(values[0], context) || isDateType(values[0], context)
+    ? isNumeric(values[0], context) ||
+        isDateType(values[0], context) ||
+        isDateText(values[0], context)
     : values.length !== 1 && areDateFields(values, context);
 };
 
@@ -2941,6 +2944,12 @@ const isNumeric = (argument: ts.Expression, context: Context) => {
     names.length > 0 &&
     names.every((name) => ["number", "boolean", "null", "undefined"].includes(name))
   );
+};
+
+// Whether a value is a string, which Date.parse and new Date read as a date.
+export const isDateText = (argument: ts.Expression, context: Context) => {
+  const names = getTypeNames(context.checker.getTypeAtLocation(argument), context.checker);
+  return names !== undefined && names.length > 0 && names.every((name) => name === "string");
 };
 
 // Whether the arguments of Date.UTC, or of new Date with a year and a month, convert to numbers

@@ -49094,4 +49094,55 @@ describe("BigInts", () => {
       ).toContain("Fri Jan 01 -0001");
     });
   });
+
+  describe("reads a Date from a string in the formats that it writes", () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      const texts = [
+        "-271821-04-20T00:00:00.000Z",
+        "+275760-09-13T00:00:00.001Z",
+        "2000-02-31",
+        "2000-01-01T24:00",
+        "2000-01-01T00:00:00.9999Z",
+        "2000-01-01T23:59:59.999-23:59",
+        "2000-07",
+        "-000000-03-31T00:45Z",
+        "Mon Feb 30 2000 13:14:15 GMT-0130 (Coordinated Universal Time)",
+        "Wed, 31 Dec 0100 23:59:59 GMT",
+      ];
+      const result = texts.map((text) => Date.parse(text) + "/" + new Date(text).getTime()).join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = [
+      "-8640000000000000/-8640000000000000",
+      "NaN/NaN",
+      "951955200000/951955200000",
+      "946771200000/946771200000",
+      "946684800999/946684800999",
+      "946857539999/946857539999",
+      "962409600000/962409600000",
+      "NaN/NaN",
+      "951921855000/951921855000",
+      "-58979923201000/-58979923201000",
+    ].join();
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another time value", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("NaN/NaN", "8640000000000001/NaN")))).failure
+          ?.message,
+      ).toContain(expected);
+    });
+
+    it("stops at a string that V8 reads with its legacy parser", async () => {
+      const result = await checkModel(`
+        const holder: { [key: string]: unknown } = {};
+        if (Date.parse("Thu, 01 Jan 0099 00:00:00 GMT") !== 915148800000) throw new Error("year");
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't parse the date");
+    });
+  });
 });
