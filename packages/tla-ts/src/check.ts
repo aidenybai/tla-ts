@@ -881,7 +881,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       outDegrees: failureOptions.outDegrees,
     };
   };
-  // Deviation from TLC: Worker#doPostCondition throws an ArrayIndexOutOfBoundsException at an incomplete successor, so TLC skips the postconditions and, under -continue, prints the exception.
+  // Deviation from TLC: Worker#doPostCondition throws an ArrayIndexOutOfBoundsException at an incomplete successor, where tla-ts checks the postconditions with the successor in CounterExample.
   const reportIncompleteSuccessor = (
     index: number,
     error: TlaIncompleteSuccessorError,
@@ -913,7 +913,26 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const trace = traces.getStateTrace(index, error.state).trace;
     const failure = createFailureResult(
       error,
-      appendTraceOutput({ trace }, live.lines),
+      appendTraceOutput(
+        {
+          trace: traceFailure
+            ? trace
+            : [
+                ...trace,
+                traces.getIncompleteStep(
+                  error.state,
+                  trace.length + 1,
+                  {
+                    action: error.action,
+                    label: action && getActionLabel(action, options.version),
+                    output: found.lines,
+                  },
+                  action,
+                ),
+              ],
+        },
+        live.lines,
+      ),
       { callStack: live.result, traceFailure },
       { isConsole: true },
     );
@@ -925,16 +944,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         message,
         toolMessage: message,
         exitCode: EXIT_STATUS.specEvaluationFailure,
-        trace: traceFailure
-          ? trace
-          : [
-              ...trace,
-              traces.getIncompleteStep(error.state, trace.length + 1, {
-                action: error.action,
-                label: action && getActionLabel(action, options.version),
-                output: found.lines,
-              }),
-            ],
       },
     });
   };

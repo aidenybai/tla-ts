@@ -278,6 +278,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     incomplete: State,
     level: number,
     step: Omit<TraceStep, "state">,
+    action: SpecAction | undefined,
   ): TraceStep => {
     const state = toRecord(incomplete.map((value) => value ?? createModelValue("null")));
     const alias = config.alias;
@@ -286,7 +287,7 @@ export const createTraceBuilder = (context: TraceContext) => {
       state:
         alias === undefined ? state : getAliasState(alias, incomplete, incomplete, level, () => []),
     };
-    context.tracedSteps.set(traceStep, { state, action: undefined });
+    context.tracedSteps.set(traceStep, { state, action });
     return traceStep;
   };
   const getFailedTrace = (index: number, successor: Successor): Behavior => ({

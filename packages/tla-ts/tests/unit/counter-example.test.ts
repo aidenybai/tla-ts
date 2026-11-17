@@ -124,9 +124,23 @@ describe("POSTCONDITION after a state that leaves a variable unassigned", () => 
     ]);
   });
 
-  it("checks the postconditions after an incomplete successor, which TLC skips as it fails", async () => {
+  it("binds CounterExample to an incomplete successor with null for the unassigned variable, where TLC fails before the postconditions", async () => {
     expect(await checkUnassigned("x = 0 /\\ y = 0", "CounterExample")).toEqual([
-      ["[action |-> {}, state |-> {<<1, [x |-> 0, y |-> 0]>>}]"],
+      [
+        [
+          "[ action |->",
+          "      { << <<1, [x |-> 0, y |-> 0]>>,",
+          '           [ name |-> "Next",',
+          "             location |->",
+          "                 [ beginLine |-> 5,",
+          "                   beginColumn |-> 9,",
+          "                   endLine |-> 5,",
+          "                   endColumn |-> 14,",
+          '                   module |-> "M" ] ],',
+          "           <<2, [x |-> 1, y |-> null]>> >> },",
+          "  state |-> {<<1, [x |-> 0, y |-> 0]>>, <<2, [x |-> 1, y |-> null]>>} ]",
+        ].join("\n"),
+      ],
       "Postcondition Post at line 6, col 9 to line 6, col 39 of module M is false.",
     ]);
   });
