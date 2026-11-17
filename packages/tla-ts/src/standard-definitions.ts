@@ -81,6 +81,10 @@ const SIGNATURES: Signature[] = [
   ["RandomSubset", 0, [0, 0], [2, 2], [1, 1]],
   ["RandomSetOfSubsets", 0, [0, 0, 0], [2, 3, 2], [1, 0, 1]],
   ["TestRandomSetOfSubsets", 0, [0, 0, 0], [2, 3, 2], [1, 0, 1]],
+  ["_Track", 0, [0, 0], [3, 2], [0, 0]],
+  ["_Counts", 0, [], [], []],
+  ["_CheckName", 0, [0], [2], [1]],
+  ["_PrintCounts", 0, [], [], []],
 ];
 
 export const STANDARD_LEVELS = new Map(

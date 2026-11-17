@@ -14,8 +14,8 @@ afterAll(() =>
     .forEach((path) => rmSync(join(FIXTURES, path))),
 );
 
-export const runCliWith = (directory: string, args: string[]) =>
-  spawnSync("bun", [CLI, ...args], { cwd: join(FIXTURES, directory), encoding: "utf8" });
+export const runCliWith = (directory: string, args: string[], input?: string) =>
+  spawnSync("bun", [CLI, ...args], { cwd: join(FIXTURES, directory), encoding: "utf8", input });
 
 export const getToolSequence = (output: string) =>
   output

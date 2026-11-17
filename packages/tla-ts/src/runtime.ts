@@ -19,6 +19,7 @@ export interface CheckerRuntime {
     | undefined;
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: (() => void) | undefined;
+  readLine: (() => string | undefined) | undefined;
   warn: (code: number, text: string) => void;
   isWarningEnabled: boolean;
   isTool: boolean;
@@ -26,6 +27,7 @@ export interface CheckerRuntime {
   seed: bigint;
   isSeen: (state: Value[]) => boolean;
   getSuccessorAction: (state: Value[], next: Value[]) => SpecAction | undefined;
+  toRecord: (state: Value[]) => Record<string, Value>;
   generatedStates: number;
   distinctStates: number;
   initialStates: number;
@@ -54,6 +56,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     deferred: undefined,
     isSeen: () => false,
     getSuccessorAction: () => undefined,
+    toRecord: () => ({}),
     setLivenessSource: () => {},
     getCurrentState: () => undefined,
     getFingerprint: getTlcFingerprint,
@@ -77,6 +80,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
       }
     },
     pause: undefined,
+    readLine: undefined,
     warn: () => {},
     isWarningEnabled: true,
     isTool: false,
