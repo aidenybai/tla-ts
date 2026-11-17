@@ -12,7 +12,12 @@ import {
   skipCasts,
 } from "./context";
 import { getPrimitiveArgument, STRING_METHODS, translatePrimitiveMethod } from "./collections";
-import { BITWISE_OPERATORS, concatenate, translateExpression } from "./expressions";
+import {
+  BITWISE_OPERATORS,
+  concatenate,
+  translateBigInt,
+  translateExpression,
+} from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
 import { getBuiltIn } from "./intrinsics";
@@ -27,7 +32,7 @@ import {
   read,
   readWith,
 } from "./protocols";
-import { apply, boolean, junction, not, string, tuple } from "./tla";
+import { apply, boolean, ifExpression, junction, not, number, string, tuple } from "./tla";
 import { getKind, hasHeapType, isEvery, isHeapType, mayBeSequenceType } from "./types";
 
 // The hint that ToPrimitive takes, which decides whether it calls valueOf or toString first.
@@ -339,6 +344,41 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       return conversion && { ...conversion, thrownSymbols: "converted" };
     }
     return undefined;
+  }
+  // An increment or a decrement of a name that holds an object converts it to a number, or keeps
+  // a BigInt, and gives a pair of what it assigns and what it evaluates to: the new value, or the
+  // old one where it's postfix.
+  if (
+    (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+    (node.operator === ts.SyntaxKind.PlusPlusToken ||
+      node.operator === ts.SyntaxKind.MinusMinusToken) &&
+    ts.isIdentifier(skipCasts(node.operand))
+  ) {
+    const operation = node.operator === ts.SyntaxKind.PlusPlusToken ? "Add" : "Subtract";
+    const operand = skipCasts(node.operand);
+    const isConverted =
+      isObjectOperand(operand, context) ||
+      isMixedOperand(operand, context) ||
+      isAnyOperand(operand, context);
+    if (!isConverted) return undefined;
+    return {
+      operands: [operand],
+      hints: ["number"],
+      combine: ([primitive]) => {
+        const isBig = useJavaScript("IsBigInt", [primitive], context);
+        const old = ifExpression(isBig, primitive, toNumber(primitive));
+        const changed = ifExpression(
+          isBig,
+          useJavaScript(
+            operation === "Add" ? "BigIntAdd" : "BigIntSubtract",
+            [primitive, translateBigInt(1n, context)],
+            context,
+          ),
+          plain(useJavaScript(operation, [toNumber(primitive), number(1)], context)),
+        );
+        return tuple([changed, ts.isPrefixUnaryExpression(node) ? changed : old]);
+      },
+    };
   }
   if (ts.isPrefixUnaryExpression(node)) {
     if (node.operator === ts.SyntaxKind.PlusToken) {

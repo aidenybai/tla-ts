@@ -52441,4 +52441,43 @@ describe("BigInts", () => {
       "Give this pattern's value an array type",
     );
   });
+
+  describe("increments and decrements a name that holds an object through its conversion", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = [];
+      var object = {
+        valueOf() {
+          log.push("valueOf");
+          return 1;
+        },
+      };
+      var first = ++object;
+      var other = { valueOf: () => 5 };
+      var second = other--;
+      var big = { valueOf: () => 1n };
+      big++;
+      var thrown = "none";
+      var bad = { valueOf: () => ({}), toString: () => ({}) };
+      try {
+        bad++;
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      var result = [first, object, second, other, String(big), log.join(), thrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("2,2,5,4,2,valueOf,TypeError");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("2,2,4,4,2,valueOf,TypeError");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 2,2,5,4,2,valueOf,TypeError",
+      );
+    });
+  });
 });

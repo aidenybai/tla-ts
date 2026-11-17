@@ -19287,7 +19287,11 @@ const getLeadingAssignment = (
   context: Context,
 ): ts.BinaryExpression | Increment | undefined => {
   if (results.has(node)) return undefined;
-  if (isIncrement(node)) return isPlainIncrement(node, context) ? node : undefined;
+  if (isIncrement(node)) {
+    return isPlainIncrement(node, context) && getConversion(node, context) === undefined
+      ? node
+      : undefined;
+  }
   // A unary operator evaluates its operand before it converts it.
   if (ts.isPrefixUnaryExpression(node)) return getLeadingAssignment(node.operand, results, context);
   if (
@@ -19844,7 +19848,11 @@ const findLeadingCall = (
       : evaluate(node);
   }
   if (isIncrement(node)) {
-    return isPlainIncrement(node, context) ? { ...blocked, increment: node } : blocked;
+    return getConversion(node, context) !== undefined
+      ? { ...blocked, conversion: node }
+      : isPlainIncrement(node, context)
+        ? { ...blocked, increment: node }
+        : blocked;
   }
   if (ts.isPrefixUnaryExpression(node)) {
     return thenConverted(findLeadingCall(node.operand, before, path, context));
@@ -21703,16 +21711,20 @@ export const translateStatements = (
       context,
       statementFrame,
       (after, value) => {
+        // An increment's conversion gives what it assigns and what it evaluates to.
         const assigned = isCompoundAssignment(node)
           ? assign(node.left, after, context, () => value)
-          : after;
+          : isIncrement(node)
+            ? assign(node.operand, after, context, () => index(value, [number(1)]))
+            : after;
+        const result = isIncrement(node) ? index(value, [number(2)]) : value;
         return translateStatements(
           statements,
           {
             ...assigned,
             scope: {
               ...assigned.scope,
-              results: new Map([...assigned.scope.results, [node, value]]),
+              results: new Map([...assigned.scope.results, [node, result]]),
             },
           },
           context,
