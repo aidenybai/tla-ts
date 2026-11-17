@@ -133,8 +133,10 @@ export class Monadic {
     this.pins.push(regex);
     this.pins.push(element);
     this.pins.pushOwned(derivative);
-    if (!this.derivativeCache.has(regex)) this.derivativeCache.set(regex, new Map());
-    this.derivativeCache.get(regex)!.set(element, derivative);
+    const derivatives = this.derivativeCache.get(regex);
+    if (derivatives === undefined)
+      this.derivativeCache.set(regex, new Map([[element, derivative]]));
+    else derivatives.set(element, derivative);
     return derivative;
   }
 

@@ -484,7 +484,8 @@ export class ReRewriter {
       left === right ? 0 : getId(left) < getId(right) ? -1 : 1;
     const composeResult = (suffix: number) => {
       let result = suffix;
-      while (prefix.length > 0) result = compose(prefix.pop()!, result);
+      for (let regex = prefix.pop(); regex !== undefined; regex = prefix.pop())
+        result = compose(regex, result);
       return result;
     };
     let left = first;

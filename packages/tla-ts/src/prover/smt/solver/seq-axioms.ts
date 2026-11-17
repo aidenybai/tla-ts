@@ -178,9 +178,8 @@ export class SeqAxioms {
     return result;
   }
 
-  private purify(expr: number | undefined) {
+  private purify(expr: number) {
     const manager = this.manager;
-    if (expr === undefined) return undefined;
     if (manager.depths[expr] === 1 || manager.isValue(expr)) return expr;
     if (this.host.rewrite(expr) === expr) return expr;
     let result = this.purified.get(expr);
@@ -250,9 +249,9 @@ export class SeqAxioms {
   extractAxiom(expr: number) {
     const manager = this.manager;
     const [seqArg, indexArg, lengthArg] = manager.getArgs(expr);
-    const seq = this.purify(seqArg)!;
-    const index = this.purify(indexArg)!;
-    const length = this.purify(lengthArg)!;
+    const seq = this.purify(seqArg);
+    const index = this.purify(indexArg);
+    const length = this.purify(lengthArg);
     if (this.smallSegmentAxiom(expr, seqArg, indexArg, lengthArg)) return;
     if (this.isTail(seq, indexArg, lengthArg)) {
       this.tailAxiom(expr, seq);
@@ -430,9 +429,9 @@ export class SeqAxioms {
     const args = manager.getArgs(index);
     const minusOne = this.mkInt(-1);
     const zero = this.mkInt(0);
-    const offset = this.purify(args[2]);
-    const pattern = this.purify(args[1])!;
-    const text = this.purify(args[0])!;
+    const offset = args.length > 2 ? this.purify(args[2]) : undefined;
+    const pattern = this.purify(args[1]);
+    const text = this.purify(args[0]);
     const contains = this.mkSeq(OP_SEQ_CONTAINS, [text, pattern]);
     const isMinusOne = this.mkEq(index, minusOne);
     const isZero = this.mkEq(index, zero);
@@ -505,8 +504,8 @@ export class SeqAxioms {
   lastIndexofAxiom(index: number) {
     const manager = this.manager;
     const [textArg, patternArg] = manager.getArgs(index);
-    const text = this.purify(textArg)!;
-    const pattern = this.purify(patternArg)!;
+    const text = this.purify(textArg);
+    const pattern = this.purify(patternArg);
     const minusOne = this.mkInt(-1);
     const zero = this.mkInt(0);
     const skolem = this.skolem;
@@ -533,9 +532,9 @@ export class SeqAxioms {
   replaceAxiom(replace: number) {
     const manager = this.manager;
     const [source, patternArg, targetArg] = manager.getArgs(replace);
-    const text = this.purify(source)!;
-    const pattern = this.purify(patternArg)!;
-    const target = this.purify(targetArg)!;
+    const text = this.purify(source);
+    const pattern = this.purify(patternArg);
+    const target = this.purify(targetArg);
     const skolem = this.skolem;
     const left = skolem.mkIndexofLeft(text, pattern);
     const right = skolem.mkIndexofRight(text, pattern);
@@ -559,8 +558,8 @@ export class SeqAxioms {
   atAxiom(expr: number) {
     const manager = this.manager;
     const [seqArg, indexArg] = manager.getArgs(expr);
-    const seq = this.purify(seqArg)!;
-    const index = this.purify(indexArg)!;
+    const seq = this.purify(seqArg);
+    const index = this.purify(indexArg);
     this.mkInt(0);
     const one = this.mkInt(1);
     const empty = this.mkEmpty(manager.sorts[expr]);
@@ -741,8 +740,8 @@ export class SeqAxioms {
   ltAxiom(expr: number) {
     const manager = this.manager;
     const [firstArg, secondArg] = manager.getArgs(expr);
-    const first = this.purify(firstArg)!;
-    const second = this.purify(secondArg)!;
+    const first = this.purify(firstArg);
+    const second = this.purify(secondArg);
     const charSort = manager.getSeqElementSort(manager.sorts[first]);
     const lt = expr;
     const gt = this.mkSeq(OP_STRING_LT, [second, first]);
@@ -889,8 +888,8 @@ export class SeqAxioms {
   private affixAxiom(expr: number, name: string, isPrefix: boolean) {
     const manager = this.manager;
     const [firstArg, secondArg] = manager.getArgs(expr);
-    const first = this.purify(firstArg)!;
-    const second = this.purify(secondArg)!;
+    const first = this.purify(firstArg);
+    const second = this.purify(secondArg);
     const firstLength = this.mkLenAxiom(first);
     const secondLength = this.mkLenAxiom(second);
     const isLonger = this.mkGe(this.mkSub(firstLength, secondLength), 1);
