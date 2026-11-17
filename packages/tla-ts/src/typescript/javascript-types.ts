@@ -65,9 +65,12 @@ const CALLEE_ERRORS = new Set([2348, 2349, 2350, 2351, 7009]);
 // A call with more or fewer arguments than its signature declares.
 const ARGUMENT_COUNT_ERRORS = new Set([2554, 2555, 2810]);
 
+// A for-in's variable whose type isn't a string's, which the loop writes keys to.
+const FOR_IN_TARGET_ERROR = 2405;
+
 // Declarations of a variable with two types, a read of a variable before a write, and a for-in's
-// variable whose type isn't a string's, which the loop writes keys to.
-const DECLARED_ERRORS = new Set([2403, 2405, 2454]);
+// variable.
+const DECLARED_ERRORS = new Set([2403, FOR_IN_TARGET_ERROR, 2454]);
 
 // A delete of a property that the type gives.
 const DELETE_ERRORS = new Set([2704, 2790]);
@@ -551,7 +554,14 @@ export const typeJavaScript = (
         isReported(diagnostic) &&
         !isAcceptedPattern(diagnostic),
     );
-  const rejected = errors.filter((diagnostic) => !FIXED_ERRORS.has(diagnostic.code));
+  // A for-in's target that isn't a name, such as this, is an early error that TypeScript reports as
+  // a type.
+  const rejected = errors.filter(
+    (diagnostic) =>
+      !FIXED_ERRORS.has(diagnostic.code) ||
+      (diagnostic.code === FOR_IN_TARGET_ERROR &&
+        !ts.isIdentifier(getDiagnosedNode(file, diagnostic))),
+  );
   if (rejected.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(rejected, host));
   const fixes = errors
     .map((diagnostic) => {
