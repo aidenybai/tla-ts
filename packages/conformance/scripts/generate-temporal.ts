@@ -117,6 +117,7 @@ const CASES = MACHINES.flatMap((machine) => [
   ),
 ]);
 
+// Deviation from TLC: TLC ends this counterexample in stuttering that WF_x(Next) rules out.
 const TLC_BUG_CASES = ["live_reset__weak__negated_leads_to"];
 
 export const generateTemporalMatrix = () =>
