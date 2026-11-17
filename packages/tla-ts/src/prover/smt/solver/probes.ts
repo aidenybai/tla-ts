@@ -515,9 +515,11 @@ const NARY_PROBES = new Map<string, (first: number, second: number) => number>([
 ]);
 
 export const compileProbe = (sexpr: SExpr, isInternal = false): Probe => {
-  if (sexpr.kind === "numeral") {
-    const value = Number(sexpr.text);
-    if (value > 2 ** 31 - 1)
+  // A decimal is a numeral of the s-expression, which is_int32 rejects unless it is whole.
+  if (sexpr.kind === "numeral" || sexpr.kind === "decimal") {
+    const [whole, fraction = ""] = sexpr.text.split(".");
+    const value = Number(whole);
+    if (!/^0*$/.test(fraction) || value > 2 ** 31 - 1)
       throw new SmtParseError(
         "invalid probe, constant is too big to fit in a fixed size integer",
         sexpr,

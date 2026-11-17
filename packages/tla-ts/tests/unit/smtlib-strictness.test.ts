@@ -444,6 +444,22 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("takes a whole decimal as a probe constant and rejects any other decimal", () => {
+    expect(
+      run([
+        "(apply (fail-if (> 3.0 2)))",
+        "(apply (fail-if (> 2.5 2)))",
+        "(apply (fail-if (> #x3 2)))",
+        "(apply (fail-if (> 2147483648.0 2)))",
+      ]),
+    ).toEqual([
+      '(error "tactic failed: fail-if tactic")',
+      '(error "line 2 column 19: invalid probe, constant is too big to fit in a fixed size integer")',
+      '(error "line 3 column 19: invalid probe, unexpected input")',
+      '(error "line 4 column 19: invalid probe, constant is too big to fit in a fixed size integer")',
+    ]);
+  });
+
   it("takes no negative numeral for an unsigned value of a tactic or a command", () => {
     expect(
       run([
