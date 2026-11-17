@@ -5,8 +5,8 @@ import {
   type FunctionNode,
   getFunction,
   getOwnSymbol,
+  getRunStatements,
   getSymbol,
-  isAmbient,
   type HelperDeclaration,
   isHeapClass,
   isHeapEnum,
@@ -179,22 +179,8 @@ const getListDeclarations = (list: ts.VariableDeclarationList) =>
   );
 
 // The functions and constants a statement declares.
+// A namespace's statements are the file's that getRunStatements lists.
 const getDeclarations = (statement: ts.Statement): Declared[] => {
-  if (ts.isModuleDeclaration(statement)) {
-    const body = statement.body;
-    // A declare, such as declare global, only describes what the host gives.
-    if (body === undefined || isAmbient(statement)) return [];
-    if (ts.isModuleDeclaration(body)) return getDeclarations(body);
-    if (!ts.isModuleBlock(body)) return [];
-    return body.statements.flatMap((inner) => {
-      const isConst =
-        ts.isVariableStatement(inner) && (inner.declarationList.flags & ts.NodeFlags.Const) !== 0;
-      if (!isDeclaration(inner) && !isConst) {
-        throw new TlaTypeScriptError(`Unsupported statement: ${inner.getText()}`, inner);
-      }
-      return getDeclarations(inner);
-    });
-  }
   if (ts.isFunctionDeclaration(statement) && statement.body !== undefined) {
     if (statement.name === undefined) throw new TlaTypeScriptError("Name this function", statement);
     return [{ name: statement.name.text, declaration: statement, identifier: statement.name }];
@@ -218,7 +204,7 @@ export const readModel = (
   positions: ReadonlyMap<ts.Statement, number>,
   context: Context,
 ): Model => {
-  const statements = sourceFile.statements;
+  const statements = getRunStatements(sourceFile);
   const tags = new Map(statements.map((statement) => [statement, getTags(statement)]));
   const symmetrySets = statements
     .filter(

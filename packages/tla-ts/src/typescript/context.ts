@@ -731,12 +731,6 @@ export const createContext = (
   return context;
 };
 
-// Whether a node writes an object or a regexp literal, each of which makes an object.
-export const hasObjectLiteral = (node: ts.Node): boolean =>
-  ts.isObjectLiteralExpression(node) ||
-  ts.isRegularExpressionLiteral(node) ||
-  (ts.forEachChild(node, hasObjectLiteral) ?? false);
-
 // The function whose arguments object a reference to arguments names. tla-ts follows only a
 // reference that no arrow function holds, since an arrow function names the arguments of the
 // function around it, which a later call may have replaced.
@@ -781,7 +775,10 @@ export const isAbsentModuleVariable = (node: ts.Identifier, context: Context) =>
   return (
     COMMON_JS_VARIABLES.has(node.text) &&
     declarations.length > 0 &&
-    declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile) &&
+    declarations.every(
+      (declaration) =>
+        ts.isVariableDeclaration(declaration) && declaration.getSourceFile().isDeclarationFile,
+    ) &&
     isModuleFile(node.getSourceFile())
   );
 };
@@ -968,12 +965,13 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
 };
 
 // A name that no declaration binds, whose reading throws a ReferenceError, but for a global that
-// Node gives.
+// Node gives, or a variable of a CommonJS module that an ES module reads.
 export const isUnresolved = (node: ts.Node, context: Context): node is ts.Identifier =>
   ts.isIdentifier(node) &&
-  context.checker.getSymbolAtLocation(node) === undefined &&
-  !NODE_GLOBALS.has(node.text) &&
-  getWrapperName(node, context.checker) === undefined;
+  ((context.checker.getSymbolAtLocation(node) === undefined &&
+    !NODE_GLOBALS.has(node.text) &&
+    getWrapperName(node, context.checker) === undefined) ||
+    isAbsentModuleVariable(node, context));
 
 // The names that an assignment target writes, through the elements of its patterns.
 const getAssignedNames = (target: ts.Expression): ts.Expression[] => {
@@ -1605,7 +1603,7 @@ export const isSuperAccess = (
   (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
   node.expression.kind === ts.SyntaxKind.SuperKeyword;
 
-const isTopLevel = (statement: ts.Node): boolean => {
+export const isTopLevel = (statement: ts.Node): boolean => {
   const parent = statement.parent;
   if (ts.isSourceFile(parent)) return true;
   const namespace = ts.isModuleBlock(parent) ? parent.parent : parent;
@@ -2212,6 +2210,26 @@ export const getAssignedSetter = (node: ts.Node, context: Context) => {
 export const isAmbient = (node: ts.Node) =>
   ts.canHaveModifiers(node) &&
   (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword);
+
+// The block of a namespace that a statement declares, which runs once, as TypeScript emits it, where
+// the declaration runs, or undefined for another statement or a declare, which runs nothing.
+const getNamespaceBody = (statement: ts.Node): ts.ModuleBlock | undefined => {
+  if (!ts.isModuleDeclaration(statement) || isAmbient(statement)) return undefined;
+  const body = statement.body;
+  return body !== undefined && ts.isModuleDeclaration(body)
+    ? getNamespaceBody(body)
+    : body !== undefined && ts.isModuleBlock(body)
+      ? body
+      : undefined;
+};
+
+// The statements that a file runs at its top level, where each namespace's declaration runs the
+// statements of its body.
+export const getRunStatements = (container: ts.SourceFile | ts.ModuleBlock): ts.Statement[] =>
+  container.statements.flatMap((statement) => {
+    const body = getNamespaceBody(statement);
+    return body === undefined ? [statement] : [statement, ...getRunStatements(body)];
+  });
 
 export const isStatic = (node: ts.Node) =>
   ts.canHaveModifiers(node) &&

@@ -48123,8 +48123,13 @@ describe("BigInts", () => {
       );
     });
 
-    it("stops where an ES module reads require", async () => {
+    it("throws a ReferenceError where a statement of an ES module first reads require", async () => {
       const read = `${source}\nif (require === undefined) throw new Error("none");`;
+      await expect(check(compile(read, path))).rejects.toThrow('"ReferenceError"');
+    });
+
+    it("stops where an ES module calls require after it runs other code", async () => {
+      const read = `${source}\nconst found = kinds.length > 0 ? require("perf_hooks") : undefined;`;
       await expect(check(compile(read, path))).rejects.toThrow(
         "tla-ts can't throw the ReferenceError of reading require, which an ES module doesn't have",
       );
@@ -49435,6 +49440,256 @@ describe("BigInts", () => {
 
     it("grows with the helpers rather than with the ways their calls nest", () => {
       expect(getSize(8)).toBeLessThan(getSize(4) * 2);
+    });
+  });
+
+  describe("throws the ReferenceError of the require that an ES module calls", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/absent.ts");
+    const getSource = (expected: string) => `/// <reference types="node" />
+      export {};
+      const loadPerformance = () => {
+        if (typeof require === "undefined") return "none";
+        const { performance } = require("perf_hooks") as { performance?: object };
+        return typeof performance;
+      };
+      const seen = [loadPerformance()];
+      try {
+        require("perf_hooks");
+      } catch (error) {
+        seen.push((error as Error).name);
+      }
+      try {
+        const loaded = require("perf_hooks") as object;
+        seen.push(typeof loaded);
+      } catch (error) {
+        seen.push((error as Error).name);
+      }
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await check(compile(getSource("none,ReferenceError,ReferenceError"), path))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a require that loads the module", async () => {
+      expect(
+        (await check(compile(getSource("object,ReferenceError,object"), path))).failure?.message,
+      ).toContain("seen none,ReferenceError,ReferenceError");
+    });
+  });
+
+  describe("runs the implementation of an overloaded function", () => {
+    const getSource = (expected: string) => `
+      function pick(value?: undefined): number | undefined;
+      function pick(value: number): number;
+      function pick(value?: number): number | undefined {
+        return value === undefined ? undefined : value + 1;
+      }
+      const picks = [pick, pick];
+      const seen = [pick(1), pick(), picks[1](4), typeof pick, pick.length, pick.name].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,,5,function,1,pick"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("2,,5,function,0,pick"))).failure?.message).toContain(
+        "seen 2,,5,function,1,pick",
+      );
+    });
+
+    it("agrees with Node where another module's top level calls it", async () => {
+      const path = join(import.meta.dirname, "../fixtures/typescript/imports/registering.ts");
+      const getImporter = (expected: string) => `
+        import { names } from "./registry";
+        const box = { seen: names.join() };
+        if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+      `;
+      expect((await check(compile(getImporter("first"), path))).failure).toBeUndefined();
+      expect((await check(compile(getImporter(""), path))).failure?.message).toContain(
+        "seen first",
+      );
+    });
+
+    it("agrees with Node where an exported action calls it", async () => {
+      const result = await checkModel(`
+        function next(count: number): number;
+        function next(count: string): string;
+        function next(count: number | string): number | string {
+          return typeof count === "number" ? count + 1 : count;
+        }
+        export let count = 0;
+        export const step = () => {
+          if (count < 2) count = next(count);
+        };
+      `);
+      expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+  });
+
+  describe("runs a namespace's body once where its declaration runs", () => {
+    const getSource = (expected: string) => `
+      namespace Tokens {
+        var current = 0;
+        const step = 2;
+        if (current === 0) current = 1;
+        export function next() {
+          current += step;
+          return current;
+        }
+        export const first = current;
+      }
+      namespace Outer.Inner {
+        let count = 10;
+        export function bump() {
+          return ++count;
+        }
+      }
+      const seen = [Tokens.next(), Tokens.next(), Tokens.first, Outer.Inner.bump()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with TypeScript's output run in Node", async () => {
+      expect((await checkModel(getSource("3,5,1,11"))).failure).toBeUndefined();
+    });
+
+    it("rejects a namespace whose variable starts again", async () => {
+      expect((await checkModel(getSource("3,3,1,11"))).failure?.message).toContain("seen 3,5,1,11");
+    });
+
+    it("agrees with TypeScript's output run in Node where a namespace's constant makes an object", async () => {
+      const getShapes = (expected: number) => `
+        namespace Shapes {
+          export const unit = { side: 1 };
+        }
+        const box = { side: Shapes.unit.side };
+        if (box.side !== ${expected}) throw new Error("side " + box.side);
+      `;
+      expect((await checkModel(getShapes(1))).failure).toBeUndefined();
+      expect((await checkModel(getShapes(2))).failure?.message).toContain("side 1");
+    });
+
+    it("agrees with TypeScript's output run in Node for another file's namespace", async () => {
+      const path = join(import.meta.dirname, "../fixtures/typescript/imports/countering.ts");
+      const getImporter = (expected: string) => `
+        import { Counter, log } from "./counter-space";
+        Counter.bump();
+        const seen = [Counter.bump(), log.join()].join();
+        if (seen !== "${expected}") throw new Error("seen " + seen);
+      `;
+      expect((await check(compile(getImporter("2,ran"), path))).failure).toBeUndefined();
+      expect((await check(compile(getImporter("2,"), path))).failure?.message).toContain(
+        "seen 2,ran",
+      );
+    });
+  });
+
+  describe("runs where its module does a constant that a call making an object gives", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/limiting.ts");
+    const getSource = (expected: string) => `
+      import { getLimit, setLimit } from "./limits";
+      const saved = { limit: getLimit() };
+      setLimit(0);
+      const during = getLimit();
+      setLimit(saved.limit);
+      const seen = [saved.limit, during, getLimit()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("10,0,10"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects a limit that the write leaves alone", async () => {
+      expect((await check(compile(getSource("10,10,10"), path))).failure?.message).toContain(
+        "seen 10,0,10",
+      );
+    });
+  });
+
+  describe("lists only values that TLC can compare in a parameter's domain", () => {
+    it("stops at a union of a string and a number", () => {
+      expect(() =>
+        compile(`export const isSame = (value: 1 | "a"): boolean => value === value;`),
+      ).toThrow(
+        `spec.ts:1:24 1 | "a" mixes values that TLC can't compare, such as a string and a number`,
+      );
+    });
+
+    it("stops at records whose same field holds a string and a number", () => {
+      expect(() =>
+        compile(
+          `export const isSame = (value: { kind: "a" } | { kind: 1 }): boolean => value === value;`,
+        ),
+      ).toThrow("mixes values that TLC can't compare");
+    });
+
+    it("agrees with Node for records whose fields differ", async () => {
+      const result = await checkModel(`
+        type Shape = { kind: "circle"; radius: 1 | 2 } | { kind: "label"; text: "a" | "b" };
+        export let seen = 0;
+        export const record = (shape: Shape) => {
+          if (seen < 4) seen += shape.kind === "circle" ? shape.radius : 1;
+        };
+      `);
+      expect([result.status, result.failure]).toEqual(["deadlock", undefined]);
+    });
+  });
+
+  describe("makes no namespace object for a module where no code that may run reads one", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/picking.ts");
+
+    it("agrees with Node where only a function that never runs reads it", async () => {
+      const result = await check(
+        compile(
+          `
+          import { double } from "./area-picker";
+          export let count = 0;
+          export const step = () => {
+            if (count < 4) count = double(count + 1);
+          };
+          export const isSmall = () => count !== 6;
+        `,
+          path,
+        ),
+      );
+      expect([result.status, getTrace(result)]).toEqual([
+        "invariant-violation",
+        [{ count: "0" }, { count: "2" }, { count: "6" }],
+      ]);
+    });
+
+    it("stops where code that may run reads it", () => {
+      expect(() =>
+        compile(
+          `
+          import { pickAreas } from "./area-picker";
+          export let count = 0;
+          export const step = () => {
+            if (count < 4) count = pickAreas().getArea(count + 1);
+          };
+        `,
+          path,
+        ),
+      ).toThrow("tla-ts can't make a module's namespace object outside a script");
+    });
+  });
+
+  describe("compiles a project whose options TypeScript deprecates", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/projects/legacy/main.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = source.replace('"2,4,6"', '"2,4"');
+      await expect(check(compile(wrong, path))).rejects.toThrow("seen 2,4,6");
     });
   });
 });

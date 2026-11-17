@@ -24,6 +24,7 @@ import {
   findOnceLocals,
   getCallee,
   getFunction,
+  getRunStatements,
   getSymbol,
   getTopLevelDeclaration,
   hasObjectMembers,
@@ -31,6 +32,7 @@ import {
   isInertValue,
   isImportCall,
   isScript,
+  isTopLevel,
   rejectArgumentsVarReads,
   rejectSloppyGlobalWrites,
   isVarFunction,
@@ -412,7 +414,7 @@ export const compile = (
         }
         if (imported !== undefined) load(imported);
       });
-      statements.push(...file.statements);
+      statements.push(...getRunStatements(file));
     }
     if (file !== sourceFile) files.push(file);
   };
@@ -430,7 +432,7 @@ export const compile = (
       ? statements
       : [
           ...statements.filter((statement) => statement.getSourceFile() !== sourceFile),
-          ...sourceFile.statements,
+          ...getRunStatements(sourceFile),
         ]
     ).map((statement, position) => [statement, position]),
   );
@@ -616,7 +618,7 @@ export const compile = (
       getCallee(node.expression, context)?.body !== undefined) ||
     (ts.forEachChild(node, hasEffect) ?? false);
   const effects = files.flatMap((file) =>
-    file.statements.filter((statement) =>
+    getRunStatements(file).filter((statement) =>
       ts.isVariableStatement(statement)
         ? statement.declarationList.declarations.some(
             (declaration) =>
@@ -656,8 +658,8 @@ export const compile = (
         ts.isVariableDeclaration(node) &&
         !(node.initializer !== undefined && ts.isFunctionLike(node.initializer)) &&
         ts.isVariableStatement(statement) &&
-        ts.isSourceFile(statement.parent) &&
-        files.includes(statement.parent)
+        isTopLevel(statement) &&
+        files.includes(statement.getSourceFile())
         ? [
             {
               statement,
@@ -712,7 +714,7 @@ export const compile = (
   // that a module later in an import cycle declares, or a later statement of its own file, which
   // throws a ReferenceError as the binding is uninitialized, runs where its file runs.
   const early = files.flatMap((file) =>
-    file.statements.filter((statement) =>
+    getRunStatements(file).filter((statement) =>
       (ts.isVariableStatement(statement)
         ? statement.declarationList.declarations.flatMap((declaration) =>
             declaration.initializer === undefined || ts.isFunctionLike(declaration.initializer)
