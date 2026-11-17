@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { printModule } from "../../src/printer";
 import { compile } from "../../src/typescript/compile";
 import { createLibrary } from "../../src/typescript/program";
+import { getJavaScriptModule } from "../../src/typescript/javascript";
 import { printRegions } from "../../src/typescript/regions";
 
 const checkModel = (source: string) => check(compile(source));
@@ -52551,5 +52552,11 @@ describe("BigInts", () => {
         "seen string",
       );
     });
+  });
+
+  it("prunes the rows of the JavaScript module's tables with the definitions that hold them", () => {
+    const text = getJavaScriptModule("").text;
+    expect(text).not.toContain("TUmalquraMonths");
+    expect(text).not.toMatch(/^\s*<<\s*$/m);
   });
 });
