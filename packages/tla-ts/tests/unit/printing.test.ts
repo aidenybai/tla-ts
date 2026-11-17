@@ -72,6 +72,19 @@ describe("printing matches TLC", () => {
     expect(formatValue(result.violation?.trace[0].state.b ?? false)).toBe(text);
   });
 
+  it.each([
+    [
+      "(Print(0, [x \\in {0, 2} |-> -x]))[6] = 0",
+      "In applying the function\n(0 :> 0 @@ 2 :> -2),\nthe first argument is:\n6\nwhich is not in its domain.\n",
+    ],
+    [
+      "LET f == [x \\in {0, 2} |-> -x] IN PrintT({f}) /\\ f[6] = 0",
+      "Attempted to apply function:\n(0 :> 0 @@ 2 :> -2)\nto argument 6, which is not in the domain of the function.",
+    ],
+  ])("prints a copy of a lazy function, but not of a set, in %s", async (expression, message) => {
+    expect((await checkPrinting(`ASSUME ${expression}`)).result.violation?.message).toBe(message);
+  });
+
   it("evaluates each bound set of a function constructor once", async () => {
     expect(
       (await checkPrinting("ASSUME PrintT([m \\in {}, n \\in Print(SUBSET {1, 2}, {1}) |-> 0])"))

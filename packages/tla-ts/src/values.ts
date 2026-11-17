@@ -2931,9 +2931,11 @@ const toPrintedFunction = (value: LazyFunctionValue) => {
 export const formatNormalizedCopies = (values: Value[]) => {
   const markedSets: SetValue[] = [];
   const writtenFunctions: [FunctionValue, Value[]][] = [];
-  const normalize = (value: Value, isWrittenOrderKept: boolean): void => {
+  const copiedFunctions: LazyFunctionValue[] = [];
+  // TLC prints a deep copy, which copies functions but shares sets, so it caches only the functions inside a set.
+  const normalize = (value: Value, isWrittenOrderKept: boolean, isCopied: boolean): void => {
     if (typeof value !== "object") return;
-    const normalizeInner = (inner: Value) => normalize(inner, isWrittenOrderKept);
+    const normalizeInner = (inner: Value) => normalize(inner, isWrittenOrderKept, false);
     switch (value.kind) {
       case "Set":
         value.elements.forEach(normalizeInner);
@@ -2947,15 +2949,16 @@ export const formatNormalizedCopies = (values: Value[]) => {
         return;
       case "Function": {
         const isRangeWrittenOrderKept = isWrittenOrderKept || getFunctionClass(value) === "lambda";
-        value.range.forEach((inner) => normalize(inner, isRangeWrittenOrderKept));
+        value.range.forEach((inner) => normalize(inner, isRangeWrittenOrderKept, isCopied));
         if (isWrittenOrderKept || value.writtenKeys === undefined) return;
         writtenFunctions.push([value, value.writtenKeys]);
         value.writtenKeys = undefined;
         return;
       }
       case "LazyFunction":
-        if (value.enumerated) normalize(value.enumerated, true);
-        else normalizeInner(value.domain);
+        if (value.enumerated) return normalize(value.enumerated, true, isCopied);
+        if (isCopied) copiedFunctions.push(value);
+        normalizeInner(value.domain);
         return;
       case "SetOperation":
         normalizeInner(value.left);
@@ -2982,11 +2985,14 @@ export const formatNormalizedCopies = (values: Value[]) => {
     }
   };
   try {
-    values.forEach((value) => normalize(value, false));
+    values.forEach((value) => normalize(value, false, true));
     return values.map((value) => formatValue(value, true, true));
   } finally {
     markedSets.forEach((set) => {
       set.isNormalized = false;
+    });
+    copiedFunctions.forEach((copied) => {
+      copied.enumerated = undefined;
     });
     writtenFunctions.forEach((entry) => {
       entry[0].writtenKeys = entry[1];
