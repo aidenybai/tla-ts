@@ -53,7 +53,7 @@ import { isMbqiByFeatures, isMbqiByLogic } from "./smt-setup";
 import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
-import { getFdConsequences } from "./fd-solver";
+import { checkFdSolver, getFdConsequences } from "./fd-solver";
 import { SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
@@ -570,21 +570,22 @@ export const runSmtlibScript = (
   };
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
   const solveWithStrategy = () => {
-    const goal = getGoal();
-    const strategy =
-      settings.parameters.get("tactic.default_tactic") ??
-      getLogicStrategy(state.logic, goal.isProofsEnabled);
     try {
+      if (isUsingFdSolver())
+        return {
+          ...checkFdSolver(state.manager, getSatParams(settings.parameters), state.assertions),
+          context: undefined,
+        };
+      const goal = getGoal();
+      const strategy =
+        settings.parameters.get("tactic.default_tactic") ??
+        getLogicStrategy(state.logic, goal.isProofsEnabled);
       const checked = checkSatUsing(compileInternalTactic(getTacticEnvironment(), strategy), goal);
       return {
         result: checked.status,
         context: undefined,
         model: checked.model,
-        // The finite-domain solver is an inc_sat_solver, whose reason stays "no reason given" after an answer.
-        reasonUnknown:
-          isUsingFdSolver() && checked.status !== L_UNDEF
-            ? "no reason given"
-            : checked.reasonUnknown,
+        reasonUnknown: checked.reasonUnknown,
       };
     } catch (error) {
       if (!(error instanceof SmtUnsupportedError)) throw error;

@@ -1085,4 +1085,30 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
       ]),
     ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
   });
+
+  it("answers check-sat of QF_FD with the finite-domain solver and the reason of its SAT solver", () => {
+    expect(
+      [1, 64, 193, 262, 280].map((rlimit) =>
+        run([
+          "(set-logic QF_FD)",
+          "(declare-datatypes ((C 0)) (((red) (green) (blue))))",
+          "(declare-const c C)",
+          "(declare-const d C)",
+          "(declare-const p Bool)",
+          "(assert (distinct c d))",
+          "(assert (or p (not (= c red))))",
+          "(assert (=> p (= d green)))",
+          `(set-option :rlimit ${rlimit})`,
+          "(check-sat)",
+          "(get-info :reason-unknown)",
+        ]),
+      ),
+    ).toEqual([
+      ["unknown", '(:reason-unknown "sat.canceled")'],
+      ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
+      ["unknown", '(:reason-unknown "no reason given")'],
+      ["unknown", '(:reason-unknown "sat.canceled")'],
+      ["sat", '(:reason-unknown "no reason given")'],
+    ]);
+  });
 });

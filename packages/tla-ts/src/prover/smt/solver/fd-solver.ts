@@ -22,7 +22,7 @@ import { release } from "./expr-ref";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import { type Definition, Goal } from "./goal";
 import { ObjMap } from "./hashtable";
-import { L_FALSE, L_TRUE } from "./lbool";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 import { convertModel, getRewriterOptions } from "./tactic";
@@ -293,6 +293,37 @@ export const createFdTactic = (manager: AstManager, params: SatParams) => (goal:
     goal.depth++;
     return [goal];
   } finally {
+    solver.release();
+  }
+};
+
+// mk_fd_solver, which check-sat runs for QF_FD. It keeps the reason of inc_sat_solver, also past an
+// exception, and get-model converts its model outside the limit of the check.
+export const checkFdSolver = (manager: AstManager, params: SatParams, forms: readonly number[]) => {
+  const fmls = runFdSimplifier(manager, forms);
+  const solver = new IncSatSolver(manager, params);
+  const limit = manager.limit;
+  const wasSuspended = limit.isSuspended;
+  try {
+    for (const form of fmls.forms.items) solver.assertExpr(form);
+    const result = (() => {
+      if (fmls.isInconsistent) return L_FALSE;
+      try {
+        return solver.check();
+      } catch (error) {
+        if (!(error instanceof SmtCanceledError)) throw error;
+        return L_UNDEF;
+      }
+    })();
+    const model = result === L_TRUE ? solver.getModel() : null;
+    limit.isSuspended = true;
+    return {
+      result,
+      model: model === null ? undefined : convertModel(fmls, model.copy()),
+      reasonUnknown: solver.reasonUnknown,
+    };
+  } finally {
+    limit.isSuspended = wasSuspended;
     solver.release();
   }
 };
