@@ -3123,7 +3123,26 @@ export const createSmtlibReader = (
       declareDatatype(list);
       return;
     }
-    const symbol = expectSymbol(list.items[1], "invalid declaration, symbol expected", list);
+    const symbol = list.items[1];
+    // check_nonreserved_identifier rejects _ and as, which define-const's check_identifier takes.
+    if (
+      !isSymbol(symbol) ||
+      (name !== "define-const" && (symbol.text === "_" || symbol.text === "as"))
+    )
+      throw new SmtParseError(
+        name === "declare-sort"
+          ? "invalid sort declaration, symbol expected"
+          : name === "define-sort"
+            ? "invalid sort definition, symbol expected"
+            : name === "define-fun"
+              ? "invalid function/constant definition, symbol expected"
+              : name === "define-const"
+                ? "invalid constant definition, symbol expected"
+                : name === "declare-fun"
+                  ? "invalid function declaration, symbol expected"
+                  : "invalid constant declaration, symbol expected",
+        symbol ?? list.end,
+      );
     if (name === "declare-sort") {
       if (sortDecls.has(symbol.text))
         throw new SmtParseError("invalid sort declaration, sort already declared/defined", symbol);

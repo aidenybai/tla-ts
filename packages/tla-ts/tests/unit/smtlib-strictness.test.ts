@@ -472,6 +472,37 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("names the declaration that lacks a symbol, and takes _ and as only for define-const", () => {
+    expect(
+      run([
+        "(declare-const 5 Int)",
+        "(declare-fun 5 () Int)",
+        "(declare-sort 5)",
+        "(define-sort 5 () Int)",
+        "(define-fun 5 () Int 1)",
+        "(define-const 5 Int 1)",
+        "(declare-const _ Int)",
+        "(declare-sort as)",
+        "(define-fun as () Int 1)",
+        "(define-const _ Int 1)",
+        "(declare-const)",
+        "(define-const)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 16: invalid constant declaration, symbol expected")',
+      '(error "line 2 column 13: invalid function declaration, symbol expected")',
+      '(error "line 3 column 14: invalid sort declaration, symbol expected")',
+      '(error "line 4 column 13: invalid sort definition, symbol expected")',
+      '(error "line 5 column 12: invalid function/constant definition, symbol expected")',
+      '(error "line 6 column 14: invalid constant definition, symbol expected")',
+      '(error "line 7 column 15: invalid constant declaration, symbol expected")',
+      '(error "line 8 column 14: invalid sort declaration, symbol expected")',
+      '(error "line 9 column 12: invalid function/constant definition, symbol expected")',
+      '(error "line 11 column 14: invalid constant declaration, symbol expected")',
+      '(error "line 12 column 13: invalid constant definition, symbol expected")',
+    ]);
+  });
+
   it("reports what a command expects where the file ends", () => {
     expect(
       [
