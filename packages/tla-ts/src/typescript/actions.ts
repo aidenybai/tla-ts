@@ -18812,10 +18812,18 @@ const getLeadingAssignment = (
   }
   const isPattern =
     ts.isArrayLiteralExpression(node.left) || ts.isObjectLiteralExpression(node.left);
-  // A value that assigns a property, as in a = b.x = v, runs first, since the setter it may run
-  // can't change which binding a name or a pattern writes.
+  // A value that assigns a property, as in a = b.x = v, runs first, since the setter it may run,
+  // or a call or a new that makes v, can't change which binding a name or a pattern writes.
   if (ts.isIdentifier(node.left) || isPattern) {
-    return getLeadingAssignment(node.right, results, context) ?? node;
+    const value = skipCasts(node.right);
+    return (
+      getLeadingAssignment(node.right, results, context) ??
+      (ts.isBinaryExpression(value) &&
+      value.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      !results.has(value)
+        ? value
+        : node)
+    );
   }
   // A property's assignment evaluates its object and key, then its value.
   const inner = getLeadingAssignment(node.right, results, context);

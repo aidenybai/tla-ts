@@ -48416,13 +48416,17 @@ describe("BigInts", () => {
       return { path, source: readFileSync(path, "utf8") };
     };
 
-    it.each(["entry.cjs", "wrapped.ts", "mixed.ts", "typed.ts", "for-in-key.cjs"])(
-      "agrees with Node on %s",
-      async (name) => {
-        const fixture = getFixture(name);
-        expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
-      },
-    );
+    it.each([
+      "entry.cjs",
+      "wrapped.ts",
+      "mixed.ts",
+      "typed.ts",
+      "for-in-key.cjs",
+      "chained-prototype.cjs",
+    ])("agrees with Node on %s", async (name) => {
+      const fixture = getFixture(name);
+      expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
+    });
 
     it.each([
       ["entry.cjs", "early,,1,true,string,true,true", "early,late,1,true,string,true,true"],
@@ -48430,6 +48434,7 @@ describe("BigInts", () => {
       ["mixed.ts", "legacy,require,import", "legacy,import,import"],
       ["typed.ts", "4,sides", "3,sides"],
       ["for-in-key.cjs", "a=1+b=2;children", "a=1+b=3;children"],
+      ["chained-prototype.cjs", "3,true,true,true", "3,false,true,true"],
     ])("rejects another outcome of %s", async (name, expected, wrong) => {
       const fixture = getFixture(name);
       const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
