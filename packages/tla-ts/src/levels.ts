@@ -1,6 +1,7 @@
 import {
   getChildren,
   type AssumeProve,
+  type Bound,
   type Definition,
   type Expression,
   type Module,
@@ -164,18 +165,41 @@ const CORE_SIGNATURES = new Map(
   ]),
 );
 
-const SET_LEVELS = createSignature("$Set", 0, [2], [1]);
-const JUNCTION_LEVELS = createSignature("$Junction", 0, [3], [1]);
-const CHOOSE_LEVELS = createSignature("$Choose", 0, [2], [1]);
-const FUNCTION_LEVELS = createSignature("$Function", 0, [3], [1]);
+const PRIME_LEVELS = createSignature("'", 2, [1], [0]);
+const UNCHANGED_LEVELS = createSignature("UNCHANGED", 2, [1], [0]);
+const ENABLED_LEVELS = createSignature("ENABLED", 1, [2], [0]);
+const ALWAYS_LEVELS = createSignature("[]", 3, [3], [0]);
+const EVENTUALLY_LEVELS = createSignature("<>", 3, [3], [0]);
+const AND_LEVELS = createSignature("$ConjList", 0, [3], [1]);
+const OR_LEVELS = createSignature("$DisjList", 0, [3], [1]);
+const IF_LEVELS = createSignature("$IfThenElse", 0, [3], [1]);
+const CASE_LEVELS = createSignature("$Case", 0, [3], [1]);
+const FORALL_LEVELS = createSignature("$BoundedForall", 0, [3], [1]);
+const EXISTS_LEVELS = createSignature("$BoundedExists", 0, [3], [1]);
+const UNBOUNDED_FORALL_LEVELS = createSignature("$UnboundedForall", 0, [3], [1]);
+const UNBOUNDED_EXISTS_LEVELS = createSignature("$UnboundedExists", 0, [3], [1]);
+const TEMPORAL_FORALL_LEVELS = createSignature("$TemporalForall", 3, [3], [0]);
+const TEMPORAL_EXISTS_LEVELS = createSignature("$TemporalExists", 3, [3], [0]);
+const BOUNDED_CHOOSE_LEVELS = createSignature("$BoundedChoose", 0, [2], [1]);
+const UNBOUNDED_CHOOSE_LEVELS = createSignature("$UnboundedChoose", 0, [2], [1]);
+const SET_ENUMERATE_LEVELS = createSignature("$SetEnumerate", 0, [2], [1]);
+const TUPLE_LEVELS = createSignature("$Tuple", 0, [2], [1]);
+const SET_OF_FCNS_LEVELS = createSignature("$SetOfFcns", 0, [2], [1]);
+const CARTESIAN_PROD_LEVELS = createSignature("$CartesianProd", 0, [2], [1]);
+const SUBSET_OF_LEVELS = createSignature("$SubsetOf", 0, [2], [1]);
+const SET_OF_ALL_LEVELS = createSignature("$SetOfAll", 0, [2], [1]);
+const FCN_CONSTRUCTOR_LEVELS = createSignature("$FcnConstructor", 0, [3], [1]);
+const RCD_CONSTRUCTOR_LEVELS = createSignature("$RcdConstructor", 0, [3], [1]);
+const SET_OF_RCDS_LEVELS = createSignature("$SetOfRcds", 0, [2], [1]);
+const EXCEPT_LEVELS = createSignature("$Except", 0, [2], [1]);
+const PAIR_LEVELS = createSignature("$Pair", 0, [3], [1]);
+const SEQ_LEVELS = createSignature("$Seq", 0, [2], [1]);
 const APPLY_LEVELS = createSignature("$FcnApply", 0, [2, 2], [1, 1]);
 const SELECT_LEVELS = createSignature("$RcdSelect", 0, [2, 0], [1, 1]);
-const PRIME_LEVELS = createSignature("'", 2, [1], [0]);
-const ENABLED_LEVELS = createSignature("ENABLED", 1, [2], [0]);
-const TEMPORAL_LEVELS = createSignature("[]", 3, [3], [0]);
-const ACTION_LEVELS = createSignature("$SquareAct", 2, [2, 1], [0, 0]);
-const FAIRNESS_LEVELS = createSignature("$WF", 3, [1, 2], [0, 0]);
-const TEMPORAL_QUANTIFIER_LEVELS = createSignature("$TemporalExists", 3, [3], [0]);
+const SQUARE_ACT_LEVELS = createSignature("$SquareAct", 2, [2, 1], [0, 0]);
+const ANGLE_ACT_LEVELS = createSignature("$AngleAct", 2, [2, 1], [0, 0]);
+const WF_LEVELS = createSignature("$WF", 3, [1, 2], [0, 0]);
+const SF_LEVELS = createSignature("$SF", 3, [1, 2], [0, 0]);
 
 const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
   formals.length === 0
@@ -258,11 +282,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
       }
     });
-    if (ranges.some((range) => range.level > ACTION_LEVEL)) {
-      throw new TlaSyntaxError(
-        `Level error in applying operator ${resolveSynonym(operator.name)}:\nThe level of the range for a bounded variable exceeds the maximum level allowed by the operator`,
-      );
-    }
     const getOperand = (formal: string) => {
       const index = operator.formals.findIndex((param) => param.name === formal);
       return index === -1 ? undefined : operands[index];
@@ -449,16 +468,20 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     operator: OperatorLevels,
     expressions: Expression[],
     scope: Scope,
-    ranges: Expression[] = [],
-    bound: string[] = [],
+    bounds: Bound[] = [],
+    bound = getBoundNames(bounds),
   ) => {
-    const inner = bindFormals(scope, toFormals(bound));
-    return applyDefined(
-      operator,
-      toOperands(expressions, inner),
-      ranges.map((range) => analyze(range, scope)),
-      bound,
-    );
+    const operands = toOperands(expressions, bindFormals(scope, toFormals(bound)));
+    const ranges = bounds.map((range) => analyze(range.set, scope));
+    const data = applyDefined(operator, operands, ranges, bound);
+    const pattern = bounds[ranges.findIndex((range) => range.level > ACTION_LEVEL)]?.pattern;
+    if (pattern) {
+      const range = pattern.ranges?.[0];
+      throw new TlaSyntaxError(
+        `Level error in applying operator ${operator.name}:\nThe level of the range for the bounded variable ${range ? formatRange(range) : getPatternNames(pattern)[0]} \nexceeds the maximum level allowed by the operator`,
+      );
+    }
+    return data;
   };
 
   const applyResolved = (resolved: Resolved, operands: Operand[]) =>
@@ -466,11 +489,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ? applyDeclared(resolved.name, resolved.level, operands)
       : applyDefined(resolved.levels, operands);
 
-  const checkJunction = (operands: Operand[], expression: Expression) => {
+  const checkJunction = (operands: Operand[], expression: Expression, name: string) => {
     const levels = operands.map((operand) => operand.data.level);
     if (levels.includes(ACTION_LEVEL) && levels.includes(TEMPORAL_LEVEL)) {
       throw createLevelError(
-        "Formula has both temporal formula and action as arguments",
+        `${name} has both temporal formula and action as arguments`,
         expression,
       );
     }
@@ -484,7 +507,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         expression,
       );
     }
-    if (LOGICAL_OPERATORS.has(expression.operator)) checkJunction(operands, expression);
+    if (LOGICAL_OPERATORS.has(expression.operator)) {
+      checkJunction(operands, expression, resolveSynonym(expression.operator));
+    }
   };
 
   const checkTemporal = (
@@ -550,29 +575,41 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "And":
       case "Or": {
         const operands = toOperands(expression.operands, scope);
-        checkJunction(operands, expression);
-        return applyDefined(JUNCTION_LEVELS, operands);
+        const isAnd = expression.kind === "And";
+        checkJunction(
+          operands,
+          expression,
+          expression.isBulleted
+            ? `${isAnd ? "Conjunction" : "Disjunction"} list`
+            : isAnd
+              ? "\\land"
+              : "\\lor",
+        );
+        return applyDefined(isAnd ? AND_LEVELS : OR_LEVELS, operands);
       }
       case "Prime":
-      case "Unchanged":
         return applyBuiltin(PRIME_LEVELS, [expression.expression], scope);
+      case "Unchanged":
+        return applyBuiltin(UNCHANGED_LEVELS, [expression.expression], scope);
       case "Enabled":
         return applyBuiltin(ENABLED_LEVELS, [expression.expression], scope);
       case "Always":
       case "Eventually": {
         const operand = toOperand(expression.expression, scope);
         checkTemporal(expression, operand.data.level);
-        return applyDefined(TEMPORAL_LEVELS, [operand]);
+        return applyDefined(expression.kind === "Always" ? ALWAYS_LEVELS : EVENTUALLY_LEVELS, [
+          operand,
+        ]);
       }
       case "If":
         return applyBuiltin(
-          JUNCTION_LEVELS,
+          IF_LEVELS,
           [expression.condition, expression.consequent, expression.alternative],
           scope,
         );
       case "Case":
         return applyBuiltin(
-          JUNCTION_LEVELS,
+          CASE_LEVELS,
           [
             ...expression.arms.flatMap((arm) => [arm.condition, arm.body]),
             ...(expression.other ? [expression.other] : []),
@@ -584,11 +621,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "Forall":
       case "Exists": {
         const data = applyBuiltin(
-          JUNCTION_LEVELS,
+          expression.kind === "Forall" ? FORALL_LEVELS : EXISTS_LEVELS,
           [expression.body],
           scope,
-          expression.bounds.map((bound) => bound.set),
-          getBoundNames(expression.bounds),
+          expression.bounds,
         );
         const actionBound =
           data.level === TEMPORAL_LEVEL
@@ -604,7 +640,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }
       case "UnboundedQuantifier":
         return applyBuiltin(
-          expression.isTemporal ? TEMPORAL_QUANTIFIER_LEVELS : JUNCTION_LEVELS,
+          expression.isTemporal
+            ? expression.quantifier === "Forall"
+              ? TEMPORAL_FORALL_LEVELS
+              : TEMPORAL_EXISTS_LEVELS
+            : expression.quantifier === "Forall"
+              ? UNBOUNDED_FORALL_LEVELS
+              : UNBOUNDED_EXISTS_LEVELS,
           [expression.body],
           scope,
           [],
@@ -612,79 +654,67 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
       case "Choose":
         return applyBuiltin(
-          CHOOSE_LEVELS,
+          expression.set ? BOUNDED_CHOOSE_LEVELS : UNBOUNDED_CHOOSE_LEVELS,
           [expression.body],
           scope,
-          expression.set ? [expression.set] : [],
+          expression.set ? [{ pattern: expression.pattern, set: expression.set }] : [],
           getPatternNames(expression.pattern),
         );
       case "SetEnumeration":
+        return applyBuiltin(SET_ENUMERATE_LEVELS, expression.elements, scope);
       case "Tuple":
+        return applyBuiltin(TUPLE_LEVELS, expression.elements, scope);
       case "FunctionSet":
+        return applyBuiltin(SET_OF_FCNS_LEVELS, [expression.domain, expression.range], scope);
       case "Product":
-        return applyBuiltin(
-          SET_LEVELS,
-          expression.kind === "FunctionSet"
-            ? [expression.domain, expression.range]
-            : expression.kind === "Product"
-              ? expression.factors
-              : expression.elements,
-          scope,
-        );
+        return applyBuiltin(CARTESIAN_PROD_LEVELS, expression.factors, scope);
       case "SetFilter":
-        return applyBuiltin(
-          SET_LEVELS,
-          [expression.predicate],
-          scope,
-          [expression.bound.set],
-          getPatternNames(expression.bound.pattern),
-        );
+        return applyBuiltin(SUBSET_OF_LEVELS, [expression.predicate], scope, [expression.bound]);
       case "SetMap":
-        return applyBuiltin(
-          SET_LEVELS,
-          [expression.expression],
-          scope,
-          expression.bounds.map((bound) => bound.set),
-          getBoundNames(expression.bounds),
-        );
+        return applyBuiltin(SET_OF_ALL_LEVELS, [expression.expression], scope, expression.bounds);
       case "FunctionConstruction":
-        return applyBuiltin(
-          FUNCTION_LEVELS,
-          [expression.body],
-          scope,
-          expression.bounds.map((bound) => bound.set),
-          getBoundNames(expression.bounds),
-        );
+        return applyBuiltin(FCN_CONSTRUCTOR_LEVELS, [expression.body], scope, expression.bounds);
       case "Record":
         return applyBuiltin(
-          FUNCTION_LEVELS,
+          RCD_CONSTRUCTOR_LEVELS,
           expression.fields.map((field) => field.value),
           scope,
         );
       case "RecordSet":
         return applyBuiltin(
-          SET_LEVELS,
+          SET_OF_RCDS_LEVELS,
           expression.fields.map((field) => field.value),
           scope,
         );
       case "Except":
-        return applyBuiltin(
-          SET_LEVELS,
-          [
-            expression.function,
-            ...expression.updates.flatMap((update) => [
-              ...update.path.flatMap((step) => (step.kind === "Index" ? step.args : [])),
-              update.value,
+        return applyDefined(EXCEPT_LEVELS, [
+          toOperand(expression.function, scope),
+          ...expression.updates.map((update): Operand => ({
+            kind: "Value",
+            data: applyDefined(PAIR_LEVELS, [
+              {
+                kind: "Value",
+                data: applyDefined(
+                  SEQ_LEVELS,
+                  update.path.map((step): Operand =>
+                    step.kind === "Field"
+                      ? { kind: "Value", data: createData() }
+                      : step.args.length === 1
+                        ? toOperand(step.args[0], scope)
+                        : { kind: "Value", data: applyBuiltin(TUPLE_LEVELS, step.args, scope) },
+                  ),
+                ),
+              },
+              toOperand(update.value, scope),
             ]),
-          ],
-          scope,
-        );
+          })),
+        ]);
       case "FunctionApplication":
         return applyDefined(APPLY_LEVELS, [
           toOperand(expression.function, scope),
           expression.args.length === 1
             ? toOperand(expression.args[0], scope)
-            : { kind: "Value", data: applyBuiltin(SET_LEVELS, expression.args, scope) },
+            : { kind: "Value", data: applyBuiltin(TUPLE_LEVELS, expression.args, scope) },
         ]);
       case "Bracket":
         return createData();
@@ -695,10 +725,18 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         ]);
       case "BoxAction":
       case "AngleAction":
-        return applyBuiltin(ACTION_LEVELS, [expression.action, expression.subscript], scope);
+        return applyBuiltin(
+          expression.kind === "BoxAction" ? SQUARE_ACT_LEVELS : ANGLE_ACT_LEVELS,
+          [expression.action, expression.subscript],
+          scope,
+        );
       case "WeakFairness":
       case "StrongFairness":
-        return applyBuiltin(FAIRNESS_LEVELS, [expression.subscript, expression.action], scope);
+        return applyBuiltin(
+          expression.kind === "WeakFairness" ? WF_LEVELS : SF_LEVELS,
+          [expression.subscript, expression.action],
+          scope,
+        );
       case "Label":
         return analyze(expression.body, scope);
       case "Subexpression":
