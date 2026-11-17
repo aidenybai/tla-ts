@@ -116,6 +116,7 @@ export const SELECTION_NAME = "$subexpression";
 export interface NullSelection {
   node: Expression;
   error: SanyError;
+  isEmpty: boolean;
 }
 
 interface SelectionArgument {
@@ -131,9 +132,12 @@ export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
+const emptyExpressions = new WeakSet<Expression>();
 
 const findNullError = (nulls: NullSelection[] | undefined) =>
-  nulls?.find((selection) => unresolvedExpressions.has(selection.node))?.error;
+  nulls?.find((selection) =>
+    (selection.isEmpty ? emptyExpressions : unresolvedExpressions).has(selection.node),
+  )?.error;
 
 const renamedArities = new WeakMap<Expression, number>();
 
@@ -620,7 +624,7 @@ const checkSelection = (
         expression.kind === "Identifier"
           ? findBinding(expression.name, scope, unit)?.kind
           : undefined;
-      if (kind === "Variable" || kind?.startsWith("New")) {
+      if (emptyExpressions.has(expression) || kind === "Variable" || kind?.startsWith("New")) {
         return report(index, `Choosing operand \`${operand}' of subexpression with no operands.`);
       }
       const sets = getBinder(expression)?.sets;
@@ -1189,16 +1193,19 @@ const resolveApply = (
   scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  if (isInstanceArityReported(expression, scope, unit)) return;
   const operator = expression.operator;
   const callee = findBinding(operator, scope, unit);
-  const arity = getSymbolArity(expression, operator, scope, unit);
-  if (arity === undefined) return;
-  if (arity !== expression.args.length) {
+  const arity = isInstanceArityReported(expression, scope, unit)
+    ? undefined
+    : getSymbolArity(expression, operator, scope, unit);
+  if (arity !== undefined && arity !== expression.args.length) {
     unit.errors.push({
       location: formatRange(expression.argumentsRange ?? getSpelledNameRange(expression, operator)),
       message: `The operator ${resolveSynonym(operator)} requires ${arity - (findInstance(operator, scope, unit)?.arity ?? 0)} arguments.`,
     });
+  }
+  if (arity !== expression.args.length) {
+    emptyExpressions.add(expression);
     return;
   }
   const params =
@@ -1308,6 +1315,7 @@ const resolveExpression = (
       return;
     case "ExceptAt":
       if (!unit.isInExcept && expression.location.range) {
+        emptyExpressions.add(expression);
         unit.errors.push({
           location: formatRange(expression.location.range),
           message: "@ used where its meaning is not defined.",
@@ -1315,9 +1323,10 @@ const resolveExpression = (
       }
       return;
     case "Identifier": {
-      if (isInstanceArityReported(expression, scope, unit)) return;
       const name = expression.name;
-      const arity = getSymbolArity(expression, name, scope, unit);
+      const arity = isInstanceArityReported(expression, scope, unit)
+        ? undefined
+        : getSymbolArity(expression, name, scope, unit);
       if (arity === 0) {
         isArgumentCountReported(
           findBinding(name, scope, unit),
@@ -1326,12 +1335,15 @@ const resolveExpression = (
           getSpelledNameRange(expression, name),
           unit,
         );
-      } else if (arity !== undefined) {
+        return;
+      }
+      if (arity !== undefined) {
         unit.errors.push({
           location: formatRange(getSpelledNameRange(expression, name)),
           message: `The operator ${resolveSynonym(name)} requires ${arity} arguments.`,
         });
       }
+      emptyExpressions.add(expression);
       return;
     }
     case "OperatorReference":
@@ -1468,7 +1480,7 @@ const resolveExpression = (
       checkLabel(expression, scope, unit);
       return;
     case "Subexpression":
-      isSubexpressionReported(expression, scope, unit);
+      if (isSubexpressionReported(expression, scope, unit)) emptyExpressions.add(expression);
       return;
   }
 };

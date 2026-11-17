@@ -186,6 +186,7 @@ describe("name resolution matches SANY", () => {
 
   const exceptSelection = "Selecting subexpression of an EXCEPT not yet implemented.";
   const letSelector = "A name selector here must be from a LET clause.";
+  const noOperands = "Choosing operand `argument selector 1' of subexpression with no operands.";
   it.each([
     ["f == g", [["line 2, col 6 to line 2, col 6", "Unknown operator: `g'."]]],
     [
@@ -880,6 +881,35 @@ describe("name resolution matches SANY", () => {
           "line 5, col 23 to line 5, col 23",
           "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
         ],
+      ],
+    ],
+    [
+      "CONSTANT c, F(_, _)\nOp1(a0) == {a0}\nOp == {Undef, F(1), Op1(LAMBDA p : p), c!1, @}\nA == Op!1!1 /\\ Op!2!1 /\\ Op!3!1!1 /\\ Op!4!1 /\\ Op!5!1\nB == Op!1 /\\ Op!2 /\\ Op!3!1 /\\ Op!4 /\\ Op!5\nTHEOREM U == ASSUME c PROVE {Undef, F(2)}\nC == U!2!1!1 /\\ U!2!2!1",
+      [
+        ["line 4, col 8 to line 4, col 12", "Unknown operator: `Undef'."],
+        ["line 4, col 16 to line 4, col 18", "The operator F requires 2 arguments."],
+        [
+          "line 4, col 25 to line 4, col 36",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        ["line 4, col 40 to line 4, col 40", "Cannot take subexpression of `c'."],
+        ["line 4, col 45 to line 4, col 45", "@ used where its meaning is not defined."],
+        ["line 5, col 11 to line 5, col 11", noOperands],
+        ["line 5, col 21 to line 5, col 21", noOperands],
+        [
+          "line 5, col 31 to line 5, col 31",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+        ["line 5, col 43 to line 5, col 43", noOperands],
+        ["line 5, col 53 to line 5, col 53", noOperands],
+        [
+          "line 6, col 27 to line 6, col 27",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+        ["line 7, col 30 to line 7, col 34", "Unknown operator: `Undef'."],
+        ["line 7, col 38 to line 7, col 40", "The operator F requires 2 arguments."],
+        ["line 8, col 12 to line 8, col 12", noOperands],
+        ["line 8, col 23 to line 8, col 23", noOperands],
       ],
     ],
     [

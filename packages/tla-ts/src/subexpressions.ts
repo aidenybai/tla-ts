@@ -209,9 +209,11 @@ const selectSubexpression = (
   const deferToExpression = (range: SourceRange | undefined, message: string) => {
     if (!expressionError && range) expressionError = { location: formatRange(range), message };
   };
-  const checkNull = (node: Expression | undefined, message: string) => {
+  const checkNull = (node: Expression | undefined, message: string, isEmpty = false) => {
     const range = reference.selectorRanges?.[selectorIndex];
-    if (node && range) nulls.push({ node, error: { location: formatRange(range), message } });
+    if (node && range) {
+      nulls.push({ node, error: { location: formatRange(range), message }, isEmpty });
+    }
   };
 
   const report = (range: SourceRange | undefined, message: string) => {
@@ -333,7 +335,9 @@ const selectSubexpression = (
         (current.kind === "Apply" && current.operator.includes("!"))) &&
       (currentRange?.module !== location.range?.module || isBefore(current.location, location))
     ) {
-      const selected = resolveSubexpressions(current, lookup, isGoal);
+      const selected = selectionErrors.has(current)
+        ? current
+        : resolveSubexpressions(current, lookup, isGoal);
       if (selectionErrors.has(selected)) {
         report(
           range,
@@ -469,6 +473,11 @@ const selectSubexpression = (
         current,
         "Subexpression selection failed, probably due to an error in the selected expression.",
       );
+      checkNull(
+        current,
+        `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`,
+        true,
+      );
     }
     selectOperand(selector);
     checkNull(
@@ -539,7 +548,7 @@ const resolveSubexpressions = (
       : mapped;
   }
   const callee = expression.kind === "Apply" ? lookup(expression.operator) : undefined;
-  const mapped =
+  const rebuilt =
     expression.kind === "Apply"
       ? {
           ...expression,
@@ -553,6 +562,11 @@ const resolveSubexpressions = (
           ),
         }
       : mapChildren(expression, (child) => resolveSubexpressions(child, lookup, isGoal));
+  const children = getChildren(expression);
+  // Keeping an unchanged node lets resolve.ts's marks on it reach selections that pass through it.
+  const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
+    ? expression
+    : rebuilt;
   const selectors =
     mapped.kind === "Subexpression"
       ? mapped.selectors
