@@ -1823,6 +1823,7 @@ const getHiddenExpressionLocation = (
       }
       const binding = findBinding(name, scope, unit);
       const count = fact.kind === "Apply" ? fact.args.length : 0;
+      // Deviation from SANY: UseOrHideNode#factCheck crashes on a fact whose operator Generator#generateExpression could not resolve, where tla-ts reports it like a null node.
       return binding?.arity === count ? range : BUILTIN_LOCATION;
     }
     default:

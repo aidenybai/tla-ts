@@ -2454,6 +2454,26 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("reports a HIDE fact whose operator SANY can't resolve, where SANY crashes", async () => {
+    await expect(checkNames("CONSTANT c\nHIDE -c")).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 6 to line 3, col 6 of module M",
+          message: "Could not find declaration or definition of symbol '-.'.",
+        },
+        {
+          location: "line 3, col 6 to line 3, col 7 of module M",
+          message: "Couldn't resolve prefix operator symbol `-.'.",
+        },
+        {
+          location: "In module --TLA+ BUILTINS--",
+          message:
+            "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        },
+      ]),
+    );
+  });
+
   it("accepts only a definition step as a DEF entry like SANY", async () => {
     const message = "DEF clause entry should describe a defined operator.";
     await expect(
