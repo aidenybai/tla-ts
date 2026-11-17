@@ -470,6 +470,28 @@ describe("elim-term-ite, as Z3 5.3.2 names the term if-then-elses", () => {
     ]);
   });
 
+  it("names the terms of each subgoal afresh", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-const c Bool)",
+        "(declare-const d Bool)",
+        "(assert (or c d))",
+        "(assert (> (ite c a b) 0))",
+        "(apply (then split-clause elim-term-ite))",
+        "(assert (not c))",
+        "(assert (< a 0))",
+        "(check-sat-using (then split-clause elim-term-ite smt))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  c\n  (> k!0 0)\n  (or (not c) (= k!0 a))\n  (or c (= k!0 b))\n  :precision precise :depth 2)\n(goal\n  d\n  (> k!1 0)\n  (or (not c) (= k!1 a))\n  (or c (= k!1 b))\n  :precision precise :depth 2)\n)",
+      "sat",
+      "(\n  (define-fun c () Bool\n    false)\n  (define-fun d () Bool\n    true)\n  (define-fun b () Int\n    1)\n  (define-fun a () Int\n    (- 1))\n)",
+    ]);
+  });
+
   it("names a term under a quantifier by its bound variables", () => {
     expect(
       run([
