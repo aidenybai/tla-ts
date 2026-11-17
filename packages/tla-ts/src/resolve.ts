@@ -130,6 +130,9 @@ const CORE_SYMBOLS: Symbols = new Map([
 export const isBefore = (left: SourceLocation, right: SourceLocation) =>
   left.line < right.line || (left.line === right.line && left.column < right.column);
 
+const compareLocations = (left: SourceLocation, right: SourceLocation) =>
+  isBefore(left, right) ? -1 : isBefore(right, left) ? 1 : 0;
+
 export const getArity = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.length : 0;
 
@@ -823,6 +826,18 @@ const resolveDefinition = (
         ? `Function name \`${name}' already defined or declared.`
         : `Operator ${resolveSynonym(name)} already defined or declared.`,
     );
+  } else if (current && definition.kind === "Function" && current.arity > 0) {
+    report(`Function ${resolveSynonym(name)} has operator arguments in its RECURSIVE declaration.`);
+  } else if (
+    current &&
+    definition.kind === "Operator" &&
+    // Deviation from SANY: Generator#processOperator compares only the last parameter's arity with the RECURSIVE declaration's.
+    (current.arity !== definition.params.length ||
+      definition.params.some((param) => param.arity > 0))
+  ) {
+    report(
+      `Definition of ${resolveSynonym(name)} has different arity than its RECURSIVE declaration.`,
+    );
   }
   if (definition.kind === "Function") {
     resolveExpression(
@@ -834,8 +849,10 @@ const resolveDefinition = (
     definition.isSelfReferential = isReferenced(definition.body, name);
   } else resolveExpression(definition.body, inner, unit);
   if (current && isDeclared) {
-    current.isPending = false;
-    current.range = range;
+    if (definition.kind === "Operator" || current.arity === 0) {
+      current.isPending = false;
+      current.range = range;
+    }
     return false;
   }
   return definition.kind === "Function"
@@ -853,10 +870,15 @@ const resolveDefinitions = (
   scope: LocalName | undefined,
   unit: Unit,
   instances: Instance[] = [],
+  declarations: Declaration[] = [],
 ) => {
   const recursive = new Set<Binding>();
   const declared = definitions
-    .filter((definition) => definition.isRecursive)
+    .filter(
+      (definition) =>
+        definition.isRecursive &&
+        declarations.every((declaration) => declaration.name !== definition.name),
+    )
     .reduce<LocalName | undefined>((parent, definition) => {
       if (lookupLocal(parent, definition.name)?.isPending) return parent;
       const local: LocalName = {
@@ -870,20 +892,46 @@ const resolveDefinitions = (
       recursive.add(local);
       return local;
     }, scope);
-  const pending = unit.isGenerated ? [] : [...instances];
-  const resolveInstances = (
+  const declaredLocals: { declaration: Declaration; local: LocalName | undefined }[] = [];
+  const bindDeclaration = (parent: LocalName | undefined, declaration: Declaration) => {
+    const binding: Binding = {
+      kind: "Definition",
+      arity: declaration.arity,
+      range: declaration.location.range,
+    };
+    const local: LocalName | undefined = isBindable(
+      declaration.name,
+      lookupLocal(parent, declaration.name) ??
+        getModuleBinding(declaration.name, unit, binding.range),
+      binding,
+      unit,
+    )
+      ? { ...binding, name: declaration.name, parent, isPending: true }
+      : undefined;
+    if (local) recursive.add(local);
+    declaredLocals.push({ declaration, local });
+    return local ?? parent;
+  };
+  const pending = [...(unit.isGenerated ? [] : instances), ...declarations].toSorted(
+    (left, right) => compareLocations(left.location, right.location),
+  );
+  const resolvePending = (
     current: LocalName | undefined,
-    isDue: (instance: Instance) => boolean,
+    isDue: (item: Instance | Declaration) => boolean,
   ) => {
-    const count = pending.findIndex((instance) => !isDue(instance));
+    const count = pending.findIndex((item) => !isDue(item));
     return pending
       .splice(0, count === -1 ? pending.length : count)
-      .reduce((parent, instance) => resolveLocalInstance(instance, parent, unit), current);
+      .reduce(
+        (parent, item) =>
+          "kind" in item ? resolveLocalInstance(item, parent, unit) : bindDeclaration(parent, item),
+        current,
+      );
   };
   const resolved = definitions.reduce<LocalName | undefined>((previous, definition) => {
     const current = isKey(definition.name)
       ? previous
-      : resolveInstances(previous, (instance) => !isBefore(definition.location, instance.location));
+      : resolvePending(previous, (item) => !isBefore(definition.location, item.location));
     const local: LocalName = {
       name: definition.name,
       arity: getArity(definition),
@@ -903,7 +951,17 @@ const resolveDefinitions = (
       ? { ...local, params: getParamArities(definition) }
       : current;
   }, declared);
-  return resolveInstances(resolved, () => true);
+  const resolvedScope = resolvePending(resolved, () => true);
+  declaredLocals.forEach((item) => {
+    const range = item.declaration.location.range;
+    if (range && !unit.isGenerated && (!item.local || item.local.isPending)) {
+      unit.errors.push({
+        location: formatRange(range),
+        message: `Symbol ${resolveSynonym(item.declaration.name)} declared in RECURSIVE statement but not defined.`,
+      });
+    }
+  });
+  return resolvedScope;
 };
 
 const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) => {
@@ -1133,7 +1191,13 @@ const resolveExpression = (
     case "Let":
       resolveExpression(
         expression.body,
-        resolveDefinitions(expression.definitions, scope, unit, expression.instances),
+        resolveDefinitions(
+          expression.definitions,
+          scope,
+          unit,
+          expression.instances,
+          expression.recursive,
+        ),
         unit,
       );
       return;
@@ -1696,13 +1760,7 @@ export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError
     }
   };
   units
-    .toSorted((left, right) =>
-      isBefore(left.location, right.location)
-        ? -1
-        : isBefore(right.location, left.location)
-          ? 1
-          : 0,
-    )
+    .toSorted((left, right) => compareLocations(left.location, right.location))
     .forEach((unit) => {
       const reported: SanyError[] = [];
       const warned: SanyError[] = [];

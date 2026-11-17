@@ -122,6 +122,7 @@ export interface LetExpression {
   kind: "Let";
   definitions: Definition[];
   instances?: Instance[];
+  recursive?: Declaration[];
   body: Expression;
   location: SourceLocation;
 }

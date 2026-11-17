@@ -1367,11 +1367,12 @@ const parse = (
       case "LET": {
         const definitions: Definition[] = [];
         const instances: Instance[] = [];
+        const recursive: Declaration[] = [];
         recursiveScopes.push(new Set());
         while (!accept("IN")) {
           if (isTlapm && isAt("RECURSIVE")) throw createUnexpected("Unexpected keyword RECURSIVE");
           if (accept("RECURSIVE")) {
-            declareRecursive();
+            recursive.push(...declareRecursive());
             continue;
           }
           const unit = parseDefinition(!isTlapm && accept("LOCAL"));
@@ -1379,10 +1380,14 @@ const parse = (
           else definitions.push(unit);
         }
         recursiveScopes.pop();
-        const body = parseExpression();
-        return instances.length === 0
-          ? { kind: "Let", definitions, body, location }
-          : { kind: "Let", definitions, instances, body, location };
+        return {
+          kind: "Let",
+          definitions,
+          ...(instances.length > 0 && { instances }),
+          ...(recursive.length > 0 && { recursive }),
+          body: parseExpression(),
+          location,
+        };
       }
       case "CHOOSE": {
         const pattern = parsePattern();

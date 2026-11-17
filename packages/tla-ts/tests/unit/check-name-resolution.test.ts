@@ -194,6 +194,42 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "RECURSIVE Map(_), f(_, _)\nMap(a, b) == 1\nf(a) == a",
+      [
+        [
+          "line 3, col 1 to line 3, col 14",
+          "Definition of Map has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 4, col 1 to line 4, col 9",
+          "Definition of f has different arity than its RECURSIVE declaration.",
+        ],
+      ],
+    ],
+    [
+      "G == LET RECURSIVE F(_), h(_), K\n         F == 1\n         h[a \\in {1}] == 1\n     IN <<F, h>>",
+      [
+        [
+          "line 3, col 10 to line 3, col 15",
+          "Definition of F has different arity than its RECURSIVE declaration.",
+        ],
+        [
+          "line 4, col 10 to line 4, col 26",
+          "Function h has operator arguments in its RECURSIVE declaration.",
+        ],
+        [
+          "line 2, col 26 to line 2, col 29",
+          "Symbol h declared in RECURSIVE statement but not defined.",
+        ],
+        [
+          "line 2, col 32 to line 2, col 32",
+          "Symbol K declared in RECURSIVE statement but not defined.",
+        ],
+        ["line 5, col 11 to line 5, col 11", "The operator F requires 1 arguments."],
+        ["line 5, col 14 to line 5, col 14", "The operator h requires 1 arguments."],
+      ],
+    ],
+    [
       "f == 1 + 1",
       [
         [
@@ -1627,5 +1663,42 @@ describe("name resolution matches SANY", () => {
         ],
       },
     });
+  });
+
+  it("reports a LET RECURSIVE declaration after the definition like SANY", async () => {
+    await expect(
+      checkNames("G == LET H == 1\n         RECURSIVE H, K\n     IN H"),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          {
+            location: "line 3, col 20 to line 3, col 20 of module M",
+            message: "Symbol H declared in RECURSIVE statement but not defined.",
+          },
+          {
+            location: "line 3, col 23 to line 3, col 23 of module M",
+            message: "Symbol K declared in RECURSIVE statement but not defined.",
+          },
+        ],
+        warnings: [
+          {
+            location: "line 3, col 20 to line 3, col 20 of module M",
+            message:
+              "Multiple declarations or definitions for symbol H.  \nThis duplicates the one at line 2, col 10 to line 2, col 15 of module M.",
+          },
+        ],
+      },
+    });
+  });
+
+  it("reports an operator parameter where a RECURSIVE declaration has _, which SANY accepts", async () => {
+    await expect(checkNames("RECURSIVE Map(_, _)\nMap(f(_), s) == 1")).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 1 to line 3, col 17 of module M",
+          message: "Definition of Map has different arity than its RECURSIVE declaration.",
+        },
+      ]),
+    );
   });
 });
