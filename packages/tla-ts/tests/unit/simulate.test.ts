@@ -216,3 +216,73 @@ it("binds CounterExample to the lasso of a behavior that violates a temporal pro
     ['<<{<<1, [a |-> 0, n |-> 1]>>}, {<<1, "UnnamedAction", 1>>}>>'],
   ]);
 });
+
+const getViewLassos = (values: string, property: string) => {
+  const lassos: [unknown[][], number | undefined][] = [];
+  simulate({
+    source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES n, k\nInit == n = 0 /\\ k = 0\nNext == k < 5 /\\ k' = k + 1 /\\ n' = ${values}[k + 1]\nSpec == Init /\\ [][Next]_<<n, k>>\nProp == ${property}\nView == n\n====`,
+    config: "SPECIFICATION Spec\nPROPERTY Prop\nVIEW View\nCHECK_DEADLOCK FALSE",
+    seed: 4n,
+    traceDepth: 6,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: () => {},
+    onProgress: (progress) => {
+      if (progress.kind !== "violation") return;
+      lassos.push([
+        progress.violation.trace.map((step) => [step.state.n, step.state.k]),
+        progress.violation.loopStart,
+      ]);
+    },
+  });
+  return lassos;
+};
+
+it("reports the lasso TLC's LiveCheck1 finds in a behavior that revisits a state", () => {
+  expect(getViewLassos("<<1, 2, 3, 2, 4>>", "[]((n /= 9 => n /= 9) => [](n = 3))")).toEqual([
+    [
+      [
+        [0, 0],
+        [1, 1],
+        [2, 2],
+      ],
+      2,
+    ],
+  ]);
+});
+
+// Deviation from TLC: TLC shows the first four states of the behavior, then a step from the fourth back to itself.
+it("shows the states of the lasso it finds past a revisited state", () => {
+  expect(getViewLassos("<<1, 0, 2, 3, 4>>", "<>[](n = 1)")).toEqual([
+    [
+      [
+        [0, 0],
+        [1, 1],
+        [0, 2],
+        [2, 3],
+        [3, 4],
+        [4, 5],
+      ],
+      5,
+    ],
+  ]);
+});
+
+// Deviation from TLC: TLC's LiveCheck1 goes on from no node that a revisited state reaches, so it reports no violation.
+it("finds a violation past a revisited state, which TLC's LiveCheck1 misses", () => {
+  expect(getViewLassos("<<1, 0, 2, 3, 4>>", "[](n = 2 => [](n = 2))")).toEqual([
+    [
+      [
+        [0, 0],
+        [1, 1],
+        [0, 2],
+        [2, 3],
+        [3, 4],
+        [4, 5],
+      ],
+      5,
+    ],
+  ]);
+});

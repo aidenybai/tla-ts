@@ -13,7 +13,7 @@ import {
 import type { State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessChecksExitCode } from "./exit-codes";
 import { getHashMapOrder } from "./java-hash";
-import { createLivenessChecks, type LivenessChecks, type SearchGraph } from "./liveness-checker";
+import { createLivenessChecks } from "./liveness-checker";
 import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
 import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor } from "./successors";
@@ -128,65 +128,6 @@ const getTrace = (last: TraceNode, order: number[]) => {
     node.level = index + 1;
   });
   return trace;
-};
-
-// Deviation from TLC: LiveCheck1 gives the initial state no stuttering step into a tableau node that isn't initial, so it misses a behavior that stutters there.
-const findTemporalViolation = (
-  trace: TraceNode[],
-  getFingerprint: (state: Value[]) => bigint,
-  checks: LivenessChecks,
-) => {
-  const fingerprints = trace.map((node) => getFingerprint(node.state));
-  const indices = new Map<bigint, number>();
-  const states: Value[][] = [];
-  const successors: number[][] = [];
-  const stateFingerprints: number[] = [];
-  fingerprints.forEach((fingerprint, position) => {
-    if (!indices.has(fingerprint)) {
-      indices.set(fingerprint, states.length);
-      states.push(trace[position].state);
-      stateFingerprints.push(Number(BigInt.asIntN(32, fingerprint)));
-      successors.push([]);
-    }
-    if (position === 0) return;
-    const source = indices.get(fingerprints[position - 1]) ?? 0;
-    const target = indices.get(fingerprint) ?? 0;
-    if (source !== target && !successors[source].includes(target)) {
-      successors[source].push(target);
-    }
-  });
-  const stateSuccessors = successors.map((targets) =>
-    targets.map((target) => ({ index: target, state: states[target] })),
-  );
-  const search: SearchGraph<Value[]> = {
-    getFingerprint: (successor) => stateFingerprints[successor.index],
-    forEachActionSuccessors: (index, _state, onSuccessors) => onSuccessors(stateSuccessors[index]),
-  };
-  // TLC's LiveCheck1 checks the behavior against one solution after another, up to the first it violates.
-  for (let position = 0; position < checks.solutions.length; position++) {
-    const checker = checks.createChecker(search, [checks.solutions[position]]);
-    checker.addInitialState(0, states[0]);
-    states.forEach((state, index) => checker.addState(index, state, stateSuccessors[index]));
-    const lasso = checker.findViolation();
-    if (!lasso) continue;
-    const getLength = (path: number[]) =>
-      path.filter((index, position) => position === 0 || index !== path[position - 1]).length;
-    const path = [...lasso.prefix, ...lasso.cycle];
-    const length = getLength(path);
-    const cyclePosition = getLength(path.slice(0, lasso.prefix.length + 1));
-    const isStuttering =
-      fingerprints[length - 1] === getFingerprint(states[path[lasso.prefix.length]]);
-    return {
-      length,
-      isStuttering,
-      loopStart: isStuttering ? length - 1 : cyclePosition - 1,
-      properties: checker.getViolatedProperties(
-        trace.slice(0, length).map((node) => node.state),
-        cyclePosition - 1,
-      ),
-    };
-  }
-  return undefined;
 };
 
 const createScheduler = (
@@ -619,13 +560,16 @@ export const simulate = (options: SimulationOptions): number => {
     for (let position = 0; position < trace.length; position++) {
       trace[position].state.forEach(markNormalized);
     }
-    const found = findTemporalViolation(trace, runtime.getFingerprint, livenessChecks);
+    const found = livenessChecks.findTraceViolation(
+      trace.map((node) => node.state),
+      trace.map((node) => runtime.getFingerprint(node.state)),
+    );
     if (!found) return undefined;
-    const back = trace[found.length];
-    const lasso = trace.slice(0, found.length);
+    const back = found.backPosition === undefined ? undefined : trace[found.backPosition];
+    const lasso = found.positions.map((position) => trace[position]);
+    const loopStart = back ? found.cyclePosition - 1 : lasso.length - 1;
     const steps = toTraceSteps(lasso);
-    const loopAction =
-      found.isStuttering || !back ? createActionRecord(undefined) : toActionValue(back.action);
+    const loopAction = back ? toActionValue(back.action) : createActionRecord(undefined);
     return {
       ...toWorkerError(MESSAGE_CODE.temporalPropertyViolated, "", last),
       isException: true,
@@ -633,13 +577,10 @@ export const simulate = (options: SimulationOptions): number => {
         name: found.properties[0],
         properties: found.properties,
         trace: steps,
-        loopStart: found.loopStart,
+        loopStart,
         loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
       },
-      counterExample: getCounterExample(lasso, steps, {
-        start: found.loopStart,
-        action: loopAction,
-      }),
+      counterExample: getCounterExample(lasso, steps, { start: loopStart, action: loopAction }),
     };
   };
   const simulateTrace = (): WorkerError | "stopped" | undefined => {

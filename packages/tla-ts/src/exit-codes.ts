@@ -98,8 +98,8 @@ export const withLivenessChecksExitCode = (
   return (
     checks && {
       solutions: checks.solutions,
-      createChecker: (search, solutions) =>
-        withCheckerExitCode(checks.createChecker(search, solutions)),
+      findTraceViolation: (trace, fingerprints) =>
+        withErrorExitCode(() => checks.findTraceViolation(trace, fingerprints)),
     }
   );
 };
