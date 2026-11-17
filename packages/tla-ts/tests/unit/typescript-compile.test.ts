@@ -50625,4 +50625,27 @@ describe("BigInts", () => {
       "Give this pattern's value an array type",
     );
   });
+
+  it("stops at a JavaScript key of a value that is only null", async () => {
+    const source = `
+      var box = { seen: "" };
+      function attempt() {
+        var base = null;
+        var key = {
+          toString: function () {
+            throw new Error("key");
+          },
+        };
+        base[key];
+      }
+      try {
+        attempt();
+      } catch (error) {
+        box.seen = error instanceof TypeError ? "type" : "other";
+      }
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
+  });
 });
