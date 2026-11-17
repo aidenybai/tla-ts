@@ -277,6 +277,29 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("completes a floating-point constant that no assertion mentions as NaN", () => {
+    expect(
+      run([
+        "(set-logic QF_FP)",
+        "(declare-const z0 (_ FloatingPoint 3 5))",
+        "(declare-const z1 (_ FloatingPoint 3 5))",
+        "(assert (fp.isNegative z1))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun z1 () (_ FloatingPoint 3 5)",
+        "    (_ -zero 3 5))",
+        "  (define-fun z0 () (_ FloatingPoint 3 5)",
+        "    (_ NaN 3 5))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("completes the empty model of a goal that simplifies to true", () => {
     expect(
       run([
