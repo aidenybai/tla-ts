@@ -236,6 +236,8 @@ export interface Context {
   // finds once before it compiles the code.
   assignedNames: Map<ts.SourceFile, Set<ts.Symbol>>;
   objectArguments: Map<ts.SourceFile, Set<ts.Symbol>>;
+  // The names, and their declarations, that each file reads as objects, once the heap is known.
+  objectTargets: ReadonlyMap<ts.SourceFile, ReadonlySet<ts.Symbol | ts.Node>>;
   // The names whose values each file's functions return or put in object literals.
   escapedNames: Map<ts.SourceFile, Set<ts.Symbol>>;
   // Whether each read of a name or a property that another function assigns keeps what TypeScript
@@ -638,6 +640,7 @@ export const createContext = (
         ),
       ]),
     ),
+    objectTargets: new Map(),
     objectArguments: new Map(
       files.map((file) => [
         file,
@@ -4458,49 +4461,70 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
   // A new or Reflect.construct constructs the function or takes it as newTarget, an Object
   // function reads or changes it as an object, or its @@hasInstance or an instanceof reads its
   // prototype.
-  const isNewTarget = (child: ts.Node): boolean => {
-    const construction = getConstruction(child, context);
-    const receiver = ts.isCallExpression(child)
-      ? getHasInstanceReceiver(child, context)
-      : undefined;
-    const targets =
-      ts.isBinaryExpression(child) && child.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
-        ? [child.right]
-        : ts.isCallExpression(child) &&
-            ts.isPropertyAccessExpression(child.expression) &&
-            getBuiltIn(child.expression.expression, context) === "Object" &&
-            OWN_PROPERTY_FUNCTIONS.has(child.expression.name.text)
-          ? child.arguments.slice(0, 1)
-          : receiver !== undefined
-            ? [receiver]
-            : construction === undefined
-              ? []
-              : [construction.callee, construction.newTarget];
-    return (
-      targets.some(isNamedBy) ||
-      (ts.forEachChild(child, (inner) => isNewTarget(inner) || undefined) ?? false)
-    );
-  };
+  const named = context.objectTargets.get(sourceFile);
   const isHeap =
     symbol !== undefined &&
     node.body !== undefined &&
     isPlain(node) &&
     isOnce(node.parent, context) &&
     !isAssigned(symbol, sourceFile, context) &&
-    (isNewTarget(sourceFile) ||
-      // An assignment writes one of its properties, or a call passes it as an object.
-      findNodes(
-        sourceFile,
-        (child): child is ts.BinaryExpression =>
-          ts.isBinaryExpression(child) &&
-          child.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-          (ts.isPropertyAccessExpression(child.left) || ts.isElementAccessExpression(child.left)) &&
-          isNamedBy(child.left.expression),
-      ).length > 0 ||
+    ((named === undefined
+      ? findNodes(sourceFile, (child): child is ts.Expression =>
+          getObjectTargets(child, context).some(isNamedBy),
+        ).length > 0
+      : named.has(symbol) || (ts.isPropertyAssignment(node.parent) && named.has(node.parent))) ||
       isPassedAsObject(symbol, sourceFile, context));
   heapFunctions.set(node, isHeap);
   return isHeap;
 };
+
+// The values that a node reads as objects: what a new or Reflect.construct constructs or takes as
+// newTarget, what @@hasInstance or an instanceof reads the prototype of, what an Object function
+// reads or changes as an object, and what an assignment writes a property of.
+const getObjectTargets = (node: ts.Node, context: Context) => {
+  const construction = getConstruction(node, context);
+  const receiver = ts.isCallExpression(node) ? getHasInstanceReceiver(node, context) : undefined;
+  return ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
+    ? [node.right]
+    : ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left))
+      ? [node.left.expression]
+      : ts.isCallExpression(node) &&
+          ts.isPropertyAccessExpression(node.expression) &&
+          getBuiltIn(node.expression.expression, context) === "Object" &&
+          OWN_PROPERTY_FUNCTIONS.has(node.expression.name.text)
+        ? node.arguments.slice(0, 1)
+        : receiver !== undefined
+          ? [receiver]
+          : construction === undefined
+            ? []
+            : [construction.callee, construction.newTarget];
+};
+
+// The names, and the declarations of the names, that each file reads as objects, as
+// getObjectTargets finds them, which tla-ts finds once before it compiles the code.
+export const findObjectTargets = (files: readonly ts.SourceFile[], context: Context) =>
+  new Map(
+    files.map((file) => [
+      file,
+      new Set(
+        findNodes(
+          file,
+          (node): node is ts.Node => node.kind !== ts.SyntaxKind.EndOfFileToken,
+        ).flatMap((node) =>
+          getObjectTargets(node, context).flatMap((target): (ts.Symbol | ts.Node)[] => {
+            const symbol = getSymbol(skipCasts(target), context.checker);
+            return symbol === undefined
+              ? []
+              : symbol.valueDeclaration === undefined
+                ? [symbol]
+                : [symbol, symbol.valueDeclaration];
+          }),
+        ),
+      ),
+    ]),
+  );
 
 // The heap class that a name names.
 export const getHeapClass = (node: ts.Expression, context: Context): HeapClass | undefined => {

@@ -7,6 +7,7 @@ import {
   createContext,
   findNodes,
   findFunctionCandidates,
+  findObjectTargets,
   findSharedFunctionCandidates,
   isReached,
   findOnceFunctions,
@@ -887,6 +888,7 @@ export const compile = (
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
     context.heap = heap;
     context.variables.set(heap, identifier(context.names.getFresh("heap")));
+    context.objectTargets = findObjectTargets(program.files, context);
     context.storedBuiltIns = new Map(
       program.files.map((file) => [
         file,
