@@ -16,6 +16,7 @@ import {
   QUANTIFIER_LAMBDA,
 } from "./ast";
 import { flattenAndVector, flattenOrVector, pushNotOwned } from "./ast-util";
+import { finishSimplifier } from "./dependent-expr-state";
 import { isOccurring } from "./der";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import type { Goal } from "./goal";
@@ -364,8 +365,7 @@ export const applyQeLite = (manager: AstManager, goal: Goal) => {
     }
     release(manager, formula);
   }
-  goal.elimTrue();
-  goal.elimRedundancies();
+  finishSimplifier(goal);
   qe.release();
   release(manager, dep);
 };

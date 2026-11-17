@@ -785,6 +785,21 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ).toEqual(["unknown", model, "unknown", model]);
   });
 
+  it("converts a model for an undecided goal through the empty model trail of der and qe-light", () => {
+    const model = "(\n  (define-fun b () Bool\n    false)\n  (define-fun x () Int\n    0)\n)";
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const b Bool)",
+        "(assert (or b (> (* x x) 2)))",
+        "(check-sat-using der)",
+        "(get-model)",
+        "(check-sat-using qe-light)",
+        "(get-model)",
+      ]),
+    ).toEqual(["unknown", model, "unknown", model]);
+  });
+
   it("copies the model of the tactic that decided the goal in the order of its table", () => {
     expect(
       run([

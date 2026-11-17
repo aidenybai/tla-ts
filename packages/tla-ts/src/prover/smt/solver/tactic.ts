@@ -25,6 +25,7 @@ import {
 import type { AckrSolver } from "./lackr";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { DerRewriter } from "./der";
+import { finishSimplifier } from "./dependent-expr-state";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { type BitBlasterRewriter, runBitBlast } from "./bit-blast-tactic";
@@ -483,9 +484,7 @@ const runDer = (manager: AstManager) => (goal: Goal) => {
     goal.update(index, result);
     manager.decRef(result);
   }
-  goal.elimTrue();
-  goal.elimRedundancies();
-  goal.depth++;
+  finishSimplifier(goal);
   rewriter.der.release();
   rewriter.release();
   return [goal];
@@ -775,14 +774,9 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       build: (environment) =>
-        inPlace((goal) => {
-          if (!goal.isProofsEnabled) applyQeLite(environment.manager, goal);
-          else {
-            goal.elimTrue();
-            goal.elimRedundancies();
-          }
-          goal.depth++;
-        }),
+        inPlace((goal) =>
+          goal.isProofsEnabled ? finishSimplifier(goal) : applyQeLite(environment.manager, goal),
+        ),
     },
   ],
   [
