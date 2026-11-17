@@ -139,6 +139,10 @@ describe("name resolution matches SANY", () => {
       "a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects",
       "r == [a |-> 1]\nF == r.THEOREM\nG == [r EXCEPT !.AXIOM = 1]\nH == r.DOMAIN\nI == 1",
     ],
+    [
+      "an operator substituted before a LEMMA, which SANY rejects",
+      "EXTENDS Integers\n---- MODULE Inner ----\nCONSTANT G(_, _)\n====\nI == INSTANCE Inner WITH G <- -\nLEMMA TRUE",
+    ],
   ])("accepts %s", async (_title, source) => {
     expect((await checkNames(source)).status).toBe("success");
   });

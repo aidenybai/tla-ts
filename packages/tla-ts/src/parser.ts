@@ -251,6 +251,7 @@ const OPERATOR_ARGUMENTS = new Set([
 
 const SELECTOR_SYMBOLS = new Set(["<<", ">>", ":", "@", "("]);
 
+// Deviation from SANY: TLAplusParser#OpOrExpr's lookahead omits PROPOSITION, LEMMA and COROLLARY, so SANY parses an operator argument before them as an expression.
 const UNIT_KEYWORDS = new Set([
   "ASSUME",
   "ASSUMPTION",
