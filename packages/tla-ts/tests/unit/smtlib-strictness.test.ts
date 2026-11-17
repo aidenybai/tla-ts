@@ -460,6 +460,14 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  // Z3 5.3.2 fails both: its n-ary probes read (+ 2 3) as 7 and (* 2 3) as 12.
+  it("applies an n-ary probe to each argument once", () => {
+    expect(run(["(apply (fail-if (> (+ 2 3) 6)))", "(apply (fail-if (> (* 2 3) 11)))"])).toEqual([
+      "(goals\n(goal\n  :precision precise :depth 0)\n)",
+      "(goals\n(goal\n  :precision precise :depth 0)\n)",
+    ]);
+  });
+
   it("takes no negative numeral for an unsigned value of a tactic or a command", () => {
     expect(
       run([

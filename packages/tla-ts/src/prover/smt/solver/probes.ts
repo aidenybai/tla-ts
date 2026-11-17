@@ -558,6 +558,8 @@ export const compileProbe = (sexpr: SExpr, isInternal = false): Probe => {
   if (children.length === 0)
     throw new SmtParseError("invalid probe, at least one argument expected", sexpr.end);
   const probes = children.map((child) => compileProbe(child, isInternal));
+  // Deviation from Z3: MK_NARY_PROBE applies the operator to its first argument twice, so (+ 2 3)
+  // is 7 and (* 2 3) is 12 there.
   return (goal) => probes.map((probe) => probe(goal)).reduce(nary);
 };
 
