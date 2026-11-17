@@ -47,11 +47,14 @@ class PddSolverStats {
 export class Equation {
   state = TO_SIMPLIFY;
   idx = 0;
+  readonly poly: Pdd;
 
   constructor(
-    public poly: Pdd,
+    poly: Pdd,
     public dep: Dependency,
-  ) {}
+  ) {
+    this.poly = poly.copy();
+  }
 }
 
 export class SetUpdate {
@@ -111,6 +114,10 @@ export class PddSolver {
   }
 
   reset() {
+    for (const equation of this.solved) equation.poly.release();
+    for (const equation of this.toSimplify) equation.poly.release();
+    for (const equation of this.processed) equation.poly.release();
+    for (const subst of this.substs) subst.poly.release();
     this.substs = [];
     this.solved = [];
     this.processed = [];
@@ -132,19 +139,20 @@ export class PddSolver {
   }
 
   simplify(poly: Pdd, dep: Dependency) {
-    let result = poly;
     let resultDep = dep;
     for (const subst of this.substs) {
-      const substituted = result.substPdd(subst.variable, subst.poly);
-      if (substituted.equals(result)) continue;
-      result = substituted;
-      resultDep = mkJoin(resultDep, subst.dep);
+      const substituted = poly.substPdd(subst.variable, subst.poly);
+      if (!substituted.equals(poly)) {
+        poly.assign(substituted);
+        resultDep = mkJoin(resultDep, subst.dep);
+      }
+      substituted.release();
     }
-    return { poly: result, dep: resultDep };
+    return resultDep;
   }
 
   addSubst(variable: number, poly: Pdd, dep: Dependency) {
-    this.substs.push({ variable, poly, dep });
+    this.substs.push({ variable, poly: poly.copy(), dep });
     if (this.var2level.length > 0) {
       this.levelp1 = Math.max(
         this.var2level[variable] + 1,
@@ -153,14 +161,9 @@ export class PddSolver {
     }
     const simplifier = (target: Equation) => {
       const substituted = target.poly.substPdd(variable, poly);
-      if (substituted.equals(target.poly)) return null;
-      if (this.isTooComplex(substituted)) {
-        this.isTooComplexFound = true;
-        return null;
-      }
-      const isLeadingTermChanged = substituted.differentLeadingTerm(target.poly);
-      target.poly = substituted;
-      target.dep = mkJoin(target.dep, dep);
+      const isLeadingTermChanged = this.simplifyTo(target, substituted, true);
+      if (isLeadingTermChanged !== null) target.dep = mkJoin(target.dep, dep);
+      substituted.release();
       return isLeadingTermChanged;
     };
     if (!this.isDone()) this.simplifySetUsing(this.processed, simplifier);
@@ -191,6 +194,7 @@ export class PddSolver {
       this.simplifyUsingAll(equation, this.processed);
       if (this.isTrivial(equation)) {
         pending = null;
+        this.retire(equation);
         return true;
       }
       if (this.checkConflict(equation)) {
@@ -205,7 +209,9 @@ export class PddSolver {
       if (this.isDone()) return false;
       if (!this.isTooComplexFound) {
         pending = null;
-        this.pushEquation(equation.poly.degree() === 1 ? SOLVED : PROCESSED, equation);
+        const poly = equation.poly.copy();
+        this.pushEquation(poly.degree() === 1 ? SOLVED : PROCESSED, equation);
+        poly.release();
       }
       return true;
     } finally {
@@ -239,13 +245,12 @@ export class PddSolver {
   }
 
   private superpose(first: Equation, second: Equation) {
-    const poly = this.manager.trySpoly(first.poly, second.poly);
-    if (poly === null || poly.isZero()) return;
-    if (this.isTooComplex(poly)) {
-      this.isTooComplexFound = true;
-      return;
+    const poly = this.manager.zero();
+    if (this.manager.trySpoly(first.poly, second.poly, poly) && !poly.isZero()) {
+      if (this.isTooComplex(poly)) this.isTooComplexFound = true;
+      else this.add(poly, mkJoin(first.dep, second.dep));
     }
-    this.add(poly, mkJoin(first.dep, second.dep));
+    poly.release();
   }
 
   private simplifyUsingAll(equation: Equation, set: Equation[]) {
@@ -257,9 +262,14 @@ export class PddSolver {
         if (this.isCanceled() || equation.poly.isVal()) break;
       }
     } while (isSimplified && !equation.poly.isVal());
-    if (equation.poly.isUnary() && equation.poly.hi().val().isNegative()) {
-      equation.poly = equation.poly.neg();
-    }
+    if (!equation.poly.isUnary()) return;
+    const hi = equation.poly.hi();
+    const isNegative = hi.val().isNegative();
+    hi.release();
+    if (!isNegative) return;
+    const negated = equation.poly.neg();
+    equation.poly.assign(negated);
+    negated.release();
   }
 
   private simplifySetUsingEquation(set: Equation[], source: Equation) {
@@ -271,7 +281,10 @@ export class PddSolver {
     for (; update.i < update.size; update.i++) {
       const target = set[update.i];
       const isLeadingTermChanged = this.isDone() ? null : simplifier(target);
-      if (isLeadingTermChanged !== null && this.isTrivial(target)) continue;
+      if (isLeadingTermChanged !== null && this.isTrivial(target)) {
+        this.retire(target);
+        continue;
+      }
       if (isLeadingTermChanged !== null && this.checkConflict(target)) continue;
       if (isLeadingTermChanged === true) {
         if (set === this.toSimplify) update.nextj();
@@ -289,28 +302,39 @@ export class PddSolver {
   private trySimplifyUsing(target: Equation, source: Equation) {
     if (source === target) return null;
     this.stats.simplified++;
-    const reduced = target.poly.reduce(source.poly);
-    if (reduced.equals(target.poly)) return null;
-    if (this.isTooComplex(reduced)) {
+    const sourcePoly = source.poly.copy();
+    const reduced = target.poly.reduce(sourcePoly);
+    const isLeadingTermChanged = this.simplifyTo(target, reduced, target.state === PROCESSED);
+    if (isLeadingTermChanged !== null) target.dep = mkJoin(target.dep, source.dep);
+    reduced.release();
+    sourcePoly.release();
+    return isLeadingTermChanged;
+  }
+
+  private simplifyTo(target: Equation, poly: Pdd, isLeadingTermTracked: boolean) {
+    if (poly.equals(target.poly)) return null;
+    if (this.isTooComplex(poly)) {
       this.isTooComplexFound = true;
       return null;
     }
-    const isLeadingTermChanged =
-      target.state === PROCESSED && reduced.differentLeadingTerm(target.poly);
-    target.poly = reduced;
-    target.dep = mkJoin(target.dep, source.dep);
+    const isLeadingTermChanged = isLeadingTermTracked && poly.differentLeadingTerm(target.poly);
+    target.poly.assign(poly);
     return isLeadingTermChanged;
   }
 
   simplifyUsing(target: Equation, source: Equation) {
     if (source === target) return false;
     this.stats.simplified++;
-    const reduced = target.poly.reduce(source.poly);
+    const sourcePoly = source.poly.copy();
+    const reduced = target.poly.reduce(sourcePoly);
     const isLeadingTermChanged =
       target.state === PROCESSED && reduced.differentLeadingTerm(target.poly);
-    if (reduced.equals(target.poly)) return isLeadingTermChanged;
-    target.poly = reduced;
-    target.dep = mkJoin(target.dep, source.dep);
+    if (!reduced.equals(target.poly)) {
+      target.poly.assign(reduced);
+      target.dep = mkJoin(target.dep, source.dep);
+    }
+    reduced.release();
+    sourcePoly.release();
     return isLeadingTermChanged;
   }
 
@@ -356,6 +380,15 @@ export class PddSolver {
   private getQueue(state: number) {
     if (state === PROCESSED) return this.processed;
     return state === TO_SIMPLIFY ? this.toSimplify : this.solved;
+  }
+
+  delEquation(equation: Equation) {
+    this.popEquation(equation);
+    this.retire(equation);
+  }
+
+  retire(equation: Equation) {
+    equation.poly.release();
   }
 
   popEquation(equation: Equation) {
