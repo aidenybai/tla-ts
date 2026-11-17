@@ -295,6 +295,7 @@ import {
   getFormatCall,
   translateFunctionValue,
   getAnyProperty,
+  getBoundBuiltIn,
 } from "./heap";
 import {
   COLLECTIONS,
@@ -13628,6 +13629,7 @@ const getCandidates = (
     declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
     (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
     getCalledMethod(callee, context) !== undefined ||
+    getBoundBuiltIn(callee, context) !== undefined ||
     getFunctionOfKind(callee, context, isAnyGenerator) !== undefined ||
     getFunctionOfKind(callee, context, isAsyncFunction) !== undefined ||
     // A call of a key that may hold a built-in method matches its functions as an expression, or

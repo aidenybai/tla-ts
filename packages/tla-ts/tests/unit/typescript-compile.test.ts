@@ -49340,4 +49340,41 @@ describe("BigInts", () => {
       ).toThrow("tla-ts can't iterate a set or a map while the loop changes objects");
     });
   });
+
+  describe("calls the own-key check that a bind of a built-in method gives", () => {
+    const getSource = (expected: string) => `
+      const box: { seen: string[] } = { seen: [] };
+      const target: Record<string, unknown> = { own: 1 };
+      const original = target.hasOwnProperty.bind(target);
+      const enumerable = Object.prototype.propertyIsEnumerable.bind(target, "own");
+      Object.defineProperty(target, "hasOwnProperty", { configurable: true, value: () => false });
+      target.added = 2;
+      box.seen.push(String(original("own")), String(original("other")), String(original("added")));
+      box.seen.push(String(enumerable()));
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("true,false,false,true"))).failure?.message).toContain(
+        "seen true,false,true,true",
+      );
+    });
+
+    it("stops where the bound receiver may change", async () => {
+      const result = await checkModel(`
+        let target: Record<string, unknown> = { own: 1 };
+        const original = target.hasOwnProperty.bind(target);
+        target = {};
+        if (!original("own")) throw new Error("not own");
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't call the function that Object.prototype.hasOwnProperty's bind gives here",
+      );
+    });
+  });
 });

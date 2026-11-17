@@ -2494,7 +2494,7 @@ export interface Binding {
 
 // A value that reads the same wherever a script reads it: a literal, or a name that nothing assigns
 // and that holds its value by the time the node runs.
-const isSteady = (value: ts.Expression, node: ts.Node, context: Context) => {
+export const isSteady = (value: ts.Expression, node: ts.Node, context: Context) => {
   if (
     ts.isLiteralExpression(value) ||
     value.getText() === "undefined" ||

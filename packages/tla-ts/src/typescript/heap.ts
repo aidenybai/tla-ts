@@ -5,6 +5,7 @@ import {
   type HeapClass,
   type CalledMethod,
   type Context,
+  isSteady,
   share,
   type FunctionNode,
   findNodes,
@@ -236,6 +237,56 @@ export const translateFunctionObject = (node: ts.Expression, scope: Scope, conte
       value,
       apply("Assert", [boolean(false), string("tla-ts can't read this function as an object")]),
     ),
+  );
+};
+
+// The bind of a built-in method that initializes the const that a callee names.
+export const getBoundBuiltIn = (callee: ts.Expression, context: Context) => {
+  const symbol = ts.isIdentifier(callee) ? getSymbol(callee, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  return declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
+    declaration.initializer !== undefined
+    ? getBuiltInBinding(skipCasts(declaration.initializer), context)
+    : undefined;
+};
+
+// A call of what a const holds, where a bind of a built-in method initializes it, which runs the
+// method with the receiver and the arguments that the bind took first. Only an own-key check runs,
+// where the bind's values read the same at the call.
+export const translateBoundBuiltInCall = (
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+) => {
+  const binding = getBoundBuiltIn(skipCasts(node.expression), context);
+  if (binding === undefined) return undefined;
+  const method = /^Object\.prototype\.(hasOwnProperty|propertyIsEnumerable)$/.exec(
+    binding.path,
+  )?.[1];
+  const [receiver, ...bound] = binding.arguments;
+  const key = [...bound, ...node.arguments].at(0);
+  if (
+    method === undefined ||
+    receiver === undefined ||
+    key === undefined ||
+    node.arguments.some(ts.isSpreadElement) ||
+    !binding.arguments.every((argument) => isSteady(argument, node, context))
+  ) {
+    return apply("Assert", [
+      boolean(false),
+      string(`tla-ts can't call the function that ${binding.path}'s bind gives here`),
+    ]);
+  }
+  return useJavaScript(
+    method === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
+    [
+      getHeap(scope, node, context),
+      translateObjectValue(receiver, scope, context),
+      translatePropertyKey(key, scope, context),
+    ],
+    context,
   );
 };
 
