@@ -51,3 +51,11 @@ it("keeps a step whose values TLC fails to compare as it drops stuttering steps,
     ["0", "[a |-> 2, b |-> 1]", "[a |-> 2, b |-> 2]"],
   ]);
 });
+
+it("sorts the records of a behavior TLC checks for liveness, as it fingerprints each state", () => {
+  const body =
+    "Init == p = 0 /\\ q = [b |-> 0, a |-> 0]\nNext == p < 2 /\\ p' = p + 1 /\\ q' = [b |-> 5, a |-> p]\nSpec == Init /\\ [][Next]_<<p, q>>\nLive == <>(q.a = 7)";
+  expect(
+    getPrintedRecords(body, "SPECIFICATION Spec\nPROPERTY Live\nCHECK_DEADLOCK FALSE"),
+  ).toEqual([["[a |-> 0, b |-> 0]", "[a |-> 0, b |-> 5]", "[a |-> 1, b |-> 5]"]]);
+});

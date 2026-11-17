@@ -587,6 +587,8 @@ export const simulate = (options: SimulationOptions): number => {
   const getTemporalViolation = (last: TraceNode): Violation | undefined => {
     if (temporalProperties.length === 0) return undefined;
     const trace = getTrace(last, search.getTlcOrder());
+    // TLC's LiveCheck#checkTrace fingerprints each state, which sorts its records.
+    trace.forEach((node) => node.state.forEach(markNormalized));
     const found = findTemporalViolation(trace, runtime.getFingerprint, createTemporalChecker);
     if (!found) return undefined;
     const back = trace[found.length];
