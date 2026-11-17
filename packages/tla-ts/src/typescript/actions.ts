@@ -13996,7 +13996,7 @@ const isDispatchedCall = (
   return true;
 };
 
-const getCandidates = (
+const getAllCandidates = (
   node: ts.CallExpression,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
@@ -14010,6 +14010,18 @@ const getCandidates = (
       ])
     : undefined;
 };
+
+// The functions that a call through a value may run, but for those that the program only calls by
+// name, which no value holds.
+const getCandidates = (
+  node: ts.CallExpression,
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+  called: ts.Expression,
+) =>
+  getAllCandidates(node, functions, context, called)?.filter(
+    (candidate) => !isOnlyCalled(candidate, context),
+  );
 
 // The callees of the calls in the model's code whose functions findEffects looks for among the
 // candidates, as a call or through call or apply, which tla-ts finds before it does.
@@ -14048,10 +14060,11 @@ const getDispatched = (
   // The function that the call runs, which a call through call or apply names before them.
   called: ts.Expression = node.expression,
 ) => {
-  const dispatched = getCandidates(node, functions, context, called);
-  // A function that the program only calls by name is none that the callee's value may hold.
+  // A call dispatches where the callee may hold any function, even one that the program only calls
+  // by name, which it then leaves out.
+  const dispatched = getAllCandidates(node, functions, context, called);
   return dispatched !== undefined && dispatched.length > 0
-    ? dispatched.filter((candidate) => !isOnlyCalled(candidate, context))
+    ? getCandidates(node, functions, context, called)
     : undefined;
 };
 
