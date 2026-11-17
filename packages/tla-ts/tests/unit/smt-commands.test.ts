@@ -702,6 +702,27 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "unknown")', "unknown", '(:reason-unknown "unknown")']);
   });
 
+  it("lets the limit that stops nnf pass or-else, as nnf throws a default_exception", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (not (and (or p q) (=> q r) (= p r))))",
+        "(check-sat-using (or-else nnf skip))",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (or-else (then simplify nnf) skip))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+
   it("leaves a goal as it is when the limit stops simplify", () => {
     expect(
       run([

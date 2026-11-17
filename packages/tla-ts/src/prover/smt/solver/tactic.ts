@@ -559,10 +559,16 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   const nnf = new Nnf(manager, names, mode, getBool(params, "ignore_labels", false));
   const definitions = new RefVector(manager);
   const size = goal.forms.size;
-  for (let index = 0; !goal.isInconsistent && index < size; index++) {
-    const result = nnf.apply(goal.forms.items[index], definitions);
-    goal.update(index, result);
-    manager.decRef(result);
+  try {
+    for (let index = 0; !goal.isInconsistent && index < size; index++) {
+      const result = nnf.apply(goal.forms.items[index], definitions);
+      goal.update(index, result);
+      manager.decRef(result);
+    }
+  } catch (error) {
+    // Z3's nnf stops at the limit with a default_exception, which or-else lets pass.
+    if (!(error instanceof SmtCanceledError)) throw error;
+    throw new SmtDefaultError(manager.limit.getCancelMessage());
   }
   for (const definition of definitions.items) {
     if (goal.isInconsistent) break;
