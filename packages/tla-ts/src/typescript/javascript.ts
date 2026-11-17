@@ -6575,7 +6575,8 @@ LOCAL TypedArrayMade(heap, type, prototype, bufferPrototype, arguments, isIterat
       offset == IndexOfArgument(argument(2))
       length == IF argument(3) = Undefined THEN Undefined ELSE IndexOfArgument(argument(3))
       byteLength == Len(object.bytes)
-  IN CASE ~IsObjectIn(heap, first) ->
+  IN CASE ~IsObjectIn(heap, first) /\\ (IsSymbol(first) \\/ IsBigInt(first)) -> Failed("TypeError")
+       [] ~IsObjectIn(heap, first) ->
             LET count == IndexOfArgument(first)
             IN CASE count = -1 -> Failed("RangeError")
                  [] count * size > MaxBytes -> Assert(FALSE, "tla-ts can't make a buffer this big")

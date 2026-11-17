@@ -50544,4 +50544,36 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("throws the TypeError of a typed array whose length is a symbol or a BigInt", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("1");
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      attempt(() => {
+        new Int8Array(symbol as any);
+      });
+      attempt(() => {
+        new BigInt64Array(2n as any);
+      });
+      attempt(() => new Int8Array(2).length);
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeError,TypeError,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("TypeError,undefined,2"))).failure?.message).toContain(
+        "results TypeError,TypeError,2",
+      );
+    });
+  });
 });
