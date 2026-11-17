@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getFreeNames,
   getReferencedName,
   isLocallyResolved,
   type Bound,
@@ -27,6 +28,7 @@ import { MESSAGE_CODE } from "./tlc/messages";
 import type { CheckerRuntime } from "./runtime";
 import {
   isEvaluatedAtStartup,
+  isExpressionImpure,
   isImpureDefinition,
   isNonconstant,
   type DefinitionFacts,
@@ -1979,6 +1981,16 @@ export const getLazyFilter = (
     createFiltered(base, context, predicate, node);
 };
 
+// A predicate that can't tell the elements apart holds of every element or of none.
+export const isUniformPredicate = (
+  expression: Expression & { kind: "SetFilter" },
+  environment: Environment,
+) =>
+  expression.bound.pattern.kind === "Name" &&
+  !environment.coverage &&
+  !getFreeNames(expression.predicate).has(expression.bound.pattern.name) &&
+  !isExpressionImpure([expression.predicate], environment, "varying");
+
 export const expectFilterPredicate = (
   value: Value,
   expression: Expression & { kind: "SetFilter" },
@@ -2021,20 +2033,21 @@ const compileSetComprehension = (
     const filterLazily = getLazyFilter(expression, environment);
     const pattern = expression.bound.pattern;
     const coverage = environment.coverage;
+    const isUniform = isUniformPredicate(expression, environment);
     return (context) => {
       const base = set(context);
       if (!isReducibleSet(base)) return filterLazily(base, context, coverage?.current);
       const kept: Value[] = [];
-      const visit = (element: Value) => {
+      const elements = base.kind === "Interval" ? base : toFiniteSet(base).elements;
+      const size = Array.isArray(elements) ? elements.length : elements.high - elements.low + 1;
+      for (let position = 0; position < size; position++) {
+        const element = Array.isArray(elements) ? elements[position] : elements.low + position;
         const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
         if (expectFilterPredicate(value, expression)) addBoundedElement(kept, element);
-      };
-      const elements = base.kind === "Interval" ? base : toFiniteSet(base).elements;
-      forEachElement(elements, visit);
+        else if (isUniform) break;
+      }
       if (coverage && coverage.current !== -1) {
-        coverage.secondary[coverage.current] +=
-          (Array.isArray(elements) ? elements.length : elements.high - elements.low + 1) +
-          kept.length;
+        coverage.secondary[coverage.current] += size + kept.length;
       }
       return createNormalizedSet(kept);
     };

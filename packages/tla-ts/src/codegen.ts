@@ -1,4 +1,4 @@
-import { getChildren, getReferencedName, isLocallyResolved, type Expression } from "./ast";
+import { getFreeNames, isLocallyResolved, type Expression } from "./ast";
 import {
   bindValue,
   expectBooleanBody,
@@ -14,6 +14,7 @@ import {
   getFunctionBuilder,
   getLazyFilter,
   isKeptLazy,
+  isUniformPredicate,
   getDomainOperator,
   getSubsetOperator,
   getEvaluator,
@@ -158,13 +159,6 @@ const addReference = (generator: Generator, value: unknown) => {
 
 const createLocal = (generator: Generator) => `local${generator.counter++}`;
 
-const getFreeNames = (expression: Expression, names = new Set<string>()) => {
-  const name = getReferencedName(expression);
-  if (name !== undefined) names.add(name);
-  getChildren(expression).forEach((child) => getFreeNames(child, names));
-  return names;
-};
-
 const getDelegateContext = (
   generator: Generator,
   expression: Expression,
@@ -279,7 +273,8 @@ const generateSetFilter = (
     const lazy = `if (!isReducible(${base})) return ${filterLazily}(${base}, ${getDelegateContext(generator, expression, bodyFrame)});`;
     const set = generateExpression(generator, expression.bound.set, bodyFrame);
     bodyFrame.locals.set(name, element);
-    const test = `if (filterPredicate(${generateExpression(generator, expression.predicate, bodyFrame)}, ${node})) addBounded(${kept}, ${element});`;
+    const stop = isUniformPredicate(expression, generator.environment) ? " else break;" : "";
+    const test = `if (filterPredicate(${generateExpression(generator, expression.predicate, bodyFrame)}, ${node})) addBounded(${kept}, ${element});${stop}`;
     return `const ${base} = ${set}; ${lazy} const ${list} = ${base}.kind === "Interval" ? ${base} : finiteElements(${base}); const ${kept} = []; ${generateLoop(generator, list, element, test)} return normalizedSet(${kept});`;
   });
 

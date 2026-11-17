@@ -514,6 +514,17 @@ describe("check matches TLC", () => {
     expect(prints).toEqual(["<<FALSE, TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, FALSE, FALSE>>"]);
   });
 
+  it("filters a set by a predicate that ignores the element like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME PrintT(<<{e \\in 1..2147483647 : 1..3 \\subseteq {1, 2}}, {e \\in 1..3 : 2 > 1}, {e \\in 1..3 : PrintT("p")}, {e \\in {} : 1}>>)\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"p"', '"p"', '"p"', "<<{}, {1, 2, 3}, {1, 2, 3}, {}>>"]);
+  });
+
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
     const result = await check({
       source:
@@ -1959,10 +1970,18 @@ describe("initial predicate and next-state relation match TLC", () => {
 });
 
 describe("check without code generation from strings", () => {
-  it("checks a spec like it does with code generation", async () => {
+  it.each([
+    [
+      "a spec",
+      "VARIABLE present\nInit == present = FALSE\nNext == UNCHANGED present\nInv == ~present \\/ present",
+    ],
+    [
+      "a set filter whose predicate ignores the element",
+      "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == {e \\in 1..2147483647 : 1..3 \\subseteq {1, 2}} = {} /\\ {e \\in 1..3 : x = 0} = 1..3",
+    ],
+  ])("checks %s like it does with code generation", async (_title, body) => {
     const options = {
-      source:
-        "---- MODULE M ----\nVARIABLE present\nInit == present = FALSE\nNext == UNCHANGED present\nInv == ~present \\/ present\n====",
+      source: `---- MODULE M ----\n${body}\n====`,
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
     };
     const script = `const tlaTs = await import(${JSON.stringify(pathToFileURL(DIST).href)});
