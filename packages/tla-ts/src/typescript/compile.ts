@@ -125,6 +125,9 @@ const NORMAL_FORMS = ["NFC", "NFD", "NFKC", "NFKD"];
 // string of every code point in a range, may hold more than the module can list.
 const LONG_LITERAL = 1024;
 
+// The symbols that a call of Symbol which may run again makes at most.
+const REPEATED_SYMBOLS = 128;
+
 // The fewest digits that give a number back, without its sign, and the power of 10 of the first,
 // as Number::toString finds them, which toExponential writes where a call gives no digits.
 const getShortestFields = (value: number) => {
@@ -1081,21 +1084,33 @@ export const compile = (
         prototypes.has(node.left.expression.getText())) ||
       (ts.forEachChild(node, changesPrototype) ?? false);
     context.hasInheritedElements = roots.some(changesPrototype);
-    const getSymbolCalls = (node: ts.Node): number =>
+    // Each call of Symbol makes a symbol each time it runs: once at the top level outside loops,
+    // and many times where a function, a class, or a loop runs it again, as a test runs its
+    // function for each typed array and each way of making one.
+    const getSymbolCalls = (node: ts.Node, isRepeated: boolean): number =>
       node
         .getChildren()
         .reduce(
-          (count, child) => count + getSymbolCalls(child),
+          (count, child) =>
+            count +
+            getSymbolCalls(
+              child,
+              isRepeated ||
+                ts.isFunctionLike(node) ||
+                ts.isClassLike(node) ||
+                ts.isIterationStatement(node, false),
+            ),
           ts.isCallExpression(node) && ["Symbol", "Symbol.for"].includes(node.expression.getText())
-            ? 1
+            ? isRepeated
+              ? REPEATED_SYMBOLS
+              : 1
             : 0,
         );
-    // The built-in objects hold properties that the well-known symbols key. Each call of Symbol
-    // may make a few symbols, as where a loop or a function runs it again.
+    // The built-in objects hold properties that the well-known symbols key.
     context.symbols = [
       ...WELL_KNOWN_SYMBOLS,
       ...Array.from(
-        { length: 4 * roots.reduce((count, root) => count + getSymbolCalls(root), 0) },
+        { length: roots.reduce((count, root) => count + getSymbolCalls(root, false), 0) },
         () => "",
       ),
     ].map((name) =>

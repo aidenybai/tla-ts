@@ -28547,7 +28547,7 @@ describe("errors", () => {
   it("stops where a script makes more symbols than it has calls of Symbol", async () => {
     const result = await checkModel(`
       let count = 0;
-      for (let index = 0; index < 10; index++) {
+      for (let index = 0; index < 130; index++) {
         const made: symbol = Symbol();
         count++;
       }
@@ -50387,6 +50387,30 @@ describe("BigInts", () => {
     it("rejects other lengths", async () => {
       expect((await checkModel(getSource("4,4,2,0"))).failure?.message).toContain(
         "lengths 4,4,2,1",
+      );
+    });
+  });
+
+  describe("makes a symbol each time a call of Symbol in a loop runs", () => {
+    const getSource = (expected: string) => `
+      const make = (index: number) => Symbol(String(index));
+      const made: symbol[] = [];
+      for (let index = 0; index < 12; index++) made.push(make(index));
+      const first = made[0];
+      const descriptions = made.map((symbol) => symbol.description).join();
+      const isDistinct = made.every((symbol, index) => index === 0 || symbol !== first);
+      if (descriptions !== "${expected}" || !isDistinct) {
+        throw new Error("made " + descriptions + " " + isDistinct);
+      }
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0,1,2,3,4,5,6,7,8,9,10,11"))).failure).toBeUndefined();
+    });
+
+    it("rejects other descriptions", async () => {
+      expect((await checkModel(getSource("0,1,2,3,4,5,6,7,8,9,10"))).failure?.message).toContain(
+        "made 0,1,2,3,4,5,6,7,8,9,10,11 true",
       );
     });
   });
