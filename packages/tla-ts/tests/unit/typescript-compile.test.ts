@@ -8910,7 +8910,9 @@ describe("errors", () => {
   it("rejects a parameter without a finite type", () => {
     expect(() =>
       compile(`let count = 0;\nexport const run = (step: () => number) => { count += step(); };`),
-    ).toThrow("spec.ts:2:21 () => number isn't finite");
+    ).toThrow(
+      "spec.ts:2:21 tla-ts can't choose every value of the parameter step: () => number isn't finite",
+    );
   });
 
   it("fails the check where an action writes past the end of an array", async () => {
@@ -50207,7 +50209,7 @@ describe("BigInts", () => {
       expect(() =>
         compile(`export const isSame = (value: 1 | "a"): boolean => value === value;`),
       ).toThrow(
-        `spec.ts:1:24 1 | "a" mixes values that TLC can't compare, such as a string and a number`,
+        `spec.ts:1:24 tla-ts can't choose every value of the parameter value: 1 | "a" mixes values that TLC can't compare, such as a string and a number`,
       );
     });
 
@@ -50560,5 +50562,97 @@ describe("BigInts", () => {
         "spec.ts:4:26 tla-ts can't run ActiveXObject, which the host gives and tla-ts doesn't model",
       );
     });
+  });
+
+  describe("stops where a loop reads Node's console, which it never may", () => {
+    const getSource = (isQuiet: boolean, expected: number) => `
+      declare const console: Record<string, unknown>;
+      const saved: Record<string, unknown> = {};
+      const suppress = () => {
+        for (const method in console) {
+          saved[method] = console[method];
+        }
+      };
+      let calls = 0;
+      const run = (isQuiet: boolean) => {
+        calls++;
+        if (isQuiet) suppress();
+      };
+      run(${isQuiet});
+      if (calls !== ${expected}) throw new Error("calls " + calls);
+    `;
+
+    it("agrees with Node where the loop never runs", async () => {
+      expect((await checkModel(getSource(false, 1))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource(false, 2))).failure?.message).toContain("calls 1");
+    });
+
+    it("stops where the loop runs", async () => {
+      expect((await checkModel(getSource(true, 1))).failure?.message).toContain(
+        "tla-ts can't read Node's global console",
+      );
+    });
+  });
+
+  describe("names what to do where an exported function's parameter has no finite model", () => {
+    it("stops at a type with no end", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          export const add = (options: { amount?: 1 | 2 }) => {
+            count += options.amount ?? 0;
+          };
+        `),
+      ).toThrow(
+        "tla-ts can't choose every value of the parameter options: { amount?: 1 | 2 | undefined; } isn't finite: the optional field amount may be missing. Give options a finite type",
+      );
+    });
+
+    it("stops at a default", () => {
+      expect(() =>
+        compile(`
+          let count = 0;
+          export const add = (amount: 1 | 2 = 1) => {
+            count += amount;
+          };
+        `),
+      ).toThrow("tla-ts can't bind a default, a rest, or a pattern here: amount: 1 | 2 = 1");
+    });
+  });
+
+  describe("keeps in the state a const whose object an action changes in place", () => {
+    const getSource = (bound: number) => `
+      const holder: { prepare: number } = { prepare: 0 };
+      export const setPrepare = (value: 1 | 2): void => {
+        holder.prepare = value;
+      };
+      export const isSmall = () => holder.prepare < ${bound};
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource(3));
+      expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+    });
+
+    it("rejects a smaller bound", async () => {
+      expect((await checkModel(getSource(2))).status).toBe("invariant-violation");
+    });
+  });
+
+  it("names what to do where an action returns a value", () => {
+    expect(() =>
+      compile(`
+        const seen = new Map<string, number>();
+        export const record = (key: "a" | "b") => {
+          seen.set(key, 1);
+          return seen.size;
+        };
+      `),
+    ).toThrow(
+      "tla-ts can't check an exported function that changes state and returns a value as an action",
+    );
   });
 });

@@ -241,21 +241,21 @@ export const readModel = (
         .flatMap(getListDeclarations)
     : [];
   const declarations = [...statements.flatMap(getDeclarations), ...nestedVars];
+  // A const whose object a write changes in place holds a new value after it, as a let does.
   const changed = new Set(
-    isScript(sourceFile)
-      ? [sourceFile, ...imported]
-          .flatMap((root) =>
-            findNodes(root, (node): node is ts.Node => getWritten(node) !== undefined),
-          )
-          .flatMap((node) => {
-            const written = getWritten(node);
-            return written === undefined ? [] : getWrittenRoots(written);
-          })
-          .flatMap((root) => {
-            const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
-            return symbol !== undefined && getKind(root, context) !== "object" ? [symbol] : [];
-          })
-      : [],
+    [sourceFile, ...imported]
+      .flatMap((root) => findNodes(root, (node): node is ts.Node => getWritten(node) !== undefined))
+      .flatMap((node) => {
+        const written = getWritten(node);
+        return written === undefined ? [] : getWrittenRoots(written);
+      })
+      .flatMap((root) => {
+        const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
+        return symbol !== undefined &&
+          (!isScript(sourceFile) || getKind(root, context) !== "object")
+          ? [symbol]
+          : [];
+      }),
   );
   // A variable that changes is state, the model's own or an imported file's, which its file may
   // export, as an importer reads the same binding.
