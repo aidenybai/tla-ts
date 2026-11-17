@@ -83,9 +83,9 @@ const rhsOf = (thm: Thm) => destEquals(thm.prop)[1];
 
 const instantiateMatch = (env: MatchEnv, rule: Thm): Thm => {
   const typed = instantiateTypes(env.tyenv, rule);
-  const insts: Instantiation[] = tableEntries(env.tenv).map(([key, binding]) => ({
-    variable: mkVar(key.name, key.index, substType(env.tyenv, binding.type)),
-    term: binding.term,
+  const insts: Instantiation[] = tableEntries(env.tenv).map((entry) => ({
+    variable: mkVar(entry[0].name, entry[0].index, substType(env.tyenv, entry[1].type)),
+    term: entry[1].term,
   }));
   return instantiate(insts, typed);
 };
