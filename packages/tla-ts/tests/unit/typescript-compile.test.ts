@@ -48628,8 +48628,8 @@ describe("BigInts", () => {
 
     // Node gives 9, but a compound assignment runs the call inside its expression, which can't
     // keep d in the state for the function that the call makes.
-    it("stops where an expression calls it", () => {
-      const source = `
+    it("runs it as a statement where a compound assignment calls it", async () => {
+      const getSource = (expected: number) => `
         const results: any = {};
         var total = 0;
         total += (function (d: number) {
@@ -48637,11 +48637,10 @@ describe("BigInts", () => {
             return d;
           };
         })(9)();
-        if (total !== 9) throw new Error("seen " + total);
+        if (total !== ${expected}) throw new Error("seen " + total);
       `;
-      expect(() => checkModel(source)).toThrow(
-        "tla-ts can't call inside an expression a function that runs once and makes a function that reads its locals",
-      );
+      expect((await checkModel(getSource(9))).failure).toBeUndefined();
+      expect((await checkModel(getSource(8))).failure?.message).toContain("seen 9");
     });
   });
 
@@ -51458,6 +51457,159 @@ describe("BigInts", () => {
 
     it("rejects another count", async () => {
       expect((await checkModel(getSource(2))).failure?.message).toContain("seen 1");
+    });
+  });
+
+  describe("follows promises through a loop's iterations, one after another", () => {
+    const getSource = (limit: number, expected: string) => `
+      const seen: string[] = [];
+      const run = async (limit: number) => {
+        let count = 0;
+        while (count < limit) {
+          count++;
+          Promise.resolve(count).then((value) => seen.push("then" + value));
+          await null;
+          seen.push("after" + count);
+        }
+        return count;
+      };
+      run(${limit}).then((count) => {
+        seen.push("done" + count);
+        if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+      });
+      seen.push("sync");
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource(2, "sync,then1,after1,then2,after2,done2"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      const result = await checkModel(getSource(2, "sync,after1,then1,then2,after2,done2"));
+      expect(result.failure?.message).toContain("A promise rejected with no handler");
+    });
+
+    it("stops past the iterations that it follows", async () => {
+      expect((await checkModel(getSource(9, "none"))).failure?.message).toContain(
+        "tla-ts can't follow promises through more than 4 iterations of a loop",
+      );
+    });
+  });
+
+  describe("stops where a loop's operator runs an async function, rather than where it compiles", () => {
+    const getSource = (isAsync: boolean, expected: number) => `
+      const box = { seen: [] as string[] };
+      const load = async () => {
+        box.seen.push("load");
+      };
+      let runs = 0;
+      const step = (isAsync: boolean) => {
+        for (let index = 0; index < 2; index++) {
+          runs++;
+          if (isAsync) load();
+        }
+      };
+      step(${isAsync});
+      if (runs !== ${expected}) throw new Error("runs " + runs);
+    `;
+
+    it("agrees with Node where the loop never calls it", async () => {
+      expect((await checkModel(getSource(false, 2))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource(false, 3))).failure?.message).toContain("runs 2");
+    });
+
+    it("stops where the loop calls it", async () => {
+      expect((await checkModel(getSource(true, 2))).failure?.message).toContain(
+        "tla-ts can't follow a promise in a loop",
+      );
+    });
+  });
+
+  describe("follows promises through a for-of over an array literal, one element after another", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const run = async () => {
+        for (const value of [1, 2, 3]) {
+          Promise.resolve(value).then((resolved) => seen.push("then" + resolved));
+          await null;
+          seen.push("after" + value);
+          if (value === 2) break;
+        }
+      };
+      run().then(() => {
+        if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("then1,after1,then2,after2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("after1,then1,then2,after2"))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
+
+  describe("catches what a call on the right of a compound assignment throws inside try", () => {
+    const getSource = (expected: string) => `
+      let output = "a";
+      const change = (text: string): string => {
+        if (text === "") throw new Error("empty");
+        output = "changed";
+        return text;
+      };
+      const run = (text: string) => {
+        try {
+          output += change(text);
+        } catch {
+          output += "!";
+        }
+        return output;
+      };
+      const seen = [run("b"), run("")].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab,ab!"))).failure).toBeUndefined();
+    });
+
+    it("rejects the value that the call wrote", async () => {
+      expect((await checkModel(getSource("changedb,ab!"))).failure?.message).toContain(
+        "seen ab,ab!",
+      );
+    });
+  });
+
+  describe("catches in an action what a call inside a compound assignment throws", () => {
+    const getSource = (start: number) => `
+      let count = ${start};
+      export const step = () => {
+        const getChecked = (): number => {
+          throw new Error("no");
+        };
+        try {
+          count += getChecked();
+        } catch {
+          count = 0;
+        }
+      };
+      export const isZeroAfterStep = () => count === 0 || count === ${start};
+      export const isStart = () => count === ${start};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(0))).failure).toBeUndefined();
+    });
+
+    it("rejects a count that the catch didn't reset", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("invariant-violation");
     });
   });
 });

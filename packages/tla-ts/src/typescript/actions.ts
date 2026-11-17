@@ -17353,6 +17353,10 @@ const translateYieldingForOf = (
 // The most iterations of a generator's counted loop that tla-ts unrolls.
 const UNROLL_LIMIT = 64;
 
+// The most iterations of a loop that follows promises that tla-ts compiles one after another, as
+// each copies the loop's body.
+const PROMISE_LOOP_LIMIT = 4;
+
 // The values that a generator's for loop gives its counter, where a literal starts it, a comparison
 // with a literal ends it, a step of a literal moves it, and nothing else writes it, with the value
 // that a var keeps once the loop ends. tla-ts unrolls such a loop, whose iterations then suspend at
@@ -17467,6 +17471,77 @@ const isForever = (loop: ts.IterationStatement) =>
     loop.initializer === undefined &&
     loop.condition === undefined &&
     loop.incrementor === undefined);
+
+// Whether a loop's own code, outside the functions it makes, follows promises: it awaits, imports,
+// makes a promise, reacts to one, or calls an async function. A loop's operator can't carry the
+// promises and the jobs that this changes.
+const isFollowingPromises = (loop: ts.IterationStatement, context: Context) => {
+  const visit = (node: ts.Node): boolean =>
+    ts.isAwaitExpression(node) ||
+    (ts.isCallExpression(node) &&
+      (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        isPromiseCall(node, context) ||
+        (ts.isPropertyAccessExpression(node.expression) &&
+          ["then", "catch", "finally"].includes(node.expression.name.text)) ||
+        (() => {
+          const callee = getCallee(node.expression, context);
+          return callee !== undefined && isAsyncFunction(callee);
+        })())) ||
+    (ts.isNewExpression(node) && getBuiltIn(node.expression, context) === "Promise") ||
+    (!ts.isFunctionLike(node) && !ts.isClassLike(node) && (ts.forEachChild(node, visit) ?? false));
+  return visit(loop);
+};
+
+// Runs a while, a do-while, or a for loop that follows promises as its iterations, one after
+// another, each testing its condition, so that the promises and the jobs carry from one iteration
+// to the next. Past PROMISE_LOOP_LIMIT iterations it stops.
+const translatePromiseLoop = (
+  loop: ts.WhileStatement | ts.DoStatement | ts.ForStatement,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const condition = ts.isForStatement(loop) ? loop.condition : loop.expression;
+  const incrementor = ts.isForStatement(loop) ? loop.incrementor : undefined;
+  return translateJoined(loop, path, context, continueWith, (leave) => {
+    const runBody = (current: Path, position: number): Formula => {
+      if (position >= PROMISE_LOOP_LIMIT) {
+        return leaf(
+          apply("Assert", [
+            boolean(false),
+            string(
+              `tla-ts can't follow promises through more than ${PROMISE_LOOP_LIMIT} iterations of a loop`,
+            ),
+          ]),
+        );
+      }
+      const next = (after: Path) =>
+        incrementor === undefined
+          ? test(after, position + 1)
+          : allocate(incrementor, after, context, (inner) =>
+              translateExpressionStatement(incrementor, inner, context, frame, (stepped) =>
+                test(stepped, position + 1),
+              ),
+            );
+      return translateStatements([loop.statement], startIteration(loop, current), context, {
+        ...frame,
+        next,
+        continueTo: next,
+        breakTo: (after) => leave(after),
+      });
+    };
+    const test = (current: Path, position: number): Formula =>
+      condition === undefined
+        ? runBody(current, position)
+        : ifThenElse(
+            translateCondition(condition, current.scope, context),
+            runBody(current, position),
+            leave(current),
+          );
+    return ts.isDoStatement(loop) ? runBody(path, 0) : test(path, 0);
+  });
+};
 
 // Runs a generator's loop that yields as its iterations, one after another: a counted loop's with
 // the counter each one reads, or a loop that runs until something leaves it, which tla-ts follows
@@ -17635,8 +17710,8 @@ const translateLoop = (
   const literal = ts.isForOfStatement(loop) ? getCast(loop.expression) : undefined;
   if (
     ts.isForOfStatement(loop) &&
-    frame.yieldTo !== undefined &&
-    (isYielding || hasYield(loop.initializer)) &&
+    ((frame.yieldTo !== undefined && (isYielding || hasYield(loop.initializer))) ||
+      (path.tasks !== undefined && isFollowingPromises(loop, context))) &&
     literal !== undefined &&
     ts.isArrayLiteralExpression(literal) &&
     literal.elements.every(
@@ -17645,7 +17720,32 @@ const translateLoop = (
   ) {
     return translateYieldingForOf(loop, literal, path, context, frame, continueWith);
   }
-  const runLoop = (inner: Path) => translateIterations(loop, inner, context, frame, continueWith);
+  // A loop whose code follows promises runs as its iterations where its condition is an
+  // expression's, and a for's initializer declares no let that a function could keep.
+  const condition =
+    ts.isWhileStatement(loop) || ts.isDoStatement(loop)
+      ? loop.expression
+      : ts.isForStatement(loop)
+        ? loop.condition
+        : undefined;
+  const forInitializer = ts.isForStatement(loop) ? loop.initializer : undefined;
+  const isPromiseLoop =
+    (ts.isWhileStatement(loop) || ts.isDoStatement(loop) || ts.isForStatement(loop)) &&
+    path.tasks !== undefined &&
+    (forInitializer === undefined ||
+      !ts.isVariableDeclarationList(forInitializer) ||
+      (forInitializer.flags & ts.NodeFlags.BlockScoped) === 0) &&
+    (condition === undefined ||
+      (getLeadingCall(condition, () => true, path, context) === undefined &&
+        getBranch(condition, path, context) === undefined &&
+        findNodes(condition, (node): node is ts.Node => getWritten(node) !== undefined).length ===
+          0)) &&
+    isFollowingPromises(loop, context);
+  const runLoop = (inner: Path) =>
+    isPromiseLoop &&
+    (ts.isWhileStatement(loop) || ts.isDoStatement(loop) || ts.isForStatement(loop))
+      ? translatePromiseLoop(loop, inner, context, frame, continueWith)
+      : translateIterations(loop, inner, context, frame, continueWith);
   // A for-of of an array whose first element a getter that only throws gives throws before its
   // first iteration, as the iterator's first next reads the element.
   if (
@@ -19591,6 +19691,16 @@ const findLeadingCall = (
       );
       return found.call !== undefined || found.isBlocked ? found : blocked;
     }
+    // A compound assignment to a name reads the name first, which keeps the value it had then
+    // where its right operand runs a call first.
+    if (isCompoundAssignment(node) && ts.isIdentifier(node.left)) {
+      const read = [...before, node.left];
+      const right = findLeadingCall(node.right, read, path, context);
+      if (right.call !== undefined) {
+        before.push(...read.slice(before.length));
+        return right;
+      }
+    }
     if (isAssignment) {
       const right = isCompoundAssignment(node)
         ? findLeadingCall(node.right, [], path, context)
@@ -19707,7 +19817,10 @@ const findLeadingCall = (
     const found = thenConverted(inOrder(node.arguments));
     if (found.call !== undefined || found.isBlocked) return found;
     if (isGeneratorType(node, context)) return blocked;
-    return isStatementCall(node, path, context) || isRemoving(node, context)
+    // A call that may throw inside try runs as a statement, whose throw the try catches.
+    return isStatementCall(node, path, context) ||
+      isRemoving(node, context) ||
+      (path.scope.isCatching && mayThrow(node, context))
       ? { call: node, isBlocked: false }
       : evaluate(node);
   }
