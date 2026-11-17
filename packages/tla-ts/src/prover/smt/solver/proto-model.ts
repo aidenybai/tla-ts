@@ -28,7 +28,7 @@ import {
 } from "./datatype-decl-plugin";
 import { mkArrayApp, mkAsArray } from "./array-decl-plugin";
 import { mkFpNumeral, mkRmNumeral } from "./fpa-decl-plugin";
-import { MPF_ROUND_TOWARD_ZERO, mkZero } from "./mpf";
+import { MPF_ROUND_TOWARD_ZERO, mkNan, mkZero } from "./mpf";
 import { RandomGen } from "./random-gen";
 import { mkEmptySeq, mkSeqApp } from "./seq-decl-plugin";
 import { Rational } from "./rational";
@@ -45,7 +45,7 @@ export const getManagerSomeValue = (manager: AstManager, sort: number): number =
   if (sort === SORT_BOOL) return manager.falseExpr;
   if (manager.isRmSort(sort)) return mkRmNumeral(manager, MPF_ROUND_TOWARD_ZERO);
   if (manager.isFpSort(sort))
-    return mkFpNumeral(manager, mkZero(manager.getEbits(sort), manager.getSbits(sort), false));
+    return mkFpNumeral(manager, mkNan(manager.getEbits(sort), manager.getSbits(sort)));
   if (isArithSort(sort)) return manager.mkNumeralOfSort(Rational.zero, sort);
   if (manager.isBvSort(sort)) return manager.mkBvNumeral(0n, manager.getBvSize(sort));
   if (manager.isArraySort(sort))
@@ -518,6 +518,8 @@ export class ProtoModel {
     const manager = this.manager;
     if (this.charFactory !== undefined && manager.isCharSort(sort))
       return manager.mkChar(this.charFactory.getSomeValue());
+    if (manager.isFpSort(sort) && !this.isFinal)
+      return mkFpNumeral(manager, mkZero(manager.getEbits(sort), manager.getSbits(sort), false));
     if (
       manager.isFpSort(sort) ||
       manager.isRmSort(sort) ||

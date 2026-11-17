@@ -17,7 +17,8 @@ import {
 import type { Goal } from "./goal";
 import { Rational } from "./rational";
 import { Rewriter, type RewriterOptions } from "./rewriter";
-import { finishSimplifier } from "./dependent-expr-state";
+import { runSimplifier } from "./dependent-expr-state";
+import { RewriterTpl } from "./rewriter-tpl";
 
 interface Bound {
   value: Rational;
@@ -91,18 +92,33 @@ export const checkPbFree = (manager: AstManager, form: number) => {
   }
 };
 
-export const card2bv = (manager: AstManager, goal: Goal, options: RewriterOptions) => {
-  if (!goal.isProofsEnabled) {
-    const rewriter = new Rewriter(manager, options);
-    const size = goal.forms.size;
-    for (let index = 0; index < size && !goal.isInconsistent; index++) {
-      const form = goal.forms.items[index];
-      const rewritten = rewriter.rewrite(form);
-      checkPbFree(manager, rewritten);
-      if (rewritten !== form) goal.update(index, rewritten);
-      manager.decRef(rewritten);
-    }
-    rewriter.release();
+// The port has no encoding to rewrite to, but the walk still counts its steps of the limit.
+class CardPbRewriter extends RewriterTpl {
+  isRewritingPatterns() {
+    return false;
   }
-  finishSimplifier(goal);
-};
+}
+
+export const card2bv = (manager: AstManager, goal: Goal, options: RewriterOptions) =>
+  runSimplifier(goal, false, (state) => {
+    const rewriter = new Rewriter(manager, options);
+    const pbRewriter = new CardPbRewriter(manager);
+    let simplified = -1;
+    return {
+      reduce: () => {
+        state.rewriteEach((form) => {
+          const next = rewriter.rewrite(form);
+          if (simplified !== -1) manager.decRef(simplified);
+          simplified = next;
+          const rewritten = pbRewriter.rewrite(simplified);
+          checkPbFree(manager, rewritten);
+          return rewritten;
+        });
+        if (simplified !== -1) manager.decRef(simplified);
+      },
+      release: () => {
+        rewriter.release();
+        pbRewriter.release();
+      },
+    };
+  });

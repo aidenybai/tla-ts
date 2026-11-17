@@ -64,7 +64,7 @@ export const finishSimplifier = (goal: Goal, definitions: Definition[] = []) => 
   goal.elimTrue();
   goal.elimRedundancies();
   goal.depth++;
-  if (definitions.length > 0 || goal.isModelsEnabled) goal.addDefinitions(definitions);
+  if (goal.isModelsEnabled) goal.addDefinitions(definitions);
 };
 
 interface Simplifier {

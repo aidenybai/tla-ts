@@ -154,6 +154,7 @@ export interface SmtParams {
   isMbqi: boolean;
   mbqiMaxIterations: number;
   relevancyLevel: 0 | 2;
+  randomSeed?: number;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
 }
@@ -172,6 +173,7 @@ export class Context extends Internalizer {
   private scopeAuxClauseLimits: number[] = [];
   private scopeTrailLimits: number[] = [];
   private baseScopeLemmaLimits: number[] = [];
+  private isBaseScopeInconsistent: boolean[] = [];
   private atomPropagationQueue: Literal[] = [];
   private thEqQueue: number[] = [];
   private thDiseqQueue: number[] = [];
@@ -210,15 +212,17 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this);
   }
 
-  // As in Z3, rereading the parameters drops the setup's tuning but for eliminate_term_ite and relevancy.
+  // As in Z3, rereading the parameters drops the setup's tuning but for eliminate_term_ite, eliminate_bounds and relevancy.
   updateParams(params: KernelParams) {
     this.params.isMbqi = params.isMbqi;
     this.params.mbqiMaxIterations = params.mbqiMaxIterations;
+    this.params.randomSeed = params.randomSeed;
     this.config = {
       ...DEFAULT_CONFIG,
       theories: this.config.theories,
       isFindingMacros: params.isFindingMacros,
       isEliminatingTermIte: this.config.isEliminatingTermIte,
+      isEliminatingBounds: this.config.isEliminatingBounds,
     };
     this.qmanager.updateParams();
   }
@@ -239,6 +243,7 @@ export class Context extends Internalizer {
     );
     this.setup = setup;
     this.config = config;
+    this.randomSeed = this.params.randomSeed ?? 0;
     if (config.relevancyLevel !== undefined) this.relevancy.isEnabled = config.relevancyLevel > 0;
     for (const family of config.theories)
       if (family !== FAMILY_POLY || this.manager.hasTypeVars) this.registerFamily(family);
@@ -982,11 +987,12 @@ export class Context extends Internalizer {
     this.cacheGeneration(newLevel, visited);
     this.qmanager.pop(numScopes);
     this.fingerprints.pop(numScopes);
+    if (newLevel >= this.baseLevel || !this.isBaseScopeInconsistent[newLevel]) this.conflict = null;
     if (newLevel < this.baseLevel) {
       this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
       shrink(this.baseScopeLemmaLimits, newLevel);
+      shrink(this.isBaseScopeInconsistent, newLevel);
     }
-    this.conflict = null;
     this.deleteClauses(this.auxClauses, this.scopeAuxClauseLimits[newLevel]);
     this.relevancy.pop(numScopes);
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
@@ -1469,6 +1475,7 @@ export class Context extends Internalizer {
     this.popToBaseLevel();
     this.pushScope();
     this.baseScopeLemmaLimits.push(this.lemmas.length);
+    this.isBaseScopeInconsistent.push(this.isInconsistent());
     this.baseLevel++;
     this.searchLevel++;
   }
@@ -1502,15 +1509,23 @@ export class Context extends Internalizer {
     this.asserted = asserted;
     this.macros = asserted.macros;
     this.hasQuantifiers = asserted.hasQuantifiers;
-    const formulas = asserted.reduce();
+    if (this.checkCanceled()) return;
+    asserted.reduce();
+    if (this.checkCanceled()) return;
     if (asserted.isInconsistent) {
       this.setConflict("axiom", null);
       return;
     }
-    for (const formula of formulas) {
-      if (this.isInconsistent()) break;
-      this.internalizeAssertion(formula, 0);
+    const formulas = asserted.getFormulas();
+    const size = asserted.getNumFormulas();
+    for (let qhead = asserted.getQhead(); qhead < size && !this.isInconsistent(); qhead++) {
+      if (this.checkCanceled()) {
+        asserted.commit(qhead);
+        return;
+      }
+      this.internalizeAssertion(formulas[qhead], 0);
     }
+    asserted.commit();
   }
 
   initAssumptions(assumptions: number[], asserted: AssertedFormulas) {
@@ -1519,7 +1534,7 @@ export class Context extends Internalizer {
     this.unsatCore = [];
     if (assumptions.length > 0) {
       this.propagate();
-      if (this.isInconsistent()) return;
+      if (this.isInconsistent() || this.checkCanceled()) return;
       this.delInactiveLemmas();
       this.pushScope();
       const manager = this.manager;
@@ -1619,10 +1634,12 @@ export class Context extends Internalizer {
   }
 
   search() {
+    if (this.asserted?.isInconsistent && !this.isInconsistent()) this.setConflict("axiom", null);
     if (this.isInconsistent()) {
       this.resolveConflict();
       return L_FALSE;
     }
+    if (this.checkCanceled()) return L_UNDEF;
     this.resetModel();
     for (const theory of this.theories) theory.initSearchEh();
     this.qmanager.initSearchEh();

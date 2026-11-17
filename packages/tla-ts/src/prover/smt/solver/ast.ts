@@ -1007,9 +1007,11 @@ export class AstManager {
   withoutTemporaries<T>(body: () => T) {
     const outer = this.temporariesMark;
     this.temporariesMark = -1;
-    const result = body();
-    this.temporariesMark = outer;
-    return result;
+    try {
+      return body();
+    } finally {
+      this.temporariesMark = outer;
+    }
   }
 
   releaseLater(expr: number) {

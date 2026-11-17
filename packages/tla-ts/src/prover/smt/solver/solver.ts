@@ -9,7 +9,7 @@ import type { DecideOptions, Verdict } from "../../verdict";
 import { AssertedFormulas } from "./asserted-formulas";
 import { AstManager } from "./ast";
 import { Context, MBQI_MAX_ITERATIONS } from "./context";
-import { L_FALSE, L_TRUE } from "./lbool";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { applyUfniaTactic } from "./quant-tactics";
 import { ResourceLimit } from "./rlimit";
 import { parseSmtlib } from "./smtlib-parser";
@@ -20,6 +20,8 @@ export interface KernelParams {
   mbqiMaxIterations: number;
   isFindingMacros: boolean;
   relevancyLevel?: 0 | 2;
+  isCoreMinimizing?: boolean;
+  randomSeed?: number;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
 }
@@ -28,6 +30,11 @@ const DEFAULT_KERNEL_PARAMS: KernelParams = {
   isMbqi: true,
   mbqiMaxIterations: MBQI_MAX_ITERATIONS,
   isFindingMacros: false,
+};
+
+const assertForms = (context: Context, asserted: AssertedFormulas, forms: number[]) => {
+  for (const form of forms) if (!context.checkCanceled()) asserted.assertExpr(form);
+  return !context.checkCanceled();
 };
 
 interface SmtCheck {
@@ -43,8 +50,12 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
     relevancyLevel: 2,
+    randomSeed: params.randomSeed,
   });
-  for (const form of forms) asserted.assertExpr(form);
+  if (!assertForms(context, asserted, forms)) {
+    manager.limit.release();
+    return { result: L_UNDEF, context, reasonUnknown: "canceled" };
+  }
   context.setupContext(params.setup, true, asserted);
   context.internalizeAssertions(asserted);
   const theoryAssumptions: number[] = [];
@@ -81,8 +92,12 @@ export const solveAssuming = (
     isMbqi: params.isMbqi,
     mbqiMaxIterations: params.mbqiMaxIterations,
     relevancyLevel: 2,
+    randomSeed: params.randomSeed,
   });
-  for (const assertion of assertions) asserted.assertExpr(assertion);
+  if (!assertForms(context, asserted, assertions)) {
+    manager.limit.release();
+    return { result: L_UNDEF, context, reasonUnknown: "canceled" };
+  }
   context.setupContext(params.setup, false, asserted);
   context.internalizeAssertions(asserted);
   const result = context.checkResearching(asserted, assumptions);

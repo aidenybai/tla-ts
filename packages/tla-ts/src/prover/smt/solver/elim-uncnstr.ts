@@ -522,7 +522,7 @@ export const elimUncnstr = (manager: AstManager, goal: Goal, bodies: RefVector) 
       const rewritten = rewriter.rewrite(form);
       if (rewritten !== form) {
         isModified = true;
-        goal.update(index, rewritten);
+        goal.update(index, rewritten, goal.dependencies[index]);
       }
       manager.decRef(rewritten);
     }

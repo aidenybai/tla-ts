@@ -88,6 +88,8 @@ export class BitBlasterRewriter extends RewriterTpl {
   readonly keys: number[] = [];
   readonly values: RefVector;
   readonly newbits: number[] = [];
+  private keyLimits: number[] = [];
+  private newbitLimits: number[] = [];
 
   constructor(
     manager: AstManager,
@@ -121,6 +123,30 @@ export class BitBlasterRewriter extends RewriterTpl {
 
   getConstBits(decl: number) {
     return this.const2bits.get(decl);
+  }
+
+  getNumScopes() {
+    return this.keyLimits.length;
+  }
+
+  push() {
+    this.keyLimits.push(this.keys.length);
+    this.newbitLimits.push(this.newbits.length);
+  }
+
+  pop(numScopes: number) {
+    if (numScopes === 0) return;
+    const manager = this.manager;
+    const size = this.keyLimits.length - numScopes;
+    const keyLimit = this.keyLimits[size];
+    for (const decl of this.keys.splice(keyLimit)) {
+      this.const2bits.delete(decl);
+      manager.decDeclRef(decl);
+    }
+    this.values.shrink(keyLimit);
+    this.keyLimits.length = size;
+    for (const decl of this.newbits.splice(this.newbitLimits[size])) manager.decDeclRef(decl);
+    this.newbitLimits.length = size;
   }
 
   private mkConst(decl: number) {

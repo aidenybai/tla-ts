@@ -448,6 +448,7 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
       return;
     }
     while (frames.length > 0) {
+      manager.limit.checkpoint();
       const frame = frames[frames.length - 1];
       const isFirst = frame.isFirst;
       frame.isFirst = false;

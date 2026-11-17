@@ -49,6 +49,7 @@ import type { Rewrite } from "./rewriter-tpl";
 export interface ArithRewriterOptions {
   readonly isSom: boolean;
   readonly isSortSums: boolean;
+  readonly isArithLhs: boolean;
   readonly isArithIneqLhs: boolean;
   readonly isGcdRounding: boolean;
   readonly isAnumSimp: boolean;

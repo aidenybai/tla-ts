@@ -70,6 +70,10 @@ export class LpSettings {
 
   constructor(readonly isCanceled: () => boolean) {}
 
+  setRandomSeed(seed: number) {
+    this.random = new RandomGen(seed);
+  }
+
   getRandomNext(bound?: number) {
     const value = this.random.next();
     return bound === undefined ? value : value % bound;

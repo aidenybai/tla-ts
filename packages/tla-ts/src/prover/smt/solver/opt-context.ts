@@ -25,7 +25,13 @@ import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { MaxsatContext, MaxsatParams, MaxsatSolver } from "./maxsmt-base";
 import { Maxsmt } from "./maxsmt";
 import { isInNraFragment } from "./opt-nlsat";
-import { canReuseNlsatSolver, giaPareto, ParetoNlsatSolver, type ParetoSolver } from "./opt-pareto";
+import {
+  canReuseNlsatSolver,
+  giaPareto,
+  ParetoNlsatSolver,
+  type ParetoObjective,
+  type ParetoSolver,
+} from "./opt-pareto";
 import type { ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
@@ -131,7 +137,7 @@ export class OptContext {
   private boxIndex = -1;
   private pareto: ParetoSolver | null = null;
   private internal: Objective[] = [];
-  private normalized: { term: number; isMax: boolean }[] = [];
+  private normalized: ParetoObjective[] = [];
   private normalizedGoal: Goal | null = null;
   private normalizedTerms: RefVector;
   private hiddenDecls: number[] = [];
@@ -358,8 +364,6 @@ export class OptContext {
     this.updateBound(optsmt, true);
     const count = this.internal.length;
     if (count > 1 && options.priority === "pareto") {
-      if (this.internal.some((objective) => objective.type === O_MAXSMT))
-        throw new SmtUnsupportedError("pareto optimization of soft constraints");
       this.pareto = this.mkParetoSolver(solver, hard, options);
       return this.executePareto();
     }
@@ -699,6 +703,9 @@ export class OptContext {
     this.normalized = this.internal.map((objective) => ({
       term: objective.term,
       isMax: objective.type === O_MAXIMIZE,
+      isMaxsmt: objective.type === O_MAXSMT,
+      terms: objective.terms,
+      weights: objective.weights,
     }));
     result.forms.reset();
     return normalizedHard;

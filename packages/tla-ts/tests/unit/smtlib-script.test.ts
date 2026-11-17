@@ -132,6 +132,34 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "unsat"]);
   });
 
+  it("walks the pareto front of objectives that elim01 turns into soft constraints", () => {
+    expect(
+      run([
+        "(set-option :opt.priority pareto)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (<= 0 x 2))",
+        "(assert (<= 0 y 2))",
+        "(assert (<= (+ x y) 3))",
+        "(maximize x)",
+        "(maximize y)",
+        "(check-sat)",
+        "(get-objectives)",
+        "(check-sat)",
+        "(get-objectives)",
+        "(check-sat)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(objectives\n (x 1)\n (y 2)\n)",
+      "sat",
+      "(objectives\n (x 2)\n (y 1)\n)",
+      "unsat",
+      "sat",
+    ]);
+  });
+
   it("gives the objectives 0 when the hard constraints are false", () => {
     expect(
       run([
@@ -277,6 +305,50 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("completes a floating-point constant that no assertion mentions as NaN", () => {
+    expect(
+      run([
+        "(set-logic QF_FP)",
+        "(declare-const z0 (_ FloatingPoint 3 5))",
+        "(declare-const z1 (_ FloatingPoint 3 5))",
+        "(assert (fp.isNegative z1))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun z1 () (_ FloatingPoint 3 5)",
+        "    (_ -zero 3 5))",
+        "  (define-fun z0 () (_ FloatingPoint 3 5)",
+        "    (_ NaN 3 5))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("takes the fresh values of a model in the order that their stubs were made", () => {
+    expect(
+      run([
+        "(declare-fun x0 () Int)",
+        "(declare-fun x1 () Int)",
+        "(declare-fun q (Int Int) Bool)",
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a2 (Array Int Int))",
+        "(assert (distinct (select (store a0 x0 x1) 1) (ite (= (ite (q 6 (- x0)) (- 2) x0) (select (store a2 x1 x1) x0)) x0 (- x0 x1))))",
+        "(check-sat)",
+        "(get-value (a0 a2))",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "((a0 ((as const (Array Int Int)) 2))",
+        " (a2 (store ((as const (Array Int Int)) 4) 1 (- 2))))",
+      ].join("\n"),
+    ]);
+  });
+
   it("completes the empty model of a goal that simplifies to true", () => {
     expect(
       run([
@@ -399,6 +471,62 @@ describe("runSmtlibScript prints what Z3 prints", () => {
         "(eval (= a b))",
       ]),
     ).toEqual(["sat", "true", "true", "false"]);
+  });
+
+  it("expands a select over a store or an if-then-else in eval", () => {
+    expect(
+      run([
+        "(declare-sort E 0)",
+        "(declare-const e0 E)",
+        "(declare-const e2 E)",
+        "(declare-const i0 Int)",
+        "(declare-const i2 Int)",
+        "(declare-const p Bool)",
+        "(declare-const a (Array Int E))",
+        "(declare-const b (Array Int Int))",
+        "(declare-const c (Array Int Int))",
+        "(check-sat)",
+        "(eval (= e0 (select (store a i0 e2) i2)))",
+        "(eval (+ (select b 0) (select c 0) (select (ite p b c) i2)))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(= e0 (ite (= i0 i2) e2 (select a i2)))",
+      "(+ (select b 0) (select c 0) (ite p (select b i2) (select c i2)))",
+    ]);
+  });
+
+  it("expands the same select again in a later eval", () => {
+    expect(
+      run([
+        "(declare-const i0 Int)",
+        "(declare-const i2 Int)",
+        "(declare-const a2 (Array Int Int))",
+        "(check-sat)",
+        "(eval (+ 1 (select (store a2 i0 3) i2)))",
+        "(eval (+ 1 (select (store a2 i0 3) i2)))",
+      ]),
+    ).toEqual([
+      "sat",
+      "(+ 1 (ite (= i0 i2) 3 (select a2 i2)))",
+      "(+ 1 (ite (= i0 i2) 3 (select a2 i2)))",
+    ]);
+  });
+
+  it("keeps a distinct of more than two terms in eval", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (= x 1))",
+        "(check-sat)",
+        "(eval (distinct x y z))",
+        "(eval (distinct x 1 z))",
+        "(eval (distinct x 2 3))",
+        "(get-value ((distinct x y z)))",
+      ]),
+    ).toEqual(["sat", "(distinct 1 y z)", "false", "true", "(((distinct x y z) false))"]);
   });
 
   // z3test's regressions/smt2/fp-rem-1.smt2, with what Z3 prints for it.
@@ -1598,6 +1726,94 @@ describe("runSmtlibScript prints what Z3 prints", () => {
         "  (define-fun x () Int\n    21238)",
         "  (define-fun mod0 ((x!0 Int) (x!1 Int)) Int\n    0)",
         "  (define-fun div0 ((x!0 Int) (x!1 Int)) Int\n    0)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("assigns the Boolean macros in the order of cmd_context's dictionary, which a pop does not shrink", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const x Int)",
+        "(define-fun d1 () Bool (> x 2))",
+        "(define-fun d2 () Int x)",
+        "(assert (! (or p q) :named a0))",
+        "(assert (! (> x 5) :named zz))",
+        "(assert (! (not q) :named a1))",
+        "(assert (! (=> q p) :named b))",
+        "(check-sat)",
+        "(get-assignment)",
+        "(push)",
+        "(define-fun d3 () Bool (< x 0))",
+        "(assert (! true :named c9))",
+        "(get-assignment)",
+        "(pop)",
+        "(check-sat)",
+        "(get-assignment)",
+      ]),
+    ).toEqual([
+      "sat",
+      "((a0 true) (d1 true) (a1 true) (zz true) (b true))",
+      '(error "line 15 column 15: model is not available")',
+      "sat",
+      "((b true) (a1 true) (a0 true) (d1 true) (zz true))",
+    ]);
+  });
+
+  it("answers QF_BV in scopes with inc_sat_solver, whose bit-blaster pops with them", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const b0 Bool)",
+        "(declare-const v0 (_ BitVec 3))",
+        "(push)",
+        "(assert (distinct v0 #b101))",
+        "(assert b0)",
+        "(check-sat)",
+        "(get-model)",
+        "(pop)",
+        "(declare-const v1 (_ BitVec 2))",
+        "(assert (= ((_ extract 1 0) v0) (bvnot v1)))",
+        "(assert (bvult v1 #b01))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun b0 () Bool\n    true)",
+        "  (define-fun v0 () (_ BitVec 3)\n    #b000)",
+        ")",
+      ].join("\n"),
+      "sat",
+      [
+        "(",
+        "  (define-fun v1 () (_ BitVec 2)\n    #b00)",
+        "  (define-fun v0 () (_ BitVec 3)\n    #b011)",
+        "  (define-fun b0 () Bool\n    false)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("gives an array of bit-vectors the default of a bit-vector value made before it", () => {
+    expect(
+      run([
+        "(declare-const v0 (_ BitVec 4))",
+        "(declare-const a0 (Array (_ BitVec 4) (_ BitVec 4)))",
+        "(assert (not (= v0 (select (store a0 v0 v0) #x0))))",
+        "(check-sat-using smt)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun v0 () (_ BitVec 4)\n    #x1)",
+        "  (define-fun a0 () (Array (_ BitVec 4) (_ BitVec 4))\n    (store ((as const (Array (_ BitVec 4) (_ BitVec 4))) #x1) #x0 #x0))",
         ")",
       ].join("\n"),
     ]);

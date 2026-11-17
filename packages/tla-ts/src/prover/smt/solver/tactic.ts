@@ -7,11 +7,10 @@ import {
 } from "../../../errors";
 import { type AstManager, OP_DIV0, OP_IDIV0, OP_MOD0, OP_OR, OP_POWER0, SORT_BOOL } from "./ast";
 import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tactic";
-import { AssertedFormulas } from "./asserted-formulas";
 import { createAigTactic } from "./aig-tactic";
 import { blastTermIte } from "./blast-term-ite";
 import { card2bv } from "./card2bv";
-import { Context, MBQI_MAX_ITERATIONS } from "./context";
+import { type Context, MBQI_MAX_ITERATIONS } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
 import { createCtxSolverSimplify } from "./ctx-solver-simplify";
 import {
@@ -25,7 +24,7 @@ import {
 import type { AckrSolver } from "./lackr";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { DerRewriter } from "./der";
-import { finishSimplifier } from "./dependent-expr-state";
+import { finishSimplifier, runSimplifier } from "./dependent-expr-state";
 import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { type BitBlasterRewriter, runBitBlast } from "./bit-blast-tactic";
@@ -67,6 +66,7 @@ import { propagateValues } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
+import { SmtKernel } from "./smt-kernel";
 import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
 import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
@@ -172,7 +172,7 @@ const REWRITER_DESCRS = getDescrs("rewriter", [
   ["sort_sums", PARAM_BOOL, false, true],
   ["gcd_rounding", PARAM_BOOL, false, true],
   ["arith_lhs", PARAM_BOOL, false, true],
-  ["arith_ineq_lhs", PARAM_BOOL, false],
+  ["arith_ineq_lhs", PARAM_BOOL, false, true],
   ["elim_to_real", PARAM_BOOL, false],
   ["push_to_real", PARAM_BOOL, true],
   ["eq2ineq", PARAM_BOOL, false],
@@ -251,7 +251,8 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   arith: {
     isSom: getBool(params, "flat", true) && getBool(params, "som", false),
     isSortSums: getBool(params, "sort_sums", false),
-    isArithIneqLhs: getBool(params, "arith_lhs", false),
+    isArithLhs: getBool(params, "arith_lhs", false),
+    isArithIneqLhs: getBool(params, "arith_ineq_lhs", false),
     isGcdRounding: getBool(params, "gcd_rounding", false),
     isAnumSimp: getBool(params, "algebraic_number_evaluator", true),
     isExpandPower: getBool(params, "expand_power", false),
@@ -276,6 +277,7 @@ const SMT_DESCRS = getDescrs("smt", [
   ["mbqi", PARAM_BOOL, true, true],
   ["mbqi.max_iterations", PARAM_UINT, MBQI_MAX_ITERATIONS, true],
   ["arith.nl.rounds", PARAM_UINT, 1024, true],
+  ["random_seed", PARAM_UINT, 0, true],
 ]);
 
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
@@ -290,6 +292,11 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
     setup: environment.setup,
+    randomSeed: getUint(
+      params,
+      "random_seed",
+      Number(getParameter(environment, "smt.random_seed", "0")),
+    ),
   };
 };
 
@@ -356,7 +363,8 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
       ? solveGoal(manager, goal.forms.items, kernelParams)
       : solveAssuming(manager, extracted.clauses.items, extracted.assumptions, kernelParams);
   extracted.clauses.reset();
-  if (solved.result === L_UNDEF) throw new SmtTacticError(getSmtTacticFailure(solved.context));
+  if (solved.result === L_UNDEF)
+    throw new SmtTacticError(solved.reasonUnknown ?? getSmtTacticFailure(solved.context));
   goal.reset();
   if (solved.result === L_FALSE)
     goal.assert(environment.manager.falseExpr, mkCoreDependency(solved.context.unsatCore));
@@ -424,30 +432,42 @@ const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrS
 // Each clause gets a fresh context, where Z3 pushes a scope on one context.
 const runUnitSubsume = (environment: TacticEnvironment) => (goal: Goal) => {
   const manager = environment.manager;
+  const kernel = new SmtKernel(manager, {
+    isMbqi: environment.isMbqi,
+    mbqiMaxIterations: environment.mbqiMaxIterations,
+    isFindingMacros: false,
+  });
+  const trail = new RefVector(manager);
   const clauses = goal.forms.items.map(() => manager.mkFreshConst("#clause", SORT_BOOL));
-  const definitions = goal.forms.items.map((form, index) => manager.mkEq(clauses[index], form));
-  for (const expr of [...clauses, ...definitions]) manager.incRef(expr);
+  for (const clause of clauses) trail.push(clause);
+  kernel.push();
+  for (const [index, form] of goal.forms.items.entries()) {
+    const definition = manager.mkEq(clauses[index], form);
+    trail.push(definition);
+    kernel.assertExpr(definition);
+  }
+  kernel.push();
+  const isDeleted = clauses.map(() => false);
   const deleted: number[] = [];
   for (const [index, clause] of clauses.entries()) {
-    const asserted = new AssertedFormulas(manager);
-    const context = new Context(manager, {
-      isMbqi: environment.isMbqi,
-      mbqiMaxIterations: environment.mbqiMaxIterations,
-      relevancyLevel: 2,
-    });
-    for (const definition of definitions) asserted.assertExpr(definition);
+    kernel.push();
     for (const [other, otherClause] of clauses.entries())
-      if (other === index) asserted.assertExpr(manager.mkNot(clause));
-      else if (!deleted.includes(other)) asserted.assertExpr(otherClause);
-    // The context has no logic, so setup_default picks setup_unknown.
-    context.setupContext(undefined, false, asserted);
-    context.internalizeAssertions(asserted);
-    if (!context.isInconsistent()) context.propagate();
-    if (context.isInconsistent()) deleted.push(index);
+      if (other === index) {
+        const negated = manager.mkNot(clause);
+        trail.push(negated);
+        kernel.assertExpr(negated);
+      } else if (!isDeleted[other]) kernel.assertExpr(otherClause);
+    kernel.push();
+    const isUnsat = kernel.context.isInconsistent();
+    kernel.pop(2);
+    if (!isUnsat) continue;
+    isDeleted[index] = true;
+    deleted.push(index);
   }
   for (const index of deleted) goal.update(index, manager.trueExpr);
   goal.elimTrue();
-  for (const expr of [...clauses, ...definitions]) manager.decRef(expr);
+  kernel.pop(2);
+  trail.reset();
   return [goal];
 };
 
@@ -490,16 +510,16 @@ const runSplitClause = (isLargest: boolean) => (goal: Goal) => {
 };
 
 const runDer = (manager: AstManager) => (goal: Goal) => {
-  const rewriter = new DerRewriter(manager);
-  const size = goal.forms.size;
-  for (let index = 0; !goal.isInconsistent && index < size; index++) {
-    const result = rewriter.rewrite(goal.forms.items[index]);
-    goal.update(index, result);
-    manager.decRef(result);
-  }
-  finishSimplifier(goal);
-  rewriter.der.release();
-  rewriter.release();
+  runSimplifier(goal, true, (state) => {
+    const rewriter = new DerRewriter(manager);
+    return {
+      reduce: () => state.rewriteEach((form) => rewriter.rewrite(form)),
+      release: () => {
+        rewriter.der.release();
+        rewriter.release();
+      },
+    };
+  });
   return [goal];
 };
 
@@ -539,10 +559,16 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   const nnf = new Nnf(manager, names, mode, getBool(params, "ignore_labels", false));
   const definitions = new RefVector(manager);
   const size = goal.forms.size;
-  for (let index = 0; !goal.isInconsistent && index < size; index++) {
-    const result = nnf.apply(goal.forms.items[index], definitions);
-    goal.update(index, result);
-    manager.decRef(result);
+  try {
+    for (let index = 0; !goal.isInconsistent && index < size; index++) {
+      const result = nnf.apply(goal.forms.items[index], definitions);
+      goal.update(index, result);
+      manager.decRef(result);
+    }
+  } catch (error) {
+    // Z3's nnf stops at the limit with a default_exception, which or-else lets pass.
+    if (!(error instanceof SmtCanceledError)) throw error;
+    throw new SmtDefaultError(manager.limit.getCancelMessage());
   }
   for (const definition of definitions.items) {
     if (goal.isInconsistent) break;
@@ -820,6 +846,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "elim-uncnstr",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["max_steps", PARAM_UINT, UINT_MAX],
@@ -1323,7 +1350,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQsat(environment.manager, QSAT_SAT),
+      build: (environment) => runQsat(environment, QSAT_SAT),
     },
   ],
   [
@@ -1331,7 +1358,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQsat(environment.manager, QSAT_QE),
+      build: (environment) => runQsat(environment, QSAT_QE),
     },
   ],
   [
@@ -1339,7 +1366,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isRejectingUnknown: false,
-      build: (environment) => runQsat(environment.manager, QSAT_QE_REC),
+      build: (environment) => runQsat(environment, QSAT_QE_REC),
     },
   ],
   [
@@ -1576,7 +1603,7 @@ const runOrElse = (tactics: Tactic[]) => (goal: Goal) => {
     try {
       return tactic(goal);
     } catch (error) {
-      if (!(error instanceof SmtTacticError)) throw error;
+      if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
     }
     goal.resetAll();
     goal.copyFrom(original);

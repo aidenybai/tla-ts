@@ -55,7 +55,6 @@ import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { getFdConsequences } from "./fd-solver";
 import { SmtKernel } from "./smt-kernel";
-import { Mus } from "./mus";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
 import { mkThSolver } from "./euf/th-solvers";
@@ -67,6 +66,7 @@ import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { DatalogContext } from "./muz/dl-context";
 import { createDatalogContext } from "./muz/horn-tactic";
 import { printModel } from "./model-printer";
+import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, getManagerSomeValue, ProtoModel } from "./proto-model";
 import {
   applyTactic,
@@ -106,7 +106,6 @@ const UNPORTED_COMMANDS = new Set([
   "ff-certify",
   "ff-check-native-proof",
   "ff-integrated-certify",
-  "get-assignment",
   "get-interpolant",
   "get-proof",
   "get-proof-graph",
@@ -178,6 +177,7 @@ const SIMPLIFY_PARAMETERS = new Set([
   "som",
   "sort_sums",
   "arith_lhs",
+  "arith_ineq_lhs",
   "gcd_rounding",
   "hi_div0",
   "mul2concat",
@@ -550,8 +550,7 @@ export const runSmtlibScript = (
         return false;
       }
       if (error instanceof SmtDefaultError) {
-        optimizer.release();
-        setCheck(L_UNDEF, { isOptimizing: true, reasonUnknown: "unknown" });
+        setCheck(L_UNDEF, { isFromTactic: true, reasonUnknown: "unknown" });
         throw new SmtParseError(error.message, end);
       }
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
@@ -626,6 +625,7 @@ export const runSmtlibScript = (
     isMbqi: settings.isMbqi || (!isSetUp && isMbqiByLogic(getSetup())),
     mbqiMaxIterations: settings.mbqiMaxIterations,
     isFindingMacros: settings.isFindingMacros,
+    isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),
   });
   // mk_special_solver_for_logic gives these logics the finite-domain solver, incremental or not.
@@ -1156,6 +1156,11 @@ export const runSmtlibScript = (
             reasonUnknown: checked.reasonUnknown ?? getCancelMessage(deadline),
           });
           print(getVerdict(checked.status));
+        } catch (error) {
+          if (!(error instanceof SmtCanceledError)) throw error;
+          const message = getCancelMessage(deadline);
+          setCheck(L_UNDEF, { isFromTactic: true, reasonUnknown: message });
+          print(`(error "tactic failed: ${message}")`);
         } finally {
           state.manager.limit.pop();
         }
@@ -1546,26 +1551,15 @@ export const runSmtlibScript = (
         if (check.core === undefined)
           throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
         const kernel = state.kernel;
-        if (
-          kernel === undefined ||
-          check.context !== kernel.context ||
-          settings.parameters.get("smt.core.minimize") !== "true"
-        ) {
+        if (kernel === undefined || check.context !== kernel.context) {
           print(`(${check.core.map(format).join(" ")})`);
           return;
         }
-        const mus = new Mus(state.manager, {
-          checkSat: (assumptions) => kernel.check(assumptions),
-          getUnsatCore: () => kernel.context.unsatCore,
-        });
-        const core = [...kernel.context.unsatCore];
-        for (const literal of core) mus.addSoft(literal);
-        const minimized = new RefVector(state.manager);
         state.manager.limit.restart(Date.now() + options.timeLimitMs);
-        const status = mus.getMus(minimized);
-        print(`(${(status === L_TRUE ? minimized.items : core).map(format).join(" ")})`);
-        minimized.reset();
-        mus.reset();
+        const core = new RefVector(state.manager);
+        kernel.getUnsatCore(core);
+        print(`(${core.items.map(format).join(" ")})`);
+        core.reset();
       },
     ],
     [
@@ -1581,9 +1575,11 @@ export const runSmtlibScript = (
         if (term === -1) throw new SmtParseError("no arguments passed to eval", list.end);
         const manager = state.manager;
         manager.incRef(term);
-        const value = model.eval(term, false);
+        const evaluator = new ModelEvaluator(manager, model);
+        const value = evaluator.rewrite(term);
         display(value);
         manager.decRef(value);
+        evaluator.release();
         manager.decRef(term);
       },
     ],
@@ -1624,6 +1620,23 @@ export const runSmtlibScript = (
           manager.decRef(expr);
         });
         print(")");
+      },
+    ],
+    [
+      "get-assignment",
+      (list) => {
+        checkArgumentCount(list, 0);
+        const manager = state.manager;
+        const model = getModel(list);
+        const assignments = state.reader.getConstantMacros().flatMap((macro) => {
+          if (manager.sorts[macro.body] !== SORT_BOOL) return [];
+          const value = model.eval(macro.body, true);
+          const assignment = `(${getQuotedName(macro.name)} ${manager.isTrue(value)})`;
+          const isDecided = manager.isTrue(value) || manager.isFalse(value);
+          manager.decRef(value);
+          return isDecided ? [assignment] : [];
+        });
+        print(`(${assignments.join(" ")})`);
       },
     ],
     [

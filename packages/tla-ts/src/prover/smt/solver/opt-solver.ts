@@ -1,4 +1,4 @@
-import { SmtCanceledError, SmtInvariantError } from "../../../errors";
+import { SmtCanceledError, SmtDefaultError, SmtInvariantError } from "../../../errors";
 import { type AstManager, FAMILY_ARITH, FAMILY_PB } from "./ast";
 import { InfEps } from "./inf-eps";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
@@ -232,7 +232,8 @@ export class OptSolver {
     try {
       this.kernel.push();
     } catch (error) {
-      if (!(error instanceof SmtCanceledError)) throw error;
+      const isPushCanceled = error instanceof SmtDefaultError && error.message === "push canceled";
+      if (!(error instanceof SmtCanceledError || isPushCanceled)) throw error;
       return L_UNDEF;
     }
     limit.push(this.dualBoundRlimit);

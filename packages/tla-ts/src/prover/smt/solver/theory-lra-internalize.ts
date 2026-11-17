@@ -91,6 +91,7 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     this.realOneVar = this.addConst(manager.mkRealNumeral(Rational.one));
     this.zeroVar = this.addConst(manager.mkNumeral(0n));
     this.realZeroVar = this.addConst(manager.mkRealNumeral(Rational.zero));
+    this.solver.settings.setRandomSeed(this.context.params.randomSeed ?? 0);
   }
 
   private addConst(expr: number) {

@@ -1,5 +1,5 @@
 import { SmtInvariantError } from "../../../errors";
-import { OP_ITE, OP_LT, SORT_BOOL, SORT_INT, isArithSort, type AstManager } from "./ast";
+import { KIND_APP, OP_ITE, OP_LT, SORT_BOOL, SORT_INT, isArithSort, type AstManager } from "./ast";
 import { combineHash } from "./hash";
 import { ObjHashtable, ObjMap } from "./hashtable";
 import { FuncInterp, type ProtoModel } from "./proto-model";
@@ -245,14 +245,30 @@ export class AufSolver {
 
   private cleanupInstantiationSets() {
     const manager = this.manager;
+    const containsArray = (expr: number) => {
+      const visited = new Set<number>();
+      const todo = [expr];
+      for (let term = todo.pop(); term !== undefined; term = todo.pop()) {
+        if (visited.has(term)) continue;
+        visited.add(term);
+        if (manager.isArraySort(manager.sorts[term])) return true;
+        manager.pushArgs(term, todo);
+      }
+      return false;
+    };
+    const shouldCleanup = (value: number | null) =>
+      value === null ||
+      (!manager.isValue(value) &&
+        !manager.isArraySort(manager.sorts[value]) &&
+        (manager.kinds[value] !== KIND_APP ||
+          manager.getNumArgs(value) === 0 ||
+          !containsArray(value)));
     for (const node of this.nodes) {
       if (!node.isRoot()) continue;
       const set = node.getInstantiationSet();
       const toDelete: number[] = [];
-      for (const term of set.elems.keys()) {
-        const value = this.eval(term, true);
-        if (value === null || !manager.isUniqueValue(value)) toDelete.push(term);
-      }
+      for (const term of set.elems.keys())
+        if (shouldCleanup(this.eval(term, true))) toDelete.push(term);
       for (const term of toDelete) set.remove(term);
       this.resetEvalCache();
     }
@@ -285,18 +301,13 @@ export class AufSolver {
     return result;
   }
 
-  private areDistinct(first: number, second: number) {
-    const manager = this.manager;
-    return first !== second && manager.isUniqueValue(first) && manager.isUniqueValue(second);
-  }
-
   private pickInstanceDiffExceptions(node: Node, exceptionValues: number[]) {
     let result: number | null = null;
     let resultGeneration = Number.POSITIVE_INFINITY;
     for (const entry of node.getInstantiationSet().elems) {
       const value = this.eval(entry[0], true);
       if (value === null) return result;
-      const isFound = exceptionValues.some((other) => !this.areDistinct(value, other));
+      const isFound = exceptionValues.some((other) => !this.manager.areDistinct(value, other));
       if (!isFound && (result === null || entry[1] < resultGeneration)) {
         result = entry[0];
         resultGeneration = entry[1];
@@ -331,7 +342,7 @@ export class AufSolver {
     if (kValue === null) return false;
     for (const exception of exceptions) {
       const value = this.eval(exception, true);
-      if (value !== null && !this.areDistinct(kValue, value))
+      if (value !== null && !this.manager.areDistinct(kValue, value))
         this.newConstraints.push(this.manager.mkNot(this.manager.mkEq(k, exception)));
     }
     return true;

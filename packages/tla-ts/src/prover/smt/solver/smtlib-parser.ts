@@ -32,10 +32,12 @@ import {
   OP_GT,
   OP_IDIV,
   OP_IMPLIES,
+  OP_INT2BV,
   OP_IS_INT,
   OP_ITE,
   OP_LE,
   OP_LT,
+  OP_MKBV,
   OP_MOD,
   OP_REM,
   OP_MUL,
@@ -537,6 +539,8 @@ const REAL_FUNCTION_OPS = new Set([
 
 // The arity of each builtin declaration but distinct, which takes the arguments it is given.
 const ARITIES = new Map<number, number>([
+  [OP_TRUE, 0],
+  [OP_FALSE, 0],
   [OP_ITE, 3],
   ...[OP_NOT, OP_UMINUS, OP_ABS, OP_TO_REAL, OP_TO_INT, OP_IS_INT, ...REAL_FUNCTION_OPS]
     .filter((op) => op !== OP_ATAN2)
@@ -972,6 +976,9 @@ export const createSmtlibReader = (
   ]);
   const funcs = new Map<string, readonly number[]>();
   const macros = new Map<string, Macro>();
+  // A pop empties the macros of a name but keeps the name in the dictionary.
+  const macroNames: string[] = [];
+  const macroDictionary = new ObjMap<string>((index) => getSymbolHash(macroNames[index]));
   const lastNamed = { name: "", expr: -1 };
   const notifiedSorts = new Set<number>();
   const undo: (() => void)[] = [];
@@ -1006,6 +1013,11 @@ export const createSmtlibReader = (
       else names.set(name, previous);
     });
     names.set(name, value);
+  };
+
+  const insertMacro = (name: string, macro: Macro) => {
+    if (!macroNames.includes(name)) macroDictionary.set(macroNames.push(name) - 1, name);
+    declare(macros, name, macro);
   };
 
   const hasArrays = logic === undefined || logicHasArray(logic);
@@ -1653,6 +1665,8 @@ export const createSmtlibReader = (
   const mkBvApp = (name: string, args: number[], indices: number[], at: SExpr) => {
     const op = BV_OP_NAMES.get(name) ?? -1;
     const argSorts = args.map((arg) => manager.sorts[arg]);
+    if (op !== OP_INT2BV && op !== OP_MKBV && (args.length === 0 || !manager.isBvSort(argSorts[0])))
+      throw new SmtParseError("operator is applied to arguments of the wrong sort", at);
     const signature = getBvSignature(manager, op, argSorts, indices);
     if (typeof signature === "string") throw new SmtParseError(signature, at);
     const mismatched = getMismatchedArgument(signature, argSorts);
@@ -2263,7 +2277,11 @@ export const createSmtlibReader = (
     const builtinOp =
       builtin === "~"
         ? OP_UMINUS
-        : (CHAINABLE_OPS.get(builtin) ?? BUILTIN_OPS.get(builtin) ?? transcendentalOp);
+        : builtin === "true"
+          ? OP_TRUE
+          : builtin === "false"
+            ? OP_FALSE
+            : (CHAINABLE_OPS.get(builtin) ?? BUILTIN_OPS.get(builtin) ?? transcendentalOp);
     // load_plugin registers the operators of arithmetic only for a logic that has it.
     const named =
       builtinOp !== undefined && manager.funcDecls[builtinOp].family === FAMILY_ARITH && !hasArith
@@ -2351,7 +2369,7 @@ export const createSmtlibReader = (
     const decl = manager.mkMacro(name, expr);
     declare(funcs, name, [...(funcs.get(name) ?? []), decl]);
     scopedFuncs.push(decl);
-    declare(macros, name, { domain: [], range: manager.sorts[expr], body: expr });
+    insertMacro(name, { domain: [], range: manager.sorts[expr], body: expr });
   };
 
   // push_app_frame's parse_qualified_identifier_core, on a head that is (_ <symbol> <index>*) or
@@ -3397,7 +3415,7 @@ export const createSmtlibReader = (
           extra ?? list.end,
         );
       manager.incRef(body);
-      declare(macros, symbol.text, { domain: bound.varSorts, range, body });
+      insertMacro(symbol.text, { domain: bound.varSorts, range, body });
       defineMacroFunc(symbol.text, bound.varSorts, body);
       expectEnd(
         extra,
@@ -3548,6 +3566,11 @@ export const createSmtlibReader = (
     isUsed,
     isClashing,
     getDeclaredFuncs,
+    getConstantMacros: () =>
+      [...macroDictionary.values()].flatMap((name) => {
+        const macro = macros.get(name);
+        return macro?.domain.length === 0 ? [{ name, body: macro.body }] : [];
+      }),
   };
 };
 

@@ -225,6 +225,24 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       ]),
     ).toEqual(["unsat", "(a1 a2)"]);
   });
+
+  it("elim-uncnstr keeps the dependency of each formula it rewrites", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_LRA)",
+        "(declare-const y Real)",
+        "(declare-const z Real)",
+        "(assert (<= y (/ 3.25 0.0)))",
+        "(assert (! (<= y 1.0) :named n1))",
+        "(assert (! (<= (+ z 1.0) 3.0) :named n3))",
+        "(check-sat-using (then elim-uncnstr smt))",
+        "(assert (! (> y 2.0) :named n2))",
+        "(check-sat-using (then elim-uncnstr smt))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["sat", "unsat", "(n1 n2)"]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {
@@ -805,6 +823,19 @@ describe("if-no-models, as Z3 5.3.2 runs it", () => {
       "unknown",
     ]);
   });
+
+  it("leaves no model converter to print after a simplifier when the goal produces no models", () => {
+    expect(
+      run([
+        "(set-option :produce-models false)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= x (+ y 1)))",
+        "(assert (> y 2))",
+        "(apply (then propagate-values solve-eqs) :print_model_converter true)",
+      ]),
+    ).toEqual(["(goals\n(goal\n  (not (<= x 3))\n  :precision precise :depth 2)\n)"]);
+  });
 });
 
 describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
@@ -877,6 +908,28 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ]);
   });
 
+  it("seeds the search of the smt tactic with its random_seed", () => {
+    const vars = ["x0", "x1", "x2", "x3", "x4"];
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        ...vars.map((name) => `(declare-const ${name} Int)`),
+        ...vars.map((name) => `(assert (and (<= 0 ${name}) (<= ${name} 9)))`),
+        "(assert (or (< (+ x0 x4) 4) (> (- x0 x4) -1)))",
+        "(assert (or (< (+ x1 x2) 7) (> (- x1 x2) 1)))",
+        "(assert (or (< (+ x1 x0) 12) (> (- x1 x0) 2)))",
+        "(assert (or (< (+ x1 x3) 9) (> (- x1 x3) 3)))",
+        "(assert (or (< (+ x4 x2) 11) (> (- x4 x2) 0)))",
+        "(assert (or (< (+ x4 x2) 3) (> (- x4 x2) 3)))",
+        "(check-sat-using (using-params smt :random_seed 1))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(\n  (define-fun x4 () Int\n    1)\n  (define-fun x1 () Int\n    4)\n  (define-fun x2 () Int\n    0)\n  (define-fun x0 () Int\n    1)\n  (define-fun x3 () Int\n    0)\n)",
+    ]);
+  });
+
   it("completes the models of nlsat and nlqsat with false, as a model rather than a proto_model does", () => {
     const bools = ["(declare-const b0 Bool)", "(declare-const b1 Bool)", "(declare-const b2 Bool)"];
     const bindings =
@@ -920,6 +973,30 @@ describe("hoist_ite, as Z3 5.3.2 simplifies", () => {
       ]),
     ).toEqual([
       "(goals\n(goal\n  (let ((a!1 (+ 1 (ite c w (ite d z (+ 3 w))) y x)))\n    (= w a!1))\n  (not (<= (+ (ite c 0 1) z y (* 2 w) (* 2 x) (ite d 2 4)) 0))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});
+
+describe("arith_lhs and arith_ineq_lhs, as Z3 5.3.2 simplifies", () => {
+  it("reads arith_lhs and arith_ineq_lhs as two parameters", () => {
+    expect(
+      run([
+        "(declare-const y0 Real)",
+        "(declare-const y2 Real)",
+        "(declare-const n Int)",
+        "(declare-const m Int)",
+        "(simplify (= y0 y2) :arith_lhs true)",
+        "(simplify (* y2 y0) :arith_lhs true)",
+        "(simplify (+ y2 y0 (* 3.0 y2 y0)) :arith_ineq_lhs true)",
+        "(simplify (= (- 0 n m) 4) :arith_ineq_lhs true)",
+        "(simplify (= (- 0 n m) 4))",
+      ]),
+    ).toEqual([
+      "(= (+ y0 (* (- 1.0) y2)) 0.0)",
+      "(* y0 y2)",
+      "(+ y2 y0 (* 3.0 y2 y0))",
+      "(= (+ n m) (- 4))",
+      "(= (+ (* (- 1) n) (* (- 1) m)) 4)",
     ]);
   });
 });

@@ -236,6 +236,13 @@ const RESTART_MODEL = [
 
 const getName = (literal: number) => `x${Math.abs(literal) - 1}`;
 
+const BV_GOAL_LINES = [
+  "(declare-const a (_ BitVec 8))",
+  "(declare-const b (_ BitVec 8))",
+  "(assert (= (bvadd a b) #x10))",
+  "(assert (bvult a b))",
+];
+
 // One more pigeon than holes, where pI_J puts pigeon I in hole J: unsatisfiable, and too hard for
 // either solver to refute within the limits of these tests.
 const getPigeonholeLines = (holeCount: number) => {
@@ -371,6 +378,28 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       `(error "line 3 column 41: ${message}")`,
       "unknown",
       `(:reason-unknown "${message}")`,
+    ]);
+  });
+
+  it("keeps the bounds of an optimization that fails, without a model", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-fun x () Int)",
+        "(assert (= x (mod 0 0)))",
+        "(assert-soft (> x 2) :weight 3 :id g)",
+        "(minimize x)",
+        "(check-sat)",
+        "(get-objectives)",
+        "(get-value (x))",
+      ]),
+    ).toEqual([
+      '(error "line 6 column 10: Benchmark contains uninterpreted function symbols, but specified logic does not support them.")',
+      "(objectives",
+      " (g  (interval 0 3))",
+      " (x  (interval (* (- 1) oo) oo))",
+      ")",
+      '(error "line 8 column 14: model is not available")',
     ]);
   });
 
@@ -660,6 +689,241 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("tries the next tactic of or-else once the limit stops a rewriter", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        ...BV_GOAL_LINES,
+        "(check-sat-using (or-else (then bit-blast sat) skip))",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (or-else bit-blast skip))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "unknown")', "unknown", '(:reason-unknown "unknown")']);
+  });
+
+  it("lets the limit that stops nnf pass or-else, as nnf throws a default_exception", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (not (and (or p q) (=> q r) (= p r))))",
+        "(check-sat-using (or-else nnf skip))",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (or-else (then simplify nnf) skip))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+
+  it("leaves a goal as it is when the limit stops simplify", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        ...BV_GOAL_LINES,
+        "(check-sat-using simplify)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (then simplify simplify))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "unknown")', "unknown", '(:reason-unknown "unknown")']);
+  });
+
+  it("reports the limit that stops the sat solver as the sat tactic's cancel", () => {
+    expect(
+      run([
+        ...getPigeonholeLines(8),
+        "(set-option :rlimit 5000)",
+        "(check-sat-using sat)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (then simplify sat))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+    ]);
+  });
+
+  it("reports the limit that stops the smt tactic before it reduces its goal as a cancel", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        ...BV_GOAL_LINES,
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+        "(check-sat-using (or-else (then simplify bit-blast sat) smt))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+    ]);
+  });
+
+  it("reports the limit that the smt tactic spends asserting its goal as a cancel", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(assert false)",
+        "(check-sat-using smt)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "canceled")']);
+  });
+
+  it("reports the limit that stops a push of ctx-solver-simplify as its reason", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat-using ctx-solver-simplify)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "push canceled")']);
+  });
+
+  it("checks the limit at each step of tseitin-cnf", () => {
+    expect(
+      run([
+        "(set-option :rlimit 2)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or (= p (or q r)) (ite p q r) (= q (or p r))))",
+        "(check-sat-using tseitin-cnf)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
+  it("counts a step of the limit for each formula that propagate-ineqs visits", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const b0 Bool)",
+        "(declare-const v0 (_ BitVec 4))",
+        "(declare-const v2 (_ BitVec 4))",
+        "(assert (bvsge (bvshl #xd v0) v2))",
+        "(assert (or b0 (bvult v0 v2)))",
+        "(check-sat-using (then propagate-ineqs tseitin-cnf))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
+  it("pushes a scope of unit-subsume-simplify's context for each clause it prunes", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> x 0))",
+        "(assert (or (> x 0) (> y 0)))",
+        "(check-sat-using (or-else unit-subsume-simplify skip))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "push canceled")']);
+  });
+
+  it("counts the steps of card2bv's pseudo-Boolean rewriter against the limit", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const y0 Real)",
+        "(declare-const b1 Bool)",
+        "(assert (or b1 (= y0 1.25) (> y0 5.0)))",
+        "(check-sat-using card2bv)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
+  it("stops solve-eqs without failing once the limit is spent", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= x (+ y 1)))",
+        "(assert (> x 0))",
+        "(check-sat-using solve-eqs)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "unknown")']);
+  });
+
+  it("counts a step of the limit for each formula that each pass of solve-eqs visits", () => {
+    expect(
+      run([
+        "(set-option :rlimit 1)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult (bvadd a b) #x7))",
+        "(assert (or (= a b) (bvugt (bvmul a #x3) b)))",
+        "(check-sat-using (then solve-eqs tseitin-cnf))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
+  it("counts a step of the limit for each formula that der visits", () => {
+    expect(
+      run([
+        "(set-option :rlimit 13)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult (bvadd a b) #x7))",
+        "(assert (or (= a b) (bvugt (bvmul a #x3) b)))",
+        "(check-sat-using (then der tseitin-cnf))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
+  it("counts the steps of cofactor-term-ite against the limit", () => {
+    expect(
+      run([
+        "(set-option :rlimit 2)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const c Int)",
+        "(assert (forall ((x Int) (y Int)) (or (not (= x (f y))) (> x y))))",
+        "(assert (> (f c) c))",
+        "(check-sat-using (then cofactor-term-ite tseitin-cnf))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
+  it("reports a limit that stops the model conversion of check-sat-using as a failed tactic", () => {
+    expect(
+      run([
+        "(set-option :rlimit 85)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult (bvadd a b) #x7))",
+        "(assert (or (= a b) (bvugt (bvmul a #x3) b)))",
+        "(check-sat-using (then bv1-blast tseitin-cnf))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(error "tactic failed: max. resource limit exceeded")',
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
   // the smt kernel keeps for its later checks and reports while its last search did not fail.
   it("prints the reason of a check that timed out", () => {
@@ -936,6 +1200,20 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
         "(check-sat)",
       ]),
     ).toEqual(["sat", "sat", "sat"]);
+  });
+
+  it("keeps the conflict that push propagates once its scope is popped", () => {
+    expect(
+      run([
+        "(set-logic QF_FP)",
+        "(declare-const y (_ FloatingPoint 3 4))",
+        "(assert (fp.isNaN y))",
+        "(assert (not (fp.isNaN (fp.neg y))))",
+        "(push 1)",
+        "(pop 1)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unsat"]);
   });
 
   // check_sat counts one resource unit once the model of a decided goal is converted, and answers unknown when that exceeds the limit.

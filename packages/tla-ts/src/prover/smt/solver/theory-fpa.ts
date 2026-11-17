@@ -48,7 +48,7 @@ const CONVERTED_OPS = new Set([
 export const mkFpaConversion = (manager: AstManager) => {
   const theoryRewriter = new Rewriter(manager, {
     isEliminatingAnd: false,
-    arith: { ...TACTIC_ARITH_OPTIONS, isArithIneqLhs: true },
+    arith: { ...TACTIC_ARITH_OPTIONS, isArithLhs: true },
     isRewritingPatterns: true,
   });
   const simp = new Rewriter(manager, {

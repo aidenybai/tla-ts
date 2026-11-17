@@ -127,3 +127,79 @@ describe("a quantifier keeps what Z3 5.3.2 keeps", () => {
     ]);
   });
 });
+
+describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () => {
+  it("keeps a term whose value is a string", () => {
+    expect(
+      run([
+        "(declare-fun g (String) String)",
+        "(declare-const s String)",
+        '(assert (= (g s) "c"))',
+        "(assert (forall ((x String)) (not (= (g x) x))))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun s () String",
+      '    "")',
+      "  (define-fun g ((x!0 String)) String",
+      '    (ite (= x!0 "") "c"',
+      '      ""))',
+      ")",
+    ]);
+  });
+});
+
+describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {
+  it("lifts the one term if-then-else out of each application with a bound variable", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((w Int)) (= (g w) (+ (f w) (ite (> a 2) 1 w)))))",
+        "(assert (> a 0))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun a () Int",
+      "    3)",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (- 1))",
+      "  (define-fun g ((x!0 Int)) Int",
+      "    0)",
+      ")",
+    ]);
+  });
+
+  it("drops the bounds on a variable that occurs in nothing else, as elim_bounds does", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (> a b))",
+        "(assert (forall ((x Int)) (or (<= x 3) (> (f a) (+ b 5)))))",
+        "(assert (< (f b) 10))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun b () Int",
+      "    0)",
+      "  (define-fun a () Int",
+      "    1)",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (ite (= x!0 0) 0",
+      "      6))",
+      ")",
+    ]);
+  });
+});

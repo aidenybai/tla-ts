@@ -16,6 +16,7 @@ import {
 } from "./ast";
 import { SmtDefaultError } from "../../../errors";
 import { collectStaticFeatures, isDense, type StaticFeatures } from "./static-features";
+import { Rational } from "./rational";
 
 const AUFLIA_LOGICS = new Set([
   "AUFLIA",
@@ -103,7 +104,11 @@ export interface SmtConfig {
   isEq2Ineq: boolean;
   isFindingMacros: boolean;
   isEliminatingTermIte: boolean;
+  isLiftingNonGroundIte: boolean;
+  isEliminatingBounds: boolean;
   isArithPropagatingEqs: boolean;
+  arithPropagationThreshold: number;
+  isArithBoundPropagating: boolean;
 }
 
 const UNKNOWN_THEORIES = [
@@ -132,7 +137,11 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isEq2Ineq: false,
   isFindingMacros: false,
   isEliminatingTermIte: false,
+  isLiftingNonGroundIte: false,
+  isEliminatingBounds: false,
   isArithPropagatingEqs: true,
+  arithPropagationThreshold: Infinity,
+  isArithBoundPropagating: true,
 };
 
 // setup_unknown(), which closes with setup_relevancy.
@@ -197,6 +206,12 @@ const setupQfLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
     config.restartStrategy = RS_GEOMETRIC;
     config.restartFactor = 1.5;
   }
+  if (
+    features.numBinClauses + features.numUnits === features.numClauses &&
+    features.isCnf &&
+    features.arithKSum.compare(Rational.of(100000n)) > 0
+  )
+    config.isArithBoundPropagating = false;
   config.theories.push(FAMILY_ARITH);
 };
 
@@ -288,10 +303,15 @@ const setupQfUfIdlByFeatures = (config: SmtConfig, features: StaticFeatures) => 
   config.theories.push(FAMILY_ARITH);
 };
 
-const setupQfUfLia = (config: SmtConfig) => {
+const setupQfUfLra = (config: SmtConfig) => {
   config.theories.push(FAMILY_ARITH);
   config.relevancyLevel = 0;
   config.isNnfCnf = false;
+};
+
+const setupQfUfLia = (config: SmtConfig) => {
+  setupQfUfLra(config);
+  config.arithPropagationThreshold = 1000;
 };
 
 const setupQfBv = (config: SmtConfig) => {
@@ -360,6 +380,8 @@ const setupAufLia = (config: SmtConfig) => {
   config.phaseSelection = PS_ALWAYS_FALSE;
   config.restartStrategy = RS_GEOMETRIC;
   config.restartFactor = 1.5;
+  config.isEliminatingBounds = true;
+  config.isLiftingNonGroundIte = true;
   config.theories.push(FAMILY_ARITH, FAMILY_ARRAY);
 };
 
@@ -373,7 +395,9 @@ const setupAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 
 const setupAufLira = (config: SmtConfig) => {
   config.phaseSelection = PS_ALWAYS_FALSE;
+  config.isEliminatingBounds = true;
   config.isFindingMacros = true;
+  config.isLiftingNonGroundIte = true;
   config.theories.push(FAMILY_ARITH, FAMILY_ARRAY);
 };
 
@@ -403,7 +427,7 @@ const DEFAULT_SETUPS = new Map<string, (config: SmtConfig) => void>([
   ["QF_LRA", setupQfLra],
   ["QF_LIA", setupQfLia],
   ["QF_UFLIA", setupQfUfLia],
-  ["QF_UFLRA", setupQfUfLia],
+  ["QF_UFLRA", setupQfUfLra],
   ["QF_AX", setupQfAx],
   ["QF_AUFLIA", setupQfAufLia],
   ["QF_BV", setupQfBv],
@@ -479,7 +503,7 @@ const setupUnknownByFeatures = (config: SmtConfig, features: StaticFeatures, set
     else setupQfLiaByFeatures(config, features);
   } else if (isTwoWithUf && isArith(features)) {
     if (!features.hasReal && isLinear) setupQfUfLiaByFeatures(config, features);
-    else if (!features.hasInt && isLinear) setupQfUfLia(config);
+    else if (!features.hasInt && isLinear) setupQfUfLra(config);
     else setupUnknown(config, features);
   } else if (numTheories === 1 && features.hasBv) setupQfBv(config);
   else if (numTheories === 1 && features.hasFpa) setupQfFp(config);
@@ -503,7 +527,7 @@ const AUTO_SETUPS = new Map<
   ["QF_LRA", setupQfLraByFeatures],
   ["QF_LIA", setupQfLiaByFeatures],
   ["QF_UFLIA", setupQfUfLiaByFeatures],
-  ["QF_UFLRA", setupQfUfLia],
+  ["QF_UFLRA", setupQfUfLra],
   ["QF_AX", setupQfAxByFeatures],
   ["QF_BVRE", setupQfBvre],
   ["QF_AUFLIA", setupQfAufLiaByFeatures],
