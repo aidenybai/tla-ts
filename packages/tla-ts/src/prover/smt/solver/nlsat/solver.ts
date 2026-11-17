@@ -102,12 +102,7 @@ export class NlsatSolver {
     irrationalAssignments: 0,
   };
 
-  steps = 0;
-
-  constructor(
-    private limit: ResourceLimit | null = null,
-    private budget = Infinity,
-  ) {
+  constructor(private limit: ResourceLimit | null = null) {
     this.mkClause([TRUE_LITERAL], false, null);
   }
 
@@ -118,9 +113,7 @@ export class NlsatSolver {
   }
 
   private checkpoint() {
-    this.steps++;
-    if ((this.limit !== null && !this.limit.inc()) || this.steps > this.budget)
-      throw new SmtCanceledError();
+    if (this.limit !== null && !this.limit.inc()) throw new SmtCanceledError();
   }
 
   mkVar(isInt: boolean) {

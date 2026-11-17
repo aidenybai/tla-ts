@@ -1,7 +1,4 @@
-// Deviations from Z3: unsupported nlsat input answers unknown where Z3 exits (levelwise.cpp,
-// add_linear_approximations), check_assignment has no satisfied branch and no add_mul_def, the
-// budget counts only nlsat's own steps, and transcendental functions are not supported.
-import { NlsatUnsupportedError, SmtInvariantError } from "../../../../errors";
+import { NlsatUnsupportedError, SmtCanceledError, SmtInvariantError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { Rational, getLcm } from "../rational";
 import { Anum } from "../nlsat/algebraic";
@@ -86,6 +83,9 @@ const hasLargeDyadicDenominator = (value: Rational) => {
   return den >= 1n << 24n && (den & (den - 1n)) === 0n;
 };
 
+const getSortedVars = (vars: readonly number[]) =>
+  [...vars].sort((first, second) => first - second);
+
 const isDyadicArtifact = (lra: LarSolver, constraint: LarConstraint) =>
   constraint.isAuxiliary &&
   (hasLargeDyadicDenominator(constraint.rhs.x) ||
@@ -95,6 +95,8 @@ export class NraSolver {
   private solver = new NlsatSolver();
   private values: Anum[] = [];
   private lp2nl = new Map<number, number>();
+  private literal2constraint = new Map<number, number>();
+  private vars2mon = new Map<string, number>();
 
   constructor(private core: NlaCore) {}
 
@@ -102,8 +104,10 @@ export class NraSolver {
     return this.solver.am;
   }
 
-  get steps() {
-    return this.solver.steps;
+  private reset() {
+    this.solver = new NlsatSolver(this.core.nraLimit);
+    this.values = [];
+    this.lp2nl.clear();
   }
 
   private mkDefinitions(isIncluded: (lpVar: number) => boolean) {
@@ -206,13 +210,20 @@ export class NraSolver {
     if (transcendentals.piVar !== NULL_LPVAR) solver.addPi(this.getNlVar(transcendentals.piVar));
   }
 
-  check(maxConflicts: number, budget: number) {
+  check(maxConflicts: number) {
+    try {
+      return this.checkCore(maxConflicts);
+    } catch (error) {
+      if (error instanceof SmtCanceledError && this.core.nraLimit.isExhausted()) return L_UNDEF;
+      throw error;
+    }
+  }
+
+  private checkCore(maxConflicts: number) {
     const core = this.core;
     const lra = core.lra;
-    this.solver = new NlsatSolver(core.limit, budget);
+    this.reset();
     this.solver.maxConflicts = maxConflicts;
-    this.values = [];
-    this.lp2nl.clear();
     const cone = getConeOfInfluence(core);
     const definitions = this.mkDefinitions((lpVar) => cone.vars.has(lpVar));
     const skipped = new Set<number>();
@@ -224,14 +235,7 @@ export class NraSolver {
       this.addConstraint(constraintIndex, definitions.definitions, definitions.denominators);
     }
     this.registerTranscendentals();
-    const result = (() => {
-      try {
-        return this.solver.check();
-      } catch (error) {
-        if (error instanceof NlsatUnsupportedError) return L_UNDEF;
-        throw error;
-      }
-    })();
+    const result = this.solver.check();
     if (result === L_TRUE) {
       this.solver.restoreOrder();
       core.setUseNraModel(true);
@@ -319,50 +323,93 @@ export class NraSolver {
             : sign === 0;
   }
 
-  private getClause() {
+  private setupAssignmentSolver() {
     const core = this.core;
     const lra = core.lra;
-    this.solver = new NlsatSolver(core.limit);
-    this.lp2nl.clear();
+    this.reset();
+    this.literal2constraint.clear();
+    this.vars2mon.clear();
     const cone = getConeOfInfluence(core);
     const definitions = this.mkDefinitions(() => true);
-    const values = lra.columns.map((_column, lpVar) => new Anum(core.val(lpVar)));
-    this.values = values;
-    const literalConstraints = new Map<number, number>();
+    for (let lpVar = 0; lpVar < lra.columns.length; lpVar++) {
+      this.values.push(new Anum(core.val(lpVar)));
+      if (core.emons.isMonicVar(lpVar))
+        this.vars2mon.set(getSortedVars(core.emons.get(lpVar).vars).join(","), lpVar);
+    }
     for (const constraintIndex of cone.constraints) {
       const literal = this.addConstraint(
         constraintIndex,
         definitions.definitions,
         definitions.denominators,
       );
-      literalConstraints.set(literal, constraintIndex);
+      this.literal2constraint.set(literal, constraintIndex);
     }
     this.registerTranscendentals();
-    const result = this.solver.checkAssignment(values);
-    if (result.result !== L_FALSE) return null;
-    return { clause: result.clause, literalConstraints };
+  }
+
+  private processPolynomialCheckAssignment(
+    polynomial: Polynomial,
+    nl2lp: readonly number[],
+    term: LarTerm,
+  ) {
+    let bound = Rational.zero;
+    for (let index = 0; index < polynomial.size; index++) {
+      const monomial = polynomial.ms[index];
+      const coeff = Rational.of(polynomial.as[index]);
+      // Z3 keeps the variables of a monomial but drops their degrees.
+      if (monomial.size === 0) bound = bound.sub(coeff);
+      else if (monomial.size === 1) term.addMonomial(coeff, nl2lp[monomial.vars[0]]);
+      else {
+        const vars = getSortedVars(monomial.vars.map((variable) => nl2lp[variable]));
+        term.addMonomial(coeff, this.vars2mon.get(vars.join(",")) ?? this.core.addMulDef(vars));
+      }
+    }
+    return bound;
+  }
+
+  private reverseLp2nl() {
+    const nl2lp: number[] = [];
+    for (const entry of this.lp2nl) nl2lp[entry[1]] = entry[0];
+    return nl2lp;
   }
 
   checkAssignment() {
-    const clause = (() => {
-      try {
-        return this.getClause();
-      } catch (error) {
-        if (error instanceof NlsatUnsupportedError) return null;
-        throw error;
-      }
-    })();
-    if (clause === null) return L_UNDEF;
-    return this.addLemma(clause.clause, clause.literalConstraints);
+    try {
+      return this.checkAssignmentCore();
+    } catch (error) {
+      // Deviation from Z3: a linear cell around an irrational section answers unknown, where Z3 exits.
+      if (error instanceof NlsatUnsupportedError) return L_UNDEF;
+      if (error instanceof SmtCanceledError && this.core.nraLimit.isExhausted()) return L_UNDEF;
+      throw error;
+    }
   }
 
-  private addLemma(clause: number[], literalConstraints: ReadonlyMap<number, number>) {
+  private checkAssignmentCore() {
+    const core = this.core;
+    const lra = core.lra;
+    this.setupAssignmentSolver();
+    const result = this.solver.checkAssignment(this.values);
+    if (result.result === L_TRUE) {
+      core.setUseNraModel(true);
+      lra.initModel();
+      for (const constraint of lra.constraints.constraints)
+        if (constraint.isActive && !this.isConstraintSatisfied(constraint)) return L_UNDEF;
+      for (const monic of core.emons.monics)
+        if (!this.isMonicSatisfied(monic.variable, monic.vars)) return L_UNDEF;
+      core.setUseNraModel(true);
+    }
+    if (result.result === L_FALSE) return this.addLemma(result.clause);
+    return result.result;
+  }
+
+  private addLemma(clause: readonly number[]) {
     const core = this.core;
     const solver = this.solver;
-    const pm = solver.pm;
+    const nl2lp = this.reverseLp2nl();
+    let result = L_FALSE;
     const lemma = new LemmaBuilder(core);
     for (const literal of clause) {
-      const constraintIndex = literalConstraints.get(literal ^ 1);
+      const constraintIndex = this.literal2constraint.get(literal ^ 1);
       if (constraintIndex !== undefined) {
         const explanation = new Explanation();
         explanation.push(constraintIndex);
@@ -371,23 +418,12 @@ export class NraSolver {
       }
       const atom = solver.getAtom(literal);
       if (atom === null) throw new SmtInvariantError(`nlsat literal ${literal} has no atom`);
-      if (
-        !isIneqAtom(atom) ||
-        atom.polynomials.length !== 1 ||
-        pm.totalDegree(atom.polynomials[0]) > 1
-      ) {
-        core.lemmas.pop();
-        return L_UNDEF;
+      if (!isIneqAtom(atom) || atom.polynomials.length !== 1) {
+        result = L_UNDEF;
+        break;
       }
-      const polynomial = atom.polynomials[0];
       const term = new LarTerm();
-      let bound = Rational.zero;
-      for (let index = 0; index < polynomial.size; index++) {
-        const monomial = polynomial.ms[index];
-        const coeff = Rational.of(polynomial.as[index]);
-        if (monomial.size === 0) bound = bound.sub(coeff);
-        else term.addMonomial(coeff, monomial.vars[0]);
-      }
+      const bound = this.processPolynomialCheckAssignment(atom.polynomials[0], nl2lp, term);
       const isNegated = (literal & 1) === 1;
       const kind =
         atom.kind === "EQ"
@@ -403,12 +439,13 @@ export class NraSolver {
               : KIND_GT;
       const ineq = mkIneq(term, kind, bound);
       if (core.ineqHolds(ineq)) {
-        core.lemmas.pop();
-        return L_UNDEF;
+        result = L_UNDEF;
+        break;
       }
       lemma.addIneq(ineq);
     }
-    core.isCheckFeasible = true;
-    return L_FALSE;
+    if (result === L_FALSE) core.isCheckFeasible = true;
+    if (result === L_UNDEF) core.lemmas.pop();
+    return result;
   }
 }
