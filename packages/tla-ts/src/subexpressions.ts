@@ -212,6 +212,7 @@ const selectSubexpression = (
   const location = reference.location;
   const selection: Selection = { params: [], args: [], lets: [], location };
   let selectorIndex = 0;
+  let operatorIndex = -1;
   let current: Expression | undefined;
   let unwrappedSelection: Expression | undefined;
   let isFailed = false;
@@ -325,6 +326,7 @@ const selectSubexpression = (
     selection.params.push(...definition.params);
     selection.args.push(...found.args);
     current = definition.body;
+    operatorIndex = selectorIndex;
     selectorIndex++;
     return undefined;
   };
@@ -503,6 +505,24 @@ const selectSubexpression = (
       }
       followLabels();
       continue;
+    }
+    if (selector.kind === "Colon" && selectors[selectorIndex - 1].kind !== "Name") {
+      report(
+        reference.selectorRanges?.[selectorIndex - 1],
+        "!: should not follow an operand selector.",
+      );
+      return reference;
+    }
+    if (
+      selector.kind === "Colon" &&
+      selectors[selectorIndex + 1]?.kind !== "Name" &&
+      (operatorIndex !== selectorIndex - 1 || selectorIndex !== selectors.length - 1)
+    ) {
+      report(
+        reference.selectorRanges?.[selectorIndex],
+        "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+      );
+      return reference;
     }
     if (selector.kind !== "Colon") {
       checkNull(

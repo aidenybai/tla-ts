@@ -2970,6 +2970,41 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "Op == {1}\nB == Op!1!:",
+      "line 3, col 9 to line 3, col 9",
+      "!: should not follow an operand selector.",
+    ],
+    [
+      "Op == \\A y \\in {1} : y = 1\nB == Op!<<!:",
+      "line 3, col 9 to line 3, col 10",
+      "!: should not follow an operand selector.",
+    ],
+    [
+      "Op == CASE TRUE -> 1 [] FALSE -> 2\nB == Op!1!2!:",
+      "line 3, col 11 to line 3, col 11",
+      "!: should not follow an operand selector.",
+    ],
+    [
+      "Op == lab:: {1}\nB == Op!lab!:",
+      "line 3, col 13 to line 3, col 13",
+      "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+    ],
+    [
+      "Op == {1}\nB == Op!:!1",
+      "line 3, col 9 to line 3, col 9",
+      "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+    ],
+  ])(
+    "reports the selector before or after `!:' in %j like SANY",
+    async (source, location, message) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError([{ location: `${location} of module M`, message }]),
+      );
+    },
+  );
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(
