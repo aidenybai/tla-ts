@@ -1082,8 +1082,8 @@ export const getImplicitGlobals = (
   file: ts.SourceFile,
   getNameSymbol: (name: ts.Identifier) => ts.Symbol | undefined,
 ) =>
-  new Set(
-    findNodes(file, (node): node is ts.Node => getPlainWrites(node).length > 0)
+  new Set([
+    ...findNodes(file, (node): node is ts.Node => getPlainWrites(node).length > 0)
       .flatMap(getPlainWrites)
       .filter(
         (name): name is ts.Identifier =>
@@ -1093,7 +1093,77 @@ export const getImplicitGlobals = (
           getNameSymbol(name) === undefined,
       )
       .map((name) => name.text),
+    ...getGlobalPropertyWrites(file).filter(
+      (key) =>
+        // Only a name that reads the global needs it as a binding, and the global object holds any
+        // other as its property.
+        findNodes(
+          file,
+          (node): node is ts.Identifier =>
+            ts.isIdentifier(node) &&
+            node.text === key &&
+            !(ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) &&
+            !(ts.isPropertyAssignment(node.parent) && node.parent.name === node) &&
+            getNameSymbol(node) === undefined,
+        ).length > 0,
+    ),
+  ]);
+
+// A script's write of the global object's property, which globalThis names with a literal key,
+// makes a global as a write outside strict mode to a name does, where the script declares no
+// binding of the name and a name reads it.
+const getGlobalPropertyWrites = (file: ts.SourceFile) => {
+  if (isModuleFile(file)) return [];
+  const declared = new Set(
+    findNodes(
+      file,
+      (node): node is ts.Identifier =>
+        ts.isIdentifier(node) &&
+        (ts.isVariableDeclaration(node.parent) ||
+          ts.isFunctionDeclaration(node.parent) ||
+          ts.isClassDeclaration(node.parent) ||
+          ts.isParameter(node.parent)) &&
+        node.parent.name === node,
+    ).map((name) => name.text),
   );
+  const isGlobalThis = (node: ts.Expression) => {
+    const inner = skipCasts(node);
+    return ts.isIdentifier(inner) && inner.text === "globalThis";
+  };
+  return findNodes(
+    file,
+    (node): node is ts.PropertyAccessExpression | ts.ElementAccessExpression =>
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      isGlobalThis(node.expression) &&
+      isWrittenTarget(node),
+  ).flatMap((node) => {
+    const key = ts.isPropertyAccessExpression(node)
+      ? node.name.text
+      : ts.isStringLiteralLike(node.argumentExpression)
+        ? node.argumentExpression.text
+        : undefined;
+    return key === undefined ||
+      declared.has(key) ||
+      [...HOST_GLOBAL_KEYS, "arguments"].includes(key) ||
+      BUILT_INS.globalThis[3].some((property) => property[0] === key)
+      ? []
+      : [key];
+  });
+};
+
+// Whether an expression is what an assignment, a compound assignment, or an increment writes.
+const isWrittenTarget = (node: ts.Expression) => {
+  const parent = node.parent;
+  return (
+    (ts.isBinaryExpression(parent) &&
+      parent.left === node &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+    ((ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent)) &&
+      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+        parent.operator === ts.SyntaxKind.MinusMinusToken))
+  );
+};
 
 // Outside strict mode, a write to NaN, Infinity, or undefined does nothing, which tla-ts doesn't
 // follow. In strict mode, a write to a global that a write outside it makes throws a ReferenceError

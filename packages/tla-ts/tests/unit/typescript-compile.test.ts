@@ -18361,17 +18361,16 @@ describe("errors", () => {
       ).toContain("tla-ts can't tell which properties the global object has");
     });
 
-    it("stops where a name that nothing declares may read the key", async () => {
-      expect(
-        (
-          await checkModel(`
-            const holder = { seen: 0 };
-            (globalThis as unknown as Record<string, unknown>).missing = 1;
-            // @ts-ignore
-            holder.seen = typeof missing === "undefined" ? 1 : 2;
-          `)
-        ).failure?.message,
-      ).toContain("tla-ts can't tell which properties the global object has");
+    it("makes the global that a name that nothing declares reads", async () => {
+      const getSource = (expected: number) => `
+        const holder = { seen: 0 };
+        (globalThis as unknown as Record<string, unknown>).missing = 1;
+        // @ts-ignore
+        holder.seen = typeof missing === "undefined" ? 1 : 2;
+        if (holder.seen !== ${expected}) throw new Error("seen " + holder.seen);
+      `;
+      expect((await checkModel(getSource(2))).failure).toBeUndefined();
+      expect((await checkModel(getSource(1))).failure?.message).toContain("seen 2");
     });
 
     it("reads the value of a var that declares the key", async () => {
@@ -52477,6 +52476,31 @@ describe("BigInts", () => {
       const source = getSource("2,2,4,4,2,valueOf,TypeError");
       expect((await check(compile(source, path))).failure?.message).toContain(
         "result 2,2,5,4,2,valueOf,TypeError",
+      );
+    });
+  });
+
+  describe("makes a global where a script writes the global object's property that a name reads", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: "" };
+      const before = (globalThis as any).y;
+      (globalThis as any).y++;
+      // @ts-ignore
+      const afterIncrement = y;
+      (globalThis as any).count = 0;
+      (globalThis as any).count += 2;
+      // @ts-ignore
+      box.seen = [String(before), String(afterIncrement), count, typeof missing].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("undefined,NaN,2,undefined"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("undefined,1,2,undefined"))).failure?.message).toContain(
+        "seen undefined,NaN,2,undefined",
       );
     });
   });
