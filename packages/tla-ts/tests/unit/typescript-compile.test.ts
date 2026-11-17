@@ -50539,4 +50539,25 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("writes JSON with a replacer that is a primitive, as it does with none", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var value = { key: [1] };
+      var written = [JSON.stringify(value, 0), JSON.stringify(value, true)];
+      box.seen = [written[0] === written[1], written[0].length].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("true,11"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("true,2"), path))).failure?.message).toContain(
+        "seen true,11",
+      );
+    });
+  });
 });

@@ -8645,7 +8645,10 @@ SerializeJSON(heap, value, state, stack, indent) ==
 \\* where it writes all of them, as it can't call a replacer function.
 JSONList(heap, replacer, isSequence) ==
   LET isList == IsArray(heap, replacer)
-                  \\/ (isSequence /\\ ~IsRef(replacer) /\\ SubSeq(ToString(replacer), 1, 2) = "<<")
+                  \\/ /\\ isSequence
+                     /\\ ~IsRef(replacer)
+                     /\\ TypeOf(replacer) = "object"
+                     /\\ SubSeq(ToString(replacer), 1, 2) = "<<"
   IN CASE TypeOfIn(heap, replacer) = "function" -> Assert(FALSE, "tla-ts can't call a replacer")
        [] /\\ ~IsRef(replacer)
           /\\ TypeOf(replacer) = "object"
