@@ -135,6 +135,10 @@ describe("name resolution matches SANY", () => {
       "an inner module that only a LET instantiates, which SANY rejects",
       "---- MODULE Inner ----\nK == 1\n====\nF == LET N == INSTANCE Inner IN N!K",
     ],
+    [
+      "a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects",
+      "r == [a |-> 1]\nF == r.THEOREM\nG == [r EXCEPT !.AXIOM = 1]\nH == r.DOMAIN\nI == 1",
+    ],
   ])("accepts %s", async (_title, source) => {
     expect((await checkNames(source)).status).toBe("success");
   });

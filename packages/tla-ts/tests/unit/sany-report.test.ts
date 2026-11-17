@@ -404,6 +404,13 @@ Spec == Init /\\ [][Next]_x
     expect(report).toEqual({ text: "", isFailed: false });
   });
 
+  it("accepts a definition after a field named THEOREM, AXIOM or DOMAIN, which SANY rejects", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nr == [a |-> 1]\nF == r.THEOREM\nG == [r EXCEPT !.AXIOM = 1]\nH == r.DOMAIN\nI == 1\n====\n",
+    });
+    expect(report).toEqual({ text: "", isFailed: false });
+  });
+
   it.each([
     ["VARIABLES x,\n  y", "line 4, col 1 to line 5, col 3", "A VARIABLE declaration"],
     ["CONSTANT C", "line 4, col 1 to line 4, col 10", "A declaration"],
