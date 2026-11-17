@@ -90,6 +90,45 @@ it("reports a behavior that stutters at its initial state, which TLC's LiveCheck
   expect([status, violations]).toEqual([13, [{ states: ["0"], loopStart: 0 }]]);
 });
 
+it.each([
+  [
+    "an invariant that a later initial state violates",
+    "INVARIANT Inv",
+    12,
+    2107,
+    "Invariant Inv is violated by the initial state:\nx = 1\n",
+  ],
+  [
+    "that the constraints keep no initial state",
+    "CONSTRAINT Constraint",
+    255,
+    2256,
+    "There is no state satisfying the initial state predicate and the state-constraint(s).",
+  ],
+])(
+  "reports %s before an implied initial predicate, which TLC's simulator never checks",
+  (_title, config, status, code, message) => {
+    const messages: [number, string][] = [];
+    const result = simulate({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x \\in {0, 1}\nNext == x' = x\nInv == x = 0\nConstraint == x = 2\nProp == x = 1\n====",
+      config: `INIT Init\nNEXT Next\nPROPERTY Prop\n${config}`,
+      seed: 4n,
+      traceDepth: 2,
+      traceCount: 1n,
+      aril: 0n,
+      isGenerating: false,
+      scheduler: "random",
+      onSimulation: (output) => {
+        if (output.kind === "message" && output.isError) {
+          messages.push([output.code, output.message]);
+        }
+      },
+    });
+    expect([result, messages]).toEqual([status, [[code, message]]]);
+  },
+);
+
 const getCounterExample = (body: string, config: string) => {
   const printed: string[] = [];
   simulate({

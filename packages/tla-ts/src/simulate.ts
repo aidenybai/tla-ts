@@ -458,6 +458,7 @@ export const simulate = (options: SimulationOptions): number => {
     undefined,
     false,
   );
+  const generatedNodes: TraceNode[] = [];
   for (const state of generated) {
     if (!isComplete(state)) {
       reportMessage(
@@ -479,18 +480,7 @@ export const simulate = (options: SimulationOptions): number => {
         reportPostcondition(true);
         return EXIT_STATUS.safetyViolation;
       }
-      // Deviation from TLC: its simulator checks no implied init, tla-ts checks them after invariants.
-      const predicate = search.findFailedInitialPredicate(state);
-      if (predicate) {
-        const alias = toTraceSteps([node])[0].state;
-        reportMessage(
-          MESSAGE_CODE.propertyViolatedInitial,
-          `Property ${predicate.name} is violated by the initial state:\n${formatState(alias)}`,
-        );
-        runtime.counterExample = getInitialCounterExample(node);
-        reportPostcondition(true);
-        return EXIT_STATUS.livenessViolation;
-      }
+      generatedNodes.push(node);
       if (search.satisfiesConstraints(state)) {
         search.trackStatePossible(state);
         initialStates.push(node);
@@ -512,6 +502,24 @@ export const simulate = (options: SimulationOptions): number => {
       "There is no state satisfying the initial state predicate and the state-constraint(s).",
     );
     return EXIT_STATUS.error;
+  }
+  // Deviation from TLC: its simulator checks no implied init, tla-ts checks them after TLC's own checks of the initial states.
+  for (const node of generatedNodes) {
+    try {
+      const predicate = search.findFailedInitialPredicate(node.state);
+      if (predicate) {
+        const alias = toTraceSteps([node])[0].state;
+        reportMessage(
+          MESSAGE_CODE.propertyViolatedInitial,
+          `Property ${predicate.name} is violated by the initial state:\n${formatState(alias)}`,
+        );
+        runtime.counterExample = getInitialCounterExample(node);
+        reportPostcondition(true);
+        return EXIT_STATUS.livenessViolation;
+      }
+    } catch (error) {
+      return reportInitialException(error, node.state);
+    }
   }
   reportMessage(
     MESSAGE_CODE.initGenerated1,
