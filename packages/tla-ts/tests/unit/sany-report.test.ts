@@ -143,6 +143,68 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports a selection into a definition whose own selection failed as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nEXTENDS Naturals\nG(a) == a + 1\nF == G(1)!7\nK == F!1\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        ...[
+          [
+            "line 4, col 11 to line 4, col 11",
+            "Nonexistent operand specified by `argument selector 7'.",
+          ],
+          [
+            "line 5, col 8 to line 5, col 8",
+            "Choosing operand `argument selector 1' of subexpression with no operands.",
+          ],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
+  it("reports an @ fact as an unknown operator as SANY does", () => {
+    const report = getReport({ M: "---- MODULE M ----\nUSE @\nTHEOREM TRUE\nBY @\n====\n" });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        ...["line 2, col 5 to line 2, col 5", "line 4, col 4 to line 4, col 4"].flatMap((range) => [
+          `${range} of module M`,
+          "",
+          "Unknown operator: `@'.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
+  it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nRECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 3, col 1 to line 3, col 6 of module M",
+        "",
+        "Definition of R has different arity than its RECURSIVE declaration.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {
@@ -443,6 +505,7 @@ Spec == Init /\\ [][Next]_x
     ["RECURSIVE F(_)\nF == 1\nA == F(1)", "line 5, col 6 to line 5, col 9", 1, 0],
     ["RECURSIVE F\nF(x) == 1\nA == F", "line 5, col 6 to line 5, col 6", 0, 1],
     ["RECURSIVE F(_, _)\nF(x) == x\nA == F(1, 2)", "line 5, col 6 to line 5, col 12", 2, 1],
+    ["RECURSIVE F(_, _)\nF == 1\nA == F(F(F, 1), 1)", "line 5, col 6 to line 5, col 18", 2, 0],
   ])("reports %j as given the wrong number of arguments", (body, range, given, required) => {
     const report = getReport({ M: `---- MODULE M ----\nEXTENDS Naturals\n${body}\n====\n` });
     expect(report.text).toContain("*** Errors: 2\n");

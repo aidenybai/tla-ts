@@ -23,12 +23,14 @@ import {
   getNameSelectors,
   getOperandIndex,
   getOperands,
+  getParamArities,
   isBefore,
   LOCAL_RESOLUTION,
   nullSelections,
   selectionErrors,
   selections,
   type NullSelection,
+  type SelectionArguments,
 } from "./resolve";
 
 type Lookup = (name: string) => Definition | undefined;
@@ -69,6 +71,12 @@ const getSelectorName = (selector: Selector) => {
       return ":";
   }
 };
+
+const getExpressionArguments = (
+  operator: string,
+  range: SourceRange | undefined,
+  args: Expression[],
+): SelectionArguments => ({ operator, range, args, params: args.map(() => 0) });
 
 const createError = (message: string, location: SourceLocation) =>
   new TlaSyntaxError(`${message} at line ${location.line}, column ${location.column}`);
@@ -173,6 +181,7 @@ const applyDefinition = (definition: Definition, selection: Selection) => {
 const selectSubexpression = (
   selectors: Selector[],
   lookup: Lookup,
+  isGoal: (name: string) => boolean,
   reference: Expression & SelectingName,
   isOperator: boolean,
 ): Expression => {
@@ -182,6 +191,7 @@ const selectSubexpression = (
   let current: Expression | undefined;
   let isFailed = false;
   const nulls: NullSelection[] = [];
+  const applications: SelectionArguments[] = [];
   const checkNull = (node: Expression | undefined, message: string) => {
     const range = reference.selectorRanges?.[selectorIndex];
     if (node && range) nulls.push({ node, error: { location: formatRange(range), message } });
@@ -190,9 +200,7 @@ const selectSubexpression = (
   const report = (range: SourceRange | undefined, message: string) => {
     if (!range) throw createError(message, location);
     selectionErrors.set(reference, {
-      args: selectors
-        .slice(0, selectorIndex)
-        .flatMap((selector) => ("args" in selector ? selector.args : [])),
+      applications,
       error: { location: formatRange(range), message },
     });
     isFailed = true;
@@ -235,6 +243,24 @@ const selectSubexpression = (
       );
     }
     if (isLast) return { definition, args: found.args };
+    applications.push({
+      operator: found.name,
+      range: reference.selectorRanges?.[selectorIndex],
+      args: found.args,
+      params: getParamArities(definition),
+    });
+    const range = definition.location.range;
+    if (
+      definition.isRecursive &&
+      range &&
+      range.module === location.range?.module &&
+      isBefore(location, range.end)
+    ) {
+      return report(
+        reference.selectorRanges?.[selectorIndex],
+        `Subexpression of  \`${found.name}' used inside the operator's definition.`,
+      );
+    }
     if (definition.kind !== "Operator") {
       throw createError(`Cannot select a subexpression of ${definition.name}`, location);
     }
@@ -259,6 +285,7 @@ const selectSubexpression = (
       selection.lets.push(...found.lets);
       selection.params.push(...params.map((name) => ({ name, arity: 0 })));
       selection.args.push(...selector.args);
+      applications.push(getExpressionArguments(selector.name, range, selector.args));
       current = found.label.body;
       selectorIndex++;
     }
@@ -267,14 +294,42 @@ const selectSubexpression = (
   const selectOperand = (selector: Selector) => {
     if (!current) throw createError("Subexpression selection failed", location);
     if (selector.kind === "Colon") return;
+    const range = reference.selectorRanges?.[selectorIndex];
+    const currentRange = current.location.range;
+    if (
+      (current.kind === "Subexpression" ||
+        (current.kind === "Identifier" && current.name.includes("!")) ||
+        (current.kind === "Apply" && current.operator.includes("!"))) &&
+      (currentRange?.module !== location.range?.module || isBefore(current.location, location))
+    ) {
+      const selected = resolveSubexpressions(current, lookup, isGoal);
+      if (selectionErrors.has(selected)) {
+        report(
+          range,
+          `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`,
+        );
+        return;
+      }
+      if (selections.has(selected) && selected.kind !== "Lambda") {
+        current =
+          selected.kind === "Let" &&
+          selected.body.kind === "Apply" &&
+          selected.body.operator === SELECTION_NAME
+            ? selected.body
+            : // SANY wraps a selection without parameters in $Nop, whose only operand is the selection.
+              { kind: "Tuple", elements: [selected], location: selected.location };
+      }
+    }
     if (current.kind === "Label") {
       current = current.body;
       selectOperand(selector);
       return;
     }
+    const nonexistent = `Nonexistent operand specified by \`${getSelectorName(selector)}'.`;
     if (current.kind === "Let") {
       if (selector.kind !== "Operand" || getOperandIndex(selector.operand, 1) !== 0) {
-        throw createError("A LET/IN expression has only one operand", location);
+        report(range, "A LET/IN expression has only one operand.");
+        return;
       }
       selection.lets.push(current.definitions);
       current = current.body;
@@ -283,38 +338,61 @@ const selectSubexpression = (
     const binder = getBinder(current);
     if (binder && (selector.kind === "Bound" || selector.kind === "At")) {
       selection.params.push(...binder.names.map((name) => ({ name, arity: 0 })));
-      if (selector.kind === "Bound") selection.args.push(...selector.args);
+      if (selector.kind === "Bound") {
+        selection.args.push(...selector.args);
+        applications.push(getExpressionArguments("", range, selector.args));
+      }
       current = binder.body;
       return;
     }
-    if (current.kind === "Case" && selector.kind === "Operand") {
+    if (current.kind === "Case") {
       const arms = [
         ...current.arms,
         ...(current.other ? [{ condition: undefined, body: current.other }] : []),
       ];
-      const arm = arms[getOperandIndex(selector.operand, arms.length)];
-      const next = selectors[selectorIndex + 1];
-      if (!arm || next?.kind !== "Operand") {
-        throw createError("A subexpression of CASE must have the form !i!j", location);
+      if (selectorIndex === selectors.length - 1) {
+        report(range, "Subexpression of CASE must have form !i!j.");
+        return;
+      }
+      const arm =
+        selector.kind === "Operand"
+          ? arms[getOperandIndex(selector.operand, arms.length)]
+          : undefined;
+      if (!arm) {
+        report(range, nonexistent);
+        return;
       }
       selectorIndex++;
-      const part = getOperandIndex(next.operand, 2);
-      const chosen = part === 0 ? arm.condition : part === 1 ? arm.body : undefined;
-      if (!chosen) throw createError("Nonexistent CASE operand", location);
+      const next = selectors[selectorIndex];
+      const part = next.kind === "Operand" ? getOperandIndex(next.operand, 2) : -1;
+      const nextRange = reference.selectorRanges?.[selectorIndex];
+      if (part === -1) {
+        report(
+          nextRange,
+          "Second selector for CASE subexpression must specify  one of two operands.",
+        );
+        return;
+      }
+      const chosen = part === 0 ? arm.condition : arm.body;
+      if (!chosen) {
+        report(nextRange, "Selecting OTHER in a CASE statement.");
+        return;
+      }
       current = chosen;
       return;
     }
-    if (selector.kind !== "Operand")
-      throw createError("Unexpected subexpression selector", location);
     const operands = binder ? binder.sets : getOperands(current);
-    const range = reference.selectorRanges?.[selectorIndex];
     if (!operands && current.kind !== "Identifier") {
       report(range, "Selecting subexpression of expression that has none.");
       return;
     }
+    if (selector.kind !== "Operand") {
+      report(range, nonexistent);
+      return;
+    }
     const operand = operands?.[getOperandIndex(selector.operand, operands.length)];
     if (!operand) {
-      report(range, `Nonexistent operand specified by \`${getSelectorName(selector)}'.`);
+      report(range, nonexistent);
       return;
     }
     current = operand;
@@ -358,6 +436,12 @@ const selectSubexpression = (
   }
   if (isFailed) return reference;
   if (!current) throw createError("Subexpression selection failed", location);
+  const params = selection.params.length;
+  const args = selection.args.length;
+  if (params !== args && (!isOperator || args > 0)) {
+    report(location.range, `Expected ${params} arguments but found ${args}.`);
+    return reference;
+  }
   const selected = createApplication(selection, current);
   nullSelections.set(selected, nulls);
   return selected;
@@ -425,7 +509,7 @@ const resolveSubexpressions = (
   const first = selectors?.[0];
   if (!selectors || (first?.kind === "Name" && isGoal(first.name))) return mapped;
   if (first?.kind === "Name" && selectors[1].kind !== "Name" && !lookup(first.name)) return mapped;
-  const selected = selectSubexpression(selectors, lookup, mapped, isOperator);
+  const selected = selectSubexpression(selectors, lookup, isGoal, mapped, isOperator);
   if (selected !== mapped) selections.add(selected);
   return selected;
 };

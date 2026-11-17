@@ -19,6 +19,7 @@ import {
   type SourceLocation,
   type SourceRange,
   type Theorem,
+  type UseOrHide,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -85,8 +86,15 @@ interface Unit {
   isGenerated: boolean;
 }
 
-interface SelectionError {
+export interface SelectionArguments {
+  operator: string;
+  range: SourceRange | undefined;
   args: Expression[];
+  params: number[];
+}
+
+interface SelectionError {
+  applications: SelectionArguments[];
   error: SanyError;
 }
 
@@ -129,6 +137,9 @@ const CORE_SYMBOLS: Symbols = new Map([
 
 export const isBefore = (left: SourceLocation, right: SourceLocation) =>
   left.line < right.line || (left.line === right.line && left.column < right.column);
+
+const compareLocations = (left: SourceLocation, right: SourceLocation) =>
+  isBefore(left, right) ? -1 : isBefore(right, left) ? 1 : 0;
 
 export const getArity = (definition: Definition) =>
   definition.kind === "Operator" ? definition.params.length : 0;
@@ -245,7 +256,7 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
   const isVisible =
     definition !== undefined &&
     (definition === unit.self
-      ? definition.kind === "Function" || definition.isRecursive
+      ? definition.isRecursive
       : definition.isRecursive
         ? getModuleBinding(name, unit, undefined) !== undefined
         : isBefore(definition.location, unit.location));
@@ -255,14 +266,17 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
 const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   const definition = getVisibleDefinition(name, unit);
   if (definition) {
+    const declared = definition.isRecursive ? unit.bindings.get(name) : undefined;
     return {
       key: unit.getKey(definition),
-      arity: getArity(definition),
-      params: getParamArities(definition),
+      arity: declared?.arity ?? getArity(definition),
+      params: declared?.params ?? getParamArities(definition),
       kind: "Definition",
     };
   }
-  return getModuleBinding(name, unit, undefined) ? unit.imported.get(name) : undefined;
+  const binding = getModuleBinding(name, unit, undefined);
+  if (binding?.isPending) return { key: name, arity: binding.arity, kind: binding.kind };
+  return binding ? unit.imported.get(name) : undefined;
 };
 
 const isFact = (name: string, unit: Unit) =>
@@ -550,10 +564,17 @@ const checkSelection = (
       state.isSufficesOpen = false;
       continue;
     }
-    if (selector.kind !== "Operand") return;
-    const operand = getOperandName(selector.operand);
+    if (selector.kind === "Colon") return;
+    const operand =
+      selector.kind === "Operand"
+        ? getOperandName(selector.operand)
+        : selector.kind === "At"
+          ? "@"
+          : "!(...)";
+    const getPosition = (count: number) =>
+      selector.kind === "Operand" ? getOperandIndex(selector.operand, count) : -1;
     if (state.isSufficesOpen) {
-      if (getOperandIndex(selector.operand, 1) !== 0) {
+      if (getPosition(1) !== 0) {
         return report(
           index,
           node.kind === "AssumeProve"
@@ -578,6 +599,7 @@ const checkSelection = (
         return report(index, `Choosing operand \`${operand}' of subexpression with no operands.`);
       }
       const sets = getBinder(expression)?.sets;
+      if (sets && selector.kind !== "Operand") return;
       const operands =
         expression.kind === "Identifier"
           ? []
@@ -589,14 +611,14 @@ const checkSelection = (
               ? undefined
               : getOperands(expression);
       if (!operands) return;
-      const position = getOperandIndex(selector.operand, operands.length);
+      const position = getPosition(operands.length);
       if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
       state.node = operands[position];
       state.isGoal = false;
       continue;
     }
     const clauses = [...node.assumptions, node.conclusion];
-    const position = getOperandIndex(selector.operand, clauses.length);
+    const position = getPosition(clauses.length);
     if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
     if (isInScopeOfDeclaration(node, position) && (!state.isGoal || isOutOfScope)) {
       return report(index, `Accessing ASSUME/PROVE clause ${SCOPE_MESSAGE}`);
@@ -823,6 +845,21 @@ const resolveDefinition = (
         ? `Function name \`${name}' already defined or declared.`
         : `Operator ${resolveSynonym(name)} already defined or declared.`,
     );
+  } else if (current && definition.kind === "Function" && current.arity > 0) {
+    report(`Function ${resolveSynonym(name)} has operator arguments in its RECURSIVE declaration.`);
+  } else if (
+    current &&
+    definition.kind === "Operator" &&
+    // Deviation from SANY: Generator#processOperator compares only the last parameter's arity with the RECURSIVE declaration's.
+    (current.arity !== definition.params.length ||
+      definition.params.some((param) => param.arity > 0))
+  ) {
+    report(
+      `Definition of ${resolveSynonym(name)} has different arity than its RECURSIVE declaration.`,
+    );
+  }
+  if (current && isDeclared && definition.kind === "Operator") {
+    current.params = getParamArities(definition);
   }
   if (definition.kind === "Function") {
     resolveExpression(
@@ -834,8 +871,10 @@ const resolveDefinition = (
     definition.isSelfReferential = isReferenced(definition.body, name);
   } else resolveExpression(definition.body, inner, unit);
   if (current && isDeclared) {
-    current.isPending = false;
-    current.range = range;
+    if (definition.kind === "Operator" || current.arity === 0) {
+      current.isPending = false;
+      current.range = range;
+    }
     return false;
   }
   return definition.kind === "Function"
@@ -853,10 +892,15 @@ const resolveDefinitions = (
   scope: LocalName | undefined,
   unit: Unit,
   instances: Instance[] = [],
+  declarations: Declaration[] = [],
 ) => {
   const recursive = new Set<Binding>();
   const declared = definitions
-    .filter((definition) => definition.isRecursive)
+    .filter(
+      (definition) =>
+        definition.isRecursive &&
+        declarations.every((declaration) => declaration.name !== definition.name),
+    )
     .reduce<LocalName | undefined>((parent, definition) => {
       if (lookupLocal(parent, definition.name)?.isPending) return parent;
       const local: LocalName = {
@@ -870,20 +914,47 @@ const resolveDefinitions = (
       recursive.add(local);
       return local;
     }, scope);
-  const pending = unit.isGenerated ? [] : [...instances];
-  const resolveInstances = (
+  const declaredLocals = new Map<Declaration, LocalName | undefined>();
+  const bindDeclaration = (parent: LocalName | undefined, declaration: Declaration) => {
+    const binding: Binding = {
+      kind: "Definition",
+      arity: declaration.arity,
+      params: Array(declaration.arity).fill(0),
+      range: declaration.location.range,
+    };
+    const local: LocalName | undefined = isBindable(
+      declaration.name,
+      lookupLocal(parent, declaration.name) ??
+        getModuleBinding(declaration.name, unit, binding.range),
+      binding,
+      unit,
+    )
+      ? { ...binding, name: declaration.name, parent, isPending: true }
+      : undefined;
+    if (local) recursive.add(local);
+    declaredLocals.set(declaration, local);
+    return local ?? parent;
+  };
+  const pending = [...(unit.isGenerated ? [] : instances), ...declarations].toSorted(
+    (left, right) => compareLocations(left.location, right.location),
+  );
+  const resolvePending = (
     current: LocalName | undefined,
-    isDue: (instance: Instance) => boolean,
+    isDue: (item: Instance | Declaration) => boolean,
   ) => {
-    const count = pending.findIndex((instance) => !isDue(instance));
+    const count = pending.findIndex((item) => !isDue(item));
     return pending
       .splice(0, count === -1 ? pending.length : count)
-      .reduce((parent, instance) => resolveLocalInstance(instance, parent, unit), current);
+      .reduce(
+        (parent, item) =>
+          "kind" in item ? resolveLocalInstance(item, parent, unit) : bindDeclaration(parent, item),
+        current,
+      );
   };
   const resolved = definitions.reduce<LocalName | undefined>((previous, definition) => {
     const current = isKey(definition.name)
       ? previous
-      : resolveInstances(previous, (instance) => !isBefore(definition.location, instance.location));
+      : resolvePending(previous, (item) => !isBefore(definition.location, item.location));
     const local: LocalName = {
       name: definition.name,
       arity: getArity(definition),
@@ -903,7 +974,17 @@ const resolveDefinitions = (
       ? { ...local, params: getParamArities(definition) }
       : current;
   }, declared);
-  return resolveInstances(resolved, () => true);
+  const resolvedScope = resolvePending(resolved, () => true);
+  declaredLocals.forEach((local, declaration) => {
+    const range = declaration.location.range;
+    if (range && !unit.isGenerated && (!local || local.isPending)) {
+      unit.errors.push({
+        location: formatRange(range),
+        message: `Symbol ${resolveSynonym(declaration.name)} declared in RECURSIVE statement but not defined.`,
+      });
+    }
+  });
+  return resolvedScope;
 };
 
 const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) => {
@@ -940,6 +1021,100 @@ const isInstanceArityReported = (
   return true;
 };
 
+const isArgumentCountReported = (
+  callee: Binding | undefined,
+  name: string,
+  count: number,
+  range: SourceRange | undefined,
+  unit: Unit,
+) => {
+  const params = callee?.kind === "Definition" ? callee.params : undefined;
+  if (!callee || !params || params.length === callee.arity) return false;
+  if (range) {
+    unit.errors.push({
+      location: formatRange(range),
+      message: `Wrong number of arguments (${count}) given to operator '${resolveSynonym(name)}', \nwhich requires ${params.length} arguments.`,
+    });
+  }
+  return true;
+};
+
+const matchArgument = (
+  arg: Expression,
+  expected: number,
+  index: number,
+  operator: string,
+  operatorRange: SourceRange | undefined,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const report = (range: SourceRange | undefined, message: string) => {
+    if (range) unit.errors.push({ location: formatRange(range), message });
+  };
+  const range = arg.location.range;
+  if (expected === 0) {
+    // Deviation from SANY: SANY names its internal node kind here, where tla-ts words it as for a name.
+    if (arg.kind === "Lambda" && arg.operator !== undefined) {
+      report(range, `The operator ${resolveSynonym(arg.operator)} requires 1 arguments.`);
+    } else if (arg.kind === "Lambda" && range) {
+      report(range, "LAMBDA expression used where an expression is required.");
+    } else if (arg.kind === "OperatorReference") {
+      const argArity = getSymbolArity(arg, arg.operator, scope, unit);
+      if (argArity !== undefined) {
+        report(
+          range,
+          `The operator ${resolveSynonym(arg.operator)} requires ${argArity} arguments.`,
+        );
+      }
+    } else resolveExpression(arg, scope, unit);
+    return true;
+  }
+  if (arg.kind === "Lambda") {
+    if (selections.has(arg)) resolveExpression(arg, scope, unit);
+    else resolveLambda(arg, scope, unit);
+    const isMatched = arg.params.length === expected;
+    if (!isMatched && selections.has(arg)) {
+      report(range, `Expected arity ${expected} but found operator of arity ${arg.params.length}.`);
+    } else if (!isMatched && range && arg.operator === undefined) {
+      report(
+        operatorRange,
+        `Lambda expression with arity ${arg.params.length} used as argument ${index + 1} of operator \`${operator}', \nbut an operator of arity ${expected} is required.`,
+      );
+    }
+    return isMatched;
+  }
+  if (arg.kind === "Subexpression") {
+    resolveExpression(arg, scope, unit);
+    return true;
+  }
+  if (arg.kind === "Apply" && arg.argumentCounts?.at(-1) === 0) {
+    const selectorIndex = arg.argumentCounts.findIndex((count) => count > 0);
+    report(
+      arg.selectorRanges?.[selectorIndex],
+      `Selector \`${arg.operator.split("!")[selectorIndex]}' should not have argument(s).`,
+    );
+    return false;
+  }
+  if (arg.kind !== "Identifier" && arg.kind !== "OperatorReference") {
+    report(
+      range,
+      `An expression appears as argument number ${index + 1} (counting from 1) to operator '${operator}', in a position an operator is required.`,
+    );
+    return false;
+  }
+  const name = arg.kind === "Identifier" ? arg.name : arg.operator;
+  const argParams = findBinding(name, scope, unit)?.params ?? [];
+  const argArity = getSymbolArity(arg, name, scope, unit);
+  if (arg.kind === "Identifier" && argArity !== undefined && argArity !== expected) {
+    report(
+      getSpelledNameRange(arg, name),
+      `Expected arity ${expected} but found operator of arity ${argArity}.`,
+    );
+  }
+  // Deviation from SANY: OpDefNode#matchingOpArgOperand reads as many parameters as a RECURSIVE declaration gives and crashes when the definition has fewer.
+  return argArity === expected && argParams.every((param) => param === 0);
+};
+
 const resolveApply = (
   expression: Expression & { kind: "Apply" },
   scope: LocalName | undefined,
@@ -957,89 +1132,38 @@ const resolveApply = (
     });
     return;
   }
-  const params = callee && (callee.kind === "Definition" ? callee.params : []);
+  const params =
+    callee && (callee.kind === "Definition" ? callee.params : expression.args.map(() => 0));
   if (params === undefined) {
     expression.args.forEach((arg) => resolveArgument(arg, scope, unit));
     return;
   }
-  const report = (range: SourceRange | undefined, message: string) => {
-    if (range) unit.errors.push({ location: formatRange(range), message });
-  };
-  expression.args
-    .map((arg, index) => {
-      const expected = params[index] ?? 0;
-      const range = arg.location.range;
-      if (expected === 0) {
-        // Deviation from SANY: SANY names its internal node kind here, where tla-ts words it as for a name.
-        if (arg.kind === "Lambda" && arg.operator !== undefined) {
-          report(range, `The operator ${resolveSynonym(arg.operator)} requires 1 arguments.`);
-        } else if (arg.kind === "Lambda" && range) {
-          report(range, "LAMBDA expression used where an expression is required.");
-        } else if (arg.kind === "OperatorReference") {
-          const argArity = getSymbolArity(arg, arg.operator, scope, unit);
-          if (argArity !== undefined) {
-            report(
-              range,
-              `The operator ${resolveSynonym(arg.operator)} requires ${argArity} arguments.`,
-            );
-          }
-        } else resolveExpression(arg, scope, unit);
-        return true;
-      }
-      if (arg.kind === "Lambda") {
-        resolveExpression(arg, scope, unit);
-        const isMatched = arg.params.length === expected;
-        if (!isMatched && selections.has(arg)) {
-          report(
-            range,
-            `Expected arity ${expected} but found operator of arity ${arg.params.length}.`,
-          );
-        } else if (!isMatched && range && arg.operator === undefined) {
-          report(
-            expression.selectorRanges?.at(-1) ?? getSpelledNameRange(expression, operator),
-            `Lambda expression with arity ${arg.params.length} used as argument ${index + 1} of operator \`${operator}', \nbut an operator of arity ${expected} is required.`,
-          );
-        }
-        return isMatched;
-      }
-      if (arg.kind === "Subexpression") {
-        resolveExpression(arg, scope, unit);
-        return true;
-      }
-      if (arg.kind === "Apply" && arg.argumentCounts?.at(-1) === 0) {
-        const selectorIndex = arg.argumentCounts.findIndex((count) => count > 0);
-        report(
-          arg.selectorRanges?.[selectorIndex],
-          `Selector \`${arg.operator.split("!")[selectorIndex]}' should not have argument(s).`,
-        );
-        return false;
-      }
-      if (arg.kind !== "Identifier" && arg.kind !== "OperatorReference") {
-        report(
-          range,
-          `An expression appears as argument number ${index + 1} (counting from 1) to operator '${operator}', in a position an operator is required.`,
-        );
-        return false;
-      }
-      const name = arg.kind === "Identifier" ? arg.name : arg.operator;
-      const argParams = findBinding(name, scope, unit)?.params ?? [];
-      const argArity = getSymbolArity(arg, name, scope, unit);
-      if (arg.kind === "Identifier" && argArity !== undefined && argArity !== expected) {
-        report(
-          getSpelledNameRange(arg, name),
-          `Expected arity ${expected} but found operator of arity ${argArity}.`,
-        );
-      }
-      return argArity === expected && argParams.every((param) => param === 0);
-    })
-    .forEach((isMatched, index) => {
-      if (!isMatched) {
-        report(
-          expression.location.range,
-          `Argument number ${index + 1} to operator '${operator}' \nshould be a ${params[index]}-parameter operator.`,
-        );
-      }
-    });
+  const operatorRange =
+    expression.selectorRanges?.at(-1) ?? getSpelledNameRange(expression, operator);
+  const matches = expression.args
+    .slice(0, params.length)
+    .map((arg, index) =>
+      matchArgument(arg, params[index], index, operator, operatorRange, scope, unit),
+    );
+  if (
+    isArgumentCountReported(
+      callee,
+      operator,
+      expression.args.length,
+      expression.location.range,
+      unit,
+    )
+  ) {
+    return;
+  }
+  matches.forEach((isMatched, index) => {
+    if (!isMatched && expression.location.range) {
+      unit.errors.push({
+        location: formatRange(expression.location.range),
+        message: `Argument number ${index + 1} to operator '${operator}' \nshould be a ${params[index]}-parameter operator.`,
+      });
+    }
+  });
 };
 
 const resolveArgument = (arg: Expression, scope: LocalName | undefined, unit: Unit) => {
@@ -1050,10 +1174,36 @@ const resolveArgument = (arg: Expression, scope: LocalName | undefined, unit: Un
 const isSelectionReported = (expression: Expression, scope: LocalName | undefined, unit: Unit) => {
   const failed = selectionErrors.get(expression);
   if (!failed) return false;
-  failed.args.forEach((arg) => resolveArgument(arg, scope, unit));
+  failed.applications.forEach((application) =>
+    application.args.forEach((arg, index) =>
+      matchArgument(
+        arg,
+        application.params[index],
+        index,
+        application.operator,
+        application.range,
+        scope,
+        unit,
+      ),
+    ),
+  );
   unit.errors.push(failed.error);
   return true;
 };
+
+const resolveLambda = (
+  expression: Expression & { kind: "Lambda" },
+  scope: LocalName | undefined,
+  unit: Unit,
+) =>
+  resolveExpression(
+    expression.body,
+    bindNames(scope, expression.params, expression.paramRanges, unit),
+    {
+      ...unit,
+      labelParams: [...unit.labelParams, ...expression.params],
+    },
+  );
 
 const resolveExpression = (
   expression: Expression,
@@ -1091,7 +1241,15 @@ const resolveExpression = (
       if (isInstanceArityReported(expression, scope, unit)) return;
       const name = expression.name;
       const arity = getSymbolArity(expression, name, scope, unit);
-      if (arity !== undefined && arity > 0) {
+      if (arity === 0) {
+        isArgumentCountReported(
+          findBinding(name, scope, unit),
+          name,
+          0,
+          getSpelledNameRange(expression, name),
+          unit,
+        );
+      } else if (arity !== undefined) {
         unit.errors.push({
           location: formatRange(getSpelledNameRange(expression, name)),
           message: `The operator ${resolveSynonym(name)} requires ${arity} arguments.`,
@@ -1106,11 +1264,13 @@ const resolveExpression = (
       resolveApply(expression, scope, unit);
       return;
     case "Lambda":
-      resolveExpression(
-        expression.body,
-        bindNames(scope, expression.params, expression.paramRanges, unit),
-        bindLabelParams(expression.params),
-      );
+      if (selections.has(expression)) resolveLambda(expression, scope, unit);
+      else if (expression.location.range) {
+        unit.errors.push({
+          location: formatRange(expression.location.range),
+          message: "LAMBDA expression used where an expression is required.",
+        });
+      }
       return;
     case "And":
     case "Or":
@@ -1133,7 +1293,13 @@ const resolveExpression = (
     case "Let":
       resolveExpression(
         expression.body,
-        resolveDefinitions(expression.definitions, scope, unit, expression.instances),
+        resolveDefinitions(
+          expression.definitions,
+          scope,
+          unit,
+          expression.instances,
+          expression.recursive,
+        ),
         unit,
       );
       return;
@@ -1279,6 +1445,13 @@ const resolveExpression = (
 
 const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
   facts.forEach((fact) => {
+    if (fact.kind === "ExceptAt" && fact.location.range) {
+      unit.errors.push({
+        location: formatRange(fact.location.range),
+        message: "Unknown operator: `@'.",
+      });
+      return;
+    }
     if (
       fact.kind === "ModuleFact" ||
       isInstanceArityReported(fact, scope, unit) ||
@@ -1295,6 +1468,87 @@ const checkFacts = (facts: Fact[], scope: LocalName | undefined, unit: Unit) =>
       });
     } else if (!isFact(name, unit)) resolveExpression(fact, scope, unit);
   });
+
+const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) => {
+  const range = def.location.range;
+  const name =
+    def.kind === "Identifier" ? def.name : def.kind === "OperatorReference" ? def.operator : "";
+  if (name === "" || !range) return true;
+  const binding =
+    lookupLocal(scope, name) ?? findSymbol(name, unit) ?? getModuleBinding(name, unit, range);
+  if (binding === undefined && (isFact(name, unit) || isStepName(name))) return true;
+  if (binding === undefined) {
+    unit.errors.push({
+      location: formatRange(range),
+      message: `Unknown operator: \`${resolveSynonym(name)}'.`,
+    });
+  }
+  if (binding && SELECTABLE_KINDS.has(binding.kind) && !isStepName(name)) return true;
+  unit.errors.push({
+    location: formatRange(range),
+    message: "DEF clause entry should describe a defined operator.",
+  });
+  return false;
+};
+
+const getHiddenExpressionLocation = (fact: Fact, scope: LocalName | undefined, unit: Unit) => {
+  const range = fact.location.range && formatRange(fact.location.range);
+  if (fact.kind === "ModuleFact" || selections.has(fact)) return undefined;
+  if (selectionErrors.has(fact) || fact.kind === "ExceptAt") return BUILTIN_LOCATION;
+  switch (fact.kind) {
+    case "Number":
+    case "String":
+    case "Decimal":
+    case "Let":
+    case "Label":
+      return undefined;
+    case "Identifier":
+    case "Apply":
+    case "Subexpression": {
+      const first = getSelectors(fact)[0];
+      if (fact.kind === "Subexpression" || first.kind !== "Name") return undefined;
+      const name = fact.kind === "Identifier" ? fact.name : fact.operator;
+      const goal = lookupLocal(scope, first.name)?.goal ?? getGoal(first.name, unit);
+      if (isFact(name, unit) || goal || (isStepName(name) && lookupLocal(scope, name))) {
+        return undefined;
+      }
+      const binding = findBinding(name, scope, unit);
+      const count = fact.kind === "Apply" ? fact.args.length : 0;
+      return binding?.arity === count ? range : BUILTIN_LOCATION;
+    }
+    default:
+      return range;
+  }
+};
+
+const checkUseOrHide = (
+  statement: UseOrHide | Extract<Proof, { kind: "By" }>,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const hidden =
+    statement.kind === "Hide"
+      ? statement.facts.map((fact) => getHiddenExpressionLocation(fact, scope, unit))
+      : [];
+  checkFacts(statement.facts, scope, unit);
+  const defCount = statement.defs.filter((def) => isDefinitionEntry(def, scope, unit)).length;
+  hidden.forEach((location) => {
+    if (location) {
+      unit.errors.push({
+        location,
+        message:
+          "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+      });
+    }
+  });
+  const range = statement.location.range;
+  if (statement.facts.length + defCount === 0 && range) {
+    unit.errors.push({
+      location: formatRange(range),
+      message: statement.kind === "By" ? "Empty BY" : "Empty USE or HIDE statement.",
+    });
+  }
+};
 
 const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit: Unit) => {
   if (symbol.set) resolveExpression(symbol.set, scope, unit);
@@ -1343,7 +1597,7 @@ const resolveStatement = (
 
 const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, outer: Unit) => {
   const unit = outer.hasLabelScope ? { ...outer, hasLabelScope: false } : outer;
-  if (proof?.kind === "By") checkFacts(proof.facts, scope, unit);
+  if (proof?.kind === "By") checkUseOrHide(proof, scope, unit);
   if (proof?.kind !== "Steps") return;
   proof.steps.reduce((current, step) => resolveStep(step, current, unit), scope);
 };
@@ -1392,7 +1646,7 @@ const resolveStep = (
     }
     case "Use":
     case "Hide":
-      checkFacts(body.facts, scope, unit);
+      checkUseOrHide(body, scope, unit);
       return bindNonFactStep(scope);
     case "Instance":
       return bindNonFactStep(resolveLocalInstance(body, scope, stepUnit));
@@ -1527,7 +1781,7 @@ const checkSubstitutions = (
       return;
     }
     if (expression.kind === "Lambda") {
-      resolveExpression(expression, scope, unit);
+      resolveLambda(expression, scope, unit);
       if (expression.params.length !== declaration.arity && range) {
         reportArity(declaration, formatRange(range));
       }
@@ -1696,13 +1950,7 @@ export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError
     }
   };
   units
-    .toSorted((left, right) =>
-      isBefore(left.location, right.location)
-        ? -1
-        : isBefore(right.location, left.location)
-          ? 1
-          : 0,
-    )
+    .toSorted((left, right) => compareLocations(left.location, right.location))
     .forEach((unit) => {
       const reported: SanyError[] = [];
       const warned: SanyError[] = [];
@@ -1824,6 +2072,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
             const binding: ModuleBinding = {
               kind: "Definition",
               arity: declaration.arity,
+              params: Array(declaration.arity).fill(0),
               range: declaration.location.range,
               position: declaration.location,
               isPending: true,
@@ -1889,7 +2138,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.uses.map((use) =>
         createCheck(use.location, undefined, false, (inner) =>
-          checkFacts(use.facts, undefined, inner),
+          checkUseOrHide(use, undefined, inner),
         ),
       ),
       {

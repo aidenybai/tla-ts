@@ -414,7 +414,11 @@ export const createSelectorResolver =
               const number = getArgNumber(item.op, operator.arity);
               if (number === -1) return addNonexistentError();
               walk.node = operands[number - 1];
-            } else if (operator.kind === "OpDef" && operator.defKind === "BuiltIn") {
+            } else if (
+              operator.kind === "OpDef" &&
+              operator.defKind === "BuiltIn" &&
+              node.nullKind !== "null"
+            ) {
               if (operator.name === "$RcdConstructor" || operator.name === "$SetOfRcds") {
                 if (operandNumber === -1) return addNonexistentError();
                 const pair = operands[operandNumber - 1];

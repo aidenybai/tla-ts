@@ -36,6 +36,15 @@ describe("subexpression references match TLC", () => {
       "assumption-violation",
     );
   });
+
+  it("selects an operand of a definition whose body is itself a selection", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nG(a) == a + 1\nH == 2 + 3\nF == G(1)!1\nE == H!1\nVARIABLE x\nInit == x = 0\nNext == x' = F!1 * 10 + E!1\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 12 }]);
+  });
 });
 
 describe("subexpression references into theorems match SANY", () => {
@@ -270,6 +279,107 @@ describe("subexpression references into theorems match SANY", () => {
         ],
         ["line 8, col 54 to line 8, col 54", "A name selector here must be from a LET clause."],
         ["line 9, col 9 to line 9, col 9", "Unknown operator: `E'."],
+      ],
+    ],
+    [
+      "selections of definitions whose bodies are selections",
+      "G(a, b) == <<a, b>>\nH == {2, 3}\nF == G(1, 2)!1\nE == H!1\nN == F!3\nP == E!2\nQ == E!1!1\nR == F!2!1\nS == G(1, 2)!7\nT == S!1",
+      [
+        [
+          "line 7, col 8 to line 7, col 8",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        [
+          "line 8, col 8 to line 8, col 8",
+          "Nonexistent operand specified by `argument selector 2'.",
+        ],
+        [
+          "line 9, col 10 to line 9, col 10",
+          "Selecting subexpression of expression that has none.",
+        ],
+        [
+          "line 10, col 10 to line 10, col 10",
+          "Selecting subexpression of expression that has none.",
+        ],
+        [
+          "line 11, col 14 to line 11, col 14",
+          "Nonexistent operand specified by `argument selector 7'.",
+        ],
+        [
+          "line 12, col 8 to line 12, col 8",
+          "Choosing operand `argument selector 1' of subexpression with no operands.",
+        ],
+      ],
+    ],
+    [
+      "selectors that a LET, a CASE or an expression without bound identifiers lacks",
+      "Op1(a, b) == <<a, b>>\nL == LET q == 1 IN <<q, 1>>\nC == CASE x = 1 -> 2 [] OTHER -> 3\nQ == \\A y \\in {1} : y = 1\nN == 7\nA1 == Op1(1, 2)!@ /\\ L!2 /\\ L!@ /\\ C!1 /\\ C!3!1 /\\ C!1!3 /\\ C!2!1\nA2 == C!@!1 /\\ N!@ /\\ Op1(1, 2)!(3) /\\ C!1!@ /\\ Q!@ /\\ L!1!@",
+      [
+        ["line 8, col 17 to line 8, col 17", "Nonexistent operand specified by `@'."],
+        ["line 8, col 24 to line 8, col 24", "A LET/IN expression has only one operand."],
+        ["line 8, col 31 to line 8, col 31", "A LET/IN expression has only one operand."],
+        ["line 8, col 38 to line 8, col 38", "Subexpression of CASE must have form !i!j."],
+        [
+          "line 8, col 45 to line 8, col 45",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        [
+          "line 8, col 56 to line 8, col 56",
+          "Second selector for CASE subexpression must specify  one of two operands.",
+        ],
+        ["line 8, col 65 to line 8, col 65", "Selecting OTHER in a CASE statement."],
+        ["line 9, col 9 to line 9, col 9", "Nonexistent operand specified by `@'."],
+        [
+          "line 9, col 18 to line 9, col 18",
+          "Selecting subexpression of expression that has none.",
+        ],
+        ["line 9, col 33 to line 9, col 35", "Nonexistent operand specified by `!(...)'."],
+        [
+          "line 9, col 44 to line 9, col 44",
+          "Second selector for CASE subexpression must specify  one of two operands.",
+        ],
+        ["line 9, col 49 to line 9, col 51", "Expected 1 arguments but found 0."],
+        ["line 9, col 60 to line 9, col 60", "Nonexistent operand specified by `@'."],
+      ],
+    ],
+    [
+      "the arguments of a selection that fails, against the parameters they fill",
+      "Op1(a0, P1(_)) == TRUE\nOp0(P0(_, _)) == 1\nA == Op1(LAMBDA p : p, {zz})!@\nB == Op0(LAMBDA p : p)!1\nC == Op1(Op0, Op0)!2",
+      [
+        [
+          "line 5, col 10 to line 5, col 21",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 5, col 24 to line 5, col 27",
+          "An expression appears as argument number 2 (counting from 1) to operator 'Op1', in a position an operator is required.",
+        ],
+        ["line 5, col 30 to line 5, col 30", "Nonexistent operand specified by `@'."],
+        [
+          "line 6, col 6 to line 6, col 8",
+          "Lambda expression with arity 1 used as argument 1 of operator `Op0', \nbut an operator of arity 2 is required.",
+        ],
+        [
+          "line 6, col 24 to line 6, col 24",
+          "Selecting subexpression of expression that has none.",
+        ],
+        ["line 7, col 10 to line 7, col 12", "The operator Op0 requires 1 arguments."],
+        [
+          "line 7, col 20 to line 7, col 20",
+          "Nonexistent operand specified by `argument selector 2'.",
+        ],
+      ],
+    ],
+    [
+      "@ and !(...) selectors of steps and theorems",
+      "THEOREM T == ASSUME NEW n PROVE n = n\nTHEOREM U == \\A y \\in {1} : y = 1\nTHEOREM TRUE\n<1>1. SUFFICES TRUE\n<1>2. TRUE # 0\n  <2>1. <1>1!@ /\\ <1>2!@ /\\ <1>2!(1) /\\ T!@ /\\ T!2!@ /\\ U!@ /\\ U!(1)\n  <2>2. QED\n<1>3. QED",
+      [
+        ["line 8, col 14 to line 8, col 14", "Nonexistent operand specified by `@'."],
+        ["line 8, col 24 to line 8, col 24", "Nonexistent operand specified by `@'."],
+        ["line 8, col 34 to line 8, col 36", "Nonexistent operand specified by `!(...)'."],
+        ["line 8, col 43 to line 8, col 43", "Nonexistent operand specified by `@'."],
+        ["line 8, col 50 to line 8, col 50", `Accessing ASSUME/PROVE clause ${SCOPE}`],
+        ["line 8, col 57 to line 8, col 59", "Expected 1 arguments but found 0."],
       ],
     ],
   ])("reports every error SANY reports for %s", async (_name, definitions, errors) => {
