@@ -427,3 +427,26 @@ describe("rationals", () => {
     ]);
   });
 });
+
+describe("tseitin-cnf, as Z3 5.3.2 composes it", () => {
+  it("leaves the core tactic out once the simplifier decides the goal", () => {
+    expect(
+      run([
+        "(declare-const b0 Bool)",
+        "(declare-const b1 Bool)",
+        "(push)",
+        "(assert (not (and false b0 true)))",
+        "(apply tseitin-cnf)",
+        "(pop)",
+        "(assert (and true b0 (not (and false b1))))",
+        "(apply tseitin-cnf)",
+        "(assert (or (and false b1) false))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  :precision precise :depth 1)\n)",
+      "(goals\n(goal\n  b0\n  :precision precise :depth 2)\n)",
+      "(goals\n(goal\n  false\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});

@@ -759,7 +759,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
               isEliminatingAnd: true,
               isKeepingDistinct: false,
             });
-            tseitinCnf(manager, goal);
+            if (!goal.isDecided()) tseitinCnf(manager, goal);
           } finally {
             original.reset();
           }
