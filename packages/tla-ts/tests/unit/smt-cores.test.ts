@@ -201,4 +201,45 @@ describe("runSmtlibScript orders cores and terms as Z3 does", () => {
       ]),
     ).toEqual(["unsat", "((not b0) b0)", "()", "unsat", "((< x 0) n1)"]);
   });
+
+  // mk_solver_for_logic gives QF_BV inc_sat_solver, which asserts a named assertion as a clause on
+  // its name.
+  it("answers the incremental checks of QF_BV with the SAT solver", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_BV)",
+        "(declare-const b0 Bool)",
+        "(declare-const b1 Bool)",
+        "(assert (not b0))",
+        "(assert (! b0 :named n2))",
+        "(check-sat-assuming (n2))",
+        "(get-unsat-core)",
+        "(check-sat-assuming ((not b1) b1))",
+        "(get-unsat-core)",
+        "(reset)",
+        "(set-logic QF_BV)",
+        "(declare-const v (_ BitVec 4))",
+        "(declare-const w (_ BitVec 4))",
+        "(assert (bvult v w))",
+        "(check-sat)",
+        "(assert (bvugt (bvmul v v) #x3))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "unsat",
+      "(b0)",
+      "unsat",
+      "((not b1) b1)",
+      "sat",
+      "sat",
+      "(",
+      "  (define-fun w () (_ BitVec 4)",
+      "    #xc)",
+      "  (define-fun v () (_ BitVec 4)",
+      "    #xb)",
+      ")",
+    ]);
+  });
 });
