@@ -848,10 +848,17 @@ export const runSmtlibScript = (
   };
   const hasNames = () => state.names.some((name) => name !== -1);
   // parse_check_sat shrinks the expression stack once the check has run.
-  const checkSatAssuming = (items: SmtList["items"], end: SmtToken) => {
+  const checkSatAssuming = (items: SmtList["items"], itemsEnd: SmtToken, end: SmtToken) => {
     const literals: number[] = [];
     try {
-      for (const item of items) literals.push(state.reader.parseFormula(item));
+      for (const [index, item] of items.entries())
+        literals.push(
+          state.reader.parseFormula(
+            item,
+            items[index + 1] ?? itemsEnd,
+            "invalid check-sat command, argument must be a Boolean literal",
+          ),
+        );
       checkSat(literals, end);
     } finally {
       for (const literal of literals) state.manager.decRef(literal);
@@ -976,7 +983,7 @@ export const runSmtlibScript = (
       "assert",
       (list) => {
         const term = list.items[1] ?? list.end;
-        const assertion = state.reader.parseAssertion(term);
+        const assertion = state.reader.parseAssertion(term, list.items[2] ?? list.end);
         const logicError = state.reader.getLogicError(assertion.formula);
         if (logicError !== undefined) {
           state.manager.decRef(assertion.formula);
@@ -1006,7 +1013,7 @@ export const runSmtlibScript = (
     [
       "check-sat",
       (list) => {
-        checkSatAssuming(list.items.slice(1), list.end);
+        checkSatAssuming(list.items.slice(1), list.end, list.end);
         validateCheck(list.end);
       },
     ],
@@ -1049,7 +1056,10 @@ export const runSmtlibScript = (
         const rule = list.items[1];
         if (rule === undefined) throw new SmtParseError("invalid rule, expected formula", list.end);
         const name = list.items[2];
-        getDatalog().addRule(state.reader.parseFormula(rule), isSymbol(name) ? name.text : "");
+        getDatalog().addRule(
+          state.reader.parseFormula(rule, rule),
+          isSymbol(name) ? name.text : "",
+        );
       },
     ],
     [
@@ -1123,7 +1133,7 @@ export const runSmtlibScript = (
             "invalid check-sat-assuming command, '(' expected",
             literals ?? list.end,
           );
-        checkSatAssuming(literals.items, list.end);
+        checkSatAssuming(literals.items, literals.end, list.end);
         validateCheck(list.end);
       },
     ],

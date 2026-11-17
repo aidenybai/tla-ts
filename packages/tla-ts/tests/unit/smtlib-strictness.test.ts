@@ -529,4 +529,25 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
       ]),
     ).toEqual(["2", "(or s r q p)", "(and p q)", "(or s r q p)"]);
   });
+
+  it("reports a term of assert or check-sat that is not Boolean at the token after it", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert x)",
+        "(assert x true)",
+        "(check-sat 1)",
+        "(check-sat-assuming (x true))",
+        "(check-sat-assuming (true x))",
+        "(assert (+ x 1))",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 9: invalid assert command, term is not Boolean")',
+      '(error "line 3 column 10: invalid assert command, term is not Boolean")',
+      '(error "line 4 column 12: invalid check-sat command, argument must be a Boolean literal")',
+      '(error "line 5 column 23: invalid check-sat command, argument must be a Boolean literal")',
+      '(error "line 6 column 27: invalid check-sat command, argument must be a Boolean literal")',
+      '(error "line 7 column 15: invalid assert command, term is not Boolean")',
+    ]);
+  });
 });

@@ -1,4 +1,4 @@
-import { SmtParseError, SmtUnsupportedError } from "../../../errors";
+import { SmtParseError, type SmtPosition, SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   getSymbolHash,
@@ -3184,21 +3184,25 @@ export const createSmtlibReader = (
     );
   };
 
-  // The caller takes the reference of the stack.
-  const parseFormula = (sexpr: SExpr) => {
+  // The caller takes the reference of the stack. Z3 reports a term that is not Boolean at the
+  // token after it.
+  const parseFormula = (
+    sexpr: SExpr,
+    follower: SmtPosition,
+    message = "invalid assert command, term is not Boolean",
+  ) => {
     runTerm(sexpr, false);
     const assertion = exprStack[exprStack.length - 1];
-    if (manager.sorts[assertion] !== SORT_BOOL)
-      throw new SmtParseError("invalid assert command, term is not Boolean", sexpr);
+    if (manager.sorts[assertion] !== SORT_BOOL) throw new SmtParseError(message, follower);
     exprStack.pop();
     return assertion;
   };
 
   // An assertion is named when the last name of its term is its own.
-  const parseAssertion = (sexpr: SExpr) => {
+  const parseAssertion = (sexpr: SExpr, follower: SmtPosition) => {
     releasePending();
     lastNamed.expr = -1;
-    const formula = parseFormula(sexpr);
+    const formula = parseFormula(sexpr, follower);
     return { formula, name: lastNamed.expr === formula ? lastNamed.name : undefined };
   };
 
@@ -3344,7 +3348,10 @@ export const parseSmtlib = (
       state.reader.declareCommand(list);
     } else if (name === "assert") {
       state.isInUse = true;
-      const assertion = state.reader.parseFormula(list.items[1] ?? list.end);
+      const assertion = state.reader.parseFormula(
+        list.items[1] ?? list.end,
+        list.items[2] ?? list.end,
+      );
       const logicError = state.reader.getLogicError(assertion);
       if (logicError !== undefined) {
         manager.decRef(assertion);
