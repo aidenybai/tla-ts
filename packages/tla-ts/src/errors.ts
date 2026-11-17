@@ -320,8 +320,7 @@ export class SmtTacticError extends TlaError {
   }
 }
 
-// Z3's smt setup rejects formulas outside the logic with a default_exception, which or-else does
-// not catch and a check reports as its reason for unknown.
+// Z3's setup throws a default_exception, which or-else doesn't catch and a check reports as unknown.
 export class SmtSetupError extends TlaError {
   constructor(message: string) {
     super(message);

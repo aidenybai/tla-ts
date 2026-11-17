@@ -411,7 +411,7 @@ export const runSmtlibScript = (
     rlimit: 0,
     printOptions: { ...DEFAULT_PRINT_OPTIONS },
     parserOptions: { isIgnoringBadPatterns: true },
-    // The answer (set-info :status ...) announces, which reset keeps.
+    // Z3 keeps set-info's :status across reset.
     status: L_UNDEF,
   };
   const createState = (): ScriptState => {

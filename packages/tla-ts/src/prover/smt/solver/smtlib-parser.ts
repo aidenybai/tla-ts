@@ -2218,8 +2218,6 @@ export const createSmtlibReader = (
     const op = named === OP_SUB && args.length === 1 ? OP_UMINUS : named;
     const domainSort = op === undefined ? -1 : getDomainSort(op, args, at);
     if (op !== undefined && domainSort !== -1) return mkApp(op, args, at, domainSort);
-    // The port gates each theory operator it has by the logic, as load_plugin does. A name it
-    // lacks may still be one Z3 knows, unless the logic leaves out the theory of the name.
     if (
       op === undefined &&
       !isPortedTheoryOperator(name) &&
@@ -3184,8 +3182,7 @@ export const createSmtlibReader = (
     );
   };
 
-  // The caller takes the reference of the stack. Z3 reports a term that is not Boolean at the
-  // token after it.
+  // The caller takes the stack's reference. Z3 reports a non-Boolean term at the token after it.
   const parseFormula = (
     sexpr: SExpr,
     follower: SmtPosition,
