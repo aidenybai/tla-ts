@@ -46727,10 +46727,10 @@ describe("BigInts", () => {
 
     it("stops at a calendar that Node takes", async () => {
       const result = await checkModel(`
-        const date = new Temporal.PlainDate(2000, 1, 1, "gregory");
+        const date = new Temporal.PlainDate(2000, 1, 1, "chinese");
         if (date.year !== 2000) throw new Error("year " + date.year);
       `);
-      expect(result.failure?.message).toContain("tla-ts can't use the calendar gregory");
+      expect(result.failure?.message).toContain("tla-ts can't use the calendar chinese");
     });
   });
 
