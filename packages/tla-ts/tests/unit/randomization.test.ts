@@ -145,6 +145,20 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     ]);
   });
 
+  // Deviation from TLC: TLC draws on from where the search stopped, finds no step and throws a NullPointerException.
+  it("draws again from the seed of the state it found the error in as it rebuilds the step", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nA == x' = RandomElement(1..1000)\nB == x' = RandomElement(1..1000)\nNext == A \\/ B\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => [step.label, step.state.x])).toEqual([
+      [undefined, 0],
+      ["A line 5, col 6 to line 5, col 32 of module M", 773],
+    ]);
+  });
+
   it("draws once for a constant TLCEval in the next-state relation", async () => {
     const result = await check({
       source:
