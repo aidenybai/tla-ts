@@ -294,57 +294,52 @@ export class AssertedFormulas {
     return this.formulas.items;
   }
 
-  // Like internalize_assertions, nothing is committed once the formulas are inconsistent.
-  reduce() {
-    if (this.qhead === this.formulas.size) return [];
-    if (!this.isInconsistent && (this.hasQuantifiers || this.isPreprocessing)) this.reduceCore();
-    if (this.isInconsistent) return [];
-    const result = this.formulas.items.slice(this.qhead);
-    this.macros.markForbidden(result);
-    for (const formula of result) this.substitution.update(formula);
-    this.qhead = this.formulas.size;
-    return result;
+  getQhead() {
+    return this.qhead;
   }
 
-  private reduceCore() {
-    if (this.macros.hasMacros()) this.findMacros();
+  commit(qhead = this.formulas.size) {
+    const committed = this.formulas.items.slice(this.qhead, qhead);
+    this.macros.markForbidden(committed);
+    for (const formula of committed) this.substitution.update(formula);
+    this.qhead = qhead;
+  }
+
+  reduce() {
+    if (this.isInconsistent || this.isCanceled() || this.qhead === this.formulas.size) return;
+    if (!this.hasQuantifiers && !this.isPreprocessing) return;
+    const isFindingMacros = this.isFindingMacros && this.hasQuantifiers;
+    if (this.macros.hasMacros()) this.invoke(isFindingMacros, () => this.findMacros());
     this.setEliminateAnd(false);
-    this.propagateValues();
-    if (this.isInconsistent) return;
-    this.findMacros();
-    if (this.isInconsistent) return;
-    if (this.isNnfCnf || this.hasQuantifiers) {
-      this.isReducePending = true;
-      this.nnfCnf();
-      if (this.isInconsistent) return;
-    }
+    if (!this.invoke(true, () => this.propagateValues())) return;
+    if (!this.invoke(isFindingMacros, () => this.findMacros())) return;
+    if (!this.invoke(this.isNnfCnf || this.hasQuantifiers, () => this.nnfCnf())) return;
     this.setEliminateAnd(true);
-    this.reduceAsserted();
-    if (this.isInconsistent) return;
-    if (this.isEliminatingTermIte) {
-      this.elimTermIte();
-      if (this.isInconsistent) return;
-    }
-    if (this.hasQuantifiers && this.simplifyFormulas((formula) => this.refineInjAxiom(formula)))
-      this.isReducePending = true;
-    if (this.isInconsistent) return;
-    this.findMacros();
-    if (this.isInconsistent) return;
-    if (
-      this.hasQuantifiers &&
-      this.simplifyFormulas((formula) => this.patternInference.rewrite(formula))
-    )
-      this.isReducePending = true;
-    if (this.isInconsistent) return;
-    if (this.simplifyFormulas((formula) => this.bvSharing.rewrite(formula)))
-      this.isReducePending = true;
-    if (this.isInconsistent) return;
-    this.reduceAsserted();
-    if (this.isInconsistent) return;
-    this.isReducePending = true;
-    this.flattenClauses();
-    if (this.isInconsistent) return;
+    if (!this.invoke(true, () => this.reduceAsserted())) return;
+    if (!this.invoke(this.isEliminatingTermIte, () => this.elimTermIte())) return;
+    const refineInjAxiom = (formula: number) => this.refineInjAxiom(formula);
+    if (!this.invoke(this.hasQuantifiers, () => this.simplifyFormulas(refineInjAxiom))) return;
+    if (!this.invoke(isFindingMacros, () => this.findMacros())) return;
+    const inferPatterns = (formula: number) => this.patternInference.rewrite(formula);
+    if (!this.invoke(this.hasQuantifiers, () => this.simplifyFormulas(inferPatterns))) return;
+    const maximizeBvSharing = () => {
+      if (this.simplifyFormulas((formula) => this.bvSharing.rewrite(formula)))
+        this.reduceAsserted();
+    };
+    if (!this.invoke(true, maximizeBvSharing)) return;
+    if (!this.invoke(true, () => this.reduceAsserted())) return;
+    if (!this.invoke(true, () => this.flattenClauses())) return;
     this.flushCache();
+  }
+
+  private isCanceled() {
+    return !this.manager.limit.inc();
+  }
+
+  private invoke(isApplying: boolean, step: () => void) {
+    if (!isApplying) return true;
+    step();
+    return !this.isInconsistent && !this.isCanceled();
   }
 
   private pushAssertion(expr: number, result: RefVector) {
@@ -387,7 +382,7 @@ export class AssertedFormulas {
 
   private elimTermIte() {
     const elim = this.termIteElim;
-    if (this.simplifyFormulas((formula) => elim.rewrite(formula))) this.isReducePending = true;
+    if (!this.simplifyFormulas((formula) => elim.rewrite(formula))) return;
     if (elim.definitions.size > 0) this.isReducePending = true;
     for (const definition of elim.definitions.items) this.formulas.push(definition);
     this.flushCache();
@@ -396,7 +391,6 @@ export class AssertedFormulas {
   }
 
   private findMacros() {
-    if (!this.isFindingMacros || !this.hasQuantifiers) return;
     this.isReducePending = true;
     this.swapFormulas(this.macros.find(this.formulas.items.slice(this.qhead)));
     this.flushCache();
@@ -422,22 +416,26 @@ export class AssertedFormulas {
     formulas.reset();
   }
 
+  // A stop at the limit keeps the formulas as they were and answers false.
   private simplifyFormulas(simplify: (formula: number) => number) {
     const manager = this.manager;
     const formulas = new RefVector(manager);
-    let isChanged = false;
     for (let index = this.qhead; index < this.formulas.size; index++) {
       const formula = this.formulas.items[index];
       const result = simplify(formula);
       if (result === formula) formulas.push(formula);
       else {
         this.pushAssertion(result, formulas);
-        isChanged = true;
+        this.isReducePending = true;
       }
       manager.decRef(result);
+      if (this.isCanceled()) {
+        formulas.reset();
+        return false;
+      }
     }
     this.swapFormulas(formulas);
-    return isChanged;
+    return true;
   }
 
   private reduceAsserted() {
@@ -475,28 +473,42 @@ export class AssertedFormulas {
   }
 
   private nnfCnf() {
+    this.isReducePending = true;
     const manager = this.manager;
     const nnf = new Nnf(manager, this.names);
     const formulas = new RefVector(manager);
     const todo = new RefVector(manager);
-    for (let index = this.qhead; index < this.formulas.size; index++) {
-      todo.reset();
-      let result = nnf.apply(this.formulas.items[index], todo);
-      todo.push(result);
-      for (let position = 0; position < todo.size; position++) {
-        const rewritten = this.rewriter.rewrite(todo.items[position]);
+    const isFinished = (() => {
+      for (let index = this.qhead; index < this.formulas.size; index++) {
+        todo.reset();
+        let result = nnf.apply(this.formulas.items[index], todo);
+        todo.push(result);
+        if (this.isCanceled()) {
+          manager.decRef(result);
+          return false;
+        }
+        for (let position = 0; position < todo.size; position++) {
+          const rewritten = this.rewriter.rewrite(todo.items[position]);
+          manager.decRef(result);
+          result = rewritten;
+          if (this.isCanceled()) {
+            manager.decRef(result);
+            return false;
+          }
+          this.pushAssertion(result, formulas);
+        }
         manager.decRef(result);
-        result = rewritten;
-        this.pushAssertion(result, formulas);
       }
-      manager.decRef(result);
-    }
-    this.swapFormulas(formulas);
+      return true;
+    })();
+    if (isFinished) this.swapFormulas(formulas);
     todo.reset();
+    formulas.reset();
     nnf.release();
   }
 
   private flattenClauses() {
+    this.isReducePending = true;
     const manager = this.manager;
     const mkNegation = (expr: number) =>
       manager.isNot(expr) ? manager.getArg(expr, 0) : manager.mkApp(OP_NOT, [expr], SORT_BOOL);

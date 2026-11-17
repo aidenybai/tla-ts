@@ -1502,15 +1502,23 @@ export class Context extends Internalizer {
     this.asserted = asserted;
     this.macros = asserted.macros;
     this.hasQuantifiers = asserted.hasQuantifiers;
-    const formulas = asserted.reduce();
+    if (this.checkCanceled()) return;
+    asserted.reduce();
+    if (this.checkCanceled()) return;
     if (asserted.isInconsistent) {
       this.setConflict("axiom", null);
       return;
     }
-    for (const formula of formulas) {
-      if (this.isInconsistent()) break;
-      this.internalizeAssertion(formula, 0);
+    const formulas = asserted.getFormulas();
+    const size = asserted.getNumFormulas();
+    for (let qhead = asserted.getQhead(); qhead < size && !this.isInconsistent(); qhead++) {
+      if (this.checkCanceled()) {
+        asserted.commit(qhead);
+        return;
+      }
+      this.internalizeAssertion(formulas[qhead], 0);
     }
+    asserted.commit();
   }
 
   initAssumptions(assumptions: number[], asserted: AssertedFormulas) {
@@ -1519,7 +1527,7 @@ export class Context extends Internalizer {
     this.unsatCore = [];
     if (assumptions.length > 0) {
       this.propagate();
-      if (this.isInconsistent()) return;
+      if (this.isInconsistent() || this.checkCanceled()) return;
       this.delInactiveLemmas();
       this.pushScope();
       const manager = this.manager;
@@ -1619,10 +1627,12 @@ export class Context extends Internalizer {
   }
 
   search() {
+    if (this.asserted?.isInconsistent && !this.isInconsistent()) this.setConflict("axiom", null);
     if (this.isInconsistent()) {
       this.resolveConflict();
       return L_FALSE;
     }
+    if (this.checkCanceled()) return L_UNDEF;
     this.resetModel();
     for (const theory of this.theories) theory.initSearchEh();
     this.qmanager.initSearchEh();
