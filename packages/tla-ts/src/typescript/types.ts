@@ -81,7 +81,7 @@ export const findDomain = (type: ts.Type, context: Context): string | Infinite =
   if (type.isUnion()) {
     const literals = type.types.map((member) => getLiteral(member, context));
     const others = findDomains(
-      type.types.filter((_, index) => literals[index] === undefined),
+      type.types.filter((_value, index) => literals[index] === undefined),
       context,
     );
     if (!Array.isArray(others)) return others;
@@ -91,7 +91,7 @@ export const findDomain = (type: ts.Type, context: Context): string | Infinite =
         isNumericKey(left) && isNumericKey(right) ? Number(left) - Number(right) : 0,
       );
     return [...(enumerated.length > 0 ? [`{${enumerated.join(", ")}}`] : []), ...others]
-      .map((domain, _, domains) => (domains.length > 1 ? wrap(domain) : domain))
+      .map((domain, _index, domains) => (domains.length > 1 ? wrap(domain) : domain))
       .join(" \\cup ");
   }
   const literal = getLiteral(type, context);

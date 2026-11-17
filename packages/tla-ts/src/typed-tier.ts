@@ -959,7 +959,7 @@ const createValueReader = (type: Type, plains: Plains): ((plain: Plain) => Value
 const getRecordShapes = (resolved: RecType) =>
   resolved.shapes.map((names) => {
     const order = names
-      .map((_, index) => index)
+      .map((_value, index) => index)
       .sort((left, right) => compareValues(names[left], names[right]));
     return {
       names: order.map((index) => names[index]),
@@ -1314,11 +1314,11 @@ const getIndexCode = (program: Program, type: FnType, code: string) => {
   }
   const rows = keys.map((key) => (Array.isArray(key) ? key : [key]));
   const isBoxed = rows.every((row) => row.length === rows[0].length && row.every(Number.isInteger));
-  const columns = rows[0].map((_, column) => {
+  const columns = rows[0].map((_value, column) => {
     const values = rows.map((row) => Number(row[column]));
     return { low: Math.min(...values), size: Math.max(...values) - Math.min(...values) + 1 };
   });
-  const strides = columns.map((_, column) =>
+  const strides = columns.map((_value, column) =>
     columns.slice(column + 1).reduce((product, next) => product * next.size, 1),
   );
   if (!isBoxed || strides[0] * columns[0].size > MAXIMUM_BITMAP) {
@@ -1397,7 +1397,8 @@ interface Frame {
   isNext: boolean;
 }
 
-const getVariableCodes = (program: Program) => program.variableTypes.map((_, index) => `v${index}`);
+const getVariableCodes = (program: Program) =>
+  program.variableTypes.map((_value, index) => `v${index}`);
 
 // An expression primed as a whole reads every variable in the next state, where priming again is an
 // error. A variable the action hasn't assigned yet has no value there, and TLC fails on it.
@@ -1580,7 +1581,7 @@ const getOperatorArgument = (
 ): OperatorBinding => {
   // An operator such as \cap applies as an expression that applies it, so a builtin compiles as one.
   if (arg.kind === "OperatorReference") {
-    const names = Array.from({ length: arity }, (_, index) => `#${index}`);
+    const names = Array.from({ length: arity }, (_value, index) => `#${index}`);
     return {
       kind: "Operator",
       definition: {
@@ -4611,7 +4612,9 @@ const getSelections = (count: number) => {
 };
 
 const getBits = (mask: number) =>
-  Array.from({ length: MASK_BITS }, (_, bit) => bit).filter((bit) => (mask & (1 << bit)) !== 0);
+  Array.from({ length: MASK_BITS }, (_value, bit) => bit).filter(
+    (bit) => (mask & (1 << bit)) !== 0,
+  );
 
 const advanceOdometer = (positions: number[], base: number) => {
   for (let index = positions.length - 1; index >= 0; index--) {
@@ -4730,7 +4733,7 @@ const HELPERS = {
   sortMap: (compare: Comparer, keys: Plain[], values: Plain[]) => {
     if (keys.length > MAXIMUM_INSERTION_SORT) {
       const order = keys
-        .map((_, index) => index)
+        .map((_value, index) => index)
         .sort((left, right) => compare(keys[left], keys[right]));
       return [order.map((index) => keys[index]), order.map((index) => values[index])];
     }
@@ -4822,7 +4825,7 @@ const HELPERS = {
   interval: (low: number, high: number) =>
     high - low + 1 > getMaximumSetSize()
       ? deopt()
-      : Array.from({ length: Math.max(0, high - low + 1) }, (_, index) => low + index),
+      : Array.from({ length: Math.max(0, high - low + 1) }, (_value, index) => low + index),
   index: (index: Int32Array, offset: number) =>
     offset >= 0 && offset < index.length ? index[offset] : -1,
   has: (mask: number, element: number) =>
@@ -4893,7 +4896,7 @@ const HELPERS = {
     map[0].every((key, index) => key === index + 1) ? map[1] : deopt(),
   toSequenceMask: (map: [number, Plain[]]) =>
     map[0] === HELPERS.range(1, map[1].length) ? map[1] : deopt(),
-  fromSequence: (values: Plain[]) => [values.map((_, index) => index + 1), values],
+  fromSequence: (values: Plain[]) => [values.map((_value, index) => index + 1), values],
   fromSequenceMask: (values: Plain[]) => [HELPERS.range(1, values.length), values],
   lookupScanned: (compare: Comparer, map: Plain[][], key: Plain) => {
     const index = findScannedKey(compare, map[0], key);
@@ -5259,7 +5262,7 @@ const getKeyWriter = (
     case "Fn": {
       const positions = isPermuted && getMovedPositions(images, resolved.domain);
       if (!positions) {
-        return `{ const ${name} = ${code}; ${resolved.domain.map((_, index) => getInner(resolved.range, `${name}[${index}]`)).join(" ")} }`;
+        return `{ const ${name} = ${code}; ${resolved.domain.map((_value, index) => getInner(resolved.range, `${name}[${index}]`)).join(" ")} }`;
       }
       const base = program.indexes.length;
       program.indexes.push(
@@ -5272,7 +5275,7 @@ const getKeyWriter = (
         }),
       );
       const sources = getName(program, "s");
-      return `{ const ${name} = ${code}; const ${sources} = D[${base} + G]; ${resolved.domain.map((_, index) => getInner(resolved.range, `${name}[${sources}[${index}]]`)).join(" ")} }`;
+      return `{ const ${name} = ${code}; const ${sources} = D[${base} + G]; ${resolved.domain.map((_value, index) => getInner(resolved.range, `${name}[${sources}[${index}]]`)).join(" ")} }`;
     }
     case "Tup":
       return `{ const ${name} = ${code}; ${getParts(resolved)
@@ -5738,7 +5741,7 @@ const compileSpec = (
     return () => (unchanged ? `!(${unchanged.emit()}) && (${action.emit()})` : action.emit());
   });
   program.variableTypes.forEach((type) => closeType(type));
-  const parameters = program.variableTypes.map((_, index) => `v${index}`).join(", ");
+  const parameters = program.variableTypes.map((_value, index) => `v${index}`).join(", ");
   const unpack = `const [${parameters}] = state;`;
   // A state predicate reads the state through the variables it unpacks, so it holds of a successor
   // with its parent's values of those.
@@ -5786,7 +5789,7 @@ const compileSpec = (
   const keyOrder = check.view
     ? [...new Set(getProjectedVariables(program, check.view, new Map()))]
     : program.variableTypes
-        .map((_, index) => index)
+        .map((_value, index) => index)
         .sort((left, right) => getKeyCost(left) - getKeyCost(right));
   const getKeyWriters = (isPermuted: boolean) =>
     keyOrder.map((index) =>
@@ -5840,7 +5843,7 @@ const compileSpec = (
         let c = 0;
         let k = -1;
         compare: { ${imageComparisons.map((item, position) => `${item.build} c = ${item.comparison}; if (c > 0) continue images; if (c < 0) { k = ${position}; ${item.choose} break compare; }`).join(" ")} }
-        switch (k) { ${imageComparisons.map((_, position) => `case ${position}: ${imageComparisons[position + 1]?.note ?? ""}`).join(" ")} }
+        switch (k) { ${imageComparisons.map((_value, position) => `case ${position}: ${imageComparisons[position + 1]?.note ?? ""}`).join(" ")} }
       }
       ${imageComparisons.map((item) => item.build).join(" ")}`;
   const viewKeyCode = `${smallestCode} ${viewWriters.join(" ")}`;
@@ -5885,7 +5888,7 @@ const compileSpec = (
   const values = program.plains.values;
   const ranks = new Int32Array(values.length);
   values
-    .map((_, id) => id)
+    .map((_value, id) => id)
     .sort((left, right) => compareAtoms(values[left], values[right]))
     .forEach((id, rank) => {
       ranks[id] = rank;
@@ -5922,7 +5925,7 @@ const compileSpec = (
       X[0] = i;
       ${readers.map((reader, index) => `const value${index} = ${reader}; X[${index + 1}] = i;`).join(" ")}
       cursor.position = (i + 3) & ~3;
-      E = [${readers.map((_, index) => `value${index}`).join(", ")}];
+      E = [${readers.map((_value, index) => `value${index}`).join(", ")}];
       return E;
     },
     writeKey: (state, arena) => {
@@ -5951,7 +5954,9 @@ const compileSpec = (
   // A key is the smallest image among those whose sums of moved atoms, in a fixed order of the
   // atoms, are smallest. Which images those are depends only on the state, so its orbit shares it.
   const moved = Int32Array.from(
-    program.plains.values.flatMap((_, id) => (atoms.some((table) => table[id] !== id) ? [id] : [])),
+    program.plains.values.flatMap((_value, id) =>
+      atoms.some((table) => table[id] !== id) ? [id] : [],
+    ),
   );
   const preimages = [
     moved,
@@ -6048,7 +6053,7 @@ const MINIMUM_SORTED_IMAGES = 24;
 const getFullOrbits = (preimages: Int32Array[]): Orbits | undefined => {
   if (preimages.length < MINIMUM_SORTED_IMAGES) return undefined;
   const moved = preimages[0];
-  const roots = Int32Array.from({ length: Math.max(0, ...moved) + 1 }, (_, atom) => atom);
+  const roots = Int32Array.from({ length: Math.max(0, ...moved) + 1 }, (_value, atom) => atom);
   const findRoot = (atom: number): number =>
     roots[atom] === atom ? atom : (roots[atom] = findRoot(roots[atom]));
   preimages.forEach((preimage) =>
@@ -6063,7 +6068,8 @@ const getFullOrbits = (preimages: Int32Array[]): Orbits | undefined => {
     starts[index + 1] = starts[index] + orbit.length;
   });
   const count = orbits.reduce(
-    (product, orbit) => orbit.reduce((factorial, _, index) => factorial * (index + 1), product),
+    (product, orbit) =>
+      orbit.reduce((factorial, _value, index) => factorial * (index + 1), product),
     1,
   );
   if (count !== preimages.length) return undefined;

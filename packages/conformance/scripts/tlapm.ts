@@ -152,7 +152,7 @@ export const normalizeTlapmTranscript = (output: string, directory: string) => {
     .replace(MISSING_EXECUTABLE, "$1<PATH>\n");
   const messages: Map<string, string>[] = [];
   const lines: string[] = [];
-  const remainder = text.replace(/@!!BEGIN\n([\s\S]*?)@!!END\n?/g, (_, block: string) => {
+  const remainder = text.replace(/@!!BEGIN\n([\s\S]*?)@!!END\n?/g, (_match, block: string) => {
     messages.push(parseToolboxMessage(block));
     return "\u0000";
   });
