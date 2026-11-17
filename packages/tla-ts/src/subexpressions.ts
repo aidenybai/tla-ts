@@ -18,6 +18,7 @@ import {
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 import { getSourceName, mapChildren, mapDefinition } from "./instances";
 import { parenthesizedRanges } from "./parser";
+import { STANDARD_LEVELS } from "./standard-definitions";
 import { resolveSynonym } from "./tlc/jar-data";
 import {
   getArity,
@@ -590,6 +591,14 @@ const resolveSubexpressions = (
       : mapped;
   }
   const callee = expression.kind === "Apply" ? lookup(expression.operator) : undefined;
+  // SANY expects an operator argument only of a user-defined operator, which a standard module's built-in operators stand for.
+  const calleeParams =
+    callee?.kind === "Operator"
+      ? callee.params
+      : expression.kind === "Apply"
+        ? STANDARD_LEVELS.get(expression.operator.slice(expression.operator.lastIndexOf("!") + 1))
+            ?.formals
+        : undefined;
   const rebuilt =
     expression.kind === "Apply"
       ? {
@@ -599,7 +608,7 @@ const resolveSubexpressions = (
               arg,
               lookup,
               isGoal,
-              callee?.kind !== "Operator" || callee.params[index]?.arity !== 0,
+              calleeParams !== undefined && calleeParams[index]?.arity !== 0,
             ),
           ),
         }

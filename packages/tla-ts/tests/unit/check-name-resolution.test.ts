@@ -2897,6 +2897,40 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each<[string, [string, string][]]>([
+    [
+      "EXTENDS Naturals\nRECURSIVE Rec0(_, _)\nRec0 == DOMAIN Rec0!2!2",
+      [
+        [
+          "line 4, col 1 to line 4, col 23",
+          "Definition of Rec0 has different arity than its RECURSIVE declaration.",
+        ],
+        ["line 4, col 16 to line 4, col 23", "The operator Rec0 requires 2 arguments."],
+      ],
+    ],
+    [
+      "Op(x) == {x}\nB == DOMAIN Op!1!2",
+      [["line 3, col 13 to line 3, col 18", "The operator Op requires 1 arguments."]],
+    ],
+    [
+      "CONSTANT C(_)\nOp(x) == {x}\nB == C(Op!1!3)",
+      [["line 4, col 8 to line 4, col 13", "The operator Op requires 1 arguments."]],
+    ],
+    [
+      "Op(x) == {x}\nH(F(_)) == F(Op!1!3)",
+      [["line 3, col 14 to line 3, col 19", "The operator Op requires 1 arguments."]],
+    ],
+  ])(
+    "checks a selection's arity right away as an argument of an operator that is not user-defined in %j like SANY",
+    async (source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(
