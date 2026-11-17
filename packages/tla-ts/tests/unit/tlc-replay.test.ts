@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { check, formatValue } from "../../src";
 import type { Expression } from "../../src/ast";
 import type { TlcVersion } from "../../src/tlc/version";
 
@@ -258,6 +258,22 @@ describe("the replay of a failed initial state matches TLC", () => {
       },
     });
     expect(counts).toEqual([2]);
+  });
+
+  it("reports each violated invariant again under -continue until it fails", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\n${HEADER}\nInit == x \\in 1..3\nNext == x' = x\nInv0 == x > 5\nInv1 == x # 2 \\/ CHOOSE e \\in {} : TRUE\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv0\nINVARIANT Inv1",
+      isContinued: true,
+      onPrint: () => {},
+    });
+    expect([
+      result.generatedStates,
+      result.failure?.traceOutput?.map((line) =>
+        line.kind === "initial-state-violation" ? `${line.name} ${formatValue(line.state.x)}` : line.kind,
+      ),
+      formatCallStack(result.failure?.callStack),
+    ]).toEqual([2, ["Inv0 1", "Inv0 2"], ["8.9-8.18", "11.9-11.39", "11.18-11.39"]]);
   });
 
   it("counts every initial state after it fails to fingerprint one", async () => {

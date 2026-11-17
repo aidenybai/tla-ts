@@ -668,16 +668,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             runtime.queueSize++;
             liveness?.addInitialState(states.length, state, tracing);
           };
-          const violation = search.checkReplayedInitialState(state, tracing, addFingerprint);
-          if (violation) {
+          search.checkReplayedInitialState(state, tracing, addFingerprint, (violation) => {
             const traced = traces.toTrace([{ action: undefined, state }], []).trace[0].state;
             capturedLines?.push({
               kind: "initial-state-violation",
               ...violation,
               state: traced,
             });
-            throw STOP_REPLAY;
-          }
+            if (!options.isContinued || violation.status !== "invariant-violation") {
+              throw STOP_REPLAY;
+            }
+          });
         } catch (error) {
           const isFingerprintFailure =
             error instanceof TlaEvaluationError && tracing.callStack?.fingerprint !== undefined;

@@ -751,7 +751,8 @@ export interface Search {
     state: Value[],
     tracing: Environment,
     addFingerprint: () => void,
-  ) => Pick<InitialStateViolation, "status" | "name"> | undefined;
+    onViolated: (violation: Pick<InitialStateViolation, "status" | "name">) => void,
+  ) => void;
   checkReplayedSuccessor: (
     state: Value[],
     next: Value[],
@@ -1353,18 +1354,20 @@ export const createSearch = (
         onViolated(predicate);
       }
     },
-    checkReplayedInitialState: (state, tracing, addFingerprint) => {
+    checkReplayedInitialState: (state, tracing, addFingerprint, onViolated) => {
       const holdsIn = (expression: Expression, scope: Scope | undefined) =>
         holdsLikeTlc(expression, getContext(tracing, state, undefined, scope));
       if (constraints.every((constraint) => holdsIn(constraint.predicate, constraint.scope))) {
         addFingerprint();
       }
-      const invariant = invariantPredicates.find((check) => !holdsIn(check.predicate, check.scope));
-      if (invariant) return { status: "invariant-violation", name: invariant.name };
+      for (const invariant of invariantPredicates) {
+        if (holdsIn(invariant.predicate, invariant.scope)) continue;
+        onViolated({ status: "invariant-violation", name: invariant.name });
+      }
       const predicate = properties.initialPredicates.find(
         (check) => !holdsIn(check.expression, check.scope),
       );
-      return predicate && { status: "liveness-violation", name: predicate.name };
+      if (predicate) onViolated({ status: "liveness-violation", name: predicate.name });
     },
     checkReplayedSuccessor: (state, next, tracing, addFingerprint) => {
       const isInModel =
