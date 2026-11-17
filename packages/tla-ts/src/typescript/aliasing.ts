@@ -533,17 +533,16 @@ const getEscapes = (
 export const getReached = (roots: readonly ts.Node[], context: Context) => {
   const table = context.nodes;
   const reached = [...roots];
-  // A bit for each node of the program's files that the walk has seen, and the few nodes that no
+  // The walk's mark on each node of the program's files that it has seen, and the few nodes that no
   // file walks to, such as JSDoc's.
-  const isSeen = new Uint32Array((table.nodes.length + 31) >>> 5);
+  table.generation += 1;
+  const generation = table.generation;
   const seenElsewhere = new Set<ts.Node>();
   const hasSeen = (node: ts.Node, position: number) =>
-    position < 0
-      ? seenElsewhere.has(node)
-      : (isSeen[position >>> 5] & (1 << (position & 31))) !== 0;
+    position < 0 ? seenElsewhere.has(node) : table.marks[position] === generation;
   const see = (node: ts.Node, position: number) => {
     if (position < 0) seenElsewhere.add(node);
-    else isSeen[position >>> 5] |= 1 << (position & 31);
+    else table.marks[position] = generation;
   };
   roots.forEach((root) => see(root, getPosition(table, root)));
   // A type runs nothing, though a class's base, which TypeScript parses as one, runs.

@@ -5299,11 +5299,9 @@ export const findNodesOf = <T extends ts.Node>(
 
 export const findNodes = <T extends ts.Node>(root: ts.Node, test: (node: ts.Node) => node is T) => {
   const found: T[] = [];
-  const visit = (node: ts.Node) => {
+  const visit = (node: ts.Node): undefined => {
     if (test(node)) found.push(node);
-    ts.forEachChild(node, (child) => {
-      visit(child);
-    });
+    return ts.forEachChild(node, visit);
   };
   visit(root);
   return found;

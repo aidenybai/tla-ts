@@ -11,7 +11,8 @@ declare module "@typescript/typescript6" {
 // each by its position there, as columns: the node, the position past its subtree, the position
 // of its file, and an identifier's symbol. A node's position is found by its id, through a slot per
 // id from the files' lowest, which holds the position plus one, or 0 for a node of no file. The
-// positions of each kind of node run in order, the kind's from its start to the next kind's.
+// positions of each kind of node run in order, the kind's from its start to the next kind's. A walk
+// that marks the nodes it has seen marks each with its own generation, so that no walk clears them.
 export interface ProgramNodes {
   first: number;
   positions: Int32Array;
@@ -21,6 +22,8 @@ export interface ProgramNodes {
   symbols: (ts.Symbol | undefined)[];
   kindStarts: Int32Array;
   kindPositions: Int32Array;
+  marks: Int32Array;
+  generation: number;
 }
 
 // The positions of the identifiers that name each symbol, by the symbol's id and then in order, as
@@ -89,6 +92,8 @@ export const createProgramNodes = (
     ),
     kindStarts,
     kindPositions,
+    marks: new Int32Array(nodes.length),
+    generation: 0,
   };
 };
 
