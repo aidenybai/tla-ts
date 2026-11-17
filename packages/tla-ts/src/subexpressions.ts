@@ -32,6 +32,7 @@ import {
   selectionErrors,
   selectionArguments,
   selections,
+  selectionSources,
   SELECTION_NAME,
   factReferences,
   type NullSelection,
@@ -121,7 +122,13 @@ const wrapLets = (body: Expression, lets: Definition[][], location: SourceLocati
 const createApplication = (selection: Selection, body: Expression): Expression => {
   const location = selection.location;
   const wrapped = wrapLets(body, selection.lets, location);
-  if (selection.params.length === 0) return wrapped;
+  if (selection.params.length === 0 && wrapped !== body) return wrapped;
+  if (selection.params.length === 0) {
+    // Each selection gets its own node, so its null checks don't overwrite another's.
+    const copy = { ...body };
+    selectionSources.set(copy, body);
+    return copy;
+  }
   if (selection.args.length === 0) {
     if (selection.params.some((param) => param.arity > 0)) {
       throw createError("Selected an operator with operator parameters as an argument", location);
@@ -338,14 +345,13 @@ const selectSubexpression = (
       const selected = selectionErrors.has(current)
         ? current
         : resolveSubexpressions(current, lookup, isGoal);
+      const noOperands = `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`;
       if (selectionErrors.has(selected)) {
-        report(
-          range,
-          `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`,
-        );
+        report(range, noOperands);
         return;
       }
       if (selections.has(selected) && selected.kind !== "Lambda") {
+        checkNull(selected, noOperands, true);
         current =
           selected.kind === "Let" &&
           selected.body.kind === "Apply" &&

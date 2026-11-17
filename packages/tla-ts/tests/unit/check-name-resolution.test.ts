@@ -2450,6 +2450,33 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("reports each selection of an expression that failed to resolve, and selecting through it, like SANY", async () => {
+    const unexpected =
+      "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.";
+    await expect(
+      checkNames(
+        "CONSTANT c\nOp == {-c, 1}\nB == Op!1\nC == Op!1\nD == {Op!1, 1}\nE == D!1!1\nTHEOREM T == {Op!1, 2}\nUSE T!1!1",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 8 to line 3, col 8 of module M",
+          message: "Could not find declaration or definition of symbol '-.'.",
+        },
+        {
+          location: "line 3, col 8 to line 3, col 9 of module M",
+          message: "Couldn't resolve prefix operator symbol `-.'.",
+        },
+        { location: "line 4, col 9 to line 4, col 9 of module M", message: unexpected },
+        { location: "line 5, col 9 to line 5, col 9 of module M", message: unexpected },
+        { location: "line 6, col 10 to line 6, col 10 of module M", message: unexpected },
+        { location: "line 7, col 10 to line 7, col 10 of module M", message: noOperands },
+        { location: "line 8, col 18 to line 8, col 18 of module M", message: unexpected },
+        { location: "line 9, col 9 to line 9, col 9 of module M", message: noOperands },
+      ]),
+    );
+  });
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(

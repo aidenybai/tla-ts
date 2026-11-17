@@ -131,12 +131,19 @@ export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
+export const selectionSources = new WeakMap<Expression, Expression>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 
+// SANY's failed selection is an operator application with no operands.
+const isEmptyExpression = (expression: Expression): boolean =>
+  emptyExpressions.has(expression) || findNullError(nullSelections.get(expression)) !== undefined;
+
 const findNullError = (nulls: NullSelection[] | undefined) =>
   nulls?.find((selection) =>
-    (selection.isEmpty ? emptyExpressions : unresolvedExpressions).has(selection.node),
+    selection.isEmpty
+      ? isEmptyExpression(selection.node)
+      : unresolvedExpressions.has(selection.node),
   )?.error;
 
 const renamedArities = new WeakMap<Expression, number>();
@@ -624,7 +631,7 @@ const checkSelection = (
         expression.kind === "Identifier"
           ? findBinding(expression.name, scope, unit)?.kind
           : undefined;
-      if (emptyExpressions.has(expression) || kind === "Variable" || kind?.startsWith("New")) {
+      if (isEmptyExpression(expression) || kind === "Variable" || kind?.startsWith("New")) {
         return report(index, `Choosing operand \`${operand}' of subexpression with no operands.`);
       }
       const sets = getBinder(expression)?.sets;
@@ -1298,8 +1305,18 @@ const resolveExpression = (
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
     const failed = findNullError(nullSelections.get(expression));
-    if (failed) unit.errors.push(failed);
-    else resolveExpression(expression, scope, { ...unit, isGenerated: true });
+    if (failed) {
+      unit.errors.push(failed);
+      return;
+    }
+    const source = selectionSources.get(expression);
+    // The selection copied its source before resolving the source renamed symbols to keys that resolve from any module.
+    if (source) {
+      Object.assign(expression, source);
+      const arity = renamedArities.get(source);
+      if (arity !== undefined) renamedArities.set(expression, arity);
+    }
+    resolveExpression(expression, scope, { ...unit, isGenerated: true });
     return;
   }
   const resolveAll = (expressions: Expression[]) =>
