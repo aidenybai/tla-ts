@@ -38,9 +38,13 @@ const ENGINE_NAMES = new Map([
   ["ddnf", ENGINE_DDNF],
 ]);
 
-// The fp module's parameters, which Z3 keeps as global parameters across resets.
+// The fp module's global parameters, copied when the context is made, as fp_params does.
 export class FpParams {
-  constructor(private parameters: ReadonlyMap<string, string>) {}
+  private parameters: ReadonlyMap<string, string>;
+
+  constructor(parameters: ReadonlyMap<string, string>) {
+    this.parameters = new Map(parameters);
+  }
 
   getBool(name: string, defaultValue: boolean) {
     const value = this.parameters.get(`fp.${name}`);

@@ -58,6 +58,23 @@ describe("datalog queries", () => {
     ).toEqual(["sat"]);
   });
 
+  // dl_context copies the fp parameters when its first declare-rel, declare-var, rule or query
+  // makes the datalog context, so a later bound on the levels doesn't stop spacer.
+  it.each([
+    ["relation", COUNTER_RELATIONS[0]],
+    ["variable", COUNTER_RELATIONS[2]],
+  ])("ignores fp parameters set after the first declared %s", (_name, declaration) => {
+    expect(
+      run([
+        declaration,
+        "(set-option :fp.spacer.max_level 2)",
+        ...COUNTER_RELATIONS.filter((line) => line !== declaration),
+        "(rule (=> (and (reach x) (= x 5)) bad))",
+        "(query bad)",
+      ]),
+    ).toEqual(["sat"]);
+  });
+
   it("answers unsat for an unreachable relation", () => {
     expect(
       run([...COUNTER_RELATIONS, "(rule (=> (and (reach x) (> x 5)) bad))", "(query bad)"]),
