@@ -7001,6 +7001,12 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
         ELSE WithBytes(current, view, view.byteOffset + first * ElementSize(view.elementType),
                        NumbersBytes(view.elementType, values))
       species == TypedArraySpecies(heap, ref, constructors)
+      \\* Whether converting the arguments at positions to integers throws the TypeError of a symbol
+      \\* or a BigInt, where none is an object, whose conversion would run its methods first.
+      throwsAt(positions) ==
+        /\\ \\A position \\in positions :
+             ~IsRef(argument(position)) /\\ ~IsSequenceValue(argument(position))
+        /\\ \\E position \\in positions : IsSymbol(argument(position)) \\/ IsBigInt(argument(position))
   IN CASE ~IsTypedArray(heap, ref) -> Thrown(heap, "TypeError")
        [] method \\notin {"at", "includes", "indexOf", "lastIndexOf", "join", "fill", "reverse", "slice",
                          "subarray", "set", "copyWithin"} ->
@@ -7030,6 +7036,11 @@ TypedArrayMethod(heap, ref, method, arguments, bufferPrototype, constructors) ==
                       Thrown(heap, "TypeError")
                  [] OTHER -> Returned(write(heap, offset, values), Undefined)
        [] IsOutOfBounds(heap, view) -> Thrown(heap, "TypeError")
+       [] \\/ method = "at" /\\ throwsAt({1})
+          \\/ method \\in {"includes", "indexOf", "lastIndexOf"} /\\ length > 0 /\\ throwsAt({2})
+          \\/ method = "copyWithin" /\\ throwsAt({1, 2, 3})
+          \\/ method = "slice" /\\ throwsAt({1, 2}) ->
+            Thrown(heap, "TypeError")
        [] method = "at" ->
             Returned(heap, IF at \\in 0..(length - 1) THEN elements[at + 1] ELSE Undefined)
        [] method = "includes" ->

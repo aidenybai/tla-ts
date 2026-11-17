@@ -50453,4 +50453,39 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("throws the TypeError of a typed array method that converts a symbol or a BigInt to an integer", () => {
+    const getSource = (expected: string) => `
+      const symbol = Symbol("1");
+      const sample = new Int8Array([7, 8]);
+      const empty = new Int8Array(0);
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      attempt(() => sample.includes(7, symbol as any));
+      attempt(() => sample.indexOf(7, 1n as any));
+      attempt(() => empty.includes(7, symbol as any));
+      attempt(() => sample.at(symbol as any));
+      attempt(() => sample.copyWithin(0, 0, symbol as any));
+      attempt(() => sample.slice(symbol as any).length);
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      const expected = "TypeError,TypeError,false,TypeError,TypeError,TypeError";
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      const expected = "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError";
+      expect((await checkModel(getSource(expected))).failure?.message).toContain(
+        "results TypeError,TypeError,false,TypeError,TypeError,TypeError",
+      );
+    });
+  });
 });
