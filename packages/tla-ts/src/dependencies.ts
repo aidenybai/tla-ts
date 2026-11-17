@@ -29,6 +29,7 @@ const VARIABLE_LEVEL_FLAGS = 32;
 const ACTION_LEVEL_FLAGS = VARIABLE_LEVEL_FLAGS | 64;
 const TEMPORAL_LEVEL_FLAGS = ACTION_LEVEL_FLAGS | 128;
 const RANDOM = 256;
+const NAMED_LIKE_VARIABLE = 512;
 
 const ACTION_KINDS = new Set<Expression["kind"]>([
   "Prime",
@@ -118,6 +119,11 @@ const collectLocalFacts = (
     if (isLevelCounted && ownLevelFlags !== undefined) row[0] |= ownLevelFlags;
     const isInnerLevelCounted = isLevelCounted && ownLevelFlags === undefined;
     const name = getReferencedName(node);
+    // TLC's getLevelBound takes a parameter named like a variable for that variable.
+    if (name !== undefined && isLocallyResolved(node) && environment.variableIndex.has(name)) {
+      row[0] |= NAMED_LIKE_VARIABLE;
+      if (isInnerLevelCounted) row[0] |= VARIABLE_LEVEL_FLAGS;
+    }
     if (name !== undefined && !isLocallyResolved(node)) {
       const target = environment.substitutions.get(name) ?? name;
       const definition = environment.definitions.get(target);
@@ -229,10 +235,11 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
 };
 
 const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM;
-const READ_MASK = NONCONSTANT | READS_IMPURE;
+const READ_MASK = NONCONSTANT | READS_IMPURE | NAMED_LIKE_VARIABLE;
+const STARTUP_MASK = NONCONSTANT | NAMED_LIKE_VARIABLE;
 
 const isEvaluatedOnce = (definition: Definition, flags: number) =>
-  definition.kind === "Operator" && definition.params.length === 0 && (flags & NONCONSTANT) === 0;
+  definition.kind === "Operator" && definition.params.length === 0 && (flags & STARTUP_MASK) === 0;
 
 export const createDefinitionFacts = (environment: DefinitionNames): DefinitionFacts => {
   const definitions = [...new Set(environment.definitions.values())];
@@ -300,7 +307,7 @@ const getExpressionsRow = (expressions: Expression[], environment: Environment) 
 };
 
 export const isConstantLevel = (definition: Definition, environment: Environment) =>
-  (getRow(definition, environment)[0] & NONCONSTANT) === 0;
+  (getRow(definition, environment)[0] & STARTUP_MASK) === 0;
 
 const EFFECT_FLAGS = {
   any: IMPURE,

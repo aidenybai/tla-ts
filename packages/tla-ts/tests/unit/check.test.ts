@@ -1461,6 +1461,19 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(prints).toEqual(['"p"', '"p"']);
   });
 
+  it("checks a constant invariant on each state when it calls an operator whose parameter is named like a variable, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nIsEven(v) == v % 2 = 0\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\nInv == IsEven(3)\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect([result.status, result.violation?.name, result.generatedStates]).toEqual([
+      "invariant-violation",
+      "Inv",
+      1,
+    ]);
+  });
+
   it("warns about a state-level property before it reads the constraints", async () => {
     const warned: string[] = [];
     await expect(
