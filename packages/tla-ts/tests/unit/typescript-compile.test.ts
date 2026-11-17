@@ -52462,4 +52462,39 @@ describe("BigInts", () => {
     ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
   });
 
+  describe("throws the ReferenceError of a default that reads its parameter or a later one", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      function self(a = a) {}
+      var later;
+      later = (a = b, b) => {};
+      function earlier(a, b = a) {
+        return b;
+      }
+      try {
+        self();
+      } catch (error) {
+        box.seen += error instanceof ReferenceError;
+      }
+      try {
+        later(undefined, 1);
+      } catch (error) {
+        box.seen += error instanceof ReferenceError;
+      }
+      box.seen += [self(1), earlier(1)].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("truetrue,1"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("falsetrue,1"), path))).failure?.message).toContain(
+        "seen truetrue,1",
+      );
+    });
+  });
+
 });
