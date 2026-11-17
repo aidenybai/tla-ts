@@ -21,6 +21,7 @@ import {
   findHeapCode,
   findObjectTargets,
   findSharedFunctionCandidates,
+  findOnlyCalled,
   isReached,
   findOnceFunctions,
   findValueEnums,
@@ -970,6 +971,7 @@ export const compile = (
       context.functionCandidates,
       context,
     );
+    context.onlyCalled = findOnlyCalled(context);
     // A name, or a string that keys a property by it, as in Object.getOwnPropertyDescriptor.
     const isTyped = (node: ts.Expression, flags: ts.TypeFlags) => {
       const type = context.checker.getTypeAtLocation(node);

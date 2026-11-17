@@ -33,6 +33,8 @@ import {
   getLowerBound,
   getPosition,
   getReferences,
+  hasBit,
+  setBit,
   type ProgramNodes,
   type References,
   withNodeTypes,
@@ -244,6 +246,9 @@ export interface Context {
   // The functions of each file that a value may hold where tla-ts can't tell which, once the
   // script's heap is known.
   functionCandidates: ReadonlyMap<ts.SourceFile, readonly FunctionNode[]>;
+  // Whether code only calls each function of the program's files by its name, by its position, as
+  // findOnlyCalled finds once the heap is known.
+  onlyCalled: Uint32Array | undefined;
   // Those of the functions that a module that imports the file may hold, which read no locals of a
   // function around them.
   sharedFunctionCandidates: ReadonlyMap<ts.SourceFile, readonly FunctionNode[]>;
@@ -714,6 +719,7 @@ export const createContext = (
     onceFunctions: new Set(),
     guardedStatements: findGuardedStatements(files),
     functionCandidates: new Map(),
+    onlyCalled: undefined,
     sharedFunctionCandidates: new Map(),
     collectionProxies: new Set(),
     checkedGlobals: new Set(),
@@ -5799,6 +5805,30 @@ export const getEnclosingFunction = (node: ts.Node, context: Context) =>
 // outside strict mode, whose name the files call wherever they write it, at least once, and that
 // reads no arguments object, whose callee would hold it.
 export const isOnlyCalled = (candidate: FunctionNode, context: Context) => {
+  const position = getPosition(context.nodes, candidate);
+  return position >= 0 && context.onlyCalled !== undefined
+    ? hasBit(context.onlyCalled, position)
+    : isOnlyCalledFunction(candidate, context);
+};
+
+// Finds once which functions of the program's files code only calls by their names.
+export const findOnlyCalled = (context: Context) => {
+  const table = context.nodes;
+  const bits = new Uint32Array((table.nodes.length + 31) >>> 5);
+  [ts.SyntaxKind.FunctionDeclaration, ts.SyntaxKind.FunctionExpression, ts.SyntaxKind.ArrowFunction]
+    .flatMap((kind) => [
+      ...table.kindPositions.subarray(table.kindStarts[kind], table.kindStarts[kind + 1]),
+    ])
+    .forEach((position) => {
+      const node = table.nodes[position];
+      const isFunction =
+        ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node);
+      if (isFunction && isOnlyCalledFunction(node, context)) setBit(bits, position);
+    });
+  return bits;
+};
+
+const isOnlyCalledFunction = (candidate: FunctionNode, context: Context) => {
   const declaration = ts.isFunctionDeclaration(candidate)
     ? candidate
     : (ts.isArrowFunction(candidate) ||
