@@ -249,6 +249,8 @@ export const simulate = (options: SimulationOptions): number => {
   const nextActions = description.actions;
   let traceCount = 0;
   let currentTrace = 0;
+  let evaluatedAction: SpecAction | undefined;
+  runtime.getSuccessorAction = () => evaluatedAction;
   runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;
   runtime.getBehavior = (state) => {
     const node = nodes.get(state);
@@ -486,6 +488,7 @@ export const simulate = (options: SimulationOptions): number => {
     const successors: TraceNode[] = [];
     let failure: WorkerError | undefined;
     runtime.deferred = undefined;
+    evaluatedAction = action;
     try {
       forEachSuccessor(
         action.expression,

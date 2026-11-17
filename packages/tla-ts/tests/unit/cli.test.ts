@@ -691,10 +691,12 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
         "e\ny\nn\n",
       ).stdout,
     );
-    expect(lines[1]).toBe(
+    expect(lines).toEqual([
+      ask(1, 9),
       "Marking a state explored is unsupported by the current TLC mode. Is TLC running in simulation mode?",
-    );
-    expect(lines).toHaveLength(4);
+      ask(1, 9),
+      ask(2, 8),
+    ]);
   });
 });
 
