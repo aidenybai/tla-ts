@@ -355,6 +355,25 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unsat", "(+ 7 x)", "(* 2 x)", "((not p) (not q))", "unsat", "((not p) (not q))"]);
   });
 
+  it("reports an even root of a negative number as an error of the command", () => {
+    const message = "even root of negative number is not real";
+    expect(
+      run([
+        "(simplify (+ 1.0 (^ (- 2.0 (^ 6.0 0.5)) 0.5)))",
+        "(declare-const x Real)",
+        "(assert (= x (^ (- 2.0 (^ 6.0 0.5)) 0.5)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      `(error "simplifier failed: ${message}")`,
+      "(+ 1.0 (^ (- 2.0 (^ 6.0 (/ 1.0 2.0))) (/ 1.0 2.0)))",
+      `(error "line 3 column 41: ${message}")`,
+      "unknown",
+      `(:reason-unknown "${message}")`,
+    ]);
+  });
+
   // sat_params reads the sat module's global parameters where using-params sets none.
   it("searches with the global sat parameters in the sat tactic", () => {
     expect(

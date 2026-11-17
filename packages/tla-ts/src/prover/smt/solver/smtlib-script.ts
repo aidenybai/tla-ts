@@ -1361,7 +1361,17 @@ export const runSmtlibScript = (
           manager,
           getRewriterOptions(manager, getSimplifyParams(list.items.slice(2))),
         );
-        const simplified = rewriter.rewrite(term);
+        // simplify_cmd prints a failure of the rewriter and then the term as it was.
+        const simplified = (() => {
+          try {
+            return rewriter.rewrite(term);
+          } catch (error) {
+            if (!(error instanceof SmtDefaultError)) throw error;
+            print(`(error "simplifier failed: ${error.message}")`);
+            manager.incRef(term);
+            return term;
+          }
+        })();
         rewriter.cleanup();
         display(simplified);
         rewriter.release();
