@@ -5763,22 +5763,26 @@ export const createDispatch = (callees: readonly ts.Expression[], context: Conte
       checker.getIndexInfosOfType(type).length === 0;
     return isOneSignature ? signatures[0].parameters.length : -1;
   });
-  // TypeScript relates a function type of TypeScript's own, with no alias and call signatures that
-  // take no type parameters and nothing else, to another type only through its signatures' flags,
-  // counts of arguments, and the types of its this, parameters, predicate, and return: candidate
-  // types alike in those, by a key that sorting groups, give each callee type one answer. Each
-  // candidate type takes the answer of the first of its group, other than for a callee type of a
-  // candidate's symbol, which TypeScript relates by the symbol's own signatures.
+  // TypeScript relates a function type of TypeScript's own, not an alias's or an instantiation's,
+  // with call signatures that take no type parameters and nothing else, to another type only
+  // through its signatures' flags, counts of arguments, and the types of its this, parameters,
+  // predicate, and return: candidate types alike in those, by a key that sorting groups, give each
+  // callee type one answer. Each candidate type takes the answer of the first of its group, other
+  // than for a callee type of a candidate's symbol, which TypeScript relates by the symbol's own
+  // signatures.
   const getKey = (type: ts.Type) => {
     const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
     const isPlainFunctionType =
       type.flags === ts.TypeFlags.Object &&
       type.aliasSymbol === undefined &&
-      ((type.objectFlags ?? 0) & (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped)) === 0 &&
+      ((type.objectFlags ?? 0) &
+        (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped | ts.ObjectFlags.Instantiated)) ===
+        0 &&
       signatures.length > 0 &&
       signatures.every(
         (signature) =>
           signature.typeParameters === undefined &&
+          signature.target === undefined &&
           (signature.flags & SIGNATURE_UNTYPED) === 0 &&
           signature.declaration !== undefined &&
           !isJavaScriptFile(signature.declaration.getSourceFile().fileName),

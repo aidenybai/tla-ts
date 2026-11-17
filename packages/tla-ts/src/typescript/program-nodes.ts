@@ -15,6 +15,8 @@ declare module "@typescript/typescript6" {
   interface Signature {
     readonly flags: number;
     readonly minArgumentCount: number;
+    // The generic signature that an instantiated one comes from.
+    readonly target?: ts.Signature;
   }
   // A context's checker reads tla-ts's own symbol of each name of the program's files from the
   // program's reference index: undefined where the name has none, and null for another node.
