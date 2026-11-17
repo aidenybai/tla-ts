@@ -1258,6 +1258,45 @@ ASSUME TLCFP(a) = -887695703
         ?.expressions.map((expression) => [expression.location, expression.count]),
     ).toEqual([["line 5, col 8 to line 5, col 9 of module M", 1]]);
   });
+
+  it.each([
+    [
+      "the invariants of an initial state",
+      'Init == x \\in 0..1\nNext == UNCHANGED x\nInvPrint == PrintT(<<"inv", x>>)\nInvLim == x <= 0\nInvAfter == PrintT(<<"after", x>>)',
+      "INIT Init\nNEXT Next\nINVARIANT InvPrint\nINVARIANT InvLim\nINVARIANT InvAfter",
+      ['<<"inv", 0>>', '<<"after", 0>>', '<<"inv", 1>>'],
+    ],
+    [
+      "the invariants of a successor",
+      'Init == x = 0\nNext == x < 3 /\\ x\' = x + 1\nInvP == PrintT(<<"inv", x>>) /\\ x <= 1\nInvAfter == PrintT(<<"after", x>>)',
+      "INIT Init\nNEXT Next\nINVARIANT InvP\nINVARIANT InvAfter",
+      ['<<"inv", 0>>', '<<"after", 0>>', '<<"inv", 1>>', '<<"after", 1>>', '<<"inv", 2>>'],
+    ],
+    [
+      "the implied initial predicates",
+      'Init == x \\in 0..1\nNext == UNCHANGED x\nSpec == Init /\\ [][Next]_x\nP1 == PrintT(<<"p", x>>)\nP2 == x <= 0',
+      "SPECIFICATION Spec\nPROPERTY P1\nPROPERTY P2",
+      ['<<"p", 0>>', '<<"p", 1>>'],
+    ],
+    [
+      "the action properties",
+      "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nP1 == [][PrintT(<<\"a\", x, x'>>)]_x\nP2 == [][x' <= 1]_x",
+      "SPECIFICATION Spec\nPROPERTY P1\nPROPERTY P2",
+      ['<<"a", 0, 1>>', '<<"a", 1, 2>>'],
+    ],
+  ])(
+    "evaluates %s once each under coverage, as TLC does",
+    async (_name, definitions, config, expected) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\n${definitions}\n====`,
+        config,
+        coverage: 1,
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(expected);
+    },
+  );
 });
 
 describe("formatValue matches TLC", () => {

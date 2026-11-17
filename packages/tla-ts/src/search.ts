@@ -1062,6 +1062,12 @@ export const createSearch = (
     ...getCoveredChecks("invariant", configInvariants),
     ...getCoveredChecks("invariant", properties.invariants, false),
   ];
+  const coveredInvariantChecks = new Map(
+    [...configInvariants, ...properties.invariants].map((item, index) => [
+      getPredicate(item.expression, environment),
+      coveredInvariants[index],
+    ]),
+  );
   const coveredActionConstraints = getCoveredChecks("constraint", actionConstraints);
   const coveredConstraints = getCoveredChecks("constraint", namedConstraints);
   const coveredInitialPredicates = getCoveredChecks("implied", properties.initialPredicates, false);
@@ -1070,6 +1076,7 @@ export const createSearch = (
     properties.actionProperties.map((property) => ({ ...property, expression: property.box })),
     false,
   );
+  // TLC evaluates each check once under coverage, so a value it finds decides the check and only a failure is evaluated again.
   const evaluateCovered = (
     covered: Coverage,
     check: CoveredCheck,
@@ -1084,9 +1091,6 @@ export const createSearch = (
       return undefined;
     }
   };
-  const isCoveredHeld = (checks: CoveredCheck[], state: Value[], next?: Value[]) =>
-    coverage !== undefined &&
-    checks.every((check) => evaluateCovered(coverage, check, state, next) === true);
   const satisfiesCovered = (checks: CoveredCheck[], state: Value[], next?: Value[]) => {
     if (!coverage) return undefined;
     for (const check of checks) {
@@ -1158,15 +1162,16 @@ export const createSearch = (
     );
   };
   const findFailedInitialPredicate = (state: Value[]) =>
-    isCoveredHeld(coveredInitialPredicates, state)
-      ? undefined
-      : properties.initialPredicates.find(
-          (predicate) =>
-            !holdsLikeTlc(
-              predicate.expression,
-              getContext(environment, state, undefined, predicate.scope),
-            ),
-        );
+    properties.initialPredicates.find((predicate, index) => {
+      const value =
+        coverage && evaluateCovered(coverage, coveredInitialPredicates[index], state, undefined);
+      return typeof value === "boolean"
+        ? !value
+        : !holdsLikeTlc(
+            predicate.expression,
+            getContext(environment, state, undefined, predicate.scope),
+          );
+    });
   const violatingStates = new WeakSet<Value[]>();
   const isViolated = (invariant: StateCheck, state: Value[], parent: Value[] | undefined) => {
     const checkedParent = parent && !violatingStates.has(parent) ? parent : undefined;
@@ -1189,6 +1194,21 @@ export const createSearch = (
         `Evaluating invariant ${invariant.name} failed.`,
       );
     }
+  };
+  const isPredicateViolated = (
+    predicate: StateCheck,
+    state: Value[],
+    parent: Value[] | undefined,
+  ) => {
+    const covered = coveredInvariantChecks.get(predicate.predicate);
+    const value =
+      coverage && covered ? evaluateCovered(coverage, covered, state, undefined) : undefined;
+    return typeof value === "boolean"
+      ? !value
+      : invariants.some(
+          (invariant) =>
+            invariant.predicate === predicate.predicate && isViolated(invariant, state, parent),
+        );
   };
   const isFingerprintedLikeTlc = hasWideString(config, environment);
   runtime.getFingerprint = getTlcStateFingerprint;
@@ -1342,25 +1362,17 @@ export const createSearch = (
       return view === undefined ? representative : [getViewValue(view.expression, representative)];
     },
     findViolatedInvariant: (state, parent) => {
-      const checked = isCoveredHeld(coveredInvariants, state) ? runtimeChecks : invariants;
-      const violated = checked.find((invariant) => isViolated(invariant, state, parent));
+      const violated =
+        coverage === undefined
+          ? invariants.find((invariant) => isViolated(invariant, state, parent))
+          : invariantPredicates.find((predicate) => isPredicateViolated(predicate, state, parent));
       if (violated) violatingStates.add(state);
       return violated;
     },
     forEachViolatedInvariant: (state, onViolated) => {
       // Under -continue, TLC's DoInitFunctor checks every invariant of an initial state.
-      const isHeld =
-        coverage !== undefined &&
-        coveredInvariants
-          .map((check) => evaluateCovered(coverage, check, state, undefined) === true)
-          .every(Boolean);
-      const checked = isHeld ? runtimeChecks : invariants;
       for (const predicate of invariantPredicates) {
-        const isPredicateViolated = checked.some(
-          (invariant) =>
-            invariant.predicate === predicate.predicate && isViolated(invariant, state, undefined),
-        );
-        if (!isPredicateViolated) continue;
+        if (!isPredicateViolated(predicate, state, undefined)) continue;
         violatingStates.add(state);
         onViolated(predicate);
       }
@@ -1415,31 +1427,32 @@ export const createSearch = (
       ),
     findFailedInitialPredicate,
     findViolatedActionProperty: (state, next) =>
-      isCoveredHeld(coveredActionProperties, state, next)
-        ? undefined
-        : actionProperties.find((property) => {
-            try {
-              return (
-                !holdsLikeTlc(
-                  property.action,
-                  getContext(environment, state, next, property.scope),
-                  () =>
-                    `Attempted to evaluate an expression of form [A]_e, but A was not a boolean.\n${describeRange(property.box)}`,
-                ) &&
-                !holds(
-                  property.unchanged,
-                  getContext(environment, state, next, property.scope),
-                  "a subscript",
-                )
-              );
-            } catch (error) {
-              throw withHeadline(
-                withNextStateExitCode(error),
-                MESSAGE_CODE.actionPropertyEvaluationFailed,
-                `Evaluating action property ${property.name} failed.`,
-              );
-            }
-          }),
+      actionProperties.find((property, index) => {
+        const value =
+          coverage && evaluateCovered(coverage, coveredActionProperties[index], state, next);
+        if (typeof value === "boolean") return !value;
+        try {
+          return (
+            !holdsLikeTlc(
+              property.action,
+              getContext(environment, state, next, property.scope),
+              () =>
+                `Attempted to evaluate an expression of form [A]_e, but A was not a boolean.\n${describeRange(property.box)}`,
+            ) &&
+            !holds(
+              property.unchanged,
+              getContext(environment, state, next, property.scope),
+              "a subscript",
+            )
+          );
+        } catch (error) {
+          throw withHeadline(
+            withNextStateExitCode(error),
+            MESSAGE_CODE.actionPropertyEvaluationFailed,
+            `Evaluating action property ${property.name} failed.`,
+          );
+        }
+      }),
     satisfiesActionConstraints: (state, next) =>
       satisfiesCovered(coveredActionConstraints, state, next) ??
       actionConstraints.every((constraint) => holdsActionConstraint(constraint, state, next)),
