@@ -14,6 +14,7 @@ import {
 } from "../../src";
 import { UNEXPECTED_EXCEPTION } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
+import { formatState } from "../../src/values";
 import { checkFixture, checkModule, checkSteps, FIXTURES } from "./check-harness";
 
 const DIST = join(import.meta.dirname, "../../dist/index.js");
@@ -518,6 +519,22 @@ describe("check matches TLC", () => {
       "A2 line 5, col 7 to line 5, col 22 of module M",
     ]);
   });
+
+  it.each([
+    ["<<x, y>>", "/\\ x = 0\n/\\ y = 5\n"],
+    ["<<y, x>>", "/\\ x = 0\n/\\ y = 5\n"],
+    ["<<x + 1>>", "<<1>>"],
+  ])(
+    "prints the VIEW %s of a state as a state only when it lists the variables",
+    async (view, text) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 5\nNext == x' = x + 1 /\\ y' = y\nInv == x < 1\nView == ${view}\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+        isViewPrinted: true,
+      });
+      expect(formatState(result.violation?.trace[0].state ?? {})).toBe(text);
+    },
+  );
 
   it("evaluates a VIEW on the symmetry representative TLC picks by its variable order", async () => {
     const result = await checkFixture("view", "ViewSymmetry");
