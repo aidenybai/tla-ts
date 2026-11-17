@@ -1984,6 +1984,8 @@ interface TacticCheck {
   model: ProtoModel | undefined;
   core: Dependency | undefined;
   reasonUnknown: string | undefined;
+  // Whether the limit stopped the conversion of the model, which check_sat does not catch.
+  isConversionCanceled: boolean;
 }
 
 // The port's declarations of division by zero leave out their domain; Z3's have two arguments.
@@ -2042,19 +2044,38 @@ const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
   return model;
 };
 
-export const convertModel = (goal: Goal, model: ProtoModel) =>
-  goal.converters.reduceRight((converted, entry) => {
-    if ("convert" in entry) return entry.convert(converted);
-    if ("definitions" in entry) return applyDefinitions(entry.definitions, converted);
-    converted.unregisterDecl(entry.decl);
-    return converted;
-  }, model);
+const applyConverter = (entry: Goal["converters"][number], model: ProtoModel) => {
+  if ("convert" in entry) return entry.convert(model);
+  if ("definitions" in entry) return applyDefinitions(entry.definitions, model);
+  model.unregisterDecl(entry.decl);
+  return model;
+};
 
-const getConvertedModel = (goal: Goal) =>
-  convertModel(goal, goal.model?.copy() ?? new ProtoModel(goal.manager).mkModel());
+export const convertModel = (goal: Goal, model: ProtoModel) =>
+  goal.converters.reduceRight((converted, entry) => applyConverter(entry, converted), model);
+
+// model_converter2model makes the model before it converts it, so a limit that stops a converter
+// leaves the model as far as the conversion got.
+const getConvertedModel = (goal: Goal) => {
+  let model = goal.model?.copy() ?? new ProtoModel(goal.manager).mkModel();
+  for (let index = goal.converters.length - 1; index >= 0; index--) {
+    try {
+      model = applyConverter(goal.converters[index], model);
+    } catch (error) {
+      if (!(error instanceof SmtCanceledError)) throw error;
+      return { model, isCanceled: true };
+    }
+  }
+  return { model, isCanceled: false };
+};
 
 export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
-  const undecided = { status: L_UNDEF, model: undefined, core: undefined };
+  const undecided = {
+    status: L_UNDEF,
+    model: undefined,
+    core: undefined,
+    isConversionCanceled: false,
+  };
   const goals = (() => {
     try {
       return tactic(goal);
@@ -2066,27 +2087,26 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
   })();
   if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
   if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
-  if (isDecidedSat(goals)) {
-    const model = getConvertedModel(goals[0]);
-    return goal.manager.limit.inc()
-      ? { status: L_TRUE, model, core: undefined, reasonUnknown: "" }
-      : { ...undecided, model, reasonUnknown: "canceled" };
-  }
   if (isDecidedUnsat(goals))
-    return {
-      status: L_FALSE,
-      model: undefined,
-      core: goals[0].getDependency(0),
-      reasonUnknown: "",
-    };
+    return { ...undecided, status: L_FALSE, core: goals[0].getDependency(0), reasonUnknown: "" };
+  const isSat = isDecidedSat(goals);
+  const converted =
+    isSat ||
+    (goal.isModelsEnabled &&
+      goals.length > 0 &&
+      (goals[0].model !== undefined || goals[0].converters.length > 0))
+      ? getConvertedModel(goals[0])
+      : undefined;
+  const model = converted?.model;
+  if (converted?.isCanceled === true)
+    return { ...undecided, model, reasonUnknown: undefined, isConversionCanceled: true };
+  if (isSat)
+    return goal.manager.limit.inc()
+      ? { ...undecided, status: L_TRUE, model, reasonUnknown: "" }
+      : { ...undecided, model, reasonUnknown: "canceled" };
   return {
     ...undecided,
-    model:
-      goal.isModelsEnabled &&
-      goals.length > 0 &&
-      (goals[0].model !== undefined || goals[0].converters.length > 0)
-        ? getConvertedModel(goals[0])
-        : undefined,
+    model,
     reasonUnknown:
       goals.length === 1 && goals[0].reasonUnknown !== "" ? goals[0].reasonUnknown : "unknown",
   };

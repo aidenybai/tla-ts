@@ -1153,6 +1153,7 @@ export const runSmtlibScript = (
         state.manager.limit.push(settings.rlimit);
         try {
           const checked = checkSatUsing(tactic, goal);
+          const reasonUnknown = checked.reasonUnknown ?? getCancelMessage(deadline);
           setCheck(checked.status, {
             isFromTactic: true,
             model: checked.model,
@@ -1160,14 +1161,13 @@ export const runSmtlibScript = (
               builder.isTrackingDependencies || !hasNames()
                 ? getDependencyValues(checked.core)
                 : undefined,
-            reasonUnknown: checked.reasonUnknown ?? getCancelMessage(deadline),
+            reasonUnknown,
           });
-          print(getVerdict(checked.status));
-        } catch (error) {
-          if (!(error instanceof SmtCanceledError)) throw error;
-          const message = getCancelMessage(deadline);
-          setCheck(L_UNDEF, { isFromTactic: true, reasonUnknown: message });
-          print(`(error "tactic failed: ${message}")`);
+          print(
+            checked.isConversionCanceled
+              ? `(error "tactic failed: ${reasonUnknown}")`
+              : getVerdict(checked.status),
+          );
         } finally {
           state.manager.limit.pop();
         }

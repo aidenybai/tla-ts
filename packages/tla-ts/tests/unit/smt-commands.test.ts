@@ -924,6 +924,28 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("keeps the model as far as the conversion that the limit stopped got", () => {
+    expect(
+      run([
+        "(set-option :rlimit 85)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult (bvadd a b) #x7))",
+        "(assert (or (= a b) (bvugt (bvmul a #x3) b)))",
+        "(check-sat-using (then bv1-blast tseitin-cnf))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      '(error "tactic failed: max. resource limit exceeded")',
+      "(",
+      "  (define-fun b () (_ BitVec 4)",
+      "    #x0)",
+      "  (define-fun a () (_ BitVec 4)",
+      "    #x0)",
+      ")",
+    ]);
+  });
+
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
   // the smt kernel keeps for its later checks and reports while its last search did not fail.
   it("prints the reason of a check that timed out", () => {
