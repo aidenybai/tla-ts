@@ -22,9 +22,16 @@ const LINE = TEST262_RUNS.map((run, index) => {
   return `C${middle} ${getY(TEST262_RUNS[index - 1])} ${middle} ${getY(run)} ${getX(index)} ${getY(run)}`;
 }).join(" ");
 
+const TIGHT_TICK_PERCENT = 18;
+// A date whose tick sits close to the next date's is dropped on a phone, where the two overlap.
 const DATE_TICKS = TEST262_RUNS.flatMap((run, index) =>
   run.label === TEST262_RUNS[index - 1]?.label ? [] : [{ label: run.label, index }],
-);
+).map((tick, index, ticks) => ({
+  ...tick,
+  isTight:
+    index < ticks.length - 1 &&
+    getX(ticks[index + 1].index) - getX(tick.index) < TIGHT_TICK_PERCENT,
+}));
 
 export const Test262Chart = () => {
   const [hoveredIndex, setHoveredIndex] = useState<number | undefined>(undefined);
@@ -119,7 +126,7 @@ export const Test262Chart = () => {
             <span
               key={tick.label}
               style={{ left: `${getX(tick.index)}%` }}
-              className="absolute top-0 flex flex-col gap-1"
+              className={cn("absolute top-0 flex flex-col gap-1", tick.isTight && "max-sm:hidden")}
             >
               <span className="h-1.5 w-px bg-input" />
               <span

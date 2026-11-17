@@ -177,7 +177,7 @@ export const ExampleSource = () => {
         </Tooltip>
       </CodeActions>
       <CodeFooter>
-        <output className="flex min-w-0 flex-1 items-center gap-1.5">
+        <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
           <ToggleGroup
             label="Language"
             value={state.isCompiled ? "tla" : "typescript"}
