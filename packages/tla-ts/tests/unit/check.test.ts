@@ -1259,6 +1259,32 @@ ASSUME TLCFP(a) = -887695703
     ).toEqual([["line 5, col 8 to line 5, col 9 of module M", 1]]);
   });
 
+  it("counts the coverage of an action under ENABLED in an invariant", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, z\nInit == x \\in BOOLEAN /\\ z = 0\nA1 == (~x => z = 1) /\\ x' \\in BOOLEAN /\\ UNCHANGED z\nA2 == z < 2 /\\ z' = z + 1 /\\ UNCHANGED x\nNext == A1 \\/ A2\nInv == ENABLED A1 \\/ z < 5\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      coverage: 1,
+    });
+    expect(
+      result.coverage?.relations
+        .find((relation) => relation.kind === "invariant")
+        ?.expressions.map((expression) => [
+          `${"|".repeat(expression.depth)}${expression.location}`,
+          expression.count,
+        ]),
+    ).toEqual([
+      ["line 8, col 8 to line 8, col 26 of module M", 6],
+      ["|line 8, col 8 to line 8, col 17 of module M", 6],
+      ["||line 5, col 8 to line 5, col 9 of module M", 6],
+      ["||line 5, col 14 to line 5, col 18 of module M", 3],
+      ["||line 5, col 24 to line 5, col 37 of module M", 0],
+      ["|||line 5, col 31 to line 5, col 37 of module M", 4],
+      ["||line 5, col 42 to line 5, col 52 of module M", 4],
+      ["|line 8, col 22 to line 8, col 26 of module M", 2],
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",

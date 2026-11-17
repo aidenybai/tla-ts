@@ -715,6 +715,7 @@ const visitUnchanged = (
     if (index !== undefined) {
       const value = replay.current?.[index];
       if (value === undefined) return false;
+      if (replay.isEnabled && replay.coverage) countCoverage(replay.coverage, node);
       const assigned = partial[index];
       if (assigned !== undefined && !isEqualLikeTlc(assigned, value)) {
         warnChangedUnchanged(replay.environment, index, expression);
@@ -805,12 +806,13 @@ export const replayEnabled = (
   const replay = createReplay(environment, "enabled", state, found, found);
   const callStack = replay.callStack;
   const depth = callStack?.expressions.length ?? 0;
+  const node = replay.coverage?.current ?? -1;
   try {
     if (expression.kind === "AngleAction" && expression.location === expression.action.location) {
-      const changed = createItem("Changed", expression.subscript, scope, -1, undefined);
-      visit(replay, expression.action, changed, scope, getEmptyState(environment), -1);
+      const changed = createItem("Changed", expression.subscript, scope, node, undefined);
+      visit(replay, expression.action, changed, scope, getEmptyState(environment), node);
     } else {
-      visit(replay, expression, undefined, scope, getEmptyState(environment), -1);
+      visit(replay, expression, undefined, scope, getEmptyState(environment), node);
     }
     return false;
   } catch (error) {
