@@ -1537,7 +1537,7 @@ export const isSuperAccess = (
   (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
   node.expression.kind === ts.SyntaxKind.SuperKeyword;
 
-const isTopLevel = (statement: ts.Node): boolean => {
+export const isTopLevel = (statement: ts.Node): boolean => {
   const parent = statement.parent;
   if (ts.isSourceFile(parent)) return true;
   const namespace = ts.isModuleBlock(parent) ? parent.parent : parent;
@@ -2125,6 +2125,26 @@ export const getAssignedSetter = (node: ts.Node, context: Context) => {
 export const isAmbient = (node: ts.Node) =>
   ts.canHaveModifiers(node) &&
   (ts.getModifiers(node) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword);
+
+// The block of a namespace that a statement declares, which runs once, as TypeScript emits it, where
+// the declaration runs, or undefined for another statement or a declare, which runs nothing.
+const getNamespaceBody = (statement: ts.Node): ts.ModuleBlock | undefined => {
+  if (!ts.isModuleDeclaration(statement) || isAmbient(statement)) return undefined;
+  const body = statement.body;
+  return body !== undefined && ts.isModuleDeclaration(body)
+    ? getNamespaceBody(body)
+    : body !== undefined && ts.isModuleBlock(body)
+      ? body
+      : undefined;
+};
+
+// The statements that a file runs at its top level, where each namespace's declaration runs the
+// statements of its body.
+export const getRunStatements = (container: ts.SourceFile | ts.ModuleBlock): ts.Statement[] =>
+  container.statements.flatMap((statement) => {
+    const body = getNamespaceBody(statement);
+    return body === undefined ? [statement] : [statement, ...getRunStatements(body)];
+  });
 
 export const isStatic = (node: ts.Node) =>
   ts.canHaveModifiers(node) &&

@@ -49144,4 +49144,61 @@ describe("BigInts", () => {
       expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
     });
   });
+
+  describe("runs a namespace's body once where its declaration runs", () => {
+    const getSource = (expected: string) => `
+      namespace Tokens {
+        var current = 0;
+        const step = 2;
+        if (current === 0) current = 1;
+        export function next() {
+          current += step;
+          return current;
+        }
+        export const first = current;
+      }
+      namespace Outer.Inner {
+        let count = 10;
+        export function bump() {
+          return ++count;
+        }
+      }
+      const seen = [Tokens.next(), Tokens.next(), Tokens.first, Outer.Inner.bump()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with TypeScript's output run in Node", async () => {
+      expect((await checkModel(getSource("3,5,1,11"))).failure).toBeUndefined();
+    });
+
+    it("rejects a namespace whose variable starts again", async () => {
+      expect((await checkModel(getSource("3,3,1,11"))).failure?.message).toContain("seen 3,5,1,11");
+    });
+
+    it("agrees with TypeScript's output run in Node where a namespace's constant makes an object", async () => {
+      const getShapes = (expected: number) => `
+        namespace Shapes {
+          export const unit = { side: 1 };
+        }
+        const box = { side: Shapes.unit.side };
+        if (box.side !== ${expected}) throw new Error("side " + box.side);
+      `;
+      expect((await checkModel(getShapes(1))).failure).toBeUndefined();
+      expect((await checkModel(getShapes(2))).failure?.message).toContain("side 1");
+    });
+
+    it("agrees with TypeScript's output run in Node for another file's namespace", async () => {
+      const path = join(import.meta.dirname, "../fixtures/typescript/imports/countering.ts");
+      const getImporter = (expected: string) => `
+        import { Counter, log } from "./counter-space";
+        Counter.bump();
+        const seen = [Counter.bump(), log.join()].join();
+        if (seen !== "${expected}") throw new Error("seen " + seen);
+      `;
+      expect((await check(compile(getImporter("2,ran"), path))).failure).toBeUndefined();
+      expect((await check(compile(getImporter("2,"), path))).failure?.message).toContain(
+        "seen 2,ran",
+      );
+    });
+  });
 });
