@@ -1563,8 +1563,11 @@ const bindArguments = (
       },
       scope: frame.scope,
     };
-    // TLC passes arguments by name, so a disjunct in one branches where the body uses it as an action.
-    if (isBranching(program, arg, frame.scope)) return withBinding(scope, param.name, source);
+    // TLC passes arguments by name, so a disjunct in one branches where the body uses it as an action,
+    // and a variable primed before the step assigns it is one the body may assign.
+    if (isBranching(program, arg, frame.scope) || hasUnassignedPrime(program, arg, frame)) {
+      return withBinding(scope, param.name, source);
+    }
     const value = compileValue(program, arg, frame);
     const current = frame.isNext ? undefined : source;
     if (!names || arg.kind === "Identifier" || arg.kind === "Number" || arg.kind === "String") {
@@ -4186,6 +4189,7 @@ const compileStep = (
       const body = continueWith(bindings.scope, [expression.body]);
       return () => `{ ${getDeclarations(bindings.names)} ${body()} }`;
     }
+
     case "Identifier": {
       const binding = first.scope.get(expression.name);
       if (binding?.kind === "Operator" && binding.definition.params.length === 0) {
@@ -4267,13 +4271,33 @@ const compileStep = (
   return () => `if (${guard.emit()}) { ${tail()} }`;
 };
 
+// Whether an expression primes a variable, outside an ENABLED, that the step has yet to assign.
+const hasUnassignedPrime = (program: Program, expression: Expression, frame: Frame): boolean => {
+  if (expression.kind === "Enabled") return false;
+  if (expression.kind === "Prime" && expression.expression.kind === "Identifier") {
+    const name = expression.expression.name;
+    const global = frame.scope.has(name) ? undefined : findGlobalName(name, program.environment);
+    return global?.kind === "Variable" && frame.primed[global.index] === undefined;
+  }
+  return getChildren(expression).some((child) => hasUnassignedPrime(program, child, frame));
+};
+
 const hasPrime = (expression: Expression): boolean =>
   expression.kind === "Prime" ||
   expression.kind === "Unchanged" ||
   expression.kind === "Enabled" ||
   getChildren(expression).some(hasPrime);
 
-const getPrimedVariable = (program: Program, expression: Expression, scope: TierScope) => {
+const getPrimedVariable = (
+  program: Program,
+  expression: Expression,
+  scope: TierScope,
+): number | undefined => {
+  // TLC finds the variable that a parameter primes in the argument it stands for.
+  const binding = expression.kind === "Identifier" ? scope.get(expression.name) : undefined;
+  if (binding?.kind === "Operator" && binding.definition.params.length === 0) {
+    return getPrimedVariable(program, binding.definition.body, binding.scope);
+  }
   if (expression.kind !== "Prime" || expression.expression.kind !== "Identifier") return undefined;
   const name = expression.expression.name;
   if (scope.has(name)) return undefined;
