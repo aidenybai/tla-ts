@@ -50423,4 +50423,31 @@ describe("BigInts", () => {
       (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
     ).toContain("tla-ts can't follow toString, which the global object inherits");
   });
+
+  describe("runs JavaScript whose calls' results, class keys, and computed properties break TypeScript's types", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var key = "k";
+      class Keyed {
+        [key] = 1;
+      }
+      var made = new Keyed();
+      var digits = String(Number("12"));
+      var found = [12].includes(String(digits));
+      var holder = { [Symbol.iterator]: 3 };
+      box.seen = [made.k, found, typeof holder[Symbol.iterator]].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("1,false,number"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("1,true,number"), path))).failure?.message).toContain(
+        "seen 1,false,number",
+      );
+    });
+  });
 });

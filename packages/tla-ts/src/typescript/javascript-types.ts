@@ -15,12 +15,13 @@ const ANY = "/** @type {any} */ ";
 
 // Errors about types that hold: an implicit any, a value that may be null or undefined, a name
 // that no declaration binds, which tla-ts resolves as Node does, a property that the type lacks,
-// which TypeScript reads as any, and a read before a declaration, which throws as tla-ts follows.
+// which TypeScript reads as any, as it does a class field's computed key that it leaves out of the
+// type, and a read before a declaration, which throws as tla-ts follows.
 const IGNORED_ERRORS = new Set([
-  2304, 2339, 2448, 2449, 2450, 2531, 2532, 2533, 2550, 2551, 2552, 2580, 2581, 2582, 2583, 2584,
-  2591, 2592, 2593, 2662, 2663, 2683, 2721, 2722, 2723, 2867, 2868, 7005, 7006, 7008, 7010, 7011,
-  7015, 7016, 7017, 7018, 7019, 7022, 7023, 7024, 7025, 7031, 7032, 7033, 7034, 7041, 7052, 7053,
-  7055, 7056, 7057, 18047, 18048, 18049,
+  1166, 1170, 2304, 2339, 2448, 2449, 2450, 2531, 2532, 2533, 2550, 2551, 2552, 2580, 2581, 2582,
+  2583, 2584, 2591, 2592, 2593, 2662, 2663, 2683, 2721, 2722, 2723, 2867, 2868, 7005, 7006, 7008,
+  7010, 7011, 7015, 7016, 7017, 7018, 7019, 7022, 7023, 7024, 7025, 7031, 7032, 7033, 7034, 7041,
+  7052, 7053, 7055, 7056, 7057, 18047, 18048, 18049,
 ]);
 
 // A value of another type than the declaration, the parameter, or the property that takes it.
@@ -304,6 +305,10 @@ const fixAssigned = (
 ): Edit[] | undefined => {
   if (isWritten(node)) return fixWrite(node, file, checker);
   const parent = node.parent;
+  const computed = ts.findAncestor(node, ts.isComputedPropertyName)?.parent;
+  if (computed !== undefined && ts.isPropertyAssignment(computed)) {
+    return castExpression(computed.initializer, file);
+  }
   if (
     ts.isIdentifier(node) &&
     (ts.isPropertyAssignment(parent) ||
@@ -338,17 +343,21 @@ const isUndefinedTaking = (type: ts.Type) =>
   (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Undefined)) !== 0 ||
   (type.isUnion() && type.types.some(isUndefinedTaking));
 
-// The call that a node is, or whose callee, callee's method name, or argument it is.
+// The call whose argument a node is, or that it is, or whose callee or callee's method name it is.
 const getCall = (node: ts.Node) =>
-  ts.findAncestor(
-    node,
-    (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
-      (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
-      (ancestor === node ||
-        ancestor.expression === node ||
-        (ts.isPropertyAccessExpression(ancestor.expression) && ancestor.expression.name === node) ||
-        (ancestor.arguments ?? []).some((argument) => argument === node)),
-  );
+  (ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent)) &&
+  (node.parent.arguments ?? []).some((argument) => argument === node)
+    ? node.parent
+    : ts.findAncestor(
+        node,
+        (ancestor): ancestor is ts.CallExpression | ts.NewExpression =>
+          (ts.isCallExpression(ancestor) || ts.isNewExpression(ancestor)) &&
+          (ancestor === node ||
+            ancestor.expression === node ||
+            (ts.isPropertyAccessExpression(ancestor.expression) &&
+              ancestor.expression.name === node) ||
+            (ancestor.arguments ?? []).some((argument) => argument === node)),
+      );
 
 // The edits for a diagnostic of a type that may not hold, or undefined where tla-ts can't make it
 // hold.
@@ -385,11 +394,15 @@ const getEdits = (
     return edits.every((edit) => edit !== undefined) ? edits.flat() : undefined;
   }
   if (CALLEE_ERRORS.has(code)) {
-    const call = getCall(node);
+    const call =
+      (ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent)) &&
+      node.parent.expression === node
+        ? node.parent
+        : getCall(node);
     return call === undefined ? undefined : castExpression(call.expression, file);
   }
   if (ARGUMENT_COUNT_ERRORS.has(code)) {
-    const call = getCall(node);
+    const call = ts.isCallExpression(node) || ts.isNewExpression(node) ? node : getCall(node);
     const signature = call === undefined ? undefined : checker.getResolvedSignature(call);
     const callee = signature?.getDeclaration()?.getSourceFile();
     // A parameter that a call leaves out holds undefined, which a JavaScript parameter, any, takes,
