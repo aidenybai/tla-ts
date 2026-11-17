@@ -46,6 +46,18 @@ describe("subexpression references match TLC", () => {
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 12 }]);
   });
 
+  it("selects an operand that contains a subexpression reference", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nQ == {5}\nP(y) == {y + 1}\nOp == {Q!1, Q!1 + 1}\nL == LET K == {5} IN {K!1, 2}\nN == LET K == {{7}} IN {K!1, 2}\nR(z) == {P(z)!1, Q!1 + z}\nVARIABLES a, b, c, d, e\nInit == a = 0 /\\ b = 0 /\\ c = 0 /\\ d = 0 /\\ e = 0\nNext == a' = Op!1 /\\ b' = Op!2 /\\ c' = L!1!1 /\\ d' = R(3)!1 + R(3)!2 /\\ e' = N!1!1!1!1\nInv == a = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.state)).toEqual([
+      { a: 0, b: 0, c: 0, d: 0, e: 0 },
+      { a: 5, b: 6, c: 5, d: 12, e: 7 },
+    ]);
+  });
+
   it("selects a label through an instance whose operators the instancing module does not extend", async () => {
     const result = await check({
       source:

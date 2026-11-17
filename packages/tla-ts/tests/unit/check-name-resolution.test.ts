@@ -2863,6 +2863,19 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it("selects through each reference that a selected operand names like SANY", async () => {
+    await expect(
+      checkNames("R == {{5}}\nQ == {R!1}\nOp == {Q!1, 2}\nB == Op!1!1!1!1!1"),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 17 to line 5, col 17 of module M",
+          message: "Selecting subexpression of expression that has none.",
+        },
+      ]),
+    );
+  });
+
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {
     await expect(
       checkNames(

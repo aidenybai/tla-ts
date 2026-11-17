@@ -231,6 +231,11 @@ const selectSubexpression = (
     }
   };
 
+  const isWrittenBefore = (node: Expression) =>
+    node.location.range?.module !== location.range?.module || isBefore(node.location, location);
+  const lookupWritten: Lookup = (name) =>
+    selection.lets.flat().find((definition) => definition.name === name) ?? lookup(name);
+
   const report = (range: SourceRange | undefined, message: string) => {
     if (!range) throw createError(message, location);
     selectionErrors.set(reference, {
@@ -349,16 +354,15 @@ const selectSubexpression = (
     if (!current) throw createError("Subexpression selection failed", location);
     if (selector.kind === "Colon") return;
     const range = reference.selectorRanges?.[selectorIndex];
-    const currentRange = current.location.range;
     if (
       (current.kind === "Subexpression" ||
         (current.kind === "Identifier" && current.name.includes("!")) ||
         (current.kind === "Apply" && current.operator.includes("!"))) &&
-      (currentRange?.module !== location.range?.module || isBefore(current.location, location))
+      isWrittenBefore(current)
     ) {
       const selected = selectionErrors.has(current)
         ? current
-        : resolveSubexpressions(current, lookup, isGoal);
+        : resolveSubexpressions(current, lookupWritten, isGoal);
       const noOperands = `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`;
       if (selectionErrors.has(selected)) {
         report(range, noOperands);
@@ -526,7 +530,14 @@ const selectSubexpression = (
     }
     deferToExpression(location.range, message);
   }
-  const selected = createApplication(selection, current);
+  const resolved = isWrittenBefore(current)
+    ? resolveSubexpressions(current, lookupWritten, isGoal)
+    : current;
+  const isCopied = selection.params.length === 0 && selection.lets.length === 0;
+  const selected = createApplication(selection, isCopied ? current : resolved);
+  if (isCopied && resolved !== current) {
+    selectionSources.set(selected, selectionSources.get(resolved) ?? resolved);
+  }
   nullSelections.set(selected, nulls);
   if (expressionError) operatorSelectionErrors.set(selected, expressionError);
   return selected;
