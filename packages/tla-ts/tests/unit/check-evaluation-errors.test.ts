@@ -637,6 +637,43 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "checks the postconditions of a deadlocked failed state",
+      'Init == x = 0 /\\ TLCSet(1, 0) /\\ PrintT(<<"i", TLCGet(1)>>)\nNext == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<"n", TLCGet(1)>>) /\\ x\' = IF TLCGet(1) = 1 THEN (x /\\ TRUE) ELSE x\nPost == PrintT(<<"post", TLCGet(1)>>)',
+      "INIT Init\nNEXT Next\nPOSTCONDITION Post",
+      ['<<"i", 0>>', '<<"post", 0>>', '<<"n", 1>>'],
+      75,
+    ],
+    [
+      "rebuilds the trace to a successor that fails a constraint",
+      'Init == x = 0 /\\ TLCSet(1, 0)\nNext == x < 3 /\\ \\E b \\in {1, 2} : TLCSet(1, TLCGet(1) + 1) /\\ x\' = x + b\nC == PrintT(<<"c", x, TLCGet(1)>>) /\\ IF x = 3 /\\ TLCGet(1) \\in {5, 6} THEN 1 \\in 2 ELSE TRUE',
+      "INIT Init\nNEXT Next\nCONSTRAINT C\nCHECK_DEADLOCK FALSE",
+      ['<<"c", 3, 6>>'],
+      75,
+    ],
+    [
+      "rebuilds the trace to a successor that fails an invariant",
+      'Init == x = 0 /\\ TLCSet(1, 0)\nNext == x < 3 /\\ \\E b \\in {1, 2} : TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<"n", x, TLCGet(1)>>) /\\ x\' = IF TLCGet(1) = 8 THEN (x /\\ TRUE) ELSE x + b\nInv == IF x = 4 /\\ TLCGet(1) = 6 THEN 1 \\in 2 ELSE TRUE',
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      ['<<"n", 2, 5>>', '<<"n", 2, 6>>'],
+      76,
+    ],
+  ])(
+    "%s before TLC's ModelChecker replays the next state",
+    async (_title, definitions, config, traceOutput, exitCode) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\n${definitions}\n====`,
+        config,
+        onPrint: () => {},
+      });
+      expect([result.failure?.traceOutput, result.failure?.exitCode]).toEqual([
+        traceOutput,
+        exitCode,
+      ]);
+    },
+  );
+
   it("prints what the replay of a failed constraint prints after the trace", async () => {
     const result = await checkSteps(
       'C == PrintT(<<"c", x>>) /\\ (IF x = 2 THEN 1 \\in 2 ELSE TRUE)',

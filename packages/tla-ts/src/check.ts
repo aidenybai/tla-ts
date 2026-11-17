@@ -871,19 +871,27 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return true;
     }
   };
+  const checkFailedTrace = (behavior: Behavior, counterExample?: CounterExampleOptions) => {
+    if (!counterExample) return { behavior, postcondition: undefined };
+    const checked = checkTracePostconditions(
+      behavior.trace,
+      undefined,
+      getStepAlias,
+      counterExample.isConsole,
+    );
+    return {
+      behavior: appendTraceOutput(behavior, checked.lines),
+      postcondition: checked.unwitnessed ?? checked.postcondition,
+    };
+  };
   const createFailureResult = (
     failed: unknown,
     behavior: Behavior,
     failureOptions: FailureOptions = {},
-    counterExample?: CounterExampleOptions,
+    postcondition?: Postcondition,
   ) => {
     const error = isStackOverflow(failed) ? new TlaStackOverflowError() : failed;
     if (!(error instanceof TlaEvaluationError)) throw error;
-    const checked =
-      counterExample &&
-      checkTracePostconditions(behavior.trace, undefined, getStepAlias, counterExample.isConsole);
-    const postcondition = checked?.unwitnessed ?? checked?.postcondition;
-    const traceOutput = [...(behavior.traceOutput ?? []), ...(checked?.lines ?? [])];
     return {
       ...createResult("error", undefined, {
         ...getFailureMessage(
@@ -891,7 +899,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           failureOptions.phase !== undefined && failureOptions.phase !== "initial",
         ),
         ...behavior,
-        ...(traceOutput.length > 0 && { traceOutput }),
         ...(postcondition && { postcondition }),
         initialState:
           failureOptions.initialState && !(error instanceof TlaModuleError)
@@ -938,8 +945,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     );
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
     const trace = traces.getStateTrace(index, { incomplete: error.state, isFailed: true }).trace;
-    const failure = createFailureResult(
-      error,
+    const checked = checkFailedTrace(
       appendTraceOutput(
         {
           trace: traceFailure
@@ -960,8 +966,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         },
         live.lines,
       ),
-      { callStack: live.result, traceFailure },
       { isConsole: true },
+    );
+    const failure = createFailureResult(
+      error,
+      checked.behavior,
+      { callStack: live.result, traceFailure },
+      checked.postcondition,
     );
     return withOutDegrees({
       ...failure,
@@ -1224,10 +1235,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         if (violation) reportContinuedViolation("invariant-violation", violation);
       } catch (error) {
         if (isStackOverflow(error)) throw error;
+        const behavior = traces.getTrace(index, successor, { isFailed: true });
         const replay = captureOutput(() => replayNext(index));
         return createFailureResult(
           error,
-          appendTraceOutput(traces.getTrace(index, successor, { isFailed: true }), replay.lines),
+          appendTraceOutput(behavior, replay.lines),
           replay.result ?? { outDegrees: getFailureOutDegrees() },
         );
       }
@@ -1497,14 +1509,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     return { result, lines: [...live.lines, ...replay.lines] };
   };
   const getNextFailureTrace = (index: number, counterExample?: CounterExampleOptions) =>
-    traces.getStateTrace(index, { isFailed: !counterExample });
-  const reportNextStateOverflow = (index: number, counterExample?: CounterExampleOptions) =>
-    createFailureResult(
+    checkFailedTrace(traces.getStateTrace(index, { isFailed: !counterExample }), counterExample);
+  const reportNextStateOverflow = (index: number, counterExample?: CounterExampleOptions) => {
+    const checked = getNextFailureTrace(index, counterExample);
+    return createFailureResult(
       createStackOverflowError(),
-      getNextFailureTrace(index, counterExample),
+      checked.behavior,
       { phase: "next" },
-      counterExample,
+      checked.postcondition,
     );
+  };
   // Deviation from TLC: under -continue, TLC's Worker reports a state whose next-state relation failed as deadlocked, or else reports the failure twice as its replay fails again.
   const reportNextStateFailure = (
     error: unknown,
@@ -1518,12 +1532,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         ? { isConsole: false }
         : undefined;
     if (isStackOverflow(error)) return reportNextStateOverflow(index, counterExample);
+    const checked = getNextFailureTrace(index, counterExample);
     const replay = replayFailedNext(index, liveSuccessors);
     return createFailureResult(
       withNextStateExitCode(error),
-      appendTraceOutput(getNextFailureTrace(index, counterExample), replay.lines),
+      appendTraceOutput(checked.behavior, replay.lines),
       { phase: "next", ...replay.result },
-      counterExample,
+      checked.postcondition,
     );
   };
   const addLiveState = (
@@ -1591,10 +1606,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           outcome = reportNextStateOverflow(index);
           return true;
         }
-        const replay = is174
-          ? captureOutput(() => replayNext(index))
-          : replayFailedNext(index, liveSuccessors);
         if (is174 && error instanceof TlaEvaluationError && !isHeadedError(error)) {
+          const replay = captureOutput(() => replayNext(index));
           outcome = createFailureResult(
             new TlaEvaluationError(`${getWrappedException(error)}${error.message}`, error),
             appendTraceOutput({ trace: [] }, replay.lines),
@@ -1602,30 +1615,33 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           );
           return true;
         }
-        const isTraceFailed = isUnfingerprintable(successor.state);
-        const traceFailure =
-          isTraceFailed && error instanceof TlaEvaluationError
-            ? getTraceFailure(
-                error,
-                captureOutput(() => {
-                  try {
-                    traces.findStepAction(index, state, successor.state, true);
-                  } catch (failed) {
-                    if (!(failed instanceof TlaEvaluationError)) throw failed;
-                  }
-                }).lines,
-              )
+        const traceError =
+          error instanceof TlaEvaluationError && isUnfingerprintable(successor.state)
+            ? error
             : undefined;
-        outcome = createFailureResult(
-          error,
-          appendTraceOutput(
-            traceFailure
-              ? traces.getStateTrace(index, { isFailed: true })
-              : traces.getTrace(index, successor, { isFailed: true }),
-            replay.lines,
-          ),
-          { phase: "next", ...replay.result, traceFailure },
-        );
+        const behavior = traceError
+          ? traces.getStateTrace(index, { isFailed: true })
+          : traces.getTrace(index, successor, { isFailed: true });
+        const traceFailure =
+          traceError &&
+          getTraceFailure(
+            traceError,
+            captureOutput(() => {
+              try {
+                traces.findStepAction(index, state, successor.state, true);
+              } catch (failed) {
+                if (!(failed instanceof TlaEvaluationError)) throw failed;
+              }
+            }).lines,
+          );
+        const replay = is174
+          ? captureOutput(() => replayNext(index))
+          : replayFailedNext(index, liveSuccessors);
+        outcome = createFailureResult(error, appendTraceOutput(behavior, replay.lines), {
+          phase: "next",
+          ...replay.result,
+          traceFailure,
+        });
       }
       return outcome !== undefined;
     });
