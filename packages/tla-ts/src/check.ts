@@ -23,7 +23,9 @@ import {
 } from "./errors";
 import {
   describeRange,
+  findGlobalName,
   getDefinition,
+  getStartupValue,
   type CallStack,
   type Environment,
   type FingerprintFailure,
@@ -1134,7 +1136,19 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const assumptionViolation = findViolatedAssumption();
   if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);
   options.onProgress?.({ kind: "initial-states-started" });
+  // A next-state relation that is the constant FALSE leaves every initial state without a successor,
+  // so with deadlock checked the typed tier, which decides only a search that succeeds, would only
+  // search the initial states for the interpreter to search again. A script compiled from
+  // TypeScript runs in its initial state and has no next-state relation.
+  const global =
+    spec.next?.kind === "Identifier" && spec.scope === undefined
+      ? findGlobalName(spec.next.name, environment)
+      : undefined;
+  const isStepless =
+    (global?.kind === "Value" && global.value === false) ||
+    (global?.kind === "Definition" && getStartupValue(global.definition, environment) === false);
   const typedChecks =
+    !(config.checkDeadlock && isStepless) &&
     !options.isContinued &&
     options.dump === undefined &&
     // A set of small integers on the tier is a 31-bit mask, which a lower bound could overflow.
