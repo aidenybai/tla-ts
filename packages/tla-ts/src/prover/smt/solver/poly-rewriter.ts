@@ -1,4 +1,3 @@
-import { SmtUnsupportedError } from "../../../errors";
 import {
   type AstManager,
   KIND_APP,
@@ -43,6 +42,7 @@ import {
   SORT_INT,
 } from "./ast";
 import { isAstLess } from "./ast-lt";
+import { ObjHashtable } from "./hashtable";
 import { Rational } from "./rational";
 import type { Rewrite } from "./rewriter-tpl";
 
@@ -232,17 +232,6 @@ export class PolyRewriter {
 
   mkAddCore(args: number[]): number | Rewrite | undefined {
     if (args.length < 2) return args.length === 1 ? args[0] : undefined;
-    const manager = this.manager;
-    if (
-      this.options.isHoistIte === true &&
-      args.some(
-        (arg) =>
-          manager.getOp(arg) === OP_ITE ||
-          (this.isAdd(arg) &&
-            manager.getArgs(arg).some((inner) => manager.getOp(inner) === OP_ITE)),
-      )
-    )
-      throw new SmtUnsupportedError("hoisting an if-then-else out of a sum");
     this.currSort = this.manager.sorts[args[0]];
     if (this.options.isFlat === false || !args.some((arg) => this.isAdd(arg)))
       return this.mkNflatAdd(args);
@@ -300,22 +289,27 @@ export class PolyRewriter {
           if (!coefficient.isZero()) newArgs.push(this.mkMulAppWith(coefficient, product));
         }
       }
-      return this.hoistMultiplication(
+      return this.hoist(
         this.mkAddApp(
           isSortSums ? this.sortMonomials(newArgs, constant.isZero() ? 0 : 1) : newArgs,
         ),
       );
     }
-    if (isOrdered && this.options.isHoistMul !== true) {
+    if (isOrdered && this.options.isHoistMul !== true && this.options.isHoistIte !== true) {
       if (numCoeffs === 0) return undefined;
       if (numCoeffs === 1 && this.isNumeral(args[0]) && !this.getValue(args[0]).isZero())
         return undefined;
     }
     const newArgs: number[] = constant.isZero() ? [] : [this.mkNumeral(constant)];
     for (const arg of args) if (!this.isNumeral(arg)) newArgs.push(arg);
-    return this.hoistMultiplication(
+    return this.hoist(
       this.mkAddApp(isOrdered ? newArgs : this.sortMonomials(newArgs, constant.isZero() ? 0 : 1)),
     );
+  }
+
+  private hoist(sum: number): number | Rewrite {
+    const hoisted = this.hoistMultiplication(sum) ?? this.hoistIte(sum);
+    return hoisted === undefined ? sum : this.reduce(hoisted, Infinity);
   }
 
   // TO_BUFFER: the first argument takes the place of the term, and the others go at the end.
@@ -335,8 +329,8 @@ export class PolyRewriter {
     return buffer;
   }
 
-  private hoistMultiplication(sum: number): number | Rewrite {
-    if (this.options.isHoistMul !== true) return sum;
+  private hoistMultiplication(sum: number) {
+    if (this.options.isHoistMul !== true) return undefined;
     const isMul = (expr: number) => this.isMul(expr);
     const adds = this.getFlatArgs(sum, (expr) => this.isAdd(expr));
     const isValid = adds.map(() => true);
@@ -372,7 +366,54 @@ export class PolyRewriter {
         isChanged = true;
         break;
       }
-    return isChanged ? this.reduce(this.mkAddApp(adds), Infinity) : sum;
+    return isChanged ? this.mkAddApp(adds) : undefined;
+  }
+
+  // The summands that every branch of an if-then-else shares leave it.
+  private hoistIte(sum: number) {
+    if (this.options.isHoistIte !== true) return undefined;
+    const manager = this.manager;
+    const isAdd = (expr: number) => this.isAdd(expr);
+    const shared = new ObjHashtable((expr) => manager.hashes[expr]);
+    let isFirst = true;
+    const isHoistable = (expr: number): boolean => {
+      if (manager.getOp(expr) === OP_ITE)
+        return isHoistable(manager.getArg(expr, 1)) && isHoistable(manager.getArg(expr, 2));
+      if (this.isNumeral(expr) && this.getValue(expr).isInt()) return false;
+      const summands = this.getFlatArgs(expr, isAdd);
+      if (isFirst) for (const summand of summands) shared.add(summand);
+      else
+        for (const summand of [...shared].filter((item) => !summands.includes(item)).reverse())
+          shared.delete(summand);
+      if (shared.size === 0 || new Set(summands).size < summands.length) return false;
+      isFirst = false;
+      return true;
+    };
+    const applyHoist = (expr: number): number =>
+      manager.getOp(expr) === OP_ITE
+        ? manager.mkApp(
+            OP_ITE,
+            [
+              manager.getArg(expr, 0),
+              applyHoist(manager.getArg(expr, 1)),
+              applyHoist(manager.getArg(expr, 2)),
+            ],
+            manager.sorts[expr],
+          )
+        : this.mkAddApp(this.getFlatArgs(expr, isAdd).filter((summand) => !shared.has(summand)));
+    const adds = this.getFlatArgs(sum, isAdd);
+    let isChanged = false;
+    for (const [index, add] of adds.entries()) {
+      if (manager.getOp(add) !== OP_ITE) continue;
+      shared.clear();
+      isFirst = true;
+      if (!isHoistable(add)) continue;
+      const hoisted = this.mkAddApp([applyHoist(add), ...shared]);
+      if (hoisted === add) continue;
+      adds[index] = hoisted;
+      isChanged = true;
+    }
+    return isChanged ? this.mkAddApp(adds) : undefined;
   }
 
   private growStamps(expr: number) {

@@ -163,6 +163,10 @@ export class ObjHashtable {
     this.map.delete(key);
   }
 
+  clear() {
+    this.map.clear();
+  }
+
   [Symbol.iterator]() {
     return this.map.keys();
   }

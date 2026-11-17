@@ -488,3 +488,23 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ]);
   });
 });
+
+describe("hoist_ite, as Z3 5.3.2 simplifies", () => {
+  it("moves the summands every branch shares out of an if-then-else", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-const w Int)",
+        "(declare-const c Bool)",
+        "(declare-const d Bool)",
+        "(assert (= w (+ (ite c (+ x y w) (ite d (+ y x z) (+ w y x 3))) 1)))",
+        "(assert (> (+ (ite c (+ x y z w) (+ z w y x 1)) (ite d (+ x 2) (+ x 4)) w) 0))",
+        "(apply (using-params simplify :hoist_ite true))",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (let ((a!1 (+ 1 (ite c w (ite d z (+ 3 w))) y x)))\n    (= w a!1))\n  (not (<= (+ (ite c 0 1) z y (* 2 w) (* 2 x) (ite d 2 4)) 0))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});
