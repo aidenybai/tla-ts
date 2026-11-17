@@ -4225,6 +4225,62 @@ const translateCallStatementBody = (
           ),
       );
     };
+    // fill, slice, copyWithin, at, and join convert their arguments in order once they read the
+    // typed array's length, and run as they would with the primitives where the conversions left
+    // the typed array and its buffer as they were.
+    const convertedTypedValues = getConvertedTypedValues(expression, context);
+    const runConvertedTyped = (converted: readonly ts.Expression[]) => {
+      const lengthName = context.names.getFresh("length");
+      return bindOnce(
+        path,
+        lengthName,
+        useJavaScript("TypedArrayLength", [heap, ref], context),
+        ifThenElse(
+          apply("=", [identifier(lengthName), number(-1)]),
+          throwTypeError(path, expression, context, frame),
+          runConversion(
+            expression,
+            {
+              operands: converted,
+              hints: converted.map(() => (method === "join" ? "string" : "number")),
+              combine: (primitives) => tuple([...primitives]),
+            },
+            path,
+            context,
+            frame,
+            (after, primitives) => {
+              const afterHeap = getHeap(after.scope, expression, context);
+              return ifThenElse(
+                useJavaScript("TypedArrayKept", [heap, afterHeap, ref], context),
+                runChange(
+                  after,
+                  useJavaScript(
+                    "TypedArrayMethod",
+                    [
+                      afterHeap,
+                      ref,
+                      string(method),
+                      primitives,
+                      translateBuiltInValue("ArrayBuffer.prototype", expression, context),
+                      translateTypedConstructors(expression, context),
+                    ],
+                    context,
+                  ),
+                ),
+                leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string(
+                      "tla-ts can't follow a typed array method whose argument's conversion changed the typed array",
+                    ),
+                  ]),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+    };
     // set of an array-like source writes each element in order, so the first that a getter which
     // only throws answers throws once set wrote those before it, where nothing before runs code.
     const setGetter = useJavaScript(
@@ -4241,22 +4297,24 @@ const translateCallStatementBody = (
             ? runConvertedSubarray(convertedSubarrayValues)
             : convertedSearchValues !== undefined
               ? runConvertedSearch(convertedSearchValues)
-              : viewCall.owner === "TypedArray" &&
-                  method === "set" &&
-                  getThrowingGetters(expression, context).length > 0
-                ? throwFirstGetter(
-                    expression,
-                    apply("#", [setGetter, getUndefined(context)]),
-                    setGetter,
-                    typedValues[0] ?? getUndefined(context),
-                    withHeap(
-                      useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
-                    ),
-                    context,
-                    frame,
-                    runOperation(),
-                  )
-                : runOperation();
+              : convertedTypedValues !== undefined
+                ? runConvertedTyped(convertedTypedValues)
+                : viewCall.owner === "TypedArray" &&
+                    method === "set" &&
+                    getThrowingGetters(expression, context).length > 0
+                  ? throwFirstGetter(
+                      expression,
+                      apply("#", [setGetter, getUndefined(context)]),
+                      setGetter,
+                      typedValues[0] ?? getUndefined(context),
+                      withHeap(
+                        useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
+                      ),
+                      context,
+                      frame,
+                      runOperation(),
+                    )
+                  : runOperation();
     return bindOnce(
       path,
       receiver,
@@ -14521,6 +14579,19 @@ const getConvertedSearchValues = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
+// The arguments of a typed array's fill, slice, copyWithin, at, or join where one is an object,
+// which the method converts in turn after it reads the typed array's length: join its separator
+// to a string, and the others theirs to numbers.
+const getConvertedTypedValues = (node: ts.Node, context: Context) => {
+  const call = getViewCall(node, context);
+  return call?.owner === "TypedArray" &&
+    ["fill", "slice", "copyWithin", "at", "join"].includes(call.method) &&
+    !call.values.some(ts.isSpreadElement) &&
+    call.values.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
+    ? call.values
+    : undefined;
+};
+
 // new of a Temporal class, which a statement runs, as it may throw.
 const getNewTemporal = (node: ts.Expression, context: Context) =>
   ts.isNewExpression(node) ? getTemporalCall(node, context) : undefined;
@@ -15796,7 +15867,8 @@ const getEffects = (
     getConvertedViewValues(node, context) !== undefined ||
     getConvertedAtomicsValues(node, context) !== undefined ||
     getConvertedSubarrayValues(node, context) !== undefined ||
-    getConvertedSearchValues(node, context) !== undefined
+    getConvertedSearchValues(node, context) !== undefined ||
+    getConvertedTypedValues(node, context) !== undefined
       ? getConversionFunctions(node, context)
       : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
         ? getKeyedConversionFunctions(node, context)

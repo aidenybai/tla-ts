@@ -7030,6 +7030,12 @@ TypedArraySubarray(heap, ref, arguments, length, bufferPrototype, constructors) 
             > Len(buffer.bytes) -> Thrown(heap, "RangeError")
        [] OTHER -> Returned(viewing, Allocated(viewing))
 
+\\* Whether a typed array and the buffer it views are as they were before a conversion.
+TypedArrayKept(before, after, ref) ==
+  LET view == before.objects[ref[Ref]]
+  IN /\\ after.objects[ref[Ref]] = view
+     /\\ after.objects[view.viewed[Ref]] = before.objects[view.viewed[Ref]]
+
 \\* includes, indexOf, or lastIndexOf of a typed array once it converted its fromIndex to a primitive,
 \\* which searches below the length that it read before, where an element that the conversion left
 \\* past the end reads as undefined, and indexOf and lastIndexOf skip it.
