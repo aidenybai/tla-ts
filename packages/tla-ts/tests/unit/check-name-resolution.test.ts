@@ -1691,6 +1691,40 @@ describe("name resolution matches SANY", () => {
     });
   });
 
+  it("resolves a name that RECURSIVE declares but nothing defines like SANY", async () => {
+    await expect(
+      checkNames("RECURSIVE F(_)\nG == F\nH == LET F(a) == 1 IN F(1)"),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          {
+            location: "line 3, col 6 to line 3, col 6 of module M",
+            message: "The operator F requires 1 arguments.",
+          },
+          {
+            location: "line 4, col 10 to line 4, col 18 of module M",
+            message: "Recursive operator F defined at wrong LET/IN level.",
+          },
+          {
+            location: "line 5, col 1 to line 5, col 10 of module M",
+            message: "A VARIABLE declaration may not appear within a recursive definition section.",
+          },
+          {
+            location: "line 2, col 11 to line 2, col 14 of module M",
+            message: "Symbol F declared in RECURSIVE statement but not defined.",
+          },
+        ],
+        warnings: [
+          {
+            location: "line 4, col 10 to line 4, col 18 of module M",
+            message:
+              "Multiple declarations or definitions for symbol F.  \nThis duplicates the one at line 2, col 11 to line 2, col 14 of module M.",
+          },
+        ],
+      },
+    });
+  });
+
   it("reports an operator parameter where a RECURSIVE declaration has _, which SANY accepts", async () => {
     await expect(checkNames("RECURSIVE Map(_, _)\nMap(f(_), s) == 1")).rejects.toThrow(
       createSanyError([
