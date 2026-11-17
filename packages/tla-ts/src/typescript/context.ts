@@ -75,6 +75,9 @@ export interface SharedCall {
   // nor gives back, and whose reads throw.
   uninitialized: ts.Symbol[];
   parameters: OperatorParam[];
+  // Whether its caller catches what its body throws, so that the body runs as inside a try. A
+  // caller that doesn't stops where an expression of the body throws, as the body inlined would.
+  isCatching: boolean;
   // Whether a call inside its own body, or a body that it runs, calls it.
   isRecursive: boolean;
   // Whether its body can end but by a throw, as a call inside its own body takes it to.
@@ -88,6 +91,9 @@ export interface SharedHelper {
   changed: ts.Symbol[];
   // The variables that a function or a class of the script names, which its operator takes.
   state: ts.Symbol[];
+  // Whether its operator also takes the function's value, whose environment a closure reads its
+  // captures from, and its this, as a call through a value runs it.
+  isEntered: boolean;
 }
 
 export interface Passed {
@@ -3574,7 +3580,7 @@ const isPropertyWrite = (node: ts.Node) =>
   ts.isExpressionStatement(node.parent.parent);
 
 // The locals that a function reads from the functions around it, with the function that binds each.
-const getOuterLocals = (node: ts.Node, context: Context) =>
+export const getOuterLocals = (node: ts.Node, context: Context) =>
   findNodes(node, ts.isIdentifier).flatMap((name) => {
     const symbol = getSymbol(name, context.checker);
     // A variable that a require initializes in JavaScript has an alias's symbol, which TypeScript

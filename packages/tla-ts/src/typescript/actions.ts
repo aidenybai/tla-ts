@@ -419,7 +419,7 @@ import {
   readFlags,
   runRegExpProtocolCall,
 } from "./regexp-protocol";
-import { getThrownMessage, isSharedCall, translateSharedCall } from "./shared-calls";
+import { getThrownMessage, isEnteredCall, isSharedCall, translateSharedCall } from "./shared-calls";
 import {
   set,
   lambda,
@@ -5163,7 +5163,12 @@ const translateCallStatementBody = (
       return dispatched.reduceRight(
         (otherwise, candidate) => {
           const candidateValue = getCandidateValue(candidate, context);
-          if (candidateValue === undefined || frame.inlining.has(candidate)) return otherwise;
+          const isEntered =
+            candidateValue !== undefined &&
+            isEnteredCall(expression, candidate, expression.arguments, path, context);
+          if (candidateValue === undefined || (frame.inlining.has(candidate) && !isEntered)) {
+            return otherwise;
+          }
           const candidateReceiver = ts.isArrowFunction(candidate)
             ? undefined
             : { value: receiver, method: candidate };
@@ -5180,42 +5185,21 @@ const translateCallStatementBody = (
                 : value,
               candidateValue,
             ]),
-            !isAnyGenerator(candidate) && !isAsyncFunction(candidate)
-              ? isClosure(candidate, context)
-                ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
-                    inlineBody(
-                      expression,
-                      candidate,
-                      expression.arguments,
-                      candidateReceiver,
-                      inner,
-                      context,
-                      innerFrame,
-                      (after, result) => continueCall(leave(after), result),
-                    ),
-                  )
-                : inlineBody(
-                    expression,
-                    candidate,
-                    expression.arguments,
-                    candidateReceiver,
-                    path,
-                    context,
-                    frame,
-                    continueCall,
-                  )
-              : isAnyGenerator(candidate)
-                ? makeGenerator(
-                    expression,
-                    candidate,
-                    expression.arguments,
-                    candidateReceiver,
-                    path,
-                    context,
-                    frame,
-                    continueCall,
-                  )
-                : isClosure(candidate, context)
+            isEntered
+              ? translateSharedCall(
+                  expression,
+                  candidate,
+                  expression.arguments,
+                  candidateReceiver,
+                  path,
+                  context,
+                  frame,
+                  continueCall,
+                  () => leaf(boolean(false)),
+                  { value, receiver },
+                )
+              : !isAnyGenerator(candidate) && !isAsyncFunction(candidate)
+                ? isClosure(candidate, context)
                   ? enterClosure(
                       candidate,
                       value,
@@ -5223,9 +5207,10 @@ const translateCallStatementBody = (
                       context,
                       frame,
                       (inner, innerFrame, leave) =>
-                        translateAsyncCall(
+                        inlineBody(
                           expression,
                           candidate,
+                          expression.arguments,
                           candidateReceiver,
                           inner,
                           context,
@@ -5233,15 +5218,54 @@ const translateCallStatementBody = (
                           (after, result) => continueCall(leave(after), result),
                         ),
                     )
-                  : translateAsyncCall(
+                  : inlineBody(
                       expression,
                       candidate,
+                      expression.arguments,
                       candidateReceiver,
                       path,
                       context,
                       frame,
                       continueCall,
-                    ),
+                    )
+                : isAnyGenerator(candidate)
+                  ? makeGenerator(
+                      expression,
+                      candidate,
+                      expression.arguments,
+                      candidateReceiver,
+                      path,
+                      context,
+                      frame,
+                      continueCall,
+                    )
+                  : isClosure(candidate, context)
+                    ? enterClosure(
+                        candidate,
+                        value,
+                        path,
+                        context,
+                        frame,
+                        (inner, innerFrame, leave) =>
+                          translateAsyncCall(
+                            expression,
+                            candidate,
+                            candidateReceiver,
+                            inner,
+                            context,
+                            innerFrame,
+                            (after, result) => continueCall(leave(after), result),
+                          ),
+                      )
+                    : translateAsyncCall(
+                        expression,
+                        candidate,
+                        candidateReceiver,
+                        path,
+                        context,
+                        frame,
+                        continueCall,
+                      ),
             otherwise,
           );
         },
@@ -7220,7 +7244,7 @@ export const inlineBody = (
     argumentNodes === node.arguments &&
     isLiftable(callee, context)
     ? continueWith(path, translateLiftedCall(callee, node, path.scope, context))
-    : isSharedCall(node, callee, argumentNodes, receiver, context)
+    : isSharedCall(node, callee, argumentNodes, context)
       ? translateSharedCall(
           node,
           callee,
