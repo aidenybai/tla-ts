@@ -26,6 +26,7 @@ export interface CheckerRuntime {
   version: TlcVersion;
   seed: bigint;
   isSeen: (state: Value[]) => boolean;
+  markExplored: ((state: Value[]) => void) | undefined;
   getSuccessorAction: (state: Value[], next: Value[]) => SpecAction | undefined;
   toRecord: (state: Value[]) => Record<string, Value>;
   generatedStates: number;
@@ -55,6 +56,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     counterExample: undefined,
     deferred: undefined,
     isSeen: () => false,
+    markExplored: undefined,
     getSuccessorAction: () => undefined,
     toRecord: () => ({}),
     setLivenessSource: () => {},

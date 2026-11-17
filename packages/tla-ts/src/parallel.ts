@@ -8,6 +8,7 @@ import {
 } from "./check";
 import { parseConfig, type ModelConfig } from "./config";
 import { TlaEvaluationError } from "./errors";
+import type { RuntimeInvariant } from "./environment";
 import { isImpure } from "./evaluate";
 import {
   createSharedFingerprints,
@@ -43,6 +44,7 @@ export interface StartMessage extends Pick<
 > {
   type: "start";
   config: ModelConfig;
+  runtimeInvariants: RuntimeInvariant[];
   modules: [string, string | undefined][];
   classes: [string, Uint8Array | undefined][];
   index: number;
@@ -146,6 +148,8 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
     specification.variableLocations,
     () => created.order.getDeclarationOrder("variable"),
     report,
+    [],
+    specification.runtimeInvariants,
   );
   if (findAssumptionViolation(specification.assumptions, environment)) return fallBack();
   if (
@@ -273,6 +277,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
       type: "start",
       source: options.source,
       config,
+      runtimeInvariants: specification.runtimeInvariants,
       modules: [...modules],
       classes: [...classes],
       index,

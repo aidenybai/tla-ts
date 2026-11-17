@@ -1177,7 +1177,9 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   }
   const builtin = context.environment.builtins.get(name);
   if (builtin?.arity === 0) return builtin.evaluate([], context);
-  throw new TlaEvaluationError(`Unknown identifier ${name} at ${describeLocation(expression)}`);
+  throw new TlaEvaluationError(
+    `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+  );
 };
 
 export const getReevaluatedDefinitions = (
