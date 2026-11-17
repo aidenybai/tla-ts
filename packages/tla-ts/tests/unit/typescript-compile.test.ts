@@ -50362,4 +50362,51 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("a:h,17"))).failure?.message).toContain("results a:h,16");
     });
   });
+
+  describe("runs JavaScript whose writes break the types that TypeScript infers", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var count = 1;
+      count = "one";
+      var first = 0;
+      [first] = ["two"];
+      var later = 0;
+      function setLater() {
+        later = null;
+      }
+      setLater();
+      var total = 1;
+      total += "0";
+      var twice = 2;
+      var twice = "2";
+      var holder = { a: 1 };
+      holder.a = "t";
+      var list = [1];
+      list[0] = "s";
+      list.push("w");
+      box.seen = [
+        typeof count,
+        typeof first,
+        later === null,
+        total,
+        typeof twice,
+        holder.a + 1,
+        list.join(""),
+      ].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("string,string,true,10,string,t1,sw");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects the types that TypeScript infers", async () => {
+      const source = getSource("number,number,false,1,number,2,1w");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "seen string,string,true,10,string,t1,sw",
+      );
+    });
+  });
 });
