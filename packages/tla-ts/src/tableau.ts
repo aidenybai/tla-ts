@@ -402,14 +402,6 @@ const extractPromises = (expression: LiveExpression, promises: LiveUnary[]) => {
   }
 };
 
-const isLocallyConsistent = (terms: LiveExpression[]) => {
-  const positive = terms.filter(isStateAtom);
-  const negative = terms.flatMap((term) =>
-    term.kind === "Not" && isStateAtom(term.body) ? [term.body] : [],
-  );
-  return !positive.some((term) => isMember(negative, term));
-};
-
 const getPositiveClosure = (terms: LiveExpression[]) => {
   const pending = [...terms];
   const closure: LiveExpression[] = [];
@@ -467,65 +459,126 @@ const getTriples = (
     return parts ? [{ whole: term, first: parts.first, second: parts.second }] : [];
   });
 
-const getParticleKey = (particle: LiveExpression[]) =>
-  [...new Set(particle.map(getTermKey))].sort().join("|");
+// A particle's terms in the order they joined it, and the set of their ids as a bitset.
+interface Particle {
+  terms: LiveExpression[];
+  bits: number[];
+}
 
-const unionParticles = (left: LiveExpression[][], right: LiveExpression[][]) => {
+// Gives each distinct term of a tableau an id, by its key.
+const createTermIds = () => {
+  const ids = new Map<string, number>();
+  return (term: LiveExpression) => {
+    const key = getTermKey(term);
+    const id = ids.get(key) ?? ids.size;
+    if (id === ids.size) ids.set(key, id);
+    return id;
+  };
+};
+
+const hasBit = (bits: number[], id: number) => (((bits[id >>> 5] ?? 0) >>> (id & 31)) & 1) === 1;
+
+const setBit = (bits: number[], id: number) => {
+  while (bits.length <= id >>> 5) bits.push(0);
+  bits[id >>> 5] |= 1 << (id & 31);
+};
+
+// The same key for particles with the same terms.
+const getParticleKey = (particle: Particle) => {
+  let end = particle.bits.length;
+  while (end > 0 && particle.bits[end - 1] === 0) end--;
+  return particle.bits.slice(0, end).join(",");
+};
+
+const unionParticles = (left: Particle[], right: Particle[]) => {
   const rightKeys = new Set(right.map(getParticleKey));
   return [...left.filter((particle) => !rightKeys.has(getParticleKey(particle))), ...right];
 };
 
-const getParticleClosure = (terms: LiveExpression[]) => {
+const getParticleClosure = (
+  terms: LiveExpression[],
+  getId: (term: LiveExpression) => number,
+): Particle[] => {
   const closure = getPositiveClosure(terms);
-  const alphas = getTriples(closure, "Always", "And");
-  const betas = getTriples(closure, "Eventually", "Or");
+  const getIds = (triples: Triple[]) =>
+    triples.map((triple) => ({
+      ...triple,
+      wholeId: getId(triple.whole),
+      firstId: getId(triple.first),
+      secondId: getId(triple.second),
+    }));
+  const alphas = getIds(getTriples(closure, "Always", "And"));
+  const betas = getIds(getTriples(closure, "Eventually", "Or"));
+  // The expansion of each term of the closure that has one, by its id. A particle holds only terms
+  // with the keys of the closure's terms.
+  const alphaOf: (typeof alphas)[number][] = [];
+  alphas.forEach((triple) => (alphaOf[triple.wholeId] = triple));
+  const betaOf: (typeof betas)[number][] = [];
+  betas.forEach((triple) => (betaOf[triple.wholeId] = triple));
+  const isMember = (particle: Particle, term: LiveExpression) => hasBit(particle.bits, getId(term));
+  const extend = (particle: Particle, term: LiveExpression): Particle => {
+    const bits = [...particle.bits];
+    setBit(bits, getId(term));
+    return { terms: [...particle.terms, term], bits };
+  };
+  // A particle is inconsistent where it holds a state atom and its negation.
+  const isLocallyConsistent = (particle: Particle) =>
+    !particle.terms.some(
+      (term) => term.kind === "Not" && isStateAtom(term.body) && isMember(particle, term.body),
+    );
 
-  const expandBeta = (particle: LiveExpression[]): LiveExpression[][] => {
-    for (const term of particle) {
-      const parts = getExpansion(term, "Eventually", "Or");
+  const expandBeta = (particle: Particle): Particle[] => {
+    for (const term of particle.terms) {
+      const parts = betaOf[getId(term)];
       if (!parts) continue;
-      if (isMember(particle, parts.first) || isMember(particle, parts.second)) continue;
+      if (hasBit(particle.bits, parts.firstId) || hasBit(particle.bits, parts.secondId)) continue;
       return unionParticles(
-        expand([...particle, parts.first]),
-        expand([...particle, parts.second]),
+        expand(extend(particle, parts.first)),
+        expand(extend(particle, parts.second)),
       );
     }
     const beta = betas.find(
       (triple) =>
-        (isMember(particle, triple.first) || isMember(particle, triple.second)) &&
-        !isMember(particle, triple.whole),
+        (hasBit(particle.bits, triple.firstId) || hasBit(particle.bits, triple.secondId)) &&
+        !hasBit(particle.bits, triple.wholeId),
     );
-    return beta ? expand([...particle, beta.whole]) : [particle];
+    return beta ? expand(extend(particle, beta.whole)) : [particle];
   };
 
-  const expand = (particle: LiveExpression[]): LiveExpression[][] => {
+  const expand = (particle: Particle): Particle[] => {
     if (!isLocallyConsistent(particle)) return [];
-    const expanded = [...particle];
-    for (let index = 0; index < expanded.length; index++) {
-      const parts = getExpansion(expanded[index], "Always", "And");
+    const expanded: Particle = { terms: [...particle.terms], bits: [...particle.bits] };
+    const push = (term: LiveExpression) => {
+      expanded.terms.push(term);
+      setBit(expanded.bits, getId(term));
+    };
+    for (let index = 0; index < expanded.terms.length; index++) {
+      const parts = alphaOf[getId(expanded.terms[index])];
       if (!parts) continue;
-      if (!isMember(expanded, parts.first)) expanded.push(parts.first);
-      if (!isMember(expanded, parts.second)) expanded.push(parts.second);
+      if (!hasBit(expanded.bits, parts.firstId)) push(parts.first);
+      if (!hasBit(expanded.bits, parts.secondId)) push(parts.second);
     }
     let isChanged = true;
     while (isChanged) {
       isChanged = false;
       for (const alpha of alphas) {
         const isImplied =
-          isMember(expanded, alpha.first) &&
-          isMember(expanded, alpha.second) &&
-          !isMember(expanded, alpha.whole);
+          hasBit(expanded.bits, alpha.firstId) &&
+          hasBit(expanded.bits, alpha.secondId) &&
+          !hasBit(expanded.bits, alpha.wholeId);
         if (isImplied) {
-          expanded.push(alpha.whole);
+          push(alpha.whole);
           isChanged = true;
         }
       }
     }
-    if (expanded.length > particle.length && !isLocallyConsistent(expanded)) return [];
+    if (expanded.terms.length > particle.terms.length && !isLocallyConsistent(expanded)) return [];
     return expandBeta(expanded);
   };
 
-  return expand(terms);
+  const initial: Particle = { terms, bits: [] };
+  terms.forEach((term) => setBit(initial.bits, getId(term)));
+  return expand(initial);
 };
 
 const createTableauNode = (particle: LiveExpression[]): TableauNode => ({
@@ -536,23 +589,25 @@ const createTableauNode = (particle: LiveExpression[]): TableauNode => ({
 });
 
 const createTableau = (formula: LiveExpression) => {
-  const nodes = getParticleClosure([formula]).map(createTableauNode);
+  const getId = createTermIds();
+  const particles = getParticleClosure([formula], getId);
+  const nodes = particles.map((particle) => createTableauNode(particle.terms));
   const initialCount = nodes.length;
   const indices = new Map<string, number>();
-  nodes.forEach((node, index) => {
-    const key = getParticleKey(node.particle);
+  particles.forEach((particle, index) => {
+    const key = getParticleKey(particle);
     if (!indices.has(key)) indices.set(key, index);
   });
   for (let index = 0; index < nodes.length; index++) {
     const implied = nodes[index].particle.flatMap((term) =>
       term.kind === "Next" ? [term.body] : [],
     );
-    for (const particle of getParticleClosure(implied)) {
+    for (const particle of getParticleClosure(implied, getId)) {
       const key = getParticleKey(particle);
       const existing = indices.get(key);
       if (existing === undefined) {
         indices.set(key, nodes.length);
-        nodes.push(createTableauNode(particle));
+        nodes.push(createTableauNode(particle.terms));
       }
       nodes[index].successors.push(existing ?? nodes.length - 1);
     }
