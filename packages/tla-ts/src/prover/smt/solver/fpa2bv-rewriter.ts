@@ -214,6 +214,8 @@ export class Fpa2BvRewriter extends RewriterTpl {
           isSwapped ? args[1] : args[2],
         );
       }
+      // Deviation from Z3: its mk_sub hands mk_add the rounding mode still under bv2rm, so the
+      // fpa2bv tactic fails on fp.sub with "Sorts RoundingMode and (_ BitVec 3) are incompatible".
       case OP_FPA_SUB:
         return converter.mkSub(sort, getRm(), args[1], args[2]);
       case OP_FPA_NEG:
