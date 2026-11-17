@@ -1966,7 +1966,7 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
   if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
   if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
   if (isDecidedSat(goals)) {
-    const model = convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager));
+    const model = convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager).mkModel());
     return goal.manager.limit.inc()
       ? { status: L_TRUE, model, core: undefined, reasonUnknown: "" }
       : { ...undecided, model, reasonUnknown: "canceled" };

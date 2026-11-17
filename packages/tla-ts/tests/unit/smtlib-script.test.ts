@@ -216,6 +216,29 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("completes the empty model of a goal that simplifies to true", () => {
+    expect(
+      run([
+        "(declare-sort U 0)",
+        "(declare-fun u () U)",
+        "(declare-const b Bool)",
+        "(assert (or b (= u u)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun u () U",
+        "    U!val!0)",
+        "  (define-fun b () Bool",
+        "    false)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("prints a named term's definition in the model as the script spells it", () => {
     expect(
       run([
