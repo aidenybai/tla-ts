@@ -180,4 +180,25 @@ describe("runSmtlibScript orders cores and terms as Z3 does", () => {
       ")",
     ]);
   });
+
+  // smt_solver::get_unsat_core runs mus on the core its context's last check left, so a second
+  // get-unsat-core minimizes the empty core of the last satisfiable check of mus.
+  it("minimizes the core with checks of the kernel under smt.core.minimize", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-option :smt.core.minimize true)",
+        "(set-logic QF_LIA)",
+        "(declare-const b0 Bool)",
+        "(declare-const b1 Bool)",
+        "(declare-const x Int)",
+        "(assert (! (> x 2) :named n1))",
+        "(check-sat-assuming ((not b0) b1 (< x 0) b0))",
+        "(get-unsat-core)",
+        "(get-unsat-core)",
+        "(check-sat-assuming ((< x 0) b1))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["unsat", "((not b0) b0)", "()", "unsat", "((< x 0) n1)"]);
+  });
 });

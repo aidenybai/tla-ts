@@ -55,6 +55,8 @@ import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { getFdConsequences } from "./fd-solver";
 import { SmtKernel } from "./smt-kernel";
+import { Mus } from "./mus";
+import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
 import { mkThSolver } from "./euf/th-solvers";
 import { isAstLess } from "./ast-lt";
@@ -1535,7 +1537,29 @@ export const runSmtlibScript = (
           throw new SmtParseError("unsat core is not available", list.end);
         if (check.core === undefined)
           throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
-        print(`(${check.core.map(format).join(" ")})`);
+        const kernel = state.kernel;
+        if (
+          kernel === undefined ||
+          check.context !== kernel.context ||
+          settings.parameters.get("smt.core.minimize") !== "true"
+        ) {
+          print(`(${check.core.map(format).join(" ")})`);
+          return;
+        }
+        // smt_solver::get_unsat_core minimizes the core that the last check of its context left,
+        // with checks of that context.
+        const mus = new Mus(state.manager, {
+          checkSat: (assumptions) => kernel.check(assumptions),
+          getUnsatCore: () => kernel.context.unsatCore,
+        });
+        const core = [...kernel.context.unsatCore];
+        for (const literal of core) mus.addSoft(literal);
+        const minimized = new RefVector(state.manager);
+        state.manager.limit.restart(Date.now() + options.timeLimitMs);
+        const status = mus.getMus(minimized);
+        print(`(${(status === L_TRUE ? minimized.items : core).map(format).join(" ")})`);
+        minimized.reset();
+        mus.reset();
       },
     ],
     [
