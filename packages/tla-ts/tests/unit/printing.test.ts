@@ -77,6 +77,14 @@ describe("printing matches TLC", () => {
       "{{}, {1}}",
     );
   });
+
+  it("orders a record's fields before PrintT fails to compare it", async () => {
+    const result = (await checkPrinting("F(s) == s\nASSUME PrintT({[a |-> 1, s |-> 2], 3})"))
+      .result;
+    expect(result.violation?.message).toBe(
+      "Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compare integer 3 with non-integer:\n[s |-> 2, a |-> 1]",
+    );
+  });
 });
 
 const NESTED_TUPLE_LINES = Array.from({ length: 10 }, () => "<<1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>");
