@@ -973,6 +973,7 @@ const isOperatorArgument = (expression: Expression, context: Context) => {
   return operator !== undefined && getArity(operator) > 0;
 };
 
+// Deviation from TLC: SymbolNodeValueLookupProvider#lookup takes an operator whose body is a literal for that literal, so a Java override rejects it as an argument.
 const evaluateBuiltinArguments = (args: Expression[], context: Context) =>
   args.map((arg) =>
     isOperatorArgument(arg, context)
