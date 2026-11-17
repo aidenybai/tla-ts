@@ -1719,6 +1719,10 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
     return BUILTIN_LOCATION;
   }
   const hidden = getHiddenExpressionLocation(fact, reference, scope, unit);
+  if (selections.has(fact)) {
+    resolveExpression(fact, scope, unit);
+    return hidden;
+  }
   if (isInstanceArityReported(fact, scope, unit)) return hidden;
   const selected = checkReference(fact, scope, unit, true);
   if (selected) {
@@ -1783,7 +1787,9 @@ const getHiddenExpressionLocation = (
 ) => {
   const range = fact.location.range && formatRange(fact.location.range);
   if (selections.has(fact)) {
-    return reference.location.range && formatRange(reference.location.range);
+    return findNullError(nullSelections.get(fact))
+      ? BUILTIN_LOCATION
+      : reference.location.range && formatRange(reference.location.range);
   }
   if (selectionErrors.has(fact) || fact.kind === "ExceptAt") return BUILTIN_LOCATION;
   switch (fact.kind) {

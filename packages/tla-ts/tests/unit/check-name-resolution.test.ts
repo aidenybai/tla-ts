@@ -2418,6 +2418,44 @@ describe("name resolution matches SANY", () => {
 
   it.each<[string, [string, string][]]>([
     [
+      "THEOREM Thm3 == G0(1)!1!2\nHIDE Thm3!:",
+      [
+        ["line 2, col 17 to line 2, col 18 of module M", "Unknown operator: `G0'."],
+        [
+          "line 3, col 6 to line 3, col 11 of module M",
+          "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        ],
+      ],
+    ],
+    [
+      "Op == Unk + 1\nHIDE Op!:",
+      [
+        [
+          "line 2, col 11 to line 2, col 11 of module M",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        [
+          "line 2, col 7 to line 2, col 13 of module M",
+          "Couldn't resolve infix operator symbol `+'.",
+        ],
+        [
+          "line 3, col 9 to line 3, col 9 of module M",
+          "An unexpected null node specified by ':'.\nThis is probably due to a previous error.",
+        ],
+        [
+          "In module --TLA+ BUILTINS--",
+          "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        ],
+      ],
+    ],
+  ])("locates a selection hidden in %j like SANY", async (source, errors) => {
+    await expect(checkNames(source)).rejects.toThrow(
+      createSanyError(errors.map((entry) => ({ location: entry[0], message: entry[1] }))),
+    );
+  });
+
+  it.each<[string, [string, string][]]>([
+    [
       "CONSTANT c\nHIDE MODULE Naturals DEF Thm9, c",
       [
         [
