@@ -79,6 +79,13 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["success", "success", "success"]);
   });
 
+  it("prints success at exit", () => {
+    expect(run(["(set-option :print-success true)", "(exit)", "(check-sat)"])).toEqual([
+      "success",
+      "success",
+    ]);
+  });
+
   it("expands define-fun and takes check-sat's assumptions", () => {
     expect(
       run([

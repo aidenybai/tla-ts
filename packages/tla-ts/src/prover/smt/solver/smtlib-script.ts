@@ -1873,6 +1873,7 @@ export const runSmtlibScript = (
       if (list === undefined) break;
       if (isSymbol(list.items[0], "exit")) {
         checkArgumentCount(list, 0);
+        if (settings.isPrintingSuccess) print("success");
         break;
       }
       run(list);
