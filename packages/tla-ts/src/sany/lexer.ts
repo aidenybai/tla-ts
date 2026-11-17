@@ -302,9 +302,9 @@ const getLongerMatch = (best: TokenMatch, match: TokenMatch) =>
 
 const matchPatterns = (patterns: [string, RegExp[]][], source: string, offset: number) =>
   patterns
-    .map(([name, regexes]) => ({
-      kind: getKind(name),
-      length: Math.max(...regexes.map((regex) => getMatchLength(regex, source, offset))),
+    .map((pattern) => ({
+      kind: getKind(pattern[0]),
+      length: Math.max(...pattern[1].map((regex) => getMatchLength(regex, source, offset))),
     }))
     .reduce(getLongerMatch, { kind: -1, length: 0 });
 

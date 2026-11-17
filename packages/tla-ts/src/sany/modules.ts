@@ -1289,8 +1289,10 @@ _TLCTrace ==
 ]);
 
 export const SANY_174_STANDARD_MODULES = new Map([
-  ...[...SANY_STANDARD_MODULES].filter(([name]) =>
-    ["FiniteSets", "Integers", "Naturals", "RealTime", "Reals", "Sequences", "TLC"].includes(name),
+  ...[...SANY_STANDARD_MODULES].filter((entry) =>
+    ["FiniteSets", "Integers", "Naturals", "RealTime", "Reals", "Sequences", "TLC"].includes(
+      entry[0],
+    ),
   ),
   ["Bags", BAGS.replace("\nLOCAL INSTANCE Naturals\n", "\nEXTENDS TLC\nLOCAL INSTANCE Naturals\n")],
   [
