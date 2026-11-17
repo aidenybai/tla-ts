@@ -6,7 +6,7 @@ When implementing anything in this project, clone `tlaplus/tlaplus` locally and 
 
 - Match TLC's semantics. When behavior is unclear, run the spec through TLC and compare.
 - Match SANY, tlapm, Z3, Zenon and Isabelle the same way. Read the reference source at the commit the port tracks, and compare output byte for byte.
-- Never copy a reference bug. Where the reference gives a wrong answer, crashes or hangs, keep tla-ts correct, add a one-line `// Deviation from <tool>: …` comment and a test, and list the deviation in the PR.
+- Never copy a reference bug. Where the reference gives a wrong answer, crashes or hangs, keep tla-ts correct, add a test, and list the deviation in the PR.
 - Never port unsound reference behavior, such as Zenon's wrong rule for a subset of an intersection.
 - Never add a default or inference that lets a buggy spec pass. tla-ts doesn't infer `@initially`, because that would turn a buggy invariant into a filter.
 - Never run an external solver from `PATH`. A prover without a port reports `tla-ts has no <prover> backend`.
@@ -90,7 +90,6 @@ Change the README only in the root Development section, and keep it short. Do no
 
 ## Ported code
 
-- Start each ported file with one header line, such as `// Ported from Z3 (src/ast/ast.h, src/ast/ast.cpp), MIT license, see z3-license.txt.`
 - Mirror the upstream source function for function. Do not restructure a ported algorithm or merge functions that are separate upstream. Fix a port the way upstream does.
 - Short names that mirror upstream variables may stay in dense numeric code. Elsewhere, use descriptive names, and do not rename toward terse upstream abbreviations such as `process2`.
 - Treat creation order as output. SANY's node order shows in its output. In the Z3 port, creating or freeing a term changes which ids later terms reuse, and with them the search.
@@ -109,12 +108,10 @@ A refactor changes no output. It keeps these exactly as they are:
 
 Aim for zero comments. Delete a comment unless it is one of these:
 
-- The one-line license or port header
 - A tool directive, such as `eslint-disable` or a shebang
 - `// HACK: reason` on a hack, such as a `setTimeout`
 - One-line JSDoc on what `src/index.ts` exports, except on fields whose name already says it
 - One line on a quirk of TLC, SANY, tlapm, Z3, Zenon, Isabelle, V8, Node or Bun that the code copies and a reader would otherwise "fix"
-- `// Deviation from <tool>: …` on a deliberate deviation
 - An issue or spec link for a constraint the code can't express
 
 Delete everything else, including:
