@@ -185,6 +185,7 @@ describe("name resolution matches SANY", () => {
   });
 
   const exceptSelection = "Selecting subexpression of an EXCEPT not yet implemented.";
+  const letSelector = "A name selector here must be from a LET clause.";
   it.each([
     ["f == g", [["line 2, col 6 to line 2, col 6", "Unknown operator: `g'."]]],
     [
@@ -817,6 +818,16 @@ describe("name resolution matches SANY", () => {
           "line 3, col 14 to line 3, col 17",
           "Symbol U declared in RECURSIVE statement but not defined.",
         ],
+      ],
+    ],
+    [
+      "CONSTANT c\nOp1 == {c, lab:: c} \\cap {LET L == c IN L}\nOp2(a) == {a, LET K(b) == b IN K(1)}\nA == Op1!1!lab /\\ Op1!<<!lab /\\ Op1!2!L /\\ Op1!2!1!L /\\ Op2(1)!2!1!K /\\ Op1!1!2!lab",
+      [
+        ["line 5, col 10 to line 5, col 10", letSelector],
+        ["line 5, col 23 to line 5, col 24", letSelector],
+        ["line 5, col 37 to line 5, col 37", letSelector],
+        ["line 5, col 66 to line 5, col 66", letSelector],
+        ["line 5, col 79 to line 5, col 79", letSelector],
       ],
     ],
     [

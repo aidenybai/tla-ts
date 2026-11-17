@@ -439,7 +439,11 @@ const selectSubexpression = (
     if (selector.kind === "Name") {
       while (current?.kind === "Label") current = current.body;
       if (current?.kind !== "Let") {
-        throw createError("A name selector here must be from a LET clause", location);
+        report(
+          reference.selectorRanges?.[selectorIndex - 1],
+          "A name selector here must be from a LET clause.",
+        );
+        return reference;
       }
       selection.lets.push(current.definitions);
       const last = enterDefinition(current.definitions);
