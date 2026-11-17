@@ -143,6 +143,30 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports a selection into a definition whose own selection failed as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nEXTENDS Naturals\nG(a) == a + 1\nF == G(1)!7\nK == F!1\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        ...[
+          [
+            "line 4, col 11 to line 4, col 11",
+            "Nonexistent operand specified by `argument selector 7'.",
+          ],
+          [
+            "line 5, col 8 to line 5, col 8",
+            "Choosing operand `argument selector 1' of subexpression with no operands.",
+          ],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {
