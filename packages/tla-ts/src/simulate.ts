@@ -155,17 +155,18 @@ const findTemporalViolation = (
       successors[source].push(target);
     }
   });
-  const getSuccessors = (index: number) =>
-    successors[index].map((successor) => ({ index: successor, state: states[successor] }));
+  const stateSuccessors = successors.map((targets) =>
+    targets.map((target) => ({ index: target, state: states[target] })),
+  );
   const search: SearchGraph<Value[]> = {
     getFingerprint: (successor) => stateFingerprints[successor.index],
-    forEachActionSuccessors: (index, _state, onSuccessors) => onSuccessors(getSuccessors(index)),
+    forEachActionSuccessors: (index, _state, onSuccessors) => onSuccessors(stateSuccessors[index]),
   };
   // TLC's LiveCheck1 checks the behavior against one solution after another, up to the first it violates.
-  for (const solution of checks.solutions) {
-    const checker = checks.createChecker(search, [solution]);
+  for (let position = 0; position < checks.solutions.length; position++) {
+    const checker = checks.createChecker(search, [checks.solutions[position]]);
     checker.addInitialState(0, states[0]);
-    states.forEach((state, index) => checker.addState(index, state, getSuccessors(index)));
+    states.forEach((state, index) => checker.addState(index, state, stateSuccessors[index]));
     const lasso = checker.findViolation();
     if (!lasso) continue;
     const getLength = (path: number[]) =>
