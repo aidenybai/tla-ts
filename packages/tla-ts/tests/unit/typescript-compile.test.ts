@@ -50359,4 +50359,37 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("a:h,17"))).failure?.message).toContain("results a:h,16");
     });
   });
+
+  describe("stops where a loop reads Node's console, which it never may", () => {
+    const getSource = (isQuiet: boolean, expected: number) => `
+      declare const console: Record<string, unknown>;
+      const saved: Record<string, unknown> = {};
+      const suppress = () => {
+        for (const method in console) {
+          saved[method] = console[method];
+        }
+      };
+      let calls = 0;
+      const run = (isQuiet: boolean) => {
+        calls++;
+        if (isQuiet) suppress();
+      };
+      run(${isQuiet});
+      if (calls !== ${expected}) throw new Error("calls " + calls);
+    `;
+
+    it("agrees with Node where the loop never runs", async () => {
+      expect((await checkModel(getSource(false, 1))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource(false, 2))).failure?.message).toContain("calls 1");
+    });
+
+    it("stops where the loop runs", async () => {
+      expect((await checkModel(getSource(true, 1))).failure?.message).toContain(
+        "tla-ts can't read Node's global console",
+      );
+    });
+  });
 });

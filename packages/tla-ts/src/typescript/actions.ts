@@ -142,6 +142,7 @@ import {
   isHeapEnum,
   isHeapFunction,
   isMethodCall,
+  isNodeGlobal,
   isSuperAccess,
   type MethodCall,
   isStatementNew,
@@ -17520,6 +17521,20 @@ const translateIterations = (
     ts.isForInStatement(iterated) &&
     !isForIn &&
     getKind(iterated.expression, context) === "sequence";
+  // Node's own globals, such as console, are objects that tla-ts doesn't follow, where a loop
+  // reads them.
+  if (
+    iterated !== undefined &&
+    ts.isIdentifier(iterated.expression) &&
+    isNodeGlobal(iterated.expression, context)
+  ) {
+    return leaf(
+      apply("Assert", [
+        boolean(false),
+        string(`tla-ts can't read Node's global ${iterated.expression.text}`),
+      ]),
+    );
+  }
   if (ts.isForInStatement(loop) && !isForIn && !isListKeys) {
     throw new TlaTypeScriptError("for-in iterates only objects", loop.expression);
   }
