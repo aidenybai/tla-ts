@@ -1387,6 +1387,19 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("stops at a successor the next-state relation leaves incomplete under -continue", async () => {
+    const result = await check({
+      source: "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1\n====",
+      config: "INIT Init\nNEXT Next",
+      isContinued: true,
+    });
+    expect([result.failure?.message, result.failure?.exitCode, result.generatedStates]).toEqual([
+      "Successor state is not completely specified by the next-state action. The following variable is not defined: y.\n",
+      75,
+      2,
+    ]);
+  });
+
   it("records where the liveness check of a state fails after a successor of it is left incomplete, like TLC", async () => {
     const result = await check({
       source:

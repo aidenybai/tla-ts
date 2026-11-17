@@ -848,6 +848,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       outDegrees: failureOptions.outDegrees,
     };
   };
+  // Deviation from TLC: under -continue, TLC goes on past an incomplete successor and leaks an ArrayIndexOutOfBoundsException.
   const reportIncompleteSuccessor = (
     index: number,
     error: TlaIncompleteSuccessorError,
