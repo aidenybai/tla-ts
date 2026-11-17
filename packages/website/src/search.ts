@@ -15,9 +15,15 @@ export interface SearchState {
   isFailing: boolean;
 }
 
+export interface SearchEdge {
+  fromId: string;
+  toId: string;
+}
+
 export interface Search {
   states: SearchState[];
   listedStates: SearchState[];
+  edges: SearchEdge[];
 }
 
 const SHOWN_STATES = 4;
@@ -36,8 +42,12 @@ export const getSearch = (
   const steps = new Map<string, { parentId: string; call: string }>();
   const states = new Map<string, SearchState>();
   const changes = new Map<string, string[]>();
+  const edges = new Map<string, SearchEdge>();
   for (const line of graph.split("\n")) {
     const edge = EDGE.exec(line);
+    if (edge && edge[1] !== edge[2]) {
+      edges.set(`${edge[1]} ${edge[2]}`, { fromId: edge[1], toId: edge[2] });
+    }
     if (edge && !states.has(edge[2]) && !steps.has(edge[2])) {
       steps.set(edge[2], { parentId: edge[1], call: getText(edge[3]) });
     }
@@ -70,7 +80,7 @@ export const getSearch = (
     });
   }
   const failing = [...states.values()].find((state) => state.isFailing);
-  const failingIds = getPath([...states.values()], failing?.id).map((state) => state.id);
+  const failingIds = getPath(states, failing?.id).map((state) => state.id);
   // A failing run shows only the steps to the failing state.
   const shown = new Set(
     failingIds.length > 0 ? failingIds : [...states.keys()].slice(0, SHOWN_STATES),
@@ -79,6 +89,7 @@ export const getSearch = (
   return {
     states: shownStates,
     listedStates: failingIds.length > 0 ? shownStates : [...states.values()],
+    edges: [...edges.values()],
   };
 };
 
@@ -88,7 +99,17 @@ export const getStateNames = (state: SearchState) =>
     ? state.variables.map((variable) => variable.name)
     : [state.call.replace(/\(.*/, "")];
 
-export const getPath = (states: SearchState[], stateId: string | undefined): SearchState[] => {
-  const state = states.find((innerState) => innerState.id === stateId);
-  return state ? [state, ...getPath(states, state.parentId)] : [];
+export const getPath = (
+  states: Map<string, SearchState>,
+  stateId: string | undefined,
+): SearchState[] => {
+  const path: SearchState[] = [];
+  for (
+    let state = states.get(stateId ?? "");
+    state !== undefined;
+    state = states.get(state.parentId ?? "")
+  ) {
+    path.push(state);
+  }
+  return path;
 };

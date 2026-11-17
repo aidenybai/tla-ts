@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@import "allo-font";
+@import "allo-font/friendly";
 @import "@fontsource-variable/geist-mono";
 @import "@fontsource/caveat/600.css";
 
@@ -140,6 +140,13 @@
   button,
   a {
     touch-action: manipulation;
+  }
+  [data-tint] {
+    --tint-fill: color-mix(in srgb, var(--tint) 16%, transparent);
+    background-color: var(--tint-fill);
+  }
+  [data-hovering-name] [data-tint] {
+    --tint-fill: color-mix(in srgb, var(--tint) 8%, transparent);
   }
   code {
     @apply font-mono;

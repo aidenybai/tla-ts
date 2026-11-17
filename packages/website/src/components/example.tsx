@@ -4,7 +4,10 @@ import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import { EXAMPLES } from "../example";
 import type { RunResult } from "../run-worker";
+import type { SearchState } from "../search";
 import { useRun } from "../use-run";
+import { useSearchPath } from "./search-cell";
+import { StateGraph } from "./state-graph";
 import { CodeActions, CodeContent, CodeFooter, CodeRoot, CodeRun } from "./code";
 import { Button } from "./ui/button";
 import { buttonVariants } from "./ui/button-variants";
@@ -20,6 +23,8 @@ interface ExampleState {
   isRunning: boolean;
   hasRun: boolean;
   result: RunResult | undefined;
+  path: SearchState[];
+  hoverState: (stateId: string | undefined) => void;
   run: () => void;
   finishMorph: () => void;
 }
@@ -37,6 +42,8 @@ export const ExampleRoot = (props: RootProps) => {
   const [phase, setPhase] = useState<"idle" | "rewinding" | "compiling">("idle");
   const [hasRun, setHasRun] = useState(false);
   const isRunning = phase !== "idle" || runner.isRunning;
+  const result = isRunning || !isCompiled ? undefined : runner.result;
+  const path = useSearchPath(result?.search);
   const request = {
     source: example.tla.code,
     config: example.config,
@@ -56,7 +63,9 @@ export const ExampleRoot = (props: RootProps) => {
         setIsCompiled,
         isRunning,
         hasRun,
-        result: isRunning || !isCompiled ? undefined : runner.result,
+        result,
+        path: path.states,
+        hoverState: path.hover,
         run: () => {
           setHasRun(true);
           if (isCompiled && runner.result === undefined) return runner.run(request);
@@ -145,6 +154,8 @@ export const ExampleSource = () => {
       activeLine={state.result?.activeLine}
       notes={state.result?.notes}
       search={state.result?.search}
+      path={state.path}
+      onHoverState={state.hoverState}
       highlights={state.example.highlights}
       onMorphEnd={state.finishMorph}
     >
@@ -166,7 +177,7 @@ export const ExampleSource = () => {
         </Tooltip>
       </CodeActions>
       <CodeFooter>
-        <output className="flex min-w-0 flex-1 items-center gap-1.5">
+        <output className="flex min-w-0 flex-1 items-center gap-1.5 max-sm:text-xs">
           <ToggleGroup
             label="Language"
             value={state.isCompiled ? "tla" : "typescript"}
@@ -190,5 +201,21 @@ export const ExampleSource = () => {
         />
       </CodeFooter>
     </CodeRoot>
+  );
+};
+
+export const ExampleGraph = () => {
+  const state = exampleContext.useParts();
+  return (
+    state.result?.search && (
+      <div className="absolute top-10 left-full ml-8 w-60 max-xl:hidden">
+        <StateGraph
+          search={state.result.search}
+          limit={12}
+          path={state.path}
+          onHover={state.hoverState}
+        />
+      </div>
+    )
   );
 };
