@@ -583,6 +583,51 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "EXTENDS Integers, Sequences\n---- MODULE Inner ----\nH(Q(_)) == Q(1)\n====\nOp(Q(_, _)) == Q(1, 2)\nI == INSTANCE Inner\nA == Op(SUBSET) /\\ Op(-. ) /\\ I!H(+ ) /\\ SelectSeq(<<>>, + )\nB == LET L(Q(_)) == Q(1) IN L(\\cup)",
+      [
+        [
+          "line 8, col 6 to line 8, col 7",
+          "Operator with incorrect arity passed as argument. \nOperator 'SUBSET' of arity 1 is argument number 1 (counting from 1) to operator `line 6, col 1 to line 6, col 22 of module M', \nbut an operator of arity 2 was expected.",
+        ],
+        [
+          "line 8, col 6 to line 8, col 15",
+          "Argument number 1 to operator 'Op' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 8, col 20 to line 8, col 21",
+          "Operator with incorrect arity passed as argument. \nOperator '-.' of arity 1 is argument number 1 (counting from 1) to operator `line 6, col 1 to line 6, col 22 of module M', \nbut an operator of arity 2 was expected.",
+        ],
+        [
+          "line 8, col 20 to line 8, col 26",
+          "Argument number 1 to operator 'Op' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 8, col 33 to line 8, col 33",
+          "Operator with incorrect arity passed as argument. \nOperator '+' of arity 2 is argument number 1 (counting from 1) to operator `line 7, col 1 to line 7, col 19 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        [
+          "line 8, col 31 to line 8, col 37",
+          "Argument number 1 to operator 'I!H' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 8, col 42 to line 8, col 50",
+          "Operator with incorrect arity passed as argument. \nOperator '+' of arity 2 is argument number 2 (counting from 1) to operator `line 53, col 1 to line 65, col 14 of module Sequences', \nbut an operator of arity 1 was expected.",
+        ],
+        [
+          "line 8, col 42 to line 8, col 60",
+          "Argument number 2 to operator 'SelectSeq' \nshould be a 1-parameter operator.",
+        ],
+        [
+          "line 9, col 29 to line 9, col 29",
+          "Operator with incorrect arity passed as argument. \nOperator '\\union' of arity 2 is argument number 1 (counting from 1) to operator `line 9, col 10 to line 9, col 24 of module M', \nbut an operator of arity 1 was expected.",
+        ],
+        [
+          "line 9, col 29 to line 9, col 35",
+          "Argument number 1 to operator 'L' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
       "---- MODULE Inner ----\nH(Op(_)) == Op(1)\nOne(a) == a\n====\nI == INSTANCE Inner\nINSTANCE Inner\nf == I!H(I!One) /\\ I!One(I!One) /\\ I!H(LAMBDA a, b : a) /\\ H(I!H) /\\ One(One)",
       [
         ["line 8, col 26 to line 8, col 30", "The operator I!One requires 1 arguments."],

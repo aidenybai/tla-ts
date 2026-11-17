@@ -300,6 +300,7 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
       arity: declared?.arity ?? getArity(definition),
       params: declared?.params ?? getParamArities(definition),
       kind: "Definition",
+      range: definition.location.range,
     };
   }
   const binding = getModuleBinding(name, unit, undefined);
@@ -1063,7 +1064,9 @@ const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) =>
     prefix === name
       ? undefined
       : (lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined));
-  return binding?.kind === "Instance" ? { name: prefix, arity: binding.arity } : undefined;
+  return binding?.kind === "Instance"
+    ? { name: prefix, arity: binding.arity, range: binding.range }
+    : undefined;
 };
 
 const isInstanceArityReported = (
@@ -1127,6 +1130,15 @@ const matchArgument = (
   const report = (range: SourceRange | undefined, message: string) => {
     if (range) unit.errors.push({ location: formatRange(range), message });
   };
+  const reportOperatorArity = (name: string, arity: number) => {
+    const definition =
+      findInstance(operator, scope, unit)?.range ?? findBinding(operator, scope, unit)?.range;
+    if (!definition) return;
+    report(
+      operatorRange,
+      `Operator with incorrect arity passed as argument. \nOperator '${resolveSynonym(name)}' of arity ${arity} is argument number ${index + 1} (counting from 1) to operator \`${formatRange(definition)}', \nbut an operator of arity ${expected} was expected.`,
+    );
+  };
   const range = arg.location.range;
   if (expected === 0) {
     const selectionError = operatorSelectionErrors.get(arg);
@@ -1160,6 +1172,8 @@ const matchArgument = (
         operatorRange,
         `Lambda expression with arity ${arg.params.length} used as argument ${index + 1} of operator \`${operator}', \nbut an operator of arity ${expected} is required.`,
       );
+    } else if (!isMatched && arg.operator !== undefined) {
+      reportOperatorArity(arg.operator, arg.params.length);
     }
     return isMatched;
   }
@@ -1190,6 +1204,9 @@ const matchArgument = (
       getSpelledNameRange(arg, name),
       `Expected arity ${expected} but found operator of arity ${argArity}.`,
     );
+  }
+  if (arg.kind === "OperatorReference" && argArity !== undefined && argArity !== expected) {
+    reportOperatorArity(name, argArity);
   }
   // Deviation from SANY: OpDefNode#matchingOpArgOperand reads as many parameters as a RECURSIVE declaration gives and crashes when the definition has fewer.
   return argArity === expected && argParams.every((param) => param === 0);
