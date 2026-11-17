@@ -21075,7 +21075,10 @@ export const translateStatements = (
             )
         : statementFrame.exit;
     if (statementFrame.inlining.size === 0) {
-      throw new TlaTypeScriptError("Actions can't return a value", statement);
+      throw new TlaTypeScriptError(
+        "tla-ts can't check an exported function that changes state and returns a value as an action. Return nothing, or call it from a script instead",
+        statement,
+      );
     }
     if (getIntlError(skipCasts(returned), context) !== undefined) {
       return translateIntlError(skipCasts(returned), path, context, statementFrame);

@@ -50439,4 +50439,18 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(2))).status).toBe("invariant-violation");
     });
   });
+
+  it("names what to do where an action returns a value", () => {
+    expect(() =>
+      compile(`
+        const seen = new Map<string, number>();
+        export const record = (key: "a" | "b") => {
+          seen.set(key, 1);
+          return seen.size;
+        };
+      `),
+    ).toThrow(
+      "tla-ts can't check an exported function that changes state and returns a value as an action",
+    );
+  });
 });
