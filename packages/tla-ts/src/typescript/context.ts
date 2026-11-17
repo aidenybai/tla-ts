@@ -709,7 +709,10 @@ export const isAbsentModuleVariable = (node: ts.Identifier, context: Context) =>
   return (
     COMMON_JS_VARIABLES.has(node.text) &&
     declarations.length > 0 &&
-    declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile) &&
+    declarations.every(
+      (declaration) =>
+        ts.isVariableDeclaration(declaration) && declaration.getSourceFile().isDeclarationFile,
+    ) &&
     isModuleFile(node.getSourceFile())
   );
 };
@@ -896,12 +899,13 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
 };
 
 // A name that no declaration binds, whose reading throws a ReferenceError, but for a global that
-// Node gives.
+// Node gives, or a variable of a CommonJS module that an ES module reads.
 export const isUnresolved = (node: ts.Node, context: Context): node is ts.Identifier =>
   ts.isIdentifier(node) &&
-  context.checker.getSymbolAtLocation(node) === undefined &&
-  !NODE_GLOBALS.has(node.text) &&
-  getWrapperName(node, context.checker) === undefined;
+  ((context.checker.getSymbolAtLocation(node) === undefined &&
+    !NODE_GLOBALS.has(node.text) &&
+    getWrapperName(node, context.checker) === undefined) ||
+    isAbsentModuleVariable(node, context));
 
 // The names that an assignment target writes, through the elements of its patterns.
 const getAssignedNames = (target: ts.Expression): ts.Expression[] => {

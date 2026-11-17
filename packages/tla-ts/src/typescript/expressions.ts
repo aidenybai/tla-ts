@@ -924,6 +924,10 @@ export const translateCall = (
 ) => {
   const withStop = getWithStop(node, context);
   if (withStop !== undefined) return apply("Assert", [boolean(false), string(withStop)]);
+  // A call reads its callee before its arguments, and an ES module has no require to read.
+  if (ts.isIdentifier(node.expression) && isAbsentModuleVariable(node.expression, context)) {
+    return translateExpression(node.expression, scope, context);
+  }
   const translated = translateBuiltInCall(node, scope, context, isDefined);
   const callee = translateHoldsCallee(node, scope, context);
   return callee === undefined

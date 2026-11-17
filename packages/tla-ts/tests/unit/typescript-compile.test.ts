@@ -48121,8 +48121,13 @@ describe("BigInts", () => {
       );
     });
 
-    it("stops where an ES module reads require", async () => {
+    it("throws a ReferenceError where a statement of an ES module first reads require", async () => {
       const read = `${source}\nif (require === undefined) throw new Error("none");`;
+      await expect(check(compile(read, path))).rejects.toThrow('"ReferenceError"');
+    });
+
+    it("stops where an ES module calls require after it runs other code", async () => {
+      const read = `${source}\nconst found = kinds.length > 0 ? require("perf_hooks") : undefined;`;
       await expect(check(compile(read, path))).rejects.toThrow(
         "tla-ts can't throw the ReferenceError of reading require, which an ES module doesn't have",
       );
@@ -49062,6 +49067,43 @@ describe("BigInts", () => {
         export const isSmall = () => backEdges < 3;
       `);
       expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+    });
+  });
+
+  describe("throws the ReferenceError of the require that an ES module calls", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/common-js/absent.ts");
+    const getSource = (expected: string) => `/// <reference types="node" />
+      export {};
+      const loadPerformance = () => {
+        if (typeof require === "undefined") return "none";
+        const { performance } = require("perf_hooks") as { performance?: object };
+        return typeof performance;
+      };
+      const seen = [loadPerformance()];
+      try {
+        require("perf_hooks");
+      } catch (error) {
+        seen.push((error as Error).name);
+      }
+      try {
+        const loaded = require("perf_hooks") as object;
+        seen.push(typeof loaded);
+      } catch (error) {
+        seen.push((error as Error).name);
+      }
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await check(compile(getSource("none,ReferenceError,ReferenceError"), path))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a require that loads the module", async () => {
+      expect(
+        (await check(compile(getSource("object,ReferenceError,object"), path))).failure?.message,
+      ).toContain("seen none,ReferenceError,ReferenceError");
     });
   });
 });
