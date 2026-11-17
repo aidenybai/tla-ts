@@ -1,4 +1,4 @@
-import { getFreeNames, isLocallyResolved, type Expression } from "./ast";
+import { getChildren, getReferencedName, isLocallyResolved, type Expression } from "./ast";
 import {
   bindValue,
   expectBooleanBody,
@@ -158,6 +158,13 @@ const addReference = (generator: Generator, value: unknown) => {
 };
 
 const createLocal = (generator: Generator) => `local${generator.counter++}`;
+
+const getFreeNames = (expression: Expression, names = new Set<string>()) => {
+  const name = getReferencedName(expression);
+  if (name !== undefined) names.add(name);
+  getChildren(expression).forEach((child) => getFreeNames(child, names));
+  return names;
+};
 
 const getDelegateContext = (
   generator: Generator,

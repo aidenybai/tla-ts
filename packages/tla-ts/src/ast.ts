@@ -611,13 +611,6 @@ export const getReferencedName = (expression: Expression) => {
   return undefined;
 };
 
-export const getFreeNames = (expression: Expression, names = new Set<string>()) => {
-  const name = getReferencedName(expression);
-  if (name !== undefined) names.add(name);
-  getChildren(expression).forEach((child) => getFreeNames(child, names));
-  return names;
-};
-
 export const isLocallyResolved = (expression: Expression) =>
   (expression.kind === "Identifier" || expression.kind === "Apply") &&
   expression.resolution?.kind === "Local";
