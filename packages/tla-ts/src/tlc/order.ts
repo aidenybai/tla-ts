@@ -48,6 +48,16 @@ interface ModuleFile extends ParsedModule {
 
 type ModuleLoader = ((name: string) => string | undefined) | undefined;
 
+// A module that a compiler hands a check already read into its tokens and syntax tree, whose names
+// and levels SANY's checks accepted when isChecked, so that a check links it as it is.
+export interface PreparedModule {
+  name: string;
+  text: string;
+  tokens: Token[];
+  module: Module;
+  isChecked: boolean;
+}
+
 interface ModuleUnit {
   location: SourceLocation;
   apply: (table: SymbolTable) => void;
@@ -270,7 +280,11 @@ const readModuleText = (text: string | undefined): ModuleText => {
 // The modules TLC reads for a spec: the root module, TLC's standard modules, the files the loader
 // returns, the modules that follow the root module, and the modules nested in any of these. A
 // module without a source has no tokens.
-const createModuleSet = (source: string | Module, loadModule: ModuleLoader) => {
+const createModuleSet = (
+  source: string | Module,
+  loadModule: ModuleLoader,
+  prepared: readonly PreparedModule[],
+) => {
   const rootText = typeof source === "string" ? source : undefined;
   const files = new Map<string, ModuleFile>();
   const nestedModules = new Map<string, ParsedModule>();
@@ -289,7 +303,8 @@ const createModuleSet = (source: string | Module, loadModule: ModuleLoader) => {
       files.set("", file);
       return file;
     }
-    const loaded = name === undefined ? undefined : loadModule?.(name);
+    const preparedModule = prepared.find((item) => item.name === name);
+    const loaded = name === undefined ? undefined : (preparedModule?.text ?? loadModule?.(name));
     const text =
       name === undefined
         ? rootText
@@ -297,7 +312,13 @@ const createModuleSet = (source: string | Module, loadModule: ModuleLoader) => {
           TLC_MODULE_SOURCES.get(name) ??
           SANY_STANDARD_MODULES.get(name) ??
           (rootText === undefined ? undefined : extractModule(rootText, name)));
-    const moduleText = readModuleText(text);
+    const moduleText = preparedModule
+      ? {
+          tokens: preparedModule.tokens,
+          ranges: getRanges(preparedModule.tokens),
+          getModule: () => preparedModule.module,
+        }
+      : readModuleText(text);
     const tokens = moduleText.tokens;
     const range = moduleText.ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
     const file = { tokens, ...range, getModule: moduleText.getModule, text, loaded };
@@ -635,10 +656,15 @@ export interface TlcOrder {
   createDefinitionOrder: () => (name: string | undefined) => string[];
   getModule: (name: string | undefined, source: string) => Module;
   getLoadedSource: (name: string) => string | undefined;
+  getPreparedModule: (name: string) => PreparedModule | undefined;
 }
 
-export const createTlcOrder = (source: string | Module, loadModule: ModuleLoader): TlcOrder => {
-  const modules = createModuleSet(source, loadModule);
+export const createTlcOrder = (
+  source: string | Module,
+  loadModule: ModuleLoader,
+  prepared: readonly PreparedModule[] = [],
+): TlcOrder => {
+  const modules = createModuleSet(source, loadModule, prepared);
   const getParsed = modules.getParsed;
   let contexts: ReturnType<typeof createContexts> | undefined;
   const getContexts = () => (contexts ??= createContexts(getParsed));
@@ -653,6 +679,7 @@ export const createTlcOrder = (source: string | Module, loadModule: ModuleLoader
         .reverse(),
     getModule: modules.getModule,
     getLoadedSource: modules.getLoadedSource,
+    getPreparedModule: (name) => prepared.find((item) => item.name === name),
     createDefinitionOrder: () => {
       const moduleContexts = getContexts();
       moduleContexts.getContext(undefined);

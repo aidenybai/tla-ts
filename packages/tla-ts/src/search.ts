@@ -99,6 +99,7 @@ interface EnvironmentSettings extends Pick<
   CheckOptions,
   | "source"
   | "loadModule"
+  | "preparedModules"
   | "loadClass"
   | "readFile"
   | "writeFile"
@@ -853,7 +854,7 @@ export const createCheckEnvironment = (
   print: (text: string) => void,
   isStringOrderFrozen = false,
 ) => {
-  const order = createTlcOrder(options.source, options.loadModule);
+  const order = createTlcOrder(options.source, options.loadModule, options.preparedModules);
   setStringOrder(order.getStringOrder(config));
   setValueOptions(options);
   setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
@@ -861,6 +862,7 @@ export const createCheckEnvironment = (
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,
+    preparedModules: options.preparedModules,
     order,
     loadClass: options.loadClass,
     print,

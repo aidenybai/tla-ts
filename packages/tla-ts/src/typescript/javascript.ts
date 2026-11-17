@@ -1,5 +1,9 @@
 import ts from "@typescript/typescript6";
-import type { Expression } from "../ast";
+import type { Expression, Module, ModuleUnit, SourceLocation } from "../ast";
+import { isPreparedModuleAccepted } from "../environment";
+import { tokenize } from "../lexer";
+import { parseModuleTokens } from "../parser";
+import type { PreparedModule } from "../tlc/order";
 import {
   type Context,
   getSymbol,
@@ -8640,10 +8644,60 @@ const ROOT_READS = MODULE_UNITS.filter((unit) => unit.names.length === 0).flatMa
   (unit) => unit.reads,
 );
 
+// The JavaScript module read once into its tokens and syntax tree, and checked once by SANY's
+// checks, of which each spec's module is a view.
+const PRELUDE_TOKENS = tokenize(JAVASCRIPT_MODULE);
+const PRELUDE: PreparedModule = {
+  name: "JavaScript",
+  text: JAVASCRIPT_MODULE,
+  tokens: PRELUDE_TOKENS,
+  module: parseModuleTokens(JAVASCRIPT_MODULE, PRELUDE_TOKENS),
+  isChecked: false,
+};
+PRELUDE.isChecked = isPreparedModuleAccepted(PRELUDE);
+
+const getUnitLocation = (unit: ModuleUnit): SourceLocation => {
+  switch (unit.kind) {
+    case "Definition":
+      return unit.definition.location;
+    case "Instance":
+      return unit.instance.location;
+    case "Assumption":
+      return unit.assumption.location;
+    case "Theorem":
+      return unit.theorem.location;
+    case "Use":
+      return unit.use.location;
+    case "Module":
+      return unit.module.location;
+    default:
+      return unit.location;
+  }
+};
+
+// The module that the lines kept leave, which is what reading the module's text with every other
+// line blank gives.
+const getModuleView = (module: Module, keptLines: Uint8Array): Module => {
+  const isKept = (location: SourceLocation) => keptLines[location.line - 1] === 1;
+  return {
+    ...module,
+    modules: module.modules.filter((nested) => isKept(nested.location)),
+    constants: module.constants.filter((constant) => isKept(constant.location)),
+    variables: module.variables.filter((variable) => isKept(variable.location)),
+    definitions: module.definitions.filter((definition) => isKept(definition.location)),
+    instances: module.instances.filter((instance) => isKept(instance.location)),
+    assumptions: module.assumptions.filter((assumption) => isKept(assumption.location)),
+    theorems: module.theorems.filter((theorem) => isKept(theorem.location)),
+    uses: module.uses.filter((use) => isKept(use.location)),
+    units: module.units.filter((unit) => isKept(getUnitLocation(unit))),
+  };
+};
+
 // The JavaScript module with only the definitions that a spec and its config read, directly or
-// through other definitions, so that a check parses and analyzes only those. Every other line is
-// blank, so each definition keeps its line.
-export const getJavaScriptModule = (text: string) => {
+// through other definitions, so that a check reads and analyzes only those. Every other line is
+// blank, so each definition keeps its line. Its tokens and syntax tree are those of the prelude
+// on the lines kept.
+export const getJavaScriptModule = (text: string): PreparedModule => {
   const kept = new Set<string>();
   const keep = (name: string) => {
     if (kept.has(name)) return;
@@ -8651,11 +8705,18 @@ export const getJavaScriptModule = (text: string) => {
     UNITS_BY_NAME.get(name)?.forEach((entry) => entry.unit.reads.forEach(keep));
   };
   [...getReadNames(text), ...ROOT_READS].forEach(keep);
-  return MODULE_UNITS.flatMap((unit) =>
-    unit.names.length === 0 || unit.names.some((name) => kept.has(name))
-      ? unit.lines
-      : unit.lines.map(() => ""),
-  ).join("\n");
+  const keptLines = new Uint8Array(MODULE_LINES.length);
+  MODULE_UNITS.forEach((unit, position) => {
+    if (unit.names.length > 0 && !unit.names.some((name) => kept.has(name))) return;
+    keptLines.fill(1, UNIT_STARTS[position], UNIT_STARTS[position] + unit.lines.length);
+  });
+  return {
+    name: PRELUDE.name,
+    text: MODULE_LINES.map((line, index) => (keptLines[index] === 1 ? line : "")).join("\n"),
+    tokens: PRELUDE.tokens.filter((token) => keptLines[token.line - 1] === 1),
+    module: getModuleView(PRELUDE.module, keptLines),
+    isChecked: PRELUDE.isChecked,
+  };
 };
 
 // The model values that stand for the numbers that TLA+ integers can't hold.

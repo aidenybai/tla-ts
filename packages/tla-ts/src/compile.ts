@@ -1,3 +1,4 @@
+import type { PreparedModule } from "./tlc/order";
 import type { Module } from "./ast";
 
 export interface CompileOptions {
@@ -13,6 +14,7 @@ export interface CompiledSpec {
   source: Module;
   config: string;
   loadModule: (name: string) => string | undefined;
+  preparedModules: PreparedModule[];
 }
 
 // The TypeScript compiler takes a while to load, so only compiling loads it.
@@ -27,5 +29,6 @@ export const compile = async (options: CompileOptions): Promise<CompiledSpec> =>
     source: compiled.source,
     config: compiled.config,
     loadModule: compiled.loadModule,
+    preparedModules: compiled.preparedModules,
   };
 };

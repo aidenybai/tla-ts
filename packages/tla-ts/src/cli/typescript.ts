@@ -1,3 +1,4 @@
+import type { PreparedModule } from "../tlc/order";
 import { readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -16,6 +17,7 @@ export interface CompiledInput {
   source: Module;
   config: string;
   loadModule: (name: string) => string | undefined;
+  preparedModules: PreparedModule[];
   isScript: boolean;
 }
 
@@ -61,6 +63,7 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
     source: compiled.source,
     config: compiled.config,
     loadModule: compiled.loadModule,
+    preparedModules: compiled.preparedModules,
     isScript: compiled.isScript,
   };
 };

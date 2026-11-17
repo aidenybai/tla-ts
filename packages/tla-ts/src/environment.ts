@@ -12,7 +12,7 @@ import {
   type SourceLocation,
 } from "./ast";
 import type { ModuleOperator } from "./check";
-import type { ModelConfig } from "./config";
+import { parseConfig, type ModelConfig } from "./config";
 import { applyConfig, type CopySource } from "./environment-config";
 import type { FileSystem } from "./json";
 import {
@@ -21,6 +21,7 @@ import {
   formatRange,
   formatSanyWarnings,
   TlaConfigError,
+  TlaError,
   TlaEvaluationError,
   TlaSyntaxError,
   type SanyError,
@@ -81,13 +82,14 @@ import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
 import { createDefinitionFacts } from "./dependencies";
-import { createTlcOrder, type TlcOrder } from "./tlc/order";
+import { createTlcOrder, type PreparedModule, type TlcOrder } from "./tlc/order";
 import { isTlcInteger, type Value } from "./values";
 import type { TlcVersion } from "./tlc/version";
 
 interface EnvironmentOptions {
   source: string | Module;
   loadModule: ((name: string) => string | undefined) | undefined;
+  preparedModules?: readonly PreparedModule[];
   order?: TlcOrder;
   loadClass?: (name: string) => Uint8Array | undefined;
   print: (text: string) => void;
@@ -245,7 +247,8 @@ export const createEnvironment = (
   config: ModelConfig,
   options: EnvironmentOptions,
 ): Specification => {
-  const order = options.order ?? createTlcOrder(options.source, options.loadModule);
+  const order =
+    options.order ?? createTlcOrder(options.source, options.loadModule, options.preparedModules);
   const root =
     typeof options.source === "string"
       ? order.getModule(undefined, options.source)
@@ -351,7 +354,15 @@ export const createEnvironment = (
   };
   rejectModuleLiterals(root);
 
+  // The modules read from prepared modules that SANY's checks already accepted, whose names and
+  // levels a check doesn't resolve or check again.
+  const acceptedModules = new Set<Module>();
   const loadModule = (name: string, importer: string) => {
+    const prepared = order.getPreparedModule(name);
+    if (prepared?.isChecked && runtime.version === "master") {
+      acceptedModules.add(prepared.module);
+      return prepared.module;
+    }
     const source =
       order.getLoadedSource(name) ??
       getSanyStandardModules(runtime.version).get(name) ??
@@ -956,7 +967,8 @@ export const createEnvironment = (
       ),
       getAvailableDefinitions(visible),
     );
-    scope.errors.push(...resolveModule(module, getUnit(module)));
+    const isAccepted = acceptedModules.has(unlinked) && module === unlinked;
+    if (!isAccepted) scope.errors.push(...resolveModule(module, getUnit(module)));
     module.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);
@@ -991,6 +1003,10 @@ export const createEnvironment = (
     const checks = instanceChecks
       .splice(firstCheck)
       .map((check) => ({ location: check.location, check: () => checkInstance(check) }));
+    if (isAccepted && checks.length === 0) {
+      linkOrder.push(linked);
+      return linked;
+    }
     scope.levelChecks.push(() =>
       checkModuleLevels(
         module,
@@ -1173,4 +1189,30 @@ export const createEnvironment = (
     moduleOperators,
     rootName: root.name,
   };
+};
+
+// Whether SANY's checks accept a prepared module as a module that another extends, with no error or
+// warning, so that every check that links it can skip them. Its expressions keep the names that
+// the checks resolve.
+export const isPreparedModuleAccepted = (prepared: PreparedModule) => {
+  let isPrinted = false;
+  try {
+    const constants = prepared.module.constants.map((constant) => constant.name);
+    createEnvironment(
+      parseConfig(`CONSTANTS ${constants.map((name) => `${name} = ${name}`).join(" ")}`),
+      {
+        source: `---- MODULE ${prepared.name}Check ----\nEXTENDS ${prepared.name}\n====`,
+        loadModule: undefined,
+        preparedModules: [prepared],
+        print: () => {
+          isPrinted = true;
+        },
+        files: { readFile: undefined, writeFile: undefined, makeDirectory: undefined },
+      },
+    );
+    return !isPrinted;
+  } catch (error) {
+    if (error instanceof TlaError) return false;
+    throw error;
+  }
 };
