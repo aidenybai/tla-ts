@@ -61,7 +61,6 @@ interface Replay {
   isEnabled: boolean;
   current: Value[] | undefined;
   onState: (state: Value[]) => void;
-  /** Whether the replay keeps an incomplete successor, as TLC's StateVec does. */
   onIncomplete: ((state: State) => boolean) | undefined;
 }
 

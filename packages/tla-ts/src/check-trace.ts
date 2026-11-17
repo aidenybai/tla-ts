@@ -135,7 +135,6 @@ export const createTraceBuilder = (context: TraceContext) => {
     const loopStart = traceOptions.loopStart;
     const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
     const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isFailed;
-    // TLC's LiveWorker rebuilds the initial state of a counterexample even when it stutters, but TLCTrace#printTrace keeps the initial state of a failed step.
     const initialOutput =
       known === 0 || (steps.length > 1 && (rebuilt > 0 || isRebuiltAgain || is174))
         ? captureOutput(context.getInitialStates).lines

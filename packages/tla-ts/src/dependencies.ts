@@ -348,7 +348,6 @@ const EFFECT_FLAGS = {
   streamed: STREAMED,
   // What a second evaluation shows: output again, or other random draws.
   replayed: REPEATED_EFFECT | RANDOM,
-  // What can make a second evaluation differ, in its value or its effects.
   varying: IMPURE | RANDOM,
 };
 

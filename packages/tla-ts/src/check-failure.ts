@@ -61,7 +61,6 @@ export const getFailureExitCode = (
     case "liveness":
       return error instanceof TlaModuleError ? error.exitCode : getErrorExitCode(error);
     default:
-      // TLC's ModelChecker exits with the status of the failure's own code when its replay doesn't fail again.
       if (!isReplayed && failureOptions.phase === "next" && !is174) return getCodeExitCode(error);
       if (!isReplayed) return getErrorExitCode(error);
       return failureOptions.fingerprint
