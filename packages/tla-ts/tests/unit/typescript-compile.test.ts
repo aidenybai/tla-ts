@@ -49084,4 +49084,35 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("skips an optional call of undefined, as a statement", () => {
+    const getSource = (expected: string) => `
+      const box = { calls: [] as string[] };
+      const run = (name: string, onReady?: () => void) => {
+        box.calls.push(name);
+        onReady?.();
+      };
+      try {
+        run("first");
+      } catch {
+        box.calls.push("caught");
+      }
+      run("second", () => {
+        box.calls.push("ready");
+      });
+      run("third", undefined);
+      const seen = box.calls.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("first,second,ready,third"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect(
+        (await checkModel(getSource("first,caught,second,ready,third"))).failure?.message,
+      ).toContain("seen first,second,ready,third");
+    });
+  });
 });

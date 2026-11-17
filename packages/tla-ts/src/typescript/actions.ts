@@ -2362,6 +2362,39 @@ export const translateCallStatement = (
   if (expression.expression.kind === ts.SyntaxKind.SuperKeyword) {
     return translateSuperCall(expression, path, context, frame, continueWith);
   }
+  // An optional call gives undefined where the function it reads is undefined or null, before any
+  // argument runs.
+  if (expression.questionDotToken !== undefined && path.scope.checked?.has(expression) !== true) {
+    if (!ts.isIdentifier(expression.expression)) {
+      throw new TlaTypeScriptError("Optional calls aren't supported", expression);
+    }
+    const name = context.names.getFresh("callee");
+    context.prelude.add("Null");
+    return bindOnce(
+      path,
+      name,
+      translateExpression(expression.expression, path.scope, context),
+      translateJoined(expression, path, context, continueWith, (next) =>
+        ifThenElse(
+          apply("\\in", [identifier(name), set([getUndefined(context), identifier("Null")])]),
+          next(path, getUndefined(context)),
+          translateCallStatement(
+            expression,
+            {
+              ...path,
+              scope: {
+                ...path.scope,
+                checked: new Set([...(path.scope.checked ?? []), expression]),
+              },
+            },
+            context,
+            frame,
+            next,
+          ),
+        ),
+      ),
+    );
+  }
   const withStop = getWithStop(expression, context);
   if (withStop !== undefined) return leaf(apply("Assert", [boolean(false), string(withStop)]));
   const formatCall = getFormatCall(expression, context);
