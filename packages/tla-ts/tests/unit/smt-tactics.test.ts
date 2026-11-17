@@ -823,6 +823,19 @@ describe("if-no-models, as Z3 5.3.2 runs it", () => {
       "unknown",
     ]);
   });
+
+  it("leaves no model converter to print after a simplifier when the goal produces no models", () => {
+    expect(
+      run([
+        "(set-option :produce-models false)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= x (+ y 1)))",
+        "(assert (> y 2))",
+        "(apply (then propagate-values solve-eqs) :print_model_converter true)",
+      ]),
+    ).toEqual(["(goals\n(goal\n  (not (<= x 3))\n  :precision precise :depth 2)\n)"]);
+  });
 });
 
 describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
