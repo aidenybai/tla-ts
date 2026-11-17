@@ -48785,8 +48785,9 @@ describe("BigInts", () => {
 
     it("agrees with Node, as an action changes the array through another name", async () => {
       const result = await checkModel(getSource(2));
+      // Once the array holds two items, add changes nothing, so no action is enabled.
       expect([result.status, result.failure, result.distinctStates]).toEqual([
-        "success",
+        "deadlock",
         undefined,
         7,
       ]);
