@@ -14180,7 +14180,13 @@ const getConvertedAtomicsValues = (node: ts.Node, context: Context) => {
     return undefined;
   }
   const converted = call.values.slice(1);
-  return converted.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
+  // A symbol throws the TypeError of its conversion in turn.
+  return converted.some(
+    (value) =>
+      isObjectOperand(value, context) ||
+      isAnyOperand(value, context) ||
+      (context.checker.getTypeAtLocation(skipCasts(value)).flags & ts.TypeFlags.ESSymbolLike) !== 0,
+  )
     ? converted
     : undefined;
 };

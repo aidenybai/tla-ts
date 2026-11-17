@@ -50517,4 +50517,31 @@ describe("BigInts", () => {
       ).toContain("results 1,true,1,3,3-1-4-1,true,4,false");
     });
   });
+
+  describe("throws the TypeError of an Atomics function that converts a symbol", () => {
+    const getSource = (expected: string) => `
+      const i32a = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 4));
+      const results: string[] = [];
+      const attempt = (run: () => unknown) => {
+        try {
+          results.push(String(run()));
+        } catch (error) {
+          results.push(error instanceof TypeError ? "TypeError" : "other");
+        }
+      };
+      attempt(() => Atomics.notify(i32a, 0, Symbol() as any));
+      attempt(() => Atomics.store(i32a, Symbol() as any, 1));
+      if (results.join() !== "${expected}") throw new Error("results " + results.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeError,TypeError"))).failure).toBeUndefined();
+    });
+
+    it("rejects other results", async () => {
+      expect((await checkModel(getSource("TypeError,0"))).failure?.message).toContain(
+        "results TypeError,TypeError",
+      );
+    });
+  });
 });
