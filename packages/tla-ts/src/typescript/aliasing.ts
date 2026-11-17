@@ -5,6 +5,7 @@ import { isSelfReturning, MUTATING_METHODS } from "./collections";
 import {
   type Context,
   findNodes,
+  findReferences,
   getCallee,
   getSymbol,
   hasObjectLiteral,
@@ -637,22 +638,6 @@ const isFreshCall = (node: ts.Node, context: Context) => {
 // The first read that would share an object that changes in place, which a TLA+ value would copy,
 // with the variable that it reads, where it reads one, in the code that getReached finds.
 export const findSharing = (reached: readonly ts.Node[], context: Context) => {
-  // The references to each symbol in a file, which one walk of the file finds.
-  const fileReferences = new Map<ts.SourceFile, Map<ts.Symbol, ts.Identifier[]>>();
-  const getReferences = (sourceFile: ts.SourceFile) => {
-    const known = fileReferences.get(sourceFile);
-    if (known !== undefined) return known;
-    const references = new Map<ts.Symbol, ts.Identifier[]>();
-    findNodes(sourceFile, ts.isIdentifier).forEach((identifier) => {
-      const symbol = getSymbol(identifier, context.checker);
-      if (symbol === undefined) return;
-      const found = references.get(symbol);
-      if (found === undefined) references.set(symbol, [identifier]);
-      else found.push(identifier);
-    });
-    fileReferences.set(sourceFile, references);
-    return references;
-  };
   // Whether a reference to a function's own variable is the last that runs, so that nothing
   // changes the variable's array after the reference shares it.
   const isLastUse = (node: ts.Node, symbol: ts.Symbol) => {
@@ -690,7 +675,7 @@ export const findSharing = (reached: readonly ts.Node[], context: Context) => {
           const other = inner === parent.whenTrue ? parent.whenFalse : parent.whenTrue;
           return ts.findAncestor(reference, (outer) => outer === other) !== undefined;
         }) !== undefined;
-      return (getReferences(declaration.getSourceFile()).get(symbol) ?? []).every(
+      return findReferences(symbol, declaration.getSourceFile(), context).every(
         (reference) =>
           reference === declaration.name ||
           reference === node ||
@@ -711,7 +696,7 @@ export const findSharing = (reached: readonly ts.Node[], context: Context) => {
     // A variable that no file exports has its references only in the function that declares it.
     return (
       !isRepeated &&
-      (getReferences(declaration.getSourceFile()).get(symbol) ?? []).every(
+      findReferences(symbol, declaration.getSourceFile(), context).every(
         (reference) =>
           reference === declaration.name ||
           reference === node ||
