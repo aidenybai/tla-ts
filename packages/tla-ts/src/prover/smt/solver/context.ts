@@ -173,6 +173,7 @@ export class Context extends Internalizer {
   private scopeAuxClauseLimits: number[] = [];
   private scopeTrailLimits: number[] = [];
   private baseScopeLemmaLimits: number[] = [];
+  private isBaseScopeInconsistent: boolean[] = [];
   private atomPropagationQueue: Literal[] = [];
   private thEqQueue: number[] = [];
   private thDiseqQueue: number[] = [];
@@ -987,11 +988,12 @@ export class Context extends Internalizer {
     this.cacheGeneration(newLevel, visited);
     this.qmanager.pop(numScopes);
     this.fingerprints.pop(numScopes);
+    if (newLevel >= this.baseLevel || !this.isBaseScopeInconsistent[newLevel]) this.conflict = null;
     if (newLevel < this.baseLevel) {
       this.deleteClauses(this.lemmas, this.baseScopeLemmaLimits[newLevel]);
       shrink(this.baseScopeLemmaLimits, newLevel);
+      shrink(this.isBaseScopeInconsistent, newLevel);
     }
-    this.conflict = null;
     this.deleteClauses(this.auxClauses, this.scopeAuxClauseLimits[newLevel]);
     this.relevancy.pop(numScopes);
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
@@ -1474,6 +1476,7 @@ export class Context extends Internalizer {
     this.popToBaseLevel();
     this.pushScope();
     this.baseScopeLemmaLimits.push(this.lemmas.length);
+    this.isBaseScopeInconsistent.push(this.isInconsistent());
     this.baseLevel++;
     this.searchLevel++;
   }

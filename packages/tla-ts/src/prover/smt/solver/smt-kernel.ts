@@ -59,12 +59,15 @@ export class SmtKernel {
     const context = this.context;
     context.popToBaseLevel();
     this.setupContext(false);
+    const wasConsistent = !context.isInconsistent();
     context.internalizeAssertions(this.asserted);
     const limit = context.manager.limit;
     if (!limit.inc()) throw new SmtCanceledError();
     const wasSuspended = limit.isSuspended;
     limit.isSuspended = true;
     if (!context.isInconsistent()) context.propagate();
+    if (wasConsistent && context.isInconsistent() && !this.asserted.isInconsistent)
+      context.resolveConflict();
     limit.isSuspended = wasSuspended;
     context.push();
     this.asserted.push();

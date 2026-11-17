@@ -1040,6 +1040,20 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "sat", "sat"]);
   });
 
+  it("keeps the conflict that push propagates once its scope is popped", () => {
+    expect(
+      run([
+        "(set-logic QF_FP)",
+        "(declare-const y (_ FloatingPoint 3 4))",
+        "(assert (fp.isNaN y))",
+        "(assert (not (fp.isNaN (fp.neg y))))",
+        "(push 1)",
+        "(pop 1)",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unsat"]);
+  });
+
   // check_sat counts one resource unit once the model of a decided goal is converted, and answers unknown when that exceeds the limit.
   it("counts the resource units of check-sat-using as Z3 does", () => {
     expect(
