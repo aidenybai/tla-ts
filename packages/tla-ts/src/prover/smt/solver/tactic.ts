@@ -2069,22 +2069,13 @@ const getConvertedModel = (goal: Goal) => {
   return { model, isCanceled: false };
 };
 
-export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
+const getTacticCheck = (goal: Goal, goals: Goal[] | string | undefined): TacticCheck => {
   const undecided = {
     status: L_UNDEF,
     model: undefined,
     core: undefined,
     isConversionCanceled: false,
   };
-  const goals = (() => {
-    try {
-      return tactic(goal);
-    } catch (error) {
-      if (error instanceof SmtTacticError || error instanceof SmtDefaultError) return error.message;
-      if (error instanceof SmtCanceledError) return undefined;
-      throw error;
-    }
-  })();
   if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
   if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
   if (isDecidedUnsat(goals))
@@ -2110,6 +2101,23 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
     reasonUnknown:
       goals.length === 1 && goals[0].reasonUnknown !== "" ? goals[0].reasonUnknown : "unknown",
   };
+};
+
+// The goals let go of their formulas once the check is done, as Z3 frees them.
+export const checkSatUsing = (tactic: Tactic, goal: Goal) => {
+  let goals: Goal[] | string | undefined;
+  try {
+    goals = tactic(goal);
+  } catch (error) {
+    if (error instanceof SmtTacticError || error instanceof SmtDefaultError) goals = error.message;
+    else if (!(error instanceof SmtCanceledError)) throw error;
+  }
+  try {
+    return getTacticCheck(goal, goals);
+  } finally {
+    goal.reset();
+    if (Array.isArray(goals)) for (const result of goals) result.reset();
+  }
 };
 
 export const applyTactic = (tactic: Tactic, goal: Goal) => {

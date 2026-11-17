@@ -924,6 +924,24 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("counts the steps of a check as if the checks before it had freed their terms", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (> (+ x (ite p 1 2)) y))",
+        "(assert (or p (= x (* 2 y))))",
+        "(assert (=> (> y 3) (< x 10)))",
+        "(set-option :rlimit 40)",
+        "(check-sat-using (then blast-term-ite tseitin-cnf))",
+        "(set-option :rlimit 78)",
+        "(check-sat-using (then blast-term-ite tseitin-cnf))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", "unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
   it("keeps the model as far as the conversion that the limit stopped got", () => {
     expect(
       run([

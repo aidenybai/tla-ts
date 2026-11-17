@@ -121,13 +121,15 @@ class RewriterCore {
     this.scopes = [];
   }
 
-  protected releaseCaches() {
+  // The destructor of rewriter_core, which also frees the results of a rewrite that the limit stopped.
+  protected releaseCore() {
     for (const cache of this.caches) cache.reset();
+    this.numFrames = 0;
+    this.shrinkResults(0);
   }
 
   protected cleanupCore() {
-    this.releaseCaches();
-    this.shrinkResults(0);
+    this.releaseCore();
     this.caches = [new ActCache(this.manager, this.manager.getNumAsts())];
     this.frames = [];
     this.numFrames = 0;
@@ -247,7 +249,7 @@ abstract class VarShifterCore extends RewriterCore {
   }
 
   release() {
-    this.releaseCaches();
+    this.releaseCore();
   }
 }
 
@@ -389,7 +391,7 @@ class RewriterEngine extends SubstCore {
     this.setLastResult(-1);
     this.invShifter.release();
     this.shifter.release();
-    this.releaseCaches();
+    this.releaseCore();
   }
 
   rewrite(expr: number): number {
@@ -859,7 +861,7 @@ export class BetaReducer extends SubstCore {
   release() {
     this.setLastResult(-1);
     this.shifter.release();
-    this.releaseCaches();
+    this.releaseCore();
   }
 
   rewrite(expr: number): number {
