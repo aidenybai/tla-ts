@@ -353,9 +353,7 @@ export const runSmtlibScript = (
     parserOptions: { isIgnoringBadPatterns: true },
   };
   const createState = (): ScriptState => {
-    const manager = new AstManager(
-      new ResourceLimit(Date.now() + options.timeLimitMs, options.signal),
-    );
+    const manager = new AstManager(new ResourceLimit(Infinity, options.signal));
     manager.isHiDiv0 = settings.isHiDiv0;
     manager.maxChar = settings.encoding.maxChar;
     manager.charBits = settings.encoding.charBits;
@@ -1670,6 +1668,8 @@ export const runSmtlibScript = (
       ? (declaration: SmtList) => state.reader.declareCommand(declaration)
       : runCommand.get(head.text);
     if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
+    // Z3's scoped_timer ends with the command that set it, so a command starts without one.
+    state.manager.limit.restart(Infinity);
     if (!MANAGERLESS_COMMANDS.has(head.text) && state.isProofsEnabled === undefined) {
       state.isProofsEnabled = settings.parameters.get("proof") === "true";
       resetKernel();

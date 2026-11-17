@@ -673,6 +673,26 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("runs the commands after a check that timed out", () => {
+    expect(
+      run(
+        [
+          ...getPigeonholeLines(11),
+          "(check-sat)",
+          "(push)",
+          "(assert false)",
+          "(check-sat)",
+          "(pop)",
+          "(simplify (and p0_0 (or p0_0 p1_0)))",
+          "(reset-assertions)",
+          "(check-sat)",
+          "(eval (or p0_0 (not p0_0)))",
+        ],
+        200,
+      ),
+    ).toEqual(["unknown", "unsat", "(and p0_0 (or p0_0 p1_0))", "sat", "true"]);
+  });
+
   // mk_fm_tactic is and_then(simplify, fm), and and_then stops at a decided goal.
   it("skips fm once simplify has decided the goal", () => {
     expect(
