@@ -26,6 +26,9 @@ const IGNORED_ERRORS = new Set([
   7056, 7057,
 ]);
 
+// A property that the type lacks, which a private name's class declares.
+const PRIVATE_NAME_ERRORS = new Set([2339, 2551]);
+
 // A value that may be null or undefined, whose type holds, which tla-ts reads as such, but for one
 // that is only null or undefined, which it reads as any value, as the read throws.
 const NULLABLE_ERRORS = new Set([2531, 2532, 2533, 2721, 2722, 2723, 18047, 18048, 18049]);
@@ -488,7 +491,7 @@ export const typeJavaScript = (
     const node = getDiagnosedNode(file, diagnostic);
     return (
       IGNORED_ERRORS.has(diagnostic.code) &&
-      !ts.isPrivateIdentifier(node) &&
+      !(ts.isPrivateIdentifier(node) && PRIVATE_NAME_ERRORS.has(diagnostic.code)) &&
       !(ts.isIdentifier(node) && node.text === "arguments") &&
       !ts.isExportSpecifier(node.parent)
     );

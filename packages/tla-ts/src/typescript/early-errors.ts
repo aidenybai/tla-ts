@@ -318,6 +318,29 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
     ) {
       reject("Unexpected private name after super", node.name);
     }
+    // A class field's initializer and a static block read no arguments, outside the functions that
+    // they hold that aren't arrows.
+    if (ts.isIdentifier(node) && node.text === "arguments" && !isPropertyName(node)) {
+      const owner = ts.findAncestor(
+        node.parent,
+        (ancestor) =>
+          (ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor)) ||
+          (ts.isPropertyDeclaration(ancestor) && ancestor.initializer !== undefined) ||
+          ts.isClassStaticBlockDeclaration(ancestor),
+      );
+      if (
+        owner !== undefined &&
+        (ts.isClassStaticBlockDeclaration(owner) ||
+          (ts.isPropertyDeclaration(owner) &&
+            owner.initializer !== undefined &&
+            node.pos >= owner.initializer.pos))
+      ) {
+        reject(
+          "'arguments' is not allowed in class field initializer or static initialization block",
+          node,
+        );
+      }
+    }
     // A module reserves await, which TypeScript reads as a name inside a function that isn't
     // async, as in an arrow's parameters.
     if (
