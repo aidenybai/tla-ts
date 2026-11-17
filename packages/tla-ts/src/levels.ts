@@ -53,6 +53,9 @@ interface LevelContext {
   variables: Set<string>;
   getDefinition: (name: string) => Definition | undefined;
   getQualifiedName?: (name: string) => string | undefined;
+  // The levels of a definition of a prepared module that SANY's checks accepted, which they found
+  // when they checked it.
+  getPreparedLevels?: (name: string) => OperatorLevels | undefined;
 }
 
 type ScopeEntry =
@@ -237,7 +240,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     if (context.variables.has(name)) return { kind: "Declared", name, level: 1, arity: 0 };
     const definition = context.getDefinition(name);
     if (definition) {
-      const levels = analyzeDefinition(definition, new Map());
+      const levels = context.getPreparedLevels?.(name) ?? analyzeDefinition(definition, new Map());
       const qualifiedName = context.getQualifiedName?.(name);
       return {
         kind: "Defined",
@@ -958,14 +961,22 @@ export const checkModuleLevels = (
             ...(step.proof?.kind === "Steps" && isTemporal() ? checkTemporalGoal(step.proof) : []),
           ];
         });
+  // The levels of each definition, which a check of a module that extends a prepared module links.
+  const levels: (OperatorLevels | undefined)[] = module.definitions.map(() => undefined);
   const errors = collectSemanticErrors(
     [
-      ...module.definitions
-        .filter((definition) => !definition.name.includes("!"))
-        .map((definition) => ({
-          location: definition.location,
-          check: () => analyzer.analyzeDefinition(definition, new Map()),
-        })),
+      ...module.definitions.flatMap((definition, position) =>
+        definition.name.includes("!")
+          ? []
+          : [
+              {
+                location: definition.location,
+                check: () => {
+                  levels[position] = analyzer.analyzeDefinition(definition, new Map());
+                },
+              },
+            ],
+      ),
       ...module.assumptions.map((assumption) => ({
         location: assumption.location,
         check: () => analyzer.analyze(assumption.expression, new Map()),
@@ -989,4 +1000,5 @@ export const checkModuleLevels = (
     warnings,
   );
   if (errors.length > 0) throw createSanyError(errors, false, undefined, warnings);
+  return levels;
 };

@@ -1563,8 +1563,11 @@ const bindArguments = (
       },
       scope: frame.scope,
     };
-    // TLC passes arguments by name, so a disjunct in one branches where the body uses it as an action.
-    if (isBranching(program, arg, frame.scope)) return withBinding(scope, param.name, source);
+    // TLC passes arguments by name, so a disjunct in one branches where the body uses it as an action,
+    // and a variable primed before the step assigns it is one the body may assign.
+    if (isBranching(program, arg, frame.scope) || hasUnassignedPrime(program, arg, frame)) {
+      return withBinding(scope, param.name, source);
+    }
     const value = compileValue(program, arg, frame);
     const current = frame.isNext ? undefined : source;
     if (!names || arg.kind === "Identifier" || arg.kind === "Number" || arg.kind === "String") {
@@ -3662,6 +3665,22 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       );
       return { type: createBool(), emit: () => getEnabledCode(step) };
     }
+    // TLC evaluates [A]_e as A, or else e unchanged, and <<A>>_e as A and e changed.
+    case "BoxAction":
+    case "AngleAction": {
+      const action = expectBool(compileValue(program, expression.action, frame));
+      const unchanged = compileUnchanged(program, expression.subscript, frame);
+      const isBox = expression.kind === "BoxAction";
+      return {
+        type: createBool(),
+        emit: () =>
+          isBox
+            ? `((${action.emit()}) || (${unchanged.emit()}))`
+            : `((${action.emit()}) && !(${unchanged.emit()}))`,
+      };
+    }
+    case "Label":
+      return compileValue(program, expression.body, frame);
     default:
       return unsupported();
   }
@@ -4186,6 +4205,8 @@ const compileStep = (
       const body = continueWith(bindings.scope, [expression.body]);
       return () => `{ ${getDeclarations(bindings.names)} ${body()} }`;
     }
+    case "Label":
+      return continueWith(first.scope, [expression.body]);
     case "Identifier": {
       const binding = first.scope.get(expression.name);
       if (binding?.kind === "Operator" && binding.definition.params.length === 0) {
@@ -4267,13 +4288,33 @@ const compileStep = (
   return () => `if (${guard.emit()}) { ${tail()} }`;
 };
 
+// Whether an expression primes a variable, outside an ENABLED, that the step has yet to assign.
+const hasUnassignedPrime = (program: Program, expression: Expression, frame: Frame): boolean => {
+  if (expression.kind === "Enabled") return false;
+  if (expression.kind === "Prime" && expression.expression.kind === "Identifier") {
+    const name = expression.expression.name;
+    const global = frame.scope.has(name) ? undefined : findGlobalName(name, program.environment);
+    return global?.kind === "Variable" && frame.primed[global.index] === undefined;
+  }
+  return getChildren(expression).some((child) => hasUnassignedPrime(program, child, frame));
+};
+
 const hasPrime = (expression: Expression): boolean =>
   expression.kind === "Prime" ||
   expression.kind === "Unchanged" ||
   expression.kind === "Enabled" ||
   getChildren(expression).some(hasPrime);
 
-const getPrimedVariable = (program: Program, expression: Expression, scope: TierScope) => {
+const getPrimedVariable = (
+  program: Program,
+  expression: Expression,
+  scope: TierScope,
+): number | undefined => {
+  // TLC finds the variable that a parameter primes in the argument it stands for.
+  const binding = expression.kind === "Identifier" ? scope.get(expression.name) : undefined;
+  if (binding?.kind === "Operator" && binding.definition.params.length === 0) {
+    return getPrimedVariable(program, binding.definition.body, binding.scope);
+  }
   if (expression.kind !== "Prime" || expression.expression.kind !== "Identifier") return undefined;
   const name = expression.expression.name;
   if (scope.has(name)) return undefined;
@@ -6304,6 +6345,18 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     while (cursor.position < end) addFingerprint(compiled.decode(cursor));
   };
   // Returns the index of a state in the model, or -1 for a state outside it.
+  // TLC's fingerprint of each state stored, by its index, which orders the successors a liveness
+  // check adds.
+  const liveFingerprints = { data: new Int32Array(check.liveness ? 1024 : 0), size: 0 };
+  const addLiveFingerprint = (state: Plain[]) => {
+    if (liveFingerprints.size === liveFingerprints.data.length) {
+      const data = new Int32Array(liveFingerprints.data.length * 2);
+      data.set(liveFingerprints.data);
+      liveFingerprints.data = data;
+    }
+    fingerprinter.fingerprint(state);
+    liveFingerprints.data[liveFingerprints.size++] = fingerprinter.words[0];
+  };
   const visit = (state: Plain[], parent?: Plain[], isUnchanged = false) => {
     statistics.generated++;
     // A step that changes no value leads back to the state it starts from, which is stored already.
@@ -6312,6 +6365,7 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     writeKey(state);
     const found = findState(true);
     if (found !== -1) return found;
+    if (check.liveness) addLiveFingerprint(state);
     if (!isEncoded) {
       keys.size = keys.start;
       compiled.encode(state, keys);
@@ -6375,27 +6429,19 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
     });
     return path;
   };
-  const holders = new Map(atoms.map((atom, position) => [atom, compiled.liveAtoms[position]]));
-  const holds = (atom: LiveAtom, state: Plain[], next: Plain[]) =>
-    (holders.get(atom) ?? unsupported())(state, next);
-  const liveFingerprints: number[] = [];
   const live =
     check.liveness &&
     createLiveGraph<Plain[]>(
       check.liveness,
       {
-        atoms: { holdsState: (atom, state) => holds(atom, state, state), holdsAction: holds },
+        holds: (position, state, next) => compiled.liveAtoms[position](state, next),
         isShared: true,
         // Without symmetry, a state's index identifies it. With it, states of one class share it.
         isSame: isImaged ? isSame : () => true,
         evaluateFrom: (_source, evaluate) => evaluate(),
       },
       {
-        getFingerprint: (successor) =>
-          (liveFingerprints[successor.index] ??= (() => {
-            fingerprinter.fingerprint(successor.state);
-            return fingerprinter.words[0];
-          })()),
+        getFingerprint: (successor) => liveFingerprints.data[successor.index],
         // The successors of a state the search expanded are all stored.
         getSuccessors: (index, state) => {
           const successors: LiveSuccessor<Plain[]>[] = [];
