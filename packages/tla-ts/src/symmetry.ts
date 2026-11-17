@@ -24,7 +24,7 @@ export type Images = Map<string, ModelValue>;
 
 const getPermutationKey = (permutation: Images) =>
   [...permutation]
-    .map(([name, image]) => `${name}>${image.name}`)
+    .map((entry) => `${entry[0]}>${entry[1].name}`)
     .sort()
     .join(",");
 

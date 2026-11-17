@@ -3111,10 +3111,10 @@ export const formatState = (state: Record<string, Value>, previous?: Record<stri
     );
   }
   return entries
-    .filter(([name]) => !(isFormatted && name === "_format"))
-    .filter(([name, value]) => !previous || !isUnchanged(previous[name], value))
-    .map(([name, value]) => {
-      const text = formatJava(format, [name, prettyPrint(formatValue(value))]);
+    .filter((entry) => !(isFormatted && entry[0] === "_format"))
+    .filter((entry) => !previous || !isUnchanged(previous[entry[0]], entry[1]))
+    .map((entry) => {
+      const text = formatJava(format, [entry[0], prettyPrint(formatValue(entry[1]))]);
       if (text === undefined) {
         throw new TlaAliasFormatError(
           `The _format field of the ALIAS ${alias} is ${formatValue(format)}, but it must format two strings, the name and the value of a field.`,

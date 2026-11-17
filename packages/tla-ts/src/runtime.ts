@@ -110,7 +110,7 @@ export const NAMED_REGISTER_PREFIX = "s:";
 const POSSIBLE_REGISTER = "s:_possible";
 
 export const getPossibleCounts = (runtime: CheckerRuntime) =>
-  createFunction([...runtime.possibleCounts].map(([name, count]): [Value, Value] => [name, count]));
+  createFunction([...runtime.possibleCounts].map((entry): [Value, Value] => [entry[0], entry[1]]));
 
 export const getNamedRegisters = (runtime: CheckerRuntime): Map<string, Value> =>
   runtime.possibleCounts.size === 0
