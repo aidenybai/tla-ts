@@ -1220,10 +1220,31 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
-  it("throws at a command named like a property of Object", () => {
-    expect(() => run(["(constructor)"])).toThrow(SmtUnsupportedError);
-    expect(() => run(["(toString)"])).toThrow(SmtUnsupportedError);
-    expect(() => run(["(__proto__)"])).toThrow(SmtUnsupportedError);
+  it("reports a command Z3 does not know, also one named like a property of Object", () => {
+    expect(
+      run([
+        "(constructor)",
+        "(toString 1 (2 3))",
+        "(__proto__)",
+        "(asert (> 1 0))",
+        "(set-option :print-success true)",
+        "(foo)",
+        '(echo "x")',
+      ]),
+    ).toEqual([
+      "unsupported",
+      "; constructor line: 1 position: 13",
+      "unsupported",
+      "; toString line: 2 position: 17",
+      "unsupported",
+      "; __proto__ line: 3 position: 10",
+      "unsupported",
+      "; asert line: 4 position: 14",
+      "success",
+      "unsupported",
+      "; foo line: 6 position: 4",
+      "x",
+    ]);
   });
 
   it("throws at a theory it does not implement", () => {

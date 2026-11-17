@@ -73,6 +73,58 @@ import {
   type TacticParam,
 } from "./tactic";
 
+const UNPORTED_COMMANDS = new Set([
+  "assert-not",
+  "assume",
+  "dbg-bool-rewriter",
+  "dbg-elim-and",
+  "dbg-get-qbody",
+  "dbg-params",
+  "dbg-pp-var",
+  "dbg-set",
+  "dbg-set-next-id",
+  "dbg-sexpr",
+  "dbg-shift-vars",
+  "dbg-size",
+  "dbg-subst",
+  "dbg-th-rewriter",
+  "dbg-translator",
+  "declare-map",
+  "declare-tactic",
+  "declare-type-var",
+  "del",
+  "display-dimacs",
+  "euf-project",
+  "eufi",
+  "ff-boolean-certify",
+  "ff-certify",
+  "ff-check-native-proof",
+  "ff-integrated-certify",
+  "get-assignment",
+  "get-interpolant",
+  "get-proof",
+  "get-proof-graph",
+  "get-unsat-assumptions",
+  "get-user-tactics",
+  "help",
+  "help-simplifier",
+  "help-tactic",
+  "include",
+  "infer",
+  "labels",
+  "mbi",
+  "mbp",
+  "mbp-qel",
+  "model-add",
+  "model-del",
+  "prefer",
+  "qe-lite",
+  "qel",
+  "reset-preferences",
+  "set-initial-value",
+  "set-simplifier",
+]);
+
 const SILENT_COMMANDS = new Set([
   ...DECLARATIONS,
   "assert",
@@ -1675,7 +1727,13 @@ export const runSmtlibScript = (
     const command = DECLARATIONS.has(head.text)
       ? (declaration: SmtList) => state.reader.declareCommand(declaration)
       : runCommand.get(head.text);
-    if (command === undefined) throw new SmtUnsupportedError(`the command ${head.text}`);
+    if (command === undefined && UNPORTED_COMMANDS.has(head.text))
+      throw new SmtUnsupportedError(`the command ${head.text}`);
+    if (command === undefined) {
+      print("unsupported");
+      printDiagnostic(`; ${head.text} line: ${list.end.line} position: ${list.end.column}`);
+      return;
+    }
     // Z3's scoped_timer ends with the command that set it, so a command starts without one.
     state.manager.limit.restart(Infinity);
     if (!MANAGERLESS_COMMANDS.has(head.text) && state.isProofsEnabled === undefined) {
