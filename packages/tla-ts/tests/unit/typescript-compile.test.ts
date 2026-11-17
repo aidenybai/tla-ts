@@ -52510,4 +52510,43 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a String.prototype method on a value whose type doesn't tell what it is, where it's a string", () => {
+    const getSource = (expected: string) => `
+      class Reader {
+        pos: any;
+        buffer: any;
+        constructor(buffer: any) {
+          this.pos = 0;
+          this.buffer = buffer;
+        }
+        peek() {
+          return this.buffer.charCodeAt(this.pos);
+        }
+        find(char: any) {
+          const { buffer, pos } = this;
+          const idx = buffer.indexOf(char, pos);
+          return idx === -1 ? buffer.length : idx;
+        }
+      }
+      const reader = new Reader("ab;c");
+      const result = [reader.peek(), reader.find(";"), reader.find("x")].join();
+      if (result !== "${expected}") throw new Error("read " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("97,2,4"))).failure).toBeUndefined();
+    });
+
+    it("rejects other positions", async () => {
+      expect((await checkModel(getSource("97,2,-1"))).failure?.message).toContain("read 97,2,4");
+    });
+
+    it("stops where the value isn't a string", async () => {
+      const source = getSource("97,2,4").replace('new Reader("ab;c")', "new Reader([1])");
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't tell which function this call runs",
+      );
+    });
+  });
 });
