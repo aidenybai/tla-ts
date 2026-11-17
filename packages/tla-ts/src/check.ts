@@ -1489,6 +1489,51 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       counterExample,
     );
   };
+  const addLiveState = (
+    index: number,
+    liveSuccessors: LiveSuccessor[],
+    source: GraphState | undefined,
+  ) => {
+    if (liveness && source && (is174 || options.dump?.stuttering)) {
+      stateWriter?.writeStuttering(source);
+    }
+    const accepted = liveness?.addState(index, states[index], liveSuccessors);
+    if (!liveness || !accepted) return undefined;
+    // Deviation from TLC: under -continue, TLC's LiveCheck throws an InvariantViolatedException after it reports the property, which its Worker reports as unexpected.
+    const steps = traces.getPathSteps(accepted);
+    const properties = getViolatedProperties(
+      liveness,
+      steps.map((step) => step.state),
+      steps.length - 1,
+    );
+    return reportViolation("property-violation", {
+      name: properties[0],
+      properties,
+      ...traces.toTrace(steps, accepted, { known: 0 }),
+    });
+  };
+  // TLC's Worker adds the state to the behavior graph after it reports a violation, where LiveCheck can report a temporal property that fails too.
+  const addReportedLiveState = (
+    index: number,
+    liveSuccessors: LiveSuccessor[],
+    source: GraphState | undefined,
+  ) =>
+    captureOutput(() => {
+      try {
+        return {
+          additional: addLiveState(index, liveSuccessors, source)?.violation,
+          isFailed: false,
+          callStack: undefined,
+        };
+      } catch (error) {
+        if (!(error instanceof TlaEvaluationError)) throw error;
+        return {
+          additional: undefined,
+          isFailed: true,
+          callStack: getLiveCallStack(index, liveSuccessors),
+        };
+      }
+    });
   const expandState = (index: number, liveSuccessors: LiveSuccessor[]) => {
     const state = states[index];
     const source = stateWriter && getGraphState(state, depths[index]);
@@ -1537,41 +1582,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     });
     current.isExpanding = false;
     const result = outcome;
-    const addLiveState = () => {
-      if (liveness && source && (is174 || options.dump?.stuttering)) {
-        stateWriter?.writeStuttering(source);
-      }
-      const accepted = liveness?.addState(index, state, liveSuccessors);
-      if (!liveness || !accepted) return undefined;
-      // Deviation from TLC: under -continue, TLC's LiveCheck throws an InvariantViolatedException after it reports the property, which its Worker reports as unexpected.
-      const steps = traces.getPathSteps(accepted);
-      const properties = getViolatedProperties(
-        liveness,
-        steps.map((step) => step.state),
-        steps.length - 1,
-      );
-      return reportViolation("property-violation", {
-        name: properties[0],
-        properties,
-        ...traces.toTrace(steps, accepted, { known: 0 }),
-      });
-    };
-    // TLC's Worker adds the state to the behavior graph after it reports a violation, where LiveCheck can report a temporal property that fails too.
-    const addReportedLiveState = () =>
-      captureOutput(() => {
-        try {
-          return { additional: addLiveState()?.violation, isFailed: false, callStack: undefined };
-        } catch (error) {
-          if (!(error instanceof TlaEvaluationError)) throw error;
-          return {
-            additional: undefined,
-            isFailed: true,
-            callStack: getLiveCallStack(index, liveSuccessors),
-          };
-        }
-      });
     if (result?.violation && !is174) {
-      const live = addReportedLiveState();
+      const live = addReportedLiveState(index, liveSuccessors, source);
       return {
         ...result,
         violation: appendTraceOutput(result.violation, live.lines),
@@ -1587,7 +1599,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         name: "deadlock",
         ...traces.getStateTrace(index),
       });
-      const live = addReportedLiveState();
+      const live = addReportedLiveState(index, liveSuccessors, source);
       const reported = deadlock.violation
         ? { ...deadlock, violation: appendTraceOutput(deadlock.violation, live.lines) }
         : deadlock;
@@ -1600,7 +1612,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return live.result.callStack ? { ...counted, liveCallStack: live.result.callStack } : counted;
     }
     try {
-      return addLiveState();
+      return addLiveState(index, liveSuccessors, source);
     } catch (error) {
       if (is174 && error instanceof TlaEvaluationError) {
         return createFailureResult(
