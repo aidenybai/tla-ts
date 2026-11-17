@@ -100,8 +100,15 @@ type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" }
 
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
+export interface NullSelection {
+  node: Expression;
+  error: SanyError;
+}
+
 export const selections = new WeakSet<Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
+export const nullSelections = new WeakMap<Expression, NullSelection[]>();
+const unresolvedExpressions = new WeakSet<Expression>();
 
 const renamedArities = new WeakMap<Expression, number>();
 
@@ -753,6 +760,7 @@ const getSymbolArity = (
     ),
     message: `Could not find declaration or definition of symbol '${spelling}'.`,
   });
+  if (fixity) unresolvedExpressions.add(expression);
   if (fixity && location.range) {
     unit.errors.push({
       location: formatRange(location.range),
@@ -1053,7 +1061,11 @@ const resolveExpression = (
   unit: Unit,
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
-    resolveExpression(expression, scope, { ...unit, isGenerated: true });
+    const failed = nullSelections
+      .get(expression)
+      ?.find((selection) => unresolvedExpressions.has(selection.node));
+    if (failed) unit.errors.push(failed.error);
+    else resolveExpression(expression, scope, { ...unit, isGenerated: true });
     return;
   }
   const resolveAll = (expressions: Expression[]) =>

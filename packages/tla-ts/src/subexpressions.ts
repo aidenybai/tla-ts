@@ -25,8 +25,10 @@ import {
   getOperands,
   isBefore,
   LOCAL_RESOLUTION,
+  nullSelections,
   selectionErrors,
   selections,
+  type NullSelection,
 } from "./resolve";
 
 type Lookup = (name: string) => Definition | undefined;
@@ -50,6 +52,23 @@ interface SelectingName {
 }
 
 const SELECTION_NAME = "$subexpression";
+
+const getSelectorName = (selector: Selector) => {
+  switch (selector.kind) {
+    case "Name":
+      return selector.name;
+    case "Operand":
+      return typeof selector.operand === "number"
+        ? `argument selector ${selector.operand}`
+        : selector.operand;
+    case "Bound":
+      return "!(...)";
+    case "At":
+      return "@";
+    case "Colon":
+      return ":";
+  }
+};
 
 const createError = (message: string, location: SourceLocation) =>
   new TlaSyntaxError(`${message} at line ${location.line}, column ${location.column}`);
@@ -162,6 +181,11 @@ const selectSubexpression = (
   let selectorIndex = 0;
   let current: Expression | undefined;
   let isFailed = false;
+  const nulls: NullSelection[] = [];
+  const checkNull = (node: Expression | undefined, message: string) => {
+    const range = reference.selectorRanges?.[selectorIndex];
+    if (node && range) nulls.push({ node, error: { location: formatRange(range), message } });
+  };
 
   const report = (range: SourceRange | undefined, message: string) => {
     if (!range) throw createError(message, location);
@@ -283,8 +307,16 @@ const selectSubexpression = (
     if (selector.kind !== "Operand")
       throw createError("Unexpected subexpression selector", location);
     const operands = binder ? binder.sets : getOperands(current);
+    const range = reference.selectorRanges?.[selectorIndex];
+    if (!operands && current.kind !== "Identifier") {
+      report(range, "Selecting subexpression of expression that has none.");
+      return;
+    }
     const operand = operands?.[getOperandIndex(selector.operand, operands.length)];
-    if (!operand) throw createError("Nonexistent operand specified by the selector", location);
+    if (!operand) {
+      report(range, `Nonexistent operand specified by \`${getSelectorName(selector)}'.`);
+      return;
+    }
     current = operand;
   };
 
@@ -311,12 +343,24 @@ const selectSubexpression = (
       followLabels();
       continue;
     }
+    if (selector.kind !== "Colon") {
+      checkNull(
+        current,
+        "Subexpression selection failed, probably due to an error in the selected expression.",
+      );
+    }
     selectOperand(selector);
+    checkNull(
+      current,
+      `An unexpected null node specified by '${getSelectorName(selectors[selectorIndex])}'.\nThis is probably due to a previous error.`,
+    );
     selectorIndex++;
   }
   if (isFailed) return reference;
   if (!current) throw createError("Subexpression selection failed", location);
-  return createApplication(selection, current);
+  const selected = createApplication(selection, current);
+  nullSelections.set(selected, nulls);
+  return selected;
 };
 
 const getQualifiedSelectors = (

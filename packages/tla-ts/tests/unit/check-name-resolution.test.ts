@@ -667,6 +667,45 @@ describe("name resolution matches SANY", () => {
         ["line 3, col 27 to line 3, col 30", "Unknown operator: `M!zz'."],
       ],
     ],
+    [
+      "Op(a) == a + zz\nS(a) == {zz + 1}\nL == 1\nT == <<1, 2>>\nf == Op(2)!1 /\\ S(2)!1 /\\ Op(2)!: /\\ Op(2)!<< /\\ L!1 /\\ T!3",
+      [
+        [
+          "line 2, col 12 to line 2, col 12",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        ["line 2, col 10 to line 2, col 15", "Couldn't resolve infix operator symbol `+'."],
+        [
+          "line 3, col 13 to line 3, col 13",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        ["line 3, col 10 to line 3, col 15", "Couldn't resolve infix operator symbol `+'."],
+        [
+          "line 6, col 12 to line 6, col 12",
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        ],
+        [
+          "line 6, col 22 to line 6, col 22",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+        [
+          "line 6, col 33 to line 6, col 33",
+          "An unexpected null node specified by ':'.\nThis is probably due to a previous error.",
+        ],
+        [
+          "line 6, col 44 to line 6, col 45",
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        ],
+        [
+          "line 6, col 52 to line 6, col 52",
+          "Selecting subexpression of expression that has none.",
+        ],
+        [
+          "line 6, col 59 to line 6, col 59",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkNames(source)).rejects.toThrow(
       createSanyError(
