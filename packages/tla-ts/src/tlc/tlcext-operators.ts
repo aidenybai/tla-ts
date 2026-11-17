@@ -263,10 +263,13 @@ export const createTlcExtOperators = (
     defineOperator("TLCNoOp", 1, (args) => getValue(args, 0, "TLCNoOp")),
     {
       ...defineLazyOperator("PickSuccessor", 1, (args, context) => {
-        // Deviation from TLC: TLCExt#pickSuccessor fingerprints a partial successor and fails, where TLCExt.tla promises TRUE.
         const next = context?.next ?? (context?.environment.variables ?? []).map(() => undefined);
-        if (!isCompleteState(next)) return true;
-        if (context?.next && runtime.isSeen(next)) return true;
+        // A simulation remembers no states, so TLC evaluates the guard before it looks at the successor.
+        if (runtime.getSimulationValue === undefined) {
+          // Deviation from TLC: TLCExt#pickSuccessor fingerprints a partial successor and fails, where TLCExt.tla promises TRUE.
+          if (!isCompleteState(next)) return true;
+          if (context?.next && runtime.isSeen(next)) return true;
+        }
         const guard = getOperator(args, 0, "PickSuccessor");
         const isPicked = guard.call([]);
         if (typeof isPicked !== "boolean") {
@@ -274,7 +277,13 @@ export const createTlcExtOperators = (
             `In evaluating TLCExt!PickSuccessor, a non-boolean expression (${getKindString(isPicked)}) was used as the condition of an IF.\n${guard.expression ? describeNode(guard.expression) : ""}`,
           );
         }
-        if (isPicked || !context?.next || !context.state || !isCompleteState(context.state)) {
+        if (
+          isPicked ||
+          !context?.next ||
+          !isCompleteState(next) ||
+          !context.state ||
+          !isCompleteState(context.state)
+        ) {
           return true;
         }
         const state = context.state;

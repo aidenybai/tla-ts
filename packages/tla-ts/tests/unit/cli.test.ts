@@ -781,6 +781,14 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
       ask(2, 8),
     ]);
   });
+
+  it("evaluates the guard of a partial successor in a simulation, which remembers no states", () => {
+    const lines = getPickLines(
+      runCliWith("tlc-ext", ["-simulate", "num=1", "-seed", "1", "-depth", "3", "PickGuard.tla"])
+        .stdout,
+    );
+    expect(lines).toEqual(['"guard"', '"guard"', '"guard"']);
+  });
 });
 
 describe("the CLI checks an invariant of -inv in a module of its own like TLC", () => {
