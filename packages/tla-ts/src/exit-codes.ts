@@ -82,6 +82,7 @@ export const withLivenessExitCode = (
       addState: (index, state, successors, tracing) =>
         withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
       storeState: checker.storeState,
+      getStateCounts: checker.getStateCounts,
       findViolation: () => withErrorExitCode(() => checker.findViolation()),
       getViolatedProperties: (path, cycleStart) =>
         withErrorExitCode(() => checker.getViolatedProperties(path, cycleStart)),

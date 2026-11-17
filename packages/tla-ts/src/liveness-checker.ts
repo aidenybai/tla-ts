@@ -46,6 +46,7 @@ export interface LivenessChecker {
     tracing?: Environment,
   ) => number[] | undefined;
   storeState: (pending: number, index: number) => void;
+  getStateCounts: () => number[];
   findViolation: () => Lasso | undefined;
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
 }
@@ -60,6 +61,8 @@ export interface LiveGraph<State> {
     successors: LiveSuccessor<State>[],
   ) => number[] | undefined;
   storeState: (pending: number, index: number) => void;
+  // How many states the graph of each branch has, which TLC counts as the fingerprints of its nodes.
+  getStateCounts: () => number[];
   findViolation: () => Lasso | undefined;
 }
 
@@ -116,6 +119,7 @@ interface BehaviorGraph<State> {
   nextSiblings: number[];
   nodeIds: NodeTable;
   isDone: boolean[];
+  stateCount: number;
   errorNode: number | undefined;
 }
 
@@ -369,6 +373,7 @@ export const createLivenessChecker = (
     addState: (index, state, successors, replay) =>
       traceWith(replay, () => graph.addState(index, state, successors)),
     storeState: graph.storeState,
+    getStateCounts: graph.getStateCounts,
     findViolation: graph.findViolation,
     getViolatedProperties: (path, cycleStart) => [
       ...new Set(
@@ -508,6 +513,7 @@ export const createLiveGraph = <State>(
     nextSiblings: [],
     nodeIds: { slots: new Int32Array(3 << 10), size: 0, shift: 22 },
     isDone: [],
+    stateCount: 0,
     errorNode: undefined,
   }));
   const checkState = (
@@ -631,8 +637,17 @@ export const createLiveGraph = <State>(
     writeToPool(behavior.lastNodes, state, [node]);
     return node;
   };
-  const recordNode = (behavior: BehaviorGraph<State>, state: number, tableauNode: number) =>
-    linkNode(behavior, state, tableauNode, pushNode(behavior, state, tableauNode));
+  // TLC's table of tableau nodes has a state once the search expands it or it has a node.
+  const hasState = (behavior: BehaviorGraph<State>, state: number) =>
+    state < 0
+      ? behavior.checks.nodes.some(
+          (_checks, tableauNode) => getNodeId(behavior, state, tableauNode) !== undefined,
+        )
+      : behavior.isDone[state] === true || (behavior.firstNodes.data[state] ?? NO_NODE) !== NO_NODE;
+  const recordNode = (behavior: BehaviorGraph<State>, state: number, tableauNode: number) => {
+    if (!hasState(behavior, state)) behavior.stateCount++;
+    return linkNode(behavior, state, tableauNode, pushNode(behavior, state, tableauNode));
+  };
   // The action results of the edge to each target are at its position in actions.
   const writeNode = (
     behavior: BehaviorGraph<State>,
@@ -799,6 +814,7 @@ export const createLiveGraph = <State>(
         }
       }
     });
+    if (!hasState(behavior, index)) behavior.stateCount++;
     behavior.isDone[index] = true;
     // TLC expands the nodes recorded before the loop, not the ones the loop records.
     for (const node of getStateNodes(behavior, index)) {
@@ -848,6 +864,7 @@ export const createLiveGraph = <State>(
       successors.push(successor.index);
       actions.push(position);
     });
+    if (!isWritten(behavior, index)) behavior.stateCount++;
     writeNode(behavior, index, successors, actionResults, actions, stateResults);
   };
 
@@ -1183,6 +1200,7 @@ export const createLiveGraph = <State>(
         }
       }
     },
+    getStateCounts: () => behaviors.map((behavior) => behavior.stateCount),
     findViolation: () => {
       for (const behavior of behaviors) {
         for (const model of behavior.solution.models) {

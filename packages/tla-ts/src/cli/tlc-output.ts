@@ -320,7 +320,7 @@ export const printCheckProgress = (
       timing.livenessStartTime = Date.now();
       if (progress.isComplete) printProgress(printer, progress.statistics);
       const branches = progress.branches > 1 ? `${progress.branches} branches of ` : "";
-      const states = progress.branches * progress.states;
+      const states = Math.round(progress.branches * progress.states);
       print(
         MESSAGE_CODE.checkingTemporal,
         MESSAGE_LEVEL.none,

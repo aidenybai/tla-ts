@@ -206,7 +206,7 @@ export type CheckProgress =
       branches: number;
       /** Whether TLC checks the complete state graph. */
       isComplete: boolean;
-      /** How many states of the graph each branch has. */
+      /** How many states the graph of each branch has, averaged over the branches. */
       states: number;
       statistics: SearchStatistics;
     }
@@ -1194,6 +1194,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         kind: "liveness-started",
         branches: liveness.branches,
         isComplete: true,
+        // The tier stores and expands every successor, so the graph of each branch has every state.
         states: typed.distinctStates,
         statistics,
       });
@@ -1582,24 +1583,31 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const startedAt = performance.now();
   const periodic = {
     at: startedAt + PERIODIC_START,
-    size: 1,
+    // The size of each branch's graph when TLC last checked it, which starts at 1.
+    sizes: liveness?.getStateCounts().map(() => 1) ?? [],
     time: 0,
     coverageCount: Math.trunc(options.coverage ?? 0),
   };
-  const findPeriodicViolation = (expanded: number) => {
+  // TLC counts the states of the graphs of all branches, which can differ.
+  const getGraphStates = (checker: LivenessChecker) =>
+    checker.getStateCounts().reduce((sum, count) => sum + count, 0) / checker.branches;
+  const findPeriodicViolation = (checker: LivenessChecker) => {
     const now = performance.now();
-    const isGrown = (expanded - periodic.size) / periodic.size > LIVENESS_GROWTH;
+    const counts = checker.getStateCounts();
+    const isGrown = counts.some(
+      (count, branch) =>
+        (count - periodic.sizes[branch]) / periodic.sizes[branch] > LIVENESS_GROWTH,
+    );
     if (!isGrown || periodic.time > (now - startedAt) * LIVENESS_RATIO) return undefined;
-    periodic.size = expanded;
-    if (!liveness) return undefined;
+    periodic.sizes = counts;
     options.onProgress?.({
       kind: "liveness-started",
-      branches: liveness.branches,
+      branches: checker.branches,
       isComplete: false,
-      states: expanded,
+      states: getGraphStates(checker),
       statistics: createResult("success"),
     });
-    const lasso = liveness.findViolation();
+    const lasso = checker.findViolation();
     if (!lasso) options.onProgress?.({ kind: "liveness-finished" });
     periodic.time += performance.now() - now;
     return lasso;
@@ -1725,7 +1733,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     newStateCount = 0;
     if ((isPeriodic || options.onProgress) && performance.now() >= periodic.at) {
       periodic.at = performance.now() + PROGRESS_INTERVAL;
-      const lasso = isPeriodic ? findPeriodicViolation(index + 1) : undefined;
+      const lasso = isPeriodic && liveness ? findPeriodicViolation(liveness) : undefined;
       if (liveness && lasso) return reportLasso(liveness, lasso);
       const isCoverageDue = options.coverage !== undefined && periodic.coverageCount === 0;
       periodic.coverageCount = isCoverageDue
@@ -1747,8 +1755,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       kind: "liveness-started",
       branches: finalLiveness.branches,
       isComplete: true,
-      // Deviation from TLC: LiveCheck#check0 counts behavior graph nodes, which can disagree with its own distinct states.
-      states: runtime.distinctStates,
+      // The tier that found the lasso stored and expanded every successor, so each graph has every state.
+      states: typedLasso ? runtime.distinctStates : getGraphStates(finalLiveness),
       statistics: createResult("success"),
     });
   }
