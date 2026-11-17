@@ -1,4 +1,12 @@
 import ts from "@typescript/typescript6";
+import {
+  addChanged,
+  getComponent,
+  getComponentParameters,
+  hasChanged,
+  isComponentErrorMade,
+  summarizeFunctions,
+} from "./change-summaries";
 import { getModuleObjects } from "./common-js";
 import { isAmbientCode } from "./early-errors";
 import { BUILT_INS } from "./built-ins";
@@ -15452,17 +15460,29 @@ export const findEffects = (reached: readonly ts.Node[], context: Context) => {
   return effects;
 };
 
+// What each function that the model's code runs changes where no parameter holds a function,
+// which tla-ts finds once, from what findEffects found, before it compiles the code.
+export const summarizeEffects = (context: Context) =>
+  summarizeFunctions(
+    [...context.effects.values()].flatMap((effects) => effects.called),
+    context.nodes,
+    (node) => getNodeEffects(node, NO_FUNCTIONS, context),
+  );
+
 // A node's place in its file, which tells it apart from every other node.
 const getNodeKey = (node: ts.Node) =>
   `${node.getSourceFile().fileName}:${node.pos}:${node.end}:${node.kind}`;
 
 // What a function changes, with what the functions that it runs change, where the bindings give
-// the functions that its parameters hold. The functions that run one another, a strongly connected
-// component of the call graph, change the same things, so they share one summary, which Tarjan's
-// algorithm makes once the components that they run have theirs.
+// the functions that its parameters hold, for a function that the program's summaries don't
+// cover. The functions that run one another, a strongly connected component of the call graph,
+// change the same things, so they share one summary, which Tarjan's algorithm makes once the
+// components that they run have theirs. The summaries that a walk makes, by its bindings, last
+// for the walk.
 const summarize = (
   root: ts.Node,
   bindings: ReadonlyMap<ts.Symbol, FunctionNode>,
+  walked: Map<string, Map<ts.Node, ChangeSummary>>,
   context: Context,
 ) => {
   const key = [...bindings]
@@ -15472,8 +15492,8 @@ const summarize = (
     })
     .sort()
     .join(",");
-  const summaries = context.changeSummaries.get(key) ?? new Map<ts.Node, ChangeSummary>();
-  context.changeSummaries.set(key, summaries);
+  const summaries = walked.get(key) ?? new Map<ts.Node, ChangeSummary>();
+  walked.set(key, summaries);
   const indexes = new Map<ts.Node, number>();
   const lowLinks = new Map<ts.Node, number>();
   const stack: ts.Node[] = [];
@@ -15504,9 +15524,11 @@ const summarize = (
     const component = stack.splice(stack.indexOf(node));
     component.forEach((member) => onStack.delete(member));
     const own = component.flatMap((member) => effects.get(member) ?? []);
-    const reached = own.flatMap((effect) =>
-      effect.called.flatMap((called) => summaries.get(called) ?? []),
-    );
+    const reached = [
+      ...new Set(
+        own.flatMap((effect) => effect.called.flatMap((called) => summaries.get(called) ?? [])),
+      ),
+    ];
     const summary: ChangeSummary = {
       changed: new Set([
         ...own.flatMap((effect) => effect.changed),
@@ -15525,46 +15547,61 @@ const summarize = (
   return summaries.get(root) ?? connect(root);
 };
 
-// What a function changes where a path binds functions to parameters. Its summary takes the
-// bindings of the parameters that it, or a function bound to one of them, calls or passes, and no
-// others, so that paths that bind other parameters share it.
-const getSummary = (
-  root: ts.Node,
-  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
-  context: Context,
-) => {
-  const bindings = new Map<ts.Symbol, FunctionNode>();
-  const pending = [root];
-  const seen = new Set<ts.Node>();
-  while (pending.length > 0) {
-    const current = pending.pop() ?? root;
-    if (seen.has(current)) continue;
-    seen.add(current);
-    summarize(current, NO_FUNCTIONS, context)?.parameters.forEach((parameter) => {
-      const bound = functions.get(parameter);
-      if (bound === undefined) return;
-      bindings.set(parameter, bound);
-      pending.push(bound);
-    });
-  }
-  return summarize(root, bindings, context);
-};
-
 // What a node may change, with the functions that it runs, where functions binds the parameters
-// that hold them.
+// that hold them. A function's summary takes the bindings of the parameters that it, or a function
+// bound to one of them, calls or passes, and no others, so that paths that bind other parameters
+// share it. A function that binds none reads the program's summary of its component.
 export const findChanged = (
   loop: ts.Node,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
   isIdentityIgnored = false,
 ) => {
+  const table = context.changes;
   const changed = new Set<ts.Symbol>();
+  const row = new Uint32Array(table?.changed.words ?? 0);
+  const walked = new Map<string, Map<ts.Node, ChangeSummary>>();
   const visited = new Set<ts.Node>();
-  const add = (inner: { changed: Iterable<ts.Symbol>; isErrorMade: boolean }) => {
-    [...inner.changed].forEach((symbol) => changed.add(symbol));
-    if (inner.isErrorMade && !isIdentityIgnored && context.heap !== undefined) {
+  const addError = (isErrorMade: boolean) => {
+    if (isErrorMade && !isIdentityIgnored && context.heap !== undefined) {
       changed.add(context.heap);
     }
+  };
+  const add = (inner: { changed: Iterable<ts.Symbol>; isErrorMade: boolean }) => {
+    [...inner.changed].forEach((symbol) => changed.add(symbol));
+    addError(inner.isErrorMade);
+  };
+  const getComponentOf = (node: ts.Node) =>
+    table === undefined ? -1 : getComponent(table, context.nodes, node);
+  const getParameters = (node: ts.Node) => {
+    const component = getComponentOf(node);
+    return table !== undefined && component >= 0
+      ? getComponentParameters(table, component)
+      : (summarize(node, NO_FUNCTIONS, walked, context)?.parameters ?? []);
+  };
+  const addSummary = (root: ts.Node) => {
+    const bindings = new Map<ts.Symbol, FunctionNode>();
+    const pending = [root];
+    const seen = new Set<ts.Node>();
+    while (pending.length > 0) {
+      const current = pending.pop() ?? root;
+      if (seen.has(current)) continue;
+      seen.add(current);
+      getParameters(current).forEach((parameter) => {
+        const bound = functions.get(parameter);
+        if (bound === undefined) return;
+        bindings.set(parameter, bound);
+        pending.push(bound);
+      });
+    }
+    const component = bindings.size === 0 ? getComponentOf(root) : -1;
+    if (table !== undefined && component >= 0) {
+      addChanged(table, component, row);
+      addError(isComponentErrorMade(table, component));
+      return;
+    }
+    const summary = summarize(root, bindings, walked, context);
+    if (summary !== undefined) add(summary);
   };
   const visit = (node: ts.Node) => {
     const effects = getNodeEffects(node, functions, context);
@@ -15572,14 +15609,15 @@ export const findChanged = (
     effects.called.forEach((called) => {
       if (visited.has(called)) return;
       visited.add(called);
-      const summary = getSummary(called, functions, context);
-      if (summary === undefined) visit(called);
-      else add(summary);
+      addSummary(called);
     });
     ts.forEachChild(node, visit);
   };
   visit(loop);
-  return changed;
+  return {
+    has: (symbol: ts.Symbol) =>
+      changed.has(symbol) || (table !== undefined && hasChanged(table, row, symbol)),
+  };
 };
 
 export const getChanged = (

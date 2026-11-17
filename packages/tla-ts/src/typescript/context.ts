@@ -21,6 +21,7 @@ import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
 import { mayThrow } from "./functions";
 import { getGetterKeys, isProxyOperation } from "./protocols";
+import type { ChangeTable } from "./change-summaries";
 import type { Namespace } from "./namespaces";
 import {
   createReferences,
@@ -241,9 +242,9 @@ export interface Context {
   // Whether each read of a name or a property that another function assigns keeps what TypeScript
   // narrowed it to, which tla-ts finds once before it compiles the code.
   keptReads: ReadonlyMap<ts.Node, boolean>;
-  // What each function that a statement runs changes, with the functions that it runs in turn, by
-  // the functions that the paths bind to the parameters that they call.
-  changeSummaries: Map<string, Map<ts.Node, ChangeSummary>>;
+  // What each function that the model's code runs changes, with the functions that it runs in
+  // turn, where no parameter holds a function, which tla-ts finds once before it compiles the code.
+  changes: ChangeTable | undefined;
   // What running each node of the model's code changes where no parameter holds a function, which
   // tla-ts finds once before it compiles the code.
   effects: ReadonlyMap<ts.Node, Effects>;
@@ -624,7 +625,7 @@ export const createContext = (
     longLiterals: new Set(),
     regExps: [],
     passed: new Map(),
-    changeSummaries: new Map(),
+    changes: undefined,
     effects: new Map(),
     assignedNames: new Map(
       files.map((file) => [

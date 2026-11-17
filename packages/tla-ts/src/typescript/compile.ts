@@ -1,5 +1,12 @@
 import ts from "@typescript/typescript6";
-import { findEffects, getWritten, getWrittenRoots, translateScript, writesState } from "./actions";
+import {
+  findEffects,
+  getWritten,
+  getWrittenRoots,
+  summarizeEffects,
+  translateScript,
+  writesState,
+} from "./actions";
 import { findSharing, getReached, isMakingObjects, rejectSharing } from "./aliasing";
 import {
   type Closure,
@@ -1096,7 +1103,10 @@ export const compile = (
   // shared, as the heap decided above found none otherwise.
   if (context.isEveryCollectionHeld) rejectSharing(shareable, context);
   rejectRegExpIndicesUses(roots, context);
-  if (context.heap !== undefined) context.effects = findEffects(reached, context);
+  if (context.heap !== undefined) {
+    context.effects = findEffects(reached, context);
+    context.changes = summarizeEffects(context);
+  }
   classifySharedHelpers(reached, context);
   // A using declaration disposes nothing where it holds only null or undefined.
   const isNothing = (node: ts.Expression | undefined) =>
