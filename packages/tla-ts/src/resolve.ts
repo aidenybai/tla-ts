@@ -795,6 +795,22 @@ const getSymbolArity = (
     );
     return undefined;
   }
+  if (
+    expression.kind !== "OperatorReference" &&
+    prefix !== "" &&
+    isPendingSelectionReported(
+      prefix,
+      expression.kind === "Apply" && expression.argumentCounts
+        ? expression.args.slice(0, expression.argumentCounts[0])
+        : [],
+      expression.selectorRanges?.[0],
+      (expression.kind === "Apply" ? expression.argumentRanges?.[0] : undefined) ?? location.range,
+      scope,
+      unit,
+    )
+  ) {
+    return undefined;
+  }
   if (selected || (prefix !== "" && isFact(prefix, unit))) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
@@ -1438,6 +1454,31 @@ const resolveExpression = (
   }
 };
 
+const isPendingSelectionReported = (
+  name: string,
+  args: Expression[],
+  selectorRange: SourceRange | undefined,
+  argumentsRange: SourceRange | undefined,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const pending = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
+  if (!pending?.isPending || !selectorRange || !argumentsRange) return false;
+  if (args.length !== pending.arity) {
+    unit.errors.push({
+      location: formatRange(argumentsRange),
+      message: `The operator ${name} requires ${pending.arity} arguments.`,
+    });
+    return true;
+  }
+  args.forEach((arg) => resolveExpression(arg, scope, unit));
+  unit.errors.push({
+    location: formatRange(selectorRange),
+    message: `Subexpression of  \`${name}' used inside the operator's definition.`,
+  });
+  return true;
+};
+
 const isSubexpressionReported = (
   expression: Expression & { kind: "Subexpression" },
   scope: LocalName | undefined,
@@ -1497,6 +1538,19 @@ const isSubexpressionReported = (
       reportUnselectable(head.name, range, unit);
       return true;
     }
+  }
+  if (
+    head.kind === "Name" &&
+    isPendingSelectionReported(
+      head.name,
+      head.args,
+      range,
+      expression.argumentRanges?.[0] ?? expression.location.range,
+      scope,
+      unit,
+    )
+  ) {
+    return true;
   }
   expression.selectors
     .flatMap((selector) => ("args" in selector ? selector.args : []))

@@ -758,6 +758,68 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "CONSTANT c\nRECURSIVE S, U(_)\nA == S!lab /\\ U(1)!lab /\\ U!lab /\\ U(1, 2)!lab /\\ U(LAMBDA p : p)!lab /\\ U(S)!lab(c)\nB == U!1 /\\ U(1, 2)!1 /\\ U(LAMBDA p : p)!1 /\\ (LET RECURSIVE T IN T!lab) /\\ (LET RECURSIVE V(_) IN V!lab!1)",
+      [
+        [
+          "line 4, col 6 to line 4, col 6",
+          "Subexpression of  `S' used inside the operator's definition.",
+        ],
+        [
+          "line 4, col 15 to line 4, col 15",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        ["line 4, col 27 to line 4, col 31", "The operator U requires 1 arguments."],
+        ["line 4, col 37 to line 4, col 42", "The operator U requires 1 arguments."],
+        [
+          "line 4, col 53 to line 4, col 64",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 4, col 51 to line 4, col 51",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        [
+          "line 4, col 74 to line 4, col 74",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        ["line 5, col 6 to line 5, col 8", "The operator U requires 1 arguments."],
+        ["line 5, col 14 to line 5, col 19", "The operator U requires 1 arguments."],
+        [
+          "line 5, col 28 to line 5, col 39",
+          "LAMBDA expression used where an expression is required.",
+        ],
+        [
+          "line 5, col 26 to line 5, col 26",
+          "Subexpression of  `U' used inside the operator's definition.",
+        ],
+        [
+          "line 5, col 62 to line 5, col 62",
+          "Symbol T declared in RECURSIVE statement but not defined.",
+        ],
+        [
+          "line 5, col 67 to line 5, col 67",
+          "Subexpression of  `T' used inside the operator's definition.",
+        ],
+        [
+          "line 5, col 92 to line 5, col 95",
+          "Symbol V declared in RECURSIVE statement but not defined.",
+        ],
+        ["line 5, col 100 to line 5, col 106", "The operator V requires 1 arguments."],
+        [
+          "line 6, col 1 to line 6, col 10",
+          "A VARIABLE declaration may not appear within a recursive definition section.",
+        ],
+        [
+          "line 3, col 11 to line 3, col 11",
+          "Symbol S declared in RECURSIVE statement but not defined.",
+        ],
+        [
+          "line 3, col 14 to line 3, col 17",
+          "Symbol U declared in RECURSIVE statement but not defined.",
+        ],
+      ],
+    ],
+    [
       "CONSTANT _ <= _\na =< b == 1",
       [
         ["line 3, col 1 to line 3, col 11", "Operator \\leq already defined or declared."],
