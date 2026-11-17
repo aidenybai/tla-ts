@@ -50,9 +50,9 @@ import {
   pushLabelScope,
   resolveName,
   resolveSymbol,
-  resolveSynonym,
   withContext,
 } from "./generation";
+import { resolveSynonym } from "../tlc/jar-data";
 import { getOperandSpan } from "./generator-def-entries";
 import {
   checkForUndefinedRecursiveOps,
@@ -710,18 +710,17 @@ export const generateExpression = (
       return { ...createNullNode(generation), nullKind: "absent" };
     case "OperatorReference":
     case "Lambda": {
-      const text =
-        generation.file.tokens[getExpressionSpan(generation.file, expression).start].text;
-      const name = expression.operator ?? text;
+      const token = generation.file.tokens[getExpressionSpan(generation.file, expression).start];
+      const name = expression.operator ?? token.text;
       // Deviation from SANY: Generator#generateExpression names its internal node kind here, where tla-ts words it as for a name.
       const symbol = resolveSymbol(generation.contexts, resolveSynonym(name));
       generation.addError(
         location,
-        text === "LAMBDA"
+        token.text === "LAMBDA"
           ? "LAMBDA expression used where an expression is required."
           : symbol === undefined
-            ? `Could not find declaration or definition of symbol '${name}'.`
-            : `The operator ${name} requires ${getSymbolArity(symbol)} arguments.`,
+            ? `Could not find declaration or definition of symbol '${token.spelling ?? name}'.`
+            : `The operator ${resolveSynonym(name)} requires ${getSymbolArity(symbol)} arguments.`,
       );
       return { ...createNullNode(generation), nullKind: "absent" };
     }

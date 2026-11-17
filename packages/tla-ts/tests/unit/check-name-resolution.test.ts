@@ -424,7 +424,7 @@ describe("name resolution matches SANY", () => {
     [
       "EXTENDS Naturals\nOne(a) == a\nf == One(\\cup) /\\ One(-.) /\\ One(SUBSET) /\\ One(1) + One",
       [
-        ["line 4, col 10 to line 4, col 13", "The operator \\cup requires 2 arguments."],
+        ["line 4, col 10 to line 4, col 13", "The operator \\union requires 2 arguments."],
         [
           "line 4, col 23 to line 4, col 24",
           "Could not find declaration or definition of symbol '-.'.",
@@ -467,6 +467,57 @@ describe("name resolution matches SANY", () => {
     [
       "f == =(1, 2, 3)",
       [["line 2, col 7 to line 2, col 15", "The operator = requires 2 arguments."]],
+    ],
+    [
+      "f == {^+} /\\ {-.} /\\ ^#(1) /\\ \\oplus(1, 2) /\\ {(+)} /\\ {=<} /\\ {\\circ} /\\ -.(1)",
+      [
+        ["line 2, col 7 to line 2, col 8", "Unknown operator: `^+'."],
+        ["line 2, col 15 to line 2, col 16", "Unknown operator: `-.'."],
+        ["line 2, col 22 to line 2, col 23", "Unknown operator: `^#'."],
+        ["line 2, col 31 to line 2, col 36", "Unknown operator: `\\oplus'."],
+        ["line 2, col 48 to line 2, col 50", "Unknown operator: `\\oplus'."],
+        ["line 2, col 57 to line 2, col 58", "Unknown operator: `\\leq'."],
+        ["line 2, col 65 to line 2, col 69", "Unknown operator: `\\o'."],
+        ["line 2, col 75 to line 2, col 76", "Unknown operator: `-.'."],
+      ],
+    ],
+    [
+      "f == {\\cup} /\\ {\\cap} /\\ {#} /\\ {<=>} /\\ {\\land} /\\ {\\X} /\\ \\X(1) /\\ \\intersect(1)",
+      [
+        ["line 2, col 7 to line 2, col 10", "The operator \\union requires 2 arguments."],
+        ["line 2, col 17 to line 2, col 20", "The operator \\intersect requires 2 arguments."],
+        ["line 2, col 27 to line 2, col 27", "The operator /= requires 2 arguments."],
+        ["line 2, col 34 to line 2, col 36", "The operator \\equiv requires 2 arguments."],
+        ["line 2, col 43 to line 2, col 47", "The operator \\land requires 2 arguments."],
+        ["line 2, col 54 to line 2, col 55", "The operator \\times requires 2 arguments."],
+        ["line 2, col 63 to line 2, col 65", "The operator \\times requires 2 arguments."],
+        ["line 2, col 80 to line 2, col 82", "The operator \\intersect requires 2 arguments."],
+      ],
+    ],
+    [
+      "a \\X b == 1\nf == LET a \\cap b == 1 IN 2",
+      [
+        ["line 2, col 1 to line 2, col 11", "Operator \\times already defined or declared."],
+        [
+          "line 2, col 1 to line 2, col 11",
+          "Symbol \\times is a built-in operator, and cannot be redefined.",
+        ],
+        ["line 3, col 10 to line 3, col 22", "Operator \\intersect already defined or declared."],
+        [
+          "line 3, col 10 to line 3, col 22",
+          "Symbol \\intersect is a built-in operator, and cannot be redefined.",
+        ],
+      ],
+    ],
+    [
+      "CONSTANT _ <= _\na =< b == 1",
+      [
+        ["line 3, col 1 to line 3, col 11", "Operator \\leq already defined or declared."],
+        [
+          "line 3, col 1 to line 3, col 11",
+          "Multiply-defined symbol '\\leq': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 15 of module M.",
+        ],
+      ],
     ],
     [
       "---- MODULE Inner ----\nCONSTANT a\nB == a\nC(p) == a\nTHEOREM T == TRUE\n====\nK(q) == INSTANCE Inner WITH a <- q\nF == K!B = U1 /\\ K(1)!C = U2 /\\ K(1, 2)!B = U3 /\\ K!C(1, 2) = U4\nG == LET L(q) == INSTANCE Inner WITH a <- q IN L!B = U5 /\\ L(1)!C(2, 3) = U6\nUSE K!T, K(1)!T, U7",

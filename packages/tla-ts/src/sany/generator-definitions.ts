@@ -60,10 +60,10 @@ import {
   popLabels,
   pushLabelScope,
   resolveSymbol,
-  resolveSynonym,
   setRecursionFields,
   withContext,
 } from "./generation";
+import { resolveSynonym } from "../tlc/jar-data";
 import {
   findNameOrKeyword,
   generateBounds,

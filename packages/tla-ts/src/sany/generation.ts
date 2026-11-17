@@ -34,19 +34,7 @@ import {
   getTokenIndex,
   type SourceFile,
 } from "./source";
-import { SANY_OPERATOR_SYNONYMS } from "../tlc/jar-data";
-
-const SYNONYMS = new Map(
-  SANY_OPERATOR_SYNONYMS.flatMap(([canonical, ...synonyms]) =>
-    synonyms.map((synonym) => [synonym, canonical]),
-  ),
-);
-
-export const resolveSynonym = (name: string) =>
-  name
-    .split("!")
-    .map((part) => SYNONYMS.get(part) ?? (part === "~" ? "\\lnot" : part))
-    .join("!");
+import { resolveSynonym } from "../tlc/jar-data";
 
 export interface AssumeProveScope {
   isDeclaredBefore: boolean[];

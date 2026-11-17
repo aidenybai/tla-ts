@@ -179,7 +179,7 @@ Spec == Init /\\ [][Next]_x
     [
       "F(a) == a\nx == F(\\cup)",
       "line 3, col 8 to line 3, col 11",
-      "The operator \\cup requires 2 arguments.",
+      "The operator \\union requires 2 arguments.",
     ],
     [
       "F(a) == a\nx == F(SUBSET)",
@@ -189,7 +189,7 @@ Spec == Init /\\ [][Next]_x
     [
       "F(a) == a\nx == F(\\lnot)",
       "line 3, col 8 to line 3, col 12",
-      "The operator ~ requires 1 arguments.",
+      "The operator \\lnot requires 1 arguments.",
     ],
     [
       "F(a) == a\nx == F(')",
@@ -200,6 +200,11 @@ Spec == Init /\\ [][Next]_x
       "F(a) == a\nx == F(^#)",
       "line 3, col 8 to line 3, col 9",
       "Could not find declaration or definition of symbol '^#'.",
+    ],
+    [
+      "F(a) == a\nx == F(=<)",
+      "line 3, col 8 to line 3, col 9",
+      "Could not find declaration or definition of symbol '=<'.",
     ],
     [
       "F(a) == a\nx == F(LAMBDA y : y)",

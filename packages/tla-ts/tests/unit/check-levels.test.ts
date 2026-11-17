@@ -18,6 +18,8 @@ describe("level checking matches SANY", () => {
     ["x' /\\ []x", "Formula has both temporal formula and action as arguments"],
     ["(x')'", "Level error in applying operator '"],
     ["ENABLED []x", "Level error in applying operator ENABLED"],
+    ["{x'} \\cup [](x = 1)", "Level error in applying operator \\union:"],
+    ["x' # []x", "Level error in applying operator /=:"],
   ])("rejects %s", async (definition, message) => {
     await expect(checkDefinition(definition)).rejects.toThrow(message);
   });
