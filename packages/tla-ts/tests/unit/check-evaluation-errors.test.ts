@@ -291,6 +291,19 @@ describe("evaluation errors match TLC", () => {
     expect(ranges?.at(-1)).toBe("34-41");
   });
 
+  it("records each prefix of a chain of infix conjunctions as TLC nests them", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 /\\ y' = (TRUE /\\ 2 /\\ TRUE /\\ TRUE)\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    const ranges = result.failure?.callStack?.map((expression) => {
+      const range = expression.location.range;
+      return range && `${range.start.column}-${range.end.column}`;
+    });
+    expect([...new Set(ranges)]).toEqual(["9-50", "9-14", "19-50", "25-49", "25-41", "25-33"]);
+  });
+
   it("records the variables of an UNCHANGED tuple in order", async () => {
     const result = await check({
       source:

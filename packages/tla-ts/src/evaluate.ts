@@ -1335,6 +1335,41 @@ export const createTracingEnvironment = (environment: Environment): Environment 
   },
 });
 
+// TLC evaluates `a /\ b /\ c` as `(a /\ b) /\ c`, so its call stack holds each prefix.
+const compileTracedJunction = (
+  expression: Expression & { kind: "And" | "Or" },
+  operands: Evaluator[],
+  callStack: CallStack | undefined,
+): Evaluator | undefined => {
+  const range = expression.location.range;
+  const prefixEnds = expression.prefixEnds;
+  if (!callStack || expression.isBulleted || !range || !prefixEnds || operands.length < 3) {
+    return undefined;
+  }
+  const prefixes = prefixEnds
+    .slice(0, operands.length - 2)
+    .map((end) => ({
+      ...expression,
+      location: { ...expression.location, range: { ...range, end } },
+    }))
+    .reverse();
+  const isAnd = expression.kind === "And";
+  return (context) => {
+    callStack.expressions.push(...prefixes);
+    for (let index = 0; index < operands.length; index++) {
+      if (index >= 2 && !callStack.isFrozen) callStack.expressions.pop();
+      const value = operands[index](context);
+      if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
+      if (value !== isAnd) {
+        if (!callStack.isFrozen)
+          callStack.expressions.length -= prefixes.length - Math.max(index - 1, 0);
+        return value;
+      }
+    }
+    return isAnd;
+  };
+};
+
 const traceFrames =
   (
     expression: Expression,
@@ -2104,25 +2139,31 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       };
     case "And": {
       const operands = expression.operands.map(getChildEvaluator);
-      return (context) => {
-        for (let index = 0; index < operands.length; index++) {
-          const value = operands[index](context);
-          if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
-          if (!value) return false;
-        }
-        return true;
-      };
+      return (
+        compileTracedJunction(expression, operands, environment.callStack) ??
+        ((context) => {
+          for (let index = 0; index < operands.length; index++) {
+            const value = operands[index](context);
+            if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
+            if (!value) return false;
+          }
+          return true;
+        })
+      );
     }
     case "Or": {
       const operands = expression.operands.map(getChildEvaluator);
-      return (context) => {
-        for (let index = 0; index < operands.length; index++) {
-          const value = operands[index](context);
-          if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
-          if (value) return true;
-        }
-        return false;
-      };
+      return (
+        compileTracedJunction(expression, operands, environment.callStack) ??
+        ((context) => {
+          for (let index = 0; index < operands.length; index++) {
+            const value = operands[index](context);
+            if (typeof value !== "boolean") throw createJunctionError(expression, index, value);
+            if (value) return true;
+          }
+          return false;
+        })
+      );
     }
     case "Prime": {
       const inner = getChildEvaluator(expression.expression);
