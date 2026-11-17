@@ -13,7 +13,6 @@ import { substitutionFrames, withSubstitutionFrames } from "./instances";
 import type { InstanceAction } from "./environment";
 import { formatRange, TlaError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import {
-  bindDefinitions,
   bindOperatorArguments,
   describeNode,
   evaluate,
@@ -26,7 +25,7 @@ import {
   type Scope,
 } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
-import { getLevel } from "./liveness";
+import { bindLetDefinitions, getLevel } from "./liveness";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
 import { LITERAL_KINDS } from "./tlc/replay";
 import type { TlcVersion } from "./tlc/version";
@@ -176,7 +175,7 @@ const unwrapBinding = (
   if (expression.kind === "Let") {
     return {
       expression: expression.body,
-      scope: bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
+      scope: bindLetDefinitions(expression, scope, environment),
     };
   }
   const thunk = getThunk(expression, scope);
@@ -268,7 +267,7 @@ const getActions = (
     case "Let":
       return getActions(
         expression.body,
-        bindDefinitions(expression.definitions, getConstantContext(environment, scope)),
+        bindLetDefinitions(expression, scope, environment),
         closure,
         environment,
         instanceActions,

@@ -119,6 +119,32 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     ]);
   });
 
+  it("draws again at each reference to a LET definition of an initial predicate that TLC takes from the spec", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == LET r == RandomElement(1..1000) IN x = r /\\ y = r\nSpec == Init /\\ [][UNCHANGED <<x, y>>]_<<x, y>>\nInv == x = 0\n====",
+      config: "SPECIFICATION Spec\nINVARIANT Inv",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => [step.state.x, step.state.y])).toEqual([
+      [731, 919],
+    ]);
+  });
+
+  it("draws again at each reference to a LET definition of an action as it rebuilds a trace", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nA == LET r == RandomElement(1..1000) IN n' = n + 1 /\\ x' = r + r\nNext == A\nInv == n < 2\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      seed: 4n,
+    });
+    expect(result.violation?.trace.map((step) => [step.label, step.state.x])).toEqual([
+      [undefined, 0],
+      ["A line 5, col 41 to line 5, col 64 of module M", 1655],
+      ["A line 5, col 41 to line 5, col 64 of module M", 763],
+    ]);
+  });
+
   it("draws once for a constant TLCEval in the next-state relation", async () => {
     const result = await check({
       source:

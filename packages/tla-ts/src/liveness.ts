@@ -16,6 +16,7 @@ import {
   forEachBoundElement,
   getBoundElements,
   getDefinition,
+  getReevaluatedDefinitions,
   getStartupValue,
   lookupScope,
   resolveApplyOperator,
@@ -323,12 +324,17 @@ export const expandTemporal = (
   return [{ expression, scope, name: expansion.name, path: expansion.path }];
 };
 
-const bindLetDefinitions = (
+// TLC takes a formula apart through a LET without binding its definitions, so it evaluates an impure one again at each reference.
+export const bindLetDefinitions = (
   expression: Expression & { kind: "Let" },
   scope: Scope | undefined,
   environment: Environment,
 ) => {
-  const bound = bindDefinitions(expression.definitions, getConstantContext(environment, scope));
+  const bound = bindDefinitions(
+    expression.definitions,
+    getConstantContext(environment, scope),
+    getReevaluatedDefinitions(expression.definitions, environment),
+  );
   for (let current = bound; current && current !== scope; current = current.parent) {
     if (current.binding.kind === "Thunk") definitionThunks.add(current.binding);
   }
