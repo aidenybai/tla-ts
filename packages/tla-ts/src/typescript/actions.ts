@@ -10638,8 +10638,25 @@ const translateShortLoopCall = (
     };
     // A typed array's filter makes its typed array through the receiver's constructor once it
     // visited the elements, reading it through a getter that the script may write.
+    // filter writes the values that it kept to its typed array, which throws the TypeError of one
+    // that it can't convert, as undefined where a callback shrank the buffer.
     const finish = (): Formula =>
-      loop.isTyped && method === "filter" ? readSpecies(after, finishFrom) : finishFrom(after);
+      loop.isTyped && method === "filter"
+        ? readSpecies(after, (read) =>
+            ifThenElse(
+              apply("=", [
+                useJavaScript(
+                  "TypedArrayElementsError",
+                  [getHeap(read.scope, expression, context), owner, value],
+                  context,
+                ),
+                string(""),
+              ]),
+              finishFrom(read),
+              throwTypeError(read, expression, context, frame),
+            ),
+          )
+        : finishFrom(after);
     const completed = isUnseeded
       ? ifThenElse(
           index(identifier(result), [number(changed.length + 2)]),

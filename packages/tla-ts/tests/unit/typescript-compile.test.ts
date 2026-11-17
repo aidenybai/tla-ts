@@ -50776,4 +50776,38 @@ describe("BigInts", () => {
       ).toContain("results TypeError,SyntaxError,TypeError,undefined");
     });
   });
+
+  describe("throws the TypeError of a value that a typed array's filter kept and can't convert", () => {
+    const getSource = (expected: string) => `
+      const rab = new ArrayBuffer(24, { maxByteLength: 24 });
+      const sample = new BigInt64Array(rab);
+      sample[0] = 1n;
+      let calls = 0;
+      let result = "none";
+      try {
+        sample.filter(() => {
+          if (calls === 0) rab.resize(8);
+          calls++;
+          return true;
+        });
+        result = "made";
+      } catch (error) {
+        result = error instanceof TypeError ? "TypeError" : "other";
+      }
+      const numbers = new Float64Array(new ArrayBuffer(16, { maxByteLength: 16 }));
+      const kept = numbers.filter(() => true).length;
+      const outcome = [result, calls, kept].join();
+      if (outcome !== "${expected}") throw new Error("outcome " + outcome);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("TypeError,3,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("made,3,2"))).failure?.message).toContain(
+        "outcome TypeError,3,2",
+      );
+    });
+  });
 });

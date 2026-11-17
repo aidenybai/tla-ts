@@ -6406,6 +6406,9 @@ LOCAL ElementsError(type, values) ==
      THEN ""
      ELSE ElementError(type, values[first])
 
+\\* The error that writing values in order to a typed array's elements throws first, or "".
+TypedArrayElementsError(heap, ref, values) == ElementsError(heap.objects[ref[Ref]].elementType, values)
+
 \\* What a typed array holds for a value that a script writes.
 ToElementOf(heap, ref, value) == ToElement(heap.objects[ref[Ref]].elementType, value)
 
