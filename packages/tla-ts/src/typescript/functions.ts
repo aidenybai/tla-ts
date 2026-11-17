@@ -5,6 +5,7 @@ import {
   type CalledMethod,
   type Context,
   type Definition,
+  type DispatchCall,
   type FunctionNode,
   findNodes,
   getAnyFunction,
@@ -76,6 +77,7 @@ import {
   lambda,
   letExpression,
   locate,
+  set,
   string,
   tuple,
 } from "./tla";
@@ -1040,21 +1042,11 @@ export const translateLiftedCall = (
   );
 };
 
-// Whether a call through a value runs one of the functions that the value may hold as the
-// function's operator, which takes the state and compiles once, rather than as a copy of its body,
-// which would copy the bodies of every function that each call through a value inside it may run in
-// turn. The operator reads no this, arguments object, or function that an argument names, and
-// starts with no let or const of the script uninitialized and nothing that catches its throws.
-const isOperatorCandidate = (
-  candidate: FunctionNode,
-  node: ts.CallExpression,
-  scope: Scope,
-  context: Context,
-) =>
-  scope.uninitialized.size === 0 &&
-  !scope.isCatching &&
-  !node.arguments.some(ts.isSpreadElement) &&
-  node.arguments.every((argument) => getCallback(argument, scope, context) === undefined) &&
+// Whether a function can run as its operator, which takes the state and compiles once, rather
+// than as a copy of its body: one that reads no this or arguments object, and takes its parameters
+// by name.
+const isOperatorFunction = (candidate: FunctionNode, context: Context) =>
+  isPlain(candidate) &&
   getParameters(candidate).every(
     (parameter) =>
       ts.isIdentifier(parameter.name) &&
@@ -1068,21 +1060,119 @@ const isOperatorCandidate = (
   getArgumentsReads(candidate, context).length === 0 &&
   getKeptLocal(candidate, context) === undefined;
 
-const translateOperatorCandidate = (
+// Whether a call may run a function as the function's operator: one that starts with no let or
+// const of the script uninitialized and nothing that catches its throws, that spreads no
+// arguments, and that passes no function that the body would run as it is.
+const isOperatorCall = (
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+  isPassed: (callback: FunctionNode) => boolean,
+) =>
+  scope.uninitialized.size === 0 &&
+  !scope.isCatching &&
+  !node.arguments.some(ts.isSpreadElement) &&
+  node.arguments.every((argument) => {
+    const callback = getCallback(argument, scope, context);
+    return callback === undefined || isPassed(callback);
+  });
+
+// Whether a call through a value runs one of the functions that the value may hold as the
+// function's operator, rather than as a copy of its body, which would copy the bodies of every
+// function that each call through a value inside it may run in turn.
+const isOperatorCandidate = (
   candidate: FunctionNode,
   node: ts.CallExpression,
   scope: Scope,
   context: Context,
+) => isOperatorFunction(candidate, context) && isOperatorCall(node, scope, context, () => false);
+
+// A call through a value of whichever of a set of functions the value holds, each of which runs
+// as its operator. One operator for the set and the count of arguments branches between them, so
+// that each call is one call of it, whichever functions the set holds.
+const translateDispatch = (
+  operators: readonly FunctionNode[],
+  value: Expression,
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+  otherwise: Expression,
 ) => {
+  const variables = [...context.variables];
+  const key = [
+    node.arguments.length,
+    ...operators.map((candidate) => `${candidate.getSourceFile().fileName}:${candidate.pos}`),
+  ].join(",");
+  const dispatch =
+    context.dispatchCalls.get(key) ??
+    (() => {
+      const valueName = context.names.getFresh("function");
+      const argumentNames = node.arguments.map(() => context.names.getFresh("argument"));
+      const states = variables.map((entry) => ({
+        symbol: entry[0],
+        name: context.names.getFresh(entry[0].name),
+      }));
+      const called = context.names.getFresh("Called");
+      context.output.push(
+        defineAt(
+          node,
+          called,
+          [],
+          set(operators.map((candidate) => getCandidateValue(candidate, context) ?? value)),
+        ),
+      );
+      const made: DispatchCall = {
+        called,
+        name: context.names.getFresh("Call"),
+        parameters: [valueName, ...argumentNames, ...states.map((state) => state.name)].map(
+          (name) => ({ name, arity: 0 }),
+        ),
+        readsState: false,
+      };
+      context.dispatchCalls.set(key, made);
+      const inner = bindNames(createStateScope(context), states);
+      const calls = operators.map((candidate) =>
+        callStateOperator(
+          undefined,
+          candidate,
+          argumentNames.map((name) => identifier(name)),
+          inner,
+          context,
+        ),
+      );
+      const body = operators
+        .slice(0, -1)
+        .reduceRight<Expression>(
+          (rest, candidate, position) =>
+            ifExpression(
+              apply("=", [identifier(valueName), getCandidateValue(candidate, context) ?? value]),
+              calls[position],
+              rest,
+            ),
+          calls[calls.length - 1],
+        );
+      context.output.push(defineAt(node, made.name, made.parameters, body));
+      return made;
+    })();
   const values = shareArguments(
     node.arguments.map((argument) => translateExpression(argument, scope, context)),
     context,
   );
-  return render(
-    values.evaluate(
-      leaf(callStateOperator(undefined, candidate, values.shared, scope, context)),
-      leaf(getUndefined(context)),
+  return ifExpression(
+    apply("\\in", [value, identifier(dispatch.called)]),
+    render(
+      values.evaluate(
+        leaf(
+          call(dispatch.name, [
+            value,
+            ...values.shared,
+            ...variables.map((entry) => scope.bindings.get(entry[0]) ?? entry[1]),
+          ]),
+        ),
+        leaf(getUndefined(context)),
+      ),
     ),
+    otherwise,
   );
 };
 
@@ -1166,46 +1256,52 @@ export const translateLocalCall = (
               : stopUnknownCall(value, context),
           )
         : stopUnknownCall(value, context);
+    const valued = candidates.filter(
+      (candidate) => getCandidateValue(candidate, context) !== undefined,
+    );
+    const operators = valued.filter((candidate) =>
+      isOperatorCandidate(candidate, node, scope, context),
+    );
     return share(
       translateExpression(node.expression, scope, context),
       "function",
       context,
-      (value) =>
-        candidates.reduceRight<Expression>(
-          (otherwise, candidate) => {
-            const candidateValue = getCandidateValue(candidate, context);
-            return candidateValue === undefined
-              ? otherwise
-              : ifExpression(
-                  apply("=", [value, candidateValue]),
-                  isOperatorCandidate(candidate, node, scope, context)
-                    ? translateOperatorCandidate(candidate, node, scope, context)
-                    : inlineCall(
-                        candidate,
-                        node.arguments,
-                        scope,
-                        context,
-                        superReceiver !== undefined && ts.isMethodDeclaration(candidate)
-                          ? { method: candidate, receiver: superReceiver, key: "" }
-                          : undefined,
-                      ),
-                  otherwise,
-                );
-          },
-          stored === undefined
-            ? getUnknown(value)
-            : field(
-                translateStoredCall(
-                  stored,
-                  value,
-                  translateExpression(stored.receiver, scope, context),
-                  false,
+      (value) => {
+        const inlined = valued
+          .filter((candidate) => !operators.includes(candidate))
+          .reduceRight<Expression>(
+            (otherwise, candidate) =>
+              ifExpression(
+                apply("=", [value, getCandidateValue(candidate, context) ?? value]),
+                inlineCall(
+                  candidate,
+                  node.arguments,
                   scope,
                   context,
+                  superReceiver !== undefined && ts.isMethodDeclaration(candidate)
+                    ? { method: candidate, receiver: superReceiver, key: "" }
+                    : undefined,
                 ),
-                "value",
+                otherwise,
               ),
-        ),
+            stored === undefined
+              ? getUnknown(value)
+              : field(
+                  translateStoredCall(
+                    stored,
+                    value,
+                    translateExpression(stored.receiver, scope, context),
+                    false,
+                    scope,
+                    context,
+                  ),
+                  "value",
+                ),
+          );
+        return operators.length === 0
+          ? inlined
+          : translateDispatch(operators, value, node, scope, context, inlined);
+      },
     );
   }
   if (callee === undefined) {

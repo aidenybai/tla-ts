@@ -31,6 +31,11 @@ export interface Definition {
   readsState: boolean;
 }
 
+// An operator that runs whichever of a set of functions a value holds, and the name of the set.
+export interface DispatchCall extends Definition {
+  called: string;
+}
+
 export interface SelfCall {
   name: string;
   changed: ts.Symbol[];
@@ -95,6 +100,9 @@ export interface Context {
   // The operator of each helper that calls itself where a statement changed the state that it
   // reads, which takes that state.
   stateCalls: Map<ts.Node, Definition>;
+  // The operator that runs whichever of a set of functions a value holds, each through its
+  // operator in stateCalls, for each set of functions and count of arguments that calls pass.
+  dispatchCalls: Map<string, DispatchCall>;
   // Helpers being compiled or inlined, to detect recursion.
   inProgress: Set<ts.Node>;
   recursive: Set<ts.Declaration>;
@@ -558,6 +566,7 @@ export const createContext = (
     variables: new Map(),
     definitions: new Map(),
     stateCalls: new Map(),
+    dispatchCalls: new Map(),
     inProgress: new Set(),
     recursive: new Set(),
     selfCalls: new Map(),

@@ -49171,4 +49171,39 @@ describe("BigInts", () => {
       expect(getSize(4)).toBeLessThan(getSize(2) * 2.2);
     });
   });
+
+  describe("runs the functions that calls through values may run through one operator for them all", () => {
+    const getSource = (functions: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: functions },
+        (_, position) => `function add${position + 1}(x: number): number {
+          return x + ${position + 1};
+        }
+        function run${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value * 2;
+        }`,
+      ).join("\n")}
+      const total: number = ${Array.from(
+        { length: functions },
+        (_, position) => `run${position + 1}(add${position + 1}, box.a)`,
+      ).join(" + ")};
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+    const getSize = (functions: number) =>
+      printModule(compile(getSource(functions, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, 18))).failure).toBeUndefined();
+    });
+
+    it("rejects another total", async () => {
+      expect((await checkModel(getSource(3, 17))).failure?.message).toContain("total 18");
+    });
+
+    it("grows with the calls and the functions rather than with each call for each function", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2.3);
+    });
+  });
 });
