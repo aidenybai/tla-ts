@@ -216,6 +216,31 @@ const isPropertyName = (node: ts.Identifier) => {
 // Rejects programs that JavaScript rejects as it parses, where TypeScript accepts them, and stops at
 // those that it accepts only outside strict mode, where tla-ts doesn't follow them.
 export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
+  // A module's top-level functions are lexical declarations, which no other declaration repeats.
+  if (isModuleFile(sourceFile)) {
+    const names = new Set<string>();
+    const vars = new Set(
+      sourceFile.statements.flatMap((statement) =>
+        ts.isVariableStatement(statement) &&
+        (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0
+          ? statement.declarationList.declarations.flatMap((declaration) =>
+              getBindingNames(declaration.name),
+            )
+          : [],
+      ),
+    );
+    sourceFile.statements.forEach((statement) => {
+      const name =
+        ts.isFunctionDeclaration(statement) && statement.body !== undefined
+          ? statement.name
+          : undefined;
+      if (name === undefined) return;
+      if (names.has(name.text) || vars.has(name.text)) {
+        reject(`Identifier '${name.text}' has already been declared`, name);
+      }
+      names.add(name.text);
+    });
+  }
   const visit = (node: ts.Node) => {
     if (ts.isRegularExpressionLiteral(node)) {
       const error = getRegularExpressionError(node);
