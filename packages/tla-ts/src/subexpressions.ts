@@ -173,6 +173,7 @@ const applyDefinition = (definition: Definition, selection: Selection) => {
 const selectSubexpression = (
   selectors: Selector[],
   lookup: Lookup,
+  isGoal: (name: string) => boolean,
   reference: Expression & SelectingName,
   isOperator: boolean,
 ): Expression => {
@@ -280,6 +281,32 @@ const selectSubexpression = (
   const selectOperand = (selector: Selector) => {
     if (!current) throw createError("Subexpression selection failed", location);
     if (selector.kind === "Colon") return;
+    const range = reference.selectorRanges?.[selectorIndex];
+    const currentRange = current.location.range;
+    if (
+      (current.kind === "Subexpression" ||
+        (current.kind === "Identifier" && current.name.includes("!")) ||
+        (current.kind === "Apply" && current.operator.includes("!"))) &&
+      (currentRange?.module !== location.range?.module || isBefore(current.location, location))
+    ) {
+      const selected = resolveSubexpressions(current, lookup, isGoal);
+      if (selectionErrors.has(selected)) {
+        report(
+          range,
+          `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`,
+        );
+        return;
+      }
+      if (selections.has(selected) && selected.kind !== "Lambda") {
+        current =
+          selected.kind === "Let" &&
+          selected.body.kind === "Apply" &&
+          selected.body.operator === SELECTION_NAME
+            ? selected.body
+            : // SANY wraps a selection without parameters in $Nop, whose only operand is the selection.
+              { kind: "Tuple", elements: [selected], location: selected.location };
+      }
+    }
     if (current.kind === "Label") {
       current = current.body;
       selectOperand(selector);
@@ -320,7 +347,6 @@ const selectSubexpression = (
     if (selector.kind !== "Operand")
       throw createError("Unexpected subexpression selector", location);
     const operands = binder ? binder.sets : getOperands(current);
-    const range = reference.selectorRanges?.[selectorIndex];
     if (!operands && current.kind !== "Identifier") {
       report(range, "Selecting subexpression of expression that has none.");
       return;
@@ -438,7 +464,7 @@ const resolveSubexpressions = (
   const first = selectors?.[0];
   if (!selectors || (first?.kind === "Name" && isGoal(first.name))) return mapped;
   if (first?.kind === "Name" && selectors[1].kind !== "Name" && !lookup(first.name)) return mapped;
-  const selected = selectSubexpression(selectors, lookup, mapped, isOperator);
+  const selected = selectSubexpression(selectors, lookup, isGoal, mapped, isOperator);
   if (selected !== mapped) selections.add(selected);
   return selected;
 };

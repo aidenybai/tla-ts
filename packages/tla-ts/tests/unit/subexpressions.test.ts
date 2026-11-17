@@ -36,6 +36,15 @@ describe("subexpression references match TLC", () => {
       "assumption-violation",
     );
   });
+
+  it("selects an operand of a definition whose body is itself a selection", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nG(a) == a + 1\nH == 2 + 3\nF == G(1)!1\nE == H!1\nVARIABLE x\nInit == x = 0\nNext == x' = F!1 * 10 + E!1\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 12 }]);
+  });
 });
 
 describe("subexpression references into theorems match SANY", () => {
@@ -270,6 +279,36 @@ describe("subexpression references into theorems match SANY", () => {
         ],
         ["line 8, col 54 to line 8, col 54", "A name selector here must be from a LET clause."],
         ["line 9, col 9 to line 9, col 9", "Unknown operator: `E'."],
+      ],
+    ],
+    [
+      "selections of definitions whose bodies are selections",
+      "G(a, b) == <<a, b>>\nH == {2, 3}\nF == G(1, 2)!1\nE == H!1\nN == F!3\nP == E!2\nQ == E!1!1\nR == F!2!1\nS == G(1, 2)!7\nT == S!1",
+      [
+        [
+          "line 7, col 8 to line 7, col 8",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        [
+          "line 8, col 8 to line 8, col 8",
+          "Nonexistent operand specified by `argument selector 2'.",
+        ],
+        [
+          "line 9, col 10 to line 9, col 10",
+          "Selecting subexpression of expression that has none.",
+        ],
+        [
+          "line 10, col 10 to line 10, col 10",
+          "Selecting subexpression of expression that has none.",
+        ],
+        [
+          "line 11, col 14 to line 11, col 14",
+          "Nonexistent operand specified by `argument selector 7'.",
+        ],
+        [
+          "line 12, col 8 to line 12, col 8",
+          "Choosing operand `argument selector 1' of subexpression with no operands.",
+        ],
       ],
     ],
   ])("reports every error SANY reports for %s", async (_name, definitions, errors) => {
