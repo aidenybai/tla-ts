@@ -989,10 +989,15 @@ export const runSmtlibScript = (
         `Invalid function name. Expecting sort list starting with '(' to disambiguate function name got ${domain.lastId}`,
         domain,
       );
-    const sorts = domain.items.map((sort) => state.reader.parseSort(sort));
+    const sorts = domain.items.map((sort) =>
+      state.reader.parseSort(
+        sort,
+        "Invalid function name. Expecting sort list starting with '(' to disambiguate function name",
+      ),
+    );
     if (reference.items[2] === undefined)
       throw new SmtParseError("Invalid function name invalid sort, unexpected ')'", reference.end);
-    const range = state.reader.parseSort(reference.items[2]);
+    const range = state.reader.parseSort(reference.items[2], "Invalid function name");
     const follower = reference.items[3] ?? reference.end;
     const found = state.reader.getFuncs(name.text).find((decl) => {
       const funcDecl = state.manager.funcDecls[decl];
@@ -1062,7 +1067,9 @@ export const runSmtlibScript = (
           throw new SmtParseError("at least 2 arguments expected", list.end);
         const decl = state.manager.mkFuncDecl(
           name.text,
-          domain.items.map((sort) => state.reader.parseSort(sort)),
+          domain.items.map((sort) =>
+            state.reader.parseSort(sort, "expecting sort list starting with '('"),
+          ),
           SORT_BOOL,
         );
         state.reader.insertFunc(decl, list.end);
@@ -1080,7 +1087,7 @@ export const runSmtlibScript = (
             list.end,
           );
         const manager = state.manager;
-        const range = state.reader.parseSort(sort);
+        const range = state.reader.parseSort(sort, "invalid command argument, sort expected");
         const decl = manager.mkFuncDecl(name.text, [], range);
         state.reader.insertFunc(decl, list.end);
         getDatalog().registerVariable(manager.mkApp(decl, [], range));
@@ -1708,7 +1715,13 @@ export const runSmtlibScript = (
       "dbg-some-value",
       (list) => {
         display(
-          getManagerSomeValue(state.manager, state.reader.parseSort(list.items[1] ?? list.end)),
+          getManagerSomeValue(
+            state.manager,
+            state.reader.parseSort(
+              list.items[1] ?? list.end,
+              "invalid command argument, sort expected",
+            ),
+          ),
         );
       },
     ],

@@ -3554,7 +3554,7 @@ export const createSmtlibReader = (
     getFuncs: (name: string) => funcs.get(name) ?? [],
     hasDefinitions,
     parseTerm,
-    parseSort: (sexpr: SExpr) => parseSort(sexpr, ""),
+    parseSort: (sexpr: SExpr, context: string) => parseSort(sexpr, context),
     parseFormula,
     parseAssertion,
     getLogicError: logicChecker.checkExpr,

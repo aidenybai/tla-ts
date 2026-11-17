@@ -383,6 +383,26 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("reports an unknown sort of a command argument with the context of the argument", () => {
+    expect(
+      run([
+        "(declare-rel p ((_ BitVec 4)))",
+        "(declare-rel q (Foo))",
+        "(declare-var y Foo)",
+        "(declare-var x (_ BitVec 4))",
+        "(query (and (p x) true))",
+        "(query (p ((_ BitVec 4)) Foo))",
+        "(dbg-some-value Foo)",
+      ]),
+    ).toEqual([
+      "(error \"line 2 column 16: expecting sort list starting with '(': unknown sort 'Foo'\")",
+      "(error \"line 3 column 15: invalid command argument, sort expected: unknown sort 'Foo'\")",
+      "(error \"line 5 column 13: Invalid function name. Expecting sort list starting with '(' to disambiguate function name: unknown sort 'p'\")",
+      "(error \"line 6 column 25: Invalid function name: unknown sort 'Foo'\")",
+      "(error \"line 7 column 16: invalid command argument, sort expected: unknown sort 'Foo'\")",
+    ]);
+  });
+
   it("makes a declaration with a token before its closing parenthesis, and reports the token", () => {
     expect(
       run([
