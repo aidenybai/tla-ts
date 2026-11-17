@@ -15,10 +15,27 @@ export interface ChangeTable {
   components: Int32Array;
   changed: Bits;
   parameters: Bits;
-  // A bit per component: whether it makes an error, and whether it runs a function that no file
-  // walks to, which only a walk of its own summarizes.
+  // A bit per component: whether it makes an error, whether it runs a function that no file walks
+  // to, which only a walk of its own summarizes, and whether a node of its own has effects that
+  // findEffects didn't find, which a path's bindings may change.
   errors: Uint32Array;
   incomplete: Uint32Array;
+  unfound: Uint32Array;
+  // The components that each component runs, from each one's start, and the components that run
+  // each one.
+  calleeStarts: Int32Array;
+  callees: Int32Array;
+  callerStarts: Int32Array;
+  callers: Int32Array;
+  // The ids of the symbols that the calls of each component's own nodes name as their callees and
+  // arguments, in order, with each one's component, which tell the components whose effects a
+  // path's bindings of functions to symbols change.
+  calledIds: Int32Array;
+  calledComponents: Int32Array;
+  // The mark of each component that a walk of the components that bindings change has reached,
+  // with the walk's own generation.
+  marks: Int32Array;
+  generation: number;
 }
 
 // Rows of bits over symbols: the ids of the symbols that the bits stand for, in order, the symbols,
@@ -58,6 +75,10 @@ export const getComponent = (table: ChangeTable, nodes: ProgramNodes, node: ts.N
   return component < 0 || hasBit(table.incomplete, component) ? -1 : component;
 };
 
+// Whether a walk of markBound's generation reached a component.
+export const isMarked = (table: ChangeTable, component: number, generation: number) =>
+  table.marks[component] === generation;
+
 export const isComponentErrorMade = (table: ChangeTable, component: number) =>
   hasBit(table.errors, component);
 
@@ -84,10 +105,52 @@ export const getComponentParameters = (table: ChangeTable, component: number) =>
 
 // Summarizes the functions that the roots run, and those that they run in turn. Each function's
 // own effects are those of the nodes of its subtree, which getEffects gives.
+// Marks the components whose summaries a path's bindings change: those whose own nodes call or pass
+// a bound symbol, and those that run them. Gives the walk's generation, which marks them.
+export const markBound = (table: ChangeTable, bound: readonly ts.Symbol[]) => {
+  table.generation += 1;
+  const generation = table.generation;
+  const pending: number[] = [];
+  const mark = (component: number) => {
+    if (table.marks[component] === generation) return;
+    table.marks[component] = generation;
+    pending.push(component);
+  };
+  if (bound.length > 0) {
+    table.marks.forEach((_, component) => {
+      if (hasBit(table.unfound, component)) mark(component);
+    });
+  }
+  bound.forEach((symbol) => {
+    const id = ts.getSymbolId(symbol);
+    const last = getLowerBound(table.calledIds, 0, table.calledIds.length, id + 1);
+    for (let index = getLowerBound(table.calledIds, 0, last, id); index < last; index += 1) {
+      mark(table.calledComponents[index]);
+    }
+  });
+  while (pending.length > 0) {
+    const component = pending.pop() ?? 0;
+    for (
+      let caller = table.callerStarts[component];
+      caller < table.callerStarts[component + 1];
+      caller += 1
+    ) {
+      mark(table.callers[caller]);
+    }
+  }
+  return generation;
+};
+
+// Summarizes the functions that the roots run, and those that they run in turn. Each function's
+// own effects are those of the nodes of its subtree, which getEffects gives, or undefined where
+// findEffects found none, and getCalled gives the symbols that a node's call names as its callee
+// and arguments.
 export const summarizeFunctions = (
   roots: readonly ts.Node[],
   nodes: ProgramNodes,
+  getFound: (node: ts.Node) => Effects | undefined,
   getEffects: (node: ts.Node) => Effects,
+  getCalled: (node: ts.Node) => readonly ts.Symbol[],
 ): ChangeTable => {
   const functions = new Int32Array(nodes.nodes.length);
   const order: number[] = [];
@@ -110,15 +173,23 @@ export const summarizeFunctions = (
   const edges: number[] = [];
   const ownErrors: boolean[] = [];
   const ownIncomplete: boolean[] = [];
+  const ownUnfound: boolean[] = [];
+  const calledStarts: number[] = [];
+  const ownCalled: number[] = [];
   for (let index = 0; index < order.length; index += 1) {
+    calledStarts.push(ownCalled.length);
     changedStarts.push(ownChanged.length);
     parameterStarts.push(ownParameters.length);
     edgeStarts.push(edges.length);
     const start = order[index];
     const isErrorMade = { value: false };
     const isIncomplete = { value: false };
+    const isUnfound = { value: false };
     for (let position = start; position < nodes.ends[start]; position += 1) {
-      const effects = getEffects(nodes.nodes[position]);
+      const found = getFound(nodes.nodes[position]);
+      if (found === undefined) isUnfound.value = true;
+      const effects = found ?? getEffects(nodes.nodes[position]);
+      getCalled(nodes.nodes[position]).forEach((symbol) => ownCalled.push(ts.getSymbolId(symbol)));
       ownChanged.push(...effects.changed);
       ownParameters.push(...effects.parameters);
       if (effects.isErrorMade) isErrorMade.value = true;
@@ -130,10 +201,12 @@ export const summarizeFunctions = (
     }
     ownErrors.push(isErrorMade.value);
     ownIncomplete.push(isIncomplete.value);
+    ownUnfound.push(isUnfound.value);
   }
   changedStarts.push(ownChanged.length);
   parameterStarts.push(ownParameters.length);
   edgeStarts.push(edges.length);
+  calledStarts.push(ownCalled.length);
   const count = order.length;
   const changed = createBits(ownChanged, count);
   const parameters = createBits(ownParameters, count);
@@ -148,6 +221,7 @@ export const summarizeFunctions = (
   const isOnStack = new Uint32Array((count + 31) >>> 5);
   const errors = new Uint32Array((count + 31) >>> 5);
   const incomplete = new Uint32Array((count + 31) >>> 5);
+  const unfound = new Uint32Array((count + 31) >>> 5);
   // The component that last added each component's rows to its own.
   const lastAdder = new Int32Array(count).fill(-1);
   const stack: number[] = [];
@@ -184,6 +258,7 @@ export const summarizeFunctions = (
       }
       if (ownErrors[member]) setBit(errors, component);
       if (ownIncomplete[member]) setBit(incomplete, component);
+      if (ownUnfound[member]) setBit(unfound, component);
       for (let edge = edgeStarts[member]; edge < edgeStarts[member + 1]; edge += 1) {
         const callee = components[edges[edge]];
         if (callee === component || lastAdder[callee] === component) continue;
@@ -226,5 +301,72 @@ export const summarizeFunctions = (
       if (caller !== undefined) lowLinks[caller] = Math.min(lowLinks[caller], lowLinks[node]);
     }
   }
-  return { functions, components, changed, parameters, errors, incomplete };
+  // The components' edges, each once, and the calls' symbols by id, in flat columns.
+  const componentCount = visited.components;
+  const callees: number[] = [];
+  const calleeStarts = new Int32Array(componentCount + 1);
+  const membersStarts = new Int32Array(componentCount + 1);
+  components.forEach((component) => {
+    membersStarts[component + 1] += 1;
+  });
+  membersStarts.forEach((size, component) => {
+    if (component > 0) membersStarts[component] = membersStarts[component - 1] + size;
+  });
+  const memberEnds = membersStarts.slice(0, -1);
+  const members = new Int32Array(count);
+  components.forEach((component, member) => {
+    members[memberEnds[component]] = member;
+    memberEnds[component] += 1;
+  });
+  lastAdder.fill(-1);
+  const namedCalls: { id: number; component: number }[] = [];
+  for (let component = 0; component < componentCount; component += 1) {
+    calleeStarts[component] = callees.length;
+    for (let index = membersStarts[component]; index < membersStarts[component + 1]; index += 1) {
+      const member = members[index];
+      for (let edge = edgeStarts[member]; edge < edgeStarts[member + 1]; edge += 1) {
+        const callee = components[edges[edge]];
+        if (callee === component || lastAdder[callee] === component) continue;
+        lastAdder[callee] = component;
+        callees.push(callee);
+      }
+      for (let own = calledStarts[member]; own < calledStarts[member + 1]; own += 1) {
+        namedCalls.push({ id: ownCalled[own], component });
+      }
+    }
+  }
+  calleeStarts[componentCount] = callees.length;
+  const callerStarts = new Int32Array(componentCount + 1);
+  callees.forEach((callee) => {
+    callerStarts[callee + 1] += 1;
+  });
+  callerStarts.forEach((size, component) => {
+    if (component > 0) callerStarts[component] = callerStarts[component - 1] + size;
+  });
+  const callerEnds = callerStarts.slice(0, -1);
+  const callers = new Int32Array(callees.length);
+  for (let component = 0; component < componentCount; component += 1) {
+    for (let edge = calleeStarts[component]; edge < calleeStarts[component + 1]; edge += 1) {
+      callers[callerEnds[callees[edge]]] = component;
+      callerEnds[callees[edge]] += 1;
+    }
+  }
+  namedCalls.sort((left, right) => left.id - right.id || left.component - right.component);
+  return {
+    functions,
+    components,
+    changed,
+    parameters,
+    errors,
+    incomplete,
+    unfound,
+    calleeStarts,
+    callees: Int32Array.from(callees),
+    callerStarts,
+    callers,
+    calledIds: Int32Array.from(namedCalls, (call) => call.id),
+    calledComponents: Int32Array.from(namedCalls, (call) => call.component),
+    marks: new Int32Array(componentCount),
+    generation: 0,
+  };
 };

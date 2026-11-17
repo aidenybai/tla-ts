@@ -5,6 +5,8 @@ import {
   getComponentParameters,
   hasChanged,
   isComponentErrorMade,
+  isMarked,
+  markBound,
   summarizeFunctions,
 } from "./change-summaries";
 import { getPosition } from "./program-nodes";
@@ -15420,25 +15422,24 @@ const getEffects = (
   };
 };
 
+// The symbols that a node's call names as its callee and its arguments, through casts too.
+const getCalledSymbols = (node: ts.Node, context: Context) =>
+  (ts.isCallExpression(node)
+    ? [node.expression, ...node.arguments]
+    : ts.isTaggedTemplateExpression(node)
+      ? [node.tag, ...getSubstitutions(node)]
+      : []
+  ).flatMap((callee) =>
+    [callee, skipCasts(callee)].flatMap((inner) => getSymbol(inner, context.checker) ?? []),
+  );
+
 // Whether a node runs a function that a parameter may hold, which the functions that a path binds
 // to its parameters tell.
 const isCallingParameter = (
   node: ts.Node,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
-) => {
-  const callees = ts.isCallExpression(node)
-    ? [node.expression, ...node.arguments]
-    : ts.isTaggedTemplateExpression(node)
-      ? [node.tag, ...getSubstitutions(node)]
-      : [];
-  return callees.some((callee) =>
-    [callee, skipCasts(callee)].some((inner) => {
-      const symbol = getSymbol(inner, context.checker);
-      return symbol !== undefined && functions.has(symbol);
-    }),
-  );
-};
+) => getCalledSymbols(node, context).some((symbol) => functions.has(symbol));
 
 // What a node changes, from what the model's code changes where no parameter holds a function.
 const getNodeEffects = (
@@ -15480,25 +15481,36 @@ export const summarizeEffects = (context: Context) =>
   summarizeFunctions(
     context.effects.found.flatMap((effects) => effects.called),
     context.nodes,
-    (node) => getNodeEffects(node, NO_FUNCTIONS, context),
+    (node) => getFoundEffects(node, context.effects, context),
+    (node) => getEffects(node, NO_FUNCTIONS, context),
+    (node) => getCalledSymbols(node, context),
   );
 
 // A node's place in its file, which tells it apart from every other node.
 const getNodeKey = (node: ts.Node) =>
   `${node.getSourceFile().fileName}:${node.pos}:${node.end}:${node.kind}`;
 
+// A summary that a walk makes, with the components of the program's summaries that it takes the
+// changed symbols of.
+interface WalkedSummary extends ChangeSummary {
+  components: ReadonlySet<number>;
+}
+
 // What a function changes, with what the functions that it runs change, where the bindings give
-// the functions that its parameters hold, for a function that the program's summaries don't
-// cover. The functions that run one another, a strongly connected component of the call graph,
-// change the same things, so they share one summary, which Tarjan's algorithm makes once the
-// components that they run have theirs. The summaries that a walk makes, by its bindings, last
-// for the walk.
+// the functions that its parameters hold, for a function whose summary the bindings change or that
+// the program's summaries don't cover. The functions that run one another, a strongly connected
+// component of the call graph, change the same things, so they share one summary, which Tarjan's
+// algorithm makes once the components that they run have theirs. A function that the bindings
+// don't change, as markBound's generation tells, takes its component's summary. The summaries
+// that a walk makes, by its bindings, last for the walk.
 const summarize = (
   root: ts.Node,
   bindings: ReadonlyMap<ts.Symbol, FunctionNode>,
-  walked: Map<string, Map<ts.Node, ChangeSummary>>,
+  walked: Map<string, Map<ts.Node, WalkedSummary>>,
+  generation: number,
   context: Context,
 ) => {
+  const table = context.changes;
   const key = [...bindings]
     .map((entry) => {
       const declaration = entry[0].valueDeclaration;
@@ -15506,14 +15518,21 @@ const summarize = (
     })
     .sort()
     .join(",");
-  const summaries = walked.get(key) ?? new Map<ts.Node, ChangeSummary>();
+  const summaries = walked.get(key) ?? new Map<ts.Node, WalkedSummary>();
   walked.set(key, summaries);
+  // The component whose summary a called function takes, or -1.
+  const getKept = (called: ts.Node) => {
+    const component = table === undefined ? -1 : getComponent(table, context.nodes, called);
+    return table !== undefined && component >= 0 && !isMarked(table, component, generation)
+      ? component
+      : -1;
+  };
   const indexes = new Map<ts.Node, number>();
   const lowLinks = new Map<ts.Node, number>();
   const stack: ts.Node[] = [];
   const onStack = new Set<ts.Node>();
   const effects = new Map<ts.Node, Effects[]>();
-  const connect = (node: ts.Node): ChangeSummary | undefined => {
+  const connect = (node: ts.Node): WalkedSummary | undefined => {
     const index = indexes.size;
     indexes.set(node, index);
     lowLinks.set(node, index);
@@ -15528,7 +15547,7 @@ const summarize = (
     effects.set(node, found);
     found.forEach((effect) =>
       effect.called.forEach((called) => {
-        if (summaries.has(called)) return;
+        if (summaries.has(called) || getKept(called) >= 0) return;
         if (!indexes.has(called)) connect(called);
         const reached = onStack.has(called) ? (lowLinks.get(called) ?? index) : index;
         lowLinks.set(node, Math.min(lowLinks.get(node) ?? index, reached));
@@ -15538,22 +15557,26 @@ const summarize = (
     const component = stack.splice(stack.indexOf(node));
     component.forEach((member) => onStack.delete(member));
     const own = component.flatMap((member) => effects.get(member) ?? []);
-    const reached = [
-      ...new Set(
-        own.flatMap((effect) => effect.called.flatMap((called) => summaries.get(called) ?? [])),
-      ),
-    ];
-    const summary: ChangeSummary = {
+    const called = [...new Set(own.flatMap((effect) => effect.called))];
+    const reached = [...new Set(called.flatMap((inner) => summaries.get(inner) ?? []))];
+    const kept = [...new Set(called.map(getKept).filter((inner) => inner >= 0))];
+    const summary: WalkedSummary = {
       changed: new Set([
         ...own.flatMap((effect) => effect.changed),
         ...reached.flatMap((inner) => [...inner.changed]),
       ]),
       isErrorMade:
-        own.some((effect) => effect.isErrorMade) || reached.some((inner) => inner.isErrorMade),
+        own.some((effect) => effect.isErrorMade) ||
+        reached.some((inner) => inner.isErrorMade) ||
+        (table !== undefined && kept.some((inner) => isComponentErrorMade(table, inner))),
       parameters: new Set([
         ...own.flatMap((effect) => effect.parameters),
         ...reached.flatMap((inner) => [...inner.parameters]),
+        ...(table === undefined
+          ? []
+          : kept.flatMap((inner) => getComponentParameters(table, inner))),
       ]),
+      components: new Set([...kept, ...reached.flatMap((inner) => [...inner.components])]),
     };
     component.forEach((member) => summaries.set(member, summary));
     return summary;
@@ -15564,7 +15587,8 @@ const summarize = (
 // What a node may change, with the functions that it runs, where functions binds the parameters
 // that hold them. A function's summary takes the bindings of the parameters that it, or a function
 // bound to one of them, calls or passes, and no others, so that paths that bind other parameters
-// share it. A function that binds none reads the program's summary of its component.
+// share it. A function whose summary they don't change reads the program's summary of its
+// component.
 export const findChanged = (
   loop: ts.Node,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
@@ -15574,12 +15598,18 @@ export const findChanged = (
   const table = context.changes;
   const changed = new Set<ts.Symbol>();
   const row = new Uint32Array(table?.changed.words ?? 0);
-  const walked = new Map<string, Map<ts.Node, ChangeSummary>>();
+  const walked = new Map<string, Map<ts.Node, WalkedSummary>>();
   const visited = new Set<ts.Node>();
+  const unbound = table === undefined ? 0 : markBound(table, []);
   const addError = (isErrorMade: boolean) => {
     if (isErrorMade && !isIdentityIgnored && context.heap !== undefined) {
       changed.add(context.heap);
     }
+  };
+  const addComponent = (component: number) => {
+    if (table === undefined) return;
+    addChanged(table, component, row);
+    addError(isComponentErrorMade(table, component));
   };
   const add = (inner: { changed: Iterable<ts.Symbol>; isErrorMade: boolean }) => {
     [...inner.changed].forEach((symbol) => changed.add(symbol));
@@ -15591,7 +15621,7 @@ export const findChanged = (
     const component = getComponentOf(node);
     return table !== undefined && component >= 0
       ? getComponentParameters(table, component)
-      : (summarize(node, NO_FUNCTIONS, walked, context)?.parameters ?? []);
+      : (summarize(node, NO_FUNCTIONS, walked, unbound, context)?.parameters ?? []);
   };
   const addSummary = (root: ts.Node) => {
     const bindings = new Map<ts.Symbol, FunctionNode>();
@@ -15608,14 +15638,17 @@ export const findChanged = (
         pending.push(bound);
       });
     }
-    const component = bindings.size === 0 ? getComponentOf(root) : -1;
-    if (table !== undefined && component >= 0) {
-      addChanged(table, component, row);
-      addError(isComponentErrorMade(table, component));
+    const generation =
+      table === undefined || bindings.size === 0 ? unbound : markBound(table, [...bindings.keys()]);
+    const component = getComponentOf(root);
+    if (table !== undefined && component >= 0 && !isMarked(table, component, generation)) {
+      addComponent(component);
       return;
     }
-    const summary = summarize(root, bindings, walked, context);
-    if (summary !== undefined) add(summary);
+    const summary = summarize(root, bindings, walked, generation, context);
+    if (summary === undefined) return;
+    add(summary);
+    summary.components.forEach(addComponent);
   };
   const visit = (node: ts.Node) => {
     const effects = getNodeEffects(node, functions, context);
