@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/normal_forms/pull_quant.cpp), MIT license, see z3-license.txt.
 import {
   KIND_QUANTIFIER,
   OP_AND,

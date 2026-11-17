@@ -1,5 +1,3 @@
-// Ported from Z3 (src/opt/optsmt.cpp, src/opt/opt_search.h, src/opt/opt_geometric.h), MIT
-// license, see z3-license.txt.
 import { SmtCanceledError, SmtUnsupportedError } from "../../../errors";
 import { type AstManager, OP_GE, OP_GT, SORT_BOOL, SORT_INT, SORT_REAL } from "./ast";
 import { InfEps, maxInfEps, minInfEps } from "./inf-eps";

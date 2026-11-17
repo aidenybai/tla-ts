@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/Isar/proof.ML, Pure/goal.ML and Pure/Isar/method.ML. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { compIncr, forallIntrVars, protectD, protectI, revcutRl } from "../pure/drule";
 import { conclude } from "../pure/goal";

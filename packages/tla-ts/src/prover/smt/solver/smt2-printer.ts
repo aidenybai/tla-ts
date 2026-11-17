@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/format.cpp, src/ast/pp.cpp, src/ast/ast_smt2_pp.cpp,
-// src/ast/shared_occs.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   FAMILY_BV,

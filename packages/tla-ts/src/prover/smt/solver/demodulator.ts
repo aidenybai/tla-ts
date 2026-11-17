@@ -1,6 +1,3 @@
-// Ported from Z3 (src/ast/substitution/demodulator_rewriter.cpp,
-// src/ast/substitution/substitution.cpp, src/util/array_map.h,
-// src/tactic/ufbv/ufbv_rewriter_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../errors";
 import {
   type AstManager,

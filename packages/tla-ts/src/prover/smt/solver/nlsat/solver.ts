@@ -1,7 +1,6 @@
-// Ported from Z3 (src/nlsat/nlsat_solver.cpp, src/nlsat/nlsat_justification.h), MIT license, see
-// z3-license.txt. Of Z3's nlsat parameters only seed and factor are ported, so nlsat_simplify and the bounds
-// of eliminated variables are not. The search counts its steps against the resource limit, but not
-// the memory, which Z3 also bounds by max_memory.
+// Of Z3's nlsat parameters only seed and factor are ported, so nlsat_simplify and the bounds of
+// eliminated variables are not. The search counts its steps against the resource limit, but not the
+// memory, which Z3 also bounds by max_memory.
 import { SmtCanceledError, SmtInvariantError } from "../../../../errors";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { type Dependency, linearize, mkJoin, mkLeaf } from "../lp/dependency";

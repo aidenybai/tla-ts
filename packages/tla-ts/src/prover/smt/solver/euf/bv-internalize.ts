@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/bv_solver.h, src/sat/smt/bv_internalize.cpp), MIT license, see
-// z3-license.txt.
 import { SmtUnsupportedError } from "../../../../errors";
 import {
   OP_ADD,

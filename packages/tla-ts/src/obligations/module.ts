@@ -1,5 +1,3 @@
-// A port of tlapm's Module.Standard, Module.Flatten, Module.Dep and Module.Subst.
-
 import { TlaProofError, TlapmBugError } from "../errors";
 import {
   at,

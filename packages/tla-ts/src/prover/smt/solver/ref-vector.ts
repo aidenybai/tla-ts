@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/ref_vector.h), MIT license, see z3-license.txt.
 import type { AstManager } from "./ast";
 
 export class RefVector {

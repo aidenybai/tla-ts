@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/rational.h), MIT license, see z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 
 export const getGcd = (first: bigint, second: bigint) => {

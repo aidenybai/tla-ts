@@ -1,7 +1,6 @@
-// Ported from Z3 (src/nlsat/levelwise.cpp, src/nlsat/nlsat_common.cpp), MIT license, see
-// z3-license.txt.
 // Deviation from Z3: ties between polynomials break by creation-order id, where Z3 recycles ids of
-// freed polynomials (id_gen in polynomial.cpp), so a cell bound can be another polynomial with the same root.
+// freed polynomials (id_gen in polynomial.cpp), so a cell bound can be another polynomial with the
+// same root.
 import { NlsatUnsupportedError } from "../../../../errors";
 import { Rational } from "../rational";
 import { type AlgebraicManager, type Anum, mergeSortIndices } from "./algebraic";

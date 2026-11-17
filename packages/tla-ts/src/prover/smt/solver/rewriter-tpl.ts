@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/rewriter.h, rewriter.cpp, rewriter_def.h), MIT license, see z3-license.txt.
 import { ActCache } from "./act-cache";
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE, type AstManager } from "./ast";
 import { grow, shrink } from "./array";

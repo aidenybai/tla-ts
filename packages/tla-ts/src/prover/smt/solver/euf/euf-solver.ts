@@ -1,6 +1,3 @@
-// Ported from Z3 (src/sat/smt/euf_solver.h, src/sat/smt/euf_solver.cpp,
-// src/sat/smt/euf_internalize.cpp, src/sat/smt/euf_model.cpp, src/util/top_sort.h), MIT license,
-// see z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../../errors";
 import {
   type AstManager,

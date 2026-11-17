@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/sat_th.h, src/sat/smt/sat_th.cpp, src/util/trail.h), MIT license,
-// see z3-license.txt.
 import { SmtCanceledError } from "../../../../errors";
 import { mkNot } from "../ast-util";
 import type { ProtoModel } from "../proto-model";

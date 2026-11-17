@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/smt_case_split_queue.cpp, src/util/heap.h), MIT license, see z3-license.txt.
-
 import { BoolVar, toBoolVar } from "./literal";
 
 class ActivityHeap {

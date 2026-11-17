@@ -1,5 +1,3 @@
-// Ported from Zenon's ext_tla.ml, as shipped in tlapm. Copyright 2008 INRIA, see LICENSE.
-
 import { compareExprs, getStringName, isApp, type Expr } from "../expr";
 import { stableSort } from "../ocaml";
 import { makeRule } from "../proof";

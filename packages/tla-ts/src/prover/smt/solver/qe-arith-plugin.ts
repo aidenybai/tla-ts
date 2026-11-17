@@ -1,5 +1,3 @@
-// Ported from Z3 (src/qe/qe_arith_plugin.cpp, src/smt/arith_eq_solver.cpp), MIT license, see
-// z3-license.txt.
 import { SmtInvariantError } from "../../../errors";
 import {
   type AstManager,

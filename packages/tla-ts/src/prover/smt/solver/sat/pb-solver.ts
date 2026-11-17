@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/pb_solver.h, src/sat/smt/pb_solver.cpp,
-// src/sat/smt/pb_internalize.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../../errors";
 import {
   type AstManager,

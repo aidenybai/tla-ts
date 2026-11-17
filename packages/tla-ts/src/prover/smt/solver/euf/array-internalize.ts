@@ -1,5 +1,3 @@
-// Ported from Z3 (src/sat/smt/array_solver.h, src/sat/smt/array_solver.cpp,
-// src/sat/smt/array_internalize.cpp), MIT license, see z3-license.txt.
 import { mkArrayDecl } from "../array-decl-plugin";
 import {
   FAMILY_ARRAY,

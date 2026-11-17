@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/bound_analyzer_on_row.h, src/math/lp/lp_bound_propagator.h, src/math/lp/implied_bound.h, and propagate_bounds_for_touched_rows in src/math/lp/lar_solver.h), MIT license, see z3-license.txt.
 import { Rational } from "../rational";
 import { COLUMN_FIXED, COLUMN_FREE, COLUMN_LOWER, COLUMN_UPPER } from "./core-solver";
 import { type ConstraintKind, KIND_GE, KIND_GT, KIND_LE, KIND_LT } from "./constraints";

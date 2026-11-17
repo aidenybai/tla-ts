@@ -1,7 +1,3 @@
-// Runs a theory's commands one after the other, as Isabelle's Pure/Isar/toplevel.ML does, with the
-// theory commands of Pure/Isar/specification.ML. Copyright (c) 1986-2025 University of Cambridge,
-// Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { typargsOf } from "../pure/consts";
 import { zeroVarIndexes } from "../pure/drule";

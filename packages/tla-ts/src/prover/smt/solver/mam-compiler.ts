@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/mam.cpp), MIT license, see z3-license.txt.
 import { KIND_VAR, type AstManager } from "./ast";
 import type { Enode } from "./enode";
 

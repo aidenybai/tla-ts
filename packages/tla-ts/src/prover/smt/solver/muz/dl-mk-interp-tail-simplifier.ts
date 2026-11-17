@@ -1,5 +1,3 @@
-// Ported from Z3 (src/muz/transforms/dl_mk_interp_tail_simplifier.cpp), MIT license, see
-// z3-license.txt.
 import {
   type AstManager,
   KIND_APP,

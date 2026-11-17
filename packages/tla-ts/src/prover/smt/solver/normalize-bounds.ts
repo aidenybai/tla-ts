@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/normalize_bounds_tactic.cpp), MIT license, see z3-license.txt.
 import { type AstManager, OP_ADD, SORT_INT } from "./ast";
 import { BoundManager } from "./bound-manager";
 import type { Definition, Goal } from "./goal";

@@ -1,6 +1,3 @@
-// Ported from Z3 (src/ackermannization/ackr_helper.h, src/ackermannization/ackr_helper.cpp,
-// src/ackermannization/ackr_info.h, src/ackermannization/ackr_bound_probe.cpp), MIT license, see
-// z3-license.txt.
 import {
   type AstManager,
   FAMILY_USER,

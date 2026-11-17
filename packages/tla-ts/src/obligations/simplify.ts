@@ -1,5 +1,3 @@
-// A port of tlapm's Proof.Simplify.
-
 import { TlaProofError } from "../errors";
 import { isEqualExpr } from "./equality";
 import {

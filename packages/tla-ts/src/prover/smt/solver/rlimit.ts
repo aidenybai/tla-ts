@@ -1,4 +1,3 @@
-// Ported from Z3 (src/util/rlimit.h, src/util/rlimit.cpp, src/util/memory_manager.cpp), MIT license, see z3-license.txt.
 import type { GCProfiler } from "node:v8";
 import { SmtCanceledError } from "../../../errors";
 

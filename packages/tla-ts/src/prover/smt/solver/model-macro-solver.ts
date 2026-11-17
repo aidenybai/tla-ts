@@ -1,4 +1,3 @@
-// Ported from Z3 (src/model/model_macro_solver.cpp, src/ast/macros/macro_util.cpp, src/ast/func_decl_dependencies.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_BASIC,
   FAMILY_USER,

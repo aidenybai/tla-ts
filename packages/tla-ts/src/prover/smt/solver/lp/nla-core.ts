@@ -1,4 +1,3 @@
-// Ported from Z3 (src/math/lp/nla_core.h, src/math/lp/nla_core.cpp, src/math/lp/nla_common.cpp, src/math/lp/nla_explanations.cpp, src/math/lp/factorization.cpp, src/math/lp/factorization_factory_imp.cpp, src/math/lp/nla_solver.cpp), MIT license, see z3-license.txt.
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import type { ResourceLimit } from "../rlimit";
 import { Rational } from "../rational";

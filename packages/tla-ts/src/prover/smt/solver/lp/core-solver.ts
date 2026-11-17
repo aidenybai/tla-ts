@@ -1,6 +1,3 @@
-// Ported from Z3 (src/math/lp/lar_core_solver.h, src/math/lp/lp_core_solver_base.h,
-// src/math/lp/lp_primal_core_solver.h, src/math/lp/lp_primal_core_solver_tableau_def.h), MIT
-// license, see z3-license.txt.
 import { Rational } from "../rational";
 import { IndexedUintSet, StackedVector, VarHeap } from "./containers";
 import type { LpSettings } from "./lp-settings";

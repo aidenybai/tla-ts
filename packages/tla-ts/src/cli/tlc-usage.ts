@@ -1,4 +1,3 @@
-// A port of TLC.printUsage and UsageGenerator.displayUsage.
 interface UsageArgument {
   name: string;
   sampleValue?: string;

@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/goal.cpp), MIT license, see z3-license.txt.
 import { OP_AND, OP_NOT, OP_OR, SORT_BOOL, type AstManager } from "./ast";
 import type { ProtoModel } from "./proto-model";
 import { RefVector } from "./ref-vector";

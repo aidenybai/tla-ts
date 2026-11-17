@@ -1,4 +1,3 @@
-// Ported from Z3 (src/smt/smt_context.cpp), MIT license, see z3-license.txt.
 import type { AssertedFormulas } from "./asserted-formulas";
 import {
   AstManager,

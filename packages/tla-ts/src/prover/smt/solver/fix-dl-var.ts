@@ -1,4 +1,3 @@
-// Ported from Z3 (src/tactic/arith/fix_dl_var_tactic.cpp), MIT license, see z3-license.txt.
 import {
   type AstManager,
   FAMILY_ARITH,

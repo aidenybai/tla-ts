@@ -1,5 +1,3 @@
-// A port of tlapm's Expr.Levels.
-
 import { TlaProofError, TlapmBugError } from "../errors";
 import {
   adjoin,

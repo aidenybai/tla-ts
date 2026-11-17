@@ -1,4 +1,3 @@
-// Ported from Z3 (src/ast/rewriter/var_subst.cpp), MIT license, see z3-license.txt.
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, type AstManager, type SmtSymbol } from "./ast";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import { BetaReducer } from "./rewriter-tpl";

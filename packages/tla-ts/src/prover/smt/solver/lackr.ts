@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ackermannization/lackr.cpp, src/ackermannization/lackr_model_constructor.cpp),
-// MIT license, see z3-license.txt.
 import {
   type AstManager,
   KIND_APP,

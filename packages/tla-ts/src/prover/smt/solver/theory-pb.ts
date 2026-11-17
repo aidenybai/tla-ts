@@ -1,5 +1,3 @@
-// Ported from Z3 (src/smt/theory_pb.h, src/smt/theory_pb.cpp, src/ast/rewriter/pb_rewriter_def.h),
-// MIT license, see z3-license.txt.
 import { SmtInvariantError, SmtUnsupportedError } from "../../../errors";
 import { FAMILY_PB, OP_AT_LEAST_K, OP_AT_MOST_K, OP_PB_EQ, OP_PB_GE, OP_PB_LE } from "./ast";
 import { mkNot } from "./ast-util";

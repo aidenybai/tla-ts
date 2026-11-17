@@ -1,4 +1,3 @@
-// Ported from Z3 (src/qe/lite/qel.cpp), MIT license, see z3-license.txt.
 import type { AstManager } from "./ast";
 import { flattenAndVector } from "./ast-util";
 import { TermGraph } from "./mbp/mbp-term-graph";

@@ -1,5 +1,3 @@
-// Ported from Isabelle2025's Pure/drule.ML, Pure/term_subst.ML and Pure/Pure.thy. Copyright (c) 1986-2025 University of Cambridge, Technische Universitaet Muenchen, and contributors, see LICENSE.
-
 import {
   cleanName,
   emptyNameContext,

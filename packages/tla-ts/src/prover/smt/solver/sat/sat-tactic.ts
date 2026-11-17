@@ -1,4 +1,3 @@
-// Ported from Z3 (src/sat/tactic/sat_tactic.cpp), MIT license, see z3-license.txt.
 import { SmtTacticError } from "../../../../errors";
 import type { AstManager } from "../ast";
 import type { ThSolverFactory } from "../euf/euf-solver";

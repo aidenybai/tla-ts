@@ -1,5 +1,3 @@
-// Ported from Isabelle/TLA+'s PredicateLogic.thy and SetTheory.thy, BSD licensed, see LICENSE.
-
 import { TlaIsabelleError } from "../../../errors";
 import { emptyNet } from "../pure/net";
 import { thenGoal } from "../pure/tactical";

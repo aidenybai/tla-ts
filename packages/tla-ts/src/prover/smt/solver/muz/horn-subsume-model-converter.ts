@@ -1,5 +1,3 @@
-// Ported from Z3 (src/ast/converters/horn_subsume_model_converter.cpp, del_rule of
-// src/muz/base/dl_util.cpp), MIT license, see z3-license.txt.
 import {
   FAMILY_USER,
   KIND_APP,

@@ -1,5 +1,3 @@
-// Ported from Z3 (src/tactic/core/elim_uncnstr_tactic.cpp, src/tactic/core/collect_occs.cpp), MIT
-// license, see z3-license.txt.
 import {
   type AstManager,
   FAMILY_ARITH,
