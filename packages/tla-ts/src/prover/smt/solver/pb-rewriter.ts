@@ -1,6 +1,5 @@
 import {
   type AstManager,
-  FAMILY_PB,
   OP_AT_LEAST_K,
   OP_AT_MOST_K,
   OP_PB_EQ,
@@ -18,8 +17,6 @@ interface PbArg {
   expr: number;
   coeff: Rational;
 }
-
-export const isPb = (manager: AstManager, expr: number) => manager.getFamily(expr) === FAMILY_PB;
 
 export const getPbK = (manager: AstManager, decl: number) => manager.getPbParameters(decl)[0];
 

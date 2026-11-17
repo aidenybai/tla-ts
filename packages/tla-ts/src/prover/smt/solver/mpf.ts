@@ -98,8 +98,6 @@ export const isPzero = (value: Mpf) => !value.sign && isZero(value);
 
 export const isNeg = (value: Mpf) => value.sign && !isNan(value);
 
-export const isPos = (value: Mpf) => !value.sign && !isNan(value);
-
 export const isDenormal = (value: Mpf) => !isZero(value) && hasBotExp(value);
 
 export const isNormal = (value: Mpf) => !(hasTopExp(value) || isDenormal(value) || isZero(value));
