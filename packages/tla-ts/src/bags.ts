@@ -99,7 +99,7 @@ const addCounts = (left: Value, right: Value) => {
   return sum;
 };
 
-// Deviation from TLC: Bags.java subtracts counts as Java ints, which wrap; this overflows like -.
+// Deviation from TLC: Bags#BagDiff subtracts counts as Java ints that wrap, where tla-ts reports the overflow as - does.
 const subtractCounts = (functionValue: FunctionValue, index: number, other: FunctionValue) => {
   const count = toCount(functionValue.range[index]);
   const removed = findCount(other, functionValue.domain[index]);

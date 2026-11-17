@@ -84,6 +84,7 @@ describe("the Bags module matches TLC", () => {
       "The second argument of BagOfAll should be a function with a finite domain, but instead it is:\n1",
     ],
     ["<<2147483647>> (+) <<1>>", "Overflow when computing 2147483647+1"],
+    ["<<2>> (-) <<-2147483647>>", "Overflow when computing 2--2147483647"],
     ['SubBag(<<"a">>)', 'The first argument of >= should be an integer, but instead it is:\n"a"'],
   ])("rejects %s", async (expression, message) => {
     const result = await checkBags(`ASSUME PrintT(${expression})`);
