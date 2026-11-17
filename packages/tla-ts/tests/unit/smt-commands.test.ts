@@ -998,4 +998,33 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ")",
     ]);
   });
+
+  it("leaves the definitions of a popped scope out of the model", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const b Bool)",
+        "(assert (! (> x 0) :named a1))",
+        "(push)",
+        "(define-fun c () Int 5)",
+        "(assert (! (not b) :named a2))",
+        "(assert (> x c))",
+        "(check-sat)",
+        "(pop)",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "(",
+      "  (define-fun x () Int",
+      "    6)",
+      "  (define-fun a1 () Bool",
+      "    (> x 0))",
+      "  (define-fun b () Bool",
+      "    false)",
+      ")",
+    ]);
+  });
 });

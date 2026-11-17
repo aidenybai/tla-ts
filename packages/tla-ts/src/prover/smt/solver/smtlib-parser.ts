@@ -982,6 +982,10 @@ export const createSmtlibReader = (
   const unrooted: number[] = [];
   const pending: number[] = [];
 
+  // A pop erases the definitions of the functions its scopes declared, in the order of declaration.
+  const scopedFuncs: number[] = [];
+  const scopedFuncStarts: number[] = [];
+
   const declare = <Value>(names: Map<string, Value>, name: string, value: Value) => {
     const previous = names.get(name);
     undo.push(() => {
@@ -1030,6 +1034,7 @@ export const createSmtlibReader = (
         at,
       );
     declare(funcs, name, [...existing, decl]);
+    scopedFuncs.push(decl);
   };
 
   const insertDatatypeDecls = (sort: number, at: SExpr) => {
@@ -2329,7 +2334,9 @@ export const createSmtlibReader = (
     manager.incRef(expr);
     lastNamed.name = name;
     lastNamed.expr = expr;
-    declare(funcs, name, [...(funcs.get(name) ?? []), manager.mkMacro(name, expr)]);
+    const decl = manager.mkMacro(name, expr);
+    declare(funcs, name, [...(funcs.get(name) ?? []), decl]);
+    scopedFuncs.push(decl);
     declare(macros, name, { domain: [], range: manager.sorts[expr], body: expr });
   };
 
@@ -3079,6 +3086,7 @@ export const createSmtlibReader = (
     for (const reversedVar of reversedVars) manager.decRef(reversedVar);
     setRecFunDefinition(manager, manager.recFunDefs.get(decl)!, true, body);
     declare(funcs, name, [...(funcs.get(name) ?? []), decl]);
+    scopedFuncs.push(decl);
   };
 
   const declareCommand = (list: SmtList) => {
@@ -3270,11 +3278,14 @@ export const createSmtlibReader = (
   const push = () => {
     releasePending();
     scopeStarts.push(undo.length);
+    scopedFuncStarts.push(scopedFuncs.length);
   };
 
-  const pop = () => {
+  const pop = (count: number) => {
     releasePending();
-    const start = scopeStarts.pop() ?? 0;
+    const funcStart = scopedFuncStarts.splice(scopedFuncStarts.length - count)[0];
+    for (const decl of scopedFuncs.splice(funcStart)) manager.eraseRecFunDef(decl);
+    const start = scopeStarts.splice(scopeStarts.length - count)[0];
     for (const restore of undo.splice(start).reverse()) restore();
   };
 

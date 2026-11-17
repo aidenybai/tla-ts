@@ -801,6 +801,14 @@ export class AstManager {
     return decl;
   }
 
+  eraseRecFunDef(decl: number) {
+    this.macros.delete(decl);
+    const def = this.recFunDefs.get(decl);
+    if (def === undefined) return;
+    for (const recFunCase of def.cases) this.recFunCases.delete(recFunCase.pred);
+    this.recFunDefs.delete(decl);
+  }
+
   // recfun::def: the declaration of a defined function, which the definition holds.
   mkRecFuncDecl(name: SmtSymbol, domain: number[], range: number) {
     const decl = this.mkRecFunDecl(OP_FUN_DEFINED, name, [0], domain, range);

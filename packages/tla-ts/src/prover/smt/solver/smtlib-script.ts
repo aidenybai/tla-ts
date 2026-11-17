@@ -1300,7 +1300,7 @@ export const runSmtlibScript = (
           const scope = state.scopes[state.scopes.length - count];
           state.kernel?.pop(count);
           useEufSolver((solver) => solver.pop(count));
-          for (let index = 0; index < count; index++) state.reader.pop();
+          state.reader.pop(count);
           restoreAssertions(scope.assertions);
           resetOptimizer();
           releaseObjectives(scope.objectives, scope.softTrail);
