@@ -18,6 +18,7 @@ import {
   type Selector,
   type SourceLocation,
   type SourceRange,
+  type StepBody,
   type Theorem,
   type UseOrHide,
 } from "./ast";
@@ -51,6 +52,7 @@ interface Goal {
   statement: Expression | AssumeProve;
   isSuffices: boolean;
   isInProof: boolean;
+  keyword: string | undefined;
 }
 
 interface LocalName extends Binding {
@@ -735,6 +737,14 @@ const getSymbolArity = (
     unit.errors.push({
       location: formatRange(getSpelledNameRange(expression, name)),
       message: "Step number of non-expression step used as an expression.",
+    });
+    return undefined;
+  }
+  const keyword = local?.goal?.keyword;
+  if (keyword) {
+    unit.errors.push({
+      location: formatRange(getSpelledNameRange(expression, name)),
+      message: `${keyword} proof step selected instead of expression.`,
     });
     return undefined;
   }
@@ -1504,7 +1514,7 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
     });
     return BUILTIN_LOCATION;
   }
-  if (!isFact(name, unit)) resolveExpression(fact, scope, unit);
+  if (!isFact(name, unit) && !lookupLocal(scope, name)?.goal) resolveExpression(fact, scope, unit);
   return hidden;
 };
 
@@ -1659,6 +1669,42 @@ const resolveLocalInstance = (instance: Instance, scope: LocalName | undefined, 
       );
 };
 
+const getStepGoal = (body: StepBody, location: SourceLocation): Goal | undefined => {
+  const createGoal = (keyword: string, statement: Expression) => ({
+    statement,
+    isSuffices: false,
+    isInProof: false,
+    keyword,
+  });
+  switch (body.kind) {
+    case "Have":
+      return createGoal("HAVE", { kind: "Tuple", elements: [body.expression], location });
+    case "Case":
+      return createGoal("CASE", { kind: "Tuple", elements: [body.expression], location });
+    case "Witness":
+      return createGoal("WITNESS", { kind: "Tuple", elements: body.expressions, location });
+    case "Take":
+      return createGoal("TAKE", { kind: "Tuple", elements: getBoundSets(body.bounds), location });
+    case "Pick":
+      return createGoal(
+        "PICK",
+        body.bounds.length > 0
+          ? { kind: "Exists", bounds: body.bounds, body: body.body, location }
+          : {
+              kind: "UnboundedQuantifier",
+              quantifier: "Exists",
+              names: body.names,
+              body: body.body,
+              location,
+            },
+      );
+    case "Qed":
+      return createGoal("QED step", { kind: "Tuple", elements: [], location });
+    default:
+      return undefined;
+  }
+};
+
 const resolveStep = (
   step: ProofStep,
   scope: LocalName | undefined,
@@ -1669,8 +1715,9 @@ const resolveStep = (
     step.name === undefined
       ? unit
       : { ...unit, hasLabelScope: true, labelParams: [], labels: new Set<string>() };
+  const goal = getStepGoal(body, step.location);
   const bindStep = (parent: LocalName | undefined): LocalName | undefined =>
-    step.name === undefined ? parent : { name: step.name, arity: 0, kind: "Theorem", parent };
+    step.name === undefined ? parent : { name: step.name, arity: 0, kind: "Theorem", parent, goal };
   const bindNonFactStep = (parent: LocalName | undefined): LocalName | undefined =>
     step.name === undefined
       ? parent
@@ -1684,10 +1731,25 @@ const resolveStep = (
         resolveProof(step.proof, proofScope, unit);
         return body.isSuffices ? assumed : scope;
       }
-      const goal = { statement: body.statement, isSuffices: body.isSuffices, isInProof: true };
-      resolveProof(step.proof, { name, arity: 0, kind: "Theorem", parent: proofScope, goal }, unit);
-      goal.isInProof = false;
-      return { name, arity: 0, kind: "Theorem", parent: body.isSuffices ? assumed : scope, goal };
+      const assertion = {
+        statement: body.statement,
+        isSuffices: body.isSuffices,
+        isInProof: true,
+        keyword: body.isSuffices && body.statement.kind !== "AssumeProve" ? "SUFFICES" : undefined,
+      };
+      resolveProof(
+        step.proof,
+        { name, arity: 0, kind: "Theorem", parent: proofScope, goal: assertion },
+        unit,
+      );
+      assertion.isInProof = false;
+      return {
+        name,
+        arity: 0,
+        kind: "Theorem",
+        parent: body.isSuffices ? assumed : scope,
+        goal: assertion,
+      };
     }
     case "Use":
     case "Hide":
@@ -2018,7 +2080,17 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const goals = new Map(
     module.theorems.flatMap((theorem): [string, Goal][] =>
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
-        ? [[theorem.name, { statement: theorem.statement, isSuffices: false, isInProof: false }]]
+        ? [
+            [
+              theorem.name,
+              {
+                statement: theorem.statement,
+                isSuffices: false,
+                isInProof: false,
+                keyword: undefined,
+              },
+            ],
+          ]
         : [],
     ),
   );

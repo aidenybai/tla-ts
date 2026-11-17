@@ -2241,6 +2241,60 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each<[string, [string, string][]]>([
+    [
+      "EXTENDS Naturals\nTHEOREM T == \\A n \\in {1} : n = 1\n<1>1. TAKE n \\in {1}\n<1>2. PICK k \\in {1}, j \\in {2} : k = j\n  OBVIOUS\n<1>3. <1>2!(1, 2) = 1\n  OBVIOUS\n<1>5. <1>2!2!1 = 2\n  OBVIOUS\n<1>6. <1>2!3 = 2\n  OBVIOUS\n<1>7. <1>1!1 = 1\n  OBVIOUS\n<1>8. <1>2 = 1\n  OBVIOUS\n<1>9. <1>1!2 = 1\n  OBVIOUS\n<1>10. QED",
+      [
+        [
+          "line 11, col 12 to line 11, col 12",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        ["line 15, col 7 to line 15, col 10", "PICK proof step selected instead of expression."],
+        [
+          "line 17, col 12 to line 17, col 12",
+          "Nonexistent operand specified by `argument selector 2'.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1 => 2 = 2\n<1>1. HAVE 1 = 1\n<1>2. CASE 2 = 2\n  <2>1. <1>2!1!1 = 2\n    OBVIOUS\n  <2>2. <1>2!2 = 2\n    OBVIOUS\n  <2>3. QED\n<1>3. WITNESS 1, 2\n<1>4. <1>1!1 = TRUE\n  OBVIOUS\n<1>5. <1>3!2 = 2\n  OBVIOUS\n<1>6. <1>3!3 = 2\n  OBVIOUS\n<1>7. <1>1 = 1\n  OBVIOUS\n<1>8. QED",
+      [
+        [
+          "line 8, col 14 to line 8, col 14",
+          "Nonexistent operand specified by `argument selector 2'.",
+        ],
+        [
+          "line 16, col 12 to line 16, col 12",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        ["line 18, col 7 to line 18, col 10", "HAVE proof step selected instead of expression."],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. SUFFICES 2 = 2\n  OBVIOUS\n<1>2. <1>1 = 1\n  OBVIOUS\n<1>3. <1>1!1 = 1\n  OBVIOUS\n<1>4. QED\n  <2>1. <1>4!1 = 1\n    OBVIOUS\n  <2>2. <1>4 = 1\n    OBVIOUS\n  <2>3. QED\n    BY <1>1, <1>4",
+      [
+        ["line 6, col 7 to line 6, col 10", "SUFFICES proof step selected instead of expression."],
+        [
+          "line 11, col 14 to line 11, col 14",
+          "Nonexistent operand specified by `argument selector 1'.",
+        ],
+        [
+          "line 13, col 9 to line 13, col 12",
+          "QED step proof step selected instead of expression.",
+        ],
+      ],
+    ],
+  ])(
+    "checks selections of PICK, TAKE, HAVE, CASE, WITNESS, SUFFICES and QED steps in %j like SANY",
+    async (source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),
