@@ -9,6 +9,7 @@ import { type AstManager, OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0, SORT_BOOL } fro
 import { createQfufbvAckrTactic, runAckermannizeBv } from "./ackermannize-bv-tactic";
 import { AssertedFormulas } from "./asserted-formulas";
 import { createAigTactic } from "./aig-tactic";
+import { blastTermIte } from "./blast-term-ite";
 import { card2bv } from "./card2bv";
 import { Context, MBQI_MAX_ITERATIONS } from "./context";
 import { ctxSimplify } from "./ctx-simplify";
@@ -1031,6 +1032,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
   [
+    "blast-term-ite",
+    {
+      isTrackingDependencies: true,
+      descrs: new Map(),
+      build: (environment) => inPlace((goal) => blastTermIte(environment.manager, goal)),
+    },
+  ],
+  [
     "distribute-forall",
     {
       descrs: new Map(),
@@ -1368,7 +1377,6 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
 
 const UNPORTED_TACTICS = new Set(
   (
-    "blast-term-ite " +
     "bv-slice bvarray2uf collect-statistics " +
     "degree-shift demodulator " +
     "elim-predicates elim-uncnstr2 " +

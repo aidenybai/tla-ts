@@ -522,6 +522,47 @@ describe("elim-term-ite, as Z3 5.3.2 names the term if-then-elses", () => {
   });
 });
 
+describe("blast-term-ite, as Z3 5.3.2 lifts the term if-then-elses", () => {
+  it("lifts each one out of its parent, under a quantifier too but not into a pattern", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-const c1 Bool)",
+        "(declare-const c2 Bool)",
+        "(declare-const c3 Bool)",
+        "(declare-const e1 Int)",
+        "(declare-const e2 Int)",
+        "(declare-const e3 Int)",
+        "(declare-const e4 Int)",
+        "(assert (p (f (ite c1 (ite c2 e1 (ite c3 e2 e3)) e4))))",
+        "(assert (forall ((x Int)) (! (> (f (ite c1 x e1)) (+ (ite c2 x e2) 1)) :pattern ((f x)))))",
+        "(assert (= (f (ite c3 e1 e1)) e2))",
+        "(apply blast-term-ite)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (let ((a!1 (ite c2 (p (f e1)) (ite c3 (p (f e2)) (p (f e3))))))\n    (ite c1 a!1 (p (f e4))))\n  (forall ((x Int))\n    (! (ite c1\n            (ite c2 (> (f x) (+ x 1)) (> (f x) (+ e2 1)))\n            (ite c2 (> (f e1) (+ x 1)) (> (f e1) (+ e2 1))))\n       :pattern ((f x))))\n  (= (f e1) e2)\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+
+  it("keeps the dependencies of the formulas it rewrites", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const c1 Bool)",
+        "(declare-const e1 Int)",
+        "(declare-const e2 Int)",
+        "(assert (! (> (f (ite c1 e1 e2)) 3) :named a1))",
+        "(assert (! (= e1 e2) :named a2))",
+        "(assert (! (< (f e2) 2) :named a3))",
+        "(check-sat-using (then blast-term-ite smt))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["unsat", "(a3 a1 a2)"]);
+  });
+});
+
 describe("if-no-models, as Z3 5.3.2 runs it", () => {
   it("runs its tactic when the goal produces no models", () => {
     expect(
