@@ -1014,6 +1014,19 @@ export const rejectSloppyGlobalWrites = (file: ts.SourceFile, context: Context) 
       strictWrite,
     );
   }
+  // The global object inherits Object.prototype's properties, which a write to their names sets or
+  // shadows and which typeof finds before the write.
+  const inherited = writes.find(
+    (name) =>
+      isImplicitGlobal(name, context) &&
+      BUILT_INS["Object.prototype"][3].some((property) => property[0] === name.text),
+  );
+  if (inherited !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't make a global outside strict mode that Object.prototype names",
+      inherited,
+    );
+  }
 };
 
 // Whether a name reads a global that a write outside strict mode makes, which throws a

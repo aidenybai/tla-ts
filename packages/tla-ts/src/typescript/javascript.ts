@@ -8907,9 +8907,23 @@ export const translateTypeOf = (
   const symbol = isImplicitGlobal(read, context) ? getSymbol(read, context.checker) : undefined;
   const global = symbol === undefined ? undefined : scope.bindings.get(symbol);
   const typeOf = translateTypeOfValue(node, scope, context);
+  // Before the write, the global object's prototypes answer, which hold the name only where a
+  // script changed Object.prototype.
+  const heap = context.heap === undefined ? undefined : scope.bindings.get(context.heap);
+  const missing =
+    heap === undefined
+      ? string("undefined")
+      : ifExpression(
+          useJavaScript("IsKept", [heap, string("Object.prototype")], context),
+          string("undefined"),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't read a global outside strict mode once Object.prototype changed"),
+          ]),
+        );
   return global === undefined
     ? typeOf
-    : ifExpression(isUnresolvable(global, context), string("undefined"), typeOf);
+    : ifExpression(isUnresolvable(global, context), missing, typeOf);
 };
 
 const translateTypeOfValue = (node: ts.TypeOfExpression, scope: Scope, context: Context) => {

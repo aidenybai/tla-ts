@@ -1031,8 +1031,28 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
         node,
       );
     }
-    const read = isImplicitGlobal(node, context) ? readGlobal(node, current, context) : current;
-    return { symbol, current: read, update: (getValue) => getValue(read) };
+    const isGlobal = isImplicitGlobal(node, context);
+    const read = isGlobal ? readGlobal(node, current, context) : current;
+    // A write that makes a global sets the global object's property, which a property of
+    // Object.prototype that a script changed can refuse or take with a setter.
+    const heap = context.heap === undefined ? undefined : path.scope.bindings.get(context.heap);
+    const guardGlobal = (value: Expression) =>
+      isGlobal && heap !== undefined
+        ? ifExpression(
+            apply("/\\", [
+              isUnresolvable(current, context),
+              apply("~", [useJavaScript("IsKept", [heap, string("Object.prototype")], context)]),
+            ]),
+            apply("Assert", [
+              boolean(false),
+              string(
+                "tla-ts can't make a global outside strict mode once Object.prototype changed",
+              ),
+            ]),
+            value,
+          )
+        : value;
+    return { symbol, current: read, update: (getValue) => guardGlobal(getValue(read)) };
   }
   const privateMember =
     ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)

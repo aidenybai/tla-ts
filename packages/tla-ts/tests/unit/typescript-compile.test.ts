@@ -49439,4 +49439,54 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("makes a global outside strict mode only where Object.prototype lacks its name", () => {
+    const getSource = (defined: string, expected: string) => `
+      const seen: string[] = [];
+      // @ts-ignore
+      seen.push(typeof made);
+      function make() {
+        // @ts-ignore
+        made = 5;
+      }
+      make();
+      // @ts-ignore
+      seen.push(typeof made, String(made));
+      Object.defineProperty(Object.prototype, "${defined}", { value: 3 });
+      // @ts-ignore
+      made = 6;
+      // @ts-ignore
+      seen.push(String(made));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("other", "undefined,number,5,6"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a write that the global object's own property doesn't take", async () => {
+      expect(
+        (await checkModel(getSource("other", "undefined,number,5,5"))).failure?.message,
+      ).toContain("seen undefined,number,5,6");
+    });
+
+    it("stops where Object.prototype changed before the global exists", async () => {
+      const source = `
+        Object.defineProperty(Object.prototype, "made", { value: 3 });
+        // @ts-ignore
+        made = 6;
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't make a global outside strict mode once Object.prototype changed",
+      );
+    });
+
+    it("stops where Object.prototype names the global", () => {
+      expect(() => compile("// @ts-ignore\ntoString = 5;")).toThrow(
+        "tla-ts can't make a global outside strict mode that Object.prototype names",
+      );
+    });
+  });
 });
