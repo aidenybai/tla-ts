@@ -56,7 +56,7 @@ const toBase26 = (number: number): string =>
     : `${toBase26(Math.floor(number / 26))}${String.fromCharCode(97 + (number % 26))}`;
 
 const getPairs = <Item>(items: Item[]): [Item, Item][] =>
-  Array.from({ length: Math.floor(items.length / 2) }, (_, position) => [
+  Array.from({ length: Math.floor(items.length / 2) }, (_value, position) => [
     items[2 * position],
     items[2 * position + 1],
   ]);
@@ -367,7 +367,7 @@ export const printIsar = (proof: MlProof, context: IsarContext): string | undefi
       dict,
       formulas,
       subproof,
-      (_, position) => `by (rule zenon_${lemma}_${position} [OF ${conclusionName}])\n`,
+      (_value, position) => `by (rule zenon_${lemma}_${position} [OF ${conclusionName}])\n`,
     );
   };
 

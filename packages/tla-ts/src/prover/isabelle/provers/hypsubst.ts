@@ -245,9 +245,9 @@ const instSubstTac = (context: HypsubstContext, isLeft: boolean, rule: Thm): Goa
       chosen.kind === "Bound"
         ? substBounds(
             [
-              ...Array.from({ length: chosen.index }, (_, position) => mkBound(position + 1)),
+              ...Array.from({ length: chosen.index }, (_value, position) => mkBound(position + 1)),
               mkBound(0),
-              ...Array.from({ length: params.length - chosen.index - 1 }, (_, position) =>
+              ...Array.from({ length: params.length - chosen.index - 1 }, (_value, position) =>
                 mkBound(chosen.index + 2 + position),
               ),
             ],

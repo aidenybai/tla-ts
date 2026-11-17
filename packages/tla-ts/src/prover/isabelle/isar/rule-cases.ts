@@ -75,7 +75,7 @@ export const getCases = (rule: CasesRule): [CaseInfo, number] => {
   const names = lookupTag(rule.tags, "case_names");
   const cases =
     names === undefined
-      ? Array.from({ length: Math.max(nprems(rule.rule) - consumes, 0) }, (_, index) => ({
+      ? Array.from({ length: Math.max(nprems(rule.rule) - consumes, 0) }, (_value, index) => ({
           name: String(index + 1),
           concls: [] as string[],
         }))
