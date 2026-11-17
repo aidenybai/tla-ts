@@ -9,17 +9,18 @@ import { getLowerBound, getPosition, type ProgramNodes } from "./program-nodes";
 // A summary is a row of bits over the symbols that any of the functions changes, and one over the
 // parameters that any calls or passes, each field a column of rows, one per component.
 export interface ChangeTable {
-  // The index of each function plus one, by its node's position, or 0.
+  // The index of each function plus one, by its node's position, or 0, and the indexes of the
+  // functions that no file walks to, such as a declaration file's, by their node ids in order.
   functions: Int32Array;
+  elsewhereIds: Int32Array;
+  elsewhereIndexes: Int32Array;
   // The component of each function.
   components: Int32Array;
   changed: Bits;
   parameters: Bits;
-  // A bit per component: whether it makes an error, whether it runs a function that no file walks
-  // to, which only a walk of its own summarizes, and whether a node of its own has effects that
+  // A bit per component: whether it makes an error, and whether a call of its own has effects that
   // findEffects didn't find, which a path's bindings may change.
   errors: Uint32Array;
-  incomplete: Uint32Array;
   unfound: Uint32Array;
   // The components that each component runs, from each one's start, and the components that run
   // each one.
@@ -70,9 +71,16 @@ const createBits = (symbols: readonly ts.Symbol[], count: number): Bits => {
 // The component of a function whose summary the table has, or -1.
 export const getComponent = (table: ChangeTable, nodes: ProgramNodes, node: ts.Node) => {
   const position = getPosition(nodes, node);
-  const index = position < 0 ? -1 : table.functions[position] - 1;
-  const component = index < 0 ? -1 : table.components[index];
-  return component < 0 || hasBit(table.incomplete, component) ? -1 : component;
+  const id = position < 0 ? ts.getNodeId(node) : -1;
+  const elsewhere =
+    position < 0 ? getLowerBound(table.elsewhereIds, 0, table.elsewhereIds.length, id) : -1;
+  const index =
+    position >= 0
+      ? table.functions[position] - 1
+      : table.elsewhereIds[elsewhere] === id
+        ? table.elsewhereIndexes[elsewhere]
+        : -1;
+  return index < 0 ? -1 : table.components[index];
 };
 
 // Whether a walk of markBound's generation reached a component.
@@ -153,17 +161,35 @@ export const summarizeFunctions = (
   getCalled: (node: ts.Node) => readonly ts.Symbol[],
 ): ChangeTable => {
   const functions = new Int32Array(nodes.nodes.length);
-  const order: number[] = [];
+  const order: ts.Node[] = [];
+  // The functions that no file walks to, which are few, by their nodes while the walk finds them.
+  const elsewhere = new Map<ts.Node, number>();
   const getIndex = (node: ts.Node) => {
     const position = getPosition(nodes, node);
-    if (position < 0) return -1;
-    if (functions[position] === 0) {
-      order.push(position);
-      functions[position] = order.length;
-    }
-    return functions[position] - 1;
+    const known = position < 0 ? (elsewhere.get(node) ?? -1) : functions[position] - 1;
+    if (known >= 0) return known;
+    order.push(node);
+    if (position < 0) elsewhere.set(node, order.length - 1);
+    else functions[position] = order.length;
+    return order.length - 1;
   };
   roots.forEach(getIndex);
+  // Visits the nodes of a function's subtree, in its table or, for one that no file walks to, by a
+  // walk.
+  const forEachInSubtree = (node: ts.Node, visit: (inner: ts.Node) => void) => {
+    const start = getPosition(nodes, node);
+    if (start < 0) {
+      const walk = (inner: ts.Node): undefined => {
+        visit(inner);
+        return ts.forEachChild(inner, walk);
+      };
+      walk(node);
+      return;
+    }
+    for (let position = start; position < nodes.ends[start]; position += 1) {
+      visit(nodes.nodes[position]);
+    }
+  };
   // Each function's own effects, in columns that run from each function's start.
   const changedStarts: number[] = [];
   const ownChanged: ts.Symbol[] = [];
@@ -172,7 +198,6 @@ export const summarizeFunctions = (
   const edgeStarts: number[] = [];
   const edges: number[] = [];
   const ownErrors: boolean[] = [];
-  const ownIncomplete: boolean[] = [];
   const ownUnfound: boolean[] = [];
   const calledStarts: number[] = [];
   const ownCalled: number[] = [];
@@ -181,26 +206,25 @@ export const summarizeFunctions = (
     changedStarts.push(ownChanged.length);
     parameterStarts.push(ownParameters.length);
     edgeStarts.push(edges.length);
-    const start = order[index];
     const isErrorMade = { value: false };
-    const isIncomplete = { value: false };
     const isUnfound = { value: false };
-    for (let position = start; position < nodes.ends[start]; position += 1) {
-      const found = getFound(nodes.nodes[position]);
-      if (found === undefined) isUnfound.value = true;
-      const effects = found ?? getEffects(nodes.nodes[position]);
-      getCalled(nodes.nodes[position]).forEach((symbol) => ownCalled.push(ts.getSymbolId(symbol)));
+    forEachInSubtree(order[index], (node) => {
+      const found = getFound(node);
+      // Only a call's effects take the functions that a path binds.
+      if (
+        found === undefined &&
+        (ts.isCallExpression(node) || ts.isTaggedTemplateExpression(node))
+      ) {
+        isUnfound.value = true;
+      }
+      const effects = found ?? getEffects(node);
+      getCalled(node).forEach((symbol) => ownCalled.push(ts.getSymbolId(symbol)));
       ownChanged.push(...effects.changed);
       ownParameters.push(...effects.parameters);
       if (effects.isErrorMade) isErrorMade.value = true;
-      effects.called.forEach((called) => {
-        const target = getIndex(called);
-        if (target < 0) isIncomplete.value = true;
-        else edges.push(target);
-      });
-    }
+      effects.called.forEach((called) => edges.push(getIndex(called)));
+    });
     ownErrors.push(isErrorMade.value);
-    ownIncomplete.push(isIncomplete.value);
     ownUnfound.push(isUnfound.value);
   }
   changedStarts.push(ownChanged.length);
@@ -220,7 +244,6 @@ export const summarizeFunctions = (
   const components = new Int32Array(count).fill(-1);
   const isOnStack = new Uint32Array((count + 31) >>> 5);
   const errors = new Uint32Array((count + 31) >>> 5);
-  const incomplete = new Uint32Array((count + 31) >>> 5);
   const unfound = new Uint32Array((count + 31) >>> 5);
   // The component that last added each component's rows to its own.
   const lastAdder = new Int32Array(count).fill(-1);
@@ -257,7 +280,6 @@ export const summarizeFunctions = (
         setRowBit(parameters, component, parameterBits[own]);
       }
       if (ownErrors[member]) setBit(errors, component);
-      if (ownIncomplete[member]) setBit(incomplete, component);
       if (ownUnfound[member]) setBit(unfound, component);
       for (let edge = edgeStarts[member]; edge < edgeStarts[member + 1]; edge += 1) {
         const callee = components[edges[edge]];
@@ -266,7 +288,6 @@ export const summarizeFunctions = (
         addRow(changed, callee, component);
         addRow(parameters, callee, component);
         if (hasBit(errors, callee)) setBit(errors, component);
-        if (hasBit(incomplete, callee)) setBit(incomplete, component);
       }
     });
   };
@@ -352,13 +373,17 @@ export const summarizeFunctions = (
     }
   }
   namedCalls.sort((left, right) => left.id - right.id || left.component - right.component);
+  const elsewhereEntries = [...elsewhere].toSorted(
+    (left, right) => ts.getNodeId(left[0]) - ts.getNodeId(right[0]),
+  );
   return {
     functions,
+    elsewhereIds: Int32Array.from(elsewhereEntries, (entry) => ts.getNodeId(entry[0])),
+    elsewhereIndexes: Int32Array.from(elsewhereEntries, (entry) => entry[1]),
     components,
     changed,
     parameters,
     errors,
-    incomplete,
     unfound,
     calleeStarts,
     callees: Int32Array.from(callees),
