@@ -11,6 +11,7 @@ import {
   isDeclarationOnly,
   isHeldError,
   isMethodCall,
+  getValueDeclaration,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { isAllocation } from "./heap";
@@ -327,7 +328,7 @@ const isRunByOwner = (
 
 const isOnlyName = (node: ts.Identifier, statement: ts.ReturnStatement, context: Context) => {
   const symbol = getSymbol(node, context.checker);
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const owner = getOwner(statement);
   if (
     symbol === undefined ||
@@ -646,7 +647,7 @@ export const findSharing = (reached: readonly ts.Node[], context: Context) => {
   // Whether a reference to a function's own variable is the last that runs, so that nothing
   // changes the variable's array after the reference shares it.
   const isLastUse = (node: ts.Node, symbol: ts.Symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     if (
       declaration === undefined ||
       !ts.isVariableDeclaration(declaration) ||

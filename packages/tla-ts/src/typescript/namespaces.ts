@@ -11,6 +11,7 @@ import {
   isScript,
   isWrittenBy,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import { getWrapperName } from "./common-js";
 import { NATIVE_ERRORS } from "./exceptions";
@@ -277,11 +278,12 @@ export const findNamespaces = (
           ? getNameModule(node.expression, checker)
           : undefined;
         const member = module && checker.getSymbolAtLocation(node.name);
-        const declaration = (
+        const declaration = getValueDeclaration(
           member !== undefined && member.flags & ts.SymbolFlags.Alias
             ? checker.getAliasedSymbol(member)
-            : member
-        )?.valueDeclaration;
+            : member,
+          context,
+        );
         return module !== undefined && declaration !== undefined && ts.isSourceFile(declaration)
           ? [module]
           : [];
@@ -349,7 +351,7 @@ export const findNamespaces = (
   // A binding that a function writes may change after its module has run, which the namespace
   // object wouldn't follow.
   const isChangedLater = (symbol: ts.Symbol) => {
-    const file = symbol.valueDeclaration?.getSourceFile();
+    const file = getValueDeclaration(symbol, context)?.getSourceFile();
     return (
       file !== undefined &&
       findNodes(file, (node): node is ts.Node => {
@@ -373,7 +375,7 @@ export const findNamespaces = (
         if (nested !== undefined) {
           return [{ name: exported.name, value: nested.file, declared: undefined }];
         }
-        const declaration = target.valueDeclaration;
+        const declaration = getValueDeclaration(target, context);
         if (file !== sourceFile && declaration?.getSourceFile() === sourceFile) {
           throw new TlaTypeScriptError(
             "tla-ts can't make the namespace object of a module that hasn't run",

@@ -15,6 +15,7 @@ import {
   type MethodCall,
   share,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
@@ -2546,7 +2547,7 @@ const getPrimitiveCall = (node: MethodCall, kind: Kind, context: Context) => {
   // primitive the method reads.
   const symbol =
     kind === "object" ? context.checker.getTypeAtLocation(receiver).getSymbol() : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const wrapper =
     declaration !== undefined && ts.isClassLike(declaration)
       ? getBuiltInBase(declaration, context)

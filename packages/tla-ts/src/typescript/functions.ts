@@ -29,6 +29,7 @@ import {
   share,
   isInertValue,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import {
   allocateArguments,
@@ -108,7 +109,7 @@ export const readsState = (
     ) {
       return true;
     }
-    const declaration = getTopLevelDeclaration(symbol);
+    const declaration = getTopLevelDeclaration(symbol, context);
     if (declaration !== undefined && !visited.has(declaration)) {
       visited.add(declaration);
       return readsState(declaration, context, visited);
@@ -429,7 +430,7 @@ const getCallback = (argument: ts.Expression, scope: Scope, context: Context) =>
 const getKeptLocal = (callee: FunctionNode, context: Context) =>
   findNodes(callee, ts.isIdentifier).find((name) => {
     const symbol = getSymbol(name, context.checker);
-    const declaration = symbol?.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     return (
       symbol !== undefined &&
       declaration !== undefined &&
@@ -615,7 +616,7 @@ const translateOperatorArgument = (
 ): Expression => {
   const symbol = getSymbol(node, context.checker);
   // A top-level function passes as its operator, and a constant that holds one only as a value.
-  const declaration = getTopLevelDeclaration(symbol);
+  const declaration = getTopLevelDeclaration(symbol, context);
   if (declaration !== undefined && getHelper(declaration, context) !== undefined) {
     return identifier(getDefinition(declaration, context).name);
   }
@@ -877,7 +878,7 @@ const getCaptured = (callee: FunctionNode, context: Context) => {
   const pending = [callee];
   while (pending.length > 0) {
     findNodes(pending.pop() ?? callee, ts.isIdentifier).forEach((name) => {
-      const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+      const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
       const found = getAnyFunction(declaration);
       if (found === undefined || !isLocal(found) || reached.has(found)) return;
       reached.add(found);
@@ -890,7 +891,7 @@ const getCaptured = (callee: FunctionNode, context: Context) => {
   reached.forEach((current) =>
     findNodes(current, ts.isIdentifier).forEach((name) => {
       const symbol = getSymbol(name, context.checker);
-      const declaration = symbol?.valueDeclaration;
+      const declaration = getValueDeclaration(symbol, context);
       if (
         symbol !== undefined &&
         declaration !== undefined &&

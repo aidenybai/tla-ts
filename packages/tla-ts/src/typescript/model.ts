@@ -13,6 +13,7 @@ import {
   isHeapFunction,
   isInlined,
   isScript,
+  getValueDeclaration,
 } from "./context";
 import type { Expression } from "../ast";
 import { getWritten, getWrittenRoots } from "./actions";
@@ -275,7 +276,7 @@ export const readModel = (
   });
   // A var or a parameter of a function that runs once holds one value, which the state holds.
   const onceVariables = [...context.onceLocals].flatMap((symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     if (
       declaration === undefined ||
       !(ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) ||

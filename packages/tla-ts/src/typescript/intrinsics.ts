@@ -11,6 +11,7 @@ import {
   isWrittenBy,
   share,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import {
@@ -76,7 +77,7 @@ export const findCheckedGlobals = (sourceFile: ts.SourceFile, context: Context) 
   const isInert = (node: ts.Node) => {
     const declaration =
       ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)
-        ? getSymbol(node, context.checker)?.valueDeclaration
+        ? getValueDeclaration(getSymbol(node, context.checker), context)
         : undefined;
     return (
       node.kind <= ts.SyntaxKind.LastToken ||
@@ -386,7 +387,7 @@ export const getGeneratorPrototypeRef = (node: ts.Node | undefined, context: Con
   const declaration =
     node === undefined || ts.isFunctionLike(node)
       ? node
-      : getSymbol(node, context.checker)?.valueDeclaration;
+      : getValueDeclaration(getSymbol(node, context.checker), context);
   const generator =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -619,7 +620,7 @@ export const isBuiltInObject = (node: ts.Expression, context: Context) =>
 // declaration.
 const getHeldBuiltIn = (node: ts.Expression, context: Context) => {
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const initializer =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -2507,7 +2508,7 @@ const getConstantValues = (
     return isExact ? undefined : getIndexedValues(expression.expression, context, visited);
   }
   const symbol = ts.isIdentifier(expression) ? getSymbol(expression, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (symbol === undefined || declaration === undefined || visited.has(declaration)) {
     return undefined;
   }
@@ -2591,7 +2592,7 @@ const getConstantValues = (
 // or to strings. An index past the end reads undefined, which none of them is.
 const getIndexedValues = (node: ts.Expression, context: Context, visited: ReadonlySet<ts.Node>) => {
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (
     symbol === undefined ||
     declaration === undefined ||

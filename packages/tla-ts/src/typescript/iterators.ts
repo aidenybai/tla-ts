@@ -11,6 +11,7 @@ import {
   isInertValue,
   isUnresolved,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
@@ -147,7 +148,7 @@ const isFixedRestWrite = (element: ts.Node, context: Context) => {
     object !== undefined && ts.isIdentifier(object)
       ? getSymbol(object, context.checker)
       : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   return (
     symbol !== undefined &&
     declaration !== undefined &&
@@ -203,9 +204,8 @@ const isPlainPattern = (
   );
   const isHidden = tries.every((tryStatement) =>
     symbols.every((symbol) => {
-      const declaration =
-        symbol.valueDeclaration &&
-        ts.findAncestor(symbol.valueDeclaration, ts.isVariableDeclaration);
+      const value = getValueDeclaration(symbol, context);
+      const declaration = value && ts.findAncestor(value, ts.isVariableDeclaration);
       return (
         declaration !== undefined &&
         ((ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) !== 0 ||

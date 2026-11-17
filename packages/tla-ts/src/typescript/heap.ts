@@ -61,6 +61,7 @@ import {
   isAsyncFunction,
   isAsyncGenerator,
   isStrictCode,
+  getValueDeclaration,
 } from "./context";
 import { getPosition } from "./program-nodes";
 import { TlaTypeScriptError } from "../errors";
@@ -421,7 +422,7 @@ const getKeyName = (key: ts.PropertyName, context: Context) => {
   if (ts.isNumericLiteral(key)) return String(Number(key.text));
   if (!ts.isComputedPropertyName(key) || !ts.isIdentifier(key.expression)) return undefined;
   const symbol = getSymbol(key.expression, context.checker);
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const made =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -2984,7 +2985,7 @@ export const getPrototypeMethod = (node: ts.Expression, owner: string, context: 
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
   const declaration =
     symbol !== undefined && !isAssigned(symbol, node.getSourceFile(), context)
-      ? symbol.valueDeclaration
+      ? getValueDeclaration(symbol, context)
       : undefined;
   const value =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
@@ -3562,7 +3563,7 @@ export const isRevocable = (node: ts.Node, context: Context) =>
 export const getOrigin = (node: ts.Expression, context: Context): ts.Expression => {
   const inner = skipCasts(node);
   const declaration = ts.isIdentifier(inner)
-    ? getSymbol(inner, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(inner, context.checker), context)
     : undefined;
   return declaration !== undefined &&
     ts.isVariableDeclaration(declaration) &&
@@ -4083,7 +4084,7 @@ export const findCollectionProxies = (roots: readonly ts.Node[], context: Contex
       // A script function's parameter that holds no array, where the function reads it only as an
       // object, and not through arguments.
       const declaration = checker.getResolvedSignature(parent)?.getDeclaration();
-      const called = getSymbol(parent.expression, checker)?.valueDeclaration;
+      const called = getValueDeclaration(getSymbol(parent.expression, checker), context);
       const parameter =
         declaration !== undefined &&
         ts.isFunctionLike(declaration) &&
@@ -4505,7 +4506,7 @@ const FRESH_ARRAY_METHODS = new Set([
 // A built-in call that makes a new array, such as Array.from(...) or a map, whose sequence the
 // heap can hold. A method that gives the array it changes gives a new one where that array is new.
 const isFreshArrayCall = (node: ts.CallExpression, context: Context): boolean => {
-  const declaration = getSymbol(node.expression, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(node.expression, context.checker), context);
   const method = ts.isPropertyAccessExpression(node.expression) ? node.expression : undefined;
   const receiver = method && skipCasts(method.expression);
   return (
@@ -4963,7 +4964,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   // The variables whose arrays a write gives a hole, which may hold another new array later.
   const holeHolders = new Set(
     [...references.entries()].flatMap((entry) => {
-      const declaration = entry[0].valueDeclaration;
+      const declaration = getValueDeclaration(entry[0], context);
       return declaration !== undefined &&
         ts.isVariableDeclaration(declaration) &&
         ts.findAncestor(declaration, (ancestor) => isReached.has(ancestor)) !== undefined &&
@@ -4992,7 +4993,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     const addHolder = (node: ts.Expression): boolean => {
       if (ts.isParenthesizedExpression(node)) return addHolder(node.expression);
       if (ts.isCallExpression(node)) {
-        const called = getCalledFunction(node, checker);
+        const called = getCalledFunction(node, context);
         if (called !== undefined) returns.push(called);
         return (
           called !== undefined ||
@@ -5118,7 +5119,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         return getCalledName(value) === undefined && addResult(value);
       }
       const declaration = ts.isIdentifier(value)
-        ? getSymbol(value, checker)?.valueDeclaration
+        ? getValueDeclaration(getSymbol(value, checker), context)
         : undefined;
       const owner =
         declaration !== undefined && ts.isVariableDeclaration(declaration)
@@ -5225,7 +5226,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         ts.isCallExpression(node) &&
         !(ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "at")
       ) {
-        const callee = getSymbol(node.expression, checker)?.valueDeclaration;
+        const callee = getValueDeclaration(getSymbol(node.expression, checker), context);
         const owner =
           callee !== undefined && ts.isVariableDeclaration(callee) ? callee.initializer : callee;
         if (owner !== undefined && ts.isFunctionLike(owner)) return addResult(owner);
@@ -5245,7 +5246,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       const named = argument === undefined ? undefined : skipCasts(argument);
       const declaration =
         named !== undefined && ts.isIdentifier(named)
-          ? getSymbol(named, checker)?.valueDeclaration
+          ? getValueDeclaration(getSymbol(named, checker), context)
           : undefined;
       const callback =
         declaration !== undefined && ts.isVariableDeclaration(declaration)
@@ -5496,7 +5497,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       }
       const callee =
         ts.isIdentifier(parent.expression) || ts.isPropertyAccessExpression(parent.expression)
-          ? getSymbol(parent.expression, checker)?.valueDeclaration
+          ? getValueDeclaration(getSymbol(parent.expression, checker), context)
           : undefined;
       const owner =
         callee !== undefined && ts.isVariableDeclaration(callee) ? callee.initializer : callee;
@@ -5512,7 +5513,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     // key, so that its keys stay in it. Each array that it takes as a key joins the group.
     const isKeyedOnly = (receiver: ts.Expression) => {
       const symbol = ts.isIdentifier(receiver) ? getSymbol(receiver, checker) : undefined;
-      const declaration = symbol?.valueDeclaration;
+      const declaration = getValueDeclaration(symbol, context);
       const initializer =
         declaration !== undefined && ts.isVariableDeclaration(declaration)
           ? declaration.initializer
@@ -5547,7 +5548,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       );
     };
     const isHolder = (symbol: ts.Symbol): boolean => {
-      const declaration = symbol.valueDeclaration;
+      const declaration = getValueDeclaration(symbol, context);
       if (declaration !== undefined && ts.isParameter(declaration)) {
         nodes.push(declaration);
         if (elementParameters.has(declaration)) return true;
@@ -5618,7 +5619,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       );
     };
     const getUses = (symbol: ts.Symbol): ts.Expression[] => {
-      const declaration = symbol.valueDeclaration;
+      const declaration = getValueDeclaration(symbol, context);
       return declaration !== undefined &&
         (ts.isParameter(declaration) || ts.isVariableDeclaration(declaration))
         ? (references.get(symbol) ?? []).filter((reference) => reference !== declaration.name)
@@ -5750,7 +5751,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
               addSource(assignment.right)
           : isUse(parent);
       };
-      const declaration = outer.valueDeclaration;
+      const declaration = getValueDeclaration(outer, context);
       return (
         elements.every((element) => element !== undefined) &&
         (declaration !== undefined && ts.isVariableDeclaration(declaration)
@@ -5935,7 +5936,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
         // read finds on the heap by name, unlike a built-in's, such as JSON.stringify's, which reads
         // every field.
         const callee = ts.isCallExpression(parent)
-          ? getSymbol(parent.expression, checker)?.valueDeclaration
+          ? getValueDeclaration(getSymbol(parent.expression, checker), context)
           : undefined;
         const isScriptParameter =
           callee !== undefined &&
@@ -6019,7 +6020,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   const starts = [
     ...[...holeHolders].map((symbol) => [symbol]),
     ...[...references.entries()].flatMap((entry) => {
-      const declaration = entry[0].valueDeclaration;
+      const declaration = getValueDeclaration(entry[0], context);
       return declaration !== undefined &&
         ts.isParameter(declaration) &&
         isReachedNode(declaration) &&
@@ -6029,7 +6030,7 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
     }),
     // A constant that names another's array, whose changes JavaScript shares.
     ...[...references.entries()].flatMap((entry) => {
-      const declaration = entry[0].valueDeclaration;
+      const declaration = getValueDeclaration(entry[0], context);
       return declaration !== undefined &&
         ts.isVariableDeclaration(declaration) &&
         declaration.initializer !== undefined &&
@@ -6332,7 +6333,7 @@ export const findHeapArrays = (
   const mayLackIdentity = (node: ts.Expression) => {
     const value = skipCasts(node);
     const declaration = ts.isIdentifier(value)
-      ? getSymbol(value, context.checker)?.valueDeclaration
+      ? getValueDeclaration(getSymbol(value, context.checker), context)
       : undefined;
     return (
       (declaration === undefined || !arrays.has(declaration)) &&
@@ -6361,7 +6362,7 @@ export const findHeapArrays = (
     );
   };
   references.forEach((uses, symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     const literal =
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
@@ -6430,13 +6431,13 @@ export const findHeapArrays = (
   // script lengthens it, deletes an element, or makes it with holes, which the new array keeps. The
   // script must read it only as an object.
   references.forEach((uses, symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return;
     const call = declaration.initializer;
     if (call === undefined || !isMethodCall(call) || call.expression.name.text !== "concat") return;
     const isHeldArray = (inner: ts.Expression) => {
       const held = ts.isIdentifier(inner) ? getSymbol(inner, context.checker) : undefined;
-      const heldDeclaration = held?.valueDeclaration;
+      const heldDeclaration = getValueDeclaration(held, context);
       return (
         held !== undefined &&
         heldDeclaration !== undefined &&
@@ -6463,7 +6464,7 @@ export const findHeapArrays = (
   // array-like object, which may lack any index below its length, or an array that the callback, or
   // what it calls, changes in place. The script must read it only as an object.
   references.forEach((uses, symbol) => {
-    const declaration = symbol.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return;
     const call = declaration.initializer;
     if (call === undefined || !ts.isCallExpression(call)) return;
@@ -6472,7 +6473,7 @@ export const findHeapArrays = (
     if (map === undefined || reads.length === 0) return;
     const receiver = map.receiver;
     const held = ts.isIdentifier(receiver) ? getSymbol(receiver, context.checker) : undefined;
-    const heldDeclaration = held?.valueDeclaration;
+    const heldDeclaration = getValueDeclaration(held, context);
     const isArrayLike =
       map.isCall ||
       arrays.has(receiver) ||

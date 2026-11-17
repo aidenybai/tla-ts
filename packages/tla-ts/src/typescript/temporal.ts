@@ -8,7 +8,7 @@ import {
   throwError,
   throwTypeError,
 } from "./actions";
-import { type Context, findNodes, getSymbol, skipCasts } from "./context";
+import { type Context, findNodes, getSymbol, skipCasts, getValueDeclaration } from "./context";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getAllocated, getHeap, getOrigin } from "./heap";
@@ -274,7 +274,7 @@ const getArguments = (values: readonly ts.Expression[], context: Context) => {
     if (!ts.isSpreadElement(value)) return [value];
     const spread = skipCasts(value.expression);
     const symbol = ts.isIdentifier(spread) ? getSymbol(spread, context.checker) : undefined;
-    const declaration = symbol?.valueDeclaration;
+    const declaration = getValueDeclaration(symbol, context);
     const isOnlySpread =
       symbol !== undefined &&
       declaration !== undefined &&

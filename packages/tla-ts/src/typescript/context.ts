@@ -599,6 +599,19 @@ const withDeclaredReads = (checker: ts.TypeChecker, reads: DeclaredReads): ts.Ty
   },
 });
 
+// The declaration of a symbol's value that runs. TypeScript gives an overloaded function or method
+// its first signature, which runs nothing, so this gives its implementation instead.
+export const getValueDeclaration = (symbol: ts.Symbol | undefined, context: Context) => {
+  const declaration = symbol?.valueDeclaration;
+  const position = declaration === undefined ? -1 : getPosition(context.nodes, declaration);
+  const implementation =
+    position < 0 ? undefined : context.nodes.nodes[context.nodes.implementations[position]];
+  return implementation !== undefined &&
+    (ts.isFunctionDeclaration(implementation) || ts.isMethodDeclaration(implementation))
+    ? implementation
+    : declaration;
+};
+
 export const createContext = (
   checker: ts.TypeChecker,
   files: readonly ts.SourceFile[],
@@ -1100,11 +1113,12 @@ export const rejectArgumentsVarReads = (file: ts.SourceFile, context: Context) =
     ) {
       return false;
     }
-    const declaration = (
+    const declaration = getValueDeclaration(
       ts.isShorthandPropertyAssignment(parent)
         ? context.checker.getShorthandAssignmentValueSymbol(parent)
-        : getSymbol(name, context.checker)
-    )?.valueDeclaration;
+        : getSymbol(name, context.checker),
+      context,
+    );
     const scope =
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
@@ -1272,7 +1286,7 @@ export const getUnresolvedRead = (
     // name that no getter or proxy can answer.
     const callee = skipCasts(node.expression);
     const declaration = ts.isIdentifier(callee)
-      ? context.checker.getSymbolAtLocation(callee)?.valueDeclaration
+      ? getValueDeclaration(context.checker.getSymbolAtLocation(callee), context)
       : undefined;
     if (ts.isPropertyAccessExpression(callee) && ts.isIdentifier(callee.expression)) {
       if (isThrowing(callee.expression)) return callee.expression;
@@ -1612,8 +1626,8 @@ export const isTopLevel = (statement: ts.Node): boolean => {
 
 // The declaration of a constant or function at the top level of a module, which becomes a TLA+
 // definition.
-export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
-  const declaration = symbol?.valueDeclaration;
+export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined, context: Context) => {
+  const declaration = getValueDeclaration(symbol, context);
   if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) return undefined;
   if (ts.isFunctionDeclaration(declaration) && isTopLevel(declaration)) return declaration;
   const isTopLevelConst =
@@ -1627,9 +1641,10 @@ export const getTopLevelDeclaration = (symbol: ts.Symbol | undefined) => {
 // The symbol that a node names, where a property's read names a module's export only through the
 // module's namespace object, or a namespace's through the namespace: another object of the same
 // type, such as another module's namespace object, may hold another value under the name.
-export const getNamedSymbol = (node: ts.Expression, checker: ts.TypeChecker) => {
+export const getNamedSymbol = (node: ts.Expression, context: Context) => {
+  const checker = context.checker;
   const symbol = getSymbol(node, checker);
-  const declaration = getTopLevelDeclaration(symbol);
+  const declaration = getTopLevelDeclaration(symbol, context);
   if (!ts.isPropertyAccessExpression(node) || declaration === undefined) return symbol;
   const container = ts.findAncestor(
     declaration.parent,
@@ -1685,7 +1700,7 @@ const isInert = (node: ts.ClassLikeDeclaration) =>
 // initializes.
 export const getClass = (node: ts.Node | undefined, context: Context) => {
   const declaration =
-    node === undefined ? undefined : getSymbol(node, context.checker)?.valueDeclaration;
+    node === undefined ? undefined : getValueDeclaration(getSymbol(node, context.checker), context);
   if (declaration === undefined) return undefined;
   const found = ts.isVariableDeclaration(declaration) ? declaration.initializer : declaration;
   return found !== undefined &&
@@ -1725,14 +1740,14 @@ const getReturnedMethod = (getter: ts.GetAccessorDeclaration, context: Context) 
   ) {
     return undefined;
   }
-  return getSymbol(returned.name, context.checker)?.valueDeclaration;
+  return getValueDeclaration(getSymbol(returned.name, context.checker), context);
 };
 
 // A method whose class the call names exactly: a static method on the class, or a method on a
 // new instance.
 const getMethod = (node: ts.Expression, context: Context) => {
   if (!ts.isPropertyAccessExpression(node)) return undefined;
-  const named = getSymbol(node.name, context.checker)?.valueDeclaration;
+  const named = getValueDeclaration(getSymbol(node.name, context.checker), context);
   const declaration =
     named !== undefined && ts.isGetAccessor(named) ? getReturnedMethod(named, context) : named;
   if (
@@ -1753,7 +1768,7 @@ const getMethod = (node: ts.Expression, context: Context) => {
     ? getErrorClass(getSymbol(receiver, context.checker), context)
     : undefined;
   if (
-    errorClass?.[0].valueDeclaration === declaration.parent &&
+    getValueDeclaration(errorClass?.[0], context) === declaration.parent &&
     findNodes(
       declaration,
       (inner): inner is ts.Node =>
@@ -2342,7 +2357,7 @@ export const isAssignedElsewhere = (symbol: ts.Symbol, read: ts.Node, context: C
 // Whether a variable that a script declares without a type or a value is assigned only as the
 // rest of object patterns, so that it holds undefined or an object.
 export const isRestOnly = (symbol: ts.Symbol, context: Context) => {
-  const declaration = symbol.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (
     declaration === undefined ||
     !ts.isVariableDeclaration(declaration) ||
@@ -2441,7 +2456,7 @@ const getPatternKey = (key: ts.PropertyName | ts.BindingName) =>
 // object. A pattern's binding that nothing assigns may take such a default too.
 export const isMadeOnly = (symbol: ts.Symbol, context: Context) => {
   const checker = context.checker;
-  const declaration = symbol.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const isMadeValue = (node: ts.Expression | undefined) =>
     node !== undefined && isFunctionObject(getGivenValue(node), context);
   if (declaration !== undefined && ts.isBindingElement(declaration)) {
@@ -2520,7 +2535,7 @@ export const getLocalCaptures = (node: FunctionNode, context: Context) => {
   const visit = (current: ts.Node, owner: ts.Node) => {
     if (ts.isIdentifier(current)) {
       const symbol = getSymbol(current, context.checker);
-      const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0];
+      const declaration = getValueDeclaration(symbol, context) ?? symbol?.declarations?.[0];
       const isLocal =
         declaration !== undefined &&
         (ts.isVariableDeclaration(declaration) ||
@@ -2563,7 +2578,7 @@ export const getFunctionValue = (
 ): ts.FunctionExpression | ts.ArrowFunction | ts.FunctionDeclaration | undefined => {
   if (context.heap === undefined) return undefined;
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const isNamed =
     symbol !== undefined &&
     declaration !== undefined &&
@@ -2611,7 +2626,7 @@ const isSteady = (value: ts.Expression, node: ts.Node, context: Context) => {
     return true;
   }
   const symbol = ts.isIdentifier(value) ? getSymbol(value, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   return (
     symbol !== undefined &&
     declaration !== undefined &&
@@ -2624,7 +2639,7 @@ const isSteady = (value: ts.Expression, node: ts.Node, context: Context) => {
 // The function or function expression that a name holds, where nothing assigns the name.
 const getNamedFunction = (node: ts.Expression, context: Context) => {
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const made =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -2711,7 +2726,7 @@ export const getBinding = (node: ts.Node, context: Context): Binding | undefined
 // The binding that a value is: a call of bind, or a name that one gives and nothing assigns.
 export const getBound = (node: ts.Expression, context: Context) => {
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (
     symbol === undefined ||
     declaration === undefined ||
@@ -2974,7 +2989,7 @@ export const getBaseClass = (node: ts.ClassLikeDeclaration, context: Context) =>
   const declaration =
     heritage === undefined || !ts.isIdentifier(heritage)
       ? undefined
-      : getSymbol(heritage, context.checker)?.valueDeclaration;
+      : getValueDeclaration(getSymbol(heritage, context.checker), context);
   const found =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -3536,7 +3551,7 @@ const getOuterLocals = (node: ts.Node, context: Context) =>
     const declaration =
       symbol === undefined || context.onceLocals.has(symbol)
         ? undefined
-        : (symbol.valueDeclaration ??
+        : (getValueDeclaration(symbol, context) ??
           (symbol.flags & ts.SymbolFlags.Alias ? symbol.declarations?.at(0) : undefined));
     const owner =
       declaration === undefined
@@ -3629,7 +3644,7 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
       const declaration =
         symbol === undefined || context.onceLocals.has(symbol)
           ? undefined
-          : symbol.valueDeclaration;
+          : getValueDeclaration(symbol, context);
       return (
         declaration !== undefined &&
         ts.findAncestor(declaration, (ancestor) => ancestor === node) === undefined &&
@@ -3691,7 +3706,7 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
       !isFactory());
   const declaration =
     isAssignment && ts.isIdentifier(assignment.left)
-      ? getSymbol(assignment.left, context.checker)?.valueDeclaration
+      ? getValueDeclaration(getSymbol(assignment.left, context.checker), context)
       : undefined;
   return (
     (isAsync && ts.isReturnStatement(node.parent) && node.parent.expression === node) ||
@@ -3742,7 +3757,7 @@ export const getCaptures = (node: Closure, context: Context) => {
   const pending: ts.Node[] = [node];
   while (pending.length > 0) {
     findNodes(pending.pop() ?? node, ts.isIdentifier).forEach((name) => {
-      const declaration = getNamed(name)?.valueDeclaration;
+      const declaration = getValueDeclaration(getNamed(name), context);
       const run =
         declaration !== undefined &&
         ts.isVariableDeclaration(declaration) &&
@@ -3767,7 +3782,7 @@ export const getCaptures = (node: Closure, context: Context) => {
     .flatMap((run) => findNodes(run, ts.isIdentifier))
     .flatMap((name) => {
       const symbol = getNamed(name);
-      const declaration = symbol?.valueDeclaration;
+      const declaration = getValueDeclaration(symbol, context);
       return symbol !== undefined &&
         declaration !== undefined &&
         !context.onceLocals.has(symbol) &&
@@ -3841,7 +3856,7 @@ export const getCaptures = (node: Closure, context: Context) => {
 // runs, which each reads and writes. A let, or a var of the function's body, that a statement of
 // its own declares.
 export const getSharedDeclaration = (symbol: ts.Symbol, context: Context) => {
-  const declaration = symbol.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   // A module's namespace object has its source file as its declaration, which has no parent.
   const statement =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
@@ -4067,7 +4082,7 @@ export const changesState = (
           ts.isIdentifier(node.name)
         ? getSymbol(node.name, context.checker)
         : undefined;
-  const declaration = written?.valueDeclaration;
+  const declaration = getValueDeclaration(written, context);
   if (
     (target !== undefined &&
       (declaration === undefined ||
@@ -4090,7 +4105,7 @@ export const changesState = (
     const receiver = isMethodCall(node) ? skipCasts(node.expression.expression) : undefined;
     const local =
       receiver !== undefined && ts.isIdentifier(receiver)
-        ? context.checker.getSymbolAtLocation(receiver)?.valueDeclaration
+        ? getValueDeclaration(context.checker.getSymbolAtLocation(receiver), context)
         : undefined;
     if (
       called === undefined &&
@@ -4539,7 +4554,8 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     return (
       found !== undefined &&
       (found === symbol ||
-        (ts.isPropertyAssignment(node.parent) && found.valueDeclaration === node.parent))
+        (ts.isPropertyAssignment(node.parent) &&
+          getValueDeclaration(found, context) === node.parent))
     );
   };
   const sourceFile = node.getSourceFile();
@@ -4630,11 +4646,12 @@ export const findObjectTargets = (files: readonly ts.SourceFile[], context: Cont
         ).flatMap((node) =>
           getObjectTargets(node, context).flatMap((target): (ts.Symbol | ts.Node)[] => {
             const symbol = getSymbol(skipCasts(target), context.checker);
+            const declaration = getValueDeclaration(symbol, context);
             return symbol === undefined
               ? []
-              : symbol.valueDeclaration === undefined
+              : declaration === undefined
                 ? [symbol]
-                : [symbol, symbol.valueDeclaration];
+                : [symbol, declaration];
           }),
         ),
       ),
@@ -4650,7 +4667,7 @@ export const getHeapClass = (node: ts.Expression, context: Context): HeapClass |
       ? inPlace
       : undefined;
   }
-  const declaration = getSymbol(inPlace, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(inPlace, context.checker), context);
   const found =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -4715,7 +4732,7 @@ export interface Construction {
 // The built-in that a class extends where the class is a buffer's, a typed array's, Date's, or a
 // collection's, which makes the class's instance as super(...args) would, with the same new.target.
 const getConstructedBase = (callee: ts.Expression, context: Context) => {
-  const declaration = getSymbol(skipCasts(callee), context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(skipCasts(callee), context.checker), context);
   const created =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -4737,7 +4754,7 @@ const getConstructedBase = (callee: ts.Expression, context: Context) => {
 const getBoundConstruction = (node: ts.NewExpression, context: Context) => {
   const name = skipCasts(node.expression);
   const symbol = ts.isIdentifier(name) ? getSymbol(name, context.checker) : undefined;
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const initializer =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -4957,7 +4974,7 @@ export const isHeldErrorName = (
   assumed: ReadonlySet<ts.Node> = new Set(),
 ) => {
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   return (
     declaration !== undefined &&
@@ -5134,7 +5151,7 @@ export const getLeadingPrivate = (node: ts.Expression): ts.PropertyAccessExpress
 };
 
 export const getPrivateMember = (name: ts.PrivateIdentifier, context: Context) => {
-  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
   return declaration !== undefined &&
     ts.isClassElement(declaration) &&
     ts.isClassLike(declaration.parent) &&
@@ -5182,7 +5199,7 @@ export const getCalledMethod = (
   if (!ts.isIdentifier(name) && !ts.isPrivateIdentifier(name) && !ts.isStringLiteralLike(name)) {
     return undefined;
   }
-  const declaration = getSymbol(name, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
   const getter =
     declaration !== undefined &&
     ts.isGetAccessorDeclaration(declaration) &&
@@ -5222,7 +5239,9 @@ export const getFactoryCall = (
   context: Context,
 ): FactoryCall | undefined => {
   if (node === undefined || !ts.isCallExpression(node)) return undefined;
-  const factory = getAnyFunction(getSymbol(node.expression, context.checker)?.valueDeclaration);
+  const factory = getAnyFunction(
+    getValueDeclaration(getSymbol(node.expression, context.checker), context),
+  );
   const body = factory?.body;
   if (factory === undefined || !isPlain(factory) || body === undefined) return undefined;
   const returned = ts.isBlock(body) ? body.statements.at(-1) : undefined;
@@ -5285,7 +5304,7 @@ export const getFactoryCall = (
     expression === undefined
       ? undefined
       : (getAnyFunction(expression) ??
-        getAnyFunction(getSymbol(expression, context.checker)?.valueDeclaration));
+        getAnyFunction(getValueDeclaration(getSymbol(expression, context.checker), context)));
   if (
     !isDeclaringFunctions ||
     closure === undefined ||
@@ -5316,7 +5335,7 @@ export const getFactoryCall = (
 // The function that a callee or callback names: one written in place, one declared elsewhere, one
 // that a factory returns, or a method of a known class.
 const resolve = (node: ts.Expression, context: Context) => {
-  const declaration = getNamedSymbol(skipCasts(node), context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getNamedSymbol(skipCasts(node), context), context);
   return (
     getAnyFunction(skipCasts(node)) ??
     getAnyFunction(declaration) ??

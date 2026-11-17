@@ -10,6 +10,7 @@ import {
   getUndefined,
   share,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import { getWritten } from "./actions";
 import { TlaTypeScriptError } from "../errors";
@@ -255,7 +256,7 @@ export const isBeforeDeclaration = (name: ts.Identifier, symbol: ts.Symbol, scop
 // throws a ReferenceError that the try catches.
 export const isCaughtBeforeDeclaration = (node: ts.Identifier, scope: Scope, context: Context) => {
   const symbol = getSymbol(node, context.checker);
-  const declaration = symbol?.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   if (
     !scope.isCatching ||
     symbol === undefined ||
@@ -314,7 +315,7 @@ const isAssigningCall = (initializer: ts.Expression, context: Context) => {
       const target = written === undefined ? undefined : skipCasts(written);
       const declaration =
         target !== undefined && ts.isIdentifier(target)
-          ? getSymbol(target, context.checker)?.valueDeclaration
+          ? getValueDeclaration(getSymbol(target, context.checker), context)
           : undefined;
       return (
         declaration !== undefined && (declaration.pos < callee.pos || declaration.end > callee.end)

@@ -13,6 +13,7 @@ import {
   isOnce,
   share,
   skipCasts,
+  getValueDeclaration,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
@@ -66,7 +67,7 @@ const isConstClass = (node: ts.Node, context: Context): node is ts.ClassExpressi
 // Whether a script reads a class's prototype, which an error that's a record can't inherit from, so
 // the class makes objects on the heap.
 export const isPrototypeRead = (symbol: ts.Symbol, context: Context) => {
-  const declaration = symbol.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   return (
     declaration !== undefined &&
     findNodesOf(
@@ -88,7 +89,7 @@ export const getErrorClass = (
   if (symbol === undefined) return undefined;
   const base = getBase(symbol, context.checker);
   if (isNative(symbol)) return [symbol, ...(base === undefined ? [] : [base])];
-  const declaration = symbol.valueDeclaration;
+  const declaration = getValueDeclaration(symbol, context);
   const held =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer
@@ -355,7 +356,7 @@ export const translateNewError = (
 
 // A caught value, or what a SuppressedError holds, which may be any value.
 const isCaught = (node: ts.Expression, context: Context): boolean => {
-  const declaration = getSymbol(node, context.checker)?.valueDeclaration;
+  const declaration = getValueDeclaration(getSymbol(node, context.checker), context);
   if (
     ts.isPropertyAccessExpression(node) &&
     ["error", "suppressed"].includes(node.name.text) &&
@@ -591,7 +592,7 @@ export const translateThrown = (node: ts.Expression, scope: Scope, context: Cont
   // An object on the heap keeps its identity as a thrown value, as its ref. A name that only an
   // object literal gives holds one, though its type, such as {}, may fit primitives.
   const declaration = ts.isIdentifier(node)
-    ? getSymbol(node, context.checker)?.valueDeclaration
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
     : undefined;
   const initializer =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
