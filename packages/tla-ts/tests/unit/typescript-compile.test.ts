@@ -52627,4 +52627,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the object offset of a typed array's set before it reads its source", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var sample = new Int8Array([1, 2, 3]);
+      var log = [];
+      sample.set([7], { valueOf() { log.push("offset"); return 1; } });
+      var thrown = "none";
+      try {
+        sample.set([9], { valueOf() { return -1; } });
+      } catch (error) {
+        thrown = error instanceof RangeError ? "RangeError" : "other";
+      }
+      var result = [sample.join(""), log.join(), thrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("173,offset,RangeError");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("713,offset,RangeError");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 173,offset,RangeError",
+      );
+    });
+  });
 });

@@ -4288,7 +4288,9 @@ const translateCallStatementBody = (
                       afterHeap,
                       ref,
                       string(method),
-                      primitives,
+                      method === "set"
+                        ? apply("\\o", [tuple([typedValues[0]]), primitives])
+                        : primitives,
                       translateBuiltInValue("ArrayBuffer.prototype", expression, context),
                       translateTypedConstructors(expression, context),
                     ],
@@ -14624,16 +14626,21 @@ const getConvertedSearchValues = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
-// The arguments of a typed array's fill, slice, copyWithin, at, or join where one is an object,
-// which the method converts in turn after it reads the typed array's length: join its separator
-// to a string, and the others theirs to numbers.
+// The arguments of a typed array's fill, slice, copyWithin, at, join, or set where one is an
+// object, which the method converts in turn after it reads the typed array's length: join its
+// separator to a string, set its offset to a number, and the others theirs to numbers.
 const getConvertedTypedValues = (node: ts.Node, context: Context) => {
   const call = getViewCall(node, context);
+  // set converts only its offset, before it reads its source.
+  const converted =
+    call?.method === "set" && call.values.length === 2 ? call.values.slice(1) : call?.values;
   return call?.owner === "TypedArray" &&
-    ["fill", "slice", "copyWithin", "at", "join"].includes(call.method) &&
+    converted !== undefined &&
+    ["fill", "slice", "copyWithin", "at", "join", "set"].includes(call.method) &&
     !call.values.some(ts.isSpreadElement) &&
-    call.values.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
-    ? call.values
+    (call.method !== "set" || call.values.length === 2) &&
+    converted.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
+    ? converted
     : undefined;
 };
 
