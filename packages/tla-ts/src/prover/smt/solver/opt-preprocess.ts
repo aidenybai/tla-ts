@@ -90,7 +90,7 @@ export class Preprocess {
       if (dual.size !== soft.size) soft = this.dualize(dual, fmls);
     }
     return {
-      soft: [...soft].map(([expr, weight]) => ({ expr, weight, value: L_UNDEF })),
+      soft: [...soft].map((entry) => ({ expr: entry[0], weight: entry[1], value: L_UNDEF })),
       lower: lower.value,
     };
   }
