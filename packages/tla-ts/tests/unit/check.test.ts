@@ -1363,6 +1363,22 @@ ASSUME TLCFP(a) = -887695703
     expect(await getCoverageCounts(definitions, config)).toEqual(expected);
   });
 
+  it("rebuilds the initial state of a counterexample that stutters there, as TLC's LiveWorker does", async () => {
+    const config = "SPECIFICATION Spec\nPROPERTY P\nCHECK_DEADLOCK FALSE";
+    const definitions =
+      "A0 == 1 \\in x /\\ x' = x \\cup {1}\nA1 == x = {} /\\ x' = x\nNext == A0 \\/ A1\nSpec == Init /\\ [][Next]_x\nP == <>(ENABLED A0)";
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = {} /\\ PrintT("i")\n${definitions}\n====`,
+      config,
+    });
+    expect(result.violation?.trace[0].output).toEqual(['"i"']);
+    expect(await getCoverageCounts(`Init == x = {}\n${definitions}`, config)).toEqual([
+      "2:2 2",
+      "0:0 1 0",
+      "0:1 2 1 1 1",
+    ]);
+  });
+
   it("replays the next-state relation after a liveness check fails to evaluate, as TLC does", async () => {
     const config = "INIT Init\nNEXT Next\nPROPERTY P";
     const property = "P == <>((CHOOSE n \\in {1, 2} : n > x) = 1)";

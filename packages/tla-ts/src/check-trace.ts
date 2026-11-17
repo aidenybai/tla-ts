@@ -132,7 +132,9 @@ export const createTraceBuilder = (context: TraceContext) => {
   ): Behavior => {
     const alias = config.alias;
     const known = traceOptions.known ?? 1;
-    const initialOutput = steps.length > 1 ? captureOutput(context.getInitialStates).lines : [];
+    // TLC's LiveWorker rebuilds the initial state of a counterexample even when it stutters.
+    const initialOutput =
+      steps.length > 1 || known === 0 ? captureOutput(context.getInitialStates).lines : [];
     const stepActions = steps.map((step, position) =>
       position === 0 || step.action === "Stuttering"
         ? { result: undefined, lines: [] }
