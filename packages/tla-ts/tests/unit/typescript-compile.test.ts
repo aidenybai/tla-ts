@@ -48434,19 +48434,25 @@ describe("BigInts", () => {
       return { path, source: readFileSync(path, "utf8") };
     };
 
-    it.each(["entry.cjs", "wrapped.ts", "mixed.ts", "typed.ts"])(
-      "agrees with Node on %s",
-      async (name) => {
-        const fixture = getFixture(name);
-        expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
-      },
-    );
+    it.each([
+      "entry.cjs",
+      "wrapped.ts",
+      "mixed.ts",
+      "typed.ts",
+      "for-in-key.cjs",
+      "chained-prototype.cjs",
+    ])("agrees with Node on %s", async (name) => {
+      const fixture = getFixture(name);
+      expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
+    });
 
     it.each([
       ["entry.cjs", "early,,1,true,string,true,true", "early,late,1,true,string,true,true"],
       ["wrapped.ts", "wrapped:2,inner,true,2", "wrapped:1,inner,true,2"],
       ["mixed.ts", "legacy,require,import", "legacy,import,import"],
       ["typed.ts", "4,sides", "3,sides"],
+      ["for-in-key.cjs", "a=1+b=2;children", "a=1+b=3;children"],
+      ["chained-prototype.cjs", "3,true,true,true", "3,false,true,true"],
     ])("rejects another outcome of %s", async (name, expected, wrong) => {
       const fixture = getFixture(name);
       const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
@@ -51997,6 +52003,124 @@ describe("BigInts", () => {
     it("rejects the key that the loop deleted", async () => {
       expect((await checkModel(getSource("a,b,c"))).failure?.message).toContain(
         "A promise rejected with no handler",
+      );
+    });
+  });
+
+  describe("returns what a call that makes an object gives through a cast", () => {
+    const getSource = (expected: string) => `
+      const base = { kind: "effect" };
+      const make = (op: string): unknown => ({ ...base, identifier: op }) as any;
+      const wrap = (label: string) => make(label) as any;
+      const first = wrap("E");
+      const second = wrap("F");
+      const seen = [first.kind, first.identifier, second.identifier, first === second].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("effect,E,F,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects another object", async () => {
+      expect((await checkModel(getSource("effect,E,E,false"))).failure?.message).toContain(
+        "seen effect,E,F,false",
+      );
+    });
+  });
+
+  describe("throws from a closure's getter that a built-in reads first, in the closure's environment", () => {
+    const getSource = (expected: string) => `
+      const make = (label: string) => ({
+        get raw(): string[] {
+          throw new Error(label + " raw");
+        },
+      });
+      const read = (label: string) => {
+        try {
+          const text = String.raw(make(label));
+          return text;
+        } catch (error) {
+          return (error as Error).message;
+        }
+      };
+      const seen = read("first") + "," + read("second");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("first raw,second raw"))).failure).toBeUndefined();
+    });
+
+    it("rejects the message of another call", async () => {
+      expect((await checkModel(getSource("first raw,first raw"))).failure?.message).toContain(
+        "seen first raw,second raw",
+      );
+    });
+  });
+
+  describe("runs a call that an object literal with methods spreads before it makes the literal", () => {
+    const getSource = (expected: string) => `
+      interface Primitive {
+        readonly kind: string;
+        readonly identifier: string;
+      }
+      const base = { kind: "effect" };
+      const make = (options: { op: string }): Primitive =>
+        ({ ...base, identifier: options.op }) as any;
+      const makeExit = (options: { op: string }) => {
+        const Proto = {
+          _tag: options.op,
+          ...make(options),
+          describe() {
+            return options.op + "!";
+          },
+        };
+        return (value: number) => {
+          const self = Object.create(Proto);
+          self.value = value;
+          return self;
+        };
+      };
+      const done = makeExit({ op: "Success" })(3);
+      const seen = [done._tag, done.kind, done.identifier, done.value, typeof done.describe].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("Success,effect,Success,3,function"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another spread", async () => {
+      expect(
+        (await checkModel(getSource("Success,effect,Failure,3,function"))).failure?.message,
+      ).toContain("seen Success,effect,Success,3,function");
+    });
+  });
+
+  describe("copies the names that a pattern binds to the closures that read them", () => {
+    const getSource = (expected: string) => `
+      const createResource = (start: string) => {
+        const { kind } = { kind: start + "!" };
+        const [size] = [start.length];
+        const read = () => kind + size;
+        return { read };
+      };
+      const first = createResource("ab");
+      const second = createResource("xyz");
+      const seen = [first.read(), second.read()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab!2,xyz!3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the names of another call", async () => {
+      expect((await checkModel(getSource("ab!3,xyz!3"))).failure?.message).toContain(
+        "seen ab!2,xyz!3",
       );
     });
   });

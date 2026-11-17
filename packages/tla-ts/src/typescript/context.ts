@@ -3983,18 +3983,27 @@ export const getCaptures = (node: Closure, context: Context) => {
     // A local of a function around the maker holds the value it had as the maker ran, which the
     // environment copies where nothing assigns it, and where it's a let, a const, or a parameter,
     // which the maker can't read before it holds its value.
+    // A name that a pattern binds holds its value from where the pattern's declaration runs.
+    const root = ts.isBindingElement(declaration)
+      ? ts.walkUpBindingElementsAndPatterns(declaration)
+      : declaration;
     const owner = ts.findAncestor(declaration.parent, ts.isFunctionLike);
     if (
-      !(ts.isVariableDeclaration(declaration) || ts.isParameter(declaration)) ||
+      !(ts.isVariableDeclaration(root) || ts.isParameter(root)) ||
+      !(
+        ts.isVariableDeclaration(declaration) ||
+        ts.isParameter(declaration) ||
+        ts.isBindingElement(declaration)
+      ) ||
       !ts.isIdentifier(declaration.name) ||
       isRepeated(node) ||
       (owner === maker
-        ? ts.isVariableDeclaration(declaration) &&
-          (isRepeated(declaration) ||
-            (declaration.end > node.getStart() && getHolder(node)?.declaration !== declaration))
+        ? ts.isVariableDeclaration(root) &&
+          (isRepeated(root) ||
+            (root.end > node.getStart() && getHolder(node)?.declaration !== root))
         : isAssigned(capture.symbol, node.getSourceFile(), context) ||
-          (ts.isVariableDeclaration(declaration) &&
-            (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.BlockScoped) === 0))
+          (ts.isVariableDeclaration(root) &&
+            (ts.getCombinedNodeFlags(root) & ts.NodeFlags.BlockScoped) === 0))
     ) {
       throw new TlaTypeScriptError(
         "tla-ts can't follow a function that outlives its call and reads this name",

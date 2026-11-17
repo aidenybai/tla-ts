@@ -304,26 +304,12 @@ export const translatePropertyKey = (node: ts.Expression, scope: Scope, context:
   const value = translateExpression(node, scope, context);
   if (getKind(node, context) === "string") return value;
   if (isNumberLike(node, context)) return translateNumberString(value, context);
-  // A type parameter's key, as Prop extends string types one, is a value of its constraint.
-  const located = context.checker.getTypeAtLocation(node);
-  const type =
-    (located.flags & ts.TypeFlags.Instantiable) === 0
-      ? located
-      : (context.checker.getBaseConstraintOfType(located) ?? located);
-  const names = getTypeNames(type, context.checker);
+  const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
   if (names?.length === 1 && names[0] === "symbol") return value;
-  // A key that TypeScript can't type, such as what a yield gives, converts as a primitive, and
-  // stops as an object, whose conversion runs code. ToPropertyKey converts a boolean, null, or
-  // undefined to its text.
-  if (
-    names?.every((name) =>
-      ["string", "number", "symbol", "boolean", "null", "undefined"].includes(name),
-    ) ||
-    (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
-  ) {
-    return useJavaScript("PropertyKey", [value], context);
-  }
-  throw new TlaTypeScriptError("Use a string, a number, or a symbol as a key", node);
+  // Any other key converts as ToPropertyKey converts a primitive, as a type parameter's or a
+  // JavaScript var's type may not tell what it holds, and stops as an object, whose conversion runs
+  // code.
+  return useJavaScript("PropertyKey", [value], context);
 };
 
 export const translateMemberKey = (name: ts.PropertyName, scope: Scope, context: Context) => {

@@ -17873,12 +17873,12 @@ const getThrowingGetters = (node: ts.Node, context: Context) =>
       getCandidateValue(getter, context) !== undefined,
   );
 
-// Runs the getter whose code a built-in reads first, where it reads one and it only throws, which
-// throws from there; otherwise runs the built-in.
+// Runs the getter that a built-in reads first, where it reads one and it only throws, which throws
+// from there; otherwise runs the built-in. A closure runs in the environment that the getter holds.
 export const throwFirstGetter = (
   node: ts.Node,
   isRead: Expression,
-  code: Expression,
+  getter: Expression,
   receiver: Expression,
   path: Path,
   context: Context,
@@ -17887,28 +17887,35 @@ export const throwFirstGetter = (
   held?: ts.Expression,
 ) =>
   getThrowingGetters(node, context)
-    .filter((getter) => isReachedGetter(getter, held))
-    .reduceRight<Formula>(
-      (rest, getter) =>
-        ifThenElse(
-          apply("/\\", [
-            isRead,
-            apply("=", [code, getCandidateValue(getter, context) ?? getUndefined(context)]),
+    .filter((candidate) => isReachedGetter(candidate, held))
+    .reduceRight<Formula>((rest, candidate) => {
+      const run = (inner: Path, innerFrame: Frame) =>
+        inlineBody(
+          node,
+          candidate,
+          [],
+          { value: receiver, method: candidate },
+          inner,
+          context,
+          innerFrame,
+          () => otherwise,
+        );
+      return ifThenElse(
+        apply("/\\", [
+          isRead,
+          apply("=", [
+            useJavaScript("CodeOf", [getHeap(path.scope, node, context), getter], context),
+            getCandidateValue(candidate, context) ?? getUndefined(context),
           ]),
-          inlineBody(
-            node,
-            getter,
-            [],
-            { value: receiver, method: getter },
-            path,
-            context,
-            frame,
-            () => otherwise,
-          ),
-          rest,
-        ),
-      otherwise,
-    );
+        ]),
+        isClosure(candidate, context)
+          ? enterClosure(candidate, getter, path, context, frame, (inner, innerFrame) =>
+              run(inner, innerFrame),
+            )
+          : run(path, frame),
+        rest,
+      );
+    }, otherwise);
 
 const translateLoop = (
   loop: ts.IterationStatement,
@@ -19328,10 +19335,18 @@ const getLeadingAssignment = (
   }
   const isPattern =
     ts.isArrayLiteralExpression(node.left) || ts.isObjectLiteralExpression(node.left);
-  // A value that assigns a property, as in a = b.x = v, runs first, since the setter it may run
-  // can't change which binding a name or a pattern writes.
+  // A value that assigns a property, as in a = b.x = v, runs first, since the setter it may run,
+  // or a call or a new that makes v, can't change which binding a name or a pattern writes.
   if (ts.isIdentifier(node.left) || isPattern) {
-    return getLeadingAssignment(node.right, results, context) ?? node;
+    const value = skipCasts(node.right);
+    return (
+      getLeadingAssignment(node.right, results, context) ??
+      (ts.isBinaryExpression(value) &&
+      value.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      !results.has(value)
+        ? value
+        : node)
+    );
   }
   // A property's assignment evaluates its object and key, then its value.
   const inner = getLeadingAssignment(node.right, results, context);
@@ -19826,25 +19841,24 @@ const findLeadingCall = (
   }
   if (ts.isArrayLiteralExpression(node)) return inOrder(node.elements);
   if (ts.isOmittedExpression(node)) return none;
+  // A method or an accessor evaluates only its computed key, as it makes a function that nothing
+  // can call before the literal is made.
   if (ts.isObjectLiteralExpression(node)) {
-    return node.properties.every(
-      (property) =>
-        ts.isPropertyAssignment(property) ||
-        ts.isShorthandPropertyAssignment(property) ||
-        ts.isSpreadAssignment(property),
-    )
-      ? inOrder(
-          node.properties.flatMap((property): ts.Node[] =>
-            ts.isPropertyAssignment(property)
-              ? ts.isComputedPropertyName(property.name)
-                ? [property.name.expression, property.initializer]
-                : [property.initializer]
-              : ts.isShorthandPropertyAssignment(property)
-                ? [property.name]
-                : [property],
-          ),
-        )
-      : blocked;
+    return inOrder(
+      node.properties.flatMap((property): ts.Node[] =>
+        ts.isPropertyAssignment(property)
+          ? ts.isComputedPropertyName(property.name)
+            ? [property.name.expression, property.initializer]
+            : [property.initializer]
+          : ts.isShorthandPropertyAssignment(property)
+            ? [property.name]
+            : ts.isSpreadAssignment(property)
+              ? [property]
+              : ts.isComputedPropertyName(property.name)
+                ? [property.name.expression]
+                : [],
+      ),
+    );
   }
   if (ts.isTemplateExpression(node)) {
     return thenConverted(inOrder(node.templateSpans.map((span) => span.expression)));
@@ -21792,18 +21806,20 @@ export const translateStatements = (
       if (constructor !== undefined && ts.isNewExpression(returned)) {
         return translateConstruction(returned, constructor, inner, context, statementFrame, exit);
       }
-      // A call that makes an object, such as Object(1), made it as the return allocated it.
+      // A call that makes an object, such as Object(1), made it as the return allocated it. A cast
+      // of a call returns what the call gives.
+      const called = skipCasts(returned);
       if (
-        ts.isCallExpression(returned) &&
-        !inner.scope.allocated.has(returned) &&
-        (!isLibraryCall(returned, context) ||
-          isPromiseCall(returned, context) ||
-          getLoopCall(returned, inner, context) !== undefined ||
-          isObjectChange(returned, context) ||
-          isStatementResult(returned, inner, context) ||
-          isRemoving(returned, context))
+        ts.isCallExpression(called) &&
+        !inner.scope.allocated.has(called) &&
+        (!isLibraryCall(called, context) ||
+          isPromiseCall(called, context) ||
+          getLoopCall(called, inner, context) !== undefined ||
+          isObjectChange(called, context) ||
+          isStatementResult(called, inner, context) ||
+          isRemoving(called, context))
       ) {
-        return translateCallStatement(returned, inner, context, statementFrame, exit);
+        return translateCallStatement(called, inner, context, statementFrame, exit);
       }
       return throwReadError(
         returned,
