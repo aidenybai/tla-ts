@@ -191,6 +191,8 @@ export class Context extends Internalizer {
   private r1ParentGenerations = new Map<Enode, number>();
   private erasedGenerations = new Map<Enode, number>();
   private lastSearchFailure: SearchFailure = FAILURE_OK;
+  // m_unknown: the reason while the last search did not fail, which no new search resets.
+  reasonUnknown = "unknown";
   private hasCaseSplit = true;
   private incompleteTheories: Theory[] = [];
   private modelState: ModelState = { kind: "none" };
@@ -243,8 +245,11 @@ export class Context extends Internalizer {
     return family < 0 ? undefined : this.theoryByFamily[family];
   }
 
+  // get_cancel_flag records the cancel as the failure of the search.
   checkCanceled() {
-    return !this.manager.limit.inc();
+    if (this.manager.limit.inc()) return false;
+    this.lastSearchFailure = FAILURE_CANCELED;
+    return true;
   }
 
   assign(literal: Literal, justification: BJustification, isDecision = false) {
@@ -1277,7 +1282,7 @@ export class Context extends Internalizer {
     if (this.lastSearchFailure === FAILURE_QUANTIFIERS) return "(incomplete quantifiers)";
     if (this.lastSearchFailure === FAILURE_THEORY)
       return `(incomplete (theory${this.incompleteTheories.map((theory) => ` ${theory.name}`).join("")}))`;
-    return "unknown";
+    return this.reasonUnknown;
   }
 
   private hasCaseSplits() {

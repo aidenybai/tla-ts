@@ -2,7 +2,7 @@ import { SmtTacticError } from "../../../../errors";
 import type { AstManager } from "../ast";
 import type { ThSolverFactory } from "../euf/euf-solver";
 import { OVER, type Goal } from "../goal";
-import { L_FALSE, L_TRUE } from "../lbool";
+import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ProtoModel } from "../proto-model";
 import type { SatParams } from "./config";
 import { Goal2Sat } from "./goal2sat";
@@ -20,6 +20,7 @@ export const createSatTactic =
     goal2sat.run(goal.forms.items);
     goal.reset();
     const result = solver.check();
+    if (result === L_UNDEF) goal.reasonUnknown = solver.reasonUnknown;
     const unhandledFuns = goal2sat.euf?.unhandledFunctions ?? goal2sat.unhandledFuns;
     if (result === L_FALSE) goal.assert(manager.falseExpr);
     else if (result === L_TRUE && unhandledFuns.length === 0) {

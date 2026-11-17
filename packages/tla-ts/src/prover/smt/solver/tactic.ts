@@ -339,6 +339,12 @@ export const getSatParams = (parameters: ReadonlyMap<string, string>) =>
       }),
   );
 
+// The message smt_tactic fails with when its context leaves the goal undecided.
+export const getSmtTacticFailure = (context: Context) =>
+  context.checkCanceled()
+    ? "canceled"
+    : `smt tactic failed to show goal to be sat/unsat ${context.getLastFailureMessage()}`;
+
 // sat_params reads what using-params leaves unset from the sat module's global parameters.
 const getSatTacticParams = (environment: TacticEnvironment, params: TacticParams) =>
   new Map([...getSatParams(environment.parameters), ...params]);
@@ -355,7 +361,7 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
       ? solveGoal(manager, goal.forms.items, kernelParams)
       : solveAssuming(manager, extracted.clauses.items, extracted.assumptions, kernelParams);
   extracted.clauses.reset();
-  if (solved.result === L_UNDEF) throw new SmtTacticError(solved.context.getLastFailureMessage());
+  if (solved.result === L_UNDEF) throw new SmtTacticError(getSmtTacticFailure(solved.context));
   goal.reset();
   if (solved.result === L_FALSE)
     goal.assert(environment.manager.falseExpr, mkCoreDependency(solved.context.unsatCore));
@@ -1880,7 +1886,7 @@ interface TacticCheck {
   status: number;
   model: ProtoModel | undefined;
   core: Dependency | undefined;
-  // What check_sat leaves in reason_unknown, or undefined where the port does not track it.
+  // What check_sat leaves in reason_unknown, or undefined once the resource limit stopped the tactic.
   reasonUnknown: string | undefined;
 }
 
@@ -1959,21 +1965,26 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
       throw error;
     }
   })();
+  if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
   if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
-  if (goals !== undefined && isDecidedSat(goals)) {
+  if (isDecidedSat(goals)) {
     const model = convertModel(goals[0], goals[0].model ?? new ProtoModel(goal.manager));
     return goal.manager.limit.inc()
       ? { status: L_TRUE, model, core: undefined, reasonUnknown: "" }
       : { ...undecided, model, reasonUnknown: "canceled" };
   }
-  if (goals !== undefined && isDecidedUnsat(goals))
+  if (isDecidedUnsat(goals))
     return {
       status: L_FALSE,
       model: undefined,
       core: goals[0].getDependency(0),
       reasonUnknown: "",
     };
-  return { ...undecided, reasonUnknown: undefined };
+  return {
+    ...undecided,
+    reasonUnknown:
+      goals.length === 1 && goals[0].reasonUnknown !== "" ? goals[0].reasonUnknown : "unknown",
+  };
 };
 
 export const applyTactic = (tactic: Tactic, goal: Goal) => {

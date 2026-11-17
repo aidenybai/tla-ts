@@ -82,6 +82,8 @@ export class Goal {
   model: ProtoModel | undefined;
   isProofsEnabled = false;
   isCoresEnabled = false;
+  // Set only by the sat tactic, and not copied with the goal.
+  reasonUnknown = "";
 
   constructor(readonly manager: AstManager) {
     this.forms = new RefVector(manager);
