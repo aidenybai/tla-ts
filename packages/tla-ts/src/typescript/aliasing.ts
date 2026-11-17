@@ -5,6 +5,7 @@ import { isSelfReturning, MUTATING_METHODS } from "./collections";
 import {
   type Context,
   findNodes,
+  findReferences,
   getCallee,
   getSymbol,
   hasObjectLiteral,
@@ -13,6 +14,7 @@ import {
   isMethodCall,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { getPosition } from "./program-nodes";
 import { type Scope } from "./scope";
 import {
   getKind,
@@ -529,29 +531,63 @@ const getEscapes = (
 // The model's file, with the declarations in other files that it names and that they name in turn,
 // which hold every function of another file that the model may run.
 export const getReached = (roots: readonly ts.Node[], context: Context) => {
+  const table = context.nodes;
   const reached = [...roots];
-  const seen = new Set<ts.Node>(reached);
-  const visit = (node: ts.Node): void => {
-    // A type runs nothing, though a class's base, which TypeScript parses as one, runs.
-    if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
-    if (
-      (ts.isImportDeclaration(node) && node.importClause?.isTypeOnly === true) ||
-      (ts.isImportSpecifier(node) && node.isTypeOnly)
-    ) {
-      return;
-    }
-    const declarations = ts.isIdentifier(node)
-      ? (getSymbol(node, context.checker)?.declarations ?? [])
-      : [];
-    // A module's namespace object reaches only the exports that a script reads through it.
-    for (const declaration of declarations.filter((inner) => !ts.isSourceFile(inner))) {
+  // The walk's mark on each node of the program's files that it has seen, and the few nodes that no
+  // file walks to, such as JSDoc's.
+  table.generation += 1;
+  const generation = table.generation;
+  const seenElsewhere = new Set<ts.Node>();
+  const hasSeen = (node: ts.Node, position: number) =>
+    position < 0 ? seenElsewhere.has(node) : table.marks[position] === generation;
+  const see = (node: ts.Node, position: number) => {
+    if (position < 0) seenElsewhere.add(node);
+    else table.marks[position] = generation;
+  };
+  roots.forEach((root) => see(root, getPosition(table, root)));
+  // A type runs nothing, though a class's base, which TypeScript parses as one, runs.
+  const isSkipped = (node: ts.Node) =>
+    (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) ||
+    (ts.isImportDeclaration(node) && node.importClause?.isTypeOnly === true) ||
+    (ts.isImportSpecifier(node) && node.isTypeOnly);
+  // A module's namespace object reaches only the exports that a script reads through it.
+  const reach = (symbol: ts.Symbol | undefined) => {
+    for (const declaration of symbol?.declarations ?? []) {
+      if (ts.isSourceFile(declaration)) continue;
+      const position = getPosition(table, declaration);
       const file = declaration.getSourceFile();
-      if (seen.has(file) || file.isDeclarationFile || seen.has(declaration)) continue;
-      seen.add(declaration);
+      if (
+        hasSeen(file, position < 0 ? getPosition(table, file) : table.files[position]) ||
+        file.isDeclarationFile ||
+        hasSeen(declaration, position)
+      ) {
+        continue;
+      }
+      see(declaration, position);
       reached.push(declaration);
       visit(declaration);
     }
-    ts.forEachChild(node, visit);
+  };
+  // A walk of a file's node scans the node's subtree in the table, past the subtrees it skips.
+  const visit = (node: ts.Node): void => {
+    const start = getPosition(table, node);
+    if (start < 0) {
+      if (isSkipped(node)) return;
+      if (ts.isIdentifier(node)) reach(getSymbol(node, context.checker));
+      ts.forEachChild(node, visit);
+      return;
+    }
+    const end = table.ends[start];
+    let position = start;
+    while (position < end) {
+      const inner = table.nodes[position];
+      if (isSkipped(inner)) {
+        position = table.ends[position];
+        continue;
+      }
+      if (ts.isIdentifier(inner)) reach(context.references.symbols[position]);
+      position += 1;
+    }
   };
   roots.forEach(visit);
   return reached;
@@ -601,22 +637,6 @@ const isFreshCall = (node: ts.Node, context: Context) => {
 // The first read that would share an object that changes in place, which a TLA+ value would copy,
 // with the variable that it reads, where it reads one, in the code that getReached finds.
 export const findSharing = (reached: readonly ts.Node[], context: Context) => {
-  // The references to each symbol in a file, which one walk of the file finds.
-  const fileReferences = new Map<ts.SourceFile, Map<ts.Symbol, ts.Identifier[]>>();
-  const getReferences = (sourceFile: ts.SourceFile) => {
-    const known = fileReferences.get(sourceFile);
-    if (known !== undefined) return known;
-    const references = new Map<ts.Symbol, ts.Identifier[]>();
-    findNodes(sourceFile, ts.isIdentifier).forEach((identifier) => {
-      const symbol = getSymbol(identifier, context.checker);
-      if (symbol === undefined) return;
-      const found = references.get(symbol);
-      if (found === undefined) references.set(symbol, [identifier]);
-      else found.push(identifier);
-    });
-    fileReferences.set(sourceFile, references);
-    return references;
-  };
   // Whether a reference to a function's own variable is the last that runs, so that nothing
   // changes the variable's array after the reference shares it.
   const isLastUse = (node: ts.Node, symbol: ts.Symbol) => {
@@ -654,7 +674,7 @@ export const findSharing = (reached: readonly ts.Node[], context: Context) => {
           const other = inner === parent.whenTrue ? parent.whenFalse : parent.whenTrue;
           return ts.findAncestor(reference, (outer) => outer === other) !== undefined;
         }) !== undefined;
-      return (getReferences(declaration.getSourceFile()).get(symbol) ?? []).every(
+      return findReferences(symbol, declaration.getSourceFile(), context).every(
         (reference) =>
           reference === declaration.name ||
           reference === node ||
@@ -675,7 +695,7 @@ export const findSharing = (reached: readonly ts.Node[], context: Context) => {
     // A variable that no file exports has its references only in the function that declares it.
     return (
       !isRepeated &&
-      (getReferences(declaration.getSourceFile()).get(symbol) ?? []).every(
+      findReferences(symbol, declaration.getSourceFile(), context).every(
         (reference) =>
           reference === declaration.name ||
           reference === node ||

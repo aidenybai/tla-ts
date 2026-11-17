@@ -62,6 +62,7 @@ import {
   isAsyncGenerator,
   isStrictCode,
 } from "./context";
+import { getPosition } from "./program-nodes";
 import { TlaTypeScriptError } from "../errors";
 import {
   ARRAY_ITERATOR_REPLACED,
@@ -79,6 +80,7 @@ import { isParsedObject, translateParsedObjects } from "./json";
 import { getCalledError, getConstructor, getErrorClass, isNativeErrorName } from "./exceptions";
 import {
   getThisValue,
+  isGlobalObjectVar,
   translateElements,
   translateCondition,
   translateCall,
@@ -90,7 +92,9 @@ import {
 } from "./expressions";
 import {
   getBuiltIn,
+  getBuiltInBinding,
   getGeneratorPrototypeRef,
+  translateBoundBuiltIn,
   isBuiltInObject,
   translateBuiltInObject,
   translateBuiltInValue,
@@ -1569,6 +1573,82 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
     );
   }
 
+  const builtInBinding = getBuiltInBinding(node, context);
+  if (builtInBinding !== undefined) {
+    const properties = BUILT_INS[builtInBinding.path];
+    const getProperty = (key: string) =>
+      properties[3].find((property) => property[0] === key && property.length === 3)?.[2];
+    const length = getProperty("length");
+    const name = getProperty("name");
+    if (length?.startsWith("n") !== true || name?.startsWith("s") !== true) {
+      throw new TlaTypeScriptError(`tla-ts can't bind ${builtInBinding.path}`, node);
+    }
+    const targetLength = Number(length.slice(1));
+    return share(
+      translateExpression(builtInBinding.target, scope, context),
+      "target",
+      context,
+      (target) =>
+        ifExpression(
+          junction("And", [
+            useJavaScript(
+              "SameValue",
+              [target, translateBoundBuiltIn(builtInBinding.path, node, context)],
+              context,
+            ),
+            useJavaScript(
+              "HoldsBuiltIn",
+              [heap, target, string("bind"), string("Function.prototype.bind")],
+              context,
+            ),
+            useJavaScript(
+              "SameValue",
+              [
+                useJavaScript("Get", [heap, target, string("length")], context),
+                number(targetLength),
+              ],
+              context,
+            ),
+            useJavaScript(
+              "SameValue",
+              [
+                useJavaScript("Get", [heap, target, string("name")], context),
+                string(name.slice(1)),
+              ],
+              context,
+            ),
+            // The receiver and the arguments that bind binds run, though only a call reads them.
+            ...builtInBinding.arguments.map((argument) => {
+              const value = translateExpression(argument, scope, context);
+              return apply("=", [value, value]);
+            }),
+          ]),
+          useJavaScript(
+            "Allocate",
+            [
+              heap,
+              useJavaScript(
+                "BoundFunctionObject",
+                [
+                  useJavaScript("Prototype", [heap, target], context),
+                  string(name.slice(1)),
+                  number(
+                    Math.max(0, targetLength - Math.max(0, builtInBinding.arguments.length - 1)),
+                  ),
+                  boolean(properties[4]),
+                ],
+                context,
+              ),
+            ],
+            context,
+          ),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which function this bind binds"),
+          ]),
+        ),
+    );
+  }
   const binding = getBinding(node, context);
   if (binding !== undefined) {
     const targetLength = getFunctionLength(getParameters(binding.target));
@@ -2313,7 +2393,22 @@ export const isDescription = (node: ts.Node, context: Context) =>
   (["object", "sequence"].includes(getKind(node.arguments[0], context)) ||
     isBuiltInObject(node.arguments[0], context) ||
     (node.expression.expression.getText() === "Object" &&
-      getKind(node.arguments[0], context) === "string"));
+      getKind(node.arguments[0], context) === "string") ||
+    isUntypedObject(node.arguments[0], context));
+
+// A global that the global object holds, whose type tells an object though only declarations give
+// it, such as the DOM's window, which holds what a script defines there.
+const isUntypedObject = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getTypeAtLocation(node);
+  return (
+    ts.isIdentifier(node) &&
+    isGlobalObjectVar(node, context) &&
+    getKind(node, context) === "other" &&
+    type.getCallSignatures().length === 0 &&
+    type.getConstructSignatures().length === 0 &&
+    isEvery(type, ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive | ts.TypeFlags.Intersection)
+  );
+};
 
 // A number that reading changes nothing, such as -Infinity or Math.PI.
 const isConstantNumber = (node: ts.Expression, context: Context): boolean =>
@@ -2522,6 +2617,7 @@ const getOrderedSetMethod = (node: ts.Node, context: Context) =>
 
 export const isAllocation = (node: ts.Node, context: Context) =>
   getBinding(node, context) !== undefined ||
+  getBuiltInBinding(node, context) !== undefined ||
   (ts.isCallExpression(node) &&
     (isDescription(node, context) ||
       isDescriptionOfAll(node, context) ||
@@ -4703,8 +4799,8 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
   const accesses: (ts.PropertyAccessExpression | ts.ElementAccessExpression)[] = [];
   const objects: ts.ObjectLiteralExpression[] = [];
   const expressions: ts.Expression[] = [];
-  const visit = (node: ts.Node) => {
-    const symbol = ts.isIdentifier(node) ? getSymbol(node, checker) : undefined;
+  // Collects what a node is, and tells whether the walk goes on into its children.
+  const collect = (node: ts.Node, symbol: ts.Symbol | undefined) => {
     if (ts.isIdentifier(node) && symbol !== undefined) {
       const found = references.get(symbol);
       if (found === undefined) references.set(symbol, [node]);
@@ -4714,22 +4810,38 @@ export const findChangedArrays = (reached: readonly ts.Node[], context: Context)
       accesses.push(node);
     }
     if (ts.isObjectLiteralExpression(node)) objects.push(node);
-    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return;
-    if (ts.isHeritageClause(node) && ts.isInterfaceDeclaration(node.parent)) return;
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) return false;
+    if (ts.isHeritageClause(node) && ts.isInterfaceDeclaration(node.parent)) return false;
     if (
       ts.isExpression(node) &&
       !(
         ts.isIdentifier(node) &&
-        getSymbol(node, checker)?.declarations?.some(
-          (declaration) => ts.getNameOfDeclaration(declaration) === node,
-        )
+        symbol?.declarations?.some((declaration) => ts.getNameOfDeclaration(declaration) === node)
       )
     ) {
       expressions.push(node);
     }
-    if (!ts.isTypeNode(node)) ts.forEachChild(node, visit);
+    return !ts.isTypeNode(node);
   };
-  new Set(reached.map((node) => node.getSourceFile())).forEach(visit);
+  const visit = (node: ts.Node) => {
+    if (collect(node, ts.isIdentifier(node) ? getSymbol(node, checker) : undefined)) {
+      ts.forEachChild(node, visit);
+    }
+  };
+  // A file of the program's files is scanned in its table, past the subtrees the walk skips.
+  new Set(reached.map((node) => node.getSourceFile())).forEach((file) => {
+    const table = context.nodes;
+    const start = getPosition(table, file);
+    if (start < 0) {
+      visit(file);
+      return;
+    }
+    let position = start;
+    while (position < table.ends[start]) {
+      const isEntered = collect(table.nodes[position], context.references.symbols[position]);
+      position = isEntered ? position + 1 : table.ends[position];
+    }
+  });
   const getFields = (type: ts.Type, name: string) =>
     (type.isUnion() || type.isIntersection() ? type.types : [type]).flatMap(
       (member) => checker.getPropertyOfType(member, name) ?? [],

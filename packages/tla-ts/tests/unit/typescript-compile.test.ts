@@ -18704,22 +18704,23 @@ describe("errors", () => {
     });
   });
 
-  it("stops at a typeof of a let inside try before its declaration, as at a read of it", () => {
-    expect(() =>
-      compile(`
-        const seen: string[] = [];
-        const note = (run: () => string) => {
-          try {
-            seen.push(run());
-          } catch (error) {
-            seen.push(error instanceof ReferenceError ? "reference" : "other");
-          }
-        };
-        note(() => typeof counter);
-        let counter = 1;
-        if (seen.join() !== "reference") throw new Error(seen.join());
-      `),
-    ).toThrow("Inside try, use counter after its declaration");
+  it("stops at a typeof of a let inside try before its declaration, as at a read of it", async () => {
+    const result = await checkModel(`
+      const seen: string[] = [];
+      const note = (run: () => string) => {
+        try {
+          seen.push(run());
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      note(() => typeof counter);
+      let counter = 1;
+      if (seen.join() !== "reference") throw new Error(seen.join());
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't throw the ReferenceError of reading counter before its declaration",
+    );
   });
 
   describe("throws the ReferenceError of a class's name before its declaration finishes", () => {
@@ -18756,22 +18757,23 @@ describe("errors", () => {
     });
   });
 
-  it("stops at a read of a class inside try before its declaration, as at a let's", () => {
-    expect(() =>
-      compile(`
-        const seen: string[] = [];
-        const note = (run: () => string) => {
-          try {
-            seen.push(run());
-          } catch (error) {
-            seen.push(error instanceof ReferenceError ? "reference" : "other");
-          }
-        };
-        note(() => String(Shape));
-        class Shape {}
-        if (seen.join() !== "reference") throw new Error(seen.join());
-      `),
-    ).toThrow("Inside try, use Shape after its declaration");
+  it("stops at a read of a class inside try before its declaration, as at a let's", async () => {
+    const result = await checkModel(`
+      const seen: string[] = [];
+      const note = (run: () => string) => {
+        try {
+          seen.push(run());
+        } catch (error) {
+          seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      note(() => String(Shape));
+      class Shape {}
+      if (seen.join() !== "reference") throw new Error(seen.join());
+    `);
+    expect(result.failure?.message).toContain(
+      "tla-ts can't throw the ReferenceError of reading Shape before its declaration",
+    );
   });
 
   describe("constructs a function expression that new calls where the script writes it", () => {
@@ -49487,6 +49489,377 @@ describe("BigInts", () => {
       expect(() => compile("// @ts-ignore\ntoString = 5;")).toThrow(
         "tla-ts can't make a global outside strict mode that Object.prototype names",
       );
+    });
+  });
+
+  describe("type checks a package's JavaScript against its declarations", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/declared.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = source.replace('"import,2,1"', '"import,1,1"');
+      await expect(check(compile(wrong, path))).rejects.toThrow("seen import,2,1");
+    });
+
+    it("rejects a value that the declarations' types rule out", () => {
+      expect(() => compile(source.replace("= label;", '= "other";'), path)).toThrow(
+        `Type '"other"' is not assignable to type 'Label'`,
+      );
+    });
+  });
+
+  describe("skips an optional call of undefined, as a statement", () => {
+    const getSource = (expected: string) => `
+      const box = { calls: [] as string[] };
+      const run = (name: string, onReady?: () => void) => {
+        box.calls.push(name);
+        onReady?.();
+      };
+      try {
+        run("first");
+      } catch {
+        box.calls.push("caught");
+      }
+      run("second", () => {
+        box.calls.push("ready");
+      });
+      run("third", undefined);
+      const seen = box.calls.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("first,second,ready,third"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect(
+        (await checkModel(getSource("first,caught,second,ready,third"))).failure?.message,
+      ).toContain("seen first,second,ready,third");
+    });
+  });
+
+  describe("compiles a read inside try before its declaration where it never runs", () => {
+    const getSource = (expected: string, isEarly = false) => `
+      const box = { seen: [] as string[] };
+      const note = (run?: () => void) => {
+        try {
+          box.seen.push("note");
+          run?.();
+        } catch (error) {
+          box.seen.push(error instanceof ReferenceError ? "reference" : "other");
+        }
+      };
+      const start = () => note(${isEarly ? "() => box.seen.push(String(counter))" : ""});
+      start();
+      let counter = 1;
+      note(() => {
+        box.seen.push(String(counter));
+      });
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("note,note,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("note,1"))).failure?.message).toContain(
+        "seen note,note,1",
+      );
+    });
+
+    it("stops where the read runs", async () => {
+      expect(
+        (await checkModel(getSource("note,reference,note,1", true))).failure?.message,
+      ).toContain(
+        "tla-ts can't throw the ReferenceError of reading counter before its declaration",
+      );
+    });
+  });
+
+  describe("binds a built-in method that a read of a library method gives", () => {
+    const getSource = (expected: string) => `
+      const box: { seen: string[] } = { seen: [] };
+      const target: Record<string, unknown> = { own: 1 };
+      const original = target.hasOwnProperty.bind(target);
+      Object.defineProperty(target, "hasOwnProperty", {
+        configurable: true,
+        value: (key: PropertyKey) => key === "own",
+        writable: true,
+      });
+      const larger = Math.max.bind(null, 1);
+      box.seen.push(typeof original, original.name, String(original.length), larger.name);
+      box.seen.push(String(larger.length));
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("function,bound hasOwnProperty,1,bound max,1"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const result = await checkModel(getSource("function,bound hasOwnProperty,0,bound max,1"));
+      expect(result.failure?.message).toContain("seen function,bound hasOwnProperty,1,bound max,1");
+    });
+
+    it("stops where the read gives another function", async () => {
+      const result = await checkModel(`
+        const target: Record<string, unknown> = {};
+        Object.defineProperty(target, "hasOwnProperty", { value: () => true });
+        const original = target.hasOwnProperty.bind(target);
+        if (original.name !== "bound value") throw new Error(original.name);
+      `);
+      expect(result.failure?.message).toContain("tla-ts can't tell which function this bind binds");
+    });
+  });
+
+  describe("describes a property of a global that only the DOM's types declare", () => {
+    const getSource = (expected: string) => `
+      declare global {
+        interface Frame {
+          label: string;
+        }
+        var window: Frame & typeof globalThis;
+      }
+      const box: { seen: string[] } = { seen: [] };
+      const read = () => {
+        if (typeof window === "undefined") {
+          box.seen.push("none");
+          return;
+        }
+        const described = Object.getOwnPropertyDescriptor(window, "label");
+        box.seen.push(String(described?.value), String(described?.writable));
+      };
+      read();
+      Object.defineProperty(globalThis, "window", { value: { label: "own" }, configurable: true });
+      read();
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("none,own,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("none,own,false"))).failure?.message).toContain(
+        "seen none,own,true",
+      );
+    });
+  });
+
+  describe("runs an optional call of a method that a class declares, as a statement", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      class Base {
+        method() {
+          box.seen.push(this instanceof Child ? "child" : "base");
+        }
+      }
+      class Child extends Base {
+        method() {
+          super.method?.();
+          box.seen.push("after");
+        }
+      }
+      new Child().method();
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("child,after"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("base,after"))).failure?.message).toContain(
+        "seen child,after",
+      );
+    });
+  });
+
+  describe("forces what a name in a function that an expression calls binds, not a copy of it", () => {
+    const getNested = (helpers: number, position = 1): string =>
+      position > helpers
+        ? "id"
+        : `(y${position}: number): number => h${position}(${getNested(helpers, position + 1)}, y${position})`;
+    const getSource = (helpers: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function h${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value + ${position + 1};
+        }`,
+      ).join("\n")}
+      const id = (x: number): number => x;
+      const result = (${getNested(helpers)})(0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, 6))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(3, 7))).failure?.message).toContain("result 6");
+    });
+
+    it("grows by less than a copy of each value for each call", () => {
+      expect(getSize(4)).toBeLessThan(getSize(3) * 5);
+    });
+  });
+
+  describe("runs each function that a call through a value may run as one operator", () => {
+    const getNested = (helpers: number, position = 1): string =>
+      position > helpers
+        ? "id"
+        : `(y${position}: number): number => h${position}(${getNested(helpers, position + 1)}, y${position})`;
+    const getSource = (helpers: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function h${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value + ${position + 1};
+        }`,
+      ).join("\n")}
+      const id = (x: number): number => x;
+      const result = (${getNested(helpers)})(0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(4, 10))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(4, 11))).failure?.message).toContain("result 10");
+    });
+
+    it("grows with the functions rather than with the ways to nest their calls", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 3);
+    });
+  });
+
+  describe("runs a helper that a statement's call through a value may run as the helper's operator", () => {
+    const getSource = (helpers: number, expected: number) => `
+      const log: { n: number } = { n: 0 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function guard${position + 1}(run: () => unknown): number {
+          try {
+            run();
+            return 0;
+          } catch (error) {
+            log.n += ${position + 1};
+            return 1;
+          }
+        }`,
+      ).join("\n")}
+      function twice(f: any): any {
+        return function (x: any): any {
+          return f(f(x));
+        };
+      }
+      const increment = (x: number): number => x + 1;
+      const twiceIncrement: any = twice(increment);
+      const result: number = twiceIncrement(0);
+      const guarded: number = ${Array.from({ length: helpers }, (_, position) => `guard${position + 1}(() => 0)`).join(" + ")};
+      if (result !== ${expected} || guarded !== 0 || log.n !== 0) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2, 2))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(2, 3))).failure?.message).toContain("result 2");
+    });
+
+    it("grows with the helpers rather than with a copy of each for each call", () => {
+      expect(getSize(4)).toBeLessThan(getSize(2) * 2.2);
+    });
+  });
+
+  describe("runs the functions that calls through values may run through one operator for them all", () => {
+    const getSource = (functions: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: functions },
+        (_, position) => `function add${position + 1}(x: number): number {
+          return x + ${position + 1};
+        }
+        function run${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value * 2;
+        }`,
+      ).join("\n")}
+      const total: number = ${Array.from(
+        { length: functions },
+        (_, position) => `run${position + 1}(add${position + 1}, box.a)`,
+      ).join(" + ")};
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+    const getSize = (functions: number) =>
+      printModule(compile(getSource(functions, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, 18))).failure).toBeUndefined();
+    });
+
+    it("rejects another total", async () => {
+      expect((await checkModel(getSource(3, 17))).failure?.message).toContain("total 18");
+    });
+
+    it("grows with the calls and the functions rather than with each call for each function", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2.3);
+    });
+  });
+
+  describe("runs a helper that a function's operator calls by name as an operator too", () => {
+    const getSource = (helpers: number, expected: number) => `
+      const box: { a: number } = { a: 1 };
+      ${Array.from(
+        { length: helpers },
+        (_, position) => `function h${position + 1}(f: any, x: number): number {
+          const value: number = f(x);
+          return value + ${position + 1};
+        }`,
+      ).join("\n")}
+      ${Array.from(
+        { length: helpers - 1 },
+        (_, position) =>
+          `const c${position + 1} = (y: number): number => h${position + 2}(c${position + 2}, y);`,
+      ).join("\n")}
+      const c${helpers} = (y: number): number => y + box.a;
+      const first: any = c1;
+      const result: number = h1(first, 0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (helpers: number) => printModule(compile(getSource(helpers, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3, 7))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(3, 8))).failure?.message).toContain("result 7");
+    });
+
+    it("grows with the helpers rather than with the ways their calls nest", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 2);
     });
   });
 });

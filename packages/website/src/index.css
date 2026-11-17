@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "allo-font";
 @import "@fontsource-variable/geist-mono";
 @import "@fontsource/caveat/600.css";
 
@@ -66,7 +67,7 @@
 }
 
 @theme inline {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Allo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-hand: "Caveat", cursive;
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --color-background: var(--background);

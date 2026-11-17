@@ -157,6 +157,7 @@ export const emit = (
       return definition;
     }),
     ...context.stateCalls.values(),
+    ...context.dispatchCalls.values(),
     ...[...context.sharedCalls.values()].flat().filter((shared) => shared.isRecursive),
   ].map((definition): Declaration => ({
     name: definition.name,
