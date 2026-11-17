@@ -6,7 +6,7 @@ When implementing anything in this project, clone `tlaplus/tlaplus` locally and 
 
 - Match TLC's semantics. When behavior is unclear, run the spec through TLC and compare.
 - Match SANY, tlapm, Z3, Zenon and Isabelle the same way. Read the reference source at the commit the port tracks, and compare output byte for byte.
-- Never copy a reference bug. Where the reference gives a wrong answer, crashes or hangs, keep tla-ts correct, add a test, and list the deviation in the PR.
+- Never copy a reference bug. Where the reference gives a wrong answer, crashes or hangs, keep tla-ts correct, add a one-line `// Deviation from <tool>: …` comment and a test, and list the deviation in the PR. Any other difference from the reference is a bug to fix.
 - Never port unsound reference behavior, such as Zenon's wrong rule for a subset of an intersection.
 - Never add a default or inference that lets a buggy spec pass. tla-ts doesn't infer `@initially`, because that would turn a buggy invariant into a filter.
 - Never run an external solver from `PATH`. A prover without a port reports `tla-ts has no <prover> backend`.
@@ -112,6 +112,7 @@ Aim for zero comments. Delete a comment unless it is one of these:
 - `// HACK: reason` on a hack, such as a `setTimeout`
 - One-line JSDoc on what `src/index.ts` exports, except on fields whose name already says it
 - One line on a quirk of TLC, SANY, tlapm, Z3, Zenon, Isabelle, V8, Node or Bun that the code copies and a reader would otherwise "fix"
+- `// Deviation from <tool>: …` where tla-ts corrects a bug in the reference
 - An issue or spec link for a constraint the code can't express
 
 Delete everything else, including:
