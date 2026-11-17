@@ -614,4 +614,40 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
       "sat",
     ]);
   });
+
+  it("reports a token before the closing parenthesis of push, pop, reset and get-value", () => {
+    expect(
+      run([
+        "(set-option :print-success true)",
+        "(declare-const x Int)",
+        "(push 1 2)",
+        "(push x)",
+        "(pop 1 x)",
+        "(pop 0 1)",
+        "(pop 5 1)",
+        "(pop 1 2)",
+        "(check-sat)",
+        "(get-value (x) 1)",
+        "(get-value (x) :foo)",
+        "(reset 1)",
+        "(check-sat)",
+        "(reset)",
+      ]),
+    ).toEqual([
+      "success",
+      "success",
+      `(error "line 3 column 8: invalid push command, ')' expected")`,
+      '(error "line 4 column 6: invalid push command, integer expected")',
+      `(error "line 5 column 7: invalid pop command, ')' expected")`,
+      `(error "line 6 column 7: invalid pop command, ')' expected")`,
+      '(error "line 7 column 7: invalid pop command, argument is greater than the current stack depth")',
+      '(error "line 8 column 7: invalid pop command, argument is greater than the current stack depth")',
+      "sat",
+      `(error "line 10 column 15: invalid get-value command, ')' expected")`,
+      `(error "line 11 column 15: invalid get-value command, ')' expected")`,
+      `(error "line 12 column 7: invalid reset command, ')' expected")`,
+      "sat",
+      "success",
+    ]);
+  });
 });

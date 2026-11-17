@@ -1270,33 +1270,41 @@ export const runSmtlibScript = (
           state.kernel?.push();
           useEufSolver((solver) => solver.push());
         }
+        if (list.items[2] !== undefined)
+          throw new SmtParseError("invalid push command, ')' expected", list.items[2]);
       },
     ],
     [
       "pop",
       (list) => {
         const count = getScopeCount(list);
+        const follower = list.items[2] ?? list.end;
         clearCheck();
-        if (count === 0) return;
         if (count > state.scopes.length)
           throw new SmtParseError(
             "invalid pop command, argument is greater than the current stack depth",
-            list.end,
+            follower,
           );
-        state.isIncremental = true;
-        const scope = state.scopes[state.scopes.length - count];
-        state.kernel?.pop(count);
-        useEufSolver((solver) => solver.pop(count));
-        for (let index = 0; index < count; index++) state.reader.pop();
-        restoreAssertions(scope.assertions);
-        resetOptimizer();
-        releaseObjectives(scope.objectives, scope.softTrail);
-        state.scopes.length -= count;
+        if (count > 0) {
+          state.isIncremental = true;
+          const scope = state.scopes[state.scopes.length - count];
+          state.kernel?.pop(count);
+          useEufSolver((solver) => solver.pop(count));
+          for (let index = 0; index < count; index++) state.reader.pop();
+          restoreAssertions(scope.assertions);
+          resetOptimizer();
+          releaseObjectives(scope.objectives, scope.softTrail);
+          state.scopes.length -= count;
+        }
+        if (follower !== list.end)
+          throw new SmtParseError("invalid pop command, ')' expected", follower);
       },
     ],
     [
       "reset",
-      () => {
+      (list) => {
+        if (list.items[1] !== undefined)
+          throw new SmtParseError("invalid reset command, ')' expected", list.items[1]);
         clearCheck();
         resetOptimizer();
         state = createState();
@@ -1538,7 +1546,14 @@ export const runSmtlibScript = (
         const exprs = terms.items.map((item) => state.reader.parseTerm(item));
         if (exprs.length === 0)
           throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
-        if (list.items.length > 2) throw new SmtUnsupportedError("the parameters of get-value");
+        const extra = list.items[2];
+        if (
+          extra?.kind === "keyword" &&
+          (extra.text === ":model-index" || extra.text === ":model_index")
+        )
+          throw new SmtUnsupportedError("the model index of get-value");
+        if (extra !== undefined)
+          throw new SmtParseError("invalid get-value command, ')' expected", extra);
         const model = getModel(list);
         pendingText += "(";
         model.compact();
