@@ -1095,16 +1095,17 @@ LOCAL TParseISO(text, goal) ==
 
 \* The calendars other than the ISO 8601 calendar that Node 26 takes and tla-ts doesn't run, by
 \* their ASCII-lowercase forms, aliases included.
-LOCAL TOtherCalendars == {"chinese", "dangi", "hebrew", "islamic-umalqura", "persian"}
+LOCAL TOtherCalendars == {"chinese", "dangi", "islamic-umalqura", "persian"}
 
-\* The calendars without leap months that tla-ts runs whose months aren't the ISO 8601 calendar's,
-\* each of which counts its days arithmetically, as Node does: the Coptic and the two Ethiopian
-\* calendars, of 13 months each, the tabular Islamic calendars, and the Indian national calendar.
+\* The calendars that tla-ts runs whose months aren't the ISO 8601 calendar's, each of which counts
+\* its days arithmetically, as Node does: the Coptic and the two Ethiopian calendars, of 13 months
+\* each, the tabular Islamic calendars, the Indian national calendar, and the Hebrew calendar, whose
+\* leap years add a month.
 LOCAL TCopticCalendars == {"coptic", "ethiopic", "ethioaa"}
 
 LOCAL TIslamicCalendars == {"islamic-civil", "islamic-tbla"}
 
-LOCAL TSimpleCalendars == TCopticCalendars \cup TIslamicCalendars \cup {"indian"}
+LOCAL TSimpleCalendars == TCopticCalendars \cup TIslamicCalendars \cup {"indian", "hebrew"}
 
 \* What a calendar's arithmetic year adds to the ISO year.
 LOCAL TYearOffset(calendar) == CASE calendar = "buddhist" -> 543 [] calendar = "roc" -> -1911 [] OTHER -> 0
@@ -1131,20 +1132,83 @@ LOCAL TIndianBefore(year, month) ==
        [] month <= 7 -> first + 31 * (month - 2)
        [] OTHER -> first + 155 + 30 * (month - 7)
 
+\* The Hebrew months before a year, and the days from its epoch to the year's molad, delayed as the
+\* calendar delays it, which splits the parts of an hour that a TLC integer wouldn't hold.
+LOCAL THebrewMonthsBefore(year) == (235 * year - 234) \div 19
+
+LOCAL THebrewElapsed(year) ==
+  LET months == THebrewMonthsBefore(year)
+      days == 29 * months + 13753 * (months \div 25920) + (12084 + 13753 * (months % 25920)) \div 25920
+  IN IF (3 * (days + 1)) % 7 < 3 THEN days + 1 ELSE days
+
+\* The rata die that a Hebrew year starts on, which the lengths of its neighbours delay.
+LOCAL THebrewNewYear(year) ==
+  LET before == THebrewElapsed(year - 1)
+      elapsed == THebrewElapsed(year)
+      after == THebrewElapsed(year + 1)
+  IN -1373427 + elapsed + (CASE after - elapsed = 356 -> 2 [] elapsed - before = 382 -> 1 [] OTHER -> 0)
+
+LOCAL THebrewLength(year) == THebrewNewYear(year + 1) - THebrewNewYear(year)
+
 LOCAL TSimpleLeap(calendar, year) ==
   CASE calendar \in TCopticCalendars -> TCopticYear(calendar, year) % 4 = 3
     [] calendar \in TIslamicCalendars -> (14 + 11 * year) % 30 < 11
+    [] calendar = "hebrew" -> (7 * year + 1) % 19 < 7
     [] OTHER -> TIsLeapYear(year + 78)
 
-LOCAL TSimpleMonths(calendar) == IF calendar \in TCopticCalendars THEN 13 ELSE 12
+LOCAL TSimpleMonths(calendar, year) ==
+  CASE calendar \in TCopticCalendars -> 13
+    [] calendar = "hebrew" -> IF TSimpleLeap(calendar, year) THEN 13 ELSE 12
+    [] OTHER -> 12
+
+\* The month code of a calendar's month in a year, as a record of the number of the month it
+\* follows and whether it's a leap month, and the month that a month code is in a year that has it.
+\* A Hebrew leap year inserts Adar I, M05L, before Adar, M06.
+LOCAL TSimpleCode(calendar, year, month) ==
+  CASE calendar # "hebrew" \/ ~TSimpleLeap(calendar, year) \/ month <= 5 -> [month |-> month, isLeap |-> FALSE]
+    [] month = 6 -> [month |-> 5, isLeap |-> TRUE]
+    [] OTHER -> [month |-> month - 1, isLeap |-> FALSE]
+
+LOCAL TSimpleOrdinal(calendar, year, code) ==
+  CASE calendar # "hebrew" \/ ~TSimpleLeap(calendar, year) \/ (code.month <= 5 /\ ~code.isLeap) -> code.month
+    [] code.isLeap -> 6
+    [] OTHER -> code.month + 1
+
+\* IsValidMonthCodeForCalendar, and YearContainsMonthCode.
+LOCAL TCodeValid(calendar, code) ==
+  IF calendar = "hebrew"
+  THEN (~code.isLeap /\ code.month <= 12) \/ (code.isLeap /\ code.month = 5)
+  ELSE ~code.isLeap /\ code.month <= IF calendar \in TCopticCalendars THEN 13 ELSE 12
+
+LOCAL TYearHasCode(calendar, year, code) == ~code.isLeap \/ TSimpleLeap(calendar, year)
+
+\* The days of a month of a Hebrew year, by its code: Heshvan and Kislev give a year its length.
+LOCAL THebrewDays(year, code) ==
+  CASE code.isLeap -> 30
+    [] code.month = 2 -> IF THebrewLength(year) % 10 = 5 THEN 30 ELSE 29
+    [] code.month = 3 -> IF THebrewLength(year) % 10 = 3 THEN 29 ELSE 30
+    [] OTHER -> IF code.month % 2 = 1 THEN 30 ELSE 29
 
 LOCAL TSimpleDaysInMonth(calendar, year, month) ==
   CASE calendar \in TCopticCalendars ->
          IF month = 13 THEN (IF TSimpleLeap(calendar, year) THEN 6 ELSE 5) ELSE 30
     [] calendar \in TIslamicCalendars ->
          IF month % 2 = 1 \/ (month = 12 /\ TSimpleLeap(calendar, year)) THEN 30 ELSE 29
+    [] calendar = "hebrew" -> THebrewDays(year, TSimpleCode(calendar, year, month))
     [] month = 1 -> IF TSimpleLeap(calendar, year) THEN 31 ELSE 30
     [] OTHER -> IF month <= 6 THEN 31 ELSE 30
+
+\* The days of a month of a code in the year that's longest.
+LOCAL TSimpleMostDays(calendar, code) ==
+  CASE calendar \in TCopticCalendars -> IF code.month = 13 THEN 6 ELSE 30
+    [] calendar \in TIslamicCalendars -> IF code.month % 2 = 1 \/ code.month = 12 THEN 30 ELSE 29
+    [] calendar = "hebrew" -> IF code.month % 2 = 1 \/ code.isLeap \/ code.month \in {2, 3} THEN 30 ELSE 29
+    [] OTHER -> IF code.month <= 6 THEN 31 ELSE 30
+
+\* The days of the months of a Hebrew year before one.
+RECURSIVE THebrewBefore(_, _)
+LOCAL THebrewBefore(year, month) ==
+  IF month = 1 THEN 0 ELSE THebrewBefore(year, month - 1) + TSimpleDaysInMonth("hebrew", year, month - 1)
 
 \* The rata die of a valid date in a calendar.
 LOCAL TSimpleRataDie(calendar, year, month, day) ==
@@ -1154,7 +1218,22 @@ LOCAL TSimpleRataDie(calendar, year, month, day) ==
        [] calendar \in TIslamicCalendars ->
             TIslamicEpoch(calendar) + (year - 1) * 354 + (3 + 11 * year) \div 30 + 29 * (month - 1)
               + month \div 2 + day
+       [] calendar = "hebrew" -> THebrewNewYear(year) + THebrewBefore(year, month) + day - 1
        [] OTHER -> TIndianStart(year) + TIndianBefore(year, month) + day - 1
+
+\* The Hebrew year that a rata die is in, from an estimate within a few years.
+RECURSIVE THebrewYearAt(_, _)
+LOCAL THebrewYearAt(day, year) ==
+  CASE THebrewNewYear(year) > day -> THebrewYearAt(day, year - 1)
+    [] THebrewNewYear(year + 1) <= day -> THebrewYearAt(day, year + 1)
+    [] OTHER -> year
+
+\* The month of a calendar's year that a day of the year, counted from 0, is in.
+RECURSIVE TSimpleMonthAt(_, _, _, _)
+LOCAL TSimpleMonthAt(calendar, year, month, within) ==
+  IF within < TSimpleDaysInMonth(calendar, year, month)
+  THEN month
+  ELSE TSimpleMonthAt(calendar, year, month + 1, within - TSimpleDaysInMonth(calendar, year, month))
 
 \* The year, month, and day in a calendar of a rata die, which splits each product that a TLC
 \* integer wouldn't hold.
@@ -1167,32 +1246,50 @@ LOCAL TSimpleDateOf(calendar, day) ==
       indian == IF day < TIndianStart(gregorian - 78) THEN gregorian - 79 ELSE gregorian - 78
       year == CASE calendar \in TCopticCalendars -> IF calendar = "ethioaa" THEN coptic + 5500 ELSE coptic
                 [] calendar \in TIslamicCalendars -> islamic
+                [] calendar = "hebrew" -> THebrewYearAt(day, ((day + 1373427) * 19) \div 6940 + 1)
                 [] OTHER -> indian
       within == day - TSimpleRataDie(calendar, year, 1, 1)
       first == TSimpleDaysInMonth(calendar, year, 1)
       month == CASE calendar \in TCopticCalendars -> within \div 30 + 1
                  [] calendar \in TIslamicCalendars -> (11 * within + 330) \div 325
+                 [] calendar = "hebrew" -> TSimpleMonthAt(calendar, year, 1, within)
                  [] within < first -> 1
                  [] within < first + 155 -> 2 + (within - first) \div 31
                  [] OTHER -> 7 + (within - first - 155) \div 30
   IN <<year, month, day - TSimpleRataDie(calendar, year, month, 1) + 1>>
 
-\* A leap year of a calendar, whose months are each as long as they are in any year.
-LOCAL TSimpleLeapYear(calendar) == IF calendar = "ethioaa" THEN 5503 ELSE IF calendar \in TCopticCalendars THEN 3 ELSE 2
+\* The months of a calendar before a year, and the year and the month of a count of them.
+LOCAL TMonthIndex(calendar, year, month) ==
+  IF calendar = "hebrew" THEN THebrewMonthsBefore(year) + month - 1 ELSE year * TSimpleMonths(calendar, 0) + month - 1
+
+RECURSIVE THebrewYearOfIndex(_, _)
+LOCAL THebrewYearOfIndex(index, year) ==
+  CASE THebrewMonthsBefore(year) > index -> THebrewYearOfIndex(index, year - 1)
+    [] THebrewMonthsBefore(year + 1) <= index -> THebrewYearOfIndex(index, year + 1)
+    [] OTHER -> year
+
+LOCAL TOfMonthIndex(calendar, index) ==
+  LET count == TSimpleMonths(calendar, 0)
+      year == THebrewYearOfIndex(index, (19 * index + 234) \div 235)
+  IN IF calendar = "hebrew"
+     THEN <<year, index - THebrewMonthsBefore(year) + 1>>
+     ELSE <<index \div count, (index % count) + 1>>
 
 \* Whether a year of a calendar has a date within the limits.
 LOCAL TSimpleYearWithinLimits(calendar, year) ==
-  LET months == TSimpleMonths(calendar)
+  LET months == TSimpleMonths(calendar, year)
   IN /\ TSimpleRataDie(calendar, year, 1, 1) - 719163 <= 100000000
      /\ TSimpleRataDie(calendar, year, months, TSimpleDaysInMonth(calendar, year, months)) - 719163 >= -100000001
 
-\* The reference date of a month and a day of a calendar: the latest that is in 1972 or before.
+\* The reference date of a month code and a day of a calendar: the latest that is in 1972 or before.
 RECURSIVE TSimpleReference(_, _, _, _)
-LOCAL TSimpleReference(calendar, year, month, day) ==
-  IF day <= TSimpleDaysInMonth(calendar, year, month) /\
-     TSimpleRataDie(calendar, year, month, day) <= TRataDie(<<1972, 12, 31>>)
-  THEN TDateOfRataDie(TSimpleRataDie(calendar, year, month, day))
-  ELSE TSimpleReference(calendar, year - 1, month, day)
+LOCAL TSimpleReference(calendar, year, code, day) ==
+  LET month == TSimpleOrdinal(calendar, year, code)
+  IN IF /\ TYearHasCode(calendar, year, code)
+        /\ day <= TSimpleDaysInMonth(calendar, year, month)
+        /\ TSimpleRataDie(calendar, year, month, day) <= TRataDie(<<1972, 12, 31>>)
+     THEN TDateOfRataDie(TSimpleRataDie(calendar, year, month, day))
+     ELSE TSimpleReference(calendar, year - 1, code, day)
 
 \* CalendarISOToDate's year, month, and day of an ISO date in a calendar.
 LOCAL TCalendarParts(calendar, date) ==
@@ -1200,18 +1297,35 @@ LOCAL TCalendarParts(calendar, date) ==
   THEN TSimpleDateOf(calendar, TRataDie(date))
   ELSE <<date[1] + TYearOffset(calendar), date[2], date[3]>>
 
-LOCAL TCalendarMonths(calendar) == IF calendar \in TSimpleCalendars THEN TSimpleMonths(calendar) ELSE 12
+\* The month code of the month of an ISO date in a calendar.
+LOCAL TCalendarCode(calendar, date) ==
+  LET parts == TCalendarParts(calendar, date)
+  IN IF calendar \in TSimpleCalendars
+     THEN TSimpleCode(calendar, parts[1], parts[2])
+     ELSE [month |-> parts[2], isLeap |-> FALSE]
 
-\* CalendarDateToISO of an arithmetic year, a BigInt, and a month and a day, which RegulateISODate
-\* runs in the calendars whose months are the ISO 8601 calendar's.
-LOCAL TRegulateCalendarDate(calendar, year, month, day, overflow) ==
+LOCAL TCodeText(code) == "M" \o TTwoDigits(code.month) \o IF code.isLeap THEN "L" ELSE ""
+
+LOCAL TCalendarMonths(calendar, year) == IF calendar \in TSimpleCalendars THEN TSimpleMonths(calendar, year) ELSE 12
+
+\* MonthCodeToOrdinal, of a month code that the year has, as ConstrainMonthCode constrains it.
+LOCAL TCodeOrdinal(calendar, year, code) ==
+  IF calendar \in TSimpleCalendars
+  THEN TSimpleOrdinal(calendar, year, IF TYearHasCode(calendar, year, code) THEN code ELSE [month |-> 6, isLeap |-> FALSE])
+  ELSE code.month
+
+\* CalendarDateToISO of an arithmetic year, a BigInt, a month, a day, and the month code that the
+\* fields gave, or Undefined, which RegulateISODate runs in the calendars whose months are the ISO
+\* 8601 calendar's. A month code that the year lacks is constrained or rejected.
+LOCAL TRegulateCalendarDate(calendar, year, month, day, code, overflow) ==
   LET kept == TYearOf(year)
-      months == TSimpleMonths(calendar)
+      months == TSimpleMonths(calendar, kept)
       clampedMonth == IF month > months THEN months ELSE month
       days == TSimpleDaysInMonth(calendar, kept, clampedMonth)
   IN CASE calendar \notin TSimpleCalendars ->
             TRegulateDate(TYearOf(BigIntSubtract(year, TBig(TYearOffset(calendar)))), month, day, overflow)
        [] ~TIsYearKept(kept) -> TFail("RangeError")
+       [] overflow = "reject" /\ code # Undefined /\ ~TYearHasCode(calendar, kept, code) -> TFail("RangeError")
        [] overflow = "reject" /\ (month > months \/ day > days) -> TFail("RangeError")
        [] OTHER ->
             TOk(TDateOfRataDie(TSimpleRataDie(calendar, kept, clampedMonth, IF day > days THEN days ELSE day)))
@@ -1231,7 +1345,7 @@ LOCAL TJapaneseEras ==
 
 \* CanonicalizeEraInCalendar, or "" where the calendar has no such era.
 LOCAL TEraOf(calendar, era) ==
-  CASE calendar \in {"coptic", "ethiopic"} /\ era = "am" -> "am"
+  CASE calendar \in {"coptic", "ethiopic", "hebrew"} /\ era = "am" -> "am"
     [] calendar \in {"ethiopic", "ethioaa"} /\ era = "aa" -> "aa"
     [] calendar = "indian" /\ era = "shaka" -> "shaka"
     [] calendar \in TIslamicCalendars /\ era \in {"ah", "bh"} -> era
@@ -1256,7 +1370,7 @@ LOCAL TEraArithmeticYear(calendar, era, eraYear) ==
 LOCAL TEraOfDate(calendar, date, year) ==
   LET started == SelectSeq(TJapaneseEras, LAMBDA entry : TCompareSequences(date, entry.start) >= 0)
   IN CASE calendar = "buddhist" -> <<"be", year>>
-       [] calendar = "coptic" -> <<"am", year>>
+       [] calendar \in {"coptic", "hebrew"} -> <<"am", year>>
        [] calendar = "ethioaa" -> <<"aa", year>>
        [] calendar = "indian" -> <<"shaka", year>>
        [] calendar = "ethiopic" -> IF year >= 1 THEN <<"am", year>> ELSE <<"aa", year + 5500>>
@@ -1383,16 +1497,15 @@ LOCAL TPrepareFields(heap, item, calendar, names, required, isPartial) ==
        [] isPartial /\ \A index \in DOMAIN keys : read[index] = Undefined -> TFail("TypeError")
        [] OTHER -> TOk([key \in TFieldKeySet |-> defaulted(key)])
 
-\* The fields of a date in a calendar, as PrepareCalendarFields gives them, with a time's fields
-\* where hasTime.
+\* ISODateToFields of a date in a calendar: its year, month code, and day, with a time's fields where
+\* hasTime. It leaves out the month, whose number gives another month code in another Hebrew year.
 LOCAL TDateFields(date, time, hasTime, calendar) ==
   LET parts == TCalendarParts(calendar, date)
   IN [key \in TFieldKeySet |->
      CASE key = "year" -> TBig(parts[1])
-       [] key = "month" -> TBig(parts[2])
-       [] key = "monthCode" -> [month |-> parts[2], isLeap |-> FALSE]
+       [] key = "monthCode" -> TCalendarCode(calendar, date)
        [] key = "day" -> TBig(parts[3])
-       [] ~hasTime \/ key \in {"era", "eraYear", "offset", "timeZone"} -> Undefined
+       [] ~hasTime \/ key \in {"month", "era", "eraYear", "offset", "timeZone"} -> Undefined
        [] key = "hour" -> TBig(time[1])
        [] key = "minute" -> TBig(time[2])
        [] key = "second" -> TBig(time[3])
@@ -1421,11 +1534,12 @@ LOCAL TResolveFields(fields, type, calendar) ==
       year == fields["year"]
       canonical == IF era = Undefined THEN "" ELSE TEraOf(calendar, era)
       arithmetic == IF eraYear = Undefined THEN year ELSE TEraArithmeticYear(calendar, canonical, eraYear)
-      resolved(month) == TOk([year |-> arithmetic, month |-> month])
+      resolved(month) == TOk([year |-> arithmetic, month |-> month, code |-> code])
+      ordinal == IF arithmetic = Undefined THEN code.month ELSE TCodeOrdinal(calendar, TYearOf(arithmetic), code)
       needsYear ==
         type \in {"date", "year-month"} \/ code = Undefined \/ fields["month"] # Undefined
       isMonthWrong ==
-        fields["month"] # Undefined /\ code # Undefined /\ TFieldOf(fields["month"]) # code.month
+        fields["month"] # Undefined /\ code # Undefined /\ TFieldOf(fields["month"]) # ordinal
   IN IF calendar = "iso8601"
      THEN CASE type \in {"date", "year-month"} /\ year = Undefined -> TFail("TypeError")
             [] type \in {"date", "month-day"} /\ fields["day"] = Undefined -> TFail("TypeError")
@@ -1443,15 +1557,16 @@ LOCAL TResolveFields(fields, type, calendar) ==
             [] eraYear # Undefined /\ canonical = "" -> TFail("RangeError")
             [] eraYear # Undefined /\ year # Undefined /\ TCompare(year, arithmetic) # 0 ->
                  TFail("RangeError")
-            [] code # Undefined /\ (code.isLeap \/ code.month > TCalendarMonths(calendar)) -> TFail("RangeError")
+            [] code # Undefined /\ ~TCodeValid(calendar, code) -> TFail("RangeError")
             [] arithmetic # Undefined /\ isMonthWrong -> TFail("RangeError")
             [] code = Undefined -> resolved(TFieldOf(fields["month"]))
-            [] OTHER -> resolved(code.month)
+            [] OTHER -> resolved(ordinal)
 
 \* CalendarDateFromFields.
 LOCAL TDateFromFields(fields, overflow, calendar) ==
   LET month == TResolveFields(fields, "date", calendar)
-      date == TRegulateCalendarDate(calendar, month.value.year, month.value.month, TFieldOf(fields["day"]), overflow)
+      date == TRegulateCalendarDate(calendar, month.value.year, month.value.month, TFieldOf(fields["day"]),
+                                    month.value.code, overflow)
   IN CASE month.error # "" -> month
        [] date.error # "" -> date
        [] ~TDateWithinLimits(date.value) -> TFail("RangeError")
@@ -1675,44 +1790,56 @@ LOCAL TISODateUntil(one, two, largestUnit) ==
 \* NonISODateAdd of a calendar whose months have their own lengths, with BigInt duration fields.
 LOCAL TSimpleDateAdd(calendar, date, duration, overflow) ==
   LET parts == TCalendarParts(calendar, date)
-      count == TSimpleMonths(calendar)
-      months == BigIntAdd(TBig(parts[1] * count + parts[2] - 1),
-                          BigIntAdd(BigIntMultiply(duration[1], TBig(count)), duration[2]))
-      year == TYearOf(TFloorDivide(months, TBig(count)))
-      month == TSmall(TModulo(months, TBig(count))) + 1
-      days == TSimpleDaysInMonth(calendar, year, month)
-      start == TSimpleRataDie(calendar, year, month, IF parts[3] > days THEN days ELSE parts[3]) - 719163
+      code == TSimpleCode(calendar, parts[1], parts[2])
+      year == TYearOf(BigIntAdd(TBig(parts[1]), duration[1]))
+      index == BigIntAdd(TBig(TMonthIndex(calendar, year, TCodeOrdinal(calendar, year, code))), duration[2])
+      month == TOfMonthIndex(calendar, TSmall(index))
+      days == TSimpleDaysInMonth(calendar, month[1], month[2])
+      start == TSimpleRataDie(calendar, month[1], month[2], IF parts[3] > days THEN days ELSE parts[3]) - 719163
       total == BigIntAdd(TBig(start), BigIntAdd(duration[4], BigIntMultiply(duration[3], Big :> 7)))
   IN CASE ~TIsYearKept(year) -> TFail("RangeError")
+       [] overflow = "reject" /\ ~TYearHasCode(calendar, year, code) -> TFail("RangeError")
+       [] TLess(index, TBig(-20000000)) \/ TLess(TBig(20000000), index) -> TFail("RangeError")
+       [] ~TIsYearKept(month[1]) -> TFail("RangeError")
        [] overflow = "reject" /\ parts[3] > days -> TFail("RangeError")
        [] TLess(total, TBig(-100000001)) \/ TLess(TBig(100000000), total) -> TFail("RangeError")
        [] ~TDateWithinLimits(TDateOfDays(TSmall(total))) -> TFail("RangeError")
        [] OTHER -> TOk(TDateOfDays(TSmall(total)))
 
 \* NonISODateUntil of a calendar whose months have their own lengths: the most years and then months
-\* that don't pass the later date, as NonISODateSurpasses finds them, and the days left.
+\* that don't pass the later date, as NonISODateSurpasses finds them from a guess that's within one
+\* of them, and the days left.
 LOCAL TSimpleDateUntil(calendar, one, two, largestUnit) ==
   LET sign == -TCompareSequences(one, two)
       first == TCalendarParts(calendar, one)
       second == TCalendarParts(calendar, two)
-      count == TSimpleMonths(calendar)
-      isPast(year, month, day) == sign * TCompareSequences(<<year, month, day>>, second) > 0
+      code == TSimpleCode(calendar, first[1], first[2])
+      key(month) == month.month * 2 + (IF month.isLeap THEN 1 ELSE 0)
+      target == <<second[1], key(TSimpleCode(calendar, second[1], second[2])), second[3]>>
+      reached(years, months) ==
+        LET year == first[1] + years
+        IN TOfMonthIndex(calendar, TMonthIndex(calendar, year, TCodeOrdinal(calendar, year, code)) + months)
       surpasses(years, months) ==
-        LET total == (first[1] + years) * count + first[2] - 1 + months
-        IN isPast(first[1] + years, first[2], first[3]) \/ isPast(total \div count, (total % count) + 1, first[3])
-      candidateYears == second[1] - first[1]
-      years == IF largestUnit = "year"
-               THEN IF surpasses(candidateYears, 0) THEN candidateYears - sign ELSE candidateYears
-               ELSE 0
-      candidateMonths == (second[1] * count + second[2]) - ((first[1] + years) * count + first[2])
+        \/ sign * TCompareSequences(<<first[1] + years, key(code), first[3]>>, target) > 0
+        \/ LET at == reached(years, months)
+           IN sign * TCompareSequences(<<at[1], at[2], first[3]>>, second) > 0
+      guess(count) == IF sign * count < 0 THEN 0 ELSE count
+      RECURSIVE BackYears(_), ForeYears(_), BackMonths(_, _), ForeMonths(_, _)
+      BackYears(count) == IF count = 0 \/ ~surpasses(count, 0) THEN count ELSE BackYears(count - sign)
+      ForeYears(count) == IF surpasses(count + sign, 0) THEN count ELSE ForeYears(count + sign)
+      BackMonths(years, count) ==
+        IF count = 0 \/ ~surpasses(years, count) THEN count ELSE BackMonths(years, count - sign)
+      ForeMonths(years, count) ==
+        IF surpasses(years, count + sign) THEN count ELSE ForeMonths(years, count + sign)
+      years == IF largestUnit = "year" THEN ForeYears(BackYears(guess(second[1] - first[1]))) ELSE 0
+      start == reached(years, 0)
       months == IF largestUnit \in {"year", "month"}
-                THEN IF surpasses(years, candidateMonths) THEN candidateMonths - sign ELSE candidateMonths
+                THEN ForeMonths(years, BackMonths(years, guess(TMonthIndex(calendar, second[1], second[2])
+                                                          - TMonthIndex(calendar, start[1], start[2]))))
                 ELSE 0
-      total == (first[1] + years) * count + first[2] - 1 + months
-      year == total \div count
-      month == (total % count) + 1
-      length == TSimpleDaysInMonth(calendar, year, month)
-      days == TRataDie(two) - TSimpleRataDie(calendar, year, month, IF first[3] > length THEN length ELSE first[3])
+      at == reached(years, months)
+      length == TSimpleDaysInMonth(calendar, at[1], at[2])
+      days == TRataDie(two) - TSimpleRataDie(calendar, at[1], at[2], IF first[3] > length THEN length ELSE first[3])
       weeks == IF largestUnit = "week" THEN (IF days < 0 THEN -((-days) \div 7) ELSE days \div 7) ELSE 0
   IN IF sign = 0
      THEN <<Big :> 0, Big :> 0, Big :> 0, Big :> 0>>
@@ -2630,7 +2757,7 @@ LOCAL TYearMonthWithinLimits(date) ==
 \* CalendarYearMonthFromFields.
 LOCAL TYearMonthFromFields(fields, overflow, calendar) ==
   LET month == TResolveFields(fields, "year-month", calendar)
-      date == TRegulateCalendarDate(calendar, month.value.year, month.value.month, 1, overflow)
+      date == TRegulateCalendarDate(calendar, month.value.year, month.value.month, 1, month.value.code, overflow)
   IN CASE month.error # "" -> month
        [] date.error # "" -> date
        [] ~TYearMonthWithinLimits(date.value) -> TFail("RangeError")
@@ -2641,20 +2768,27 @@ LOCAL TSimpleMonthDay(fields, overflow, calendar) ==
   LET resolved == TResolveFields(fields, "month-day", calendar)
       year == resolved.value.year
       kept == TYearOf(year)
-      months == TSimpleMonths(calendar)
+      months == IF year = Undefined THEN 13 ELSE TSimpleMonths(calendar, kept)
       month == IF resolved.value.month > months THEN months ELSE resolved.value.month
+      given == resolved.value.code
+      code == CASE year = Undefined -> given
+                [] given = Undefined -> TSimpleCode(calendar, kept, month)
+                [] TYearHasCode(calendar, kept, given) -> given
+                [] OTHER -> [month |-> 6, isLeap |-> FALSE]
       days == IF year = Undefined
-              THEN TSimpleDaysInMonth(calendar, TSimpleLeapYear(calendar), month)
+              THEN TSimpleMostDays(calendar, code)
               ELSE TSimpleDaysInMonth(calendar, kept, month)
       day == TFieldOf(fields["day"])
       reference == TSimpleDateOf(calendar, TRataDie(<<1972, 12, 31>>))[1]
   IN CASE resolved.error # "" -> resolved
        [] year # Undefined /\ ~(TIsYearKept(kept) /\ TSimpleYearWithinLimits(calendar, kept)) ->
             TFail("RangeError")
+       [] overflow = "reject" /\ year # Undefined /\ given # Undefined /\ ~TYearHasCode(calendar, kept, given) ->
+            TFail("RangeError")
        [] overflow = "reject" /\ (resolved.value.month > months \/ day > days) -> TFail("RangeError")
-       [] OTHER -> TOk(TSimpleReference(calendar, reference, month, IF day > days THEN days ELSE day))
+       [] OTHER -> TOk(TSimpleReference(calendar, reference, code, IF day > days THEN days ELSE day))
 
-
+\* CalendarMonthDayFromFields, whose year, where the fields give one, only decides how long the
 \* month is, and must be within the limits in a calendar other than the ISO 8601 calendar. Each
 \* calendar whose months are the ISO 8601 calendar's takes 1972 as the reference year.
 LOCAL TMonthDayFromFields(fields, overflow, calendar) ==
@@ -2682,8 +2816,7 @@ LOCAL TDateOf(step, calendar) == IF step.error # "" THEN step ELSE TOk([date |->
 
 \* ISODateToFields of a year-month or a month-day: its month code, and its year or its day.
 LOCAL TPartFields(date, isYearMonth, calendar) ==
-  [TDateFields(date, TMidnight, FALSE, calendar) EXCEPT
-     ![IF isYearMonth THEN "day" ELSE "year"] = Undefined, !["month"] = Undefined]
+  [TDateFields(date, TMidnight, FALSE, calendar) EXCEPT ![IF isYearMonth THEN "day" ELSE "year"] = Undefined]
 
 \* ToTemporalYearMonth, as the date and the calendar.
 LOCAL TToYearMonth(heap, item, options) ==
@@ -2817,12 +2950,12 @@ LOCAL TYearGetters(date, calendar) ==
       isSimple == calendar \in TSimpleCalendars
   IN [calendarId |-> calendar, era |-> IF isISO THEN Undefined ELSE era[1],
       eraYear |-> IF isISO THEN Undefined ELSE era[2], year |-> year, month |-> parts[2],
-      monthCode |-> TMonthCode(parts[2]),
+      monthCode |-> TCodeText(TCalendarCode(calendar, date)),
       daysInMonth |-> IF isSimple THEN TSimpleDaysInMonth(calendar, year, parts[2]) ELSE TDaysInMonth(date[1], date[2]),
       daysInYear |-> IF isSimple
                      THEN TSimpleRataDie(calendar, year + 1, 1, 1) - TSimpleRataDie(calendar, year, 1, 1)
                      ELSE TDaysInYear(date[1]),
-      monthsInYear |-> TCalendarMonths(calendar),
+      monthsInYear |-> TCalendarMonths(calendar, year),
       inLeapYear |-> IF isSimple THEN TSimpleLeap(calendar, year) ELSE TIsLeapYear(date[1])]
 
 \* The getters of a date, whose week of the year only the ISO 8601 calendar numbers.
@@ -2870,7 +3003,7 @@ LOCAL TSlotsOf(kind, value) ==
     [] kind = "PlainMonthDay" ->
          [kind |-> kind, date |-> value.date, calendar |-> value.calendar,
           getters |-> [calendarId |-> value.calendar,
-                       monthCode |-> TMonthCode(TCalendarParts(value.calendar, value.date)[2]),
+                       monthCode |-> TCodeText(TCalendarCode(value.calendar, value.date)),
                        day |-> TCalendarParts(value.calendar, value.date)[3]]]
 
 \* The heap with a new Temporal object of a kind whose slots a step gives, and the object.

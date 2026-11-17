@@ -49230,6 +49230,38 @@ describe("BigInts", () => {
     });
   });
 
+  describe("runs Temporal in the Hebrew calendar, whose leap years add a month", () => {
+    const getSource = (expected: string) => `
+      const thrown = (run: () => unknown) => {
+        try {
+          return String(run());
+        } catch (error) {
+          return (error as Error).name;
+        }
+      };
+      const adar = Temporal.PlainDate.from({ calendar: "hebrew", year: 5784, monthCode: "M05L", day: 30 });
+      const seen = [
+        adar.month,
+        adar.add({ years: 1 }).monthCode,
+        thrown(() => adar.add({ years: 1 }, { overflow: "reject" })),
+        Temporal.PlainMonthDay.from({ calendar: "hebrew", monthCode: "M05L", day: 1 }).toString(),
+        adar.until("2025-09-23[u-ca=hebrew]", { largestUnit: "years" }).toString(),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "6,M06,RangeError,1970-02-07[u-ca=hebrew],P1Y6M1D";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects a leap month that a common year keeps", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("6,M06,", "6,M05L,")))).failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
+
   describe("gives the resolved options of Intl's objects of English or the default locale", () => {
     const getSource = (expected: string) => `
       const format = new Intl.ListFormat("en-us", { style: "short", type: "unit" });
