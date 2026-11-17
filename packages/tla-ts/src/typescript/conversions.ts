@@ -33,7 +33,17 @@ import {
   read,
   readWith,
 } from "./protocols";
-import { apply, boolean, ifExpression, junction, not, number, string, tuple } from "./tla";
+import {
+  apply,
+  boolean,
+  identifier,
+  ifExpression,
+  junction,
+  not,
+  number,
+  string,
+  tuple,
+} from "./tla";
 import { getKind, hasHeapType, isEvery, isHeapType, mayBeSequenceType } from "./types";
 
 // The hint that ToPrimitive takes, which decides whether it calls valueOf or toString first.
@@ -382,6 +392,25 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
         [argument],
         "number",
         (primitives) => plain(translateNumberOf(primitives[0], context)),
+        false,
+        true,
+      );
+    }
+    // isNaN and isFinite convert their value to a number.
+    if (
+      (node.expression.text === "isNaN" || node.expression.text === "isFinite") &&
+      node.arguments.length === 1
+    ) {
+      const isNaN = node.expression.text === "isNaN";
+      return make(
+        [argument],
+        "number",
+        (primitives) => {
+          const converted = useJavaScript("ToNumber", [primitives[0]], context);
+          return isNaN
+            ? apply("=", [converted, identifier("NaN")])
+            : useJavaScript("IsFinite", [converted], context);
+        },
         false,
         true,
       );

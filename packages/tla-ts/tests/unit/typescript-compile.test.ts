@@ -52656,4 +52656,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the object that isNaN and isFinite take to a number", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var called = 0;
+      var obj = {
+        valueOf: function () { called = NaN; return Infinity; },
+      };
+      obj[Symbol.toPrimitive] = function () { called += 1; return 42; };
+      var first = isNaN(obj);
+      var second = isFinite(obj);
+      obj[Symbol.toPrimitive] = function () { called += 1; return "text"; };
+      var third = isNaN(obj);
+      var result = [first, second, third, called].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("false,true,true,3");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("false,true,false,3");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result false,true,true,3",
+      );
+    });
+  });
 });
