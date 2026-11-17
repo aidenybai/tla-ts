@@ -114,7 +114,6 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
 
   private insertAtom(expr: number, boolVar: number) {
     this.atoms.set(expr, boolVar);
-    if (this.mkThSolver === null) return;
     this.manager.incRef(expr);
     this.recentAtoms.push(expr);
   }

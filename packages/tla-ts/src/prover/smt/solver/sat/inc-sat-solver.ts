@@ -26,6 +26,7 @@ interface Scope {
   readonly fmlsSize: number;
   readonly fmlsHead: number;
   readonly namesSize: number;
+  readonly hasUninterpreted: boolean;
 }
 
 export class IncSatSolver {
@@ -109,22 +110,23 @@ export class IncSatSolver {
     this.assertExpr(manager.mkApp(OP_IMPLIES, [name, expr], SORT_BOOL));
   }
 
-  // Outside sat.euf, a scope would also need the scopes of the bit-blaster.
   push() {
-    if (this.goal2sat.euf === null) throw new SmtUnsupportedError("push on the SAT solver");
     this.internalizeFormulas();
     this.goal2sat.push();
     this.solver.userPush();
+    this.bitBlaster?.push();
     this.scopes.push({
       converters: this.converters.converters,
       fmlsSize: this.fmls.size,
       fmlsHead: this.fmlsHead,
       namesSize: this.names.size,
+      hasUninterpreted: this.hasUninterpreted,
     });
   }
 
   pop(numScopes: number) {
     const count = Math.min(numScopes, this.scopes.length);
+    this.bitBlaster?.pop(count);
     this.goal2sat.pop(count);
     this.solver.userPop(count);
     for (let index = 0; index < count; index++) {
@@ -133,7 +135,14 @@ export class IncSatSolver {
       this.fmlsHead = scope.fmlsHead;
       this.fmls.shrink(scope.fmlsSize);
       this.names.shrink(scope.namesSize);
+      this.hasUninterpreted = scope.hasUninterpreted;
     }
+  }
+
+  private getBitBlaster() {
+    const bitBlaster = (this.bitBlaster ??= new BitBlasterRewriter(this.manager, BIT_BLAST_PARAMS));
+    while (bitBlaster.getNumScopes() < this.scopes.length) bitBlaster.push();
+    return bitBlaster;
   }
 
   private checkUninterpreted() {
@@ -155,7 +164,7 @@ export class IncSatSolver {
   private internalizeGoal(goal: Goal) {
     this.solver.popToBaseLevel();
     if (this.solver.isInconsistent) return L_FALSE;
-    const bitBlaster = (this.bitBlaster ??= new BitBlasterRewriter(this.manager, BIT_BLAST_PARAMS));
+    const bitBlaster = this.getBitBlaster();
     const subgoals = (() => {
       if (this.isCnf) return [goal];
       try {
@@ -263,7 +272,7 @@ export class IncSatSolver {
 
   getConsequences(assumptions: readonly number[], vars: readonly number[]) {
     const manager = this.manager;
-    this.bitBlaster ??= new BitBlasterRewriter(manager, BIT_BLAST_PARAMS);
+    this.getBitBlaster();
     this.dep2asm = new Map();
     this.solver.popToBaseLevel();
     const consequences: number[] = [];

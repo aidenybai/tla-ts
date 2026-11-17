@@ -1634,6 +1634,43 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("answers QF_BV in scopes with inc_sat_solver, whose bit-blaster pops with them", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const b0 Bool)",
+        "(declare-const v0 (_ BitVec 3))",
+        "(push)",
+        "(assert (distinct v0 #b101))",
+        "(assert b0)",
+        "(check-sat)",
+        "(get-model)",
+        "(pop)",
+        "(declare-const v1 (_ BitVec 2))",
+        "(assert (= ((_ extract 1 0) v0) (bvnot v1)))",
+        "(assert (bvult v1 #b01))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun b0 () Bool\n    true)",
+        "  (define-fun v0 () (_ BitVec 3)\n    #b000)",
+        ")",
+      ].join("\n"),
+      "sat",
+      [
+        "(",
+        "  (define-fun v1 () (_ BitVec 2)\n    #b00)",
+        "  (define-fun v0 () (_ BitVec 3)\n    #b011)",
+        "  (define-fun b0 () Bool\n    false)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("gives an array of bit-vectors the default of a bit-vector value made before it", () => {
     expect(
       run([
