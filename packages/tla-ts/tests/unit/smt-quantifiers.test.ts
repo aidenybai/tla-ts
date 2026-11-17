@@ -127,3 +127,27 @@ describe("a quantifier keeps what Z3 5.3.2 keeps", () => {
     ]);
   });
 });
+
+describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () => {
+  it("keeps a term whose value is a string", () => {
+    expect(
+      run([
+        "(declare-fun g (String) String)",
+        "(declare-const s String)",
+        '(assert (= (g s) "c"))',
+        "(assert (forall ((x String)) (not (= (g x) x))))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun s () String",
+      '    "")',
+      "  (define-fun g ((x!0 String)) String",
+      '    (ite (= x!0 "") "c"',
+      '      ""))',
+      ")",
+    ]);
+  });
+});
