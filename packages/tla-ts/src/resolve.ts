@@ -249,7 +249,7 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
   const isVisible =
     definition !== undefined &&
     (definition === unit.self
-      ? definition.kind === "Function" || definition.isRecursive
+      ? definition.isRecursive
       : definition.isRecursive
         ? getModuleBinding(name, unit, undefined) !== undefined
         : isBefore(definition.location, unit.location));

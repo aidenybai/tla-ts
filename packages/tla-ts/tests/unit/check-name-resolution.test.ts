@@ -194,6 +194,13 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "f[a \\in f] == 1\nG == LET h[b \\in h] == 1 IN h\nRECURSIVE k\nk[c \\in k] == 1",
+      [
+        ["line 2, col 9 to line 2, col 9", "Unknown operator: `f'."],
+        ["line 3, col 18 to line 3, col 18", "Unknown operator: `h'."],
+      ],
+    ],
+    [
       "RECURSIVE Map(_), f(_, _)\nMap(a, b) == 1\nf(a) == a",
       [
         [
