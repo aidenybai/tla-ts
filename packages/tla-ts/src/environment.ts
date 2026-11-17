@@ -99,6 +99,7 @@ interface EnvironmentOptions {
   isWarningEnabled?: boolean;
   version?: TlcVersion;
   moduleOperators?: ModuleOperator[];
+  readLine?: () => string | undefined;
 }
 
 export interface ResolvedModuleOperator extends ModuleOperator {
@@ -260,6 +261,7 @@ export const createEnvironment = (
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   runtime.isTool = options.isTool ?? false;
   runtime.version = options.version ?? "master";
+  runtime.readLine = options.readLine;
   const linkedModules = new Map<string, LinkedModule>();
   const checkedModules = new Map<string, LinkedModule>();
   const linkOrder: LinkedModule[] = [];

@@ -649,6 +649,55 @@ describe("the CLI reports results like TLC", () => {
   });
 });
 
+describe("the CLI answers PickSuccessor from standard input like TLC", () => {
+  const getPickLines = (output: string) => {
+    const lines = output.split("\n");
+    return lines.slice(
+      lines.findIndex((line) => line.startsWith("Finished computing initial states")) + 1,
+      lines.findIndex((line) => /^(Model checking completed|Progress:)/.test(line)),
+    );
+  };
+  const ask = (length: number, line: number) =>
+    `Extend behavior of length ${length} with a "Next" step [<Action line ${line}, col 12 to line ${line}, col 45 of module PickAsk>]? (Yes/no/explored/states/diff):`;
+
+  it("shows the states or their difference and asks again until an answer extends the behavior or not", () => {
+    const result = runCliWith("tlc-ext", ["PickAsk.tla"], "s\nd\nzz\nN\ny\n \nno\nYes\n\n");
+    expect(result.status).toBe(0);
+    expect(getPickLines(result.stdout)).toEqual([
+      ask(1, 8),
+      "/\\ x = 0",
+      "/\\ y = 0",
+      "~>",
+      "/\\ x = 1",
+      "/\\ y = 0",
+      ask(1, 8),
+      "/\\ x = 1",
+      "",
+      ask(1, 8),
+      ask(1, 8),
+      ask(1, 8),
+      ask(1, 9),
+      ask(2, 8),
+      ask(2, 9),
+      ask(3, 8),
+    ]);
+  });
+
+  it("tells a simulation it can't mark a state explored and asks again", () => {
+    const lines = getPickLines(
+      runCliWith(
+        "tlc-ext",
+        ["-simulate", "num=1", "-seed", "1", "-depth", "2", "PickAsk.tla"],
+        "e\ny\nn\n",
+      ).stdout,
+    );
+    expect(lines[1]).toBe(
+      "Marking a state explored is unsupported by the current TLC mode. Is TLC running in simulation mode?",
+    );
+    expect(lines).toHaveLength(4);
+  });
+});
+
 describe("the CLI takes several specs and globs", () => {
   it("checks each spec a glob matches and exits with the first failure", () => {
     const result = runCliWith("cli-output", ["*.tla"]);

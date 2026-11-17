@@ -95,26 +95,34 @@ import {
   type Value,
 } from "./values";
 
-interface EnvironmentSettings extends Pick<
-  CheckOptions,
-  | "source"
-  | "loadModule"
-  | "loadClass"
-  | "readFile"
-  | "writeFile"
-  | "makeDirectory"
-  | "seed"
-  | "isTool"
-  | "traceSpec"
-  | "isSanyReported"
-  | "isWarningEnabled"
-  | "version"
-  | "moduleOperators"
-  | "fingerprintPolynomial"
-  | "maxSetSize"
-  | "isLazyValueExpanded"
-  | "isViewPrinted"
-> {}
+export interface StandardInput {
+  /** Reads a line of standard input for TLCExt!PickSuccessor, or undefined at its end. */
+  readLine?: () => string | undefined;
+}
+
+interface EnvironmentSettings
+  extends
+    Pick<
+      CheckOptions,
+      | "source"
+      | "loadModule"
+      | "loadClass"
+      | "readFile"
+      | "writeFile"
+      | "makeDirectory"
+      | "seed"
+      | "isTool"
+      | "traceSpec"
+      | "isSanyReported"
+      | "isWarningEnabled"
+      | "version"
+      | "moduleOperators"
+      | "fingerprintPolynomial"
+      | "maxSetSize"
+      | "isLazyValueExpanded"
+      | "isViewPrinted"
+    >,
+    StandardInput {}
 
 interface NamedExpression {
   name: string;
@@ -875,6 +883,7 @@ export const createCheckEnvironment = (
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
     moduleOperators: options.moduleOperators,
+    readLine: options.readLine,
   });
   return { order, specification };
 };
@@ -1186,6 +1195,7 @@ export const createSearch = (
       ? record
       : setViewText(record, () => getViewText(view.expression, state));
   };
+  runtime.toRecord = toRecord;
   return {
     properties,
     spec,
