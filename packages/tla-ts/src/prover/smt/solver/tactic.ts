@@ -172,7 +172,7 @@ const REWRITER_DESCRS = getDescrs("rewriter", [
   ["sort_sums", PARAM_BOOL, false, true],
   ["gcd_rounding", PARAM_BOOL, false, true],
   ["arith_lhs", PARAM_BOOL, false, true],
-  ["arith_ineq_lhs", PARAM_BOOL, false],
+  ["arith_ineq_lhs", PARAM_BOOL, false, true],
   ["elim_to_real", PARAM_BOOL, false],
   ["push_to_real", PARAM_BOOL, true],
   ["eq2ineq", PARAM_BOOL, false],
@@ -251,7 +251,8 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   arith: {
     isSom: getBool(params, "flat", true) && getBool(params, "som", false),
     isSortSums: getBool(params, "sort_sums", false),
-    isArithIneqLhs: getBool(params, "arith_lhs", false),
+    isArithLhs: getBool(params, "arith_lhs", false),
+    isArithIneqLhs: getBool(params, "arith_ineq_lhs", false),
     isGcdRounding: getBool(params, "gcd_rounding", false),
     isAnumSimp: getBool(params, "algebraic_number_evaluator", true),
     isExpandPower: getBool(params, "expand_power", false),

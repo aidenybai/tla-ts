@@ -178,6 +178,7 @@ const SIMPLIFY_PARAMETERS = new Set([
   "som",
   "sort_sums",
   "arith_lhs",
+  "arith_ineq_lhs",
   "gcd_rounding",
   "hi_div0",
   "mul2concat",

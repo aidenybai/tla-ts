@@ -41,6 +41,7 @@ import { Anum } from "./nlsat/algebraic";
 export const KERNEL_ARITH_OPTIONS: ArithRewriterOptions = {
   isSom: true,
   isSortSums: true,
+  isArithLhs: false,
   isArithIneqLhs: true,
   isGcdRounding: true,
   isAnumSimp: true,
@@ -52,6 +53,7 @@ export const KERNEL_ARITH_OPTIONS: ArithRewriterOptions = {
 export const TACTIC_ARITH_OPTIONS: ArithRewriterOptions = {
   isSom: false,
   isSortSums: false,
+  isArithLhs: false,
   isArithIneqLhs: false,
   isGcdRounding: false,
   isAnumSimp: true,
@@ -118,7 +120,8 @@ export class ArithRewriter extends PolyRewriter {
         ]),
         2,
       );
-    if (!this.isArithTerm(left) && !this.isArithTerm(right)) return undefined;
+    if (!this.options.isArithLhs && !this.isArithTerm(left) && !this.isArithTerm(right))
+      return undefined;
     return this.mkLeGeEq(left, right, KIND_EQ);
   }
 
@@ -1259,7 +1262,12 @@ export class ArithRewriter extends PolyRewriter {
       sides[index] = expr;
     };
     const cancelled = manager.withTemporaries(
-      () => this.cancelMonomials(originalLeft, originalRight, this.options.isArithIneqLhs),
+      () =>
+        this.cancelMonomials(
+          originalLeft,
+          originalRight,
+          this.options.isArithIneqLhs || this.options.isArithLhs,
+        ),
       (result) => (result === undefined ? [] : [result.lhs, result.rhs]),
     );
     if (cancelled !== undefined) sides.push(cancelled.lhs, cancelled.rhs);
@@ -1366,7 +1374,7 @@ export class ArithRewriter extends PolyRewriter {
       return this.reduce(manager.mkAnd([mkUpper(), lower]), 3);
     }
     const negated =
-      this.options.isArithIneqLhs && this.manager.isNumeral(right)
+      (this.options.isArithLhs || this.options.isArithIneqLhs) && this.manager.isNumeral(right)
         ? this.getNegatedPolynomial(left)
         : undefined;
     if (negated !== undefined) {

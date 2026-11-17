@@ -924,6 +924,30 @@ describe("hoist_ite, as Z3 5.3.2 simplifies", () => {
   });
 });
 
+describe("arith_lhs and arith_ineq_lhs, as Z3 5.3.2 simplifies", () => {
+  it("reads arith_lhs and arith_ineq_lhs as two parameters", () => {
+    expect(
+      run([
+        "(declare-const y0 Real)",
+        "(declare-const y2 Real)",
+        "(declare-const n Int)",
+        "(declare-const m Int)",
+        "(simplify (= y0 y2) :arith_lhs true)",
+        "(simplify (* y2 y0) :arith_lhs true)",
+        "(simplify (+ y2 y0 (* 3.0 y2 y0)) :arith_ineq_lhs true)",
+        "(simplify (= (- 0 n m) 4) :arith_ineq_lhs true)",
+        "(simplify (= (- 0 n m) 4))",
+      ]),
+    ).toEqual([
+      "(= (+ y0 (* (- 1.0) y2)) 0.0)",
+      "(* y0 y2)",
+      "(+ y2 y0 (* 3.0 y2 y0))",
+      "(= (+ n m) (- 4))",
+      "(= (+ (* (- 1) n) (* (- 1) m)) 4)",
+    ]);
+  });
+});
+
 describe("theory_pb, as Z3 5.3.2 internalizes it", () => {
   it("gives an argument that another theory owns a proxy", () => {
     expect(
