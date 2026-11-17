@@ -564,10 +564,17 @@ const checkSelection = (
       state.isSufficesOpen = false;
       continue;
     }
-    if (selector.kind !== "Operand") return;
-    const operand = getOperandName(selector.operand);
+    if (selector.kind === "Colon") return;
+    const operand =
+      selector.kind === "Operand"
+        ? getOperandName(selector.operand)
+        : selector.kind === "At"
+          ? "@"
+          : "!(...)";
+    const getPosition = (count: number) =>
+      selector.kind === "Operand" ? getOperandIndex(selector.operand, count) : -1;
     if (state.isSufficesOpen) {
-      if (getOperandIndex(selector.operand, 1) !== 0) {
+      if (getPosition(1) !== 0) {
         return report(
           index,
           node.kind === "AssumeProve"
@@ -592,6 +599,7 @@ const checkSelection = (
         return report(index, `Choosing operand \`${operand}' of subexpression with no operands.`);
       }
       const sets = getBinder(expression)?.sets;
+      if (sets && selector.kind !== "Operand") return;
       const operands =
         expression.kind === "Identifier"
           ? []
@@ -603,14 +611,14 @@ const checkSelection = (
               ? undefined
               : getOperands(expression);
       if (!operands) return;
-      const position = getOperandIndex(selector.operand, operands.length);
+      const position = getPosition(operands.length);
       if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
       state.node = operands[position];
       state.isGoal = false;
       continue;
     }
     const clauses = [...node.assumptions, node.conclusion];
-    const position = getOperandIndex(selector.operand, clauses.length);
+    const position = getPosition(clauses.length);
     if (position === -1) return report(index, `Nonexistent operand specified by \`${operand}'.`);
     if (isInScopeOfDeclaration(node, position) && (!state.isGoal || isOutOfScope)) {
       return report(index, `Accessing ASSUME/PROVE clause ${SCOPE_MESSAGE}`);

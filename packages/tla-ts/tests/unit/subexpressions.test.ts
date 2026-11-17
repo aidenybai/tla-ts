@@ -370,6 +370,18 @@ describe("subexpression references into theorems match SANY", () => {
         ],
       ],
     ],
+    [
+      "@ and !(...) selectors of steps and theorems",
+      "THEOREM T == ASSUME NEW n PROVE n = n\nTHEOREM U == \\A y \\in {1} : y = 1\nTHEOREM TRUE\n<1>1. SUFFICES TRUE\n<1>2. TRUE # 0\n  <2>1. <1>1!@ /\\ <1>2!@ /\\ <1>2!(1) /\\ T!@ /\\ T!2!@ /\\ U!@ /\\ U!(1)\n  <2>2. QED\n<1>3. QED",
+      [
+        ["line 8, col 14 to line 8, col 14", "Nonexistent operand specified by `@'."],
+        ["line 8, col 24 to line 8, col 24", "Nonexistent operand specified by `@'."],
+        ["line 8, col 34 to line 8, col 36", "Nonexistent operand specified by `!(...)'."],
+        ["line 8, col 43 to line 8, col 43", "Nonexistent operand specified by `@'."],
+        ["line 8, col 50 to line 8, col 50", `Accessing ASSUME/PROVE clause ${SCOPE}`],
+        ["line 8, col 57 to line 8, col 59", "Expected 1 arguments but found 0."],
+      ],
+    ],
   ])("reports every error SANY reports for %s", async (_name, definitions, errors) => {
     await expect(checkModule(definitions)).rejects.toThrow(getSanyError(errors, "M"));
   });
