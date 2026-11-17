@@ -500,6 +500,8 @@ export interface Path {
   // State variables and mutable locals, which assignments may change.
   mutable: Set<ts.Symbol>;
   isAssigned: boolean;
+  // A step of an exported function, which a path that changes nothing leaves disabled.
+  isAction?: boolean;
   isLast: boolean;
   isLooping: boolean;
   // The generator objects that the statements made, by name, with where each one's body suspended.
@@ -16094,8 +16096,8 @@ export const translateJoined = (
         ? path.generators
         : pruned;
   // An action is enabled on a path that assigns a state variable or changes the heap, which the
-  // operator can't tell from the heap it takes, so exits join only where each is enabled, or none
-  // is and the operator doesn't take the heap.
+  // operator can't tell from the heap it takes, so an action's exits join only where each is
+  // enabled, or none is and the operator doesn't take the heap.
   const heapSymbol = context.heap;
   const isEnabled = (exit: Path) =>
     exit.isAssigned ||
@@ -16104,8 +16106,9 @@ export const translateJoined = (
   const isAllEnabled = exits.length > 0 && isEnabled(exits[0].path);
   const isJoinable = exits.every(
     (exit) =>
-      isEnabled(exit.path) === isAllEnabled &&
-      (isAllEnabled || heapSymbol === undefined || !passed.includes(heapSymbol)) &&
+      (path.isAction !== true ||
+        (isEnabled(exit.path) === isAllEnabled &&
+          (isAllEnabled || heapSymbol === undefined || !passed.includes(heapSymbol)))) &&
       changed.every((symbol) => exit.path.scope.bindings.has(symbol)) &&
       settled !== undefined &&
       (exit.path.generators === settled ||
@@ -16143,7 +16146,7 @@ export const translateJoined = (
   const rest = continueWith(
     {
       ...path,
-      isAssigned: isAllEnabled,
+      isAssigned: path.isAction === true ? isAllEnabled : path.isAssigned,
       generators: settled ?? exits[0].path.generators,
       unboundThis: exits[0].path.unboundThis,
       scope: {
@@ -21495,6 +21498,7 @@ export const translateAction = (
       scope,
       mutable: new Set(context.variables.keys()),
       isAssigned: false,
+      isAction: true,
       isLast: false,
       isLooping: false,
       generators: new Map(),
