@@ -3,7 +3,7 @@ import type { Expression, OperatorDefinition, OperatorParam, SourceLocation } fr
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS, HOST_GLOBAL_KEYS, NODE_GLOBALS } from "./built-ins";
 import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
-import { type Collection, getBuiltIn, isHeldBuiltInObject } from "./intrinsics";
+import { type Collection, getBuiltIn, getBuiltInPath, isHeldBuiltInObject } from "./intrinsics";
 import {
   type BufferName,
   getArrayMethodCall,
@@ -5339,6 +5339,8 @@ export interface CalledMethod {
   method: ts.MethodDeclaration | ts.GetAccessorDeclaration;
   receiver: ts.Expression;
   key: string;
+  // The well-known symbol that keys the method, such as iterator for obj[Symbol.iterator].
+  symbol?: string;
   // A getter like `get method() { return this.#method; }` that the call reads the method through.
   getter?: ts.GetAccessorDeclaration;
 }
@@ -5355,10 +5357,25 @@ export const getCalledMethod = (
     (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node));
   if (!isAccess) return undefined;
   const name = ts.isPropertyAccessExpression(node) ? node.name : node.argumentExpression;
-  if (!ts.isIdentifier(name) && !ts.isPrivateIdentifier(name) && !ts.isStringLiteralLike(name)) {
-    return undefined;
-  }
-  const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
+  const symbol =
+    ts.isPropertyAccessExpression(name) && getBuiltInPath(name.expression, context) === "Symbol"
+      ? name.name.text
+      : undefined;
+  const text =
+    ts.isIdentifier(name) || ts.isPrivateIdentifier(name) || ts.isStringLiteralLike(name)
+      ? name.text
+      : undefined;
+  const key = symbol === undefined ? text : `@@${symbol}`;
+  if (key === undefined) return undefined;
+  // A method that a well-known symbol keys is the property of the receiver's type with its name.
+  const property =
+    symbol === undefined
+      ? getSymbol(name, context.checker)
+      : context.checker
+          .getTypeAtLocation(node.expression)
+          .getProperties()
+          .find((inner) => inner.escapedName.toString().startsWith(`__@${symbol}@`));
+  const declaration = getValueDeclaration(property, context);
   const getter =
     declaration !== undefined &&
     ts.isGetAccessorDeclaration(declaration) &&
@@ -5371,7 +5388,13 @@ export const getCalledMethod = (
   const method = getObjectMethod(returned ?? declaration, context);
   return method === undefined || !isKind(method)
     ? undefined
-    : { method, receiver: node.expression, key: name.text, getter };
+    : {
+        method,
+        receiver: node.expression,
+        key,
+        symbol,
+        getter,
+      };
 };
 
 // A value that a literal writes, which reads the same wherever it runs.
@@ -5657,8 +5680,7 @@ const isOnlyCalled = (candidate: FunctionNode, context: Context) => {
     (ts.isArrowFunction(candidate) || findNames(table, candidate, ["arguments"]).length === 0) &&
     [...table.fileStarts].every((start) =>
       findNames(table, table.nodes[start], [name.text]).every(
-        (use) =>
-          use === name || (ts.isCallExpression(use.parent) && use.parent.expression === use),
+        (use) => use === name || (ts.isCallExpression(use.parent) && use.parent.expression === use),
       ),
     )
   );

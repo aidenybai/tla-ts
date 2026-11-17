@@ -6207,13 +6207,13 @@ export const bindCall = (
       : undefined;
   if (iterated !== undefined) return iterated;
   // A parameter's array pattern that a script types as iterable takes its values from the argument,
-  // which the call passes as a name, through the argument's iterator before the body runs. Every
-  // argument is inert, so taking the values first runs nothing out of order.
+  // which the call passes as a name or an array literal, through the argument's iterator before the
+  // body runs. Every argument is inert, so taking the values first runs nothing out of order.
   const iterable = parameters.flatMap((parameter, position) => {
     const argument = argumentNodes.at(position);
     return ts.isArrayBindingPattern(parameter.name) &&
       argument !== undefined &&
-      ts.isIdentifier(argument) &&
+      (ts.isIdentifier(argument) || ts.isArrayLiteralExpression(argument)) &&
       !path.scope.results.has(argument) &&
       argumentNodes.every(isInertValue) &&
       !isAsyncFunction(callee)
@@ -8734,10 +8734,9 @@ const translateGeneratorStep = (
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
-  const heapSymbol = context.heap;
   const method = step.name.text;
   const argument = node.arguments.at(0);
-  return resumeGenerator(
+  return stepGenerator(
     node,
     translateExpression(step.expression, path.scope, context),
     method,
@@ -8748,6 +8747,31 @@ const translateGeneratorStep = (
           : translateExpression(argument, path.scope, context),
       node: argument,
     },
+    path,
+    context,
+    frame,
+    continueWith,
+  );
+};
+
+// Resumes the generator that a receiver holds for its next, return, or throw, and gives the object
+// with what it yields or returns.
+export const stepGenerator = (
+  node: ts.Node,
+  receiver: Expression,
+  method: string,
+  argument: { value: Expression; node?: ts.Expression } | undefined,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula => {
+  const heapSymbol = context.heap;
+  return resumeGenerator(
+    node,
+    receiver,
+    method,
+    argument,
     path,
     context,
     frame,
@@ -9040,7 +9064,7 @@ const translateGeneratorCall = (
 // of the generator functions made. The pattern binds the values once the generator has run, so the
 // generator must not read what the pattern binds, and the pattern's defaults, like the evaluated
 // expressions, must not read what the generator changes.
-const takeFromHeld = (
+export const takeFromHeld = (
   pattern: ts.ArrayBindingPattern | ts.ArrayLiteralExpression,
   receiver: Expression,
   generators: FunctionNode[],
@@ -16770,6 +16794,68 @@ const writesGeneratorKey = (node: ts.Node): boolean => {
   );
 };
 
+// Runs a for-of's body for each value that the generator that a receiver holds yields, as its
+// next resumes it, and closes it through its return where the loop leaves early.
+const iterateGenerator = (
+  loop: ts.ForOfStatement,
+  start: Path,
+  receiver: Expression,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const resume = (
+    current: Path,
+    method: string,
+    resumeFrame: Frame,
+    step: Caller["step"],
+  ): Formula =>
+    resumeGenerator(
+      loop.expression,
+      receiver,
+      method,
+      undefined,
+      current,
+      context,
+      resumeFrame,
+      step,
+    );
+  // Leaving the body early runs the generator's return, though a throw keeps what it threw.
+  const close = (current: Path, exit: (path: Path) => Formula) =>
+    resume(current, "return", frame, (after) => exit(after));
+  const next = (current: Path): Formula =>
+    resume(current, "next", frame, (after, value, isDone, isResult) => {
+      if (isDone) return continueWith(after);
+      const bodyFrame: Frame = {
+        ...guardYields(frame),
+        next,
+        continueTo: next,
+        breakTo: (left) => close(left, continueWith),
+        exit: (left, returned) => close(left, (closed) => frame.exit(closed, returned)),
+        // A throw closes the generator and keeps what it threw, even where the return throws.
+        throwTo: (left, thrown) => {
+          const rethrow = (closed: Path) =>
+            frame.throwTo === undefined ? leaf(thrown.uncaught) : frame.throwTo(closed, thrown);
+          return resume(left, "return", { ...frame, throwTo: rethrow }, rethrow);
+        },
+      };
+      const runBody = (current: Path, element: Expression) =>
+        bindIteration(
+          loop.initializer,
+          element,
+          undefined,
+          startIteration(loop, current),
+          context,
+          bodyFrame,
+          (bound, innerFrame) => translateStatements([loop.statement], bound, context, innerFrame),
+        );
+      return isResult && value !== undefined
+        ? readValue(loop.expression, value, after, context, frame, runBody)
+        : runBody(after, value ?? getUndefined(context));
+    });
+  return next(start);
+};
+
 // A for-of over a generator, which calls its next for each value, and its return where the loop
 // leaves early, as the generator object's own iterator does.
 const translateForOfGenerator = (
@@ -16791,59 +16877,15 @@ const translateForOfGenerator = (
       iterated,
     );
   }
-  const iterate = (start: Path, receiver: Expression) => {
-    const resume = (
-      current: Path,
-      method: string,
-      resumeFrame: Frame,
-      step: Caller["step"],
-    ): Formula =>
-      resumeGenerator(
-        loop.expression,
-        receiver,
-        method,
-        undefined,
-        current,
-        context,
-        resumeFrame,
-        step,
-      );
-    // Leaving the body early runs the generator's return, though a throw keeps what it threw.
-    const close = (current: Path, exit: (path: Path) => Formula) =>
-      resume(current, "return", frame, (after) => exit(after));
-    const next = (current: Path): Formula =>
-      resume(current, "next", frame, (after, value, isDone, isResult) => {
-        if (isDone) return continueWith(after);
-        const bodyFrame: Frame = {
-          ...guardYields(frame),
-          next,
-          continueTo: next,
-          breakTo: (left) => close(left, continueWith),
-          exit: (left, returned) => close(left, (closed) => frame.exit(closed, returned)),
-          // A throw closes the generator and keeps what it threw, even where the return throws.
-          throwTo: (left, thrown) => {
-            const rethrow = (closed: Path) =>
-              frame.throwTo === undefined ? leaf(thrown.uncaught) : frame.throwTo(closed, thrown);
-            return resume(left, "return", { ...frame, throwTo: rethrow }, rethrow);
-          },
-        };
-        const runBody = (current: Path, element: Expression) =>
-          bindIteration(
-            loop.initializer,
-            element,
-            undefined,
-            startIteration(loop, current),
-            context,
-            bodyFrame,
-            (bound, innerFrame) =>
-              translateStatements([loop.statement], bound, context, innerFrame),
-          );
-        return isResult && value !== undefined
-          ? readValue(loop.expression, value, after, context, frame, runBody)
-          : runBody(after, value ?? getUndefined(context));
-      });
-    return next(isBuiltIn ? withBuiltInIterator(loop.expression, start, receiver, context) : start);
-  };
+  const iterate = (start: Path, receiver: Expression) =>
+    iterateGenerator(
+      loop,
+      isBuiltIn ? withBuiltInIterator(loop.expression, start, receiver, context) : start,
+      receiver,
+      context,
+      frame,
+      continueWith,
+    );
   if (opened !== undefined) {
     return translateIteratorCall(loop.expression, opened, path, context, frame, (after, ref) =>
       iterate(after, ref ?? getUndefined(context)),
@@ -18525,10 +18567,42 @@ const translateIterations = (
         context,
         frame,
         throwWith,
-        (opened, iterator, next) => translateFrom(opened, { iterator, next }),
+        // A generator method that the open ran made the iterator, whose body the loop resumes. No
+        // code after the loop can reach the generator object, so the loop's exits join without it.
+        (opened, iterator, next) =>
+          ts.isForOfStatement(iterated) && isGeneratorMade(path, opened)
+            ? translateJoined(
+                iterated,
+                withoutMade(path, opened),
+                context,
+                (after) => continueWith(after),
+                (joinNext) =>
+                  iterateGenerator(iterated, opened, iterator, context, frame, (after) =>
+                    joinNext(withoutMade(path, after)),
+                  ),
+              )
+            : translateFrom(opened, { iterator, next }),
       ),
   );
 };
+
+// Whether a path holds a generator that it didn't hold before, as one that a generator method made.
+export const isGeneratorMade = (before: Path, after: Path) =>
+  [...after.generators.keys()].some((name) => !before.generators.has(name));
+
+// A path without the generators that it made since another and that completed, as the iterator
+// that a generator method made for a loop or a pattern, which nothing else reaches.
+export const withoutMade = (before: Path, after: Path): Path => ({
+  ...after,
+  generators: new Map(
+    [...after.generators].filter(
+      (entry) =>
+        before.generators.has(entry[0]) ||
+        entry[1].resume !== undefined ||
+        entry[1].caller !== undefined,
+    ),
+  ),
+});
 
 // A call to a built-in function that changes nothing, which an expression can make.
 const isLibraryCall = (node: ts.CallExpression, context: Context) =>

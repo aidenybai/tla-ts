@@ -51735,4 +51735,85 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a generator method that makes an object's iterator for a for-of and a pattern", () => {
+    const getSource = (expected: string) => `
+      class Bag {
+        items = [1, 2, 3];
+        *[Symbol.iterator]() {
+          yield this.items[0] * 10;
+          yield this.items[1] * 10;
+          yield this.items[2] * 10;
+        }
+      }
+      const seen: number[] = [];
+      for (const value of new Bag()) {
+        if (value > 20) break;
+        seen.push(value);
+      }
+      const [first, second] = new Bag();
+      seen.push(first, second);
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,20,10,20"))).failure).toBeUndefined();
+    });
+
+    it("rejects other values", async () => {
+      expect((await checkModel(getSource("10,20,30,10,20"))).failure?.message).toContain(
+        "seen 10,20,10,20",
+      );
+    });
+  });
+
+  describe("iterates the generator object that a call of an object's Symbol.iterator method makes", () => {
+    const getSource = (expected: string) => `
+      class Bag {
+        items = [1, 2, 3];
+        *[Symbol.iterator]() {
+          yield this.items[0] * 10;
+          yield this.items[1] * 10;
+          yield this.items[2] * 10;
+        }
+      }
+      const seen: number[] = [];
+      const bag = new Bag();
+      for (const value of bag[Symbol.iterator]()) seen.push(value);
+      const result = seen.join();
+      if (result !== "${expected}") throw new Error("seen " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10,20,30"))).failure).toBeUndefined();
+    });
+
+    it("rejects other values", async () => {
+      expect((await checkModel(getSource("10,20"))).failure?.message).toContain("seen 10,20,30");
+    });
+  });
+
+  describe("destructures an array through the generator that a script put on Array.prototype", () => {
+    const getSource = (expected: number) => `
+      const box = { total: 0 };
+      Array.prototype[Symbol.iterator] = function* (this: number[]) {
+        if (this.length > 0) yield this[0];
+        if (this.length > 2) yield 42;
+      } as unknown as () => ArrayIterator<number>;
+      const take = ([first, second]: number[]) => {
+        box.total = first + second;
+      };
+      take([1, 2, 3]);
+      if (box.total !== ${expected}) throw new Error("total " + box.total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(43))).failure).toBeUndefined();
+    });
+
+    it("rejects the array's own elements", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain("total 43");
+    });
+  });
 });
