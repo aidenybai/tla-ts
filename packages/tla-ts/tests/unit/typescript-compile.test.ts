@@ -50389,4 +50389,35 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a closure that call through a value runs as an operator that takes its environment", () => {
+    const getSource = (composed: number, expected: number) => `
+      function compose(f: (x: number) => number, g: (x: number) => number): (x: number) => number {
+        return function (this: unknown, x: number): number {
+          const inner: number = g.call(this, x);
+          const outer: number = f.call(this, inner);
+          return outer;
+        };
+      }
+      const increment = (x: number): number => x + 1;
+      let composite: (x: number) => number = increment;
+      ${Array.from({ length: composed }, () => "composite = compose(composite, increment);").join("\n")}
+      const result: number = composite(0);
+      if (result !== ${expected}) throw new Error("result " + result);
+    `;
+    const getSize = (composed: number) =>
+      printModule(compile(getSource(composed, 0)).source).length;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2, 3))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(2, 4))).failure?.message).toContain("result 3");
+    });
+
+    it("grows by a statement for each closure that it composes", () => {
+      expect(getSize(8)).toBeLessThan(getSize(4) * 1.4);
+    });
+  });
 });

@@ -463,7 +463,9 @@ export const isSharedCall = (
 ) =>
   context.sharedHelpers.get(callee)?.isEntered === isEntered &&
   ts.isCallExpression(node) &&
-  argumentNodes === node.arguments &&
+  // An entered function's call may pass what call or apply passes on.
+  (argumentNodes === node.arguments ||
+    (isEntered && !argumentNodes.some(ts.isOmittedExpression))) &&
   !argumentNodes.some(ts.isSpreadElement) &&
   (argumentNodes.length <= getParameters(callee).length ||
     getParameters(callee).some((parameter) => parameter.dotDotDotToken !== undefined));

@@ -4892,12 +4892,19 @@ const translateCallStatementBody = (
         through.thisArgument === undefined
           ? getUndefined(context)
           : translateExpression(through.thisArgument, path.scope, context);
+      // An apply of an array that isn't a literal passes its elements, which no node names.
+      const isListed =
+        through.isApply && through.argumentNodes.at(0) === expression.arguments.at(1);
       return through.candidates.reduceRight(
         (otherwise, candidate) => {
           const candidateValue = getCandidateValue(candidate, context);
+          const isEntered =
+            candidateValue !== undefined &&
+            !isListed &&
+            isEnteredCall(expression, candidate, through.argumentNodes, path, context);
           if (
             candidateValue === undefined ||
-            frame.inlining.has(candidate) ||
+            (frame.inlining.has(candidate) && !isEntered) ||
             isAnyGenerator(candidate) ||
             isAsyncFunction(candidate)
           ) {
@@ -4906,20 +4913,8 @@ const translateCallStatementBody = (
           const receiver = ts.isArrowFunction(candidate)
             ? undefined
             : { value: thisValue, method: candidate };
-          const run = isClosure(candidate, context)
-            ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
-                inlineBody(
-                  expression,
-                  candidate,
-                  through.argumentNodes,
-                  receiver,
-                  inner,
-                  context,
-                  innerFrame,
-                  (after, result) => continueCall(leave(after), result),
-                ),
-              )
-            : inlineBody(
+          const run = isEntered
+            ? translateSharedCall(
                 expression,
                 candidate,
                 through.argumentNodes,
@@ -4928,7 +4923,32 @@ const translateCallStatementBody = (
                 context,
                 frame,
                 continueCall,
-              );
+                () => leaf(boolean(false)),
+                { value, receiver: thisValue },
+              )
+            : isClosure(candidate, context)
+              ? enterClosure(candidate, value, path, context, frame, (inner, innerFrame, leave) =>
+                  inlineBody(
+                    expression,
+                    candidate,
+                    through.argumentNodes,
+                    receiver,
+                    inner,
+                    context,
+                    innerFrame,
+                    (after, result) => continueCall(leave(after), result),
+                  ),
+                )
+              : inlineBody(
+                  expression,
+                  candidate,
+                  through.argumentNodes,
+                  receiver,
+                  path,
+                  context,
+                  frame,
+                  continueCall,
+                );
           return ifThenElse(
             apply("=", [
               isClosure(candidate, context) ||
