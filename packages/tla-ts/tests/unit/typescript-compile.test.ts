@@ -50362,4 +50362,32 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("a:h,17"))).failure?.message).toContain("results a:h,16");
     });
   });
+
+  describe("makes a typed array through a value that holds a class extending a typed array", () => {
+    const getSource = (expected: string) => `
+      class MyUint8Array extends Uint8Array {}
+      const buffer = new ArrayBuffer(4, { maxByteLength: 8 });
+      const makers: Uint8ArrayConstructor[] = [Uint8Array, MyUint8Array];
+      const make = (maker: Uint8ArrayConstructor) => new maker(buffer, 1, 2);
+      const lengths: number[] = [];
+      for (const maker of makers) {
+        const made = new maker(buffer);
+        if (Object.getPrototypeOf(made) !== maker.prototype) throw new Error("prototype");
+        lengths.push(made.length);
+      }
+      const view = make(MyUint8Array);
+      lengths.push(view.length, view instanceof MyUint8Array ? 1 : 0);
+      if (lengths.join() !== "${expected}") throw new Error("lengths " + lengths.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("4,4,2,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects other lengths", async () => {
+      expect((await checkModel(getSource("4,4,2,0"))).failure?.message).toContain(
+        "lengths 4,4,2,1",
+      );
+    });
+  });
 });
