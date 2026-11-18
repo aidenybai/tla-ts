@@ -1420,25 +1420,23 @@ export class PbSolver implements SatExtension, ConstraintHost {
     const decl = manager.decls[expr];
     const k = getPbK(manager, decl);
     const isUnit = hasUnitCoefficients(manager, decl);
-    // Deviation from Z3: convert_eq_k asserts it at the base level, so it outlives the scope.
-    const isBase = isRoot && this.solver.numUserScopes === 0;
     switch (manager.getOp(expr)) {
       case OP_AT_MOST_K:
-        return this.convertAtMostK(expr, k, isBase, isSign);
+        return this.convertAtMostK(expr, k, isRoot, isSign);
       case OP_AT_LEAST_K:
-        return this.convertAtLeastK(expr, k, isBase, isSign);
+        return this.convertAtLeastK(expr, k, isRoot, isSign);
       case OP_PB_LE:
         return isUnit
-          ? this.convertAtMostK(expr, k, isBase, isSign)
-          : this.convertPbLe(expr, isBase, isSign);
+          ? this.convertAtMostK(expr, k, isRoot, isSign)
+          : this.convertPbLe(expr, isRoot, isSign);
       case OP_PB_GE:
         return isUnit
-          ? this.convertAtLeastK(expr, k, isBase, isSign)
-          : this.convertPbGe(expr, isBase, isSign);
+          ? this.convertAtLeastK(expr, k, isRoot, isSign)
+          : this.convertPbGe(expr, isRoot, isSign);
       case OP_PB_EQ:
         return isUnit
-          ? this.convertEqK(expr, k, isBase, isSign)
-          : this.convertPbEq(expr, isBase, isSign);
+          ? this.convertEqK(expr, k, isRoot, isSign)
+          : this.convertPbEq(expr, isRoot, isSign);
       default:
         throw new SmtTacticError("unexpected pseudo-Boolean operator");
     }
@@ -1490,7 +1488,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
       k = k.add(Rational.of(BigInt(wlits.coeffs[index])));
     }
     const bound = this.checkUnsigned(k);
-    if (isRoot) {
+    if (isRoot && this.solver.numUserScopes === 0) {
       this.addRootPbGe(wlits, bound, isSign);
       return NULL_LITERAL;
     }
@@ -1502,7 +1500,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
   private convertPbGe(expr: number, isRoot: boolean, isSign: boolean) {
     const bound = this.checkUnsigned(getPbK(this.manager, this.manager.decls[expr]));
     const wlits = this.convertPbWlits(expr);
-    if (isRoot) {
+    if (isRoot && this.solver.numUserScopes === 0) {
       this.addRootPbGe(wlits, bound, isSign);
       return NULL_LITERAL;
     }
@@ -1515,7 +1513,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
     const solver = this.solver;
     let k = getPbK(this.manager, this.manager.decls[expr]);
     const wlits = this.convertPbWlits(expr);
-    const isBaseAssert = isRoot && !isSign;
+    const isBaseAssert = isRoot && !isSign && solver.numUserScopes === 0;
     const lit1 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
     const lit2 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
     this.addPbGe(lit1, wlits, Number(BigInt.asUintN(32, k.num)), false);
@@ -1548,7 +1546,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
   private convertAtLeastK(expr: number, k: Rational, isRoot: boolean, isSign: boolean) {
     const lits = this.convertPbArgs(expr);
     let bound = k.compare(Rational.of(BigInt(lits.length))) > 0 ? lits.length + 1 : Number(k.num);
-    if (isRoot) {
+    if (isRoot && this.solver.numUserScopes === 0) {
       if (isSign) {
         for (let index = 0; index < lits.length; index++) lits[index] ^= 1;
         bound = lits.length + 1 - bound;
@@ -1567,7 +1565,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
     for (let index = 0; index < lits.length; index++) lits[index] ^= 1;
     const bound1 = k.compare(Rational.of(BigInt(lits.length))) >= 0 ? lits.length : Number(k.num);
     let bound = lits.length - bound1;
-    if (isRoot) {
+    if (isRoot && this.solver.numUserScopes === 0) {
       if (isSign) {
         for (let index = 0; index < lits.length; index++) lits[index] ^= 1;
         bound = lits.length + 1 - bound;
@@ -1584,7 +1582,8 @@ export class PbSolver implements SatExtension, ConstraintHost {
   private convertEqK(expr: number, k: Rational, isRoot: boolean, isSign: boolean) {
     const solver = this.solver;
     const lits = this.convertPbArgs(expr);
-    const isBaseAssert = isRoot && !isSign;
+    // Deviation from Z3: convert_eq_k asserts at the base level in a user scope too, so the constraint outlives the pop.
+    const isBaseAssert = isRoot && !isSign && solver.numUserScopes === 0;
     const lit1 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
     const lit2 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
     const bound = k.compare(Rational.of(BigInt(lits.length))) > 0 ? lits.length + 1 : Number(k.num);
