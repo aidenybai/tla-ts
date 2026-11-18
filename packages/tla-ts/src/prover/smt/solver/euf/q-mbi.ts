@@ -212,6 +212,7 @@ export class Mbqi {
         if (model === null) throw new SmtInvariantError("a satisfiable check has a model");
         const isFound =
           this.checkForallSubst(quantifier, qb) || this.checkForallDefault(quantifier, qb, model);
+        model.decRef();
         solver.pop(1);
         return isFound ? L_FALSE : L_UNDEF;
       }
@@ -235,11 +236,13 @@ export class Mbqi {
     const solver = this.initSolver();
     const eqs: number[] = [];
     let index = 0;
+    let cex: ProtoModel | null = null;
     solver.push();
     this.addDomainEqs(qb);
     for (; index < this.maxCex; index++) {
       if (solver.check() !== L_TRUE) break;
-      const cex = solver.getModel();
+      cex?.decRef();
+      cex = solver.getModel();
       if (cex === null) throw new SmtInvariantError("a satisfiable check has a model");
       const projection = this.solverProject(cex, qb, eqs, true);
       if (projection === null) break;
@@ -247,6 +250,7 @@ export class Mbqi {
       this.assertExpr(this.manager.mkApp(OP_NOT, [this.manager.mkAnd(eqs)], SORT_BOOL));
     }
     solver.pop(1);
+    cex?.decRef();
     return index > 0;
   }
 

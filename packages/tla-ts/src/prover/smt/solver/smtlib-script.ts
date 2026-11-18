@@ -372,6 +372,8 @@ interface CheckResult {
   isFromTactic: boolean;
   model: ProtoModel | undefined;
   fdSolver: FdSolver | undefined;
+  // inc_sat_solver, which makes a model at each command that asks for one.
+  satSolver: IncSatSolver | undefined;
   core: number[] | undefined;
   // check_sat_result::reason_unknown, where the port tracks it.
   reasonUnknown?: string;
@@ -716,6 +718,7 @@ export const runSmtlibScript = (
         isFromTactic,
         model: solved.model,
         fdSolver,
+        satSolver: isKernelChecking && !isFromTactic ? state.satSolver : undefined,
         core: solved.core ?? solved.context?.unsatCore ?? [],
         reasonUnknown: getReasonUnknown(solved, deadline),
       });
@@ -747,16 +750,23 @@ export const runSmtlibScript = (
       state.manager.limit.pop();
     }
   };
+  // The command holds a reference to the model, as its model_ref does.
   const getModel = (list: SmtList) => {
     const check = state.check;
     if (!settings.isProducingModels || check === undefined || check.status === L_FALSE)
       throw new SmtParseError("model is not available", list.end);
-    if (check.model !== undefined) return check.model;
+    if (check.model !== undefined) {
+      check.model.incRef();
+      return check.model;
+    }
     if (check.isOptimizing) throw new SmtUnsupportedError("the models of optimization");
     if (check.context === undefined && check.status !== L_TRUE)
       throw check.isFromTactic
         ? new SmtParseError("model is not available", list.end)
         : new SmtUnsupportedError("the model of a canceled search");
+    const satModel = check.satSolver?.getModel();
+    if (satModel === null) throw new SmtParseError("model is not available", list.end);
+    if (satModel !== undefined) return satModel;
     const context = check.context;
     const model =
       check.fdSolver !== undefined
@@ -765,13 +775,18 @@ export const runSmtlibScript = (
           ? new ProtoModel(state.manager)
           : context.getModel();
     if (model === undefined) throw new SmtParseError("model is not available", list.end);
-    if (check.fdSolver !== undefined) return model;
+    if (check.fdSolver === undefined) {
+      model.incRef();
+      check.model = model;
+    }
     model.incRef();
-    check.model = model;
     return model;
   };
+  // m_check_sat_result keeps the solver that answered until cmd_context drops the result.
   const clearCheck = () => {
     state.check?.model?.decRef();
+    const satSolver = state.check?.satSolver;
+    if (satSolver !== undefined && satSolver !== state.satSolver) satSolver.release();
     state.check = undefined;
   };
   const releaseTacticModel = () => {
@@ -794,6 +809,7 @@ export const runSmtlibScript = (
       isFromTactic: false,
       model: undefined,
       fdSolver: undefined,
+      satSolver: undefined,
       core: undefined,
       ...result,
     };
@@ -813,7 +829,7 @@ export const runSmtlibScript = (
       parameters.get("tactic.default_tactic") === "sat" ||
       parameters.get("sat.smt") === "true" ||
       isEuf;
-    state.satSolver?.release();
+    if (state.satSolver !== state.check?.satSolver) state.satSolver?.release();
     decConverterRefs(state.manager, state.tacticConverters);
     state.tacticConverters = [];
     releaseTacticModel();
@@ -884,7 +900,7 @@ export const runSmtlibScript = (
       return {
         result,
         context: undefined,
-        model: result === L_TRUE ? (solver.getModel() ?? undefined) : undefined,
+        model: undefined,
         core: result === L_FALSE ? [...solver.getUnsatCore()] : undefined,
         reasonUnknown: solver.reasonUnknown,
       };
@@ -1768,15 +1784,19 @@ export const runSmtlibScript = (
           throw new SmtParseError("invalid command argument, keyword expected", parameter);
         if (parameter !== undefined) throw new SmtUnsupportedError("the parameters of eval");
         const model = getModel(list);
-        if (term === -1) throw new SmtParseError("no arguments passed to eval", list.end);
+        if (term === -1) {
+          model.decRef();
+          throw new SmtParseError("no arguments passed to eval", list.end);
+        }
         const manager = state.manager;
         manager.incRef(term);
         const evaluator = new ModelEvaluator(manager, model);
         const value = evaluator.rewrite(term);
         display(value);
-        // eval_cmd frees its model_evaluator before the value, and the parser frees the term last.
+        // eval_cmd frees its model_evaluator, the value and the model, and the parser frees the term last.
         evaluator.release();
         manager.decRef(value);
+        model.decRef();
         manager.decRef(term);
       },
     ],
@@ -1794,6 +1814,7 @@ export const runSmtlibScript = (
         // parse_get_value keeps the terms on its expression stack until it has printed them, and
         // then frees them in their order.
         for (const expr of exprs) manager.incRef(expr);
+        let model: ProtoModel | undefined;
         try {
           if (exprs.length === 0)
             throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
@@ -1805,7 +1826,7 @@ export const runSmtlibScript = (
             throw new SmtUnsupportedError("the model index of get-value");
           if (extra !== undefined)
             throw new SmtParseError("invalid get-value command, ')' expected", extra);
-          const model = getModel(list);
+          model = getModel(list);
           pendingText += "(";
           model.compact();
           // Z3 prints each term as the script spells it, from the end of the term before.
@@ -1813,7 +1834,7 @@ export const runSmtlibScript = (
             terms.offset + 1,
             ...terms.items.map((item) => (item.kind === "list" ? item.end : item).endOffset),
           ];
-          exprs.forEach((expr, index) => {
+          for (const [index, expr] of exprs.entries()) {
             const isCompleting = model.getModelCompletion();
             const value = model.eval(expr, true);
             pendingText += `${index > 0 ? "\n " : ""}(${text.slice(offsets[index], offsets[index + 1]).trim()} ${format(value)})`;
@@ -1821,11 +1842,12 @@ export const runSmtlibScript = (
             // scoped_model_completion restores the completion once the value is gone, which
             // resets the model's cache.
             model.setModelCompletion(isCompleting);
-          });
+          }
           print(")");
         } finally {
           state.reader.releaseTerms();
           for (const expr of exprs) manager.decRef(expr);
+          model?.decRef();
         }
       },
     ],
@@ -1846,6 +1868,7 @@ export const runSmtlibScript = (
           return isDecided ? [assignment] : [];
         });
         print(`(${assignments.join(" ")})`);
+        model.decRef();
       },
     ],
     [
@@ -1896,6 +1919,7 @@ export const runSmtlibScript = (
         }
         model.addRecFuns();
         print(`(\n${printModel(manager, getPrintEnvironment(), model, 2)})`);
+        model.decRef();
       },
     ],
     [

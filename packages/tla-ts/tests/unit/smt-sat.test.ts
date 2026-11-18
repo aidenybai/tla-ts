@@ -220,6 +220,53 @@ describe("sat solver", () => {
     expect(limit.isSuspended).toBe(false);
   });
 
+  it("makes a model for each command that asks for one, which the command frees", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(set-option :produce-models true)",
+        "(declare-const v0 (_ BitVec 8))",
+        "(declare-const v1 (_ BitVec 8))",
+        "(declare-const p0 Bool)",
+        "(declare-const p1 Bool)",
+        "(assert (bvsge (bvmul (bvxor v0 v1) (bvadd v0 v0)) (bvudiv (_ bv53 8) (_ bv213 8))))",
+        "(assert (bvult (bvmul (bvand (_ bv196 8) v0) (bvor v1 v1)) (bvmul (_ bv185 8) v0)))",
+        "(assert p1)",
+        "(assert (and p1 (bvult (bvudiv (bvmul (_ bv49 8) (_ bv3 8)) v1) (bvadd v0 v1))))",
+        "(check-sat-assuming (p0))",
+        "(get-value ((bvand (bvxor (_ bv26 8) (_ bv163 8)) (bvshl v0 v0))))",
+        "(check-sat-assuming (p0))",
+        "(get-value ((bvmul (bvshl (_ bv118 8) (_ bv166 8)) (bvurem v0 v1))))",
+        "(assert (or (bvult (bvlshr (bvsub v1 v0) (bvudiv v0 v1)) (_ bv228 8)) (= (bvshl (bvand v1 (_ bv14 8)) (bvurem v0 (_ bv174 8))) v0)))",
+        "(get-info :rlimit)",
+        "(push 1)",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toBe(
+      [
+        "sat",
+        "(((bvand (bvxor (_ bv26 8) (_ bv163 8)) (bvshl v0 v0)) #x00))",
+        "sat",
+        "(((bvmul (bvshl (_ bv118 8) (_ bv166 8)) (bvurem v0 v1)) #x00))",
+        "(:rlimit 6566)",
+        "sat",
+        "(",
+        "  (define-fun p1 () Bool",
+        "    true)",
+        "  (define-fun p0 () Bool",
+        "    true)",
+        "  (define-fun v0 () (_ BitVec 8)",
+        "    #x7f)",
+        "  (define-fun v1 () (_ BitVec 8)",
+        "    #xb2)",
+        ")",
+        "(:rlimit 11385)",
+      ].join("\n"),
+    );
+  });
+
   it("drops the cardinality constraints over the variables of a popped scope", () => {
     expect(
       run([

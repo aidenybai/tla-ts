@@ -60,7 +60,6 @@ export class IncSatSolver {
   private isInternalizedConverted = false;
   private readonly internalized: RefVector;
   private hasUninterpreted = false;
-  private models: ProtoModel[] = [];
   private subgoals: Goal[] = [];
   private scopes: Scope[] = [];
   reasonUnknown = "no reason given";
@@ -409,11 +408,10 @@ export class IncSatSolver {
     return convertModel(this.converters, euf === null ? model : euf.updateModel(model));
   }
 
+  // The caller holds the reference to the model, as its model_ref does.
   getModel() {
     const model = this.mkModel();
-    if (model === null) return null;
-    model.incRef();
-    this.models.push(model);
+    model?.incRef();
     return model;
   }
 
@@ -470,8 +468,6 @@ export class IncSatSolver {
   }
 
   release() {
-    for (const model of this.models) model.decRef();
-    this.models = [];
     for (const scope of this.scopes) decConverterRefs(this.manager, scope.converters);
     this.converters.releaseConverters();
     this.resetSubgoals();
