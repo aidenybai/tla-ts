@@ -13,7 +13,7 @@ import type { SanyLocation } from "./nodes";
 
 interface DefEntryParts {
   hasChildlessFirstChild: boolean | undefined;
-  last: TokenSpan;
+  last: SanyLocation;
   lastKind: string | undefined;
 }
 
@@ -107,20 +107,21 @@ const getDefEntryParts = (
   expression: Expression,
   span: TokenSpan,
 ): DefEntryParts | undefined => {
+  const getLocation = (start: number, end = start) => getSpanLocation(file, { start, end });
   const getPart = (operand: Expression, partSpan = getOperandSpan(file, operand)) => ({
-    last: partSpan,
+    last: getSpanLocation(file, partSpan),
     lastKind: getSyntaxKind(file, operand, partSpan),
   });
   const getSecondHeir = (end: number, lastKind: string) => ({
     hasChildlessFirstChild: false,
-    last: { start: span.start + 1, end },
+    last: getLocation(span.start + 1, end),
     lastKind,
   });
   const getOperator = (left: Expression, lastKind: string) => {
     const leftSpan = getOperandSpan(file, left);
     return {
       hasChildlessFirstChild: hasChildlessFirstChild(file, left, leftSpan),
-      last: { start: leftSpan.end + 1, end: leftSpan.end + 1 },
+      last: getLocation(leftSpan.end + 1),
       lastKind,
     };
   };
@@ -142,7 +143,7 @@ const getDefEntryParts = (
       return first === undefined
         ? {
             hasChildlessFirstChild: false,
-            last: { start: span.end, end: span.end },
+            last: getLocation(span.end),
             lastKind: file.tokens[span.end].text,
           }
         : { hasChildlessFirstChild: false, ...getPart(first) };
@@ -168,6 +169,22 @@ const getDefEntryParts = (
     case "Forall":
     case "Exists":
       return getSecondHeir(getOperandSpan(file, expression.bounds[0].set).end, "N_QuantBound");
+    case "Choose":
+    case "SetFilter":
+      return (expression.kind === "Choose" ? expression.pattern : expression.bound.pattern).kind ===
+        "Tuple"
+        ? getSecondHeir(getMatchingIndex(file, span.start + 1), "N_IdentifierTuple")
+        : undefined;
+    case "Decimal": {
+      // A decimal's N_Real node has the integer part, the point, and the fraction as heirs.
+      const token = file.tokens[span.start];
+      const point = token.column + token.text.indexOf(".");
+      return {
+        hasChildlessFirstChild: false,
+        last: { ...getLocation(span.start), beginColumn: point, endColumn: point },
+        lastKind: ".",
+      };
+    }
     case "Let":
       return getSecondHeir(getOperandSpan(file, expression.body).start - 2, "N_LetDefinitions");
     case "Product":
@@ -184,7 +201,7 @@ const getDefEntryParts = (
       const item = getOperandSpan(file, expression.operands[1]);
       return {
         hasChildlessFirstChild: true,
-        last: { start: item.start - 1, end: item.end },
+        last: getLocation(item.start - 1, item.end),
         lastKind: expression.kind === "And" ? "N_ConjItem" : "N_DisjItem",
       };
     }
@@ -203,7 +220,7 @@ const getDefEntryParts = (
           expression.expression,
           getOperandSpan(file, expression.expression),
         ),
-        last: { start: span.end, end: span.end },
+        last: getLocation(span.end),
         lastKind: "N_GenPostfixOp",
       };
     case "FunctionApplication":
@@ -214,7 +231,7 @@ const getDefEntryParts = (
       const next = operandSpan.end + 1;
       return {
         hasChildlessFirstChild: hasChildlessFirstChild(file, operand, operandSpan),
-        last: { start: next, end: next },
+        last: getLocation(next),
         lastKind: file.tokens[next].text,
       };
     }
@@ -225,7 +242,7 @@ const getDefEntryParts = (
           ? undefined
           : {
               hasChildlessFirstChild: true,
-              last: { start: span.start + 1, end: span.end },
+              last: getLocation(span.start + 1, span.end),
               lastKind: "N_OpArgs",
             };
       }
@@ -257,15 +274,14 @@ export const getDefEntryErrors = (file: SourceFile, expression: Expression): Def
     return [{ location, message: "DEF clause entry should describe a defined operator." }];
   }
   if (parts?.hasChildlessFirstChild === undefined || parts.lastKind === undefined) return [];
-  const lastLocation = getSpanLocation(file, parts.last);
   return [
     ...(parts.hasChildlessFirstChild ? [{ location, message: "Was expecting a GeneralId." }] : []),
     ...(parts.lastKind === "N_OpArgs"
-      ? [{ location: lastLocation, message: "Selector `!(...)' should not have argument(s)." }]
+      ? [{ location: parts.last, message: "Selector `!(...)' should not have argument(s)." }]
       : [
-          { location: lastLocation, message: "Unexpected token found." },
+          { location: parts.last, message: "Unexpected token found." },
           {
-            location: lastLocation,
+            location: parts.last,
             message: `Need name or step number here, not \`${parts.lastKind}'.`,
           },
         ]),

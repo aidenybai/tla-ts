@@ -10,7 +10,7 @@ import type {
   UseOrHide,
 } from "../ast";
 import { TlaSyntaxError } from "../errors";
-import { defEntryErrors } from "../parser";
+import { defEntryErrors, getDefEntryBinder } from "../parser";
 import { createLevelFields } from "./builtins";
 import {
   addToContext,
@@ -124,22 +124,22 @@ const generateDefs = (generation: ModuleGeneration, defs: Fact[]) =>
     const entryErrors = defEntryErrors.get(fact) ?? [];
     entryErrors.forEach((error) => generation.addError(error.location, error.message));
     if (entryErrors.length > 0) return [];
+    const location = getLocation(generation.file, fact);
     const symbol = generateSelector(
       generation,
-      fact.kind === "OperatorReference"
-        ? { kind: "Identifier", name: fact.operator, location: fact.location }
-        : fact,
+      getDefEntryBinder(fact) ??
+        (fact.kind === "OperatorReference"
+          ? { kind: "Identifier", name: fact.operator, location: fact.location }
+          : fact),
       -1,
       false,
       true,
+      location,
     );
     const isDefinition =
       symbol.kind === "OpDef" || (symbol.kind === "ThmOrAssumpDef" && !symbol.name.startsWith("<"));
     if (!isDefinition) {
-      generation.addError(
-        getLocation(generation.file, fact),
-        "DEF clause entry should describe a defined operator.",
-      );
+      generation.addError(location, "DEF clause entry should describe a defined operator.");
       return [];
     }
     return [symbol];

@@ -124,6 +124,7 @@ export const generateSelector = (
   expectedArity: number,
   isFact: boolean,
   isDef: boolean,
+  location = getLocation(generation.file, expression),
 ) => {
   const items = getSelectorItems(expression);
   if (items === undefined) throw new TlaSyntaxError(`Expected a name, found ${expression.kind}`);
@@ -132,7 +133,7 @@ export const generateSelector = (
     expectedArity,
     isFact,
     isDef,
-    getLocation(generation.file, expression),
+    location,
   );
 };
 

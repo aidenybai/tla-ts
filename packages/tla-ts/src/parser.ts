@@ -485,6 +485,23 @@ export const parenthesizedRanges = new WeakMap<Expression, SourceRange>();
 // Generator#genIdToSelector rejects a DEF entry that isn't a name by the shape of its syntax tree.
 export const defEntryErrors = new WeakMap<Expression, DefEntryError[]>();
 
+// Generator#genIdToSelector looks up the name a binder declares as the name of the DEF entry.
+export const getDefEntryBinder = (expression: Expression): Expression | undefined => {
+  if (parenthesizedRanges.has(expression)) return undefined;
+  const binder =
+    expression.kind === "UnboundedQuantifier"
+      ? { name: expression.names[0], range: expression.nameRanges?.[0] }
+      : expression.kind === "Choose" && expression.pattern.kind === "Name"
+        ? { name: expression.pattern.name, range: expression.pattern.ranges?.[0] }
+        : expression.kind === "SetFilter" && expression.bound.pattern.kind === "Name"
+          ? { name: expression.bound.pattern.name, range: expression.bound.pattern.ranges?.[0] }
+          : undefined;
+  const range = binder?.range;
+  return binder && range
+    ? { kind: "Identifier", name: binder.name, location: { ...range.start, range } }
+    : undefined;
+};
+
 export const extractModule = (source: string, name: string) => {
   const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
   const lines = source.replace(/\r?\n$/, "").split(/\r?\n/);

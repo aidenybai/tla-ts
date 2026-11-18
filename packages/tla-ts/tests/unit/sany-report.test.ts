@@ -251,6 +251,47 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("looks up the name a binder declares in a DEF clause entry, and rejects decimals, as SANY does", () => {
+    const DEF_ERROR = "DEF clause entry should describe a defined operator.";
+    const report = getReport({
+      M: "---- MODULE M ----\nCONSTANT K\nA == 1\nB == 2\nTHEOREM TRUE BY DEF CHOOSE v : TRUE, \\E v, w : TRUE, {v \\in {} : TRUE}, A\nTHEOREM TRUE BY DEF CHOOSE <<a, b>> \\in {} : TRUE, {<<a, b>> \\in {} : TRUE}, 12.50, A\nTHEOREM TRUE BY DEF CHOOSE A : TRUE, CHOOSE K : TRUE, \\AA v : TRUE\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 18",
+        "",
+        ...[
+          ["line 5, col 28 to line 5, col 28", "Unknown operator: `v'."],
+          ["line 5, col 21 to line 5, col 35", DEF_ERROR],
+          ["line 5, col 41 to line 5, col 41", "Unknown operator: `v'."],
+          ["line 5, col 38 to line 5, col 51", DEF_ERROR],
+          ["line 5, col 55 to line 5, col 55", "Unknown operator: `v'."],
+          ["line 5, col 54 to line 5, col 70", DEF_ERROR],
+          ["line 6, col 28 to line 6, col 35", "Unexpected token found."],
+          [
+            "line 6, col 28 to line 6, col 35",
+            "Need name or step number here, not `N_IdentifierTuple'.",
+          ],
+          ["line 6, col 21 to line 6, col 49", DEF_ERROR],
+          ["line 6, col 53 to line 6, col 60", "Unexpected token found."],
+          [
+            "line 6, col 53 to line 6, col 60",
+            "Need name or step number here, not `N_IdentifierTuple'.",
+          ],
+          ["line 6, col 52 to line 6, col 75", DEF_ERROR],
+          ["line 6, col 80 to line 6, col 80", "Unexpected token found."],
+          ["line 6, col 80 to line 6, col 80", "Need name or step number here, not `.'."],
+          ["line 6, col 78 to line 6, col 82", DEF_ERROR],
+          ["line 7, col 38 to line 7, col 52", DEF_ERROR],
+          ["line 7, col 59 to line 7, col 59", "Unknown operator: `v'."],
+          ["line 7, col 55 to line 7, col 66", DEF_ERROR],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
   it("reports DEF clause entries of bracketed, quantified and infix shapes as SANY does", () => {
     const report = getReport({
       M: "---- MODULE M ----\nA == 1\nB == 2\nTHEOREM TRUE BY DEF CASE A -> 1 [] OTHER -> 2, [a |-> 1], [a : {}], A\nTHEOREM TRUE BY DEF [v \\in {} |-> 1], \\A v, w \\in {} : TRUE, A\nTHEOREM TRUE BY DEF LET Q == 1 IN Q, A \\X B, A /\\ B, {A \\/ B}, A\nTHEOREM TRUE BY DEF [A EXCEPT ![1] = 2], [A -> B], {A : v \\in {}}, WF_A(B), A\nTHEOREM TRUE BY DEF /\\ A\n                    /\\ B\n====\n",

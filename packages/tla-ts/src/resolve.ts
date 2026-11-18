@@ -23,7 +23,7 @@ import {
   type UseOrHide,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
-import { defEntryErrors, parenthesizedRanges } from "./parser";
+import { defEntryErrors, getDefEntryBinder, parenthesizedRanges } from "./parser";
 import { formatSanyLocation } from "./sany/nodes";
 import { resolveSynonym } from "./tlc/jar-data";
 
@@ -1844,7 +1844,8 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
     })),
   );
   if (entryErrors.length > 0) return false;
-  const reference = selections.get(def) ?? def;
+  const binder = getDefEntryBinder(def);
+  const reference = binder ?? selections.get(def) ?? def;
   const range = reference.location.range;
   if (!range) return true;
   const name =
@@ -1864,7 +1865,7 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
       : name === "" || isDefinitionName(name, local, binding, range, unit);
   if (isDefined) return true;
   unit.errors.push({
-    location: formatRange(range),
+    location: formatRange((binder ? def : reference).location.range ?? range),
     message: "DEF clause entry should describe a defined operator.",
   });
   return false;
