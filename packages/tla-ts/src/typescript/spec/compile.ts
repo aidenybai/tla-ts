@@ -58,6 +58,32 @@ const compact = (definitions: readonly CodeDefinition[]) => {
   ];
 };
 
+// A program's definitions in an order where each comes after those that it reads, unless they read
+// each other, and the names of the ones that a definition reads before they come, which TLA+ needs
+// declared RECURSIVE.
+const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
+  const byName = new Map(definitions.map((definition) => [definition.name, definition]));
+  const isVisited = new Map<string, boolean>();
+  const sorted: CodeDefinition[] = [];
+  const recursive = new Set<string>();
+  const visit = (definition: CodeDefinition) => {
+    isVisited.set(definition.name, false);
+    for (const name of definition.text.slice(definition.text.indexOf("==")).match(/\b[A-Z]\w*/g) ??
+      []) {
+      const read = byName.get(name);
+      if (read === undefined) continue;
+      if (isVisited.get(name) === false) recursive.add(name);
+      else if (!isVisited.has(name)) visit(read);
+    }
+    isVisited.set(definition.name, true);
+    sorted.push(definition);
+  };
+  definitions.forEach((definition) => {
+    if (!isVisited.has(definition.name)) visit(definition);
+  });
+  return { sorted, recursive };
+};
+
 // Compiles a TypeScript script to a spec whose Init runs it as ESCore runs a script: the realm,
 // then the script, then the jobs it queued. An uncaught exception fails Init's assertion. The
 // spec's module ProgramCode holds the script's code, and the runtime's prepared modules the rest.
@@ -165,16 +191,17 @@ export const compileToEscore = (
   );
   const viewed = new Set(view.module.definitions.map((definition) => definition.name));
   const stubs = leaves.filter((leaf) => viewed.has(leaf.name));
+  const ordered = sortDefinitions(definitions);
   const module = [
     "---- MODULE ProgramCode ----",
     "EXTENDS ESRuntime",
-    ...definitions
-      .filter((definition) => definition.arity > 0)
+    ...ordered.sorted
+      .filter((definition) => ordered.recursive.has(definition.name))
       .map(
         (definition) =>
           `RECURSIVE ${definition.name}(${Array.from({ length: definition.arity }, () => "_").join(", ")})`,
       ),
-    code,
+    ...ordered.sorted.map((definition) => definition.text),
     ...stubs.map(
       (stub) =>
         `Stub${stub.name}(${Array.from({ length: stub.arity }, (_, index) => `p${index + 1}`).join(", ")}) == Assert(FALSE, "tla-ts can't run ${stub.name}, which this program's spec leaves out of ESCore")`,
