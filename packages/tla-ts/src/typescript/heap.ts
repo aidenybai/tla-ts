@@ -3753,6 +3753,7 @@ const isRevocableMember = (node: ts.Expression, name: string, context: Context) 
 
 // A value that is a proxy that the script makes, where a statement that reads it runs its traps.
 export const isProxyValue = (node: ts.Expression, context: Context) => {
+  if (!context.isProxied) return false;
   const origin = getOrigin(node, context);
   return isNewProxy(origin, context) || isRevocableMember(origin, "proxy", context);
 };
@@ -3927,10 +3928,11 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
 export const isMade = (node: ts.Node, context: Context, isSometimes = false): boolean => {
   if (context.heap === undefined) return false;
   if (
-    isHeapFunction(node, context) ||
-    isFunctionObject(node, context) ||
-    isNestedFunction(node, context) ||
-    isClosure(node, context)
+    (ts.isFunctionLike(node) || ts.isClassExpression(node)) &&
+    (isHeapFunction(node, context) ||
+      isFunctionObject(node, context) ||
+      isNestedFunction(node, context) ||
+      isClosure(node, context))
   ) {
     return !isSometimes;
   }
@@ -3940,26 +3942,39 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
   if (ts.isOptionalChain(node) || ts.isConditionalExpression(node) || ts.isBinaryExpression(node)) {
     return false;
   }
-  const created = getNewClass(node, context);
-  const isNewInstance =
-    !isSometimes &&
-    created !== undefined &&
-    ts.isExpression(node) &&
-    ((getRunConstructor(created, context) === undefined &&
-      getSettableSupers(created, context).length === 0) ||
-      isStatementNew(node));
   return (
     (ts.isObjectLiteralExpression(node) &&
       isObjectValue(node, context) &&
       !isProxyOperation(node, context) &&
       !isArrayFromLength(node, context)) ||
+    (ts.isArrayLiteralExpression(node) && context.heapCollections.has(node)) ||
+    ts.isRegularExpressionLiteral(node) ||
+    getWrappedThis(node, context) !== undefined ||
+    // Only a call or a new makes any other object, as each test below finds.
+    ((ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+      isMadeByCall(node, context, isSometimes))
+  );
+};
+
+// Whether a call or a new makes an object.
+const isMadeByCall = (
+  node: ts.CallExpression | ts.NewExpression,
+  context: Context,
+  isSometimes: boolean,
+) => {
+  const created = getNewClass(node, context);
+  const isNewInstance =
+    !isSometimes &&
+    created !== undefined &&
+    ((getRunConstructor(created, context) === undefined &&
+      getSettableSupers(created, context).length === 0) ||
+      isStatementNew(node));
+  return (
     // map makes its array as it runs, after it visits each element.
-    ((ts.isArrayLiteralExpression(node) ||
-      isHoleyNewArray(node, context) ||
+    ((isHoleyNewArray(node, context) ||
       (ts.isCallExpression(node) && getMapCall(node, context) === undefined) ||
       ts.isNewExpression(node)) &&
       context.heapCollections.has(node)) ||
-    ts.isRegularExpressionLiteral(node) ||
     getMadeRegExp(node, context) !== undefined ||
     isNewObject(node, context) ||
     isNewDate(node, context) ||
@@ -3967,7 +3982,6 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
     isNewProxy(node, context) ||
     getNewBuffer(node, context) !== undefined ||
     getNewWrapper(node, context) !== undefined ||
-    getWrappedThis(node, context) !== undefined ||
     isHeldError(node, context) ||
     isParsedObject(node, context) ||
     (!isSometimes && isAllocation(node, context)) ||

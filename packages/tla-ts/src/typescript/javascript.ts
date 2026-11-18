@@ -1824,6 +1824,16 @@ GeneratorObject == [EmptyObject EXCEPT !.isOpaque = TRUE]
 \\* A generator object that inherits from a prototype that tla-ts holds.
 GeneratorObjectOf(prototype) == [GeneratorObject EXCEPT !.prototype = prototype]
 
+\\* A generator object that a state machine runs, as ESCore's generator object keeps its state and
+\\* frames in its slots: [[GeneratorState]], and where the body suspended, as a resume point and the
+\\* locals saved there.
+MachineObject(object) ==
+  [generator |-> [state |-> "suspendedStart", point |-> 0, locals |-> <<>>]] @@ object
+
+MachineOf(heap, ref) == heap.objects[ref[Ref]].generator
+
+SetMachine(heap, ref, machine) == [heap EXCEPT !.objects[ref[Ref]].generator = machine]
+
 \\* An iterator helper, which tla-ts follows as a generator, inherits from %IteratorHelperPrototype%.
 IteratorHelperObject == GeneratorObjectOf(Ref :> "%IteratorHelperPrototype%")
 
@@ -2876,6 +2886,17 @@ FirstElementGetter(heap, ref) ==
   ELSE Undefined
 
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
+
+\\* Whether a write to an object's key converts the value it writes: a typed array's numeric key.
+IsTypedElementWrite(heap, ref, key) == IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+
+\\* Whether a compound assignment to a key that converts reads or writes an object plainly: one that
+\\* the heap holds, which is no proxy or typed array, with no accessor at the key.
+IsPlainKeyAccess(heap, ref, key) ==
+  /\\ IsHeap(ref)
+  /\\ ~IsProxy(heap, ref)
+  /\\ ~IsTypedArray(heap, ref)
+  /\\ AccessorOf(heap, ref, key) = Undefined
 
 \\* The getter that an object that the heap holds reads its then through, where it isn't a promise, a
 \\* generator, or a proxy, whose then tla-ts reads otherwise.

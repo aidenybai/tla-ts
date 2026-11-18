@@ -230,6 +230,7 @@ import {
   takeFromIterable,
   takeFromIterator,
   openFromIterator,
+  openLoopedIterator,
   takeEntries,
   takeEvery,
   takeSpreads,
@@ -351,7 +352,13 @@ import {
   stopUnknownCall,
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
-import { getNamespaceRef, isLiteralValue, type Namespace } from "./namespaces";
+import {
+  getNamespaceModule,
+  getNamespaceRef,
+  isBindingRead,
+  isLiteralValue,
+  type Namespace,
+} from "./namespaces";
 import {
   bindFactory,
   forceHeap,
@@ -411,6 +418,7 @@ import {
   translateUsing,
 } from "./disposal";
 import {
+  dropLocalStacks,
   getStackCall,
   getStackFunctions,
   isStackConstruction,
@@ -519,6 +527,18 @@ import {
   REORDER_METHODS,
   LOOP_METHODS,
 } from "./types";
+import {
+  type Machine,
+  type MachineLoop,
+  getMachine,
+  getMachines,
+  getSteppedOuter,
+  isMachineGenerator,
+  isMachineHelper,
+  makeHelperMachine,
+  makeMachine,
+  stepMachine,
+} from "./generator-machines";
 
 export interface Path {
   scope: Scope;
@@ -537,6 +557,9 @@ export interface Path {
   disposal?: Disposal;
   // The derived constructors running whose this is still uninitialized, until their super(...).
   unboundThis?: ReadonlySet<ts.ConstructorDeclaration>;
+  // Whether a generator's state machine runs the statements, whose code after a yield runs apart
+  // from the code before it, so that it can't call an operator that the code before it defines.
+  isMachine?: boolean;
 }
 
 interface KnownDefault {
@@ -544,7 +567,7 @@ interface KnownDefault {
   isRun: boolean;
 }
 
-interface Suspension {
+export interface Suspension {
   ref: Expression;
   // The function whose body a next runs, which a helper of an object that isn't an iterator lacks.
   generator: FunctionNode | undefined;
@@ -567,6 +590,8 @@ interface Suspension {
   // Whether a step may make the suspension again once it's gone, as an array's or a string's
   // iterator, whose next reads where it is from the heap.
   isRestartable?: boolean;
+  // The state machine that runs the body, which keeps where it suspended on the heap instead.
+  machine?: Machine;
 }
 
 interface Caller {
@@ -737,6 +762,8 @@ export interface Frame {
     | undefined;
   // Functions being inlined, to reject recursion.
   inlining: Set<ts.Node>;
+  // What runs a loop of a generator's body that yields, where a state machine runs the body.
+  loopTo?: MachineLoop;
 }
 
 const COMPOUND_OPERATORS = new Map([
@@ -7234,7 +7261,7 @@ const isSelfCallable = (
 
 // The declarations that a function's body names, and those that the functions it may call name. It
 // enters only a declaration that may hold a function, as a call runs no other's initializer.
-const getCalledReach = (body: ts.Node, context: Context) => {
+export const getCalledReach = (body: ts.Node, context: Context) => {
   const reached: ts.Node[] = [];
   const seen = new Set<ts.Node>();
   const isHoldingFunction = (declaration: ts.Node) =>
@@ -7713,7 +7740,7 @@ export const inlineBody = (
     const isOwn = (entry: [ts.Node, Expression]) =>
       ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
     const getCaller = (current: Path): Path => ({
-      ...current,
+      ...dropLocalStacks(current, inner, callee, context),
       scope: {
         ...current.scope,
         previous: inner.scope.previous,
@@ -7730,12 +7757,16 @@ export const inlineBody = (
     });
     return translateJoined(node, getCaller(inner), context, continueWith, (next) => {
       const afterCall = (after: Path, value?: Expression) => next(getCaller(after), value);
+      const throwTo = frame.throwTo;
       const bodyFrame = {
         next: afterCall,
         exit: afterCall,
         breakTo: undefined,
         continueTo: undefined,
-        throwTo: frame.throwTo,
+        throwTo:
+          throwTo &&
+          ((after: Path, thrown: Thrown) =>
+            throwTo(dropLocalStacks(after, inner, callee, context), thrown)),
         yieldTo: undefined,
         awaitTo: undefined,
         inlining: new Set([...frame.inlining, callee]),
@@ -7842,6 +7873,8 @@ export const makeGenerator = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
+  // Whether the caller steps the object in a loop that runs a state machine.
+  isLooped = false,
 ): Formula =>
   bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) => {
     const name = context.names.getFresh("generator");
@@ -8048,58 +8081,109 @@ export const makeGenerator = (
         throwOnDestructured(bound.scope, inner, context, frame, continueWith(made, ref)),
       );
     }
-    return letIn(
-      bound.definitions,
-      throwOnDestructured(
-        bound.scope,
-        inner,
-        context,
-        frame,
-        bindOnce(
+    // A generator object inherits from its function's prototype object, where the heap holds it,
+    // or from what the prototype property of the function's object holds.
+    const object =
+      prototype !== undefined
+        ? useJavaScript("GeneratorObjectOf", [prototype], context)
+        : held === undefined
+          ? identifier("GeneratorObject")
+          : useJavaScript(
+              "GeneratorObjectFrom",
+              [
+                getHeap(bound.scope, node, context),
+                held,
+                translateBuiltInValue(
+                  isAsync
+                    ? "%AsyncGeneratorFunction%.prototype.prototype"
+                    : "%GeneratorFunction%.prototype.prototype",
+                  node,
+                  context,
+                ),
+              ],
+              context,
+            );
+    const allocated = {
+      ...inner,
+      scope: {
+        ...inner.scope,
+        bindings: new Map([...inner.scope.bindings, [heapSymbol, identifier(name)]]),
+      },
+    };
+    const built = isMachineGenerator(node, callee, isLooped, context)
+      ? tryMachine(() => makeMachine(node, callee, ref, allocated, start.scope, context, frame))
+      : undefined;
+    const allocateObject = (value: Expression, rest: Formula) =>
+      letIn(
+        bound.definitions,
+        throwOnDestructured(
+          bound.scope,
           inner,
-          name,
-          useJavaScript(
-            "Allocate",
-            [
-              getHeap(bound.scope, node, context),
-              // A generator object inherits from its function's prototype object, where the heap
-              // holds it, or from what the prototype property of the function's object holds.
-              prototype !== undefined
-                ? useJavaScript("GeneratorObjectOf", [prototype], context)
-                : held === undefined
-                  ? identifier("GeneratorObject")
-                  : useJavaScript(
-                      "GeneratorObjectFrom",
-                      [
-                        getHeap(bound.scope, node, context),
-                        held,
-                        translateBuiltInValue(
-                          isAsync
-                            ? "%AsyncGeneratorFunction%.prototype.prototype"
-                            : "%GeneratorFunction%.prototype.prototype",
-                          node,
-                          context,
-                        ),
-                      ],
-                      context,
-                    ),
-            ],
-            context,
+          context,
+          frame,
+          bindOnce(
+            inner,
+            name,
+            useJavaScript("Allocate", [getHeap(bound.scope, node, context), value], context),
+            rest,
           ),
+        ),
+      );
+    if (built !== undefined) {
+      return allocateObject(
+        useJavaScript("MachineObject", [object], context),
+        letIn(
+          built.definitions,
           continueWith(
             {
-              ...made,
-              scope: {
-                ...made.scope,
-                bindings: new Map([...made.scope.bindings, [heapSymbol, identifier(name)]]),
-              },
+              ...allocated,
+              generators: new Map([
+                ...allocated.generators,
+                [
+                  name,
+                  {
+                    ref,
+                    generator: callee,
+                    resume: undefined,
+                    isStarted: false,
+                    isGuarded: false,
+                    isAsync,
+                    queue: [],
+                    machine: built.machine,
+                  },
+                ],
+              ]),
             },
             ref,
           ),
         ),
+      );
+    }
+    return allocateObject(
+      object,
+      continueWith(
+        {
+          ...made,
+          scope: {
+            ...made.scope,
+            bindings: new Map([...made.scope.bindings, [heapSymbol, identifier(name)]]),
+          },
+        },
+        ref,
       ),
     );
   });
+
+// Translates a state machine, or gives undefined where tla-ts can't, so that the code that steps
+// the object inlines what it runs instead.
+const tryMachine = <T>(make: () => T): T | undefined => {
+  try {
+    return make();
+  } catch (error) {
+    if (error instanceof TlaTypeScriptError) return undefined;
+    throw error;
+  }
+};
 
 // A call of a method of Iterator.prototype that steps a generator to its end, or until its
 // callback decides, then closes the generator as the method's IteratorClose does.
@@ -8667,7 +8751,7 @@ const getReturnedLength = (callback: FunctionNode, context: Context) => {
   return lengths.size === 1 && !isFallible ? [...lengths][0] : undefined;
 };
 
-const getReturnType = (callback: ts.SignatureDeclaration, context: Context) => {
+export const getReturnType = (callback: ts.SignatureDeclaration, context: Context) => {
   const signature = context.checker.getSignatureFromDeclaration(callback);
   return signature && context.checker.getReturnTypeOfSignature(signature);
 };
@@ -8687,7 +8771,7 @@ const isPrimitiveType = (type: ts.Type) =>
   );
 
 // Whether a function returns only primitives.
-const isPrimitiveReturn = (callback: ts.SignatureDeclaration, context: Context) => {
+export const isPrimitiveReturn = (callback: ts.SignatureDeclaration, context: Context) => {
   const returned = getReturnType(callback, context);
   return returned !== undefined && isPrimitiveType(returned);
 };
@@ -8784,6 +8868,84 @@ const translateIteratorHelper = (
     helper.invalid === "object"
       ? getUndefined(context)
       : translateExpression(helper.receiver, path.scope, context);
+  // A helper of a state machine or of an array's iterator runs as a state machine itself, where
+  // its object only meets code that steps one.
+  const sourceMachine = getMachine(translated, path);
+  if (
+    heapSymbol !== undefined &&
+    helper.invalid === undefined &&
+    isMachineHelper(node, context) &&
+    (sourceMachine !== undefined || isBuiltInIteratorType(helper.receiver, context))
+  ) {
+    const allocated = withHeap(path, identifier(name), context);
+    const make = () =>
+      makeHelperMachine(
+        node,
+        method,
+        callback,
+        callbackReceiver,
+        limit,
+        identifier(underlyingName),
+        sourceMachine,
+        ref,
+        allocated,
+        context,
+        frame,
+      );
+    // A helper of an array's iterator can still run as the code that steps it inlines it, but the
+    // generator that a state machine runs has no inlined body.
+    const made = sourceMachine === undefined ? tryMachine(make) : make();
+    if (made !== undefined) {
+      return translateHoldsIteratorPrototype(
+        method,
+        node,
+        path,
+        context,
+        bindOnce(
+          path,
+          underlyingName,
+          translated,
+          bindOnce(
+            path,
+            name,
+            useJavaScript(
+              "Allocate",
+              [
+                getHeap(path.scope, node, context),
+                useJavaScript("MachineObject", [identifier("IteratorHelperObject")], context),
+              ],
+              context,
+            ),
+            letIn(
+              made.definitions,
+              continueWith(
+                {
+                  ...allocated,
+                  generators: new Map([
+                    ...allocated.generators,
+                    [
+                      name,
+                      {
+                        ref,
+                        generator: callback,
+                        resume: undefined,
+                        isStarted: false,
+                        isGuarded: false,
+                        isAsync: false,
+                        queue: [],
+                        machine: made.machine,
+                      },
+                    ],
+                  ]),
+                },
+                ref,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+  }
   // The generator that a next runs, which patterns check, where the receiver may hold only one.
   const suspensions = [...path.generators.values()];
   const exact = suspensions.filter((suspension) => isSameExpression(suspension.ref, translated));
@@ -9081,6 +9243,41 @@ export const stepGenerator = (
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const heapSymbol = context.heap;
+  const machine = getMachine(receiver, path);
+  if (machine !== undefined && heapSymbol !== undefined) {
+    return stepMachine(
+      node,
+      machine,
+      method,
+      argument?.value,
+      path,
+      context,
+      frame,
+      (current, kind, value) => {
+        const name = context.names.getFresh("heap");
+        const result = useJavaScript(
+          "IteratorResult",
+          [value, apply("=", [kind, string("return")])],
+          context,
+        );
+        return bindOnce(
+          current,
+          name,
+          useJavaScript("Allocate", [getHeap(current.scope, node, context), result], context),
+          continueWith(
+            {
+              ...current,
+              scope: {
+                ...current.scope,
+                bindings: new Map([...current.scope.bindings, [heapSymbol, identifier(name)]]),
+              },
+            },
+            useJavaScript("Allocated", [identifier(name)], context),
+          ),
+        );
+      },
+    );
+  }
   return resumeGenerator(
     node,
     receiver,
@@ -9238,6 +9435,11 @@ export const resumeGenerator = (
       );
     });
   const run = (name: string, suspension: Suspension) => {
+    if (suspension.machine !== undefined) {
+      return leaf(
+        apply("Assert", [boolean(false), string("tla-ts can't follow a generator here")]),
+      );
+    }
     // A next of an async generator whose body runs waits for the body to yield.
     if (
       suspension.caller !== undefined &&
@@ -9332,6 +9534,11 @@ export const resumeGenerator = (
   const generators = [...path.generators];
   const held = generators.find((entry) => isSameExpression(entry[1].ref, receiver));
   if (held !== undefined) return run(held[0], held[1]);
+  // A state machine's body holds only the generators that state machines run, so a generator from
+  // outside it runs as the code that steps the machine inlines its body instead.
+  if (path.isMachine === true) {
+    throw new TlaTypeScriptError("tla-ts can't resume this generator from a state machine", node);
+  }
   return generators.reduceRight(
     (rest, entry) =>
       ifThenElse(apply("=", [receiver, entry[1].ref]), run(entry[0], entry[1]), rest),
@@ -13061,7 +13268,7 @@ const translateTaggedTemplate = (
       );
 };
 
-const translateExpressionStatement = (
+export const translateExpressionStatement = (
   expression: ts.Expression,
   path: Path,
   context: Context,
@@ -14252,12 +14459,21 @@ const isHeapCall = (
       visited.add(callee);
       return isMaking(callee.body, visited);
     });
-  // A namespace's function, as an import * names it, is no method.
+  // A function that a namespace object holds is no method, so its call runs as a function's.
   const method = isMethodCall(node) ? getCalledMethod(node.expression, context)?.method : undefined;
   if (method !== undefined) {
     return method.body !== undefined && isMaking(method.body, new Set([method]));
   }
-  if (isMethodCall(node) && getCallee(node.expression, context) === undefined) return false;
+  if (
+    isMethodCall(node) &&
+    !(
+      ts.isIdentifier(node.expression.expression) &&
+      getNamespaceModule(node.expression.expression, context.checker) !== undefined &&
+      isBindingRead(node.expression, context.checker)
+    )
+  ) {
+    return false;
+  }
   const symbol = getSymbol(node.expression, context.checker);
   const callee =
     (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);
@@ -14335,7 +14551,8 @@ const isDispatchedCall = (
       !(
         ts.isElementAccessExpression(callee) &&
         (ts.isStringLiteral(callee.argumentExpression) ||
-          ts.isNumericLiteral(callee.argumentExpression))
+          ts.isNumericLiteral(callee.argumentExpression) ||
+          isConvertedElementKey(skipCasts(callee.argumentExpression), context))
       ) &&
       !isArgumentsElement(callee, context) &&
       !isAnyMember(callee, context)) ||
@@ -15361,7 +15578,7 @@ const translateNewBufferStatement = (
                 ),
                 readsPrototypeAfter(
                   allocated,
-                  openIterator(
+                  openLoopedIterator(
                     node,
                     values[0],
                     allocated,
@@ -16257,16 +16474,15 @@ const getEffects = (
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
 ): Effects => {
+  // A function or a method of any kind that runs, which resolves once for all of them.
+  const isRun = (inner: FunctionNode) =>
+    isPlain(inner) || isAnyGenerator(inner) || isAsyncFunction(inner);
   const getFunctionNode = (expression: ts.Expression) => {
     const symbol = getSymbol(expression, context.checker);
     return (
       (symbol && functions.get(symbol)) ??
-      getCallee(expression, context) ??
-      getFunctionOfKind(expression, context, isAnyGenerator) ??
-      getFunctionOfKind(expression, context, isAsyncFunction) ??
-      getCalledMethod(expression, context)?.method ??
-      getCalledMethod(expression, context, isAnyGenerator)?.method ??
-      getCalledMethod(expression, context, isAsyncFunction)?.method
+      getFunctionOfKind(expression, context, isRun) ??
+      getCalledMethod(expression, context, isRun)?.method
     );
   };
   const written =
@@ -16335,7 +16551,9 @@ const getEffects = (
     getConvertedSearchValues(node, context) !== undefined ||
     getConvertedTypedValues(node, context) !== undefined ||
     getConvertedBufferValues(node, context) !== undefined ||
-    getConvertedArrayValues(node, context) !== undefined
+    getConvertedArrayValues(node, context) !== undefined ||
+    (ts.isExpression(node) && getKeyUpdate(node, context) !== undefined) ||
+    getTypedObjectWrite(node, context) !== undefined
       ? getConversionFunctions(node, context)
       : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
         ? getKeyedConversionFunctions(node, context)
@@ -16954,7 +17172,9 @@ export const translateJoined = (
   translateWith: (next: (inner: Path, value?: Expression) => Formula) => Formula,
   changed = getChanged(node, path, context),
 ): Formula => {
-  if (context.heap === undefined) return translateWith(continueWith);
+  if (context.heap === undefined || (path.isMachine === true && hasYield(node))) {
+    return translateWith(continueWith);
+  }
   const isVar = (declaration: ts.VariableDeclaration) =>
     ts.isVariableDeclarationList(declaration.parent) &&
     (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0;
@@ -17667,9 +17887,15 @@ const translateForOfGenerator = (
     (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||
     (!ts.isFunctionLike(node) && (ts.forEachChild(node, suspends) ?? false));
   const isLooped = isBuiltIn && !suspends(loop.statement);
-  const iterate = (start: Path, receiver: Expression) =>
-    isLooped &&
-    [...start.generators.values()].every((suspension) => suspension.isRestartable === true)
+  const iterate = (start: Path, receiver: Expression) => {
+    const machine = getMachine(receiver, start);
+    if (machine !== undefined) {
+      return translateIterations(loop, start, context, frame, continueWith, receiver, machine);
+    }
+    return isLooped &&
+      [...start.generators.values()].every(
+        (suspension) => suspension.isRestartable === true || suspension.machine !== undefined,
+      )
       ? translateIterations(loop, start, context, frame, continueWith, receiver)
       : iterateGenerator(
           loop,
@@ -17679,6 +17905,7 @@ const translateForOfGenerator = (
           frame,
           continueWith,
         );
+  };
   if (opened !== undefined) {
     return translateIteratorCall(loop.expression, opened, path, context, frame, (after, ref) =>
       iterate(after, ref ?? getUndefined(context)),
@@ -18640,8 +18867,15 @@ const translateLoop = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const isYielding = frame.yieldTo !== undefined && hasYield(loop.statement);
-  const unrolled = isYielding && ts.isForStatement(loop) ? getCounts(loop, context) : undefined;
-  if (unrolled !== undefined || (isYielding && isForever(loop))) {
+  // A state machine runs a while, a do-while, or a for that yields as jumps to its head.
+  const loopTo = frame.loopTo;
+  const isJumped =
+    isYielding &&
+    loopTo !== undefined &&
+    (ts.isWhileStatement(loop) || ts.isDoStatement(loop) || ts.isForStatement(loop));
+  const unrolled =
+    isYielding && !isJumped && ts.isForStatement(loop) ? getCounts(loop, context) : undefined;
+  if (unrolled !== undefined || (isYielding && !isJumped && isForever(loop))) {
     return translateUnrolled(loop, unrolled, path, context, frame, continueWith);
   }
   const literal = ts.isForOfStatement(loop) ? getCast(loop.expression) : undefined;
@@ -18679,10 +18913,12 @@ const translateLoop = (
           0)) &&
     isFollowingPromises(loop, context);
   const runLoop = (inner: Path) =>
-    isPromiseLoop &&
-    (ts.isWhileStatement(loop) || ts.isDoStatement(loop) || ts.isForStatement(loop))
-      ? translatePromiseLoop(loop, inner, context, frame, continueWith)
-      : translateIterations(loop, inner, context, frame, continueWith);
+    isJumped && loopTo !== undefined
+      ? loopTo(loop, inner, frame, continueWith)
+      : isPromiseLoop &&
+          (ts.isWhileStatement(loop) || ts.isDoStatement(loop) || ts.isForStatement(loop))
+        ? translatePromiseLoop(loop, inner, context, frame, continueWith)
+        : translateIterations(loop, inner, context, frame, continueWith);
   // A for-of of an array whose first element a getter that only throws gives throws before its
   // first iteration, as the iterator's first next reads the element.
   if (
@@ -18789,6 +19025,8 @@ const translateLoop = (
 interface OpenedIterator {
   iterator: Expression;
   next?: Expression;
+  // The generator that a state machine runs, which each iteration steps.
+  machine?: Suspension;
 }
 
 const translateIterations = (
@@ -18797,8 +19035,10 @@ const translateIterations = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
-  // The array's or the string's iterator that a for-of steps, which its caller opened.
+  // The array's or the string's iterator that a for-of steps, which its caller opened, or the
+  // generator object of a state machine.
   builtIn?: Expression,
+  machine?: Suspension,
 ): Formula => {
   const iterated = ts.isForOfStatement(loop) || ts.isForInStatement(loop) ? loop : undefined;
   // A for-of over an array, or a set or a map that keeps its order, that the heap holds visits its
@@ -18903,6 +19143,8 @@ const translateIterations = (
     ...new Set([
       ...getChanged(loop, path, context),
       ...(builtIn === undefined || context.heap === undefined ? [] : [context.heap]),
+      ...(machine?.machine?.outer ?? []),
+      ...getSteppedOuter(loop, path, context),
     ]),
   ].filter((symbol) => !path.scope.uninitialized.has(symbol));
   // The iterator reads each element as the loop reaches it, which a copy of the elements matches
@@ -18966,16 +19208,28 @@ const translateIterations = (
     done: (path: Path) => Formula,
   ) => {
     const site = iterating.expression;
+    const closeMachine = opened.machine;
     const close = (current: Path, closeFrame: Frame, closedWith: (path: Path) => Formula) =>
-      closeIterator(
-        site,
-        opened.iterator,
-        current,
-        context,
-        closeFrame,
-        (failed) => throwTypeError(failed, site, context, closeFrame),
-        closedWith,
-      );
+      closeMachine !== undefined
+        ? stepMachine(
+            site,
+            closeMachine,
+            "return",
+            undefined,
+            current,
+            context,
+            closeFrame,
+            (closed) => closedWith(closed),
+          )
+        : closeIterator(
+            site,
+            opened.iterator,
+            current,
+            context,
+            closeFrame,
+            (failed) => throwTypeError(failed, site, context, closeFrame),
+            closedWith,
+          );
     const throwTo = bodyFrame.throwTo;
     const iterationFrame: Frame = {
       ...bodyFrame,
@@ -18999,6 +19253,20 @@ const translateIterations = (
         iterationFrame,
         (bound, innerFrame) => translateStatements([loop.statement], bound, context, innerFrame),
       );
+    const machine = opened.machine;
+    if (machine !== undefined) {
+      return stepMachine(
+        site,
+        machine,
+        "next",
+        undefined,
+        path,
+        context,
+        bodyFrame,
+        (stepped, kind, value) =>
+          ifThenElse(apply("=", [kind, string("return")]), done(stepped), runBody(stepped, value)),
+      );
+    }
     const next = opened.next;
     if (next === undefined) {
       // An array's or a string's iterator throws the TypeError of a typed array out of bounds,
@@ -19255,8 +19523,9 @@ const translateIterations = (
         parameters.map((parameter) => identifier(parameter)),
       ),
       isLooping: true,
-      // A generator from before the loop resumes only outside it, as each iteration's path ends.
-      generators: new Map(),
+      // A generator from before the loop resumes only outside it, as each iteration's path ends,
+      // except one that a state machine runs, which keeps where it suspended on the heap.
+      generators: getMachines(path),
       tasks: undefined,
     };
     const carriedValues = tuple(parameters.map((parameter) => identifier(parameter)));
@@ -19459,7 +19728,7 @@ const translateIterations = (
   };
   // A for-of of an array throws the TypeError of GetIterator before its first iteration where the
   // array's Symbol.iterator, which a script may delete from Array.prototype, isn't a function.
-  if (builtIn !== undefined) return translateFrom(path, { iterator: builtIn });
+  if (builtIn !== undefined) return translateFrom(path, { iterator: builtIn, machine });
   if (
     iterated !== undefined &&
     ts.isForOfStatement(iterated) &&
@@ -19545,7 +19814,7 @@ const isLibraryCall = (node: ts.CallExpression, context: Context) =>
 
 // Whether evaluating a node calls a function, which a function's body doesn't, as it only runs
 // where something calls it.
-const hasCall = (node: ts.Node, context: Context): boolean =>
+export const hasCall = (node: ts.Node, context: Context): boolean =>
   !ts.isFunctionLike(node) &&
   ((ts.isCallExpression(node) && !isLibraryCall(node, context)) ||
     ts.isNewExpression(node) ||
@@ -19751,9 +20020,12 @@ const isPlainCallee = (
       ts.isGetAccessorDeclaration,
     ) &&
     isPlainCallee(getCast(node.expression), context, results)) ||
-  // A key that a string or a number literal writes reads as a name does.
+  // A key that a string or a number literal writes reads as a name does, as does an object key that
+  // a statement converted first.
   (ts.isElementAccessExpression(node) &&
-    (ts.isStringLiteral(node.argumentExpression) || ts.isNumericLiteral(node.argumentExpression)) &&
+    (ts.isStringLiteral(node.argumentExpression) ||
+      ts.isNumericLiteral(node.argumentExpression) ||
+      (results?.has(skipCasts(node.argumentExpression)) ?? false)) &&
     getObjectGetter(node, context) === undefined &&
     !(getSymbol(node.argumentExpression, context.checker)?.declarations ?? []).some(
       ts.isGetAccessorDeclaration,
@@ -20884,6 +21156,15 @@ const findLeadingCall = (
       (ts.isElementAccessExpression(node.expression) &&
         getHeapRegExpCall(node, context) !== undefined &&
         isPlainCallee(getCast(node.expression.expression), context, path.scope.results));
+    // A method that an object key names converts the key as the call reads the method, before
+    // the call evaluates its arguments.
+    if (
+      ts.isElementAccessExpression(callee) &&
+      !path.scope.results.has(skipCasts(callee.argumentExpression)) &&
+      isConvertedElementKey(skipCasts(callee.argumentExpression), context)
+    ) {
+      return { ...blocked, conversion: skipCasts(callee.argumentExpression) };
+    }
     // super evaluates nothing before its arguments.
     if (
       !isListed &&
@@ -21272,6 +21553,76 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
     context,
   );
   return { node, conversion };
+};
+
+// A plain assignment of an object that a name holds to a primitive key of an object that a name
+// holds, which may be a typed array, which converts the object where it is one.
+const getTypedObjectWrite = (node: ts.Node, context: Context) => {
+  if (
+    context.heap === undefined ||
+    !ts.isBinaryExpression(node) ||
+    node.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+  ) {
+    return undefined;
+  }
+  const access = skipCasts(node.left);
+  const value = skipCasts(node.right);
+  if (
+    !ts.isElementAccessExpression(access) ||
+    access.questionDotToken !== undefined ||
+    !ts.isIdentifier(skipCasts(access.expression)) ||
+    !ts.isIdentifier(value) ||
+    !(isObjectOperand(value, context) || isAnyOperand(value, context)) ||
+    isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression)))
+  ) {
+    return undefined;
+  }
+  const key = skipCasts(access.argumentExpression);
+  const keyNames = getTypeNames(context.checker.getTypeAtLocation(key), context.checker);
+  const objectType = context.checker.getTypeAtLocation(skipCasts(access.expression));
+  const isTypedType = (type: ts.Type): boolean =>
+    (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+    TYPED_ARRAYS.has(type.getSymbol()?.getName() ?? "") ||
+    (type.isUnion() && type.types.some(isTypedType));
+  return (ts.isNumericLiteral(key) ||
+    ts.isStringLiteral(key) ||
+    (keyNames?.every((name) => name === "number" || name === "string") ?? false)) &&
+    isTypedType(objectType)
+    ? { node, access }
+    : undefined;
+};
+
+// A compound assignment to a key that is an object that a name holds, of an object that a name
+// holds which can't be undefined or null, other than super's, and how it combines what it reads
+// with its value.
+const getKeyUpdate = (node: ts.Expression, context: Context) => {
+  if (context.heap === undefined || !ts.isBinaryExpression(node)) return undefined;
+  const update = getPrimitiveUpdate(node.operatorToken.kind, context);
+  const access = skipCasts(node.left);
+  if (
+    update === undefined ||
+    !ts.isElementAccessExpression(access) ||
+    access.questionDotToken !== undefined ||
+    !ts.isIdentifier(skipCasts(access.expression)) ||
+    isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression)))
+  ) {
+    return undefined;
+  }
+  const key = skipCasts(access.argumentExpression);
+  return ts.isIdentifier(key) && isObjectOperand(key, context)
+    ? { node, access, key, update }
+    : undefined;
+};
+
+// A value that a compound assignment evaluates that runs nothing, or that is a call that only a
+// statement runs, which runs once the assignment reads the key.
+const isPlainUpdateValue = (node: ts.Expression, path: Path, context: Context) => {
+  const found = findLeadingCall(node, [], path, context);
+  return (
+    (found.call === undefined || found.call === skipCasts(node)) &&
+    !found.isBlocked &&
+    findNodes(node, (inner): inner is ts.Expression => isAssignment(inner)).length === 0
+  );
 };
 
 // The first computed key of a class that a statement makes that converts an object, which runs as
@@ -22603,6 +22954,152 @@ export const translateStatements = (
         )
       : gather(path);
   }
+  // A compound assignment to an object key converts the key as it reads the property and again as
+  // it writes it, as Node does, once it evaluates its value.
+  const keyUpdate = ts.isExpressionStatement(statement)
+    ? getKeyUpdate(skipCasts(statement.expression), context)
+    : undefined;
+  if (keyUpdate !== undefined && isPlainUpdateValue(keyUpdate.node.right, path, context)) {
+    const site = keyUpdate.node;
+    const object = translateExpression(keyUpdate.access.expression, path.scope, context);
+    const keyValue = translateExpression(keyUpdate.key, path.scope, context);
+    const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
+    return runToPrimitive(
+      site,
+      keyValue,
+      "string",
+      path,
+      context,
+      statementFrame,
+      (read, first) => {
+        const readHeap = getHeap(read.scope, site, context);
+        const readKey = useJavaScript("PropertyKey", [first], context);
+        return ifThenElse(
+          useJavaScript("IsPlainKeyAccess", [readHeap, object, readKey], context),
+          bind(
+            read,
+            "current",
+            useJavaScript("Get", [readHeap, object, readKey], context),
+            context,
+            (current, held) => {
+              const right = skipCasts(keyUpdate.node.right);
+              const evaluate = (next: (operated: Path, operand: Expression) => Formula) =>
+                ts.isCallExpression(right) && !current.scope.results.has(right)
+                  ? translateCallStatement(
+                      right,
+                      current,
+                      context,
+                      statementFrame,
+                      (after, value) =>
+                        bind(after, "operand", value ?? getUndefined(context), context, next),
+                    )
+                  : bind(
+                      current,
+                      "operand",
+                      translateExpression(keyUpdate.node.right, current.scope, context),
+                      context,
+                      next,
+                    );
+              return evaluate((operated, operand) =>
+                ifThenElse(
+                  apply("\\/", [
+                    useJavaScript("IsObjectIn", [readHeap, held], context),
+                    useJavaScript(
+                      "IsObjectIn",
+                      [getHeap(operated.scope, site, context), operand],
+                      context,
+                    ),
+                  ]),
+                  stop("tla-ts can't convert the objects that a compound assignment combines here"),
+                  runToPrimitive(
+                    site,
+                    keyValue,
+                    "string",
+                    operated,
+                    context,
+                    statementFrame,
+                    (written, second) => {
+                      const writeHeap = getHeap(written.scope, site, context);
+                      const writeKey = useJavaScript("PropertyKey", [second], context);
+                      return ifThenElse(
+                        useJavaScript("IsPlainKeyAccess", [writeHeap, object, writeKey], context),
+                        ifThenElse(
+                          useJavaScript("CanPut", [writeHeap, object, writeKey], context),
+                          continueWith(
+                            withHeap(
+                              written,
+                              useJavaScript(
+                                "SetProperty",
+                                [writeHeap, object, writeKey, keyUpdate.update(held, operand)],
+                                context,
+                              ),
+                              context,
+                            ),
+                          ),
+                          isStrictCode(site)
+                            ? throwTypeError(written, site, context, statementFrame)
+                            : stop("tla-ts can't ignore a failed write outside strict mode"),
+                        ),
+                        stop("tla-ts can't write this key of this object here"),
+                      );
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
+          stop("tla-ts can't read this key of this object here"),
+        );
+      },
+    );
+  }
+  // A write of an object to a typed array's numeric key converts it to a number or a BigInt, once
+  // the assignment evaluates it, before it checks the index.
+  const typedWrite = ts.isExpressionStatement(statement)
+    ? getTypedObjectWrite(skipCasts(statement.expression), context)
+    : undefined;
+  if (typedWrite !== undefined && !path.scope.results.has(typedWrite.node.right)) {
+    const value = typedWrite.node.right;
+    const withValue = (current: Path, primitive: Expression) =>
+      translateStatements(
+        statements,
+        {
+          ...current,
+          scope: {
+            ...current.scope,
+            results: new Map([
+              ...current.scope.results,
+              [value, primitive],
+              [skipCasts(value), primitive],
+            ]),
+          },
+        },
+        context,
+        frame,
+      );
+    const heap = getHeap(path.scope, typedWrite.node, context);
+    return ifThenElse(
+      useJavaScript(
+        "IsTypedElementWrite",
+        [
+          heap,
+          translateExpression(typedWrite.access.expression, path.scope, context),
+          translatePropertyKey(typedWrite.access.argumentExpression, path.scope, context),
+        ],
+        context,
+      ),
+      runToPrimitive(
+        typedWrite.node,
+        translateExpression(value, path.scope, context),
+        "number",
+        path,
+        context,
+        statementFrame,
+        withValue,
+      ),
+      withValue(path, translateExpression(value, path.scope, context)),
+    );
+  }
   const classKey = getHoistedClassKey(statement, path, context);
   if (classKey !== undefined) {
     return runConversion(
@@ -23189,11 +23686,14 @@ export const translateAction = (
 ): Formula => {
   const heapSymbol = context.heap;
   const heap = heapSymbol === undefined ? undefined : context.variables.get(heapSymbol);
+  // The heap that the action starts from, which holds the arguments object that TLC's call makes,
+  // and which no action changes where nothing else changes it.
+  const start = heapSymbol === undefined ? undefined : scope.bindings.get(heapSymbol);
   const finish = (path: Path): Formula => {
-    const assignments = [...context.variables].map((entry) => ({
-      name: entry[1],
-      value: path.scope.bindings.get(entry[0]) ?? entry[1],
-    }));
+    const assignments = [...context.variables].map((entry) => {
+      const value = path.scope.bindings.get(entry[0]) ?? entry[1];
+      return { name: entry[1], value: entry[1] === heap && value === start ? entry[1] : value };
+    });
     const changedHeap = assignments.find(
       (assignment) => assignment.name === heap && assignment.value !== heap,
     )?.value;

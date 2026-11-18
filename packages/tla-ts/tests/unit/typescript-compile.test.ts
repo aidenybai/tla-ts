@@ -20567,21 +20567,23 @@ describe("errors", () => {
     }
   });
 
-  it("stops translating a helper whose callback's paths multiply its steps", () => {
-    expect(() =>
-      compile(`
-        const holder = { count: 0 };
-        function* count() {
-          for (let index = 0; index < 8; ++index) yield index;
-        }
-        const flat = count().flatMap((value) => {
-          if (value === 0) return [0];
-          if (value === 1) return [1, 1];
-          return [];
-        });
-        for (const value of flat) holder.count += value;
-      `),
-    ).toThrow("tla-ts can't follow this many paths through an iterator helper's callback");
+  it("runs a helper whose callback's paths multiply its steps", async () => {
+    const source = `
+      const holder = { count: 0 };
+      function* count() {
+        for (let index = 0; index < 8; ++index) yield index;
+      }
+      const flat = count().flatMap((value) => {
+        if (value === 0) return [0];
+        if (value === 1) return [1, 1];
+        return [];
+      });
+      for (const value of flat) holder.count += value;
+      if (holder.count !== 2) throw new Error("count " + holder.count);
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = await checkModel(source.replace("[1, 1]", "[1, 1, 1]"));
+    expect(wrong.failure?.message).toContain("count 3");
   });
 
   it("iterates the helper that a call makes in a for-of", async () => {
@@ -55493,6 +55495,582 @@ describe("BigInts", () => {
       const source = getSource("ok,B,D,1|a|c,two|one|");
       expect((await check(compile(source, path))).failure?.message).toContain(
         "result ok,B,D,1|a|c,one|two|",
+      );
+    });
+  });
+
+  describe("runs a JavaScript callback whose returns don't fit the type that its call gives it", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var joined = [1, 2, 3].values().reduce((x, y) => \`(\${x}+\${y})\`);
+      var started = [1, 2, 3].reduce((x, y) => \`(\${x}+\${y})\`, 0);
+      var objects = [1].map(() => Object.defineProperty({}, "key", { value: 2, enumerable: "yes" }));
+      box.seen = [joined, started, Object.keys(objects[0]).join()].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await check(compile(getSource("((1+2)+3),(((0+1)+2)+3),key"), path))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const source = getSource("((1+2)+3),(((0+1)+2)+3),");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "seen ((1+2)+3),(((0+1)+2)+3),key",
+      );
+    });
+  });
+
+  describe("leaves out the DisposableStacks that a returned function made, which nothing reaches", () => {
+    const getSource = (expected: string) => `
+      const seen: number[] = [];
+      function make1() { const stack = new DisposableStack(); stack.use(1 as unknown as Disposable); }
+      function make2() { const stack = new DisposableStack(); stack.use(2 as unknown as Disposable); }
+      function make3() { const stack = new DisposableStack(); stack.use(3 as unknown as Disposable); }
+      function make4() { const stack = new DisposableStack(); stack.use(4 as unknown as Disposable); }
+      function make5() { const stack = new DisposableStack(); stack.use(5 as unknown as Disposable); }
+      function make6() { const stack = new DisposableStack(); stack.use(6 as unknown as Disposable); }
+      try { make1(); } catch (error) { seen.push(error instanceof TypeError ? 1 : -1); }
+      try { make2(); } catch (error) { seen.push(error instanceof TypeError ? 2 : -1); }
+      try { make3(); } catch (error) { seen.push(error instanceof TypeError ? 3 : -1); }
+      try { make4(); } catch (error) { seen.push(error instanceof TypeError ? 4 : -1); }
+      try { make5(); } catch (error) { seen.push(error instanceof TypeError ? 5 : -1); }
+      try { make6(); } catch (error) { seen.push(error instanceof TypeError ? 6 : -1); }
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,2,3,4,5,6"))).failure).toBeUndefined();
+    });
+
+    it("rejects a call that doesn't throw", async () => {
+      expect((await checkModel(getSource("1,2,3,4,5"))).failure?.message).toContain(
+        "seen 1,2,3,4,5,6",
+      );
+    });
+  });
+
+  describe("converts an object key that a compound assignment updates as it reads and as it writes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var n = 0;
+      var key = { toString: function () { n += 1; log += "key" + n + "|"; return n === 1 ? "a" : "b"; } };
+      var obj = { a: 1, b: 10 };
+      var rhs = 5;
+      obj[key] += rhs;
+      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + "|"; return "c"; } };
+      obj.c = 2;
+      obj[other] *= 3;
+      var bad = { toString: function () { throw new RangeError("x"); } };
+      var thrown = "none";
+      try {
+        obj[bad] -= 1;
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join("|"), thrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+    const getStrictSource = (expected: string) => `
+      "use strict";
+      var log = "";
+      var bump = 1;
+      var key = { toString: function () { log += "k|"; bump += 1; return "a"; } };
+      var frozen = Object.freeze({ a: 1 });
+      var thrown = "none";
+      try {
+        frozen[key] += bump;
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var open = { a: 1 };
+      open[key] += bump;
+      var result = [thrown, frozen.a, open.a, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("1,6,6,a|b|c,RangeError,key1|key2|string|string|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("1,15,6,a|b|c,RangeError,key1|key2|string|string|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 1,6,6,a|b|c,RangeError,key1|key2|string|string|",
+      );
+    });
+
+    it("reads its value after the first conversion and throws where it can't write", async () => {
+      expect(
+        (await check(compile(getStrictSource("TypeError,1,5,k|k|k|k|"), path))).failure,
+      ).toBeUndefined();
+      expect(
+        (await check(compile(getStrictSource("TypeError,1,4,k|k|k|k|"), path))).failure?.message,
+      ).toContain("result TypeError,1,5,k|k|k|k|");
+    });
+  });
+
+  describe("calls a method through an object key, which converts before the arguments", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var key = { toString: function () { log += "key|"; return "run"; } };
+      var note = function () {
+        log += "arg|";
+        return 2;
+      };
+      var obj = {
+        count: 1,
+        run: function (step) {
+          log += "run|";
+          return this.count + step;
+        },
+      };
+      var got = obj[key](note());
+      var missing = { toString: function () { return "absent"; } };
+      var thrown = "none";
+      try {
+        obj[missing]();
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [got, thrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("3,TypeError,key|arg|run|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("3,TypeError,arg|key|run|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 3,TypeError,key|arg|run|",
+      );
+    });
+  });
+
+  describe("converts an object that a write to a typed array's index takes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var value = { valueOf() { log += "value|"; return 7; } };
+      var sample = new Int8Array(2);
+      sample[0] = value;
+      sample[5] = value;
+      var plain = { a: 1 };
+      plain[0] = value;
+      var big = new BigInt64Array(1);
+      var bigValue = { valueOf() { log += "big|"; return 3n; } };
+      big[0] = bigValue;
+      var wrong = { valueOf() { log += "wrong|"; return 3; } };
+      var thrown = "none";
+      try {
+        big[0] = wrong;
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var bad = { valueOf() { throw new RangeError("x"); } };
+      var badThrown = "none";
+      try {
+        sample[1] = bad;
+      } catch (error) {
+        badThrown = error.constructor.name;
+      }
+      var result = [sample[0], sample[1], plain[0] === value, big[0], thrown, badThrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("7,0,true,3,TypeError,RangeError,value|value|big|wrong|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("7,0,true,3,TypeError,RangeError,value|big|wrong|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 7,0,true,3,TypeError,RangeError,value|value|big|wrong|",
+      );
+    });
+  });
+
+  describe("runs the call that a compound assignment to an object key takes between its conversions", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var n = 0;
+      var key = { toString: function () { n += 1; log += "key" + n + "|"; return "a"; } };
+      var obj = { a: 1 };
+      var step = function () {
+        log += "rhs|";
+        obj.a = 100;
+        return 5;
+      };
+      obj[key] += step();
+      var bad = { toString: function () { throw new RangeError("x"); } };
+      var never = function () {
+        log += "never|";
+        return 1;
+      };
+      var thrown = "none";
+      try {
+        obj[bad] -= never();
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var boom = function () {
+        throw new SyntaxError("y");
+      };
+      var rhsThrown = "none";
+      try {
+        obj[key] *= boom();
+      } catch (error) {
+        rhsThrown = error.constructor.name;
+      }
+      var result = [obj.a, thrown, rhsThrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("6,RangeError,SyntaxError,key1|rhs|key2|key3|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("105,RangeError,SyntaxError,key1|rhs|key2|key3|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 6,RangeError,SyntaxError,key1|rhs|key2|key3|",
+      );
+    });
+  });
+
+  describe("runs a generator's body as a state machine", () => {
+    const getLoop = (expected: string) => `
+      function* count(limit: number) {
+        let index = 0;
+        while (index < limit) {
+          if (index % 7 === 3) {
+            index += 1;
+            continue;
+          }
+          const sent: number | undefined = yield index * 2;
+          index += sent ?? 1;
+        }
+        return "done";
+      }
+      const counter = count(90);
+      // An object that the code changes in place keeps the code's objects on the heap.
+      const totals = { total: 0 };
+      const first = counter.next();
+      const skipped = counter.next(5);
+      let seen = 0;
+      for (const value of counter) {
+        totals.total += value;
+        seen += 1;
+      }
+      const last = counter.next();
+      const result = [first.value, skipped.value, totals.total, seen, last.done, last.value].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a loop that yields more than 64 values", async () => {
+      expect((await checkModel(getLoop("0,10,6816,72,true,"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the loop", async () => {
+      expect((await checkModel(getLoop("0,10,6816,71,true,"))).failure?.message).toContain(
+        "0,10,6816,72,true,",
+      );
+    });
+
+    const getClosed = (expected: string) => `
+      const trace = { log: "" };
+      function* guarded() {
+        try {
+          for (let index = 0; index < 100; index++) {
+            trace.log += index;
+            yield index;
+          }
+        } finally {
+          trace.log += "f";
+        }
+        trace.log += "x";
+      }
+      const opened = guarded();
+      opened.next();
+      opened.next();
+      const closed = opened.return(7 as never);
+      const after = opened.next();
+      for (const value of guarded()) {
+        if (value === 2) break;
+      }
+      const result = [closed.value, closed.done, after.done, trace.log].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a return that runs a finally block", async () => {
+      expect((await checkModel(getClosed("7,true,true,01f012f"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the return", async () => {
+      expect((await checkModel(getClosed("7,true,true,01f012"))).failure?.message).toContain(
+        "7,true,true,01f012f",
+      );
+    });
+
+    const getHelpers = (expected: string) => `
+      const seen = { mapped: "" };
+      function* numbers(limit: number) {
+        for (let index = 0; index < limit; index++) yield index;
+      }
+      const evens = numbers(80).filter((value) => value % 2 === 0);
+      const first = evens.next();
+      let total = 0;
+      for (const value of evens) total += value;
+      const flat = [3, 0, 2].values().flatMap((count, position) => {
+        seen.mapped += position;
+        return count === 0 ? [] : count === 2 ? [count, -count] : [count, count, count];
+      });
+      const values: number[] = [];
+      for (const value of flat) values.push(value);
+      const taken = numbers(100)
+        .map((value) => value * 3)
+        .drop(2)
+        .take(3);
+      const firstTaken = taken.next();
+      const closed = taken.return!();
+      const after = taken.next();
+      const result = [
+        first.value,
+        total,
+        values.join(" "),
+        seen.mapped,
+        firstTaken.value,
+        closed.done,
+        after.done,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on iterator helpers of a generator and an array's iterator", async () => {
+      expect(
+        (await checkModel(getHelpers("0,1560,3 3 3 2 -2,012,6,true,true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the helpers", async () => {
+      expect(
+        (await checkModel(getHelpers("0,1560,3 3 3 -2 2,012,6,true,true"))).failure?.message,
+      ).toContain("0,1560,3 3 3 2 -2,012,6,true,true");
+    });
+
+    const getTaken = (taken: string, expected: string) => `
+      const numbers = {
+        *[Symbol.iterator]() {
+          for (let index = 0; index < 66; index++) yield index * 3;
+        },
+      };
+      const source: unknown = numbers;
+      const taken = ${taken};
+      const result = [taken.length, taken[65]].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a spread of more than 64 values of a generator method", async () => {
+      expect((await checkModel(getTaken("[...numbers]", "66|195"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the spread", async () => {
+      expect((await checkModel(getTaken("[...numbers]", "66|192"))).failure?.message).toContain(
+        "66|195",
+      );
+    });
+
+    it("agrees with Node on a typed array of more than 64 values of a generator method", async () => {
+      const typed = "new Uint8Array(source as never)";
+      expect((await checkModel(getTaken(typed, "66|195"))).failure).toBeUndefined();
+    });
+
+    const getOutside = (expected: string) => `
+      const counts = { inner: 0 };
+      function* values() {
+        yield 1;
+        yield 2;
+      }
+      const data = values();
+      const control = (function* () {
+        for (const value of data) {
+          counts.inner += value;
+          yield;
+        }
+      })();
+      control.next();
+      control.next();
+      const last = control.next();
+      const result = [counts.inner, last.done].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a body that iterates a generator from outside it", async () => {
+      expect((await checkModel(getOutside("3,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the generator from outside", async () => {
+      expect((await checkModel(getOutside("2,true"))).failure?.message).toContain("3,true");
+    });
+  });
+
+  describe("floors and truncates a number that isn't a division where every number is an integer", () => {
+    const getSource = (expected: string) => `
+      const normalize = (count: number): number => (count > 0 ? Math.floor(count) : 0);
+      const result = [normalize(3), normalize(-2), Math.trunc(-4)].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+      export let total = 0;
+      export const step = (by: 1 | 2) => {
+        if (total < 4) total += normalize(by) - Math.trunc(by - 1);
+      };
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("3,0,-4"));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        5,
+      ]);
+    });
+
+    it("rejects another floor", async () => {
+      expect((await checkModel(getSource("3,-2,-4"))).failure?.message).toContain("result 3,0,-4");
+    });
+  });
+
+  describe("names a helper's throw apart from a script's variables named place and message", () => {
+    const getSource = (expected: number) => `
+      const box = { size: 0 };
+      const check = (value: number) => {
+        if (value > 2) throw new Error("big " + value);
+        box.size += value;
+        return value;
+      };
+      const message = [check(1), check(2)].join();
+      const place = box.size;
+      if (message !== "1,2" || place !== ${expected}) throw new Error("message " + message + " " + place);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    });
+
+    it("rejects another place", async () => {
+      expect((await checkModel(getSource(4))).failure?.message).toContain("message 1,2 3");
+    });
+  });
+
+  describe("splits with the regexp literal that a conditional picks, where the heap holds the result", () => {
+    const getSource = (expected: string) => `
+      export const syntaxError = (text: "a\\nb\\tc" | "ab", at: 1 | 5, isLoose: boolean): SyntaxError => {
+        const lines = text.slice(0, at).split(isLoose ? /\\r\\n|[\\n\\r\\t]/ : /\\r\\n|[\\n\\r]/);
+        return new SyntaxError(\`line \${lines.length}, column \${lines[lines.length - 1].length + 1}\`);
+      };
+      const outer: number[][] = [];
+      const inner: number[] = [];
+      outer.push(inner);
+      inner.push(1);
+      if (outer[0].length !== 1) throw new Error("inner " + outer[0].length);
+      const result = [syntaxError("a\\nb\\tc", 5, true).message, syntaxError("a\\nb\\tc", 5, false).message].join(";");
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("line 3, column 2;line 2, column 4"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the other regexp's split", async () => {
+      expect(
+        (await checkModel(getSource("line 3, column 2;line 3, column 2"))).failure?.message,
+      ).toContain("result line 3, column 2;line 2, column 4");
+    });
+  });
+
+  describe("calls a function that makes objects through a module's namespace object", () => {
+    const path = join(
+      import.meta.dirname,
+      "../fixtures/typescript/imports/making-through-namespace.ts",
+    );
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects objects that the calls share", async () => {
+      const wrong = source.replace('"2,1,function"', '"2,2,function"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("result 2,1,function");
+    });
+  });
+
+  describe("gives an exported action the arguments object of the call that TLC makes", () => {
+    const getSource = (invariant: string) => `
+      const width = Uint8Array.BYTES_PER_ELEMENT;
+      export let count = 0;
+      export let last = 0;
+      export function record(key: 1 | 2): void {
+        if (count >= 3) return;
+        last = (arguments[0] as number) * 10 + arguments.length * width;
+        count += 1;
+      }
+      export const isRecorded = () => ${invariant};
+      record(2);
+      if (last !== 21) throw new Error("last " + last);
+    `;
+
+    it("agrees with Node, and disables the action where it changes nothing else", async () => {
+      const result = await checkModel(getSource("count === 0 || last === 11 || last === 21"));
+      expect([result.status, result.failure]).toEqual(["deadlock", undefined]);
+    });
+
+    it("rejects another value of the arguments object", async () => {
+      expect((await checkModel(getSource("count === 0 || last === 21"))).status).toBe(
+        "invariant-violation",
+      );
+    });
+  });
+
+  describe("reads the arguments object of a call through a value inside a helper that changes objects", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      function count(...values: number[]): number;
+      function count(): number {
+        if (arguments.length === 1) return arguments[0] * 2;
+        return arguments.length;
+      }
+      const double = (value: number) => value * 2;
+      const handlers: Record<string, (...values: number[]) => number> = { count, double };
+      const run = (name: string, value: number) => {
+        box.size += 1;
+        const result = handlers[name](value);
+        return result + box.size;
+      };
+      const results = [run("count", 3), run("double", 4), run("count", 5), box.size].join();
+      if (results !== "${expected}") throw new Error("results " + results);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("7,10,13,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects another count", async () => {
+      expect((await checkModel(getSource("7,10,14,3"))).failure?.message).toContain(
+        "results 7,10,13,3",
       );
     });
   });
