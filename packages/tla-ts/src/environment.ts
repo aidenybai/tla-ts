@@ -584,7 +584,11 @@ export const createEnvironment = (
     const declared = new Set(declarations.map((declaration) => declaration.name));
     return new Map(
       [...exported]
-        .filter((entry) => !declared.has(entry[0]))
+        .filter(
+          (entry) =>
+            !declared.has(entry[0]) &&
+            (instance.name !== undefined || entry[1].kind !== "Instance"),
+        )
         .map((entry): [string, ModuleSymbol] => {
           if (instance.name === undefined) {
             return [
@@ -607,7 +611,7 @@ export const createEnvironment = (
           return [
             qualified,
             {
-              key: getKey(entry[1].key, qualified),
+              key: entry[1].kind === "Instance" ? qualified : getKey(entry[1].key, qualified),
               arity: entry[1].arity + instance.params.length,
               params: entry[1].params && [
                 ...instance.params.map((param) => param.arity),
@@ -747,7 +751,7 @@ export const createEnvironment = (
     });
     const declared = new Set(declarations.map((declaration) => declaration.name));
     const aliases = [...linked.exported]
-      .filter((entry) => !declared.has(entry[0]))
+      .filter((entry) => !declared.has(entry[0]) && entry[1].kind !== "Instance")
       .map((entry) => {
         const key = instantiation.getKey(entry[1].key);
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
@@ -984,6 +988,14 @@ export const createEnvironment = (
             visible.set(name, symbol);
             if (!instance.isLocal) exported.set(name, symbol);
           });
+          if (instance.name !== undefined && !instance.isLocal) {
+            exported.set(instance.name, {
+              key: `${instance.name}${KEY_SEPARATOR}${scope.id}`,
+              arity: instance.params.length,
+              kind: "Instance",
+              range: instance.location.range,
+            });
+          }
         },
       })),
       ...parsed.modules.map((nested) => ({

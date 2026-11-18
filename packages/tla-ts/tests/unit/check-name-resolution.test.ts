@@ -1453,6 +1453,39 @@ describe("name resolution matches SANY", () => {
     });
   });
 
+  it("imports the name of an instance a module defines like SANY", async () => {
+    const modules = new Map([
+      ["Empty", "---- MODULE Empty ----\n===="],
+      ["Inner", "---- MODULE Inner ----\nL == INSTANCE Empty\nP(a) == INSTANCE Empty\n===="],
+    ]);
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Inner\nJ == INSTANCE Inner\nK(b) == INSTANCE Empty\nA == L\nB == J!L /\\ J!P /\\ J!P(1)\nC == J!L!1 /\\ K /\\ K(1, 2)\nD == LET N == INSTANCE Inner IN N!L\nP == 1\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) => modules.get(name),
+      }),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          ["line 5, col 6 to line 5, col 6", "Operator name L is incomplete."],
+          ["line 6, col 8 to line 6, col 8", "Operator name J!L is incomplete."],
+          ["line 6, col 13 to line 6, col 15", "The operator J!P requires 1 arguments."],
+          ["line 6, col 22 to line 6, col 22", "Operator name J!P is incomplete."],
+          ["line 7, col 6 to line 7, col 8", "Unknown operator: `J!L'."],
+          ["line 7, col 15 to line 7, col 15", "The operator K requires 1 arguments."],
+          ["line 7, col 21 to line 7, col 26", "The operator K requires 1 arguments."],
+          ["line 8, col 35 to line 8, col 35", "Operator name N!L is incomplete."],
+          ["line 9, col 1 to line 9, col 6", "Operator P already defined or declared."],
+          [
+            "line 9, col 1 to line 9, col 6",
+            "Multiply-defined symbol 'P': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 22 of module Inner.",
+          ],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      },
+    });
+  });
+
   it.each([
     [
       "a definition defined twice",

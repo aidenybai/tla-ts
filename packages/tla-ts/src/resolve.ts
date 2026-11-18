@@ -839,6 +839,18 @@ const getSymbolArity = (
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
   if (isInstanceName(name, scope, unit)) {
+    const instance = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
+    const count = expression.kind === "Apply" ? expression.args.length : 0;
+    if (instance?.kind === "Instance" && instance.arity !== count) {
+      unit.errors.push({
+        location: formatRange(
+          (expression.kind === "Apply" && expression.argumentsRange) ||
+            getSpelledNameRange(expression, name),
+        ),
+        message: `The operator ${name} requires ${instance.arity} arguments.`,
+      });
+      return undefined;
+    }
     const range = getSpelledNameRange(expression, name);
     unit.errors.push({
       location: formatRange({
@@ -1695,7 +1707,9 @@ const isSubexpressionReported = (
     .slice(0, nameCount)
     .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []));
   const symbolIndex = names.findIndex(
-    (_name, index) => index > 0 && findSymbol(names.slice(0, index + 1).join("!"), unit),
+    (_name, index) =>
+      index > 0 &&
+      (findSymbol(names.slice(0, index + 1).join("!"), unit)?.kind ?? "Instance") !== "Instance",
   );
   const isInstance =
     names.length > 1 &&
