@@ -8,7 +8,7 @@ import {
   isAmbientDeclaration,
   isAssigned,
   isInertValue,
-  isUnresolved,
+  isUndeclared,
   findWrites,
   share,
   skipCasts,
@@ -1240,7 +1240,7 @@ export const translateBuiltIns = (node: ts.SourceFile, context: Context) => {
     ...findNodes(
       node,
       (child): child is ts.Identifier =>
-        isUnresolved(child, context) &&
+        isUndeclared(child, context) &&
         !(ts.isPropertyAccessExpression(child.parent) && child.parent.name === child) &&
         ts.findAncestor(child, ts.isTypeNode) === undefined,
     ).map((name) => name.text),

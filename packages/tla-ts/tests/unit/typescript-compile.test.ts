@@ -52581,6 +52581,19 @@ describe("BigInts", () => {
         "seen truetrue,1",
       );
     });
+
+    it("keeps the global object's key that a default reads before its parameter", async () => {
+      const source = `
+        var box = { seen: 0 };
+        function later(a = b, b = 1) {
+          return a;
+        }
+        globalThis.b = 2;
+        box.seen = globalThis.b;
+        if (box.seen !== 2) throw new Error("seen " + box.seen);
+      `;
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
   });
 
   describe("keeps a JavaScript pattern parameter's type where each call passes a literal that fits it", () => {
