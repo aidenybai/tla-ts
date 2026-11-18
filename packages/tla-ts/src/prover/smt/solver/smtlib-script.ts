@@ -645,6 +645,8 @@ export const runSmtlibScript = (
   });
   const checkFdSolver = (fdSolver: FdSolver, extra: number[]) => {
     const result = fdSolver.check(extra);
+    // cmd_context::check_sat counts a step to see whether the limit stopped a search that gave up.
+    if (result === L_UNDEF) state.manager.limit.inc();
     return {
       result,
       context: undefined,

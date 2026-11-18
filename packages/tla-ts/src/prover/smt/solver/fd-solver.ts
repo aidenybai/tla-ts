@@ -29,7 +29,7 @@ import {
   Goal,
   mkDependencyLeaf,
 } from "./goal";
-import { L_FALSE, L_TRUE } from "./lbool";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import type { ProtoModel } from "./proto-model";
 import type { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
@@ -542,6 +542,8 @@ export class FdSolver {
     const flushed = this.flush(assumptions);
     const result = this.solver.check(flushed.items);
     flushed.reset();
+    // solver::check_sat counts a step to see whether the limit stopped a search that gave up.
+    if (result === L_UNDEF) this.manager.limit.inc();
     return result;
   }
 

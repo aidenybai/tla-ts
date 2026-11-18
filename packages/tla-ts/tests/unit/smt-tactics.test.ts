@@ -1307,6 +1307,23 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ).toEqual(["sat", "(:rlimit 680)", "((x 0))", "(:rlimit 689)", "((x 0))", "(:rlimit 690)"]);
   });
 
+  it("counts the steps of a QF_FD check that gives up", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const p Bool)",
+        "(declare-fun f (Bool) Bool)",
+        "(assert (= (f p) (f (not p))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(push 1)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(pop 1)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 93)", "unknown", "(:rlimit 97)"]);
+  });
+
   it("keeps a named formula of QF_FD that reads a constant the simplifiers define", () => {
     expect(
       run([
