@@ -348,6 +348,7 @@ export const simulate = (options: SimulationOptions): number => {
   const toTraceSteps = (
     trace: TraceNode[],
     positions = trace.map((_node, index) => index),
+    isAliased = true,
   ): TraceStep[] =>
     positions.map((position) => {
       const node = trace[position];
@@ -356,7 +357,7 @@ export const simulate = (options: SimulationOptions): number => {
         action: node.action.name,
         label: getActionLabel(node.action, options.version, node.level === 1),
         state:
-          config.alias === undefined
+          config.alias === undefined || !isAliased
             ? toRecord(node.state)
             : search.evaluateAlias(
                 config.alias,
@@ -779,9 +780,11 @@ export const simulate = (options: SimulationOptions): number => {
         : { positions: trace.map((_node, index) => index), failure: undefined };
     output({
       kind: "behavior",
-      // TLC's Simulator evaluates the alias of each state right before it prints the state.
+      // TLC's Simulator evaluates the alias of each state right before it prints the state, and prints the error state alone as TLCState#toString does, without the alias.
       trace: shown.positions.map((position) => {
-        const captured = capture.captureOutput(() => toTraceSteps(trace, [position])[0]);
+        const captured = capture.captureOutput(
+          () => toTraceSteps(trace, [position], !isLastStateOnly)[0],
+        );
         return captured.lines.length > 0
           ? { ...captured.result, aliasOutput: captured.lines }
           : captured.result;
