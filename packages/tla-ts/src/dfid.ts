@@ -30,6 +30,7 @@ import {
   withUnexpectedException,
 } from "./tlc/messages";
 import { getTlcFingerprint } from "./tlc/fingerprint";
+import { createJavaRandom } from "./tlc/random";
 import { replayInitialStates, replaySuccessors, walkSuccessors } from "./tlc/replay";
 import { getOptimisticProbability, getActualProbability } from "./tlc/summary";
 import { createModelValue, formatState, getSetBound, isSameValue, type Value } from "./values";
@@ -661,6 +662,9 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     );
     fingerprintSet.level++;
     fingerprintSet.leveled = LEVELED - fingerprintSet.leveled;
+    // TLC starts a new DFIDWorker thread for each level, whose generator for random values starts over from the seed.
+    const random = createJavaRandom(runtime.seed);
+    runtime.getRandom = () => random;
     searchLevel(level);
     checker.isDone = false;
     levelCode = checker.isKeepingCallStack ? NO_ERROR : checker.errorCode;
