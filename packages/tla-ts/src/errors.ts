@@ -12,6 +12,8 @@ export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeExc
 
 export const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalException");
 
+export const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationException");
+
 export const isStackOverflow = (error: unknown) =>
   (error instanceof RangeError && error.message === "Maximum call stack size exceeded") ||
   (error instanceof SyntaxError && error.message.endsWith(": Stack overflow"));

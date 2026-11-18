@@ -8,8 +8,10 @@ import {
   TlaStackOverflowError,
   TlaTooManyStatesError,
   TlaUnsupportedError,
+  TlaSetBoundError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
+  WRONG_INVOCATION_EXCEPTION,
 } from "./errors";
 import type { State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessChecksExitCode } from "./exit-codes";
@@ -838,4 +840,8 @@ const toEvaluationError = (error: unknown) => {
 };
 
 const getUnexpectedPrefix = (error: TlaEvaluationError) =>
-  isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION;
+  isEvalException(error)
+    ? UNEXPECTED_EVAL_EXCEPTION
+    : error instanceof TlaSetBoundError
+      ? WRONG_INVOCATION_EXCEPTION
+      : UNEXPECTED_EXCEPTION;
