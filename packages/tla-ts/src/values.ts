@@ -1691,8 +1691,12 @@ export const toFiniteSet = (value: Value): SetValue => {
   sets?.push(value);
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = isOuterSorting && lazy?.kind === "MixedSet";
-  const elements = enumerateSet(value);
-  isSortingLiteral = isOuterSorting;
+  let elements: Value[];
+  try {
+    elements = enumerateSet(value);
+  } finally {
+    isSortingLiteral = isOuterSorting;
+  }
   sets?.pop();
   const isSorted =
     typeof value === "object" &&

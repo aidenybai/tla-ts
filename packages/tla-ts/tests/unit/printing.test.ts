@@ -135,6 +135,7 @@ describe("printing matches TLC", () => {
     ["x \\in {F(1), F(3)} \\cup {F(2)}", ["1  1", "2  2", "3  3"]],
     ["x \\in {F(k) : k \\in 1..3} \\cup {F(0)}", ["1  1", "0  0", "2  2", "3  3"]],
     ["x \\in UNION {{F(1)}, {F(2)}}", ["1  1", "2  2"]],
+    ["x = ({F(1), {k \\in SUBSET {1} : k = {1 \\div 0}}} = {})", []],
   ])(
     "evaluates the recursive functions of a set in %s as TLC does, which sorts the set only once it needs it sorted",
     async (init, expected) => {
