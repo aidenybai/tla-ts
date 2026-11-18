@@ -73,6 +73,7 @@ import {
 import {
   findNodes,
   findNodesOf,
+  getCalleeRun,
   getFunctionCandidates,
   getFunctionValue,
   getObjectGetter,
@@ -14152,10 +14153,33 @@ const getCandidates = (
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
   called: ts.Expression,
-) =>
-  getAllCandidates(node, functions, context, called)?.filter(
-    (candidate) => !isOnlyCalled(candidate, context),
-  );
+) => {
+  const run = getFoundRun(functions, context, called);
+  return run >= 0
+    ? getRunFunctions(run, context)
+    : getAllCandidates(node, functions, context, called)?.filter(
+        (candidate) => !isOnlyCalled(candidate, context),
+      );
+};
+
+// The run that findCalleeRuns found of a callee, where no function that a path binds changes
+// whether the call dispatches, or -1.
+const getFoundRun = (
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+  called: ts.Expression,
+) => {
+  const callee = skipCasts(called);
+  const symbol = functions.size === 0 ? undefined : getSymbol(callee, context.checker);
+  return symbol !== undefined && functions.has(symbol) ? -1 : getCalleeRun(callee, context);
+};
+
+const getRunFunctions = (run: number, context: Context) => {
+  const runs = context.calleeRuns;
+  return runs === undefined
+    ? []
+    : runs.functions.slice(runs.runStarts[run], runs.runStarts[run + 1]);
+};
 
 // The callees of the calls in the model's code whose functions findEffects looks for among the
 // candidates, as a call or through call or apply, which tla-ts finds before it does.
@@ -14196,9 +14220,16 @@ const getDispatched = (
 ) => {
   // A call dispatches where the callee may hold any function, even one that the program only calls
   // by name, which it then leaves out.
+  const run = getFoundRun(functions, context, called);
+  if (run >= 0) {
+    const runs = context.calleeRuns;
+    return runs !== undefined && hasBit(runs.heldBits, run)
+      ? getRunFunctions(run, context)
+      : undefined;
+  }
   const dispatched = getAllCandidates(node, functions, context, called);
   return dispatched !== undefined && dispatched.length > 0
-    ? getCandidates(node, functions, context, called)
+    ? dispatched.filter((candidate) => !isOnlyCalled(candidate, context))
     : undefined;
 };
 

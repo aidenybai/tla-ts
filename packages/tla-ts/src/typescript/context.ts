@@ -309,6 +309,8 @@ export interface Context {
   effects: NodeEffects;
   // Which function candidates the callees of the model's calls through values may hold.
   dispatch: Dispatch | undefined;
+  // The functions that each dispatched callee may hold.
+  calleeRuns: CalleeRuns | undefined;
 }
 
 // The types of the callees that findEffects dispatches among the function candidates, by type id in
@@ -321,6 +323,18 @@ export interface Dispatch {
   // The bits that each row tested, which the rest of the bits don't tell.
   tested: Uint32Array;
   candidateTypes: Int32Array;
+}
+
+// The functions that each callee that findEffects dispatches may hold, but for those that code only
+// calls by name, by the callee's position in order: the index of its run, whose functions run from
+// runStarts[run] to runStarts[run + 1], and a bit per run of whether the callee may hold any
+// function at all, those too.
+export interface CalleeRuns {
+  calleePositions: Int32Array;
+  calleeRuns: Int32Array;
+  runStarts: Int32Array;
+  functions: FunctionNode[];
+  heldBits: Uint32Array;
 }
 
 // The effects of the nodes of the program's files by their positions, and of the few nodes that no
@@ -739,6 +753,7 @@ export const createContext = (
     changes: undefined,
     effects: { positions: [], elsewhere: new Map(), found: [] },
     dispatch: undefined,
+    calleeRuns: undefined,
     assignedNames: new Map(
       files.map((file) => [
         file,
@@ -5975,14 +5990,7 @@ export const findSharedFunctionCandidates = (
 // function's run binds.
 export const getFunctionCandidates = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
-  const sourceFile = callee.getSourceFile();
-  const found = context.functionCandidates.has(sourceFile)
-    ? [...context.functionCandidates.entries()].flatMap((entry) =>
-        entry[0] === sourceFile ? entry[1] : (context.sharedFunctionCandidates.get(entry[0]) ?? []),
-      )
-    : findFunctionCandidates(sourceFile, context).filter((candidate) =>
-        isReached(candidate, context),
-      );
+  const found = getFileCandidates(callee.getSourceFile(), context);
   const checker = context.checker;
   const type = checker.getTypeAtLocation(callee);
   const call = callee.parent;
@@ -6014,25 +6022,131 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
       )
     );
   };
-  // A callee whose type createDispatch tested reads its row.
+  const row = isSuperAccess(callee) ? -1 : getDispatchRow(type, context);
+  return found.filter(
+    (candidate) => isDispatchAssignable(candidate, row, type, context) && isTyped(candidate),
+  );
+};
+
+// The function candidates that a callee of a file may hold where its type lets it: those of the
+// file and the shared ones of the files it imports.
+const getFileCandidates = (sourceFile: ts.SourceFile, context: Context) =>
+  context.functionCandidates.has(sourceFile)
+    ? [...context.functionCandidates.entries()].flatMap((entry) =>
+        entry[0] === sourceFile ? entry[1] : (context.sharedFunctionCandidates.get(entry[0]) ?? []),
+      )
+    : findFunctionCandidates(sourceFile, context).filter((candidate) =>
+        isReached(candidate, context),
+      );
+
+// The row that createDispatch tested a callee type in, or -1.
+const getDispatchRow = (type: ts.Type, context: Context) => {
   const dispatch = context.dispatch;
-  const rowIndex =
-    dispatch === undefined || isSuperAccess(callee)
+  const row =
+    dispatch === undefined
       ? -1
       : getLowerBound(dispatch.calleeIds, 0, dispatch.calleeIds.length, type.id);
-  const row =
-    dispatch !== undefined && rowIndex >= 0 && dispatch.calleeIds[rowIndex] === type.id
-      ? rowIndex
-      : -1;
-  const isAssignable = (candidate: FunctionNode) => {
-    const position = row < 0 ? -1 : getPosition(context.nodes, candidate);
-    const bit = position < 0 || dispatch === undefined ? -1 : dispatch.candidateTypes[position] - 1;
-    const word = row * (dispatch?.words ?? 0) + (bit >>> 5);
-    return dispatch !== undefined && bit >= 0 && (dispatch.tested[word] & (1 << (bit & 31))) !== 0
-      ? (dispatch.rows[word] & (1 << (bit & 31))) !== 0
-      : checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type);
+  return dispatch !== undefined &&
+    row < dispatch.calleeIds.length &&
+    dispatch.calleeIds[row] === type.id
+    ? row
+    : -1;
+};
+
+// Whether TypeScript lets a callee type hold a candidate, which the callee type's row tells where
+// createDispatch tested the candidate's type.
+const isDispatchAssignable = (
+  candidate: FunctionNode,
+  row: number,
+  type: ts.Type,
+  context: Context,
+) => {
+  const dispatch = context.dispatch;
+  const position = row < 0 ? -1 : getPosition(context.nodes, candidate);
+  const bit = position < 0 || dispatch === undefined ? -1 : dispatch.candidateTypes[position] - 1;
+  const word = row * (dispatch?.words ?? 0) + (bit >>> 5);
+  return dispatch !== undefined && bit >= 0 && (dispatch.tested[word] & (1 << (bit & 31))) !== 0
+    ? (dispatch.rows[word] & (1 << (bit & 31))) !== 0
+    : context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(candidate), type);
+};
+
+// Finds once the functions that each callee that findEffects dispatches may hold: the function
+// candidates that its type lets it hold, then the closures, but for those that code only calls by
+// name. Callees of one file and one type hold the same ones, which a run holds once for all of
+// them, but for a held built-in or super, which getFunctionCandidates and getClosures tell apart.
+export const findCalleeRuns = (callees: readonly ts.Expression[], context: Context): CalleeRuns => {
+  const table = context.nodes;
+  const checker = context.checker;
+  const placed = callees.filter((callee) => getPosition(table, callee) >= 0);
+  const positions = Int32Array.from(placed, (callee) => getPosition(table, callee));
+  const files = Int32Array.from(positions, (position) => table.files[position]);
+  const typeIds = Int32Array.from(placed, (callee) => checker.getTypeAtLocation(callee).id);
+  const aloneBits = new Uint32Array((placed.length + 31) >>> 5);
+  placed.forEach((callee, index) => {
+    if (isHeldBuiltInObject(callee, context) || isSuperAccess(callee)) setBit(aloneBits, index);
+  });
+  const isShared = (left: number, right: number) =>
+    !hasBit(aloneBits, left) &&
+    !hasBit(aloneBits, right) &&
+    files[left] === files[right] &&
+    typeIds[left] === typeIds[right];
+  const byKey = Int32Array.from(placed, (_, index) => index).sort(
+    (left, right) => files[left] - files[right] || typeIds[left] - typeIds[right] || left - right,
+  );
+  const runOf = new Int32Array(placed.length);
+  const starts = [0];
+  const functions: FunctionNode[] = [];
+  const heldBits = new Uint32Array((placed.length + 31) >>> 5);
+  byKey.forEach((index, order) => {
+    const previous = order > 0 ? byKey[order - 1] : -1;
+    if (previous >= 0 && isShared(previous, index)) {
+      runOf[index] = runOf[previous];
+      return;
+    }
+    const callee = placed[index];
+    const run = starts.length - 1;
+    runOf[index] = run;
+    const type = checker.getTypeAtLocation(callee);
+    const row = getDispatchRow(type, context);
+    const held = hasBit(aloneBits, index)
+      ? [...getFunctionCandidates(callee, context), ...getClosures(callee, context)]
+      : [
+          ...getFileCandidates(callee.getSourceFile(), context).filter((candidate) =>
+            isDispatchAssignable(candidate, row, type, context),
+          ),
+          ...(context.closures.get(callee.getSourceFile()) ?? []).filter((closure) =>
+            checker.isTypeAssignableTo(checker.getTypeAtLocation(closure), type),
+          ),
+        ];
+    if (held.length > 0) setBit(heldBits, run);
+    held.forEach((candidate) => {
+      if (!isOnlyCalled(candidate, context)) functions.push(candidate);
+    });
+    starts.push(functions.length);
+  });
+  const byPosition = Int32Array.from(placed, (_, index) => index).sort(
+    (left, right) => positions[left] - positions[right],
+  );
+  return {
+    calleePositions: Int32Array.from(byPosition, (index) => positions[index]),
+    calleeRuns: Int32Array.from(byPosition, (index) => runOf[index]),
+    runStarts: Int32Array.from(starts),
+    functions,
+    heldBits,
   };
-  return found.filter((candidate) => isAssignable(candidate) && isTyped(candidate));
+};
+
+// The run of the functions that a callee may hold, which findCalleeRuns found, or -1.
+export const getCalleeRun = (callee: ts.Expression, context: Context) => {
+  const runs = context.calleeRuns;
+  const position = getPosition(context.nodes, callee);
+  const index =
+    runs === undefined || position < 0
+      ? -1
+      : getLowerBound(runs.calleePositions, 0, runs.calleePositions.length, position);
+  return runs !== undefined && index >= 0 && runs.calleePositions[index] === position
+    ? runs.calleeRuns[index]
+    : -1;
 };
 
 // TypeScript's flags of a signature with a rest parameter, and of an untyped one of JavaScript.
