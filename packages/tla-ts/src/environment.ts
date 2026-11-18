@@ -9,6 +9,7 @@ import {
   type Instance,
   type Module,
   type OperatorParam,
+  type Proof,
   type SourceLocation,
 } from "./ast";
 import type { ModuleOperator } from "./check";
@@ -236,6 +237,19 @@ const getSubstitutions = (instances: Instance[]) =>
     instance.substitutions.map((substitution) => substitution.expression),
   );
 
+const getProofInstances = (proof: Proof | undefined): Instance[] =>
+  proof?.kind === "Steps"
+    ? proof.steps.flatMap((step) => [
+        ...(step.body.kind === "Instance" ? [step.body] : []),
+        ...(step.body.kind === "Define"
+          ? step.body.definitions.flatMap((definition) =>
+              definition.kind === "Instance" ? [definition] : [],
+            )
+          : []),
+        ...getProofInstances(step.proof),
+      ])
+    : [];
+
 const rejectLiterals = (expressions: Expression[]): void =>
   expressions.forEach((expression) => {
     if (expression.kind === "Decimal") throw createRealNumberError(expression);
@@ -275,9 +289,10 @@ export const createEnvironment = (
   const dependencies = new Map<string, Set<string>>();
   const loading: Set<string>[] = [];
   const linking: string[] = [];
+  const usedModules = new Set<string>();
 
   const useModule = (name: string, used: Iterable<string>) =>
-    loading.forEach((closure) => {
+    [usedModules, ...loading].forEach((closure) => {
       closure.add(name);
       [...used].forEach((dependency) => closure.add(dependency));
     });
@@ -896,6 +911,13 @@ export const createEnvironment = (
         module.definitions.toReversed().map((definition) => [definition.name, definition]),
       ),
       getKey,
+      isModuleKnown: (name, location) =>
+        name === parsed.name ||
+        usedModules.has(name) ||
+        scope.modules.has(name) ||
+        parsed.modules.some(
+          (nested) => nested.name === name && isBefore(nested.location, location),
+        ),
       instanced,
       facts,
       reports,
@@ -972,6 +994,13 @@ export const createEnvironment = (
       ),
       getAvailableDefinitions(visible),
     );
+    parsed.theorems
+      .flatMap((theorem) => getProofInstances(theorem.proof))
+      .filter((instance) => !getVisibleModules().has(instance.module))
+      .forEach(
+        (instance) =>
+          getStandardSymbols(instance.module) ?? getLinkedModule(instance.module, parsed.name),
+      );
     scope.errors.push(...resolveModule(module, getUnit(module)));
     module.definitions.forEach((definition) => {
       const key = getKey(definition);

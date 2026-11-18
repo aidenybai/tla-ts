@@ -159,6 +159,7 @@ export const generateUseOrHide = (generation: ModuleGeneration, use: UseOrHide):
   if (facts.length + defs.length === 0)
     generation.addError(location, "Empty USE or HIDE statement.");
   if (use.kind === "Hide") {
+    // Deviation from SANY: UseOrHideNode#factCheck crashes on a fact whose operator Generator#generateExpression could not resolve, where tla-ts reports it like a null node.
     facts
       .filter((fact) => fact.kind === "OpAppl" && fact.operator.kind !== "ThmOrAssumpDef")
       .forEach((fact) =>

@@ -478,6 +478,8 @@ const getOperatorApplication = (
   }
 };
 
+export const parenthesizedRanges = new WeakMap<Expression, SourceRange>();
+
 export const extractModule = (source: string, name: string) => {
   const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
   const lines = source.replace(/\r?\n$/, "").split(/\r?\n/);
@@ -1344,6 +1346,7 @@ const parse = (
       case "(": {
         const expression = withBracketLayout(() => parseExpression());
         expect(")");
+        parenthesizedRanges.set(expression, getRange(start));
         return expression;
       }
       case "[":

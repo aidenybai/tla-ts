@@ -2365,6 +2365,8 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Label":
       return getChildEvaluator(expression.body);
+    case "Selection":
+      return getChildEvaluator(expression.expression);
     case "Subexpression":
       return () => {
         throw new TlaEvaluationError(

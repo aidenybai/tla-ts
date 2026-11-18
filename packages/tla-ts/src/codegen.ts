@@ -162,7 +162,9 @@ const createLocal = (generator: Generator) => `local${generator.counter++}`;
 const getFreeNames = (expression: Expression, names = new Set<string>()) => {
   const name = getReferencedName(expression);
   if (name !== undefined) names.add(name);
-  getChildren(expression).forEach((child) => getFreeNames(child, names));
+  if (expression.kind !== "Selection") {
+    getChildren(expression).forEach((child) => getFreeNames(child, names));
+  }
   return names;
 };
 

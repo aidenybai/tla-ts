@@ -985,6 +985,8 @@ export const generateExpression = (
       return generateLabel(generation, expression);
     case "Subexpression":
       return generateSelectorExpression(generation, expression);
+    case "Selection":
+      return generateExpression(generation, expression.expression);
   }
 };
 

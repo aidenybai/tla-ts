@@ -1260,6 +1260,145 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each<[string, [string, string][]]>([
+    [
+      "G(a, b) == a\nOp0(P0(_, _), a1) == P0(a1, a1)\nf == Op0((G), 1)",
+      [
+        [
+          "line 4, col 10 to line 4, col 12",
+          "An expression appears as argument number 1 (counting from 1) to operator 'Op0', in a position an operator is required.",
+        ],
+        [
+          "line 4, col 6 to line 4, col 16",
+          "Argument number 1 to operator 'Op0' \nshould be a 2-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "G(a, b) == a\nOp0(P0(_, _), a1) == P0(a1, a1)\nf == Op0(((G)), 1)",
+      [
+        [
+          "line 4, col 10 to line 4, col 14",
+          "An expression appears as argument number 1 (counting from 1) to operator 'Op0', in a position an operator is required.",
+        ],
+        [
+          "line 4, col 6 to line 4, col 18",
+          "Argument number 1 to operator 'Op0' \nshould be a 2-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nH(a, b) == a + b\nD == H(1, 2)\nOp0(P0(_), a1) == P0(a1)\nf == Op0((D!1), 1)",
+      [
+        [
+          "line 6, col 10 to line 6, col 14",
+          "An expression appears as argument number 1 (counting from 1) to operator 'Op0', in a position an operator is required.",
+        ],
+        [
+          "line 6, col 6 to line 6, col 18",
+          "Argument number 1 to operator 'Op0' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "---- MODULE Inner ----\nCONSTANT F(_)\n====\nG(a) == a\nI == INSTANCE Inner WITH F <- (G)",
+      [
+        [
+          "line 6, col 31 to line 6, col 33",
+          "Arity 1 operator (not an expression) is expected \nto substitute for CONSTANT 'F'.",
+        ],
+        [
+          "In module --TLA+ BUILTINS--",
+          "An operator must be substituted for symbol 'F', and it must have arity 1.",
+        ],
+      ],
+    ],
+  ])(
+    "reports an operator in parentheses, which SANY reads as an expression, in %j",
+    async (source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({
+            location: error[0].startsWith("In module") ? error[0] : `${error[0]} of module M`,
+            message: error[1],
+          })),
+        ),
+      );
+    },
+  );
+
+  it.each<[string, [string, string][]]>([
+    [
+      "EXTENDS Naturals\nH(a, b) == a + b\nD == H(1, 2)\nOp0(P0(_), a1) == P0(a1)\nf == Op0(D!1, 1)",
+      [
+        ["line 6, col 10 to line 6, col 12", "Expected arity 1 but found operator of arity 0."],
+        [
+          "line 6, col 6 to line 6, col 16",
+          "Argument number 1 to operator 'Op0' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nD == 3 + 1\nOp0(P0(_), a1) == P0(a1)\nf == Op0(D!:, 1)",
+      [
+        ["line 5, col 10 to line 5, col 12", "Expected arity 1 but found operator of arity 0."],
+        [
+          "line 5, col 6 to line 5, col 16",
+          "Argument number 1 to operator 'Op0' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nH(a, b) == a + b\nD(p) == H(p, 2)\nOp0(P0(_), a1) == P0(a1)\nf == Op0(D(1)!1, 1)",
+      [
+        ["line 6, col 10 to line 6, col 10", "Selector `D' should not have argument(s)."],
+        [
+          "line 6, col 6 to line 6, col 19",
+          "Argument number 1 to operator 'Op0' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nD == \\A z \\in {1} : z > 0\nOp0(P0(_), a1) == P0(a1)\nf == Op0(D!(1), 1)",
+      [
+        ["line 5, col 12 to line 5, col 14", "Selector `!(...)' should not have argument(s)."],
+        [
+          "line 5, col 6 to line 5, col 18",
+          "Argument number 1 to operator 'Op0' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nD == {3 + 1}\nE == {D!1, 0}\nOp0(P0(_), a1) == P0(a1)\nf == Op0(E!1, 1)",
+      [
+        ["line 6, col 10 to line 6, col 12", "Expected arity 1 but found operator of arity 0."],
+        [
+          "line 6, col 6 to line 6, col 16",
+          "Argument number 1 to operator 'Op0' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nD == {3 + 1}\nOp0(P0(_), a1) == P0(a1)\nf == LET E == {D!1, 0} IN Op0(E!1, 1)",
+      [
+        ["line 5, col 31 to line 5, col 33", "Expected arity 1 but found operator of arity 0."],
+        [
+          "line 5, col 27 to line 5, col 37",
+          "Argument number 1 to operator 'Op0' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+  ])(
+    "checks a selection without parameters as an operator argument in %j like SANY",
+    async (source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it("passes an operator argument through an operator a LET instantiates", async () => {
     const result = await check({
       source:
@@ -2297,6 +2436,160 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each<[string, [string, string][]]>([
+    [
+      "THEOREM Thm3 == G0(1)!1!2\nHIDE Thm3!:",
+      [
+        ["line 2, col 17 to line 2, col 18 of module M", "Unknown operator: `G0'."],
+        [
+          "line 3, col 6 to line 3, col 11 of module M",
+          "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        ],
+      ],
+    ],
+    [
+      "Op == Unk + 1\nHIDE Op!:",
+      [
+        [
+          "line 2, col 11 to line 2, col 11 of module M",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        [
+          "line 2, col 7 to line 2, col 13 of module M",
+          "Couldn't resolve infix operator symbol `+'.",
+        ],
+        [
+          "line 3, col 9 to line 3, col 9 of module M",
+          "An unexpected null node specified by ':'.\nThis is probably due to a previous error.",
+        ],
+        [
+          "In module --TLA+ BUILTINS--",
+          "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        ],
+      ],
+    ],
+  ])("locates a selection hidden in %j like SANY", async (source, errors) => {
+    await expect(checkNames(source)).rejects.toThrow(
+      createSanyError(errors.map((entry) => ({ location: entry[0], message: entry[1] }))),
+    );
+  });
+
+  it("reports a HIDE fact whose operator SANY can't resolve, where SANY crashes", async () => {
+    await expect(checkNames("CONSTANT c\nHIDE -c")).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 6 to line 3, col 6 of module M",
+          message: "Could not find declaration or definition of symbol '-.'.",
+        },
+        {
+          location: "line 3, col 6 to line 3, col 7 of module M",
+          message: "Couldn't resolve prefix operator symbol `-.'.",
+        },
+        {
+          location: "In module --TLA+ BUILTINS--",
+          message:
+            "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        },
+      ]),
+    );
+  });
+
+  it("accepts only a definition step as a DEF entry like SANY", async () => {
+    const message = "DEF clause entry should describe a defined operator.";
+    await expect(
+      checkNames(
+        "THEOREM TRUE\n<1>1. DEFINE G == 1\n<1>2. USE TRUE\n<1>3. TRUE\n  OBVIOUS\n<1> USE DEF <1>1, <1>2, <1>3, <1>4\n<1> QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 7, col 19 to line 7, col 22", "DEF clause entry refers to a non-definition step."],
+          ["line 7, col 19 to line 7, col 22", message],
+          ["line 7, col 25 to line 7, col 28", message],
+          ["line 7, col 31 to line 7, col 34", "Unknown operator: `<1>4'."],
+          ["line 7, col 31 to line 7, col 34", message],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
+  it.each<[string, [string, string][]]>([
+    [
+      "CONSTANT c\nHIDE MODULE Naturals DEF Thm9, c",
+      [
+        [
+          "line 3, col 13 to line 3, col 20",
+          "Module `Naturals' used without being extended or instantiated.",
+        ],
+        ["line 3, col 26 to line 3, col 29", "Unknown operator: `Thm9'."],
+        [
+          "line 3, col 26 to line 3, col 29",
+          "DEF clause entry should describe a defined operator.",
+        ],
+        [
+          "line 3, col 32 to line 3, col 32",
+          "DEF clause entry should describe a defined operator.",
+        ],
+        ["line 3, col 1 to line 3, col 32", "Empty USE or HIDE statement."],
+      ],
+    ],
+    [
+      "USE MODULE Inner\n---- MODULE Inner ----\n====",
+      [
+        [
+          "line 2, col 12 to line 2, col 16",
+          "Module `Inner' used without being extended or instantiated.",
+        ],
+        ["line 2, col 1 to line 2, col 16", "Empty USE or HIDE statement."],
+      ],
+    ],
+    [
+      "THEOREM TRUE\nBY MODULE Foo",
+      [
+        [
+          "line 3, col 11 to line 3, col 13",
+          "Module `Foo' used without being extended or instantiated.",
+        ],
+        ["line 3, col 1 to line 3, col 13", "Empty BY"],
+      ],
+    ],
+    [
+      "Op == 1\nUSE MODULE Naturals, Op DEF MODULE TLC, Op",
+      [
+        [
+          "line 3, col 12 to line 3, col 19",
+          "Module `Naturals' used without being extended or instantiated.",
+        ],
+        [
+          "line 3, col 36 to line 3, col 38",
+          "Module `TLC' used without being extended or instantiated.",
+        ],
+      ],
+    ],
+  ])("reports a module fact in %j that SANY has not processed", async (source, errors) => {
+    await expect(checkNames(source)).rejects.toThrow(
+      createSanyError(
+        errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("accepts module facts for the modules SANY has processed and the inner modules before them", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Sequences\n---- MODULE Inner ----\nEXTENDS FiniteSets\nUSE MODULE FiniteSets, MODULE Naturals, MODULE Inner\n====\n---- MODULE Other ----\nLOCAL INSTANCE TLC\n====\nI == INSTANCE Other\nUSE MODULE Naturals, MODULE Inner, MODULE M, MODULE TLC, MODULE FiniteSets DEF MODULE Other",
+      ),
+    ).resolves.toMatchObject({ status: "success" });
+  });
+
+  it("accepts a module fact for a module that only a later proof step instantiates, like SANY", async () => {
+    await expect(
+      checkNames(
+        "USE MODULE FiniteSets, MODULE Bags\nTHEOREM TRUE\n<1>1. INSTANCE FiniteSets\n<1>2. DEFINE B == INSTANCE Bags\n<1> QED",
+      ),
+    ).resolves.toMatchObject({ status: "success" });
+  });
+
   const hidden =
     "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.";
   it.each<[string, string, [string, string][]]>([
@@ -2590,6 +2883,276 @@ describe("name resolution matches SANY", () => {
         { location: "line 9, col 9 to line 9, col 9 of module M", message: noOperands },
       ]),
     );
+  });
+
+  it.each<[string, [string, string][]]>([
+    [
+      "CONSTANT Cop(_)\nOp0(a0) == Cop(inner:: a0)!1\nf == Op0(1)!inner",
+      [
+        ["line 3, col 12 to line 3, col 14", "Cannot take subexpression of `Cop'."],
+        ["line 4, col 13 to line 4, col 17", "Cannot find label `inner'."],
+      ],
+    ],
+    [
+      "Op0(a0) == Nope(inner:: a0)!1\nf == Op0(1)!inner",
+      [
+        ["line 2, col 12 to line 2, col 15", "Unknown operator: `Nope'."],
+        ["line 3, col 13 to line 3, col 17", "Cannot find label `inner'."],
+      ],
+    ],
+    [
+      "G(y) == {y}\nOp0(a0) == G(inner:: a0, 2)!1\nf == Op0(1)!inner",
+      [
+        ["line 3, col 13 to line 3, col 27", "The operator G requires 1 arguments."],
+        ["line 4, col 13 to line 4, col 17", "Cannot find label `inner'."],
+      ],
+    ],
+    [
+      "G(y) == {y}\nOp0(a0) == G(inner:: a0)!3\nf == Op0(1)!inner",
+      [
+        [
+          "line 3, col 26 to line 3, col 26",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
+      "---- MODULE Sub ----\nCONSTANT e\nS1(z) == e\n====\nSubI(q) == INSTANCE Sub WITH e <- 1\nOp0(a0) == SubI(1)!S1(inner:: a0, 2)!1\nf == Op0(1)!inner",
+      [
+        ["line 7, col 22 to line 7, col 36", "The operator SubI!S1 requires 1 arguments."],
+        ["line 8, col 13 to line 8, col 17", "Cannot find label `inner'."],
+      ],
+    ],
+    [
+      "---- MODULE Sub ----\nCONSTANT e\nS1(z) == e\n====\nSubI(q) == INSTANCE Sub WITH e <- 1\nOp0(a0) == SubI(inner:: a0)!S1(1, 2)!1\nf == Op0(1)!inner",
+      [["line 7, col 31 to line 7, col 36", "The operator SubI!S1 requires 1 arguments."]],
+    ],
+  ])(
+    "finds a label in a failed selection's arguments only if SANY generated them, in %j",
+    async (source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
+  it.each<[string, [string, string][]]>([
+    [
+      "EXTENDS Naturals\nJ(a, Q(_)) == Q(a)\nK == lab:: 1 + 1\nOp0 == J(K!1)\nf == Op0!@\ng == Op0!1",
+      [
+        ["line 5, col 9 to line 5, col 13", "The operator J requires 2 arguments."],
+        [
+          "line 6, col 10 to line 6, col 10",
+          "Choosing operand `@' of subexpression with no operands.",
+        ],
+        ["line 7, col 10 to line 7, col 10", noOperands],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nK == lab:: 1 + 1\nOp0 == {Nope(K!1), 2}\nf == Op0!1!1\ng == Op0!1",
+      [
+        ["line 4, col 9 to line 4, col 12", "Unknown operator: `Nope'."],
+        ["line 5, col 12 to line 5, col 12", noOperands],
+      ],
+    ],
+  ])(
+    "reports choosing an operand of a failed expression that contains a selection, in %j, like SANY",
+    async (source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
+  it("selects through each reference that a selected operand names like SANY", async () => {
+    await expect(
+      checkNames("R == {{5}}\nQ == {R!1}\nOp == {Q!1, 2}\nB == Op!1!1!1!1!1"),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 17 to line 5, col 17 of module M",
+          message: "Selecting subexpression of expression that has none.",
+        },
+      ]),
+    );
+  });
+
+  it.each([
+    ["---- MODULE I ----\nQ == {5}\nOp == {Q!1, 2}\n====\nJ == INSTANCE I\nB == J!Op!1!1!1", 7, 15],
+    [
+      "---- MODULE I ----\nQ == {{5}}\nC == Q!1\n====\nJ == INSTANCE I\nB == J!C!1!1\nB2 == J!C!1!1!1",
+      8,
+      15,
+    ],
+  ])(
+    "selects through a reference in an instantiated definition in %j like SANY",
+    async (source, line, column) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError([
+          {
+            location: `line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+            message: "Selecting subexpression of expression that has none.",
+          },
+        ]),
+      );
+    },
+  );
+
+  it.each<[string, [string, string][]]>([
+    [
+      "EXTENDS Naturals\nRECURSIVE Rec0(_, _)\nRec0 == DOMAIN Rec0!2!2",
+      [
+        [
+          "line 4, col 1 to line 4, col 23",
+          "Definition of Rec0 has different arity than its RECURSIVE declaration.",
+        ],
+        ["line 4, col 16 to line 4, col 23", "The operator Rec0 requires 2 arguments."],
+      ],
+    ],
+    [
+      "Op(x) == {x}\nB == DOMAIN Op!1!2",
+      [["line 3, col 13 to line 3, col 18", "The operator Op requires 1 arguments."]],
+    ],
+    [
+      "CONSTANT C(_)\nOp(x) == {x}\nB == C(Op!1!3)",
+      [["line 4, col 8 to line 4, col 13", "The operator Op requires 1 arguments."]],
+    ],
+    [
+      "Op(x) == {x}\nH(F(_)) == F(Op!1!3)",
+      [["line 3, col 14 to line 3, col 19", "The operator Op requires 1 arguments."]],
+    ],
+  ])(
+    "checks a selection's arity right away as an argument of an operator that is not user-defined in %j like SANY",
+    async (source, errors) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
+  it.each<[string, [string, string][]]>([
+    [
+      "G(F(_)) == F(1)\nOp(x) == {x}\nB == G(Op!1!3)",
+      [
+        [
+          "line 4, col 13 to line 4, col 13",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
+      "G(F(_)) == F(1)\nB == G(Nope!1)",
+      [["line 3, col 8 to line 3, col 11", "Unknown operator: `Nope'."]],
+    ],
+    [
+      "G(F(_)) == F(1)\nOp(x) == {Nope(x)}\nB == G(Op!1!1)",
+      [
+        ["line 3, col 11 to line 3, col 14", "Unknown operator: `Nope'."],
+        ["line 4, col 13 to line 4, col 13", noOperands],
+      ],
+    ],
+  ])(
+    "reports a failed selection in %j as an argument that is not an operator like SANY",
+    async (source, errors) => {
+      const line = source.split("\n").length + 1;
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError(
+          [
+            ...errors,
+            [
+              `line ${line}, col 6 to line ${line}, col 14`,
+              "Argument number 1 to operator 'G' \nshould be a 1-parameter operator.",
+            ],
+          ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "Op == {1}\nB == Op!1!:",
+      "line 3, col 9 to line 3, col 9",
+      "!: should not follow an operand selector.",
+    ],
+    [
+      "Op == \\A y \\in {1} : y = 1\nB == Op!<<!:",
+      "line 3, col 9 to line 3, col 10",
+      "!: should not follow an operand selector.",
+    ],
+    [
+      "Op == CASE TRUE -> 1 [] FALSE -> 2\nB == Op!1!2!:",
+      "line 3, col 11 to line 3, col 11",
+      "!: should not follow an operand selector.",
+    ],
+    [
+      "Op == lab:: {1}\nB == Op!lab!:",
+      "line 3, col 13 to line 3, col 13",
+      "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+    ],
+    [
+      "Op == {1}\nB == Op!:!1",
+      "line 3, col 9 to line 3, col 9",
+      "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+    ],
+  ])(
+    "reports the selector before or after `!:' in %j like SANY",
+    async (source, location, message) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError([{ location: `${location} of module M`, message }]),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "---- MODULE I ----\nK == 1\n====\nJ == INSTANCE I\nB == J",
+      "line 6, col 6 to line 6, col 6",
+      "J",
+    ],
+    [
+      "---- MODULE I2 ----\nK == 1\n====\n---- MODULE I ----\nL == INSTANCE I2\n====\nJ == INSTANCE I\nB == J!L",
+      "line 9, col 8 to line 9, col 8",
+      "J!L",
+    ],
+    [
+      "---- MODULE I ----\nCONSTANT c\nK == c\n====\nJ(x) == INSTANCE I WITH c <- x\nB == J(1)",
+      "line 7, col 6 to line 7, col 6",
+      "J",
+    ],
+    [
+      "---- MODULE I ----\nCONSTANT c\nK == c\n====\nJ(x) == INSTANCE I WITH c <- x\nTHEOREM TRUE BY J(1)",
+      "line 7, col 17 to line 7, col 17",
+      "J",
+    ],
+    [
+      "---- MODULE I ----\nK == 1\n====\nB == LET J == INSTANCE I IN J",
+      "line 5, col 29 to line 5, col 29",
+      "J",
+    ],
+  ])(
+    "reports an instance name used as an operator in %j like SANY",
+    async (source, location, name) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError([
+          { location: `${location} of module M`, message: `Operator name ${name} is incomplete.` },
+        ]),
+      );
+    },
+  );
+
+  it("accepts an instance name as a fact like SANY", async () => {
+    await expect(
+      checkNames(
+        "---- MODULE I ----\nK == 1\n====\nJ == INSTANCE I\nUSE J\nHIDE J\nTHEOREM TRUE BY J",
+      ),
+    ).resolves.toMatchObject({ status: "success" });
   });
 
   it("reports a selection that leaves parameters unfilled under a built-in operator like SANY", async () => {

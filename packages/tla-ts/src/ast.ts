@@ -307,6 +307,12 @@ interface SubexpressionExpression {
   location: SourceLocation;
 }
 
+interface SelectionExpression {
+  kind: "Selection";
+  expression: Expression;
+  location: SourceLocation;
+}
+
 export type Expression =
   | NumberExpression
   | DecimalExpression
@@ -342,7 +348,8 @@ export type Expression =
   | ActionExpression
   | FairnessExpression
   | LabelExpression
-  | SubexpressionExpression;
+  | SubexpressionExpression
+  | SelectionExpression;
 
 export interface OperatorParam {
   name: string;
@@ -601,6 +608,8 @@ export const getChildren = (expression: Expression): Expression[] => {
       return [expression.body];
     case "Subexpression":
       return expression.selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
+    case "Selection":
+      return [expression.expression];
   }
 };
 
