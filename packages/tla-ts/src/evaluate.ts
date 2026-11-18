@@ -568,6 +568,31 @@ export const forEachBinding = (
   visit: (scope: Scope | undefined) => boolean,
 ) => forEachBoundElement(bounds, getBoundElements(bounds, context), context.scope, visit);
 
+const forEachChargedBinding = (
+  bounds: Bound[],
+  context: Context,
+  coverage: Coverage,
+  visit: (scope: Scope | undefined) => boolean,
+) => {
+  const bounded = mapBoundSets(bounds, (set) => {
+    const value = evaluate(set, context);
+    return {
+      value,
+      elements: getQuantifierElements(value, set, context.environment.runtime.version),
+    };
+  });
+  const sets = bounded.map((item) => item.elements);
+  const charge = chargeContexts(
+    coverage,
+    bounded.map((item) => item.value),
+    sets,
+  );
+  return forEachBoundElement(bounds, sets, context.scope, (scope) => {
+    charge();
+    return visit(scope);
+  });
+};
+
 const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
   const sets = mapBoundSets(bounds, (set) => evaluate(set, context));
   return sets.length === 1 ? sets[0] : { kind: "ProductSet", factors: sets };
@@ -1410,9 +1435,11 @@ const countEvaluator =
     coverage.current = node;
     try {
       const value = evaluator(context);
-      if (typeof value === "object" && expression.kind === "SetEnumeration") {
-        coverage.values.set(value, node);
-      }
+      const isTagged =
+        expression.kind === "SetEnumeration" ||
+        ((expression.kind === "SetFilter" || expression.kind === "SetMap") &&
+          isReducibleSet(value));
+      if (typeof value === "object" && isTagged) coverage.values.set(value, node);
       return value;
     } finally {
       coverage.current = outer;
@@ -1661,20 +1688,12 @@ const compileQuantifier = (
   const coverage = environment.coverage;
   if (coverage) {
     return (context) => {
-      const bounded = mapBoundSets(expression.bounds, (set) => {
-        const value = getEvaluator(set, environment)(context);
-        return { value, elements: getQuantifierElements(value, set, environment.runtime.version) };
-      });
-      const sets = bounded.map((item) => item.elements);
-      const charge = chargeContexts(
+      const isFound = forEachChargedBinding(
+        expression.bounds,
+        context,
         coverage,
-        bounded.map((item) => item.value),
-        sets,
+        (scope) => expectBooleanBody(body(withScope(context, scope)), expression) !== isForall,
       );
-      const isFound = forEachBoundElement(expression.bounds, sets, context.scope, (scope) => {
-        charge();
-        return expectBooleanBody(body(withScope(context, scope)), expression) !== isForall;
-      });
       return isFound ? !isForall : isForall;
     };
   }
@@ -2078,20 +2097,21 @@ const compileSetComprehension = (
         if (expectFilterPredicate(value, expression)) addBoundedElement(kept, element);
         else if (isUniform) break;
       }
-      if (coverage && coverage.current !== -1) {
-        coverage.secondary[coverage.current] += size + kept.length;
-      }
+      if (coverage) costCoverage(coverage, base, size + 1);
       return createNormalizedSet(kept);
     };
   }
   if (expression.kind === "SetMap") {
     const mapped = getEvaluator(expression.expression, environment);
+    const coverage = environment.coverage;
     return (context) => {
       const elements: Value[] = [];
-      forEachBinding(expression.bounds, context, (scope) => {
+      const add = (scope: Scope | undefined) => {
         addBoundedElement(elements, mapped(withScope(context, scope)));
         return false;
-      });
+      };
+      if (coverage) forEachChargedBinding(expression.bounds, context, coverage, add);
+      else forEachBinding(expression.bounds, context, add);
       return createEnumeratedSet(elements);
     };
   }

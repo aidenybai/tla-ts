@@ -1672,6 +1672,36 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges the set a filter or map draws from and the set it builds, as TLC does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE F ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv1 == {e \\in 0..2 : e >= x} # {7}\nInv2 == \\E e \\in {f \\in {0, 1, 2} : f >= x} : e = 2\nInv3 == \\E e \\in {f + 1 : f \\in {0, 1, 2}} : e = x + 1\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv1\nINVARIANT Inv2\nINVARIANT Inv3",
+    );
+    expect(lines?.slice(2)).toEqual([
+      [
+        "line 6, col 9 to line 6, col 35 of module F: 3",
+        "|line 6, col 9 to line 6, col 29 of module F: 3",
+        "||line 6, col 23 to line 6, col 28 of module F: 9",
+        "||line 6, col 16 to line 6, col 19 of module F: 3",
+        "|line 6, col 33 to line 6, col 35 of module F: 3",
+      ],
+      [
+        "line 7, col 9 to line 7, col 51 of module F: 3",
+        "|line 7, col 47 to line 7, col 51 of module F: 6",
+        "|line 7, col 18 to line 7, col 43 of module F: 3:9",
+        "||line 7, col 37 to line 7, col 42 of module F: 9",
+        "||line 7, col 25 to line 7, col 33 of module F: 3:12",
+      ],
+      [
+        "line 8, col 9 to line 8, col 54 of module F: 3",
+        "|line 8, col 46 to line 8, col 54 of module F: 6",
+        "|line 8, col 18 to line 8, col 42 of module F: 3:9",
+        "||line 8, col 19 to line 8, col 23 of module F: 9",
+        "||line 8, col 33 to line 8, col 41 of module F: 3:12",
+      ],
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",
