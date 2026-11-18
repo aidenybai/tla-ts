@@ -2230,10 +2230,10 @@ const getUnverifiedPrimitive = (node: ts.Expression, context: Context) => {
           : undefined;
 };
 
-// An arithmetic operator or an ordering of a value of type any where no heap holds objects, so that
-// the value is a primitive or a value that tla-ts can't convert, as a list, which stops where it
-// runs. The operator converts the primitives as JavaScript's does: + joins a string, an ordering
-// runs IsLessThan, and the others convert to numbers.
+// An arithmetic operator or an ordering of a value of type any that no statement converts first, as
+// in a loop's condition, or where no heap holds objects, whose value is a primitive or an object,
+// which stops where it runs. The operator converts the primitives as JavaScript's does: + joins a
+// string, an ordering runs IsLessThan, and the others run ToNumeric.
 const translateAnyOperation = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
   const kind = node.operatorToken.kind;
   const operands = [node.left, node.right];
@@ -2249,7 +2249,6 @@ const translateAnyOperation = (node: ts.BinaryExpression, scope: Scope, context:
         ts.TypeFlags.Undefined,
     );
   if (
-    context.heap !== undefined ||
     !(
       ORDERING_OPERATORS.has(kind) ||
       kind === ts.SyntaxKind.PlusToken ||
@@ -2290,7 +2289,7 @@ const translateAnyOperation = (node: ts.BinaryExpression, scope: Scope, context:
         value,
         apply("Assert", [
           boolean(false),
-          string("tla-ts can't convert this value to a primitive where no heap holds objects"),
+          string("tla-ts can't convert this object to a primitive here"),
         ]),
       );
     }),

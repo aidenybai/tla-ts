@@ -52952,9 +52952,7 @@ describe("BigInts", () => {
           const less = (left: any, right: any) => left < right;
           if (less([1], 2)) throw new Error("less");
         `),
-      ).rejects.toThrow(
-        "tla-ts can't convert this value to a primitive where no heap holds objects",
-      );
+      ).rejects.toThrow("tla-ts can't convert this object to a primitive here");
     });
   });
 
@@ -53357,6 +53355,34 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain(
         "tla-ts can't throw the TypeError of mixing a BigInt with a number",
       );
+    });
+  });
+
+  describe("orders a value of type any in a loop's condition, which no statement converts first", () => {
+    const getSource = (start: string, expected: string) => `
+      const box = { seen: [] as string[] };
+      function collect(this: unknown, ...values: unknown[]) {
+        for (var index: any = ${start}; index < arguments.length; index++) {
+          box.seen.push(String(arguments[index]));
+        }
+        return values.length;
+      }
+      collect("a", "b", "c");
+      if (box.seen.join() !== "${expected}") throw new Error("seen " + box.seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1", "b,c"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("1", "a,b,c"))).failure?.message).toContain("seen b,c");
+    });
+
+    it("stops where the value is an object", async () => {
+      expect(
+        (await checkModel(getSource("{ valueOf: () => 1 }", "b,c"))).failure?.message,
+      ).toContain("tla-ts can't convert this object to a primitive here");
     });
   });
 });
