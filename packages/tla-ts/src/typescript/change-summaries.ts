@@ -33,14 +33,15 @@ export interface ChangeTable {
   calledIds: Int32Array;
   calledComponents: Int32Array;
   // Each function's node, by its index, and its own effects, those of the nodes of its subtree, in
-  // columns that run from each function's start: the symbols that they change and the parameters
-  // that they call or pass, whether they make an error, the indexes of the functions that they
-  // run, and the ids of the symbols that getCalled gives, which tell whether bindings change them.
+  // columns that run from each function's start: the bits of the symbols that they change and of
+  // the parameters that they call or pass, whether they make an error, the indexes of the functions
+  // that they run, and the ids of the symbols that getCalled gives, which tell whether bindings
+  // change them.
   functionNodes: ts.Node[];
   changedStarts: Int32Array;
-  ownChanged: ts.Symbol[];
+  ownChanged: Int32Array;
   parameterStarts: Int32Array;
-  ownParameters: ts.Symbol[];
+  ownParameters: Int32Array;
   ownErrors: Uint32Array;
   edgeStarts: Int32Array;
   edges: Int32Array;
@@ -79,7 +80,7 @@ const createBits = (symbols: readonly ts.Symbol[], count: number): Bits => {
 };
 
 // The index of a function that the table has, or -1.
-const getFunctionIndex = (table: ChangeTable, nodes: ProgramNodes, node: ts.Node) => {
+export const getFunctionIndex = (table: ChangeTable, nodes: ProgramNodes, node: ts.Node) => {
   const position = getPosition(nodes, node);
   const id = position < 0 ? ts.getNodeId(node) : -1;
   const elsewhere =
@@ -97,35 +98,15 @@ export const getComponent = (table: ChangeTable, nodes: ProgramNodes, node: ts.N
   return index < 0 ? -1 : table.components[index];
 };
 
-// A function's own effects, as one, where none of its nodes names a symbol of the sorted ids that
-// bindings bind, so that they are what the table found, or undefined.
-export const getOwnEffects = (
-  table: ChangeTable,
-  nodes: ProgramNodes,
-  node: ts.Node,
-  boundIds: Int32Array,
-) => {
-  const index = getFunctionIndex(table, nodes, node);
-  if (index < 0) return undefined;
+// Whether a function's own nodes name a symbol of the sorted ids that bindings bind, which changes
+// their effects from those that the table found.
+export const isNamingBound = (table: ChangeTable, index: number, boundIds: Int32Array) => {
   const start = table.calledStarts[index];
   const end = table.calledStarts[index + 1];
-  const isNamed = boundIds.some((id) => {
+  return boundIds.some((id) => {
     const at = getLowerBound(table.ownCalled, start, end, id);
     return at < end && table.ownCalled[at] === id;
   });
-  if (isNamed) return undefined;
-  return {
-    changed: table.ownChanged.slice(table.changedStarts[index], table.changedStarts[index + 1]),
-    isErrorMade: hasBit(table.ownErrors, index),
-    called: Array.from(
-      table.edges.subarray(table.edgeStarts[index], table.edgeStarts[index + 1]),
-      (edge) => table.functionNodes[edge],
-    ),
-    parameters: table.ownParameters.slice(
-      table.parameterStarts[index],
-      table.parameterStarts[index + 1],
-    ),
-  };
 };
 
 // Whether a walk of markBound's generation reached a component.
@@ -426,9 +407,9 @@ export const summarizeFunctions = (
     calledComponents: Int32Array.from(namedCalls, (call) => call.component),
     functionNodes: order,
     changedStarts: Int32Array.from(changedStarts),
-    ownChanged,
+    ownChanged: changedBits,
     parameterStarts: Int32Array.from(parameterStarts),
-    ownParameters,
+    ownParameters: parameterBits,
     ownErrors: ownErrors.reduce(
       (bits, isErrorMade, index) => {
         if (isErrorMade) setBit(bits, index);

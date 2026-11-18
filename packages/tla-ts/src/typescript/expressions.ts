@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import { BUILT_INS, HOST_GLOBAL_KEYS } from "./built-ins";
 import { isAmbientCode } from "./early-errors";
 import {
+  translateAnyStringCall,
   getHeapSetOrMapChange,
   translateArrayConstructor,
   translateArrayLikeCall,
@@ -1016,6 +1017,8 @@ const translateBuiltInCall = (
       ]),
     );
   }
+  const anyString = translateAnyStringCall(node, scope, context);
+  if (anyString !== undefined) return anyString;
   const symbol = getNamedSymbol(node.expression, context);
   const helper = getTopLevelDeclaration(symbol, context);
   if (helper?.getSourceFile().isDeclarationFile) {

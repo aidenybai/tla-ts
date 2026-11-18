@@ -115,7 +115,7 @@ TLC tries every value of a parameter's type, so tla-ts gives each type a finite 
 | `string`                       | `""`, `"a"`, and `"b"`                  |
 | `T[]`                          | Every array of `T`s up to 3 long        |
 
-The bounds on `number`, `string`, and arrays keep the search finite, so a check covers only those values. Use a union of literals, such as `0 | 1 | 2`, to check other values. tla-ts rejects a parameter of any other type that has no end, such as a function. A parameter of any type works when the action starts with a guard such as `if (!pending.has(message)) return;`. tla-ts then chooses the parameter from that set. A later guard's set may use a parameter an earlier guard chose, as in `if (!getMoves(from).has(to)) return;`.
+The bounds on `number`, `string`, and arrays keep the search finite, so a check covers only those values. Use a union of literals, such as `0 | 1 | 2`, to check other values. tla-ts calls no exported function with a parameter of any other type that has no end, such as a function, and prints a line naming it, such as `tla-ts calls no run: its parameter step takes values it can't list`. Node runs only a module's top level, so the check still covers the top level and the other exports. tla-ts also calls no exported function without parameters whose every call throws. A parameter of any type works when the action starts with a guard such as `if (!pending.has(message)) return;`. tla-ts then chooses the parameter from that set. A later guard's set may use a parameter an earlier guard chose, as in `if (!getMoves(from).has(to)) return;`.
 
 ### Values
 

@@ -24,6 +24,7 @@ import {
   getSymbol,
   getUndefined,
   isClosure,
+  isImportCall,
   isPlain,
   type SharedCall,
   type SharedHelper,
@@ -62,6 +63,23 @@ const TASK_NAMES = new Set([
   "WeakRef",
   "FinalizationRegistry",
 ]);
+
+// Whether a function reads this as its own code, or as an arrow, the this around it.
+const isThisRead = (callee: FunctionNode) =>
+  findNodes(callee, (inner): inner is ts.Node => {
+    if (inner.kind !== ts.SyntaxKind.ThisKeyword) return false;
+    const owner = ts.findAncestor(
+      inner.parent,
+      (ancestor) => ts.isFunctionLike(ancestor) && !ts.isArrowFunction(ancestor),
+    );
+    return ts.isArrowFunction(callee)
+      ? owner === undefined ||
+          ts.findAncestor(owner, (ancestor) => ancestor === callee) === undefined
+      : owner === callee;
+  }).length > 0;
+
+// The methods of a promise that queue jobs.
+const PROMISE_METHODS = new Set(["then", "catch", "finally"]);
 
 // The function that a declaration always holds: a function declaration's, or a const's.
 const getFixedFunction = (declaration: ts.Node) =>
@@ -189,6 +207,15 @@ const getUnit = (unit: ts.Node, context: Context, owner?: ts.Node): Unit => {
     read,
     isTasked:
       isTaskNamed.value ||
+      // An import() makes a promise, and then, catch, and finally of a promise queue jobs.
+      findNodes(unit, isImportCall).length > 0 ||
+      findNodes(unit, ts.isCallExpression).some(
+        (node) =>
+          ts.isPropertyAccessExpression(node.expression) &&
+          PROMISE_METHODS.has(node.expression.name.text) &&
+          context.checker.getTypeAtLocation(node.expression.expression).getProperty("then") !==
+            undefined,
+      ) ||
       findNodes(unit, ts.isNewExpression).some((node) => isStackConstruction(node, context)) ||
       findNodes(unit, ts.isCallExpression).some(
         (node) => getStackCall(node, context) !== undefined,
@@ -276,24 +303,18 @@ export const classifySharedHelpers = (reached: readonly ts.Node[], context: Cont
   const sharedState = [...context.variables.keys()].filter((symbol) => namedInside.has(symbol));
   const entered = [
     ...new Set(
-      [...context.functionCandidates.values(), ...context.closures.values()]
-        .flat()
-        .filter(
-          (callee): callee is ts.FunctionExpression | ts.FunctionDeclaration | ts.ArrowFunction =>
-            (ts.isFunctionExpression(callee) ||
-              ts.isFunctionDeclaration(callee) ||
-              ts.isArrowFunction(callee)) &&
-            callee.body !== undefined &&
-            isPlain(callee) &&
-            getParameters(callee).every((parameter) => ts.isIdentifier(parameter.name)) &&
-            (isClosure(callee, context) ||
-              findNodes(
-                callee,
-                (inner): inner is ts.Node =>
-                  inner.kind === ts.SyntaxKind.ThisKeyword &&
-                  ts.findAncestor(inner.parent, ts.isFunctionLike) === callee,
-              ).length > 0),
-        ),
+      [...context.functionCandidates.values(), ...context.closures.values()].flat().filter(
+        (callee): callee is ts.FunctionExpression | ts.FunctionDeclaration | ts.ArrowFunction =>
+          (ts.isFunctionExpression(callee) ||
+            ts.isFunctionDeclaration(callee) ||
+            ts.isArrowFunction(callee)) &&
+          callee.body !== undefined &&
+          isPlain(callee) &&
+          getParameters(callee).every((parameter) => ts.isIdentifier(parameter.name)) &&
+          // An arrow's this is the this around it, which no call passes.
+          !(ts.isArrowFunction(callee) && isThisRead(callee)) &&
+          (isClosure(callee, context) || (!ts.isArrowFunction(callee) && isThisRead(callee))),
+      ),
     ),
   ];
   // The units that the candidates, the callbacks, and the entered functions run, each found once.

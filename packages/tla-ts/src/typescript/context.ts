@@ -27,11 +27,14 @@ import type { Namespace } from "./namespaces";
 import {
   createReferences,
   findNames,
+  findProgramNames,
   findNodesOfKind,
   getFileIndex,
   getLowerBound,
   getPosition,
   getReferences,
+  hasBit,
+  setBit,
   type ProgramNodes,
   type References,
   withNodeTypes,
@@ -141,7 +144,8 @@ export interface Context {
   fileSetters: readonly (readonly AccessorFunction[])[];
   fileSetAccessors: readonly (readonly ts.SetAccessorDeclaration[])[];
   fileReturned: readonly (readonly HeapFunction[])[];
-  fileWritten: readonly ReadonlyMap<string, readonly FunctionNode[]>[];
+  // The functions that the program's files write under each key, as methods, getters, or values.
+  written: ReadonlyMap<string, readonly FunctionNode[]>;
   // The variables of each of the program's files that the script assigns an executor's resolve or
   // reject, by the file's index.
   resolverHolders: readonly ReadonlySet<ts.Symbol>[];
@@ -243,6 +247,9 @@ export interface Context {
   // The functions of each file that a value may hold where tla-ts can't tell which, once the
   // script's heap is known.
   functionCandidates: ReadonlyMap<ts.SourceFile, readonly FunctionNode[]>;
+  // Whether code only calls each function of the program's files by its name, by its position, as
+  // findOnlyCalled finds once the heap is known.
+  onlyCalled: Uint32Array | undefined;
   // Those of the functions that a module that imports the file may hold, which read no locals of a
   // function around them.
   sharedFunctionCandidates: ReadonlyMap<ts.SourceFile, readonly FunctionNode[]>;
@@ -340,14 +347,6 @@ export interface Effects {
 export interface FunctionObject {
   object: Expression;
   prototype: { key: string; object: Expression } | undefined;
-}
-
-export interface ChangeSummary {
-  changed: Set<ts.Symbol>;
-  // Whether it makes an error, which changes the heap unless the caller ignores its identity.
-  isErrorMade: boolean;
-  // The parameters that it calls or passes, which a path may bind to functions.
-  parameters: Set<ts.Symbol>;
 }
 
 export interface Unknown {
@@ -651,11 +650,14 @@ export const createContext = (
   defaultLibraries: ReadonlySet<ts.SourceFile>,
   nodes: ProgramNodes,
 ): Context => {
-  const reads = getDeclaredReads(checker, files);
+  // TypeScript checks an expression again on each query of its type, so the walk of what each read
+  // keeps and the checker that narrows by it read the types of one column.
+  const typed = withNodeTypes(checker, nodes);
+  const reads = getDeclaredReads(typed, files);
   const references = createReferences(nodes, (name) => getSymbol(name, checker));
   const context: Context = {
     checker: {
-      ...withNodeTypes(withDeclaredReads(checker, reads), nodes),
+      ...withNodeTypes(withDeclaredReads(typed, reads), nodes),
       getNameSymbol: (node) => {
         const position = ts.isIdentifier(node) ? getPosition(nodes, node) : -1;
         return position < 0 ? null : references.symbols[position];
@@ -673,7 +675,7 @@ export const createContext = (
     fileSetters: [],
     fileSetAccessors: [],
     fileReturned: [],
-    fileWritten: [],
+    written: new Map(),
     resolverHolders: [],
     keptReads: reads.keptReads,
     names: createNames(JAVASCRIPT_OPERATORS),
@@ -718,6 +720,7 @@ export const createContext = (
     onceFunctions: new Set(),
     guardedStatements: findGuardedStatements(files),
     functionCandidates: new Map(),
+    onlyCalled: undefined,
     sharedFunctionCandidates: new Map(),
     collectionProxies: new Set(),
     checkedGlobals: new Set(),
@@ -4613,7 +4616,15 @@ export const findFileAccessors = (context: Context) => {
   context.fileSetters = accessors.map((found) => found.get("set") ?? []);
   context.fileSetAccessors = files.map((file) => findSetAccessors(file, context));
   context.fileReturned = files.map((file) => findReturnedFunctions(file, context));
-  context.fileWritten = files.map((file) => findWrittenFunctions(file, context));
+  // A protocol may read a function that another module writes, as a harness's object literal.
+  context.written = files
+    .map((file) => findWrittenFunctions(file, context))
+    .reduce((merged, found) => {
+      found.forEach((functions, key) =>
+        merged.set(key, [...new Set([...(merged.get(key) ?? []), ...functions])]),
+      );
+      return merged;
+    }, new Map<string, FunctionNode[]>());
 };
 
 // Whether a value of one type may be used as another, which any may not where the other is a type
@@ -5873,6 +5884,30 @@ export const getEnclosingFunction = (node: ts.Node, context: Context) =>
 // outside strict mode, whose name the files call wherever they write it, at least once, and that
 // reads no arguments object, whose callee would hold it.
 export const isOnlyCalled = (candidate: FunctionNode, context: Context) => {
+  const position = getPosition(context.nodes, candidate);
+  return position >= 0 && context.onlyCalled !== undefined
+    ? hasBit(context.onlyCalled, position)
+    : isOnlyCalledFunction(candidate, context);
+};
+
+// Finds once which functions of the program's files code only calls by their names.
+export const findOnlyCalled = (context: Context) => {
+  const table = context.nodes;
+  const bits = new Uint32Array((table.nodes.length + 31) >>> 5);
+  [ts.SyntaxKind.FunctionDeclaration, ts.SyntaxKind.FunctionExpression, ts.SyntaxKind.ArrowFunction]
+    .flatMap((kind) => [
+      ...table.kindPositions.subarray(table.kindStarts[kind], table.kindStarts[kind + 1]),
+    ])
+    .forEach((position) => {
+      const node = table.nodes[position];
+      const isFunction =
+        ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node);
+      if (isFunction && isOnlyCalledFunction(node, context)) setBit(bits, position);
+    });
+  return bits;
+};
+
+const isOnlyCalledFunction = (candidate: FunctionNode, context: Context) => {
   const declaration = ts.isFunctionDeclaration(candidate)
     ? candidate
     : (ts.isArrowFunction(candidate) ||
@@ -5886,9 +5921,7 @@ export const isOnlyCalled = (candidate: FunctionNode, context: Context) => {
   const table = context.nodes;
   const uses =
     name !== undefined && ts.isIdentifier(name)
-      ? [...table.fileStarts].flatMap((start) =>
-          findNames(table, table.nodes[start], [name.text]).filter((use) => use !== name),
-        )
+      ? findProgramNames(table, name.text).filter((use) => use !== name)
       : [];
   return (
     declaration !== undefined &&

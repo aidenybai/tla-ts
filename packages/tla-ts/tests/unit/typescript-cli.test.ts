@@ -57,6 +57,15 @@ describe("the CLI with TypeScript files", () => {
     expect(readdirSync(directory)).toEqual(files);
   });
 
+  it("prints a line for each exported function that it calls nowhere, and checks the rest", () => {
+    const result = runCli(copyFixtures("passing"), ["library.ts"]);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain(
+      "tla-ts calls no apply: its parameter transform takes values it can't list",
+    );
+    expect(result.stdout).toContain("Model checking completed. No error has been found.");
+  });
+
   it("checks a script with the JavaScript module that the compiler gives it", () => {
     const directory = copyFixtures("passing");
     const result = runCli(directory, ["script.ts"]);
