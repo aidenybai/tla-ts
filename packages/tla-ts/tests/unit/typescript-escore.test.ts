@@ -223,4 +223,26 @@ describe("compiles scripts by specializing ESCore", () => {
       );
     });
   });
+
+  describe("calls a tag with its site's template object", () => {
+    const getSource = (expected: string) => `
+      const sites: TemplateStringsArray[] = [];
+      const keep = (strings: TemplateStringsArray, ...values: unknown[]) => {
+        sites.push(strings);
+        return strings.raw.join("|") + "#" + values.join();
+      };
+      let text = "";
+      for (let index = 0; index < 2; index++) text = keep\`a\${index}b\\n\`;
+      const result = [text, sites[0] === sites[1], Object.isFrozen(sites[0])].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("a|b\\\\n#1,true,true"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("a|b\\\\n#1,false,true"))).message).toContain(THREW);
+    });
+  });
 });

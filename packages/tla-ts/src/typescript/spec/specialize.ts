@@ -355,6 +355,7 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
   const codes: { id: number; body: string }[] = [];
   const loops: { id: number; body: string }[] = [];
   let count = 0;
+  let templateSites = 0;
 
   // A node's source text, as a slice of the program's, which SourceText holds once.
   const getSourceText = (node: ts.Node) =>
@@ -876,9 +877,7 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
         node,
       );
     }
-    if (ts.isTaggedTemplateExpression(node)) {
-      throw new TlaTypeScriptError("tla-ts can't compile a tagged template to ESCore yet", node);
-    }
+    if (ts.isTaggedTemplateExpression(node)) return taggedTemplate(node, scope);
     if (ts.isRegularExpressionLiteral(node)) {
       // RegExpCreateLiteral (§13.2.7.3) of the literal's body and flags, as written.
       const text = node.text;
@@ -979,6 +978,44 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     return defineCode(
       "Assign",
       `${head} ${old} CompoundThen(Val(ref), Val(old), "${COMPOUND_OPERATORS.get(operator)}", ${right("old.s", "ctx")})`,
+    );
+  };
+
+  // Tagged templates (§13.3.11): the tag called with its site's template object, which
+  // GetTemplateObject makes once per site, and the substitutions, as TagThen does.
+  const taggedTemplate = (node: ts.TaggedTemplateExpression, scope: Scope): Code => {
+    const tag = reference(node.tag, scope);
+    const template = node.template;
+    const parts = ts.isNoSubstitutionTemplateLiteral(template)
+      ? [template]
+      : [template.head, ...template.templateSpans.map((span) => span.literal)];
+    // The parser marks a part whose escapes have no cooked value, which TemplateCookedList holds
+    // as None (TokenFlags.ContainsInvalidEscape).
+    const cooked = parts.map((part) => {
+      const flags: unknown = Reflect.get(part, "templateFlags");
+      return typeof flags === "number" && (flags & 2048) !== 0 ? "None" : getUnits(part.text);
+    });
+    const raw = parts.map((part) => {
+      const text = part.getText();
+      const end = text.endsWith("${") ? text.length - 2 : text.length - 1;
+      return getUnits(text.slice(1, end).replace(/\r\n?/g, "\n"));
+    });
+    templateSites += 1;
+    const args = argumentList(
+      ts.isNoSubstitutionTemplateLiteral(template)
+        ? []
+        : template.templateSpans.map((span) => span.expression),
+      scope,
+    );
+    return defineCode(
+      "Tagged",
+      [
+        `LET r == ${tag("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE`,
+        "LET f == GetValue(r.s, Val(r)) IN IF IsAbrupt(f) THEN f ELSE",
+        `LET object == GetTemplateObject(f.s, <<0, ${templateSites}>>, [TemplateCookedList |-> ${getSequence(cooked)}, TemplateRawList |-> ${getSequence(raw)}]) IN`,
+        `LET a == ${args("object.s", "ctx")} IN IF IsAbrupt(a) THEN a ELSE`,
+        "CallArgumentsThen(Val(f), CallThisValue(object.s, Val(r)), FALSE, Ok(a.s, <<Val(object)>> \\o Val(a)))",
+      ].join("\n  "),
     );
   };
 
