@@ -1771,6 +1771,25 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it("reports the failure of a successor it can't compare as it rebuilds the step, where TLC skips the successor and reports a TLC bug(5)", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = IF x = 1 THEN {1} \\X 2 ELSE x + 1\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.failure?.trace.map((step) => formatValue(step.state.x)),
+      result.failure?.traceFailure?.message,
+      result.failure?.fingerprint?.reason,
+      result.failure?.exitCode,
+    ]).toEqual([
+      ["0", "1"],
+      `${UNEXPECTED_EXCEPTION}Shouldn't call isEmpty() on value 2`,
+      "Shouldn't call isEmpty() on value 2",
+      75,
+    ]);
+  });
+
   it("records where the liveness check of a state fails after a successor of it is left incomplete, like TLC", async () => {
     const result = await check({
       source:
