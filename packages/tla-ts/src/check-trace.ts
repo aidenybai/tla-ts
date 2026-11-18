@@ -58,7 +58,7 @@ interface TraceContext {
   tracedSteps: WeakMap<TraceStep, TracedStep>;
   captureOutput: <Result>(rebuild: () => Result) => { result: Result; lines: OutputLine[] };
   forEachInitialState: (onState: (state: Value[]) => void) => void;
-  getUncoveredInitialStates: () => Value[][];
+  findUncoveredInitialState: (isMatch: (state: Value[]) => boolean) => Value[] | undefined;
   findSuccessorAction: (
     state: Value[],
     isMatch: (successor: Successor) => boolean,
@@ -248,6 +248,7 @@ export const createTraceBuilder = (context: TraceContext) => {
         const aliasOutput = known === 0 ? [] : getAliasOutput(position);
         const traceStep: TraceStep = {
           action: step.action,
+          // Deviation from TLC: when the next-state relation no longer yields a step, as it reads TLCGet("stats"), TLCTrace#printTrace fails with a TLC bug(2) or bug(4).
           label: action && getActionLabel(action, options.version),
           state: alias === undefined ? toRecord(step.state) : aliases[position].result,
           output: position === 0 ? prefixOutput : position < rebuilt ? [] : outputs[position],
@@ -288,7 +289,7 @@ export const createTraceBuilder = (context: TraceContext) => {
   const getPathStates = (path: number[], nextFailure: string) => {
     const initial = captureOutput(() =>
       isReducing || isImpure(environment)
-        ? context.getUncoveredInitialStates().find((state) => hasFingerprint(state, path[0]))
+        ? context.findUncoveredInitialState((state) => hasFingerprint(state, path[0]))
         : states[path[0]],
     ).result;
     if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
