@@ -1338,8 +1338,6 @@ export const runSmtlibScript = (
         try {
           const fdSolver = state.fdSolver;
           if (fdSolver !== undefined) {
-            if (names.length > 0)
-              throw new SmtUnsupportedError("the named assertions of the finite-domain solver");
             const found = fdSolver.getConsequences(assumptions, vars);
             setCheck(found.result, {
               isFromTactic: true,

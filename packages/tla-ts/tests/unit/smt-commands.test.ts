@@ -1245,6 +1245,34 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("assumes the named assertions in get-consequences on the finite-domain solver", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_FD)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(declare-const d Bool)",
+        "(assert (=> a b))",
+        "(assert (! (or c d) :named n1))",
+        "(get-consequences ((and a (not b))) (a b c))",
+        "(get-unsat-core)",
+        "(get-consequences ((=> c a) (not d)) (a b c d))",
+      ]),
+    ).toEqual([
+      "unsat",
+      "",
+      "((and a (not b)))",
+      "sat",
+      "",
+      "(=> (and n1 (not d) (=> c a)) a)",
+      "(=> (and n1 (not d) (=> c a)) b)",
+      "(=> (and n1 (not d)) c)",
+      "(=> (not d) (not d))",
+    ]);
+  });
+
   it("orders the model of the SAT solver by its variables, as inc_sat_solver registers them", () => {
     expect(
       run([
