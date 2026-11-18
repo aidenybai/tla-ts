@@ -2,6 +2,7 @@
 @import "allo-font/friendly";
 @import "@fontsource-variable/geist-mono";
 @import "@fontsource/caveat/600.css";
+@import "./generated/fonts.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -110,6 +111,13 @@
     }
   }
 
+  @keyframes tint-in {
+    from {
+      background-color: transparent;
+      box-shadow: 0 0 0 transparent;
+    }
+  }
+
   @keyframes line-fade {
     from {
       opacity: 1;
@@ -144,12 +152,16 @@
   [data-tint] {
     --tint-fill: color-mix(in srgb, var(--tint) 16%, transparent);
     background-color: var(--tint-fill);
+    animation: tint-in 200ms ease-out;
   }
   [data-hovering-name] [data-tint] {
     --tint-fill: color-mix(in srgb, var(--tint) 8%, transparent);
   }
   [data-skeleton] [data-token] {
     background: linear-gradient(var(--border), var(--border)) center / 100% 0.85em no-repeat;
+  }
+  [data-shared] :is([data-pane] > *, [data-file-name]) {
+    visibility: hidden;
   }
   code {
     @apply font-mono;

@@ -1,12 +1,12 @@
 import { useMemo, useRef } from "react";
-import { getHighlightedLines } from "../highlighter";
 import { getLineHoveredName, getLineMarks } from "../line-marks";
-import type { Mark } from "../site-data";
+import type { Mark, Token } from "../site-data";
 import { CodeLine, LineNumber } from "./code-line";
 
 interface CodeEditorProps {
   label: string;
   value: string;
+  tokens: Token[][];
   onChange: (value: string) => void;
   marks: Mark[];
   hoveredName: string | undefined;
@@ -23,7 +23,6 @@ export const CodeEditor = (props: CodeEditorProps) => {
     () => getLineMarks(props.value.split("\n"), props.marks),
     [props.value, props.marks],
   );
-  const highlighted = useMemo(() => getHighlightedLines(props.value, "typescript"), [props.value]);
   return (
     <div className="flex min-h-full w-max min-w-full gap-4 font-mono text-[13px]/[1.7] text-foreground pointer-coarse:text-[16px]/[1.7]">
       <span ref={characterRef} aria-hidden className="invisible absolute">
@@ -38,7 +37,7 @@ export const CodeEditor = (props: CodeEditorProps) => {
       </div>
       <div className="grid flex-1">
         <code aria-hidden className="pointer-events-none [grid-area:1/1]">
-          {highlighted
+          {props.tokens
             .map((tokens, index) => ({ tokens, index }))
             .map((line) => (
               <CodeLine
