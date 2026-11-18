@@ -1458,6 +1458,19 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "(:rlimit 98)"]);
   });
 
+  it("counts the final checks of the theories without terms that setup_unknown registers", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(push)",
+        "(assert (= x y))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 62)"]);
+  });
+
   it("initializes the manager for get-info :rlimit", () => {
     expect(
       run(['(echo "a")', "(get-info :rlimit)", "(declare-const p Bool)", "(get-info :rlimit)"]),

@@ -7,13 +7,16 @@ import {
   FAMILY_BASIC,
   FAMILY_BV,
   FAMILY_CHAR,
+  FAMILY_DATALOG_RELATION,
   FAMILY_DATATYPE,
+  FAMILY_FF,
   FAMILY_FINITE_SET,
   FAMILY_FPA,
   FAMILY_PB,
   FAMILY_POLY,
   FAMILY_RECFUN,
   FAMILY_SEQ,
+  FAMILY_SPECIAL_RELATIONS,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -66,6 +69,7 @@ import { TheoryDatatype } from "./theory-datatype";
 import { TheoryFiniteSet } from "./theory-finite-set";
 import { TheoryPb } from "./theory-pb";
 import { TheoryPolymorphism } from "./theory-polymorphism";
+import { TheoryWithoutTerms } from "./theory-without-terms";
 import { TheoryLra } from "./theory-lra";
 import { shrink } from "./array";
 import {
@@ -132,6 +136,15 @@ const THEORY_MAKERS = new Map<number, (context: Context) => Theory>([
   [FAMILY_FINITE_SET, (context) => new TheoryFiniteSet(context)],
   [FAMILY_POLY, (context) => new TheoryPolymorphism(context)],
   [FAMILY_PB, (context) => new TheoryPb(context)],
+  [
+    FAMILY_DATALOG_RELATION,
+    (context) => new TheoryWithoutTerms(context, FAMILY_DATALOG_RELATION, "datalog"),
+  ],
+  [FAMILY_FF, (context) => new TheoryWithoutTerms(context, FAMILY_FF, "finite-field")],
+  [
+    FAMILY_SPECIAL_RELATIONS,
+    (context) => new TheoryWithoutTerms(context, FAMILY_SPECIAL_RELATIONS, "unknown"),
+  ],
 ]);
 
 // get_luby
