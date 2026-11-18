@@ -22,7 +22,13 @@ interface CodeDefinition {
 
 // A program's definitions with each one whose text is another's but for its name and the names of
 // definitions merged before it merged into the first, and with each literal sequence of numbers,
-// such as a name's code units, a definition of its own, so that a check reads each one once.
+// such as a name's code units, a definition of its own, so that a check reads each one once. A
+// sequence of the code units of characters that a TLA+ string can hold is that string's units.
+const getStringUnits = (sequence: string) => {
+  const text = getTlaString(String.fromCharCode(...(sequence.match(/\d+/g) ?? []).map(Number)));
+  return text === undefined ? undefined : `StringUnits(${text})`;
+};
+
 const compact = (definitions: readonly CodeDefinition[]) => {
   const merged = new Map<string, string>();
   const firsts = new Map<string, string>();
@@ -42,7 +48,7 @@ const compact = (definitions: readonly CodeDefinition[]) => {
       text:
         definition.name === "SourceText"
           ? definition.text
-          : rename(definition.text).replace(/<<\d+(?:, \d+){2,}>>/g, (sequence) => {
+          : rename(definition.text).replace(/<<\d+(?:, \d+)*>>/g, (sequence) => {
               const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;
               sequences.set(sequence, name);
               return name;
@@ -52,7 +58,7 @@ const compact = (definitions: readonly CodeDefinition[]) => {
     ...[...sequences].map((entry) => ({
       name: entry[1],
       arity: 0,
-      text: `${entry[1]} == ${entry[0]}`,
+      text: `${entry[1]} == ${getStringUnits(entry[0]) ?? entry[0]}`,
     })),
     ...kept,
   ];
@@ -153,9 +159,7 @@ export const compileToEscore = (
         name: "SourceUnits",
         arity: 1,
         text:
-          sourceString === undefined
-            ? "SourceUnits(t) == t"
-            : "SourceUnits(t) == [i \\in 1..Len(t) |-> CharacterUnits[SubSeq(t, i, i)]]",
+          sourceString === undefined ? "SourceUnits(t) == t" : "SourceUnits(t) == StringUnits(t)",
       },
       {
         name: "RunProgram",

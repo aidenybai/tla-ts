@@ -128,6 +128,8 @@ export const getTlaString = (text: string) =>
 
 export const RUNTIME_DEFINITIONS: GeneratedDefinition[] = [
   ...DEFINITIONS,
+  // The code units of a TLA+ string's characters.
+  `StringUnits(t) == [i \\in 1..Len(t) |-> CharacterUnits[SubSeq(t, i, i)]]`,
   // The code unit of each character that a TLA+ string can hold.
   `CharacterUnits ==
   LET characters == <<${[...CHARACTERS.values()].map((character) => `"${character}"`).join(", ")}>>
