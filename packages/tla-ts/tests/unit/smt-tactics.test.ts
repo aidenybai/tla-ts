@@ -2731,4 +2731,24 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
       ]),
     ).toEqual(["sat", "unknown", '(:reason-unknown "fail tactic")']);
   });
+
+  it("reads the sat parameters as each check runs its tactic", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then simplify sat)")',
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(assert (or a b))",
+        "(assert (or a (not b)))",
+        "(assert (or (not a) c))",
+        "(assert (or (not a) (not c)))",
+        "(check-sat)",
+        "(set-option :sat.max_conflicts 0)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "unknown", '(:reason-unknown "no reason given")', "(:rlimit 87)"]);
+  });
 });

@@ -791,7 +791,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       isRejectingUnknown: false,
       build: (environment, params) =>
         inPlace(
-          createCtxSolverSimplify(environment.manager, {
+          createCtxSolverSimplify(environment.manager, () => ({
             isMbqi: getBool(params, "mbqi", environment.isMbqi),
             mbqiMaxIterations: getUint(
               params,
@@ -799,7 +799,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
               environment.mbqiMaxIterations,
             ),
             isFindingMacros: environment.isFindingMacros,
-          }),
+          })),
         ),
     },
   ],
@@ -1505,8 +1505,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
       isTrackingDependencies: true,
-      build: (environment, params) =>
-        createSatTactic(environment.manager, getSatTacticParams(environment, params)),
+      build: (environment, params) => (goal) =>
+        createSatTactic(environment.manager, getSatTacticParams(environment, params))(goal),
     },
   ],
   [
@@ -1514,8 +1514,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) =>
-        createFdTactic(environment.manager, getSatTacticParams(environment, params)),
+      build: (environment, params) => (goal) =>
+        createFdTactic(environment.manager, getSatTacticParams(environment, params))(goal),
     },
   ],
   [
@@ -1524,8 +1524,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
       isTrackingDependencies: true,
-      build: (environment, params) =>
-        createSatTactic(environment.manager, getSatTacticParams(environment, params)),
+      build: (environment, params) => (goal) =>
+        createSatTactic(environment.manager, getSatTacticParams(environment, params))(goal),
     },
   ],
   [
