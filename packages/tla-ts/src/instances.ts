@@ -31,8 +31,9 @@ export const frameSubstitutions = new WeakMap<Expression, () => Substitution[]>(
 
 export const substitutedExpressions = new WeakMap<Expression, Substitution>();
 
+// A replacement has no frames, unlike each copy that stands for a name.
 export const isSubstitutionDefinition = (definition: Definition) =>
-  substitutedExpressions.get(definition.body)?.replacement === definition.body;
+  substitutedExpressions.has(definition.body) && !substitutionFrames.has(definition.body);
 
 export const withSubstitutionFrames = (expression: Expression, frames: Expression[]) => {
   if (frames.length === 0) return expression;
@@ -696,7 +697,24 @@ const getInstanceOperator = (
 const getCopy = (rewrite: Rewrite, key: string) =>
   rewrite.instantiation.isParameterized(key) ? copyDefinition(rewrite, key) : undefined;
 
+// The copy of a name or replacement an inner instance substitutes still stands for that substitution.
 const substitute = (
+  expression: Expression,
+  rewrite: Rewrite,
+  bound: Map<string, string>,
+): Expression => {
+  const substituted = substituteExpression(expression, rewrite, bound);
+  const substitution = substitutedExpressions.get(expression);
+  if (!substitution || substituted === expression || substitutedExpressions.has(substituted)) {
+    return substituted;
+  }
+  substitutedExpressions.set(substituted, substitution);
+  const frames = substitutionFrames.get(expression);
+  if (frames && !substitutionFrames.has(substituted)) substitutionFrames.set(substituted, frames);
+  return substituted;
+};
+
+const substituteExpression = (
   expression: Expression,
   rewrite: Rewrite,
   bound: Map<string, string>,

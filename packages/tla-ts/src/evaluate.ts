@@ -1630,12 +1630,17 @@ const getCoverageEvaluator = (expression: Expression, evaluator: Evaluator, cove
       coverage,
     );
   }
+  // TLC evaluates the LazyValue of each name the replacement stands for in turn, through an instance of an instance.
+  const replaced = (frames ?? []).flatMap((frame) => {
+    const outer = substitutedExpressions.get(frame);
+    return outer && outer.replacement !== frame ? [outer] : [];
+  });
   return countEvaluator(
     expression,
-    countSubstitution(
-      substitution,
-      countEvaluator(substitution.replacement, evaluator, coverage),
-      coverage,
+    [...replaced, substitution].reduceRight(
+      (inner, item) =>
+        countSubstitution(item, countEvaluator(item.replacement, inner, coverage), coverage),
+      evaluator,
     ),
     coverage,
   );

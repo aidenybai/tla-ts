@@ -2830,6 +2830,40 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts each substitution a name passes through in an instance of an instance, as TLC evaluates the LazyValue of each", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE N ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES a, b\nA == a < 2 /\\ a' = a + K /\\ UNCHANGED b\nP == a + b + K >= 0\n====\n---- MODULE Mid ----\nEXTENDS Naturals\nCONSTANT C\nVARIABLES p, q\nJ == INSTANCE Inner WITH K <- C + 1, a <- p, b <- q\nM == J!A\nPM == J!P\n====\nI == INSTANCE Mid WITH C <- 0, p <- x, q <- y\nInit == x = 0 /\\ y = 0\nNext == I!M \\/ (x = 2 /\\ UNCHANGED <<x, y>>)\nInv == I!PM /\\ I!J!P\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines?.slice(1)).toEqual([
+      [
+        "line 19, col 37 to line 19, col 37 of module N: 5",
+        "line 15, col 31 to line 15, col 35 of module N: 2",
+        "line 15, col 43 to line 15, col 43 of module N: 5",
+        "line 8, col 6 to line 8, col 10 of module N: 2",
+        "|line 8, col 6 to line 8, col 6 of module N: 3",
+        "line 8, col 15 to line 8, col 24 of module N: 2",
+        "line 8, col 29 to line 8, col 39 of module N: 2",
+      ],
+      [
+        "line 21, col 17 to line 21, col 21 of module N: 4",
+        "|line 21, col 17 to line 21, col 17 of module N: 3",
+        "line 21, col 26 to line 21, col 43 of module N: 1",
+      ],
+      [
+        "line 22, col 8 to line 22, col 20 of module N: 3",
+        "|line 22, col 8 to line 22, col 11 of module N: 3",
+        "|line 22, col 16 to line 22, col 20 of module N: 3",
+        "||line 19, col 37 to line 19, col 37 of module N: 6",
+        "||line 19, col 45 to line 19, col 45 of module N: 6",
+        "||line 15, col 31 to line 15, col 35 of module N: 6",
+        "||line 15, col 43 to line 15, col 43 of module N: 6",
+        "||line 15, col 51 to line 15, col 51 of module N: 6",
+        "||line 9, col 6 to line 9, col 19 of module N: 3",
+      ],
+    ]);
+  });
+
   it("takes the definition an instance with parameters copies for an action of constant arguments, as TLC's Tool#getActionsAppl binds them", async () => {
     const lines = formatCoverage(
       await getInstanceCoverage(
