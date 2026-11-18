@@ -80,6 +80,17 @@ const DEFINITIONS = [
   IF IsAbrupt(created) THEN created
   ELSE HoistGlobalFunctions(HoldEnvs([created.s EXCEPT !.hoisted = @ \\cup {<<env, Head(fns).site>>}]),
                             env, Tail(fns), declared \\cup {name})`,
+  // FunctionDeclarationInstantiation (§10.2.11) of a function whose parameters are distinct names
+  // without initializers and whose body declares nothing and needs no arguments object: the state
+  // and the context its body runs in.
+  `PlainInstantiation(s, ctx, names, args, strict) ==
+  LET bound == BindArguments(CreateBindings(s, ctx.lex, names, strict, FALSE), ctx.lex, names, args, 1)
+      le == NewDeclarativeEnvironment(bound, ctx.lex)
+  IN IF strict THEN [s |-> bound, ctx |-> [ctx EXCEPT !.var = ctx.lex]]
+     ELSE [s |-> le.s, ctx |-> [ctx EXCEPT !.lex = le.e, !.var = ctx.lex]]`,
+  `BindArguments(s, env, names, args, i) ==
+  IF i > Len(names) THEN s
+  ELSE BindArguments(InitializeBinding(s, env, names[i], Arg(args, i)).s, env, names, args, i + 1)`,
   `Unsupported(s, what) == Assert(FALSE, "tla-ts can't run a part of ECMAScript that ESCore leaves out")`,
 ];
 

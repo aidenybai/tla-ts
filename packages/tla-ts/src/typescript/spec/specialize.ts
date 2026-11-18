@@ -1534,7 +1534,28 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
           ? statementList(body.statements, scope)(functionState, "bodyCtx")
           : `LET e == ${value(body, scope)(functionState, "bodyCtx")} IN IF IsAbrupt(e) THEN e ELSE Abrupt(e.s, Completion("return", Val(e), Empty))`;
     steps.push(evaluation);
-    codes[id - 1] = { id, body: `Code${id}(s, f, ctx, args) ==\n  ${steps.join("\n  ")}` };
+    // A function whose parameters are names that its body declares nothing beside instantiates
+    // through one shared operator, as the steps above fold to the same few for all of them.
+    const isPlain =
+      isSimple &&
+      !hasDuplicates &&
+      !argumentsNeeded &&
+      varScoped.names.every((name) => parameterNames.includes(name)) &&
+      lexical.length === 0 &&
+      functions.length === 0 &&
+      (isStrict || getHoistableFunctions(statements).length === 0);
+    const plainEvaluation =
+      body === undefined
+        ? "Ok(i.s, Empty)"
+        : ts.isBlock(body)
+          ? statementList(body.statements, scope)("i.s", "i.ctx")
+          : `LET e == ${value(body, scope)("i.s", "i.ctx")} IN IF IsAbrupt(e) THEN e ELSE Abrupt(e.s, Completion("return", Val(e), Empty))`;
+    codes[id - 1] = {
+      id,
+      body: isPlain
+        ? `Code${id}(s, f, ctx, args) ==\n  LET i == PlainInstantiation(s, ctx, ${getSequence(parameterNames.map(getUnits))}, args, ${getBool(isStrict)}) IN\n  ${plainEvaluation}`
+        : `Code${id}(s, f, ctx, args) ==\n  ${steps.join("\n  ")}`,
+    };
     const length = parameters.findIndex(
       (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
     );
