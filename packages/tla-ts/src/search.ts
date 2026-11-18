@@ -335,7 +335,7 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
     return false;
   }
   const value = evaluate(conjunct, getContext(environment, undefined, undefined, item.scope));
-  const name = getKeyName(conjunct.name);
+  const name = environment.instanceNames.get(conjunct.name) ?? getKeyName(conjunct.name);
   if (value === false) {
     throw new TlaConfigError(`The spec is trivially false because ${name} is false.`);
   }

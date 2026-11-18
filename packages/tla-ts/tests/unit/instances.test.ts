@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, formatValue, parseModule, TlaSyntaxError } from "../../src";
+import { check, formatValue, parseModule, TlaConfigError, TlaSyntaxError } from "../../src";
 import { createSanyError } from "../../src/errors";
 import { checkFixture, getModuleLoader } from "./check-harness";
 
@@ -294,6 +294,36 @@ describe("INSTANCE matches TLC", () => {
     "keeps a standard operator in an instanced module apart from a root definition of the same name that the configuration %s",
     async (_title, unit, assumption, config) => {
       expect((await checkShadowed(unit, assumption, config)).status).toBe("success");
+    },
+  );
+
+  it("names a property that applies an operator of an instance as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nI == INSTANCE N\nInit == x = 0\nNext == x' = (x + 1) % 3\nR == I!Rising(x)\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY R",
+      loadModule: (name) =>
+        name === "N"
+          ? "---- MODULE N ----\nEXTENDS Naturals\nRising(v) == [][v' >= v]_v\n===="
+          : undefined,
+    });
+    expect(result.violation?.name).toBe("I!Rising");
+  });
+
+  it.each([
+    ["F == FALSE", "I!F", "The spec is trivially false because I!F is false."],
+    ["G == 3", "I!G", "The operator I!G, which equals 3,\ncannot be used as a spec"],
+  ])(
+    "names a constant conjunct of the spec from an instance as TLC does: %s",
+    async (definition, conjunct, message) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\nI == INSTANCE N\nInit == x = 0\nNext == x' = x\nSpec == Init /\\ [][Next]_x /\\ ${conjunct}\n====`,
+          config: "SPECIFICATION Spec",
+          loadModule: (name) =>
+            name === "N" ? `---- MODULE N ----\n${definition}\n====` : undefined,
+        }),
+      ).rejects.toThrow(new TlaConfigError(message));
     },
   );
 });

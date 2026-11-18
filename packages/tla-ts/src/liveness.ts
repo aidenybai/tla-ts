@@ -304,7 +304,9 @@ export const expandTemporal = (
       return expand(
         operator.body,
         bindOperatorArguments(operator, expression.args, context),
-        expansion.isSubstituted && definition ? definition.name : getKeyName(expression.operator),
+        expansion.isSubstituted && definition
+          ? definition.name
+          : (environment.instanceNames.get(expression.operator) ?? getKeyName(expression.operator)),
         expansion.expanding,
         definition,
       );
