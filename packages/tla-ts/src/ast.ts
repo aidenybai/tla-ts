@@ -307,7 +307,6 @@ interface SubexpressionExpression {
   location: SourceLocation;
 }
 
-// A resolved subexpression reference, which shares the node it selects like SANY's $Nop.
 interface SelectionExpression {
   kind: "Selection";
   expression: Expression;

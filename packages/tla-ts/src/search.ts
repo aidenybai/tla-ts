@@ -698,7 +698,6 @@ const isWideConfigValue = (value: ConfigValue): boolean =>
     ? WIDE_CHARACTER.test(value.value)
     : value.kind === "Set" && value.elements.some(isWideConfigValue);
 
-// Selections share the nodes they select, so the scan checks each once.
 const isWideExpression = (expression: Expression, checked: Set<Expression>): boolean => {
   if (expression.kind === "Selection") {
     if (checked.has(expression.expression)) return false;

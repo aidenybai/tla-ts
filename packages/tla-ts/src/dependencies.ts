@@ -106,7 +106,6 @@ const collectLocalFacts = (
     }
     return undefined;
   };
-  // Selections share the nodes they select, so the walk visits each in each context once.
   const contexts = new Map<Expression, number>();
   const visit = (node: Expression, isLevelCounted: boolean, isOperatorArgument: boolean) => {
     const kind = node.kind;

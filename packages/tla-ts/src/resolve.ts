@@ -1584,7 +1584,6 @@ const resolveExpression = (
     case "Subexpression":
       if (isSubexpressionReported(expression, scope, unit)) emptyExpressions.add(expression);
       return;
-    // A selection's node is resolved in the definition it comes from.
     case "Selection":
       return;
   }

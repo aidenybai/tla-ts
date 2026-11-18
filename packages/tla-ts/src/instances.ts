@@ -551,7 +551,6 @@ const substitute = (
   bound: Map<string, string>,
 ): Expression => {
   const recurse = (node: Expression) => substitute(node, rewrite, bound);
-  // Selections share the nodes they select, which keep their sharing unless a bound name is renamed.
   if (expression.kind === "Selection" && [...bound].every((entry) => entry[0] === entry[1])) {
     const selected = expression.expression;
     const substituted = rewrite.selections.get(selected) ?? recurse(selected);

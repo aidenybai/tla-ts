@@ -126,7 +126,6 @@ const findLabel = (
   return undefined;
 };
 
-// A node SANY doesn't build has no range, so TLC's call stack doesn't show it.
 const getHiddenLocation = (location: SourceLocation) => ({
   line: location.line,
   column: location.column,
@@ -413,7 +412,6 @@ const selectSubexpression = (
         selection.args.push(...selector.args);
         applications.push(getExpressionArguments("", range, selector.args));
       }
-      // A selected LAMBDA's body is the node it shares, which SANY selects without a $Nop.
       current =
         selections.has(current) && binder.body.kind === "Selection"
           ? binder.body.expression
@@ -877,7 +875,6 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
     module.definitions.some((definition) => containsReference(definition.body)) ||
     module.assumptions.some((assumption) => containsReference(assumption.expression));
   if (hasReferences) {
-    // A selection shares the nodes it selects, so each definition is resolved before any that selects from it.
     [...module.definitions, ...clauses]
       .toSorted((left, right) => compareLocations(left.location, right.location))
       .forEach((definition) =>
