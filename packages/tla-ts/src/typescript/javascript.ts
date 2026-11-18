@@ -4,7 +4,7 @@ import { getPreparedModuleLevels } from "../environment";
 import { tokenize, type Token } from "../lexer";
 import { decodeGraph, encodeGraph, type EncodedGraph } from "../graph-codec";
 import { parseModuleTokens } from "../parser";
-import type { PreparedModule } from "../tlc/order";
+import { getParsedTexts, type PreparedModule } from "../tlc/order";
 import {
   type Context,
   getSymbol,
@@ -8943,20 +8943,25 @@ export const prepareJavaScriptModule = (): PreparedModule => {
 export const getPreludeGraph = (prepared: PreparedModule) =>
   encodeGraph({ tokens: prepared.tokens, module: prepared.module, levels: prepared.levels });
 
-// The build writes the prepared module's graph as JSON in place of this string, so that a process
-// reads the module rather than prepares it again. Unbuilt, it is JSON for a string.
-const PRELUDE_GRAPH = '"tla-ts:prelude-graph"';
-const encodedPrelude: unknown = JSON.parse(PRELUDE_GRAPH);
-const PRELUDE: PreparedModule = Array.isArray(encodedPrelude)
-  ? {
-      name: "JavaScript",
-      text: JAVASCRIPT_MODULE,
-      ...(decodeGraph(encodedPrelude as EncodedGraph) as Pick<
-        PreparedModule,
-        "tokens" | "module" | "levels"
-      >),
-    }
-  : prepareJavaScriptModule();
+// The build writes the prepared module's graph in place of these strings, its tables as JSON and
+// its stream as it is, so that a process reads the module rather than prepares it again. Unbuilt,
+// the tables are JSON for a string.
+const PRELUDE_TABLES = '"tla-ts:prelude-tables"';
+const PRELUDE_STREAM = "tla-ts:prelude-stream";
+const readPrelude = (): PreparedModule => {
+  const tables: unknown = JSON.parse(PRELUDE_TABLES);
+  return Array.isArray(tables)
+    ? {
+        name: "JavaScript",
+        text: JAVASCRIPT_MODULE,
+        ...(decodeGraph({
+          tables: tables as EncodedGraph["tables"],
+          stream: PRELUDE_STREAM,
+        }) as Pick<PreparedModule, "tokens" | "module" | "levels">),
+      }
+    : prepareJavaScriptModule();
+};
+const PRELUDE = readPrelude();
 
 const getReadNames = (text: string) => [...(text.match(/\b[A-Z]\w*\b/g) ?? [])];
 
@@ -9056,6 +9061,14 @@ for (let index = 0, unit = 0; index <= PRELUDE.tokens.length; index++) {
     UNIT_TOKEN_STARTS[++unit] = index;
   }
 }
+// The texts each unit adds to TLC's order of strings, each once in the order it first comes.
+const UNIT_TEXTS_IN_ORDER = MODULE_UNITS.map((_unit, unit) => {
+  const tokens = PRELUDE.tokens.slice(UNIT_TOKEN_STARTS[unit], UNIT_TOKEN_STARTS[unit + 1]);
+  return {
+    parsed: [...new Set(getParsedTexts(tokens))],
+    strings: [...new Set(tokens.flatMap((token) => (token.kind === "String" ? [token.text] : [])))],
+  };
+});
 
 // The module that the units kept leave, which is what reading the module's text with every other
 // line blank gives.
@@ -9103,6 +9116,14 @@ export const getJavaScriptModule = (text: string): PreparedModule => {
     ).join("\n"),
     tokens,
     module: getModuleView(PRELUDE.module, isKept),
+    texts: {
+      parsed: UNIT_TEXTS_IN_ORDER.flatMap((texts, unit) =>
+        keptUnits[unit] === 1 ? texts.parsed : [],
+      ),
+      strings: UNIT_TEXTS_IN_ORDER.flatMap((texts, unit) =>
+        keptUnits[unit] === 1 ? texts.strings : [],
+      ),
+    },
     levels: PRELUDE.levels?.filter((_levels, position) =>
       isKept(PRELUDE.module.definitions[position].location),
     ),

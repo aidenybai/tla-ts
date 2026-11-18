@@ -38,6 +38,14 @@ interface ParsedModule {
   start: number;
   end: number;
   getModule: () => Module;
+  texts?: ModuleTexts;
+}
+
+// The texts that a module's tokens add to TLC's order of strings: the texts it parses and its string
+// literals, in the order they come, either list free to leave out a text that came before.
+export interface ModuleTexts {
+  parsed: readonly string[];
+  strings: readonly string[];
 }
 
 // A module of the module set read once from its file, with its text and the text the loader gave
@@ -58,6 +66,7 @@ export interface PreparedModule {
   tokens: Token[];
   module: Module;
   levels: readonly (OperatorLevels | undefined)[] | undefined;
+  texts?: ModuleTexts;
 }
 
 interface ModuleUnit {
@@ -216,7 +225,7 @@ const STRING_ESCAPES: Record<string, string> = {
   "\f": "\\f",
 };
 
-const getParsedTexts = (tokens: Token[]) => {
+export const getParsedTexts = (tokens: Token[]) => {
   const texts: string[] = [];
   for (let index = 0; index < tokens.length; index++) {
     const token = tokens[index];
@@ -323,7 +332,14 @@ const createModuleSet = (
       : readModuleText(text);
     const tokens = moduleText.tokens;
     const range = moduleText.ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
-    const file = { tokens, ...range, getModule: moduleText.getModule, text, loaded };
+    const file = {
+      tokens,
+      ...range,
+      getModule: moduleText.getModule,
+      text,
+      loaded,
+      texts: preparedModule?.texts,
+    };
     files.set(name ?? "", file);
     moduleText.ranges.forEach((nestedRange, nestedName) => {
       if (nestedRange.start === range.start || nestedModules.has(nestedName)) return;
@@ -551,6 +567,11 @@ const getStringOrder = (
   });
   TLC_STARTUP_STRINGS.forEach(intern);
   // A file that is one module, as a prepared module is, is its own unit.
+  const getUnitParsedTexts = (name: string | undefined) =>
+    getParsed(name).texts?.parsed ?? getParsedTexts(getUnitTokens(name));
+  const getUnitStrings = (name: string | undefined) =>
+    getParsed(name).texts?.strings ??
+    getUnitTokens(name).flatMap((token) => (token.kind === "String" ? [token.text] : []));
   const getUnitTokens = (name: string | undefined) => {
     const unit = getParsed(name);
     return unit.start === 0 && unit.end === unit.tokens.length
@@ -629,7 +650,7 @@ const getStringOrder = (
       const importer = module.unit ?? getModuleName(getParsed(undefined).tokens);
       throw createMissingModuleError(name, importer);
     }
-    getParsedTexts(getUnitTokens(name)).forEach(intern);
+    getUnitParsedTexts(name).forEach(intern);
   }
   SEMANTIC_PRELUDE.forEach(intern);
   const analyzed = new Set<string | undefined>();
@@ -646,9 +667,7 @@ const getStringOrder = (
       internStrings(source, intern);
       return;
     }
-    getUnitTokens(name).forEach((token) => {
-      if (token.kind === "String") intern(token.text);
-    });
+    getUnitStrings(name).forEach(intern);
   };
   analyze(undefined);
   TLC_RUNTIME_STRINGS.forEach(intern);

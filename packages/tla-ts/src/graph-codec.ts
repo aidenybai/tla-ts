@@ -1,9 +1,11 @@
-// Writes a graph of plain objects, arrays, maps, sets, and primitives as JSON-ready arrays, and reads
-// it back with the same keys in the same order and the same objects shared, so that a build can
-// prepare a structure once that each process reads rather than computes.
+// Writes a graph of plain objects, arrays, maps, sets, and primitives as JSON-ready tables and a
+// stream, and reads it back with the same keys in the same order and the same objects shared, so
+// that a build can prepare a structure once that each process reads rather than computes.
 
 // The stream is a string of variable-length integers, five bits to a character with a sixth that
 // marks one more character. A value is a tag, or a small integer stored as itself plus SMALL_START.
+// SHARED comes before an object the graph holds more than once, which REFERENCE then names by the
+// order in which such objects come.
 const UNDEFINED = 0;
 const NULL = 1;
 const FALSE = 2;
@@ -16,31 +18,51 @@ const ARRAY = 8;
 const MAP = 9;
 const SET = 10;
 const BIGINT = 11;
+const SHARED = 12;
 const SMALL_START = 16;
 const SMALL_END = 1 << 28;
 
-// The characters of the stream, none of which JSON escapes, and each one's digit.
+// The characters of the stream, none of which JSON or a JavaScript string escapes, and each one's
+// digit.
 const DIGITS = Array.from({ length: 65 }, (_value, index) => String.fromCharCode(35 + index))
   .filter((character) => character !== "\\")
   .join("");
 const DIGIT_VALUES = new Int8Array(128).fill(-1);
 for (let digit = 0; digit < 64; digit++) DIGIT_VALUES[DIGITS.charCodeAt(digit)] = digit;
 
-export type EncodedGraph = [
-  strings: string[],
-  shapes: string[][],
-  numbers: number[],
-  stream: string,
-];
+// The tables of a graph, and the stream that reads them.
+export interface EncodedGraph {
+  tables: [strings: string[], shapes: string[][], numbers: number[]];
+  stream: string;
+}
+
+const getChildren = (value: object): unknown[] =>
+  Array.isArray(value)
+    ? value
+    : value instanceof Map
+      ? [...value].flat()
+      : value instanceof Set
+        ? [...value]
+        : Object.values(value);
 
 export const encodeGraph = (root: unknown): EncodedGraph => {
   const strings: string[] = [];
   const stringIds = new Map<string, number>();
   const shapes: string[][] = [];
   const shapeIds = new Map<string, number>();
-  const objectIds = new Map<object, number>();
   const numbers: number[] = [];
   const stream: number[] = [];
+  // How many times the graph holds each object.
+  const counts = new Map<object, number>();
+  const pending: unknown[] = [root];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (typeof value !== "object" || value === null) continue;
+    const seen = counts.get(value) ?? 0;
+    counts.set(value, seen + 1);
+    if (seen === 0) pending.push(...getChildren(value));
+  }
+  const sharedIds = new Map<object, number>();
   const getStringId = (text: string) => {
     const known = stringIds.get(text);
     if (known !== undefined) return known;
@@ -89,12 +111,15 @@ export const encodeGraph = (root: unknown): EncodedGraph => {
       stream.push(NULL);
       return;
     }
-    const known = objectIds.get(value);
+    const known = sharedIds.get(value);
     if (known !== undefined) {
       stream.push(REFERENCE, known);
       return;
     }
-    objectIds.set(value, objectIds.size);
+    if ((counts.get(value) ?? 0) > 1) {
+      sharedIds.set(value, sharedIds.size);
+      stream.push(SHARED);
+    }
     const prototype = Object.getPrototypeOf(value);
     if (prototype === Array.prototype && Array.isArray(value)) {
       stream.push(ARRAY, value.length);
@@ -128,29 +153,30 @@ export const encodeGraph = (root: unknown): EncodedGraph => {
       if (isLast) break;
     }
   }
-  return [strings, shapes, numbers, digits.join("")];
+  return { tables: [strings, shapes, numbers], stream: digits.join("") };
 };
 
 export const decodeGraph = (encoded: EncodedGraph): unknown => {
-  const [strings, shapes, numbers, digits] = encoded;
-  // The values of the stream, read from its characters in one pass.
-  const stream = new Int32Array(digits.length);
-  let length = 0;
-  for (let index = 0, value = 0, scale = 1; index < digits.length; index++) {
-    const digit = DIGIT_VALUES[digits.charCodeAt(index)];
-    value += (digit & 31) * scale;
-    if (digit < 32) {
-      stream[length++] = value;
-      value = 0;
-      scale = 1;
-    } else {
-      scale *= 32;
-    }
-  }
-  const objects: unknown[] = [];
+  const [strings, shapes, numbers] = encoded.tables;
+  const digits = encoded.stream;
+  // An object of each shape for the objects of that shape to copy, which JSON gives room for its
+  // keys, so that each copy holds its values in itself.
+  const templates = shapes.map((keys): object =>
+    JSON.parse(`{${keys.map((key) => `${JSON.stringify(key)}:0`).join(",")}}`),
+  );
+  const shared: unknown[] = [];
   let position = 0;
-  const next = () => stream[position++];
-  const read = (): unknown => {
+  const next = () => {
+    let digit = DIGIT_VALUES[digits.charCodeAt(position++)];
+    if (digit < 32) return digit;
+    let value = digit & 31;
+    for (let scale = 32; ; scale *= 32) {
+      digit = DIGIT_VALUES[digits.charCodeAt(position++)];
+      value += (digit & 31) * scale;
+      if (digit < 32) return value;
+    }
+  };
+  const read = (isShared = false): unknown => {
     const tag = next();
     if (tag >= SMALL_START) return tag - SMALL_START;
     switch (tag) {
@@ -169,18 +195,20 @@ export const decodeGraph = (encoded: EncodedGraph): unknown => {
       case BIGINT:
         return BigInt(strings[next()]);
       case REFERENCE:
-        return objects[next()];
+        return shared[next()];
+      case SHARED:
+        return read(true);
       case ARRAY: {
         const length = next();
         const array: unknown[] = [];
-        objects.push(array);
+        if (isShared) shared.push(array);
         for (let index = 0; index < length; index++) array.push(read());
         return array;
       }
       case MAP: {
         const size = next();
         const map = new Map<unknown, unknown>();
-        objects.push(map);
+        if (isShared) shared.push(map);
         for (let index = 0; index < size; index++) {
           const key = read();
           map.set(key, read());
@@ -190,14 +218,15 @@ export const decodeGraph = (encoded: EncodedGraph): unknown => {
       case SET: {
         const size = next();
         const set = new Set<unknown>();
-        objects.push(set);
+        if (isShared) shared.push(set);
         for (let index = 0; index < size; index++) set.add(read());
         return set;
       }
       case OBJECT: {
-        const keys = shapes[next()];
-        const object: Record<string, unknown> = {};
-        objects.push(object);
+        const shape = next();
+        const keys = shapes[shape];
+        const object: Record<string, unknown> = { ...templates[shape] };
+        if (isShared) shared.push(object);
         for (const key of keys) object[key] = read();
         return object;
       }
