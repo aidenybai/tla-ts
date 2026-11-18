@@ -171,6 +171,7 @@ class SolverFormulas extends Goal {
 const runFdSimplifier = (manager: AstManager, forms: readonly number[]) => {
   const fmls = new SolverFormulas(manager);
   for (const form of forms) fmls.assert(form);
+  if (fmls.forms.size === 0) return fmls;
   const state = new DependentExprState(manager, fmls);
   const simplifiers = [
     () => runBoundedInt2Bv(manager, fmls),

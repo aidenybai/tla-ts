@@ -1129,6 +1129,13 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ]);
   });
 
+  it("counts no steps of the simplifiers of QF_FD without assertions", () => {
+    expect(run(["(set-logic QF_FD)", "(check-sat)", "(get-info :rlimit)"])).toEqual([
+      "sat",
+      "(:rlimit 4)",
+    ]);
+  });
+
   it("has no model after check-sat of QF_FD answers unknown", () => {
     expect(
       run([
