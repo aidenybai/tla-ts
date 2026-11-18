@@ -2692,13 +2692,15 @@ const translateCallStatementBody = (
   // before it doesn't read what it changes.
   const getLeading = () => getLeadingCall(expression, (call) => call !== expression, path, context);
   const runLeading = (leading: { call: ts.CallExpression; reads: readonly ts.Expression[] }) =>
-    translateCallStatement(leading.call, path, context, frame, (after, value) =>
-      translateCallStatement(
-        expression,
-        withLeadingResults(leading, path, after, value, context),
-        context,
-        frame,
-        continueWith,
+    forceLeadingReads(leading, path, context, () =>
+      translateCallStatement(leading.call, path, context, frame, (after, value) =>
+        translateCallStatement(
+          expression,
+          withLeadingResults(leading, path, after, value, context),
+          context,
+          frame,
+          continueWith,
+        ),
       ),
     );
   const leadingLoop = loop === undefined ? undefined : getLeading();
@@ -13086,7 +13088,9 @@ const translateExpressionStatement = (
     expression.operatorToken.kind === ts.SyntaxKind.CommaToken
   ) {
     return translateExpressionStatement(expression.left, path, context, frame, (after) =>
-      translateExpressionStatement(expression.right, after, context, frame, continueWith),
+      forceAssigned(path, after, context, (forced) =>
+        translateExpressionStatement(expression.right, forced, context, frame, continueWith),
+      ),
     );
   }
   if (ts.isTaggedTemplateExpression(expression) && !isRawTemplate(expression, context)) {
@@ -19050,12 +19054,14 @@ const translateIterations = (
           : getLeadingCall(condition, () => true, current, context);
       if (leading !== undefined) {
         return allocate(leading.call, current, context, (allocated) =>
-          translateCallStatement(leading.call, allocated, context, bodyFrame, (after, value) =>
-            test(
-              withLeadingResults(leading, allocated, after, value, context),
-              whenTrue,
-              whenFalse,
-              tested,
+          forceLeadingReads(leading, allocated, context, () =>
+            translateCallStatement(leading.call, allocated, context, bodyFrame, (after, value) =>
+              test(
+                withLeadingResults(leading, allocated, after, value, context),
+                whenTrue,
+                whenFalse,
+                tested,
+              ),
             ),
           ),
         );
@@ -20919,6 +20925,33 @@ const getLeadingCall = (
   return { call, reads: kept };
 };
 
+// Evaluates the values of the reads that a statement evaluates before what runs first, where one
+// may stop, before that runs, as JavaScript evaluates them first.
+const forceValues = (values: readonly Expression[], run: () => Formula): Formula => {
+  const stopping = values.filter(mayStop);
+  return stopping.length === 0
+    ? run()
+    : ifThenElse(
+        junction(
+          "And",
+          stopping.map((value) => apply("=", [value, value])),
+        ),
+        run(),
+        leaf(boolean(false)),
+      );
+};
+
+const forceLeadingReads = (
+  leading: { call: ts.CallExpression; reads: readonly ts.Expression[] },
+  path: Path,
+  context: Context,
+  run: () => Formula,
+) =>
+  forceValues(
+    leading.reads.map((read) => translateExpression(read, path.scope, context)),
+    run,
+  );
+
 // A read that a statement evaluates before what runs first, which keeps the value it had then, as
 // what the statement evaluates first runs no code that a later read could.
 const isKeptRead = (inner: ts.Node): inner is ts.Expression => ts.isExpression(inner);
@@ -21024,11 +21057,13 @@ const runBranch = (
           withOperand(allocated, translateExpression(operand, allocated.scope, context)),
         )
       : allocate(leading.call, next, context, (allocated) =>
-          translateCallStatement(leading.call, allocated, context, frame, (after, value) =>
-            evaluate(
-              operand,
-              withLeadingResults(leading, allocated, after, value, context),
-              withOperand,
+          forceLeadingReads(leading, allocated, context, () =>
+            translateCallStatement(leading.call, allocated, context, frame, (after, value) =>
+              evaluate(
+                operand,
+                withLeadingResults(leading, allocated, after, value, context),
+                withOperand,
+              ),
             ),
           ),
         );
@@ -21332,8 +21367,10 @@ export const runLeadingCall = (
   const leading = getLeadingCall(node, () => true, path, context);
   return (
     leading &&
-    translateCallStatement(leading.call, path, context, frame, (after, value) =>
-      rest(withLeadingResults(leading, path, after, value, context)),
+    forceLeadingReads(leading, path, context, () =>
+      translateCallStatement(leading.call, path, context, frame, (after, value) =>
+        rest(withLeadingResults(leading, path, after, value, context)),
+      ),
     )
   );
 };
@@ -21765,10 +21802,10 @@ export const translateStatements = (
   const statementFrame: Frame = {
     ...frame,
     next: (inner) => force(inner, frame.next),
-    exit: (inner, value) => frame.exit(leave(inner), value),
-    breakTo: breakTo && ((inner) => breakTo(leave(inner))),
-    continueTo: continueTo && ((inner) => continueTo(leave(inner))),
-    throwTo: throwTo && ((inner, thrown) => throwTo(leave(inner), thrown)),
+    exit: (inner, value) => force(inner, (forced) => frame.exit(forced, value)),
+    breakTo: breakTo && ((inner) => force(inner, breakTo)),
+    continueTo: continueTo && ((inner) => force(inner, continueTo)),
+    throwTo: throwTo && ((inner, thrown) => force(inner, (forced) => throwTo(forced, thrown))),
   };
   // A statement that reads a built-in that the script may change on the global object runs only
   // where the global object still holds it.
@@ -22252,12 +22289,19 @@ export const translateStatements = (
   const hoistedCall = getHoistedCall(statement, path, context);
   if (hoistedCall !== undefined) {
     return allocate(hoistedCall.call, path, context, (allocated) =>
-      translateCallStatement(hoistedCall.call, allocated, context, statementFrame, (after, value) =>
-        translateStatements(
-          statements,
-          withLeadingResults(hoistedCall, allocated, after, value, context),
+      forceLeadingReads(hoistedCall, allocated, context, () =>
+        translateCallStatement(
+          hoistedCall.call,
+          allocated,
           context,
-          frame,
+          statementFrame,
+          (after, value) =>
+            translateStatements(
+              statements,
+              withLeadingResults(hoistedCall, allocated, after, value, context),
+              context,
+              frame,
+            ),
         ),
       ),
     );
@@ -22269,28 +22313,32 @@ export const translateStatements = (
       read,
       translateExpression(read, path.scope, context),
     ]);
-    return translateJoined(
-      branch.node,
-      path,
-      context,
-      (after, value) =>
-        translateStatements(
-          statements,
-          {
-            ...after,
-            scope: {
-              ...after.scope,
-              results: new Map([
-                ...after.scope.results,
-                ...kept,
-                [branch.node, value ?? getUndefined(context)],
-              ]),
-            },
-          },
+    return forceValues(
+      kept.map((entry) => entry[1]),
+      () =>
+        translateJoined(
+          branch.node,
+          path,
           context,
-          frame,
+          (after, value) =>
+            translateStatements(
+              statements,
+              {
+                ...after,
+                scope: {
+                  ...after.scope,
+                  results: new Map([
+                    ...after.scope.results,
+                    ...kept,
+                    [branch.node, value ?? getUndefined(context)],
+                  ]),
+                },
+              },
+              context,
+              frame,
+            ),
+          (next) => runBranch(branch.node, path, context, statementFrame, next),
         ),
-      (next) => runBranch(branch.node, path, context, statementFrame, next),
     );
   }
   const hoisted = getHoistedAssignment(statement, path, context);
@@ -22299,19 +22347,23 @@ export const translateStatements = (
       ? []
       : getEarlierReads(hoisted, evaluated, path.scope, context);
   if (hoisted !== undefined) {
-    return runAssignment(hoisted, path, context, statementFrame, (after, value) =>
-      translateStatements(
-        statements,
-        {
-          ...after,
-          scope: {
-            ...after.scope,
-            results: new Map([...after.scope.results, ...earlier, [hoisted, value]]),
-          },
-        },
-        context,
-        frame,
-      ),
+    return forceValues(
+      earlier.map((entry) => entry[1]),
+      () =>
+        runAssignment(hoisted, path, context, statementFrame, (after, value) =>
+          translateStatements(
+            statements,
+            {
+              ...after,
+              scope: {
+                ...after.scope,
+                results: new Map([...after.scope.results, ...earlier, [hoisted, value]]),
+              },
+            },
+            context,
+            frame,
+          ),
+        ),
     );
   }
   // An increment runs first, where what the statement reads before it keeps its value from then.
@@ -22321,19 +22373,23 @@ export const translateStatements = (
       read,
       translateExpression(read, path.scope, context),
     ]);
-    return runAssignment(increment.node, path, context, statementFrame, (after, value) =>
-      translateStatements(
-        statements,
-        {
-          ...after,
-          scope: {
-            ...after.scope,
-            results: new Map([...after.scope.results, ...kept, [increment.node, value]]),
-          },
-        },
-        context,
-        frame,
-      ),
+    return forceValues(
+      kept.map((entry) => entry[1]),
+      () =>
+        runAssignment(increment.node, path, context, statementFrame, (after, value) =>
+          translateStatements(
+            statements,
+            {
+              ...after,
+              scope: {
+                ...after.scope,
+                results: new Map([...after.scope.results, ...kept, [increment.node, value]]),
+              },
+            },
+            context,
+            frame,
+          ),
+        ),
     );
   }
   const construction = getHoistedConstruction(statement, path, context);

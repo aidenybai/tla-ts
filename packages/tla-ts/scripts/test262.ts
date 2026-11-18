@@ -207,26 +207,29 @@ process.on("unhandledRejection", (reason) => {
 // Runs a test in Node, with its jobs and then its timers, as an async test checks $DONE in one. The
 // global object is an ordinary one, as a script's is. vm's default global intercepts each access, so
 // that a global var named __proto__, or a global getter that deletes itself, behaves otherwise.
-const getNodeError = async (source: string, isSloppy: boolean) => {
-  const timers: (() => void)[] = [];
-  try {
-    const output = ts.transpileModule(source, {
+const getNodeError = (source: string, isSloppy: boolean) =>
+  getNodeScriptsError([
+    ts.transpileModule(source, {
       compilerOptions: {
         module: ts.ModuleKind.CommonJS,
         target: ts.ScriptTarget.ESNext,
         moduleDetection: isSloppy ? ts.ModuleDetectionKind.Legacy : ts.ModuleDetectionKind.Force,
         alwaysStrict: !isSloppy,
       },
-    }).outputText;
-    runInContext(
-      output,
-      Object.assign(createContext(constants.DONT_CONTEXTIFY), {
-        exports: {},
-        setTimeout: (callback: () => void) => {
-          timers.push(callback);
-        },
-      }),
-    );
+    }).outputText,
+  ]);
+
+// Runs scripts in turn in one global object, as a page runs its scripts.
+const getNodeScriptsError = async (scripts: readonly string[]) => {
+  const timers: (() => void)[] = [];
+  try {
+    const global = Object.assign(createContext(constants.DONT_CONTEXTIFY), {
+      exports: {},
+      setTimeout: (callback: () => void) => {
+        timers.push(callback);
+      },
+    });
+    scripts.forEach((script) => runInContext(script, global));
     await new Promise((resolve) => {
       setImmediate(resolve);
     });
@@ -4203,10 +4206,14 @@ const checkProgram = async (
   id: string,
   program: string,
   path: string,
+  scripts: readonly string[],
   onTypeError: (reason: string) => TestRun | Promise<TestRun>,
 ): Promise<TestRun> => {
   try {
-    const result = await check({ ...compile(program, path), onPrint: () => {} });
+    const result = await check({
+      ...compile(program, path, undefined, false, scripts),
+      onPrint: () => {},
+    });
     if (result.status === "success" || result.status === "deadlock") {
       return { id, outcome: "pass", reason: "" };
     }
@@ -4325,7 +4332,7 @@ const runJavaScriptTest = async (
       run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
     return { id, outcome: "skipped", reason: `Node fails as JavaScript: ${nodeError}` };
   }
-  return checkProgram(id, tla.test, tla.testPath, (reason) => ({
+  return checkProgram(id, tla.test, tla.testPath, [], (reason) => ({
     id,
     outcome: "skipped",
     reason: `type error as JavaScript: ${reason}`,
@@ -4345,6 +4352,65 @@ const runJavaScriptSyntaxTest = (id: string, source: string): TestRun => {
     }));
   }
   return { id, outcome: "wrong", reason: "Compiled a program with a SyntaxError" };
+};
+
+// A harness as a script, where its declare global's declarations augment the global scope as they
+// stand.
+const getScriptHarness = (harness: string) => {
+  const sourceFile = ts.createSourceFile("harness.ts", harness, ts.ScriptTarget.Latest, true);
+  return sourceFile.statements
+    .filter(
+      (statement): statement is ts.ModuleDeclaration & { body: ts.ModuleBlock } =>
+        ts.isModuleDeclaration(statement) &&
+        statement.name.text === "global" &&
+        statement.body !== undefined &&
+        ts.isModuleBlock(statement.body),
+    )
+    .reduceRight(
+      (text, statement) =>
+        text.slice(0, statement.getStart(sourceFile)) +
+        statement.body.statements.map((inner) => inner.getText(sourceFile)).join("\n") +
+        text.slice(statement.end),
+      harness,
+    );
+};
+
+// Runs a test outside strict mode as JavaScript: a script that runs after the harness's script,
+// in one global object, as a page runs its scripts, which tla-ts compiles as allowJs files too.
+const runJavaScriptScriptTest = async (
+  id: string,
+  source: string,
+  metadata: Metadata,
+): Promise<TestRun> => {
+  const harness = getScriptHarness(getHarness(metadata, source));
+  const nodeError = await getNodeScriptsError([
+    ts.transpileModule(harness, {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ESNext,
+        moduleDetection: ts.ModuleDetectionKind.Legacy,
+      },
+    }).outputText,
+    source,
+  ]);
+  if (nodeError !== undefined) {
+    return {
+      id,
+      outcome: "skipped",
+      reason: `Node fails as JavaScript: ${getFirstLine(nodeError)}`,
+    };
+  }
+  const root = join(JAVASCRIPT_DIRECTORY, "script");
+  const harnessPath = join(root, "harness.ts");
+  const testPath = join(root, id);
+  mkdirSync(dirname(testPath), { recursive: true });
+  writeFileSync(harnessPath, harness);
+  writeFileSync(testPath, source);
+  return checkProgram(id, source, testPath, [harnessPath], (reason) => ({
+    id,
+    outcome: "skipped",
+    reason: `type error as JavaScript: ${reason}`,
+  }));
 };
 
 const runTest = async (path: string): Promise<TestRun> => {
@@ -4404,16 +4470,18 @@ const runTest = async (path: string): Promise<TestRun> => {
   // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
   // import of the test's .js path to the test's code rather than to the .js that Node runs.
   if (isLinked) writeFileSync(programPath, program);
-  // A test outside strict mode can't run as an ES module.
-  return checkProgram(id, program, isLinked ? programPath : "test262.ts", (reason) =>
-    isSloppy
+  // A test outside strict mode runs as a script, and can't import fixtures as one.
+  return checkProgram(id, program, isLinked ? programPath : "test262.ts", [], (reason) =>
+    isSloppy && isLinked
       ? { id, outcome: "skipped", reason: `type error: ${reason}` }
-      : runJavaScriptTest(
-          id,
-          metadata.isModule ? source : nameGlobalObject(source),
-          metadata,
-          fixtures,
-        ),
+      : isSloppy
+        ? runJavaScriptScriptTest(id, source, metadata)
+        : runJavaScriptTest(
+            id,
+            metadata.isModule ? source : nameGlobalObject(source),
+            metadata,
+            fixtures,
+          ),
   );
 };
 

@@ -53061,6 +53061,79 @@ describe("BigInts", () => {
     });
   });
 
+  it("stops at NaN where a script holds no objects, rather than read it as undefined", () => {
+    expect(() =>
+      compile(`
+        const same = (left: any, right: any) => left === right;
+        if (same(NaN, NaN)) throw new Error("same");
+      `),
+    ).toThrow("tla-ts can't tell what NaN holds here");
+  });
+
+  describe("orders values of type any as IsLessThan does, converting objects first", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const compare = (left: any, right: any) => {
+        box.seen.push(String(left < right), String(left >= right));
+      };
+      compare("a", "b");
+      compare("10", 9);
+      compare(1n, 2);
+      compare("3", 2n);
+      compare("x", 2n);
+      compare(undefined, 0);
+      compare(null, 0);
+      compare({ valueOf: () => 5 }, 4);
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected =
+      "true,false,false,true,true,false,false,true,false,false,false,false,false,true,false,true";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace(/^true/, "false");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("runs the operators of values of type any where a script holds no objects", () => {
+    const getSource = (expected: string) => `
+      const less = (left: any, right: any) => left < right;
+      const atLeast = (left: any, right: any) => left >= right;
+      const subtract = (left: any, right: any) => left - right;
+      const add = (left: any, right: any) => left + right;
+      const seen = [
+        less(5, 2), less("1", "2"), less("10", 9), atLeast(undefined, 0), atLeast(null, 0),
+        subtract("7", 1), add("a", 1), add(true, 1), less(1n, "2"),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("false,true,false,false,true,6,a1,2,true"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      await expect(checkModel(getSource("false,true,true,false,true,6,a1,2,true"))).rejects.toThrow(
+        "seen false,true,false,false,true,6,a1,2,true",
+      );
+    });
+
+    it("stops at a list, which it can't convert where no heap holds it", async () => {
+      await expect(
+        checkModel(`
+          const less = (left: any, right: any) => left < right;
+          if (less([1], 2)) throw new Error("less");
+        `),
+      ).rejects.toThrow("tla-ts can't convert this object to a primitive here");
+    });
+  });
+
   describe("makes a typed array of every value that a script's iterator gives", () => {
     const getSource = (count: number, expected: string) => `
       interface Counter {
@@ -54679,6 +54752,170 @@ describe("BigInts", () => {
       expect((await checkModel(sloppy)).failure?.message).toContain(
         "tla-ts can't read this function as an object",
       );
+    });
+  });
+
+  it("stops at a read of a built-in object that a cast gives a record's type", () => {
+    expect(() =>
+      compile(`
+        const holder = Error as { prepare?: unknown };
+        const seen = String(holder.prepare);
+        if (seen !== "undefined") throw new Error(seen);
+      `),
+    ).toThrow("tla-ts can't read prepare of Error, which isn't a record here");
+  });
+
+  it("keeps a const that a built-in object initializes out of a model's state", () => {
+    expect(() =>
+      compile(`
+        const holder = Error as { prepare?: unknown };
+        export const setPrepare = (value: 1 | 2): void => {
+          holder.prepare = value;
+        };
+      `),
+    ).toThrow("Only state variables and local lets can change: holder");
+  });
+
+  describe("runs arithmetic on values of type any as ToNumeric does, with BigInts", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const run = (left: any, right: any) => {
+        box.seen.push(String(left - right), String(left * right), String(left + right));
+        box.seen.push(String(left % right));
+      };
+      run(10n, 3n);
+      run(7, 2);
+      run("8", 2);
+      run({ valueOf: () => 5n }, 2n);
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "7,30,13,1,5,14,9,1,6,16,82,0,3,10,7,1";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace(/^7/, "8");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+
+    it("stops where a BigInt meets a number", async () => {
+      const result = await checkModel(`
+        const box = { seen: [] as string[] };
+        const subtract = (left: any, right: any) => left - right;
+        box.seen.push(String(subtract(1n, 1)));
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't throw the TypeError of mixing a BigInt with a number",
+      );
+    });
+  });
+
+  describe("orders a value of type any in a loop's condition, which no statement converts first", () => {
+    const getSource = (start: string, expected: string) => `
+      const box = { seen: [] as string[] };
+      function collect(this: unknown, ...values: unknown[]) {
+        for (var index: any = ${start}; index < arguments.length; index++) {
+          box.seen.push(String(arguments[index]));
+        }
+        return values.length;
+      }
+      collect("a", "b", "c");
+      if (box.seen.join() !== "${expected}") throw new Error("seen " + box.seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1", "b,c"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("1", "a,b,c"))).failure?.message).toContain("seen b,c");
+    });
+
+    it("stops where the value is an object", async () => {
+      expect(
+        (await checkModel(getSource("{ valueOf: () => 1 }", "b,c"))).failure?.message,
+      ).toContain("tla-ts can't convert this object to a primitive here");
+    });
+  });
+
+  it("fires a stop in a value that a statement reads before a call that throws in it", async () => {
+    const source = `
+      var box = { seen: "" };
+      function get() {
+        return /** @type {any} */ (undefined);
+      }
+      function thrower() {
+        throw new Error("after");
+      }
+      function run() {
+        var read = 0;
+        try {
+          (read = get().x), thrower();
+        } catch (error) {
+          box.seen = error instanceof TypeError ? "type" : error.message;
+        }
+      }
+      run();
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
+  });
+
+  describe("runs JavaScript as a script after another, in one global scope, as a page runs them", () => {
+    const directory = join(import.meta.dirname, "../fixtures/typescript/scripts");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var loose = 5;
+      undeclared = 7;
+      check(shared === 1, "shared");
+      check(this.loose === 5, "this");
+      check(globalThis.undeclared === 7, "implicit");
+      box.seen = typeof check;
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+    const compileScript = (source: string) =>
+      compile(source, join(directory, "model.js"), undefined, false, [
+        join(directory, "harness.ts"),
+      ]);
+
+    it("agrees with Node", async () => {
+      expect((await check(compileScript(getSource("function")))).failure).toBeUndefined();
+    });
+
+    it("stops at a key of a primitive that an element access names and its type lacks", async () => {
+      const result = await check(
+        compileScript(`
+          var box = { seen: "" };
+          var symbol = Symbol("66");
+          symbol[62] = 0;
+          box.seen = String(symbol[62]);
+        `),
+      );
+      expect(result.failure?.message).toContain("tla-ts can't read the properties of Symbol");
+    });
+
+    it("stops at a script's JavaScript that TypeScript's checker fails on", () => {
+      expect(() =>
+        compileScript(`
+          var items = {};
+          items[Symbol.iterator] = function () {
+            return 1;
+          };
+        `),
+      ).toThrow("tla-ts can't type this JavaScript, as TypeScript fails");
+    });
+
+    it.each([
+      ["shared === 1", "shared === 2", "shared"],
+      ["this.loose === 5", "this.loose === 6", "this"],
+      ['"function"', '"object"', "seen function"],
+    ])("rejects %s read otherwise", async (from, to, message) => {
+      const source = getSource("function").replace(from, to);
+      expect((await check(compileScript(source))).failure?.message).toContain(message);
     });
   });
 });
