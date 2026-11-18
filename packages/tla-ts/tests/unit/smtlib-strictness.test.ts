@@ -1016,4 +1016,82 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
       '(error "line 9 column 8: invalid command argument, keyword expected")',
     ]);
   });
+
+  it("reports a term of assert-soft that is not Boolean at the token after it", () => {
+    expect(
+      run([
+        "(declare-const x0 Int)",
+        "(assert-soft x0 :weight 3)",
+        "(assert-soft x0)",
+        "(assert-soft   x0   :id g)",
+        "(assert-soft (+ x0 1) :weight 2 :id h)",
+        "(assert-soft x0",
+        ")",
+        "(assert-soft (> x0 1) :weight x0)",
+        "(assert-soft x0 :dweight 3)",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 16: Invalid type for expression. Expected Boolean type.")',
+      '(error "line 3 column 15: Invalid type for expression. Expected Boolean type.")',
+      '(error "line 4 column 20: Invalid type for expression. Expected Boolean type.")',
+      '(error "line 5 column 22: Invalid type for expression. Expected Boolean type.")',
+      '(error "line 7 column 0: Invalid type for expression. Expected Boolean type.")',
+      '(error "line 8 column 30: invalid command argument, numeral expected")',
+      '(error "line 9 column 16: Invalid type for expression. Expected Boolean type.")',
+      "sat",
+    ]);
+  });
+
+  it("checks the parameters of assert-soft by their kinds, and takes one without a value", () => {
+    const runSoft = (command: string) =>
+      run([
+        "(declare-const p Bool)",
+        command,
+        "(assert (not p))",
+        "(check-sat)",
+        "(get-objectives)",
+      ]);
+    expect(run(["(declare-const p Bool)", "(assert-soft p :weight x)", "(check-sat)"])).toEqual([
+      '(error "line 2 column 23: invalid command argument, numeral expected")',
+      "sat",
+    ]);
+    expect(run(["(declare-const p Bool)", "(assert-soft p :weight #x3)", "(check-sat)"])).toEqual([
+      '(error "line 2 column 23: invalid command argument, numeral expected")',
+      "sat",
+    ]);
+    expect(run(["(declare-const p Bool)", "(assert-soft p :id 3)", "(check-sat)"])).toEqual([
+      '(error "line 2 column 19: invalid command argument, symbol expected")',
+      "sat",
+    ]);
+    expect(run(["(declare-const p Bool)", "(assert-soft p :dweight 3)", "(check-sat)"])).toEqual([
+      '(error "line 2 column 15: invalid keyword argument")',
+      "sat",
+    ]);
+    expect(runSoft("(assert-soft p :weight)")).toEqual(["sat", "(objectives\n ( 1)\n)"]);
+    expect(runSoft("(assert-soft p :weight 2 :weight)")).toEqual(["sat", "(objectives\n ( 2)\n)"]);
+    expect(runSoft("(assert-soft p :WEIGHT 4 :Id |a b|)")).toEqual([
+      "sat",
+      "(objectives\n (a b 4)\n)",
+    ]);
+  });
+
+  it("gives an assert-soft none of the parameters of one that failed, where Z3 keeps them", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert-soft p :weight 3 :dweight 1)",
+        "(assert-soft q)",
+        "(assert (not p))",
+        "(assert (not q))",
+        "(check-sat)",
+        "(get-objectives)",
+      ]),
+    ).toEqual([
+      '(error "line 3 column 25: invalid keyword argument")',
+      "sat",
+      "(objectives\n ( 1)\n)",
+    ]);
+  });
 });

@@ -235,6 +235,7 @@ const BUILTIN_OPTIONS = new Set([
 
 const getParameterName = (keyword: string) => keyword.slice(1).toLowerCase().replaceAll("-", "_");
 
+// Deviation from Z3: each assert-soft starts with no parameters, where Z3 keeps those a failed one set.
 const getSoftParameters = (items: SExpr[]) => {
   const parameters = { weight: Rational.one, id: null as string | null };
   for (let index = 0; index < items.length; index += 2) {
@@ -242,13 +243,18 @@ const getSoftParameters = (items: SExpr[]) => {
     if (keyword.kind !== "keyword")
       throw new SmtParseError("invalid command argument, keyword expected", keyword);
     const name = getParameterName(keyword.text);
+    if (name !== "weight" && name !== "id")
+      throw new SmtParseError("invalid keyword argument", keyword);
     const value = items[index + 1];
-    if (name === "weight" && (value?.kind === "numeral" || value?.kind === "decimal")) {
+    if (value === undefined) continue;
+    if (name === "weight") {
+      if (value.kind !== "numeral" && value.kind !== "decimal")
+        throw new SmtParseError("invalid command argument, numeral expected", value);
       parameters.weight = Rational.fromDecimal(value.text);
       continue;
     }
-    if (name !== "id" || !isSymbol(value))
-      throw new SmtUnsupportedError(`the parameter :${name} of assert-soft`);
+    if (!isSymbol(value))
+      throw new SmtParseError("invalid command argument, symbol expected", value);
     parameters.id = value.text;
   }
   return parameters;
@@ -1438,7 +1444,10 @@ export const runSmtlibScript = (
       (list) => {
         const formula = state.reader.parseTerm(list.items[1] ?? list.end);
         if (state.manager.sorts[formula] !== SORT_BOOL)
-          throw new SmtParseError("Invalid type for expression. Expected Boolean type.", list.end);
+          throw new SmtParseError(
+            "Invalid type for expression. Expected Boolean type.",
+            list.items[2] ?? list.end,
+          );
         const parameters = getSoftParameters(list.items.slice(2));
         resetOptimizer();
         const existing = state.objectives.findIndex(
