@@ -1049,21 +1049,52 @@ export const checkModuleLevels = (
       ];
     });
   };
-  const errors = collectSemanticErrors(
+  const statementLevels = new Map<Expression | AssumeProve, number>();
+  const getStatementLevel = (statement: Expression | AssumeProve) => {
+    const cached = statementLevels.get(statement);
+    if (cached !== undefined) return cached;
+    const level =
+      statement.kind === "AssumeProve"
+        ? analyzeAssumeProve(statement, new Map(), analyzer).level
+        : analyzer.analyze(statement, new Map()).level;
+    statementLevels.set(statement, level);
+    return level;
+  };
+  const statements = [
+    ...module.theorems,
+    ...module.assumptions.map((assumption) => ({
+      ...assumption,
+      statement: assumption.expression,
+    })),
+  ];
+  const statementBodies = new Set(statements.map((statement) => statement.statement));
+  // ModuleNode#levelCheck checks every definition, then named theorems and assumptions, then the rest in order.
+  const errors = [
+    module.definitions
+      .filter(
+        (definition) => !definition.name.includes("!") && !statementBodies.has(definition.body),
+      )
+      .map((definition) => ({
+        location: definition.location,
+        check: (reported: SanyError[]) => {
+          analyzer.analyzeDefinition(definition, new Map());
+          reported.push(...analyzer.errors.splice(0));
+        },
+      })),
+    statements
+      .filter((statement) => statement.name !== undefined)
+      .map((statement) => ({
+        location: statement.location,
+        check: (reported: SanyError[]) => {
+          getStatementLevel(statement.statement);
+          reported.push(...analyzer.errors.splice(0));
+        },
+      })),
     [
-      ...module.definitions
-        .filter((definition) => !definition.name.includes("!"))
-        .map((definition) => ({
-          location: definition.location,
-          check: (reported: SanyError[]) => {
-            analyzer.analyzeDefinition(definition, new Map());
-            reported.push(...analyzer.errors.splice(0));
-          },
-        })),
       ...module.assumptions.map((assumption) => ({
         location: assumption.location,
         check: (reported: SanyError[]) => {
-          const level = analyzer.analyze(assumption.expression, new Map()).level;
+          const level = getStatementLevel(assumption.expression);
           reported.push(...analyzer.errors.splice(0));
           const range = assumption.location.range;
           if (level !== CONSTANT_LEVEL && range) {
@@ -1077,14 +1108,11 @@ export const checkModuleLevels = (
       ...module.theorems.map((theorem) => ({
         location: theorem.location,
         check: (reported: SanyError[]) => {
-          const data =
-            theorem.statement.kind === "AssumeProve"
-              ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
-              : analyzer.analyze(theorem.statement, new Map());
+          const level = getStatementLevel(theorem.statement);
           reported.push(
             ...analyzer.errors.splice(0),
             ...checkProof(theorem.proof, new Map()),
-            ...(data.level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
+            ...(level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
             ...analyzer.errors.splice(0),
           );
         },
@@ -1098,7 +1126,6 @@ export const checkModuleLevels = (
       })),
       ...instances,
     ],
-    warnings,
-  );
+  ].flatMap((units) => collectSemanticErrors(units, warnings));
   if (errors.length > 0) throw createSanyError(errors, false, undefined, warnings);
 };

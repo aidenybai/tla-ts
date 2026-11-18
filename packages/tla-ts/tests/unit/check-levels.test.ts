@@ -134,6 +134,33 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks definitions, then named facts, then the rest of a module like SANY", async () => {
+    const setError =
+      "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    const assumeError =
+      "Level error: assumptions must be level 0 (Constant), \nbut this one has level 3.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nASSUME {<>x} = 1\nTHEOREM T == {<>x} = 1\n  BY {[]x} = 1\nASSUME N == {[]x} = 1\nTHEOREM {[]x} = 1\nA == {[]x}\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 8, col 6 to line 8, col 10", setError],
+          ["line 4, col 14 to line 4, col 18", setError],
+          ["line 6, col 13 to line 6, col 17", setError],
+          ["line 3, col 8 to line 3, col 12", setError],
+          ["line 3, col 1 to line 3, col 16", assumeError],
+          ["line 5, col 6 to line 5, col 10", setError],
+          ["line 6, col 1 to line 6, col 21", assumeError],
+          ["line 7, col 9 to line 7, col 13", setError],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("rejects an ASSUME above constant level like SANY", async () => {
     await expect(
       check({
