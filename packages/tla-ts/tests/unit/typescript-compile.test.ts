@@ -56299,4 +56299,34 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none"))).failure?.message).toContain("seen type");
     });
   });
+
+  describe("reads the length of an arguments object that holds a function that the call passes", () => {
+    const getSource = (expected: string) => `
+      const width = Uint8Array.BYTES_PER_ELEMENT;
+      const dual = function (arity: number, body: (...args: Array<any>) => any): any {
+        return function (a: any, b: any) {
+          if (arguments.length >= arity) {
+            return body(a, b);
+          }
+          return function (self: any) {
+            return body(self, a);
+          };
+        };
+      };
+      const apply: (f: (value: number) => number, value: number) => number = dual(
+        2,
+        (f: (value: number) => number, value: number) => f(value) + width,
+      );
+      const result = [apply((value: number) => value * 2, 3), apply((value: number) => value - 1, 3)].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("7,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("7,4"))).failure?.message).toContain("result 7,3");
+    });
+  });
 });

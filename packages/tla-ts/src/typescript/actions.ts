@@ -6769,17 +6769,29 @@ export const bindCall = (
   const plainValues = argumentValues.isSpread ? values.shared.slice(0, -1) : values.shared;
   const restValue = argumentValues.isSpread ? values.shared.at(-1) : undefined;
   const evaluateArguments = (rest: Formula) => values.evaluate(rest, leaf(boolean(false)));
-  if (isArgumentsNamed(callee, context) && context.heap !== undefined && callbacks.length > 0) {
+  const lengths = getArgumentsLengths(callee, argumentNodes, context);
+  if (
+    lengths === undefined &&
+    isArgumentsNamed(callee, context) &&
+    context.heap !== undefined &&
+    callbacks.length > 0
+  ) {
     throw new TlaTypeScriptError("Unsupported arguments object", node);
   }
   // Parameters' defaults may read the arguments object, which the call makes before it binds them.
-  const made = allocateArguments(
-    callee,
-    argumentValues.list ?? tuple(values.shared),
-    node,
-    { definitions: [], scope: path.scope },
-    context,
-  );
+  const made =
+    lengths !== undefined
+      ? {
+          definitions: [],
+          scope: { ...path.scope, results: new Map([...path.scope.results, ...lengths]) },
+        }
+      : allocateArguments(
+          callee,
+          argumentValues.list ?? tuple(values.shared),
+          node,
+          { definitions: [], scope: path.scope },
+          context,
+        );
   const valueParameters = parameters.filter((_, position) => isValue(position));
   const parameterScope = ts.isCallExpression(node)
     ? bindFactory(
@@ -6979,6 +6991,27 @@ export const isArgumentsRead = (read: ts.Identifier, context: Context) => {
       INCREMENT_OPERATORS.has(outer.operator)
     )
   );
+};
+
+// The number of arguments that a call passes, for each read of its callee's arguments object, where
+// the callee only reads its length, which no write changes, and the call spreads nothing: the call
+// need make no object, which can't hold the functions that a call passes as callbacks.
+export const getArgumentsLengths = (
+  callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
+  context: Context,
+): [ts.Expression, Expression][] | undefined => {
+  const reads = getArgumentsReads(callee, context);
+  return reads.length > 0 &&
+    !argumentNodes.some(ts.isSpreadElement) &&
+    reads.every(
+      (read) =>
+        ts.isPropertyAccessExpression(read.parent) &&
+        read.parent.name.text === "length" &&
+        isArgumentsRead(read, context),
+    )
+    ? reads.map((read) => [read.parent as ts.Expression, number(argumentNodes.length)])
+    : undefined;
 };
 
 // Outside strict mode, a function with simple parameters has an arguments object that maps them,
@@ -13149,7 +13182,9 @@ const throwReadError = (
   read: Formula,
 ) => {
   const accessed = skipCasts(expression);
+  // A read whose value the scope already holds, such as an arguments object's length, ran.
   return context.heap !== undefined &&
+    !path.scope.results.has(accessed) &&
     (ts.isElementAccessExpression(accessed) ||
       (ts.isPropertyAccessExpression(accessed) && !ts.isPrivateIdentifier(accessed.name))) &&
     accessed.expression.kind !== ts.SyntaxKind.SuperKeyword &&
