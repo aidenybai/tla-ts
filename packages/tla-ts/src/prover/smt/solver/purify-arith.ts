@@ -578,54 +578,56 @@ export const purifyArith = (manager: AstManager, goal: Goal, options: PurifyOpti
   mkCongruence(state, state.divs, goal);
   mkCongruence(state, state.mods, goal);
   mkCongruence(state, state.idivs, goal);
-  const definitions: Definition[] = [...state.appToFresh.entries()].map((entry) => ({
-    decl: manager.decls[entry[1]],
-    def: -1,
-  }));
-  if (state.divs.length > 0)
-    definitions.push({ decl: OP_DIV0, def: mkTable(state, state.divs, SORT_REAL) });
-  if (state.mods.length > 0) {
-    const body = mkTable(state, state.mods, SORT_INT);
-    definitions.push({ decl: OP_MOD0, def: body });
-    const isNonneg = pin(
-      manager.mkApp(
-        OP_GE,
-        [pin(manager.mkVar(1, SORT_INT)), pin(manager.mkNumeralOfSort(Rational.zero, SORT_INT))],
-        SORT_BOOL,
-      ),
-    );
-    const negated = pin(manager.mkApp(OP_UMINUS, [body], SORT_INT));
-    definitions.push({
-      decl: OP_MOD0,
-      def: pin(manager.mkApp(OP_ITE, [isNonneg, body, negated], SORT_INT)),
-    });
-  }
-  if (state.idivs.length > 0)
-    definitions.push({ decl: OP_IDIV0, def: mkTable(state, state.idivs, SORT_INT) });
-  if (state.ipower0 !== -1) definitions.push({ decl: OP_POWER0, def: state.ipower0 });
-  if (state.rpower0 !== -1) definitions.push({ decl: OP_POWER0, def: state.rpower0 });
-  goal.addDefinitions(definitions);
-  if (state.sinCos.size > 0) {
-    const zero = pin(manager.mkRealNumeral(Rational.zero));
-    goal.addDefinitions(
-      [...state.sinCos.entries()].map((entry) => {
-        const [sin, cos] = entry[1];
-        const isNonneg = pin(manager.mkApp(OP_GE, [sin, zero], SORT_BOOL));
-        const acos = pin(manager.mkApp(OP_ACOS, [cos], SORT_REAL));
-        const negated = pin(manager.mkApp(OP_UMINUS, [cos], SORT_REAL));
-        const shifted = pin(
-          manager.mkApp(
-            OP_ADD,
-            [pin(manager.mkApp(OP_ACOS, [negated], SORT_REAL)), manager.piExpr],
-            SORT_REAL,
-          ),
-        );
-        return {
-          decl: manager.decls[entry[0]],
-          def: pin(manager.mkApp(OP_ITE, [isNonneg, acos, shifted], SORT_REAL)),
-        };
-      }),
-    );
+  if (goal.isModelsEnabled) {
+    const definitions: Definition[] = [...state.appToFresh.entries()].map((entry) => ({
+      decl: manager.decls[entry[1]],
+      def: -1,
+    }));
+    if (state.divs.length > 0)
+      definitions.push({ decl: OP_DIV0, def: mkTable(state, state.divs, SORT_REAL) });
+    if (state.mods.length > 0) {
+      const body = mkTable(state, state.mods, SORT_INT);
+      definitions.push({ decl: OP_MOD0, def: body });
+      const isNonneg = pin(
+        manager.mkApp(
+          OP_GE,
+          [pin(manager.mkVar(1, SORT_INT)), pin(manager.mkNumeralOfSort(Rational.zero, SORT_INT))],
+          SORT_BOOL,
+        ),
+      );
+      const negated = pin(manager.mkApp(OP_UMINUS, [body], SORT_INT));
+      definitions.push({
+        decl: OP_MOD0,
+        def: pin(manager.mkApp(OP_ITE, [isNonneg, body, negated], SORT_INT)),
+      });
+    }
+    if (state.idivs.length > 0)
+      definitions.push({ decl: OP_IDIV0, def: mkTable(state, state.idivs, SORT_INT) });
+    if (state.ipower0 !== -1) definitions.push({ decl: OP_POWER0, def: state.ipower0 });
+    if (state.rpower0 !== -1) definitions.push({ decl: OP_POWER0, def: state.rpower0 });
+    goal.addDefinitions(definitions);
+    if (state.sinCos.size > 0) {
+      const zero = pin(manager.mkRealNumeral(Rational.zero));
+      goal.addDefinitions(
+        [...state.sinCos.entries()].map((entry) => {
+          const [sin, cos] = entry[1];
+          const isNonneg = pin(manager.mkApp(OP_GE, [sin, zero], SORT_BOOL));
+          const acos = pin(manager.mkApp(OP_ACOS, [cos], SORT_REAL));
+          const negated = pin(manager.mkApp(OP_UMINUS, [cos], SORT_REAL));
+          const shifted = pin(
+            manager.mkApp(
+              OP_ADD,
+              [pin(manager.mkApp(OP_ACOS, [negated], SORT_REAL)), manager.piExpr],
+              SORT_REAL,
+            ),
+          );
+          return {
+            decl: manager.decls[entry[0]],
+            def: pin(manager.mkApp(OP_ITE, [isNonneg, acos, shifted], SORT_REAL)),
+          };
+        }),
+      );
+    }
   }
   goal.depth++;
   state.pinned.reset();

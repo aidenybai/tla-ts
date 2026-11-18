@@ -31,21 +31,23 @@ export const createSatTactic =
     const unhandledFuns = goal2sat.euf?.unhandledFunctions ?? goal2sat.unhandledFuns;
     if (result === L_FALSE) goal.assert(manager.falseExpr);
     else if (result === L_TRUE && unhandledFuns.length === 0) {
-      const model = new ProtoModel(manager).mkModel();
-      for (const [expr, boolVar] of goal2sat.atoms) {
-        if (!manager.isUninterpretedConst(expr)) continue;
-        const value = solver.model[boolVar];
-        if (value === L_TRUE) model.registerConst(manager.decls[expr], manager.trueExpr);
-        else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
+      if (goal.isModelsEnabled) {
+        const model = new ProtoModel(manager).mkModel();
+        for (const [expr, boolVar] of goal2sat.atoms) {
+          if (!manager.isUninterpretedConst(expr)) continue;
+          const value = solver.model[boolVar];
+          if (value === L_TRUE) model.registerConst(manager.decls[expr], manager.trueExpr);
+          else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
+        }
+        const euf = goal2sat.euf;
+        goal.model = euf?.updateModel(model) ?? model;
+        euf?.validateModel(goal.model);
       }
-      const euf = goal2sat.euf;
-      goal.model = euf?.updateModel(model) ?? model;
-      euf?.validateModel(goal.model);
     } else {
       solver.popToBaseLevel();
       const converter = new Sat2GoalConverter(manager);
       sat2goal(manager, solver, goal2sat.atoms, goal, converter);
-      goal.addDefinitions(converter.entries);
+      if (goal.isModelsEnabled) goal.addDefinitions(converter.entries);
       if (unhandledFuns.length > 0) goal.updatePrecision(OVER);
     }
     goal.depth++;

@@ -480,6 +480,8 @@ class Pb2Bv {
     }
     for (const [index, result] of results.items.entries()) goal.update(index, result);
     results.reset();
+    goal.depth++;
+    if (!goal.isModelsEnabled) return;
     const hidden: Definition[] = [];
     for (const [, bit] of this.const2bit) hidden.push({ decl: manager.decls[bit], def: -1 });
     for (const fresh of this.temporaryInts.items)
@@ -505,7 +507,6 @@ class Pb2Bv {
       }
       return model;
     });
-    goal.depth++;
   }
 
   private throwNonPb(expr: number): never {

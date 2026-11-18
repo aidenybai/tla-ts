@@ -1002,6 +1002,60 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ).toEqual(["sat", "(:rlimit 91)"]);
   });
 
+  it("builds no model converter in the tactics that skip it when the goal has no models", () => {
+    const fm = [
+      "(declare-const x Real)",
+      "(declare-const y Real)",
+      "(declare-const z Real)",
+      "(assert (<= x y))",
+      "(assert (>= x 0))",
+      "(assert (<= y z))",
+      "(assert (<= z 5))",
+      "(check-sat-using (then fm smt))",
+    ];
+    const lia2pb = [
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(assert (and (<= 0 x) (<= x 5) (<= 0 y) (<= y 3)))",
+      "(assert (= (+ x y) 7))",
+      "(check-sat-using (then lia2pb smt))",
+    ];
+    const normalizeBounds = [
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(assert (and (<= 3 x) (<= x 9) (<= 2 y)))",
+      "(assert (<= (+ x y) 12))",
+      "(check-sat-using (then normalize-bounds smt))",
+    ];
+    const purifyArith = [
+      "(declare-const x Real)",
+      "(declare-const y Real)",
+      "(assert (> (/ x y) 1))",
+      "(check-sat-using (then purify-arith smt))",
+    ];
+    const reduceArgs = [
+      "(declare-fun f (Int Int) Int)",
+      "(declare-const x Int)",
+      "(assert (> (f x 1) (f x 2)))",
+      "(check-sat-using (then reduce-args smt))",
+    ];
+    const ackermannize = [
+      "(declare-fun f ((_ BitVec 4)) (_ BitVec 4))",
+      "(declare-const a (_ BitVec 4))",
+      "(declare-const b (_ BitVec 4))",
+      "(assert (not (= (f a) (f b))))",
+      "(check-sat-using (then ackermannize_bv bit-blast sat))",
+    ];
+    const getRlimit = (lines: string[]) =>
+      run(["(set-option :produce-models false)", ...lines, "(get-info :rlimit)"]);
+    expect(getRlimit(fm)).toEqual(["sat", "(:rlimit 33)"]);
+    expect(getRlimit(lia2pb)).toEqual(["sat", "(:rlimit 519)"]);
+    expect(getRlimit(normalizeBounds)).toEqual(["sat", "(:rlimit 145)"]);
+    expect(getRlimit(purifyArith)).toEqual(["sat", "(:rlimit 392)"]);
+    expect(getRlimit(reduceArgs)).toEqual(["sat", "(:rlimit 102)"]);
+    expect(getRlimit(ackermannize)).toEqual(["sat", "(:rlimit 159)"]);
+  });
+
   it("walks each formula that is not a constraint with the pb2bv rewriter in pb2bv", () => {
     expect(
       run([

@@ -28,7 +28,8 @@ export const runAckermannizeBv =
       return [goal];
     }
     const info = lackr.info;
-    result.addModelConversion((model) => convertAckrModel(info, undefined, model));
+    if (goal.isModelsEnabled)
+      result.addModelConversion((model) => convertAckrModel(info, undefined, model));
     result.depth++;
     lackr.release(true);
     return [result];
@@ -50,7 +51,7 @@ export const createQfufbvAckrTactic =
     if (status === L_FALSE) result.assert(manager.falseExpr);
     if (status === L_UNDEF) goal.depth++;
     const model = lackr.model;
-    if (status === L_TRUE && model !== undefined) {
+    if (goal.isModelsEnabled && status === L_TRUE && model !== undefined) {
       model.incRef();
       const info = lackr.info;
       result.addModelConversion((converted) => convertAckrModel(info, model, converted));

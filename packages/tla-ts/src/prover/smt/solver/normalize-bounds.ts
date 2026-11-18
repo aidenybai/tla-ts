@@ -47,7 +47,7 @@ export const normalizeBounds = (
     manager.decRef(rewritten);
   }
   rewriter.release();
-  goal.addDefinitions(definitions);
+  if (goal.isModelsEnabled) goal.addDefinitions(definitions);
   terms.reset();
   goal.depth++;
 };
