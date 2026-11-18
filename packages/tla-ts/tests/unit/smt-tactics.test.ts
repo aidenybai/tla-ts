@@ -1513,6 +1513,48 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
   });
 
+  // Deviation from Z3: Z3 5.3.2 crashes at the second check, which encodes C as an enumeration
+  // without constructors. The port leaves C to the SAT solver.
+  it("raises once for a datatype whose declaration failed and keeps the reason of its SAT solver", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-datatypes ((C 0)) ((k0)(k1)))",
+        "(declare-const e0 C)",
+        "(declare-const e1 C)",
+        "(assert (= e0 e1))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 32: invalid datatype declaration, too many data-type bodies defined")',
+      "unknown",
+      '(:reason-unknown "no reason given")',
+      "(:rlimit 12)",
+      "unknown",
+      '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun = (C C) Bool)\n)")',
+    ]);
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-datatypes ((C 0)) ((k0)(k1)))",
+        "(declare-const e0 C)",
+        "(declare-const e1 C)",
+        "(declare-const p Bool)",
+        "(assert (= e0 e1))",
+        "(push 1)",
+        "(assert (or p ((_ is k1) e1)))",
+      ]),
+    ).toEqual([
+      '(error "line 2 column 32: invalid datatype declaration, too many data-type bodies defined")',
+      '(error "line 7 column 7: datatype constructors have not been created")',
+      '(error "line 8 column 27: invalid datatype recognizer, unknown constructor k1")',
+    ]);
+  });
+
   it("answers check-sat of QF_FD with the finite-domain solver and the reason of its SAT solver", () => {
     expect(
       [1, 64, 193, 262, 280].map((rlimit) =>

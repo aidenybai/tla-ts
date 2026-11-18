@@ -714,7 +714,7 @@ export const runSmtlibScript = (
         isFromTactic: !isKernelChecking,
         reasonUnknown:
           error instanceof SmtDefaultError
-            ? error.message
+            ? ((isKernelChecking ? undefined : reasonUnknown) ?? error.message)
             : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown }, deadline),
       });
       print("unknown");

@@ -18,7 +18,6 @@ import { mkBvApp } from "./bv-decl-plugin";
 import {
   getConstructorIndex,
   getDatatypeConstructors,
-  getDatatypeDef,
   getNumConstructors,
   getRecognizerConstructor,
 } from "./datatype-decl-plugin";
@@ -28,12 +27,17 @@ import { ObjMap } from "./hashtable";
 import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 
-const isEnumSort = (manager: AstManager, sort: number) =>
-  manager.isDatatypeSort(sort) &&
-  (getDatatypeDef(manager, sort)?.constructors.every(
-    (constructor) => constructor.accessors.length === 0,
-  ) ??
-    false);
+// is_enum_sort reads the constructors, so a datatype whose declaration failed raises once.
+// Deviation from Z3: Z3 then counts it as an enumeration without constructors and crashes when it
+// encodes one, where the port leaves it to the solver.
+const isEnumSort = (manager: AstManager, sort: number) => {
+  if (!manager.isDatatypeSort(sort)) return false;
+  const constructors = getDatatypeConstructors(manager, sort);
+  return (
+    constructors.length > 0 &&
+    constructors.every((constructor) => manager.funcDecls[constructor].domain.length === 0)
+  );
+};
 
 const getEnumBvSize = (manager: AstManager, sort: number) => {
   const numConstructors = getNumConstructors(manager, sort);
