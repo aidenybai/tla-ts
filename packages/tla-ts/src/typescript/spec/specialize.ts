@@ -430,20 +430,21 @@ const getDispatch = (
 };
 
 // The name that a function is reached by, other than as a value where it's written: a declaration's
-// or method's, or that of the property or variable a function expression initializes.
+// or method's, or that of the property or variable a function expression initializes. An accessor
+// runs wherever its property is read or written, by keys that ESCore may compute, as an array's
+// operators compute indices, so it has none, nor has a function under an index.
 const getFunctionKey = (node: ts.Node) => {
   const named =
-    ts.isFunctionDeclaration(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node)
+    ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)
       ? node.name
       : (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
           (ts.isPropertyAssignment(node.parent) || ts.isVariableDeclaration(node.parent)) &&
           node.parent.initializer === node
         ? node.parent.name
         : undefined;
-  return named !== undefined && (ts.isIdentifier(named) || ts.isStringLiteral(named))
+  return named !== undefined &&
+    (ts.isIdentifier(named) || ts.isStringLiteral(named)) &&
+    !/^\d/.test(named.text)
     ? named.text
     : undefined;
 };

@@ -456,6 +456,16 @@ describe("compiles scripts by specializing ESCore", () => {
       ).toBeUndefined();
     });
 
+    it("runs an accessor that an index the runtime computes reaches", async () => {
+      const getSource = (expected: string) => `
+        const arrayLike = { get "1"() { return "got"; }, length: 2 };
+        const result = Array.prototype.join.call(arrayLike);
+        if (result !== "${expected}") throw new Error(result);
+      `;
+      expect((await checkScript(getSource(",got"))).message).toBeUndefined();
+      expect((await checkScript(getSource(",got!"))).message).toContain(THREW);
+    });
+
     it("stops where the script reaches it by a name it makes", async () => {
       expect(
         (await checkScript('function unused() { return 1; } (globalThis as any)["un" + "used"]();'))
