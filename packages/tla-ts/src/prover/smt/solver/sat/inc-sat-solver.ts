@@ -110,18 +110,22 @@ export class IncSatSolver {
     this.assertExpr(manager.mkApp(OP_IMPLIES, [name, expr], SORT_BOOL));
   }
 
+  // inc_sat_solver::push pushes its scope also when internalizing the formulas throws.
   push() {
-    this.internalizeFormulas();
-    this.goal2sat.push();
-    this.solver.userPush();
-    this.bitBlaster?.push();
-    this.scopes.push({
-      converters: this.converters.converters,
-      fmlsSize: this.fmls.size,
-      fmlsHead: this.fmlsHead,
-      namesSize: this.names.size,
-      hasUninterpreted: this.hasUninterpreted,
-    });
+    try {
+      this.internalizeFormulas();
+    } finally {
+      this.goal2sat.push();
+      this.solver.userPush();
+      this.bitBlaster?.push();
+      this.scopes.push({
+        converters: this.converters.converters,
+        fmlsSize: this.fmls.size,
+        fmlsHead: this.fmlsHead,
+        namesSize: this.names.size,
+        hasUninterpreted: this.hasUninterpreted,
+      });
+    }
   }
 
   pop(numScopes: number) {

@@ -14,6 +14,8 @@ export class SmtKernel {
   isSetUp = false;
   private setup: SmtSetup | undefined;
   private isCoreMinimizing: boolean;
+  // solver_na2as::m_scopes: a push that fails leaves no scope for a pop.
+  private scopeCount = 0;
 
   constructor(manager: AstManager, params: KernelParams) {
     this.asserted = new AssertedFormulas(manager, params.isFindingMacros);
@@ -71,6 +73,7 @@ export class SmtKernel {
     limit.isSuspended = wasSuspended;
     context.push();
     this.asserted.push();
+    this.scopeCount++;
   }
 
   getAssertions() {
@@ -78,8 +81,11 @@ export class SmtKernel {
   }
 
   pop(numScopes: number) {
-    this.context.pop(numScopes);
-    for (let index = 0; index < numScopes; index++) this.asserted.pop();
+    const count = Math.min(numScopes, this.scopeCount);
+    if (count === 0) return;
+    this.context.pop(count);
+    for (let index = 0; index < count; index++) this.asserted.pop();
+    this.scopeCount -= count;
   }
 
   initAssumptions(assumptions: number[]) {

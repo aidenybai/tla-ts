@@ -1319,8 +1319,17 @@ export const runSmtlibScript = (
           });
           state.reader.push();
           state.isIncremental = true;
-          state.kernel?.push();
-          useSatSolver((solver) => solver.push());
+          const limit = state.manager.limit;
+          limit.push(settings.rlimit);
+          try {
+            state.kernel?.push();
+            useSatSolver((solver) => solver.push());
+          } catch (error) {
+            if (!(error instanceof SmtCanceledError)) throw error;
+            throw new SmtParseError(limit.getCancelMessage(), list.end);
+          } finally {
+            limit.pop();
+          }
         }
         if (list.items[2] !== undefined)
           throw new SmtParseError("invalid push command, ')' expected", list.items[2]);

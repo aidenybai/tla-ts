@@ -819,6 +819,52 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "canceled")', "sat", "3", "sat"]);
   });
 
+  it("bounds push by the rlimit and keeps the scopes that a canceled push leaves", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> x 0))",
+        "(assert (or (< y x) (> (+ x y) 7)))",
+        "(set-option :rlimit 2)",
+        "(push)",
+        "(set-option :rlimit 0)",
+        "(assert (< x 0))",
+        "(check-sat)",
+        "(pop)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(error "line 6 column 5: push canceled")',
+      "unsat",
+      "unsat",
+      '(:reason-unknown "canceled")',
+    ]);
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult a b))",
+        "(assert (= (bvadd a #x1) b))",
+        "(set-option :rlimit 60)",
+        "(push)",
+        "(set-option :rlimit 0)",
+        "(assert (= a b))",
+        "(check-sat)",
+        "(pop)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(error "line 7 column 5: max. resource limit exceeded")',
+      "unsat",
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+
   it("reports the limit that stops a push of ctx-solver-simplify as its reason", () => {
     expect(
       run([
