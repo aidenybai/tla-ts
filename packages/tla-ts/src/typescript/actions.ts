@@ -14552,6 +14552,14 @@ const isThrowingCall = (node: ts.CallExpression, path: Path, context: Context) =
   return callee !== undefined && mayThrow(callee, context);
 };
 
+// The operand whose value a comma, or commas in turn, give, which the operands before it ran first.
+const getCommaValue = (node: ts.Expression): ts.Expression => {
+  const inner = skipCasts(node);
+  return ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.CommaToken
+    ? getCommaValue(inner.right)
+    : node;
+};
+
 // The expression that parentheses and casts wrap.
 export const getCast = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) || ts.isAsExpression(node) ? getCast(node.expression) : node;
@@ -18758,7 +18766,7 @@ const translateIterations = (
     !isLive &&
     !isListChanged &&
     !isObjectChanged &&
-    isIteratedChanged(iterated.expression)
+    isIteratedChanged(getCommaValue(iterated.expression))
   ) {
     throw new TlaTypeScriptError(
       "Don't change an array while a for-of iterates it",
@@ -20413,8 +20421,18 @@ const findLeadingCall = (
   }
   // An operand that runs a call that only statements can run, an increment, an assignment to a
   // name of a value that runs nothing, a yield, or a branch of these, which it may evaluate first.
-  const isBranchRun = (operand: ts.Expression) => {
+  const isBranchRun = (operand: ts.Expression): boolean => {
     const run = skipCasts(operand);
+    // A comma runs its operands in turn, each of which runs as an operand of its own.
+    if (ts.isBinaryExpression(run) && run.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      const isLeftRun = isBranchRun(run.left);
+      const isRightRun = isBranchRun(run.right);
+      return (
+        (isLeftRun || isRightRun) &&
+        (isLeftRun || isPlainOperand(run.left)) &&
+        (isRightRun || isPlainOperand(run.right))
+      );
+    }
     const found = findLeadingCall(run, [], path, context);
     return (
       found.call !== undefined ||
@@ -20797,6 +20815,9 @@ const runBranch = (
   // An operand runs the calls in it that only statements can run, in order, before the rest.
   const evaluate = (operand: ts.Expression, next: Path, withOperand = withValue): Formula => {
     const run = skipCasts(operand);
+    if (ts.isBinaryExpression(run) && run.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      return evaluate(run.left, next, (after) => evaluate(run.right, after, withOperand));
+    }
     const inner = findLeadingCall(run, [], next, context).branch;
     if (inner !== undefined && inner === run)
       return runBranch(inner, next, context, frame, withOperand);

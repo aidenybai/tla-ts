@@ -48519,6 +48519,7 @@ describe("BigInts", () => {
       "typed.ts",
       "for-in-key.cjs",
       "chained-prototype.cjs",
+      "for-in-comma.cjs",
     ])("agrees with Node on %s", async (name) => {
       const fixture = getFixture(name);
       expect((await check(compile(fixture.source, fixture.path))).failure).toBeUndefined();
@@ -48531,6 +48532,7 @@ describe("BigInts", () => {
       ["typed.ts", "4,sides", "3,sides"],
       ["for-in-key.cjs", "a=1+b=2;children", "a=1+b=3;children"],
       ["chained-prototype.cjs", "3,true,true,true", "3,false,true,true"],
+      ["for-in-comma.cjs", "a+b,__self+c,2,true,warn", "a+b,__self+c,2,false,warn"],
     ])("rejects another outcome of %s", async (name, expected, wrong) => {
       const fixture = getFixture(name);
       const result = await check(compile(fixture.source.replace(expected, wrong), fixture.path));
@@ -53730,6 +53732,75 @@ describe("BigInts", () => {
       const source = getSource("1,2,6,x,-1,-1,true").replace('find("abc", "c")', "find(7, 7)");
       expect((await checkModel(source)).failure?.message).toContain(
         "tla-ts can't tell which function this call runs",
+      );
+    });
+  });
+
+  describe("reads a property of a value that a constructor's type types through the heap", () => {
+    const getSource = (expected: string) => `
+      const proto = { label: "Effectable" };
+      const Base: new () => { label: string } = (() => {
+        const Base = function () {};
+        Base.prototype = proto;
+        return Base as any;
+      })();
+      const seen = [Base.prototype === proto, typeof Base.name].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,string"))).failure).toBeUndefined();
+    });
+
+    it("rejects another prototype", async () => {
+      expect((await checkModel(getSource("false,string"))).failure?.message).toContain(
+        "seen true,string",
+      );
+    });
+  });
+
+  describe("runs no function that a call runs where the script writes it for a value's call", () => {
+    const getSource = (expected: string) => `
+      const proto = { label: "Effectable" };
+      const Base: new () => { label: string } = (() => {
+        const Base = function () {};
+        Base.prototype = proto;
+        return Base as any;
+      })();
+      const run = (make: () => number) => make() + 1;
+      const seen = [run(() => 1), Base.prototype === proto].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("3,true"))).failure?.message).toContain("seen 2,true");
+    });
+  });
+
+  describe("runs a comma that a branch runs only sometimes, operand by operand", () => {
+    const getSource = (expected: string) => `
+      let proxy = false;
+      const pick = (s: number) => (s > 1 ? ((proxy = true), s * 2) : s);
+      const a = pick(1);
+      const before = proxy;
+      const b = pick(2);
+      const seen = [a, before, b, proxy].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,false,4,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("1,true,4,true"))).failure?.message).toContain(
+        "seen 1,false,4,true",
       );
     });
   });
