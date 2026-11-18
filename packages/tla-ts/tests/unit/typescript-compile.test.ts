@@ -55332,4 +55332,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("leaves out the DisposableStacks that a returned function made, which nothing reaches", () => {
+    const getSource = (expected: string) => `
+      const seen: number[] = [];
+      function make1() { const stack = new DisposableStack(); stack.use(1 as unknown as Disposable); }
+      function make2() { const stack = new DisposableStack(); stack.use(2 as unknown as Disposable); }
+      function make3() { const stack = new DisposableStack(); stack.use(3 as unknown as Disposable); }
+      function make4() { const stack = new DisposableStack(); stack.use(4 as unknown as Disposable); }
+      function make5() { const stack = new DisposableStack(); stack.use(5 as unknown as Disposable); }
+      function make6() { const stack = new DisposableStack(); stack.use(6 as unknown as Disposable); }
+      try { make1(); } catch (error) { seen.push(error instanceof TypeError ? 1 : -1); }
+      try { make2(); } catch (error) { seen.push(error instanceof TypeError ? 2 : -1); }
+      try { make3(); } catch (error) { seen.push(error instanceof TypeError ? 3 : -1); }
+      try { make4(); } catch (error) { seen.push(error instanceof TypeError ? 4 : -1); }
+      try { make5(); } catch (error) { seen.push(error instanceof TypeError ? 5 : -1); }
+      try { make6(); } catch (error) { seen.push(error instanceof TypeError ? 6 : -1); }
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,2,3,4,5,6"))).failure).toBeUndefined();
+    });
+
+    it("rejects a call that doesn't throw", async () => {
+      expect((await checkModel(getSource("1,2,3,4,5"))).failure?.message).toContain(
+        "seen 1,2,3,4,5,6",
+      );
+    });
+  });
 });

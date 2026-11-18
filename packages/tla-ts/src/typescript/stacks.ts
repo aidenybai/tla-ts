@@ -8,7 +8,15 @@ import {
   throwError,
   throwTypeError,
 } from "./actions";
-import { type Context, findNodes, getStackKind, getUndefined, skipCasts } from "./context";
+import {
+  type Context,
+  findNodes,
+  findReferences,
+  getStackKind,
+  getSymbol,
+  getUndefined,
+  skipCasts,
+} from "./context";
 import { disposeAll, readResource, type Resource } from "./disposal";
 import { TlaTypeScriptError } from "../errors";
 import { translateExpression } from "./expressions";
@@ -16,7 +24,7 @@ import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap, getPrototypeMethod } from "./heap";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { useJavaScript } from "./javascript";
-import { translateAsyncBuiltIn } from "./promises";
+import { keepTasks, translateAsyncBuiltIn } from "./promises";
 import { getFunctionCandidates, getWrittenFunctions, isNullish } from "./protocols";
 import { apply, boolean, identifier, string } from "./tla";
 
@@ -28,6 +36,8 @@ export interface TrackedStack {
   isDisposed: boolean;
   // Whether it's an AsyncDisposableStack, which awaits what it disposes.
   isAsync: boolean;
+  // The code that made it.
+  site: ts.Node;
 }
 
 const STACK_METHODS = new Set(["use", "adopt", "defer", "move", "dispose", "disposeAsync"]);
@@ -118,6 +128,57 @@ export const getStackFunctions = (node: ts.Node, context: Context) => [
   }),
 ];
 
+// Whether a function made a stack in a local that only its own code reads, each read the receiver
+// of use, adopt, or defer, of dispose for a stack that disposes as it's called, or of disposed, so
+// that nothing reaches the stack once the function returns or throws.
+const isLocalStack = (stack: TrackedStack, callee: ts.Node, context: Context) => {
+  const declaration = ts.isVariableDeclaration(stack.site.parent) ? stack.site.parent : undefined;
+  const symbol =
+    declaration !== undefined &&
+    ts.isNewExpression(stack.site) &&
+    declaration.initializer === stack.site &&
+    ts.isIdentifier(declaration.name) &&
+    ts.findAncestor(declaration, ts.isFunctionLike) === callee
+      ? getSymbol(declaration.name, context.checker)
+      : undefined;
+  const methods = stack.isAsync ? ["use", "adopt", "defer"] : ["use", "adopt", "defer", "dispose"];
+  return (
+    symbol !== undefined &&
+    findReferences(symbol, callee.getSourceFile(), context).every((reference) => {
+      const parent = reference.parent;
+      return (
+        reference === declaration?.name ||
+        (ts.findAncestor(parent, ts.isFunctionLike) === callee &&
+          ts.isPropertyAccessExpression(parent) &&
+          parent.expression === reference &&
+          (parent.name.text === "disposed" ||
+            (methods.includes(parent.name.text) &&
+              ts.isCallExpression(parent.parent) &&
+              parent.parent.expression === parent)))
+      );
+    })
+  );
+};
+
+// A path after a call of a function, without the stacks that the function made and that nothing
+// reaches once it returns or throws, so that paths that differ only in those can join.
+export const dropLocalStacks = (current: Path, before: Path, callee: ts.Node, context: Context) => {
+  const tasks = current.tasks;
+  const earlier = before.tasks;
+  if (tasks === undefined || earlier === undefined || tasks.stacks === earlier.stacks)
+    return current;
+  const kept = [...tasks.stacks].filter(
+    (entry) => earlier.stacks.has(entry[0]) || !isLocalStack(entry[1], callee, context),
+  );
+  const isSame =
+    kept.length === earlier.stacks.size &&
+    kept.every((entry) => earlier.stacks.get(entry[0]) === entry[1]);
+  return {
+    ...current,
+    tasks: keepTasks({ ...tasks, stacks: isSame ? earlier.stacks : new Map(kept) }, earlier),
+  };
+};
+
 const getStacks = (path: Path, node: ts.Node) => {
   if (path.tasks === undefined) {
     throw new TlaTypeScriptError("tla-ts can't follow a DisposableStack in a loop", node);
@@ -175,6 +236,7 @@ const makeStack = (
         resources,
         isDisposed: false,
         isAsync,
+        site: node,
       }),
       ref,
     ),
