@@ -10,18 +10,16 @@ import {
   putConstraint,
   TEMPORAL_LEVEL,
   type InstanceLevels,
-  type InstanceSubstitutes,
   type OperatorLevels,
   type Scope,
 } from "./levels";
 
-export interface InstanceCheck {
+interface InstanceCheck {
   module: string;
   instancer: string;
   lets: Definition[];
   substitutions: Map<string, Expression>;
   location: SourceLocation;
-  substitutes?: InstanceSubstitutes;
 }
 
 export interface KeyedDeclaration extends Declaration {

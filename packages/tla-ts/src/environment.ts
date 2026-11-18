@@ -94,14 +94,11 @@ import {
   checkModuleLevels,
   createLevelAnalyzer,
   type InstanceCopy,
+  type InstanceLevelCheck,
   type InstanceSubstitutes,
   type LetInstance,
 } from "./levels";
-import {
-  createInstanceChecker,
-  type InstanceCheck,
-  type KeyedDeclaration,
-} from "./substitution-levels";
+import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
 import { createDefinitionFacts } from "./dependencies";
 import { createTlcOrder, type TlcOrder } from "./tlc/order";
@@ -322,7 +319,7 @@ export const createEnvironment = (
     });
   let copyCount = 0;
   const createName = (name: string) => `${name}#${copyCount++}`;
-  const instanceChecks: InstanceCheck[] = [];
+  const instanceChecks: InstanceLevelCheck[] = [];
   const warnings: SanyError[] = [];
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
@@ -622,11 +619,15 @@ export const createEnvironment = (
       ),
     };
     instanceChecks.push({
-      module: instance.module,
-      instancer: module.name,
-      lets: [],
-      substitutions,
       location: instance.location,
+      check: () =>
+        instanceLevels.checkInstance({
+          module: instance.module,
+          instancer: module.name,
+          lets: [],
+          substitutions,
+          location: instance.location,
+        }),
       substitutes,
     });
     const frame = declarations.length > 0 ? getSubstitutionFrame(instance) : undefined;
@@ -1231,11 +1232,6 @@ export const createEnvironment = (
       ]),
     };
     if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
-    const checks = instanceChecks.splice(firstCheck).map((check) => ({
-      location: check.location,
-      check: () => instanceLevels.checkInstance(check),
-      substitutes: check.substitutes,
-    }));
     scope.levelChecks.push(
       checkModuleLevels(
         module,
@@ -1246,7 +1242,7 @@ export const createEnvironment = (
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
         },
-        checks,
+        instanceChecks.splice(firstCheck),
         warnings,
       ),
     );

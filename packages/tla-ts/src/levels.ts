@@ -75,7 +75,13 @@ interface LevelContext {
   variables: Set<string>;
   getDefinition: (name: string) => Definition | undefined;
   getQualifiedName?: (name: string) => string | undefined;
-  instances?: InstanceLevels;
+  instances: InstanceLevels;
+}
+
+export interface InstanceLevelCheck {
+  location: SourceLocation;
+  check: () => SanyError[];
+  substitutes: InstanceSubstitutes;
 }
 
 type ScopeEntry =
@@ -867,7 +873,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const analyzeLet = (expression: LetExpression, scope: Scope) => {
     const instances = expression.instances?.flatMap(
-      (instance) => context.instances?.getLetInstance(instance) ?? [],
+      (instance) => context.instances.getLetInstance(instance) ?? [],
     );
     instances?.forEach((instance) =>
       expression.definitions.forEach((definition) => {
@@ -1241,12 +1247,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return operands;
   };
 
-  const analyzeInstanced = (
-    definition: Definition,
-    copy: InstanceCopy,
-    instanced: InstancedDefinition,
-    scope: Scope,
-  ) => {
+  const analyzeInstanced = (definition: Definition, copy: InstanceCopy, scope: Scope) => {
+    const instanced = context.instances.getInstanced(copy);
     const source = instanced.source;
     const formals = getFormals(definition);
     const prefix = formals.length - source.formals.length;
@@ -1362,12 +1364,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     if (cached && !staleDefinitions.delete(definition)) return cached;
     const prior = cached ?? createPlaceholder(definition, TEMPORAL_LEVEL, 0);
     definitionLevels.set(definition, prior);
-    const copy = letCopies.get(definition) ?? context.instances?.getCopy(definition);
-    const instanced = copy && context.instances?.getInstanced(copy);
-    const levels =
-      copy && instanced
-        ? analyzeInstanced(definition, copy, instanced, scope)
-        : analyzeOperator(
+    const copy = letCopies.get(definition) ?? context.instances.getCopy(definition);
+    const levels = copy
+      ? analyzeInstanced(definition, copy, scope)
+      : analyzeOperator(
             definition.name,
             getFormals(definition),
             getDefinitionBody(definition),
@@ -1485,11 +1485,7 @@ export const analyzeAssumeProve = (
 export const checkModuleLevels = (
   module: Module,
   context: LevelContext,
-  instances: {
-    location: SourceLocation;
-    check: () => SanyError[];
-    substitutes?: InstanceSubstitutes;
-  }[],
+  instances: InstanceLevelCheck[],
   warnings: SanyError[],
 ) => {
   const analyzer = createLevelAnalyzer(context);
@@ -1629,16 +1625,11 @@ export const checkModuleLevels = (
                 analyzer.analyzeDefinition(definition, new Map()),
               ),
             ),
-          ...instances.flatMap((instance) => {
-            const substitutes = instance.substitutes;
-            return substitutes
-              ? [
-                  createCheck(instance.location, () =>
-                    analyzer.getSubstitutes(substitutes, new Map()),
-                  ),
-                ]
-              : [];
-          }),
+          ...instances.map((instance) =>
+            createCheck(instance.location, () =>
+              analyzer.getSubstitutes(instance.substitutes, new Map()),
+            ),
+          ),
         ],
         statements
           .filter((statement) => statement.name !== undefined)
