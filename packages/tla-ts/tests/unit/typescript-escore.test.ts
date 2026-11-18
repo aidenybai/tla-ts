@@ -296,4 +296,19 @@ describe("compiles scripts by specializing ESCore", () => {
       ).toContain("tla-ts can't");
     });
   });
+
+  describe("keeps the built-ins of a global that a table of names links", () => {
+    const getSource = (expected: string) => `
+      const result = [...new Float32Array([3, 1.5])].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("3,1.5"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("3,1"))).message).toContain(THREW);
+    });
+  });
 });

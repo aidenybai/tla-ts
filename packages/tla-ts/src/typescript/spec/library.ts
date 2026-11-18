@@ -147,6 +147,11 @@ export const createLibrary = (directory: string): Library => {
     for (const match of text.matchAll(/GlobalLink\("[A-Za-z0-9_]+", N\("([^"]+)"\)\)/g)) {
       triggers.get(getGroup(part))?.add(match[1]);
     }
+    // The globals that a table of names links, such as TypedArrayNames.
+    for (const table of text.matchAll(/^[A-Z][A-Za-z0-9]*Names ==\n?((?:.*\n)*?)(?=^\S)/gm)) {
+      for (const match of table[1].matchAll(/"([A-Z][A-Za-z0-9]*)"/g))
+        triggers.get(getGroup(part))?.add(match[1]);
+    }
     for (const match of text.matchAll(
       /\b(?:M|G)\("([A-Za-z0-9_]+)", (?:SV\("([^"]+)"\)|Sym[A-Za-z]+), "([A-Za-z0-9]+)", "([A-Za-z0-9_]*)"(?:, "([A-Za-z0-9_]*)")?/g,
     )) {
