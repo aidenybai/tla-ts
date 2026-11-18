@@ -846,15 +846,23 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
           return { ...body, facts: resolveFacts(body.facts), defs: resolveDefs(body.defs) };
         case "Instance":
           return resolveInstance(body, lookup, isProofGoal);
-        case "Define":
+        case "Define": {
+          const defined: Definition[] = [];
+          const local = createProofResolver(
+            (name) => defined.find((definition) => definition.name === name) ?? lookup(name),
+          );
           return {
             ...body,
-            definitions: body.definitions.map((definition) =>
-              definition.kind === "Instance"
-                ? resolveInstance(definition, lookup, isProofGoal)
-                : resolveDefinition(definition, resolveInProof),
-            ),
+            definitions: body.definitions.map((definition) => {
+              if (definition.kind === "Instance") {
+                return resolveInstance(definition, local.lookup, local.isProofGoal);
+              }
+              const resolved = resolveDefinition(definition, local.resolveInProof);
+              defined.push(resolved);
+              return resolved;
+            }),
           };
+        }
         case "Have":
         case "Case":
           return { ...body, expression: resolveInProof(body.expression) };
@@ -897,7 +905,16 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
         }),
       };
     };
-    return { lookup, resolveFacts, resolveDefs, resolveStatement, resolveStep, resolveProof };
+    return {
+      lookup,
+      isProofGoal,
+      resolveInProof,
+      resolveFacts,
+      resolveDefs,
+      resolveStatement,
+      resolveStep,
+      resolveProof,
+    };
   };
   const hasReferences =
     module.definitions.some((definition) => containsReference(definition.body)) ||

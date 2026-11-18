@@ -3873,6 +3873,23 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("selects from a definition that an earlier definition of the same DEFINE step makes, like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z == 1 + 2\n             W == Z!1 + 1\n             V == Z!3\n<1>2. W!1!3 = 2\n<1>3. QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        ["line 6, col 21 to line 6, col 21", "line 7, col 11 to line 7, col 11"].map(
+          (location) => ({
+            location: `${location} of module M`,
+            message: "Nonexistent operand specified by `argument selector 3'.",
+          }),
+        ),
+      ),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),
