@@ -415,6 +415,23 @@ const selectSubexpression = (
       current = current.body;
       return;
     }
+    if (current.kind === "Lambda" && selector.kind !== "Bound" && selector.kind !== "At") {
+      // Deviation from SANY: SANY names a numbered selector here by its syntax node, N_StructOp; tla-ts names it by its number, as the CLI does.
+      const name = selector.kind === "Operand" ? selector.operand : getSelectorName(selector);
+      report(range, `Cannot use !${name} to select subexpression of a LAMBDA.`);
+      return;
+    }
+    if (
+      current.kind === "Lambda" &&
+      selector.kind === "Bound" &&
+      selector.args.length !== current.params.length
+    ) {
+      report(
+        range,
+        `Selector with ${selector.args.length} arguments used for LAMBDA expression taking ${current.params.length} arguments.`,
+      );
+      return;
+    }
     const binder = getBinder(current);
     if (binder && (selector.kind === "Bound" || selector.kind === "At")) {
       if (selector.kind === "Bound" && selector.args.length !== binder.names.length) {

@@ -593,6 +593,19 @@ describe("subexpression references into theorems match SANY", () => {
       ],
     ],
     [
+      "selectors into a LAMBDA, naming a numbered selector by its number where SANY names its syntax node",
+      "F(G(_)) == G(0)\nOp == F(LAMBDA z : z = 1)\nC == Op!1!1\nD == Op!1!(1, 2)\nE == Op!1!<<\nH == Op!1!(1) /\\ Op!1!@",
+      [
+        ["line 5, col 11 to line 5, col 11", "Cannot use !1 to select subexpression of a LAMBDA."],
+        [
+          "line 6, col 11 to line 6, col 16",
+          "Selector with 2 arguments used for LAMBDA expression taking 1 arguments.",
+        ],
+        ["line 7, col 11 to line 7, col 12", "Cannot use !<< to select subexpression of a LAMBDA."],
+        ["line 8, col 18 to line 8, col 23", "Expected 1 arguments but found 0."],
+      ],
+    ],
+    [
       "@ and !(...) selectors of steps and theorems",
       "THEOREM T == ASSUME NEW n PROVE n = n\nTHEOREM U == \\A y \\in {1} : y = 1\nTHEOREM TRUE\n<1>1. SUFFICES TRUE\n<1>2. TRUE # 0\n  <2>1. <1>1!@ /\\ <1>2!@ /\\ <1>2!(1) /\\ T!@ /\\ T!2!@ /\\ U!@ /\\ U!(1)\n  <2>2. QED\n<1>3. QED",
       [
