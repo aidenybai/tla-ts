@@ -2134,17 +2134,18 @@ export const runSmtlibScript = (
           value !== undefined &&
           value.kind !== "list";
         if (isParameter) {
-          // Z3 checks a numeral as the string of its rational, so 1.5 becomes 3/2.
-          checkParameterValue(
-            getParameterName(keyword),
+          // Z3 sets a numeral as the string of its rational, so 2.0 becomes 2 and 1.5 becomes 3/2.
+          const text =
             value.kind === "decimal"
               ? Rational.fromDecimal(value.text).toString()
               : value.kind === "numeral" || value.kind === "bitvector"
                 ? BigInt(value.text.replace("#", "0")).toString()
-                : value.text,
-            value,
-          );
-          settings.parameters.set(getParameterName(keyword), value.text);
+                : value.text;
+          checkParameterValue(getParameterName(keyword), text, value);
+          // A fraction keeps its decimal, which is how Z3 prints a double.
+          settings.parameters.set(getParameterName(keyword), text.includes("/") ? value.text : text);
+          if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
+          if (optionName === ":rlimit") settings.rlimit = Number(text);
           // Z3 reads the parameters model and unsat_core again whenever any parameter is set.
           const model = settings.parameters.get("model");
           if (model !== undefined) settings.isProducingModels = model === "true";
@@ -2159,10 +2160,6 @@ export const runSmtlibScript = (
           settings.isPrintingSuccess = true;
         if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
         if (optionName === ":smt.macro_finder") settings.isFindingMacros = isTrue;
-        if (optionName === ":smt.mbqi.max_iterations" && value?.kind === "numeral")
-          settings.mbqiMaxIterations = Number(value.text);
-        if (optionName === ":rlimit" && value?.kind === "numeral")
-          settings.rlimit = Number(value.text);
         const kernel = state.kernel;
         if (isParameter && kernel !== undefined)
           kernel.updateParams(getKernelParams(kernel.isSetUp));
@@ -2187,7 +2184,7 @@ export const runSmtlibScript = (
             numericOption === undefined &&
             booleanOption === undefined) ||
           (optionName.startsWith(":lp.") &&
-            (optionName !== ":lp.int_hammer_period" || value?.kind !== "numeral"))
+            (optionName !== ":lp.int_hammer_period" || !isParameter))
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
       },

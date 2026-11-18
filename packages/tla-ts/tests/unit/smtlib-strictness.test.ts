@@ -827,6 +827,37 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       "sat",
     ]);
   });
+
+  // set_option_cmd passes a numeral to gparams as the string of its rational, so a whole decimal
+  // sets an unsigned parameter.
+  it("sets a whole decimal as an integer", () => {
+    expect(
+      run([
+        "(set-option :rlimit 30.0)",
+        "(get-option :rlimit)",
+        "(set-option :smt.mbqi.max_iterations 3.0)",
+        "(get-option :smt.mbqi.max_iterations)",
+        "(set-option :sat.restart.factor 1.5)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 2.0)",
+        "(get-option :sat.restart.factor)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> (+ x y) 2))",
+        "(assert (< (- x y) 7))",
+        "(assert (or (> x 10) (< y -3)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "30",
+      "3",
+      "1.5",
+      "2",
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
 });
 
 describe("the terms the reader makes and frees, in Z3's order", () => {
