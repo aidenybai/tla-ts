@@ -14,6 +14,9 @@ import { check } from "../src/parallel";
 import { STRING_METHODS } from "../src/typescript/collections";
 import { getIndexedKind, INDEX_PARAMETERS, SET_LIKE_METHODS } from "../src/typescript/types";
 import { compile } from "../src/typescript/compile";
+import { printModule } from "../src/printer";
+import { compileToEscore } from "../src/typescript/spec/compile";
+import { createLibrary } from "../src/typescript/spec/library";
 import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
 
 type Outcome = "pass" | "wrong" | "untranslatable" | "skipped";
@@ -4198,6 +4201,13 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
   return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
 
+// TLA_TS_ESCORE=1 compiles with the backend that specializes ESCore instead, and TLA_TS_STATS=1
+// prints each check's compile and check time and its module's size.
+const ESCORE =
+  process.env.TLA_TS_ESCORE === undefined
+    ? undefined
+    : createLibrary(join(import.meta.dirname, "../ecmascript"));
+
 // Compiles a program and checks it, where a TypeScript error gives the run that onTypeError makes.
 const checkProgram = async (
   id: string,
@@ -4206,7 +4216,18 @@ const checkProgram = async (
   onTypeError: (reason: string) => TestRun | Promise<TestRun>,
 ): Promise<TestRun> => {
   try {
-    const result = await check({ ...compile(program, path), onPrint: () => {} });
+    const start = performance.now();
+    const spec =
+      ESCORE === undefined ? compile(program, path) : compileToEscore(program, path, ESCORE);
+    const compiled = performance.now();
+    const result = await check({ ...spec, onPrint: () => {} });
+    if (process.env.TLA_TS_STATS !== undefined) {
+      const size =
+        typeof spec.source === "string" ? spec.source.length : printModule(spec.source).length;
+      console.log(
+        `STATS ${id} compile=${Math.round(compiled - start)} check=${Math.round(performance.now() - compiled)} size=${size}`,
+      );
+    }
     if (result.status === "success" || result.status === "deadlock") {
       return { id, outcome: "pass", reason: "" };
     }
