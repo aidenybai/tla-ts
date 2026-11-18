@@ -1219,7 +1219,7 @@ export class Context extends Internalizer {
       const theory = this.theories[this.finalCheckIndex];
       const check = theory === undefined ? qmanager.finalCheckEh(true) : theory.finalCheckEh(level);
       if (theory !== undefined) maxLevel = Math.max(maxLevel, theory.numFinalCheckLevels());
-      const isCanceled = theory === this.arith && this.checkCanceled();
+      const isCanceled = theory !== undefined && this.checkCanceled();
       if (isCanceled) failure = FAILURE_CANCELED;
       else if (theory !== undefined && check === FC_GIVEUP) {
         failure = FAILURE_THEORY;

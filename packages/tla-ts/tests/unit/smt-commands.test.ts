@@ -1442,6 +1442,22 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["(:rlimit 9)", "(:rlimit 12)"]);
   });
 
+  it("counts a step of the limit after the final check of each theory", () => {
+    expect(
+      run([
+        "(set-logic QF_AUFLIA)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const a (Array Int Int))",
+        "(declare-const x Int)",
+        "(push)",
+        "(assert (= (f x) (select a x)))",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 98)"]);
+  });
+
   it("initializes the manager for get-info :rlimit", () => {
     expect(
       run(['(echo "a")', "(get-info :rlimit)", "(declare-const p Bool)", "(get-info :rlimit)"]),
