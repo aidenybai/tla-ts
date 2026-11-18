@@ -180,6 +180,11 @@ const findCoverageRelation = (coverage: Coverage, kind: CoverageKind, expression
     (relation) => relation.kind === kind && relation.expression === expression,
   )?.node;
 
+// SANY applies the LAMBDA of a selection with parameters where it is referenced, which tla-ts wraps in a LET without a location.
+const getRelationRange = (expression: Expression) =>
+  expression.location.range ??
+  (expression.kind === "Let" ? expression.body.location.range : undefined);
+
 export const addCoverageRelation = (
   coverage: Coverage,
   kind: CoverageKind,
@@ -189,7 +194,7 @@ export const addCoverageRelation = (
 ) => {
   const shared = kind === "next" ? findCoverageRelation(coverage, kind, expression) : undefined;
   if (shared !== undefined) return shared;
-  const node = addNode(coverage, undefined, expression.location.range, -1, false);
+  const node = addNode(coverage, undefined, getRelationRange(expression), -1, false);
   coverage.relations.push({ kind, label, expression, scope, node });
   return node;
 };
@@ -210,9 +215,9 @@ export const getCoverageLabel = (
 ) => {
   const definition = name === undefined ? undefined : environment.definitions.get(name);
   const head = definition?.kind === "Operator" ? definition.head : undefined;
-  const range = expression.location.range;
+  const range = getRelationRange(expression);
   if (!definition || !head) return `Action ${range ? formatRange(range) : "Unknown location"}`;
-  if (isSameRange(definition.body.location.range, range) || !range) {
+  if (isSameRange(getRelationRange(definition.body), range) || !range) {
     return `${definition.name} ${formatRange(head)}`;
   }
   return `${definition.name} ${formatRange(head)} (${range.start.line} ${range.start.column} ${range.end.line} ${range.end.column})`;

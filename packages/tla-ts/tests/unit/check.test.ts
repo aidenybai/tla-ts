@@ -2105,6 +2105,21 @@ ASSUME TLCFP(a) = -887695703
       "line 7, col 19 to line 7, col 24 of module G: 6",
     ]);
   });
+
+  it("locates the relation of a selection with parameters where SANY applies its LAMBDA", async () => {
+    const result = await check({
+      source:
+        "---- MODULE P ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nP == \\A e \\in 0..2 : e # x + 3\nInv == P!(1)\nProp == [](P!(0))\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nPROPERTY Prop",
+      coverage: 1,
+    });
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 4, col 1 to line 4, col 4 of module P",
+      "Next line 5, col 1 to line 5, col 4 of module P",
+      "Inv line 7, col 1 to line 7, col 3 of module P",
+      "Action line 8, col 12 to line 8, col 16 of module P",
+    ]);
+  });
 });
 
 describe("formatValue matches TLC", () => {
