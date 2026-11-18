@@ -17,7 +17,13 @@ import {
   type StepBody,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
-import { getSourceName, mapChildren, mapDefinition } from "./instances";
+import {
+  getSourceName,
+  mapChildren,
+  mapDefinition,
+  substitutionFrames,
+  withSubstitutionFrames,
+} from "./instances";
 import { parenthesizedRanges } from "./parser";
 import { STANDARD_LEVELS } from "./standard-definitions";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -284,6 +290,7 @@ const selectSubexpression = (
   let selectorIndex = 0;
   let operatorIndex = -1;
   let current: Expression | undefined;
+  let enteredBody: Expression | undefined;
   let isFailed = false;
   let generatedArguments = 0;
   const nulls: NullSelection[] = [];
@@ -404,6 +411,7 @@ const selectSubexpression = (
     selection.params.push(...(definition.kind === "Operator" ? definition.params : []));
     selection.args.push(...found.args);
     current = getDefinitionBody(definition, local !== undefined || letDefinitions.has(definition));
+    enteredBody ??= definition.body;
     operatorIndex = selectorIndex;
     selectorIndex++;
     return undefined;
@@ -651,10 +659,14 @@ const selectSubexpression = (
     }
     deferToExpression(location.range, message);
   }
+  // SANY puts the SubstInNode of each instance the selection goes through around the selected expression.
+  const frames = enteredBody === undefined ? undefined : substitutionFrames.get(enteredBody);
+  const getFramed = (expression: Expression) =>
+    frames && current !== enteredBody ? withSubstitutionFrames(expression, frames) : expression;
   const body =
     current.kind === "Lambda"
-      ? { ...current, body: wrapLets(current.body, selection.lets, location) }
-      : wrapLets(current, selection.lets, location);
+      ? { ...current, body: wrapLets(getFramed(current.body), selection.lets, location) }
+      : wrapLets(getFramed(current), selection.lets, location);
   const share = (expression: Expression): Expression => ({
     kind: "Selection",
     expression,

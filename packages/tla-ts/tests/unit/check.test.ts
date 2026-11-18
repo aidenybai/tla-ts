@@ -2438,6 +2438,35 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts the substitutions of an instance a subexpression is selected through, as SANY puts the instance's SubstInNode around the selection", async () => {
+    const lines = formatCoverage(
+      await check({
+        source:
+          "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE z\nOp(a) == /\\ z < a\n         /\\ z' = z + 1\n====\nI == INSTANCE Inner WITH z <- x\nInit == x = 0 /\\ y = 0\nNext == \\/ I!Op(3)!1 /\\ I!Op(3)!2 /\\ y' = y\n        \\/ I!Op(2)!2 /\\ x < 2 /\\ y' = y\n====",
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+      }),
+    );
+    expect(lines?.slice(1)).toEqual([
+      [
+        "line 7, col 13 to line 7, col 17 of module E: 3",
+        "|line 7, col 13 to line 7, col 13 of module E: 4",
+        "|line 7, col 17 to line 7, col 17 of module E: 4",
+        "line 10, col 31 to line 10, col 31 of module E: 7",
+        "line 8, col 13 to line 8, col 22 of module E: 3",
+        "line 12, col 38 to line 12, col 43 of module E: 3",
+      ],
+      [
+        "line 10, col 31 to line 10, col 31 of module E: 4",
+        "line 8, col 13 to line 8, col 22 of module E: 2",
+        "|line 8, col 18 to line 8, col 22 of module E: 4",
+        "line 13, col 25 to line 13, col 29 of module E: 2",
+        "|line 13, col 25 to line 13, col 25 of module E: 4",
+        "line 13, col 34 to line 13, col 39 of module E: 2",
+      ],
+    ]);
+  });
+
   it("names an action by the LET definition it applies and splits the definition's body, as TLC's Tool#getActionsAppl does", async () => {
     const result = await check({
       source:
