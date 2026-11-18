@@ -6,7 +6,7 @@ import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ProtoModel } from "../proto-model";
 import type { SatParams } from "./config";
 import { Goal2Sat } from "./goal2sat";
-import { sat2goal } from "./sat2goal";
+import { Sat2GoalConverter, sat2goal } from "./sat2goal";
 import { Solver } from "./solver";
 
 // With a theory factory, the sat solver runs the euf solver of sat.euf as its extension.
@@ -43,7 +43,9 @@ export const createSatTactic =
       euf?.validateModel(goal.model);
     } else {
       solver.popToBaseLevel();
-      sat2goal(manager, solver, goal2sat.atoms, goal);
+      const converter = new Sat2GoalConverter(manager);
+      sat2goal(manager, solver, goal2sat.atoms, goal, converter);
+      goal.addDefinitions(converter.entries);
       if (unhandledFuns.length > 0) goal.updatePrecision(OVER);
     }
     goal.depth++;

@@ -397,6 +397,9 @@ export const buildCoverage = (
       case "Lambda":
         walk(expression.body, bindNames(expression.params, locals));
         return;
+      case "Selection":
+        walk(expression.expression, locals);
+        return;
       case "Let": {
         const inner = expression.definitions.reduce<Local | undefined>(
           (parent, definition) => ({ name: definition.name, definition, scope: undefined, parent }),

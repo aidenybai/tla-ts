@@ -5,6 +5,7 @@ import {
   type Definition,
   type Expression,
   type Module,
+  type NewSymbol,
   type OperatorParam,
   type Proof,
   type ProofStep,
@@ -48,7 +49,7 @@ interface LevelContext {
 }
 
 type ScopeEntry =
-  | { kind: "Formal"; arity: number }
+  | { kind: "Formal"; arity: number; level: number }
   | { kind: "Let"; definition: Definition; scope: Scope };
 
 export type Scope = Map<string, ScopeEntry>;
@@ -66,6 +67,14 @@ export const CONSTANT_LEVEL = 0;
 export const VARIABLE_LEVEL = 1;
 export const ACTION_LEVEL = 2;
 export const TEMPORAL_LEVEL = 3;
+
+const NEW_SYMBOL_LEVELS = {
+  Constant: CONSTANT_LEVEL,
+  Variable: VARIABLE_LEVEL,
+  State: VARIABLE_LEVEL,
+  Action: ACTION_LEVEL,
+  Temporal: TEMPORAL_LEVEL,
+} satisfies Record<NewSymbol["level"], number>;
 
 const SEPARATOR = "\u0000";
 
@@ -208,7 +217,7 @@ const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
         ...scope,
         ...formals.map((formal): [string, ScopeEntry] => [
           formal.name,
-          { kind: "Formal", arity: formal.arity },
+          { kind: "Formal", arity: formal.arity, level: CONSTANT_LEVEL },
         ]),
       ]);
 
@@ -228,11 +237,12 @@ const isOperatorApplication = (expression: Expression) =>
 
 export const createLevelAnalyzer = (context: LevelContext) => {
   const definitionLevels = new Map<Definition, OperatorLevels>();
+  const selectionLevels = new Map<Expression, LevelData>();
 
   const resolve = (name: string, scope: Scope): Resolved => {
     const entry = scope.get(name);
     if (entry?.kind === "Formal") {
-      return { kind: "Declared", name, level: 0, arity: entry.arity };
+      return { kind: "Declared", name, level: entry.level, arity: entry.arity };
     }
     if (entry?.kind === "Let") {
       return { kind: "Defined", levels: analyzeDefinition(entry.definition, entry.scope) };
@@ -739,6 +749,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
       case "Label":
         return analyze(expression.body, scope);
+      case "Selection": {
+        const selected = expression.expression;
+        const known = selectionLevels.get(selected);
+        if (known) return known;
+        const data = analyze(selected, scope);
+        selectionLevels.set(selected, data);
+        return data;
+      }
       case "Subexpression":
         return createData();
     }
@@ -772,6 +790,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         return names;
       case "Lambda":
       case "Let":
+      case "Selection":
         return names;
       case "Prime":
       case "Unchanged":
@@ -808,7 +827,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const inner = bindFormals(scope, formals);
     const data = analyze(body, inner);
     const isFormal = (param: string) => formals.some((formal) => formal.name === param);
-    const nonLeibnizNames = getNonLeibnizNames(body, inner);
+    const nonLeibnizNames = getNonLeibnizNames(
+      body.kind === "Selection" ? body.expression : body,
+      inner,
+    );
     const levels: OperatorLevels = {
       ...createData(data.level),
       name,
@@ -889,17 +911,29 @@ export const analyzeAssumeProve = (
   assumeProve: AssumeProve,
   scope: Scope,
   analyzer: ReturnType<typeof createLevelAnalyzer>,
+  errors: SanyError[] = [],
 ): LevelData => {
   const inner = new Map(scope);
   const parts = assumeProve.assumptions.flatMap((assumption) => {
     if (assumption.kind === "NewSymbol") {
       const set = assumption.set && analyzer.analyze(assumption.set, inner);
-      inner.set(assumption.name, { kind: "Formal", arity: assumption.arity });
+      const range = assumption.location.range;
+      if (set?.level === TEMPORAL_LEVEL && range) {
+        errors.push({
+          location: formatRange(range),
+          message: "Level error:\nTemporal formula used as set.",
+        });
+      }
+      inner.set(assumption.name, {
+        kind: "Formal",
+        arity: assumption.arity,
+        level: NEW_SYMBOL_LEVELS[assumption.level],
+      });
       return set ? [set] : [];
     }
     return [
       assumption.kind === "AssumeProve"
-        ? analyzeAssumeProve(assumption, inner, analyzer)
+        ? analyzeAssumeProve(assumption, inner, analyzer, errors)
         : analyzer.analyze(assumption, inner),
     ];
   });
@@ -964,6 +998,10 @@ export const checkModuleLevels = (
       ? []
       : proof.steps.flatMap((step) => {
           const body = step.body;
+          const newSymbolErrors: SanyError[] = [];
+          if (body.kind === "Assert" && body.statement.kind === "AssumeProve") {
+            analyzeAssumeProve(body.statement, new Map(), analyzer, newSymbolErrors);
+          }
           const isTemporal = () => getStepLevel(step) === TEMPORAL_LEVEL;
           const pickErrors =
             body.kind === "Pick" && body.bounds.length > 0 && isTemporal()
@@ -981,6 +1019,7 @@ export const checkModuleLevels = (
                   )
               : [];
           return [
+            ...newSymbolErrors,
             ...checkProof(step.proof),
             ...pickErrors,
             ...(step.proof?.kind === "Steps" && isTemporal() ? checkTemporalGoal(step.proof) : []),
@@ -1010,11 +1049,13 @@ export const checkModuleLevels = (
       ...module.theorems.map((theorem) => ({
         location: theorem.location,
         check: () => {
+          const newSymbolErrors: SanyError[] = [];
           const data =
             theorem.statement.kind === "AssumeProve"
-              ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
+              ? analyzeAssumeProve(theorem.statement, new Map(), analyzer, newSymbolErrors)
               : analyzer.analyze(theorem.statement, new Map());
           const errors = [
+            ...newSymbolErrors,
             ...checkProof(theorem.proof),
             ...(data.level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
           ];

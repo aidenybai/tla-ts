@@ -277,6 +277,28 @@ export class RuleProperties {
       );
   }
 
+  checkQuantifierFree() {
+    const first = this.quantifiers.entries().next();
+    if (first.done !== true)
+      throw new SmtTacticError(
+        `cannot process quantifier in rule ${first.value[1].display(this.context)}`,
+      );
+  }
+
+  checkNestedFree() {
+    const rules = this.interpretedPredicateRules;
+    if (rules.length > 0)
+      throw new SmtTacticError(`Rule contains nested predicates ${rules[0].display(this.context)}`);
+  }
+
+  checkInfiniteSorts() {
+    const rules = this.infiniteSortRules;
+    if (rules.length > 0)
+      throw new SmtTacticError(
+        `Rule contains infinite sorts in rule ${rules[rules.length - 1].display(this.context)}`,
+      );
+  }
+
   checkExistsFree() {
     for (const entry of this.quantifiers)
       if (this.manager.getQuantifier(entry[0]).kind === QUANTIFIER_EXISTS)

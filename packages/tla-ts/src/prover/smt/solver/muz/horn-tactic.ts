@@ -17,7 +17,7 @@ import { L_FALSE, L_TRUE } from "../lbool";
 import { RefVector } from "../ref-vector";
 import type { RewriterOptions } from "../rewriter";
 import { getFreeVarSorts } from "../var-subst";
-import { DatalogContext, ENGINE_SPACER, FpParams } from "./dl-context";
+import { DatalogContext, ENGINE_DATALOG, ENGINE_SPACER, FpParams } from "./dl-context";
 import { mkForall, mkPp } from "./dl-rule";
 import { SpacerDlInterface } from "./spacer-dl-interface";
 
@@ -27,6 +27,19 @@ export const createDatalogContext = (
   rewriterOptions: RewriterOptions,
 ) =>
   new DatalogContext(manager, new FpParams(parameters), rewriterOptions, (context, engine) => {
+    if (engine === ENGINE_DATALOG)
+      return {
+        // rel_context::query checks the rules with the query's before the saturation the port lacks.
+        query: (query) => {
+          context.ruleManager.mkQuery(query, context.getRules());
+          context.ensureClosed();
+          context.getRules();
+          throw new SmtUnsupportedError("the datalog engine");
+        },
+        getModel: () => {
+          throw new SmtUnsupportedError("the datalog engine");
+        },
+      };
     if (engine !== ENGINE_SPACER) throw new SmtUnsupportedError("the bmc engine");
     return new SpacerDlInterface(context);
   });

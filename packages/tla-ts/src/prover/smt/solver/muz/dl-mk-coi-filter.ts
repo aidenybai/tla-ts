@@ -91,7 +91,7 @@ export class MkCoiFilter implements RuleTransformerPlugin {
         newTail.push(rule.tail[index]);
         newNegated.push(false);
       }
-      result.addRule(this.context.ruleManager.mk(rule.head, newTail, newNegated, "", false));
+      result.addRule(this.context.ruleManager.mk(rule.head, newTail, newNegated, undefined, false));
     }
     if (result.rules.length === source.rules.length) return undefined;
     result.close();

@@ -107,8 +107,15 @@ const collectLocalFacts = (
     }
     return undefined;
   };
+  const contexts = new Map<Expression, number>();
   const visit = (node: Expression, isLevelCounted: boolean, isOperatorArgument: boolean) => {
     const kind = node.kind;
+    if (kind === "Selection") {
+      const seen = contexts.get(node.expression) ?? 0;
+      const context = isLevelCounted ? (isOperatorArgument ? 1 : 2) : isOperatorArgument ? 4 : 8;
+      if ((seen & context) !== 0) return;
+      contexts.set(node.expression, seen | context);
+    }
     // TLC's getLevelBound takes an operator argument for a constant.
     const nonconstantFlags = isOperatorArgument ? NONCONSTANT : NONCONSTANT | ABOVE_CONSTANT_BOUND;
     if (

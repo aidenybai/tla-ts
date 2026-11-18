@@ -643,6 +643,8 @@ export const createModuleConverter = (
           },
           { location },
         );
+      case "Selection":
+        return recurse(expression.expression);
       case "Subexpression": {
         const [head, ...selectors] = expression.selectors;
         if (head.kind !== "Name") throw new TlaProofError("Unexpected subexpression reference");

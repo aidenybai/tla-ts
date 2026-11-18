@@ -824,6 +824,30 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports a HIDE fact whose operator SANY can't resolve, where SANY crashes", () => {
+    const report = getReport({ Hidden: "---- MODULE Hidden ----\nVARIABLE x\nHIDE -x\n====\n" });
+    expect(report.text).toContain(
+      joinLines([
+        "*** Errors: 3",
+        "",
+        "line 3, col 6 to line 3, col 6 of module Hidden",
+        "",
+        "Could not find declaration or definition of symbol '-.'.",
+        "",
+        "",
+        "line 3, col 6 to line 3, col 7 of module Hidden",
+        "",
+        "Couldn't resolve prefix operator symbol `-.'.",
+        "",
+        "",
+        "In module --TLA+ BUILTINS--",
+        "",
+        "The only expression allowed as a fact in a HIDE is ",
+        "the name of a theorem, assumption, or step.",
+      ]),
+    );
+  });
+
   it("rejects USE ONLY in a module body but not in a proof", () => {
     const getText = (body: string) =>
       getReport({ Only: `---- MODULE Only ----\n${body}\n====\n` }).text;

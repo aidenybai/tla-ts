@@ -76,7 +76,7 @@ export class OptSolver {
   }
 
   private getContextModel() {
-    return this.hold(this.kernel.context.getModel());
+    return this.hold(this.kernel.context.getSatModel());
   }
 
   // get_optimizer makes an arithmetic theory when the setup made none.

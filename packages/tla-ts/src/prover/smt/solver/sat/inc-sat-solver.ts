@@ -1,4 +1,4 @@
-import { SmtTacticError, SmtUnsupportedError } from "../../../../errors";
+import { SmtCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../../errors";
 import { type AstManager, OP_AND, OP_EQ, OP_IMPLIES, OP_NOT, OP_OR, SORT_BOOL } from "../ast";
 import { mkNot } from "../ast-util";
 import { BitBlasterRewriter } from "../bit-blast-tactic";
@@ -7,11 +7,16 @@ import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ProtoModel } from "../proto-model";
 import { RefVector } from "../ref-vector";
 import type { ThSolverFactory } from "../euf/euf-solver";
-import { convertModel, mkIncSatEufPreprocess, mkIncSatPreprocess } from "../tactic";
+import {
+  applyDefinitions,
+  convertModel,
+  mkIncSatEufPreprocess,
+  mkIncSatPreprocess,
+} from "../tactic";
 import type { SatParams } from "./config";
 import { Goal2Sat } from "./goal2sat";
 import { getConsequences } from "./consequences";
-import { isLiteral, sat2goal } from "./sat2goal";
+import { isLiteral, Sat2GoalConverter, sat2goal } from "./sat2goal";
 import { Solver } from "./solver";
 
 const BIT_BLAST_PARAMS = {
@@ -42,6 +47,7 @@ export class IncSatSolver {
   private bitBlaster: BitBlasterRewriter | undefined;
   // m_mcs.back(), the model converters of the preprocessed goals.
   private readonly converters: Goal;
+  private readonly satConverter: Sat2GoalConverter;
   private isInternalizedConverted = false;
   private readonly internalized: RefVector;
   private hasUninterpreted = false;
@@ -69,6 +75,7 @@ export class IncSatSolver {
     this.names = new RefVector(manager);
     this.core = new RefVector(manager);
     this.converters = new Goal(manager);
+    this.satConverter = new Sat2GoalConverter(manager);
     this.internalized = new RefVector(manager);
   }
 
@@ -111,17 +118,20 @@ export class IncSatSolver {
   }
 
   push() {
-    this.internalizeFormulas();
-    this.goal2sat.push();
-    this.solver.userPush();
-    this.bitBlaster?.push();
-    this.scopes.push({
-      converters: this.converters.converters,
-      fmlsSize: this.fmls.size,
-      fmlsHead: this.fmlsHead,
-      namesSize: this.names.size,
-      hasUninterpreted: this.hasUninterpreted,
-    });
+    try {
+      this.internalizeFormulas();
+    } finally {
+      this.goal2sat.push();
+      this.solver.userPush();
+      this.bitBlaster?.push();
+      this.scopes.push({
+        converters: this.converters.converters,
+        fmlsSize: this.fmls.size,
+        fmlsHead: this.fmlsHead,
+        namesSize: this.names.size,
+        hasUninterpreted: this.hasUninterpreted,
+      });
+    }
   }
 
   pop(numScopes: number) {
@@ -177,8 +187,10 @@ export class IncSatSolver {
         return goals;
       } catch (error) {
         this.releaseBitBlaster();
-        if (!(error instanceof SmtTacticError)) throw error;
-        this.reasonUnknown = error.message;
+        if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
+        // The tactics of the preprocessing report a limit that stops their rewriters as a tactic_exception.
+        this.reasonUnknown =
+          error instanceof SmtCanceledError ? this.manager.limit.getCancelMessage() : error.message;
         return undefined;
       }
     })();
@@ -239,7 +251,16 @@ export class IncSatSolver {
     this.internalizeAssumptions([...literals, ...this.names.items]);
     this.reasonUnknown = "no reason given";
     this.isInternalizedConverted = false;
-    const result = this.solver.check(this.asms);
+    const result = (() => {
+      try {
+        return this.solver.check(this.asms);
+      } catch (error) {
+        if (!(error instanceof SmtCanceledError)) throw error;
+        // check_sat_core counts a step to see whether the limit stopped the search.
+        manager.limit.inc();
+        return L_UNDEF;
+      }
+    })();
     if (result === L_TRUE && this.hasUninterpreted) {
       this.reasonUnknown = "(sat.giveup has-uninterpreted)";
       return L_UNDEF;
@@ -337,18 +358,15 @@ export class IncSatSolver {
     const manager = this.manager;
     if (!this.solver.isModelCurrent || this.fmls.size > this.fmlsHead) return null;
     const euf = this.goal2sat.euf;
-    // The euf solver fills a model rather than a proto_model, so its declarations keep their order.
-    const model = euf === null ? new ProtoModel(manager) : new ProtoModel(manager).mkModel();
+    const model = new ProtoModel(manager).mkModel();
     for (const [expr, boolVar] of this.goal2sat.atoms) {
       if (!manager.isUninterpretedConst(expr)) continue;
       const value = this.solver.model[boolVar];
       if (value === L_TRUE) model.registerConst(manager.decls[expr], manager.trueExpr);
       else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
     }
-    const converted = convertModel(
-      this.converters,
-      euf === null ? model.mkModel() : euf.updateModel(model),
-    );
+    if (this.satConverter.entries.length > 0) applyDefinitions(this.satConverter.entries, model);
+    const converted = convertModel(this.converters, euf === null ? model : euf.updateModel(model));
     converted.incRef();
     this.models.push(converted);
     return converted;
@@ -379,10 +397,9 @@ export class IncSatSolver {
     if (this.fmlsHead !== this.fmls.size) return this.fmls.items;
     if (this.isInternalizedConverted) return this.internalized.items;
     const goal = new Goal(this.manager);
-    sat2goal(this.manager, this.solver, this.goal2sat.atoms, goal);
+    sat2goal(this.manager, this.solver, this.goal2sat.atoms, goal, this.satConverter);
     this.internalized.reset();
     for (const form of goal.forms.items) this.internalized.push(form);
-    this.converters.converters = [...this.converters.converters, ...goal.converters];
     this.isInternalizedConverted = true;
     return this.internalized.items;
   }
@@ -391,7 +408,9 @@ export class IncSatSolver {
   // asserted formulas are internalized.
   getConverters(): Goal["converters"] {
     this.getAssertions();
-    return this.isInternalizedConverted ? this.converters.converters : [];
+    return this.isInternalizedConverted
+      ? [...this.converters.converters, { definitions: this.satConverter.entries }]
+      : [];
   }
 
   release() {

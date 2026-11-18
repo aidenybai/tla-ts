@@ -53,7 +53,7 @@ import { isMbqiByFeatures, isMbqiByLogic } from "./smt-setup";
 import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
-import { getFdConsequences } from "./fd-solver";
+import { checkFdSolver, getFdConsequences } from "./fd-solver";
 import { SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
@@ -109,7 +109,6 @@ const UNPORTED_COMMANDS = new Set([
   "get-interpolant",
   "get-proof",
   "get-proof-graph",
-  "get-unsat-assumptions",
   "get-user-tactics",
   "help",
   "help-simplifier",
@@ -267,6 +266,17 @@ const getSimplifyParams = (items: SExpr[]) => {
   return params;
 };
 
+const GET_INFO_KEYWORDS = [
+  ":reason-unknown",
+  ":status",
+  ":version",
+  ":authors",
+  ":error-behavior",
+  ":parameters",
+  ":rlimit",
+  ":assertion-stack-levels",
+];
+
 const APPLY_PARAMETERS = new Map([
   ["print", true],
   ["print_model_converter", true],
@@ -344,6 +354,7 @@ interface Scope {
   assertions: number;
   objectives: number;
   softTrail: number;
+  rlimit: number;
 }
 
 interface CheckResult {
@@ -414,6 +425,7 @@ export const runSmtlibScript = (
     isPrintingSuccess: false,
     isProducingModels: true,
     isProducingUnsatCores: false,
+    isProducingUnsatAssumptions: false,
     isProducingProofs: false,
     isExitingOnError: false,
     isInteractive: false,
@@ -550,13 +562,15 @@ export const runSmtlibScript = (
         return false;
       }
       if (error instanceof SmtDefaultError) {
-        setCheck(L_UNDEF, { isFromTactic: true, reasonUnknown: "unknown" });
+        setCheck(L_UNDEF, { isFromTactic: true, reasonUnknown: optimizer.getReasonUnknown() });
         throw new SmtParseError(error.message, end);
       }
       if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
       const reasonUnknown = optimizer.getReasonUnknown();
       optimizer.release();
       setCheck(L_UNDEF, { isOptimizing: true, reasonUnknown });
+      if (error instanceof SmtCanceledError)
+        throw new SmtParseError(manager.limit.getCancelMessage(), end);
       print("unknown");
       return true;
     } finally {
@@ -570,21 +584,22 @@ export const runSmtlibScript = (
   };
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
   const solveWithStrategy = () => {
-    const goal = getGoal();
-    const strategy =
-      settings.parameters.get("tactic.default_tactic") ??
-      getLogicStrategy(state.logic, goal.isProofsEnabled);
     try {
+      if (isUsingFdSolver())
+        return {
+          ...checkFdSolver(state.manager, getSatParams(settings.parameters), state.assertions),
+          context: undefined,
+        };
+      const goal = getGoal();
+      const strategy =
+        settings.parameters.get("tactic.default_tactic") ??
+        getLogicStrategy(state.logic, goal.isProofsEnabled);
       const checked = checkSatUsing(compileInternalTactic(getTacticEnvironment(), strategy), goal);
       return {
         result: checked.status,
         context: undefined,
         model: checked.model,
-        // The finite-domain solver is an inc_sat_solver, whose reason stays "no reason given" after an answer.
-        reasonUnknown:
-          isUsingFdSolver() && checked.status !== L_UNDEF
-            ? "no reason given"
-            : checked.reasonUnknown,
+        reasonUnknown: checked.reasonUnknown,
       };
     } catch (error) {
       if (!(error instanceof SmtUnsupportedError)) throw error;
@@ -663,11 +678,12 @@ export const runSmtlibScript = (
       setCheck(solved.result, {
         context: solved.context,
         isOptimizing,
-        isFromTactic: isFromTactic && !isUsingFdSolver(),
+        isFromTactic,
         model: solved.model,
         core: solved.core ?? solved.context?.unsatCore ?? [],
         reasonUnknown: getReasonUnknown(solved, deadline),
       });
+      if (isFromTactic && isUsingFdSolver()) solved.model?.decRef();
       print(getVerdict(solved.result));
     } catch (error) {
       if (
@@ -679,13 +695,14 @@ export const runSmtlibScript = (
       )
         throw error;
       const context = isKernelChecking ? state.kernel?.context : undefined;
+      const reasonUnknown = isKernelChecking ? state.satSolver?.reasonUnknown : undefined;
       setCheck(L_UNDEF, {
         isOptimizing,
-        isFromTactic: !isKernelChecking && !isUsingFdSolver(),
+        isFromTactic: !isKernelChecking,
         reasonUnknown:
           error instanceof SmtDefaultError
             ? error.message
-            : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown: undefined }, deadline),
+            : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown }, deadline),
       });
       print("unknown");
     } finally {
@@ -703,7 +720,9 @@ export const runSmtlibScript = (
       throw check.isFromTactic
         ? new SmtParseError("model is not available", list.end)
         : new SmtUnsupportedError("the model of a canceled search");
-    const model = check.context?.getModel() ?? new ProtoModel(state.manager);
+    const context = check.context;
+    const model = context === undefined ? new ProtoModel(state.manager) : context.getModel();
+    if (model === undefined) throw new SmtParseError("model is not available", list.end);
     model.incRef();
     check.model = model;
     return model;
@@ -754,6 +773,13 @@ export const runSmtlibScript = (
       state.kernel?.push();
       useSatSolver((solver) => solver.push());
     }
+  };
+  const initManager = () => {
+    if (state.isProofsEnabled !== undefined) return;
+    state.isProofsEnabled = settings.parameters.get("proof") === "true";
+    if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
+    if (state.logic === undefined) state.reader.registerList();
+    resetKernel();
   };
   // The parts of inc_sat_solver that are not ported leave its answers to the smt kernel.
   const useSatSolver = <Result>(action: (solver: IncSatSolver) => Result) => {
@@ -989,10 +1015,15 @@ export const runSmtlibScript = (
         `Invalid function name. Expecting sort list starting with '(' to disambiguate function name got ${domain.lastId}`,
         domain,
       );
-    const sorts = domain.items.map((sort) => state.reader.parseSort(sort));
+    const sorts = domain.items.map((sort) =>
+      state.reader.parseSort(
+        sort,
+        "Invalid function name. Expecting sort list starting with '(' to disambiguate function name",
+      ),
+    );
     if (reference.items[2] === undefined)
       throw new SmtParseError("Invalid function name invalid sort, unexpected ')'", reference.end);
-    const range = state.reader.parseSort(reference.items[2]);
+    const range = state.reader.parseSort(reference.items[2], "Invalid function name");
     const follower = reference.items[3] ?? reference.end;
     const found = state.reader.getFuncs(name.text).find((decl) => {
       const funcDecl = state.manager.funcDecls[decl];
@@ -1010,6 +1041,76 @@ export const runSmtlibScript = (
     if (follower !== reference.end)
       throw new SmtUnsupportedError("a function declaration reference with trailing terms");
     return found;
+  };
+  // get_info_cmd prints in set_next_arg, before the parser checks the rest of the command.
+  const printInfo = (list: SmtList, keyword: string) => {
+    if (keyword === ":reason-unknown") {
+      const check = state.check;
+      const reasonUnknown =
+        check === undefined
+          ? "state of the most recent check-sat command is not known"
+          : check.reasonUnknown;
+      if (reasonUnknown === undefined)
+        throw new SmtUnsupportedError("the information :reason-unknown");
+      print(`(:reason-unknown "${reasonUnknown.replaceAll('"', '\\"')}")`);
+      return;
+    }
+    if (keyword === ":rlimit") {
+      initManager();
+      print(`(:rlimit ${state.manager.limit.count})`);
+      return;
+    }
+    if (keyword === ":error-behavior") {
+      print(
+        `(:error-behavior ${settings.isExitingOnError ? "immediate-exit" : "continued-execution"})`,
+      );
+      return;
+    }
+    if (keyword === ":name") {
+      print('(:name "Z3")');
+      return;
+    }
+    if (keyword === ":authors") {
+      print(
+        '(:authors "Leonardo de Moura, Nikolaj Bjorner, Lev Nachmanson and Christoph Wintersteiger")',
+      );
+      return;
+    }
+    if (keyword === ":version") {
+      print('(:version "5.3.2")');
+      return;
+    }
+    if (keyword === ":status") {
+      print(`(:status ${getVerdict(settings.status)})`);
+      return;
+    }
+    if (keyword === ":assertion-stack-levels") {
+      print(`(:assertion-stack-levels ${state.scopes.length})`);
+      return;
+    }
+    if (keyword === ":all-statistics" || keyword === ":parameters")
+      throw new SmtUnsupportedError(`the information ${keyword}`);
+    if (keyword !== ":?") {
+      print("unsupported");
+      printDiagnostic(`; ${keyword} line: ${list.line} position: ${list.column}`);
+    }
+    print("; Suppported get-info parameters:");
+    for (const supported of GET_INFO_KEYWORDS) print(`; (get-info ${supported})`);
+  };
+  const printCore = () => {
+    const check = state.check;
+    if (check?.core === undefined)
+      throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
+    const kernel = state.kernel;
+    if (kernel === undefined || check.context !== kernel.context) {
+      print(`(${check.core.map(format).join(" ")})`);
+      return;
+    }
+    state.manager.limit.restart(Date.now() + options.timeLimitMs);
+    const core = new RefVector(state.manager);
+    kernel.getUnsatCore(core);
+    print(`(${core.items.map(format).join(" ")})`);
+    core.reset();
   };
   const runCommand = new Map<string, (list: SmtList) => void>([
     [
@@ -1062,7 +1163,9 @@ export const runSmtlibScript = (
           throw new SmtParseError("at least 2 arguments expected", list.end);
         const decl = state.manager.mkFuncDecl(
           name.text,
-          domain.items.map((sort) => state.reader.parseSort(sort)),
+          domain.items.map((sort) =>
+            state.reader.parseSort(sort, "expecting sort list starting with '('"),
+          ),
           SORT_BOOL,
         );
         state.reader.insertFunc(decl, list.end);
@@ -1080,7 +1183,7 @@ export const runSmtlibScript = (
             list.end,
           );
         const manager = state.manager;
-        const range = state.reader.parseSort(sort);
+        const range = state.reader.parseSort(sort, "invalid command argument, sort expected");
         const decl = manager.mkFuncDecl(name.text, [], range);
         state.reader.insertFunc(decl, list.end);
         getDatalog().registerVariable(manager.mkApp(decl, [], range));
@@ -1094,7 +1197,7 @@ export const runSmtlibScript = (
         const name = list.items[2];
         getDatalog().addRule(
           state.reader.parseFormula(rule, rule),
-          isSymbol(name) ? name.text : "",
+          isSymbol(name) ? name.text : undefined,
         );
       },
     ],
@@ -1146,6 +1249,7 @@ export const runSmtlibScript = (
         state.manager.limit.push(settings.rlimit);
         try {
           const checked = checkSatUsing(tactic, goal);
+          const reasonUnknown = checked.reasonUnknown ?? getCancelMessage(deadline);
           setCheck(checked.status, {
             isFromTactic: true,
             model: checked.model,
@@ -1153,14 +1257,13 @@ export const runSmtlibScript = (
               builder.isTrackingDependencies || !hasNames()
                 ? getDependencyValues(checked.core)
                 : undefined,
-            reasonUnknown: checked.reasonUnknown ?? getCancelMessage(deadline),
+            reasonUnknown,
           });
-          print(getVerdict(checked.status));
-        } catch (error) {
-          if (!(error instanceof SmtCanceledError)) throw error;
-          const message = getCancelMessage(deadline);
-          setCheck(L_UNDEF, { isFromTactic: true, reasonUnknown: message });
-          print(`(error "tactic failed: ${message}")`);
+          print(
+            checked.isConversionCanceled
+              ? `(error "tactic failed: ${reasonUnknown}")`
+              : getVerdict(checked.status),
+          );
         } finally {
           state.manager.limit.pop();
         }
@@ -1286,11 +1389,21 @@ export const runSmtlibScript = (
             assertions: state.assertions.length,
             objectives: state.objectives.length,
             softTrail: state.softTrail.length,
+            rlimit: settings.rlimit,
           });
           state.reader.push();
           state.isIncremental = true;
-          state.kernel?.push();
-          useSatSolver((solver) => solver.push());
+          const limit = state.manager.limit;
+          limit.push(settings.rlimit);
+          try {
+            state.kernel?.push();
+            useSatSolver((solver) => solver.push());
+          } catch (error) {
+            if (!(error instanceof SmtCanceledError)) throw error;
+            throw new SmtParseError(limit.getCancelMessage(), list.end);
+          } finally {
+            limit.pop();
+          }
         }
         if (list.items[2] !== undefined)
           throw new SmtParseError("invalid push command, ')' expected", list.items[2]);
@@ -1314,6 +1427,7 @@ export const runSmtlibScript = (
           useSatSolver((solver) => solver.pop(count));
           state.reader.pop(count);
           restoreAssertions(scope.assertions);
+          settings.rlimit = scope.rlimit;
           resetOptimizer();
           releaseObjectives(scope.objectives, scope.softTrail);
           state.scopes.length -= count;
@@ -1339,7 +1453,12 @@ export const runSmtlibScript = (
         restoreAssertions(0);
         resetOptimizer();
         releaseObjectives(0, 0);
-        state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0, softTrail: 0 }));
+        state.scopes = state.scopes.map((scope) => ({
+          ...scope,
+          assertions: 0,
+          objectives: 0,
+          softTrail: 0,
+        }));
         if (state.isProofsEnabled !== undefined) resetKernel();
         state.isIncremental = state.scopes.length > 0;
         state.hasChecked = false;
@@ -1422,6 +1541,7 @@ export const runSmtlibScript = (
         if (isPrintingDependencies && !builder.isTrackingDependencies && hasNames())
           throw new SmtUnsupportedError("the dependencies of a tactic that drops dependencies");
         state.manager.limit.restart(Date.now() + options.timeLimitMs);
+        state.manager.limit.push(settings.rlimit);
         const goals = (() => {
           try {
             return applyTactic(tactic, input);
@@ -1429,6 +1549,8 @@ export const runSmtlibScript = (
             if (!(error instanceof SmtTacticError)) throw error;
             print(`(error "tactic failed: ${error.message}")`);
             return undefined;
+          } finally {
+            state.manager.limit.pop();
           }
         })();
         // apply_tactic_cmd releases the result goals and then the input goal.
@@ -1545,21 +1667,23 @@ export const runSmtlibScript = (
             "unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)",
             list.end,
           );
-        const check = state.check;
-        if (check === undefined || check.status !== L_FALSE)
+        if (state.check?.status !== L_FALSE)
           throw new SmtParseError("unsat core is not available", list.end);
-        if (check.core === undefined)
-          throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
-        const kernel = state.kernel;
-        if (kernel === undefined || check.context !== kernel.context) {
-          print(`(${check.core.map(format).join(" ")})`);
-          return;
-        }
-        state.manager.limit.restart(Date.now() + options.timeLimitMs);
-        const core = new RefVector(state.manager);
-        kernel.getUnsatCore(core);
-        print(`(${core.items.map(format).join(" ")})`);
-        core.reset();
+        printCore();
+      },
+    ],
+    [
+      "get-unsat-assumptions",
+      (list) => {
+        checkArgumentCount(list, 0);
+        if (!settings.isProducingUnsatAssumptions)
+          throw new SmtParseError(
+            "unsat assumptions construction is not enabled, use command (set-option :produce-unsat-assumptions true)",
+            list.end,
+          );
+        if (state.check?.status !== L_FALSE)
+          throw new SmtParseError("unsat assumptions is not available", list.end);
+        printCore();
       },
     ],
     [
@@ -1578,8 +1702,9 @@ export const runSmtlibScript = (
         const evaluator = new ModelEvaluator(manager, model);
         const value = evaluator.rewrite(term);
         display(value);
-        manager.decRef(value);
+        // eval_cmd frees its model_evaluator before the value, and the parser frees the term last.
         evaluator.release();
+        manager.decRef(value);
         manager.decRef(term);
       },
     ],
@@ -1708,7 +1833,13 @@ export const runSmtlibScript = (
       "dbg-some-value",
       (list) => {
         display(
-          getManagerSomeValue(state.manager, state.reader.parseSort(list.items[1] ?? list.end)),
+          getManagerSomeValue(
+            state.manager,
+            state.reader.parseSort(
+              list.items[1] ?? list.end,
+              "invalid command argument, sort expected",
+            ),
+          ),
         );
       },
     ],
@@ -1759,8 +1890,19 @@ export const runSmtlibScript = (
         const optionName = `:${getParameterName(keyword)}`;
         const value = list.items[2];
         const isTrue = isSymbol(value, "true");
+        if (
+          (keyword === ":produce-proofs" ||
+            keyword === ":produce-unsat-cores" ||
+            keyword === ":produce-unsat-assumptions") &&
+          state.assertions.length > 0
+        )
+          throw new SmtParseError(
+            `error setting '${keyword}', option value cannot be modified after assertions have been added`,
+            value ?? list.end,
+          );
         if (keyword === ":produce-models") settings.isProducingModels = isTrue;
         if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
+        if (keyword === ":produce-unsat-assumptions") settings.isProducingUnsatAssumptions = isTrue;
         if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
         if (keyword === ":interactive-mode" || keyword === ":produce-assertions") {
           if (state.isProofsEnabled !== undefined)
@@ -1837,6 +1979,7 @@ export const runSmtlibScript = (
           [":print-success", settings.isPrintingSuccess],
           [":produce-models", settings.isProducingModels],
           [":produce-unsat-cores", settings.isProducingUnsatCores],
+          [":produce-unsat-assumptions", settings.isProducingUnsatAssumptions],
           [":interactive-mode", settings.isInteractive],
           [":produce-assertions", settings.isInteractive],
           [":int-real-coercions", true],
@@ -1856,26 +1999,12 @@ export const runSmtlibScript = (
       "get-info",
       (list) => {
         const info = list.items[1];
-        if (info?.kind !== "keyword")
-          throw new SmtParseError("invalid command argument, keyword expected", info ?? list.end);
-        const check = state.check;
-        const reasonUnknown =
-          check === undefined
-            ? "state of the most recent check-sat command is not known"
-            : check.reasonUnknown;
-        if (info.text === ":reason-unknown" && reasonUnknown !== undefined) {
-          print(`(:reason-unknown "${reasonUnknown.replaceAll('"', '\\"')}")`);
-          return;
-        }
-        if (info.text === ":rlimit") {
-          print(`(:rlimit ${state.manager.limit.count})`);
-          return;
-        }
-        if (info.text !== ":error-behavior")
-          throw new SmtUnsupportedError(`the information ${info.text}`);
-        print(
-          `(:error-behavior ${settings.isExitingOnError ? "immediate-exit" : "continued-execution"})`,
-        );
+        if (info === undefined)
+          throw new SmtParseError("invalid command, argument(s) missing", list.end);
+        if (info.kind !== "keyword")
+          throw new SmtParseError("invalid command argument, keyword expected", info);
+        printInfo(list, info.text);
+        checkArgumentCount(list, 1);
       },
     ],
     [
@@ -1950,12 +2079,7 @@ export const runSmtlibScript = (
     }
     // Z3's scoped_timer ends with the command that set it, so a command starts without one.
     state.manager.limit.restart(Infinity);
-    if (!MANAGERLESS_COMMANDS.has(head.text) && state.isProofsEnabled === undefined) {
-      state.isProofsEnabled = settings.parameters.get("proof") === "true";
-      if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
-      if (state.logic === undefined) state.reader.registerList();
-      resetKernel();
-    }
+    if (!MANAGERLESS_COMMANDS.has(head.text)) initManager();
     try {
       command(list);
     } catch (error) {

@@ -113,7 +113,7 @@ class ParallelSolver {
       this.context.maxConflicts = this.threadsMaxConflicts;
       const result = this.kernel.check([...this.assumptions, ...cube]);
       if (result === L_TRUE) {
-        this.setSat(this.context.getModel());
+        this.setSat(this.context.getSatModel());
         return false;
       }
       if (result === L_FALSE) {

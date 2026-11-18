@@ -320,6 +320,8 @@ const visitAt = (
       }
       case "Label":
         return visit(replay, expression.body, items, scope, partial, node);
+      case "Selection":
+        return visit(replay, expression.expression, items, scope, partial, node);
       default:
         if (LITERAL_KINDS.has(expression.kind))
           throw new TlaEvaluationError("The state relation is not a boolean expression.");
@@ -925,6 +927,9 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
         return;
       case "Label":
         collect(expression.body, scope, visited);
+        return;
+      case "Selection":
+        collect(expression.expression, scope, visited);
         return;
       case "FunctionApplication":
         collect(expression.function, scope, visited);

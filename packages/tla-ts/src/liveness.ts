@@ -244,6 +244,7 @@ export const expandTemporal = (
     return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
   }
   if (expression.kind === "Label") return expand(expression.body, scope);
+  if (expression.kind === "Selection") return expand(expression.expression, scope);
   if (expression.kind === "Let") {
     return expand(expression.body, bindLetDefinitions(expression, scope, environment));
   }
@@ -539,6 +540,8 @@ export const toLiveExpression = (
     switch (expression.kind) {
       case "Label":
         return convert(expression.body, scope);
+      case "Selection":
+        return convert(expression.expression, scope);
       case "Let":
         return convert(expression.body, bindLetDefinitions(expression, scope, environment));
       case "Apply": {

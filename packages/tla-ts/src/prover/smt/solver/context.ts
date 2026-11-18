@@ -1,3 +1,4 @@
+import { SmtInvariantError } from "../../../errors";
 import type { AssertedFormulas } from "./asserted-formulas";
 import {
   AstManager,
@@ -1286,6 +1287,9 @@ export class Context extends Internalizer {
   }
 
   private mkProtoModel() {
+    const failure = this.lastSearchFailure;
+    if (this.hasCaseSplits() || failure === FAILURE_CANCELED || failure === FAILURE_NUM_CONFLICTS)
+      return undefined;
     if (this.modelState.kind !== "none") this.modelState.generated.model.decRef();
     const generated = mkModel(this);
     generated.model.incRef();
@@ -1328,13 +1332,21 @@ export class Context extends Internalizer {
   }
 
   getModel() {
+    if (this.isInconsistent()) return undefined;
     if (this.modelState.kind === "final") return this.modelState.model;
     const generated =
       this.modelState.kind === "proto" ? this.modelState.generated : this.mkProtoModel();
+    if (generated === undefined) return undefined;
     const model = generated.model.mkModel();
     model.addRecFuns();
     model.incRef();
     this.modelState = { kind: "final", generated, model };
+    return model;
+  }
+
+  getSatModel() {
+    const model = this.getModel();
+    if (model === undefined) throw new SmtInvariantError("a sat answer without a model");
     return model;
   }
 
@@ -1367,7 +1379,10 @@ export class Context extends Internalizer {
       )
         return status;
       const generated = this.mkProtoModel();
-      if (qmanager.checkModel(generated.model, generated.root2value) !== CHECK_MODEL_RESTART)
+      if (
+        generated === undefined ||
+        qmanager.checkModel(generated.model, generated.root2value) !== CHECK_MODEL_RESTART
+      )
         return status;
       this.lastSearchFailure = FAILURE_OK;
       status = L_UNDEF;
@@ -1377,9 +1392,10 @@ export class Context extends Internalizer {
     if (status === L_TRUE && qmanager.quantifiers.length === 0) return L_TRUE;
     if (status === L_TRUE) {
       const generated = this.mkProtoModel();
-      const result = qmanager.isModelBased()
-        ? qmanager.checkModel(generated.model, generated.root2value)
-        : CHECK_MODEL_UNKNOWN;
+      const result =
+        generated !== undefined && qmanager.isModelBased()
+          ? qmanager.checkModel(generated.model, generated.root2value)
+          : CHECK_MODEL_UNKNOWN;
       if (result === CHECK_MODEL_SAT) return L_TRUE;
       if (result === CHECK_MODEL_UNKNOWN) {
         this.lastSearchFailure = FAILURE_QUANTIFIERS;
