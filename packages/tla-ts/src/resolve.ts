@@ -294,13 +294,15 @@ export const getBoundNames = (bounds: Bound[]) =>
 
 const getVisibleDefinition = (name: string, unit: Unit) => {
   const definition = unit.definitions.get(name);
+  const binding = getModuleBinding(name, unit, undefined);
   const isVisible =
     definition !== undefined &&
     (definition === unit.self
       ? definition.isRecursive
       : definition.isRecursive
-        ? getModuleBinding(name, unit, undefined) !== undefined
-        : isBefore(definition.location, unit.location));
+        ? binding !== undefined
+        : isBefore(definition.location, unit.location) &&
+          (binding === undefined || !isBefore(binding.position, definition.location)));
   return isVisible ? definition : undefined;
 };
 

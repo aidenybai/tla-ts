@@ -1521,6 +1521,31 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "a definition of a declared constant or an imported operator, and refers to the first",
+      "EXTENDS Naturals\nCONSTANT c\nc(a) == 1\nNat(a) == 2\nA == c\nB == Nat\nC == LET D == c IN D",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message: "Operator c already defined or declared.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'c': this definition or declaration conflicts \nwith the one at line 3, col 10 to line 3, col 10 of module M.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 11 of module M",
+          message: "Operator Nat already defined or declared.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Nat': this definition or declaration conflicts \nwith the one at line 14, col 1 to line 14, col 16 of module Naturals.",
+        },
+      ],
+      [],
+    ],
+    [
       "a constant declared after a definition",
       "B == 1\nCONSTANT B",
       [
