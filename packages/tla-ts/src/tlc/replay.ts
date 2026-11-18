@@ -1,5 +1,7 @@
 import type { Expression, SourceLocation } from "../ast";
-import { TlaEvaluationError } from "../errors";
+import { getKindString } from "../builtins";
+import { TlaEvaluationError, TlaUncodedError } from "../errors";
+import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { isConstantLevel } from "../dependencies";
 import {
   chargeContexts,
@@ -18,6 +20,7 @@ import {
   bindDefinitions,
   bindLazyArguments,
   bindOperatorArguments,
+  describeNode,
   describeRange,
   evaluate,
   forEachBoundElement,
@@ -38,6 +41,7 @@ import {
   toUnspecifiedSubscriptError,
 } from "../evaluate";
 import {
+  formatValue,
   getStreamedElements,
   isEqualLikeTlc,
   isTlcEnumerable,
@@ -45,6 +49,7 @@ import {
   type Value,
 } from "../values";
 import { isSubstitutionDefinition, substitutedExpressions, substitutionFrames } from "../instances";
+import { CORE_OPERATORS } from "../standard-modules";
 import type { SuccessorGenerator } from "../successors";
 import { MESSAGE_CODE } from "./messages";
 import { getRandomSubset, nextPrime } from "./random";
@@ -60,6 +65,11 @@ interface ActionItem {
   scope: Scope | undefined;
   node: number;
   rest: ActionItem | undefined;
+}
+
+interface RunKind {
+  isInit: boolean;
+  isEnabled: boolean;
 }
 
 interface Replay {
@@ -208,10 +218,62 @@ const getPrimedVariable = (
     : undefined;
 };
 
-const isTrue = (value: Value) => {
-  if (typeof value !== "boolean")
-    throw new TlaEvaluationError("TLC expected a boolean expression.");
-  return value;
+export const getComputation = (run: RunKind) =>
+  run.isInit ? "initial states" : run.isEnabled ? "ENABLED" : "next states";
+
+export const createRunError = (run: RunKind, message: string) => {
+  const error = new TlaEvaluationError(message);
+  return run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
+};
+
+const getRelationMessage = (run: RunKind, expression: Expression) => {
+  const node = describeNode(expression);
+  return run.isEnabled
+    ? `Attempted to compute ENABLED on a non-boolean expression.\n${node}`
+    : `The ${run.isInit ? "init" : "next"} state relation is not a boolean expression.\n${node}`;
+};
+
+export const getIfConditionMessage = (run: RunKind, value: Value, expression: Expression) => {
+  const kind = getKindString(value);
+  const range = describeRange(expression);
+  if (run.isEnabled) {
+    return `In computing ENABLED, a non-boolean expression(${kind}) was used as the guard condition of an IF.\n${range}`;
+  }
+  return `In computing ${getComputation(run)}, a non-boolean expression (${kind}) was used as the condition of an IF.${run.isInit ? "\n" : ""}${range}`;
+};
+
+export const getCaseGuardMessage = (run: RunKind, value: Value, body: Expression) =>
+  `In computing ${getComputation(run)}, a non-boolean expression${run.isEnabled ? "" : " "}(${getKindString(value)}) was used as a guard condition of a CASE.\n${describeNode(body)}`;
+
+export const getCaseOtherMessage = (run: RunKind, expression: Expression) =>
+  `In computing ${getComputation(run)}, TLC encountered a CASE with no conditions true.\n${describeRange(expression)}`;
+
+export const getImpliesConditionMessage = (run: RunKind, value: Value, expression: Expression) => {
+  const kind = getKindString(value);
+  const range = describeRange(expression);
+  if (run.isInit)
+    return `In computing initial states of a predicate of form P => Q, P was ${kind}\n.${range}`;
+  return run.isEnabled
+    ? `While computing ENABLED of an expression of the form P => Q, P was ${kind}.\n${range}`
+    : `In computing next states of a predicate of the form P => Q, P was\n${kind}.\n${range}`;
+};
+
+const CORE_OPERATOR_NAMES = new Set(CORE_OPERATORS.map((operator) => operator.name));
+
+const isBuiltInOperation = (expression: Expression) =>
+  expression.kind === "Apply"
+    ? CORE_OPERATOR_NAMES.has(expression.operator)
+    : expression.kind !== "Identifier" && !LITERAL_KINDS.has(expression.kind);
+
+export const holdsValue = (run: RunKind, expression: Expression, value: Value, isWalked = true) => {
+  if (typeof value === "boolean") return value;
+  const message =
+    isWalked && LITERAL_KINDS.has(expression.kind)
+      ? getRelationMessage(run, expression)
+      : `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${describeNode(expression)}`;
+  throw run.isInit && isWalked && isBuiltInOperation(expression)
+    ? new TlaUncodedError(message)
+    : createRunError(run, message);
 };
 
 export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
@@ -303,8 +365,11 @@ const proceedAssigned = (
     const isHeld =
       item.kind === "Changed"
         ? isChanged(replay, item, partial)
-        : isTrue(
+        : holdsValue(
+            replay,
+            item.expression,
             evaluateAt(replay, item.node, item.expression, getContext(replay, item.scope, partial)),
+            false,
           );
     if (!isHeld) {
       const coverage = replay.coverage;
@@ -376,8 +441,9 @@ const visitFramed = (
       case "Selection":
         return visit(replay, expression.expression, items, scope, partial, node);
       default:
-        if (LITERAL_KINDS.has(expression.kind))
-          throw new TlaEvaluationError("The state relation is not a boolean expression.");
+        if (LITERAL_KINDS.has(expression.kind)) {
+          throw createRunError(replay, getRelationMessage(replay, expression));
+        }
         return withFrame(replay, expression, () =>
           visitApplication(replay, expression, items, scope, partial, node),
         );
@@ -386,11 +452,12 @@ const visitFramed = (
 
 const visitValue = (
   replay: Replay,
+  expression: Expression,
   value: Value,
   items: ActionItem | undefined,
   partial: State,
   node: number,
-) => isTrue(value) && proceed(replay, items, partial, node);
+) => holdsValue(replay, expression, value) && proceed(replay, items, partial, node);
 
 const BUILT_IN_OPERATORS = new Set([
   "=",
@@ -450,6 +517,7 @@ const visitDefined = (
     }
     return visitValue(
       replay,
+      expression,
       evaluateOperatorAt(replay, node, expression, context),
       items,
       partial,
@@ -466,7 +534,7 @@ const visitDefined = (
   const value = BUILT_IN_OPERATORS.has(expression.operator)
     ? evaluateAt(replay, node, expression, context)
     : evaluateOperatorAt(replay, node, expression, context);
-  return visitValue(replay, value, items, partial, node);
+  return visitValue(replay, expression, value, items, partial, node);
 };
 
 const proceedWithValue = (
@@ -632,9 +700,11 @@ const visitApplication = (
         return visitAssignment(replay, expression, items, scope, partial, node);
       }
       if (expression.operator === "=>" && expression.args.length === 2) {
-        if (isTrue(evaluateAt(replay, node, expression.args[0], context))) {
-          return visit(replay, expression.args[1], items, scope, partial, node);
+        const condition = evaluateAt(replay, node, expression.args[0], context);
+        if (typeof condition !== "boolean") {
+          throw createRunError(replay, getImpliesConditionMessage(replay, condition, expression));
         }
+        if (condition) return visit(replay, expression.args[1], items, scope, partial, node);
         return proceed(replay, items, partial, node);
       }
       return visitDefined(replay, expression, items, scope, partial, node);
@@ -758,25 +828,22 @@ const visitApplication = (
         );
       return visit(replay, expression.body, rest, bounds[0], partial, node);
     }
-    case "If":
-      return visit(
-        replay,
-        isTrue(evaluateAt(replay, node, expression.condition, context))
-          ? expression.consequent
-          : expression.alternative,
-        items,
-        scope,
-        partial,
-        node,
-      );
-    case "Case": {
-      const arm = expression.arms.find((candidate) =>
-        isTrue(evaluateAt(replay, node, candidate.condition, context)),
-      );
-      const body = arm?.body ?? expression.other;
-      if (body === undefined) {
-        throw new TlaEvaluationError("TLC encountered a CASE with no conditions true.");
+    case "If": {
+      const condition = evaluateAt(replay, node, expression.condition, context);
+      if (typeof condition !== "boolean") {
+        throw createRunError(replay, getIfConditionMessage(replay, condition, expression));
       }
+      const branch = condition ? expression.consequent : expression.alternative;
+      return visit(replay, branch, items, scope, partial, node);
+    }
+    case "Case": {
+      const arm = expression.arms.find((candidate) => {
+        const value = evaluateAt(replay, node, candidate.condition, context);
+        if (typeof value === "boolean") return value;
+        throw createRunError(replay, getCaseGuardMessage(replay, value, candidate.body));
+      });
+      const body = arm?.body ?? expression.other;
+      if (body === undefined) throw createRunError(replay, getCaseOtherMessage(replay, expression));
       return visit(replay, body, items, scope, partial, node);
     }
     case "FunctionApplication": {
@@ -822,7 +889,14 @@ const visitApplication = (
   }
   const failure = replay.isEnabled ? getEnabledFailure(expression) : undefined;
   if (failure !== undefined) throw new TlaEvaluationError(failure);
-  return visitValue(replay, evaluateAt(replay, node, expression, context), items, partial, node);
+  return visitValue(
+    replay,
+    expression,
+    evaluateAt(replay, node, expression, context),
+    items,
+    partial,
+    node,
+  );
 };
 
 export const warnChangedUnchanged = (
