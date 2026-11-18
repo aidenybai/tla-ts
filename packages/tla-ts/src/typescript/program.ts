@@ -282,10 +282,6 @@ const createFile = (
     ? createJavaScriptFile(fileName, text, languageVersion)
     : ts.createSourceFile(fileName, text, languageVersion, true);
 
-// A file's text where it declares the vars of the functions that its blocks declare.
-const declareFileVarFunctions = (fileName: string, text: string) =>
-  declareVarFunctions(createFile(fileName, text, ts.ScriptTarget.ESNext));
-
 // A file whose text declares the vars of the functions that its blocks declare.
 const createVarFunctionsFile = (
   fileName: string,
@@ -556,9 +552,12 @@ export const createProgram = (
     if (file === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
     return file;
   };
-  const firstText = declareFileVarFunctions(
-    path,
-    assignParameterProperties(path, getJsxCalls(path, source)),
+  const firstText = declareVarFunctions(
+    createModelFile(
+      path,
+      assignParameterProperties(path, getJsxCalls(path, source)),
+      ts.ScriptTarget.ESNext,
+    ),
   );
   const firstProgram = createTypeScriptProgram(roots, firstText, new Set(), undefined, new Map());
   const firstSourceFile = getModelSourceFile(firstProgram);

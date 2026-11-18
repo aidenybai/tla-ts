@@ -55048,6 +55048,47 @@ describe("BigInts", () => {
       expect(result.failure?.message).toContain("tla-ts can't read the properties of Symbol");
     });
 
+    it.each([
+      ["0,true,s", "0,true,s"],
+      ["1,true,s", "0,true,s"],
+    ])("runs a with statement of JavaScript that expects %s", async (expected, seen) => {
+      const result = await check(
+        compileScript(`
+          var box = { seen: "" };
+          var x = 0;
+          var o = { x: 1, y: 2 };
+          with (o) {
+            x = true;
+            y = "s";
+          }
+          box.seen = [x, o.x, o.y].join();
+          if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+        `),
+      );
+      expect(result.failure?.message).toEqual(
+        expected === seen ? undefined : expect.stringContaining(`seen ${seen}`),
+      );
+    });
+
+    it.each([
+      ["decl", "decl"],
+      ["other", "decl"],
+    ])("runs a function that an if's branch declares, expecting %s", async (expected, seen) => {
+      const result = await check(
+        compileScript(`
+          var box = { seen: "" };
+          (function () {
+            if (true) function f() { return "decl"; } else function g() { return "other"; }
+            box.seen = f();
+          })();
+          if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+        `),
+      );
+      expect(result.failure?.message).toEqual(
+        expected === seen ? undefined : expect.stringContaining(`seen ${seen}`),
+      );
+    });
+
     it("stops at a script's JavaScript that TypeScript's checker fails on", () => {
       expect(() =>
         compileScript(`
