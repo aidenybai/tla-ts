@@ -54149,4 +54149,192 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads and writes the keys of the object that Object.fromEntries makes", () => {
+    const getSource = (expected: string) => `
+      const pairs: [string, number][] = [
+        ["a", 1],
+        ["b", 2],
+      ];
+      const made = Object.fromEntries(pairs);
+      made.c = 3;
+      made["d"] = made.a + made.b;
+      delete made.b;
+      const keys: string[] = [];
+      for (const key in made) keys.push(key);
+      const result = [keys.join(""), "b" in made, made.d, JSON.stringify(made)].join("|");
+      if (result !== '${expected}') throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource('acd|false|3|{"a":1,"c":3,"d":3}'))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource('acd|false|4|{"a":1,"c":3,"d":4}'))).failure?.message,
+      ).toContain("acd|false|3|");
+    });
+  });
+
+  describe("reads every key's value through getters in one loop", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      const source = {
+        get a() {
+          box.log += "a";
+          delete (source as { b?: number }).b;
+          return 1;
+        },
+        b: 2,
+        c: 3,
+        get d() {
+          box.log += "d";
+          return 4;
+        },
+        e: 5,
+        f: 6,
+        get g() {
+          box.log += "g";
+          return 7;
+        },
+      };
+      const values = Object.values(source);
+      const entries = Object.entries(source);
+      const target: Record<string, number> = {};
+      Object.assign(target, source);
+      const result = [
+        values.join("-"),
+        entries.length,
+        entries[5][0],
+        JSON.stringify(target),
+        box.log,
+      ].join("|");
+      if (result !== '${expected}') throw new Error(result);
+    `;
+    const read = '1-3-4-5-6-7|6|g|{"a":1,"c":3,"d":4,"e":5,"f":6,"g":7}|adgadgadg';
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(read))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource(read.replace("1-3-4", "1-2-3-4")))).failure?.message,
+      ).toContain("1-3-4-5-6-7|");
+    });
+  });
+
+  describe("reads every listed key's descriptor in one loop", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      const descriptors: PropertyDescriptorMap = {};
+      for (const key of ["p", "q", "r", "s", "t", "u"]) {
+        descriptors[key] = { value: key + "!", enumerable: key !== "q", writable: true };
+      }
+      Object.defineProperty(descriptors, "v", {
+        get() {
+          box.log += "v";
+          return { value: "late", enumerable: true };
+        },
+        enumerable: true,
+      });
+      const made: Record<string, string> = Object.defineProperties({}, descriptors);
+      const created: Record<string, string> = Object.create(null, descriptors);
+      const result = [Object.keys(made).join(""), made.u, made.v, created.p, box.log].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("prstuv|u!|late|p!|vv"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("pqrstuv|u!|late|p!|vv"))).failure?.message).toContain(
+        "prstuv|u!|late|p!|vv",
+      );
+    });
+  });
+
+  describe("steps a typed array's iterator in a for-of's loop", () => {
+    const getSource = (expected: string) => `
+      const numbers: number[] = [];
+      for (let index = 0; index < 30; index++) numbers.push(index * 2);
+      const iterable: Iterable<number> = new Uint8Array(numbers);
+      let total = 0;
+      let seen = 0;
+      for (const value of iterable) {
+        if (value > 50) break;
+        total += value;
+        seen += 1;
+      }
+      let all = 0;
+      for (const value of iterable) all += value;
+      const result = [total, seen, all].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("650,26,870"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("650,26,868"))).failure?.message).toContain("650,26,870");
+    });
+  });
+
+  describe("takes every value of a generator that a script's @@iterator method makes", () => {
+    const getValues = (taken: string, expected: string) => `
+      const numbers = {
+        *[Symbol.iterator]() {
+          for (let index = 0; index < 12; index++) yield index * 3;
+        },
+      };
+      const source: unknown = numbers;
+      const taken = ${taken};
+      const result = [taken.length, taken[11]].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const spread = "[...numbers]";
+    const typed = "new Uint8Array(source as never)";
+
+    it("agrees with Node on a spread", async () => {
+      expect((await checkModel(getValues(spread, "12|33"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for a spread", async () => {
+      expect((await checkModel(getValues(spread, "11|30"))).failure?.message).toContain("12|33");
+    });
+
+    it("agrees with Node on a typed array", async () => {
+      expect((await checkModel(getValues(typed, "12|33"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for a typed array", async () => {
+      expect((await checkModel(getValues(typed, "11|30"))).failure?.message).toContain("12|33");
+    });
+
+    const getEntries = (expected: string) => `
+      const entries = {
+        *[Symbol.iterator](): Generator<[string, number]> {
+          for (let index = 0; index < 12; index++) yield ["k" + (index % 5), index];
+        },
+      };
+      const result = JSON.stringify(Object.fromEntries(entries));
+      if (result !== '${expected}') throw new Error(result);
+    `;
+    const made = '{"k0":10,"k1":11,"k2":7,"k3":8,"k4":9}';
+
+    it("agrees with Node on Object.fromEntries", async () => {
+      expect((await checkModel(getEntries(made))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for Object.fromEntries", async () => {
+      expect(
+        (await checkModel(getEntries(made.replace('"k2":7', '"k2":2')))).failure?.message,
+      ).toContain(":7,");
+    });
+  });
 });

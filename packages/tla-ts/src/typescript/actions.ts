@@ -74,6 +74,7 @@ import {
 import {
   findNodes,
   findNodesOf,
+  getCalleeRun,
   getFunctionCandidates,
   getFunctionValue,
   getObjectGetter,
@@ -14252,10 +14253,33 @@ const getCandidates = (
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
   called: ts.Expression,
-) =>
-  getAllCandidates(node, functions, context, called)?.filter(
-    (candidate) => !isOnlyCalled(candidate, context),
-  );
+) => {
+  const run = getFoundRun(functions, context, called);
+  return run >= 0
+    ? getRunFunctions(run, context)
+    : getAllCandidates(node, functions, context, called)?.filter(
+        (candidate) => !isOnlyCalled(candidate, context),
+      );
+};
+
+// The run that findCalleeRuns found of a callee, where no function that a path binds changes
+// whether the call dispatches, or -1.
+const getFoundRun = (
+  functions: ReadonlyMap<ts.Symbol, FunctionNode>,
+  context: Context,
+  called: ts.Expression,
+) => {
+  const callee = skipCasts(called);
+  const symbol = functions.size === 0 ? undefined : getSymbol(callee, context.checker);
+  return symbol !== undefined && functions.has(symbol) ? -1 : getCalleeRun(callee, context);
+};
+
+const getRunFunctions = (run: number, context: Context) => {
+  const runs = context.calleeRuns;
+  return runs === undefined
+    ? []
+    : runs.functions.slice(runs.runStarts[run], runs.runStarts[run + 1]);
+};
 
 // The callees of the calls in the model's code whose functions findEffects looks for among the
 // candidates, as a call or through call or apply, which tla-ts finds before it does.
@@ -14296,9 +14320,16 @@ const getDispatched = (
 ) => {
   // A call dispatches where the callee may hold any function, even one that the program only calls
   // by name, which it then leaves out.
+  const run = getFoundRun(functions, context, called);
+  if (run >= 0) {
+    const runs = context.calleeRuns;
+    return runs !== undefined && hasBit(runs.heldBits, run)
+      ? getRunFunctions(run, context)
+      : undefined;
+  }
   const dispatched = getAllCandidates(node, functions, context, called);
   return dispatched !== undefined && dispatched.length > 0
-    ? getCandidates(node, functions, context, called)
+    ? dispatched.filter((candidate) => !isOnlyCalled(candidate, context))
     : undefined;
 };
 
@@ -14578,10 +14609,6 @@ const isStatementCall = (node: ts.CallExpression, path: Path, context: Context) 
     (callee?.body !== undefined && ts.forEachChild(callee.body, hasTry) === true)
   );
 };
-
-// The values that new of a typed array takes from a generator that a script's @@iterator method
-// makes, before tla-ts stops following it.
-const TYPED_ARRAY_TAKE_LIMIT = 8;
 
 // new of a typed array of a value whose type doesn't tell whether it's an object that a script's
 // iterator iterates, which only statements can run.
@@ -15220,7 +15247,6 @@ const translateNewBufferStatement = (
                         iterator,
                         next,
                         tuple([]),
-                        TYPED_ARRAY_TAKE_LIMIT,
                         opened,
                         context,
                         frame,
@@ -16164,13 +16190,16 @@ const getEffects = (
       ? getBoundNames(node.name).flatMap((name) => getSymbol(name, context.checker) ?? [])
       : [];
   const isObjectMade = isMade(node, context);
+  const isChange = isObjectChange(node, context);
+  const entriesFrom = getIterableFrom(node, context, "fromEntries");
+  const isThroughCall = ts.isCallExpression(node) && isFunctionThroughCall(node, context);
   const isErrorMade = isObjectMade && isNewError(node, context);
   const temporalCall = getTemporalCall(node, context);
   // An operation that converts an object runs its valueOf and toString methods, as does a definition
   // of an array's length.
   const conversions =
     (ts.isExpression(node) && getConversion(node, context) !== undefined) ||
-    (isObjectChange(node, context) && mayDefineObjectLength(node, context)) ||
+    (isChange && mayDefineObjectLength(node, context)) ||
     isIndexConvertingNew(node, context) ||
     isObjectDateCall(node, context) ||
     getConvertedViewValues(node, context) !== undefined ||
@@ -16222,7 +16251,7 @@ const getEffects = (
       getKind(node.expression, context) !== "sequence" &&
       isIterableValue(node.expression, context)) ||
     getIterableFrom(node, context) !== undefined ||
-    getIterableFrom(node, context, "fromEntries") !== undefined ||
+    entriesFrom !== undefined ||
     (ts.isExpression(node) && isIteratedTypedArray(node, context));
   // A method call on a generator object, a call it's passed to, or a pattern, a for-of, a spread,
   // or a yield* that iterates one resumes the body of a generator that may have made it.
@@ -16254,14 +16283,14 @@ const getEffects = (
         (node.dotDotDotToken !== undefined && ts.isObjectBindingPattern(node.parent)))) ||
     (ts.isObjectLiteralExpression(node) && !isArrayFromLength(node, context)) ||
     ts.isDeleteExpression(node) ||
-    isObjectChange(node, context) ||
+    isChange ||
     isRevoke(node, context) ||
     isProxyOperation(node, context) ||
     getDateCall(node, context) !== undefined ||
     getHeapRegExpCall(node, context) !== undefined ||
     getRegExpProtocolCall(node, context) !== undefined ||
     getViewCall(node, context) !== undefined ||
-    getTemporalCall(node, context) !== undefined ||
+    temporalCall !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
     isStoredChange(node, context) ||
     getArrayIteratorCall(node, context) !== undefined ||
@@ -16280,12 +16309,13 @@ const getEffects = (
     ? [
         node.expression,
         // A call through call or apply runs the function that it reads them from.
-        ...(isFunctionThroughCall(node, context) ? [node.expression.expression] : []),
+        ...(isThroughCall ? [node.expression.expression] : []),
         ...node.arguments,
       ]
     : ts.isTaggedTemplateExpression(node)
       ? [node.tag, ...getSubstitutions(node)]
       : [];
+  const calleeFunctions = callees.map(getFunctionNode);
   return {
     changed: [
       ...assigned,
@@ -16298,7 +16328,7 @@ const getEffects = (
       ...getters,
       ...(isIterated ? getIteratorFunctions(node, context) : []),
       // Object.fromEntries reads each entry's key and value, and converts the key.
-      ...(getIterableFrom(node, context, "fromEntries") === undefined
+      ...(entriesFrom === undefined
         ? []
         : [
             ...getWrittenFunctions(node, "0", context),
@@ -16310,25 +16340,29 @@ const getEffects = (
         ? getWrittenFunctions(node, "throw", context)
         : []),
       ...(isResumed
-        ? findNodes(
+        ? findNodesOf(
             node.getSourceFile(),
+            [
+              ts.SyntaxKind.FunctionDeclaration,
+              ts.SyntaxKind.FunctionExpression,
+              ts.SyntaxKind.MethodDeclaration,
+            ],
             (inner): inner is FunctionNode =>
               (ts.isFunctionDeclaration(inner) ||
                 ts.isFunctionExpression(inner) ||
                 ts.isMethodDeclaration(inner)) &&
               inner.asteriskToken !== undefined,
+            context,
           )
         : []),
       ...(isStackCall || isUsing ? getStackFunctions(node, context) : []),
-      ...(isObjectChange(node, context) && isReflectSet(node, context)
-        ? getSetters(node, context)
-        : []),
+      ...(isChange && isReflectSet(node, context) ? getSetters(node, context) : []),
       ...(isIteratorDispose ? getWrittenFunctions(node, "return", context) : []),
       ...(isIteratorDispose ? getMethods(node, "return", context, true) : []),
-      ...callees.flatMap((callee) => getFunctionNode(callee) ?? []),
-      ...(ts.isCallExpression(node) && getFunctionNode(node.expression) === undefined
+      ...calleeFunctions.flatMap((calleeFunction) => calleeFunction ?? []),
+      ...(ts.isCallExpression(node) && calleeFunctions[0] === undefined
         ? (getDispatched(node, functions, context) ??
-          (isFunctionThroughCall(node, context)
+          (isThroughCall
             ? getDispatched(node, functions, context, getCast(node.expression.expression))
             : undefined) ??
           [])
@@ -17497,15 +17531,27 @@ const translateForOfGenerator = (
       iterated,
     );
   }
+  // An array's or a string's iterator steps on the heap, so the loop runs as one recursive
+  // operator, where its body doesn't suspend, and the path holds no generator that it may resume
+  // besides the iterators that a later step makes again from the heap.
+  const suspends = (node: ts.Node): boolean =>
+    ts.isYieldExpression(node) ||
+    ts.isAwaitExpression(node) ||
+    (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||
+    (!ts.isFunctionLike(node) && (ts.forEachChild(node, suspends) ?? false));
+  const isLooped = isBuiltIn && !suspends(loop.statement);
   const iterate = (start: Path, receiver: Expression) =>
-    iterateGenerator(
-      loop,
-      isBuiltIn ? withBuiltInIterator(loop.expression, start, receiver, context) : start,
-      receiver,
-      context,
-      frame,
-      continueWith,
-    );
+    isLooped &&
+    [...start.generators.values()].every((suspension) => suspension.isRestartable === true)
+      ? translateIterations(loop, start, context, frame, continueWith, receiver)
+      : iterateGenerator(
+          loop,
+          isBuiltIn ? withBuiltInIterator(loop.expression, start, receiver, context) : start,
+          receiver,
+          context,
+          frame,
+          continueWith,
+        );
   if (opened !== undefined) {
     return translateIteratorCall(loop.expression, opened, path, context, frame, (after, ref) =>
       iterate(after, ref ?? getUndefined(context)),
@@ -18611,9 +18657,11 @@ const translateLoop = (
   );
 };
 
+// An iterator that a for-of opened, whose next it read, or an array's or a string's iterator,
+// without next, which steps through the heap.
 interface OpenedIterator {
   iterator: Expression;
-  next: Expression;
+  next?: Expression;
 }
 
 const translateIterations = (
@@ -18622,6 +18670,8 @@ const translateIterations = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
+  // The array's or the string's iterator that a for-of steps, which its caller opened.
+  builtIn?: Expression,
 ): Formula => {
   const iterated = ts.isForOfStatement(loop) || ts.isForInStatement(loop) ? loop : undefined;
   // A for-of over an array, or a set or a map that keeps its order, that the heap holds visits its
@@ -18709,6 +18759,7 @@ const translateIterations = (
     getKind(iterated.expression, context) === "string";
   if (
     iterated !== undefined &&
+    builtIn === undefined &&
     !isForIn &&
     !isListKeys &&
     !isIterator &&
@@ -18720,9 +18771,13 @@ const translateIterations = (
   }
   // A let or a const whose declaration hasn't run yet has no value to pass to the loop, which only
   // a function that stops instead of reading it before its declaration could change.
-  const changed = getChanged(loop, path, context).filter(
-    (symbol) => !path.scope.uninitialized.has(symbol),
-  );
+  // An array's or a string's iterator steps on the heap.
+  const changed = [
+    ...new Set([
+      ...getChanged(loop, path, context),
+      ...(builtIn === undefined || context.heap === undefined ? [] : [context.heap]),
+    ]),
+  ].filter((symbol) => !path.scope.uninitialized.has(symbol));
   // The iterator reads each element as the loop reaches it, which a copy of the elements matches
   // only while the body changes no object. Where it may, each step reads the array's length and
   // elements again, as an array iterator does. A set's or a map's iterator steps through its
@@ -18762,6 +18817,7 @@ const translateIterations = (
     isKeyChecked && heldSymbol !== undefined && !isAssigned(heldSymbol, loop, context);
   if (
     iterated !== undefined &&
+    builtIn === undefined &&
     !isIterator &&
     !isLive &&
     !isListChanged &&
@@ -18806,30 +18862,61 @@ const translateIterations = (
           return close(current, { ...bodyFrame, throwTo: rethrow }, rethrow);
         }),
     };
+    const runBody = (taken: Path, value: Expression) =>
+      bindIteration(
+        iterating.initializer,
+        value,
+        undefined,
+        taken,
+        context,
+        iterationFrame,
+        (bound, innerFrame) => translateStatements([loop.statement], bound, context, innerFrame),
+      );
+    const next = opened.next;
+    if (next === undefined) {
+      // An array's or a string's iterator throws the TypeError of a typed array out of bounds,
+      // and otherwise steps on the heap.
+      const heap = getHeap(path.scope, site, context);
+      return ifThenElse(
+        useJavaScript("HoldsIteratorNext", [heap, opened.iterator], context),
+        bind(
+          path,
+          "step",
+          useJavaScript("BuiltInIteratorStep", [heap, opened.iterator], context),
+          context,
+          (bound, step) => {
+            const stepped = withHeap(bound, field(step, "heap"), context);
+            return ifThenElse(
+              field(step, "isThrown"),
+              throwTypeError(bound, site, context, bodyFrame),
+              ifThenElse(
+                field(step, "isDone"),
+                done(stepped),
+                runBody(stepped, field(step, "value")),
+              ),
+            );
+          },
+        ),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't step an iterator whose next a script replaced"),
+          ]),
+        ),
+      );
+    }
     return stepIterator(
       site,
       opened.iterator,
       "next",
-      opened.next,
+      next,
       [],
       path,
       context,
       bodyFrame,
       (failed) => throwTypeError(failed, site, context, bodyFrame),
       done,
-      (stepped, result) =>
-        readValue(site, result, stepped, context, bodyFrame, (taken, value) =>
-          bindIteration(
-            iterating.initializer,
-            value,
-            undefined,
-            taken,
-            context,
-            iterationFrame,
-            (bound, innerFrame) =>
-              translateStatements([loop.statement], bound, context, innerFrame),
-          ),
-        ),
+      (stepped, result) => readValue(site, result, stepped, context, bodyFrame, runBody),
     );
   };
   const translateFrom = (path: Path, opened?: OpenedIterator): Formula => {
@@ -19243,6 +19330,7 @@ const translateIterations = (
   };
   // A for-of of an array throws the TypeError of GetIterator before its first iteration where the
   // array's Symbol.iterator, which a script may delete from Array.prototype, isn't a function.
+  if (builtIn !== undefined) return translateFrom(path, { iterator: builtIn });
   if (
     iterated !== undefined &&
     ts.isForOfStatement(iterated) &&

@@ -16,6 +16,7 @@ import {
   type FunctionNode,
   createContext,
   createDispatch,
+  findCalleeRuns,
   findNodes,
   findFunctionCandidates,
   findFileAccessors,
@@ -1244,11 +1245,9 @@ export const compile = (
   if (context.isEveryCollectionHeld) rejectSharing(shareable, context);
   rejectRegExpIndicesUses(roots, context);
   if (context.heap !== undefined) {
-    context.dispatch = createDispatch(
-      findDispatchedCallees(reached, context),
-      context,
-      program.isStrictFunctionTypes,
-    );
+    const callees = findDispatchedCallees(reached, context);
+    context.dispatch = createDispatch(callees, context, program.isStrictFunctionTypes);
+    context.calleeRuns = findCalleeRuns(callees, context);
     context.effects = findEffects(reached, context);
     context.changes = summarizeEffects(context);
   }

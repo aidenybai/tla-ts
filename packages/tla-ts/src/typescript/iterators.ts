@@ -6,6 +6,7 @@ import {
   getChanged,
   throwTypeError,
   isGeneratorMade,
+  resumeGenerator,
   takeFromHeld,
   translateJoined,
   withoutMade,
@@ -56,10 +57,6 @@ export const getTakenValue = (value: Expression) => {
 };
 
 export const getTaken = (values: Expression[]) => getTakenValue(tuple(values));
-
-// The values that a rest element or a spread takes from a generator before tla-ts stops following
-// it.
-const TAKE_LIMIT = 3;
 
 // The key of the method that makes an object's iterator, Symbol.iterator, as protocols name it.
 const ITERATOR_KEY = "@@iterator";
@@ -862,7 +859,6 @@ const takeAll = (
         iterator,
         next,
         tuple(values),
-        TAKE_LIMIT,
         current,
         context,
         frame,
@@ -935,78 +931,74 @@ export const getIteratedSpreads = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
-interface LoopStep {
+interface LoopVisit {
   (
     current: Path,
     state: Expression,
+    value: Expression,
     inner: Frame,
     again: (current: Path, state: Expression) => Formula,
-    stop: (current: Path, result: Expression) => Formula,
   ): Formula;
 }
 
-// Steps an iterator in a recursive operator, as a loop's iterations run, from a state that each
-// step gives the next. A generator that a generator method made keeps its state in the path, which
-// the operator can't carry, so its steps unroll, up to a limit.
+// Steps an iterator to its end, visiting each value it gives with a state that each visit gives
+// the next. A script's iterator steps in a recursive operator, as a loop's iterations run. A
+// generator that a generator method made keeps where it suspended in the path, which the operator
+// can't carry, so its steps unroll until it completes, which its body bounds, as tla-ts unrolls a
+// generator's loops up to a limit.
 const loopIterator = (
   site: ts.Node,
   iterator: Expression,
+  next: Expression,
   seed: Expression,
-  limit: number,
   path: Path,
   context: Context,
   frame: Frame,
-  step: LoopStep,
+  visit: LoopVisit,
   continueWith: (path: Path, result: Expression) => Formula,
 ): Formula => {
-  if (!madeIterators.has(iterator)) {
-    // The operator carries what the iterator's functions may change, which the effects of an
-    // assignment's pattern, unlike its assignment's, leave out. A let whose declaration hasn't run
-    // has no value to carry.
-    const changed = [
-      ...new Set([
-        ...getChanged(site, path, context),
-        ...getIteratorFunctions(site, context).flatMap((called) =>
-          getChanged(called, path, context),
+  if (madeIterators.has(iterator)) {
+    // Each step names the state it carries, which the next builds on.
+    const unroll = (current: Path, state: Expression): Formula =>
+      bind(current, "state", state, context, (bound, held) =>
+        resumeGenerator(
+          site,
+          iterator,
+          "next",
+          undefined,
+          bound,
+          context,
+          frame,
+          (after, value, isDone, isResult) =>
+            isDone
+              ? continueWith(after, held)
+              : isResult && value !== undefined
+                ? readValue(site, value, after, context, frame, (read, given) =>
+                    visit(read, held, given, frame, unroll),
+                  )
+                : visit(after, held, value ?? getUndefined(context), frame, unroll),
         ),
-        ...(context.heap === undefined ? [] : [context.heap]),
-      ]),
-    ].filter((symbol) => !path.scope.uninitialized.has(symbol));
-    return loopStates(site, seed, changed, path, context, frame, step, continueWith);
+      );
+    return unroll(path, seed);
   }
-  const unroll = (current: Path, state: Expression, count: number): Formula =>
-    count > limit
-      ? leaf(
-          apply("Assert", [
-            boolean(false),
-            string(`tla-ts can't take more than ${limit} values from a generator`),
-          ]),
-        )
-      : step(current, state, frame, (after, next) => unroll(after, next, count + 1), continueWith);
-  return unroll(path, seed, 0);
-};
-
-// Steps an iterator to its end, as a spread does, appending each value it gives to those taken.
-export const takeRest = (
-  site: ts.Node,
-  iterator: Expression,
-  next: Expression,
-  taken: Expression,
-  limit: number,
-  path: Path,
-  context: Context,
-  frame: Frame,
-  continueWith: (path: Path, values: Expression) => Formula,
-) =>
-  loopIterator(
+  // The operator carries what the iterator's functions may change, which the effects of an
+  // assignment's pattern, unlike its assignment's, leave out. A let whose declaration hasn't run
+  // has no value to carry.
+  const changed = [
+    ...new Set([
+      ...getChanged(site, path, context),
+      ...getIteratorFunctions(site, context).flatMap((called) => getChanged(called, path, context)),
+      ...(context.heap === undefined ? [] : [context.heap]),
+    ]),
+  ].filter((symbol) => !path.scope.uninitialized.has(symbol));
+  return loopStates(
     site,
-    iterator,
-    taken,
-    limit,
+    seed,
+    changed,
     path,
     context,
     frame,
-    (current, values, inner, again, stop) =>
+    (current, state, inner, again, stop) =>
       stepIterator(
         site,
         iterator,
@@ -1017,12 +1009,36 @@ export const takeRest = (
         context,
         inner,
         (after) => throwTypeError(after, site, context, inner),
-        (done) => stop(done, values),
+        (done) => stop(done, state),
         (stepped, result) =>
           readValue(site, result, stepped, context, inner, (read, value) =>
-            again(read, apply("Append", [values, value])),
+            visit(read, state, value, inner, again),
           ),
       ),
+    continueWith,
+  );
+};
+
+// Steps an iterator to its end, as a spread does, appending each value it gives to those taken.
+export const takeRest = (
+  site: ts.Node,
+  iterator: Expression,
+  next: Expression,
+  taken: Expression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, values: Expression) => Formula,
+) =>
+  loopIterator(
+    site,
+    iterator,
+    next,
+    taken,
+    path,
+    context,
+    frame,
+    (current, values, value, _inner, again) => again(current, apply("Append", [values, value])),
     continueWith,
   );
 
@@ -1059,16 +1075,8 @@ export const takeSpreads = (
                   frame,
                   throwWith,
                   (opened, iterator, next) =>
-                    takeRest(
-                      site,
-                      iterator,
-                      next,
-                      tuple([]),
-                      TAKE_LIMIT,
-                      opened,
-                      context,
-                      frame,
-                      (done) => spread(done, rest.slice(1)),
+                    takeRest(site, iterator, next, tuple([]), opened, context, frame, (done) =>
+                      spread(done, rest.slice(1)),
                     ),
                 );
           return spread(path, iterables);
@@ -1119,7 +1127,7 @@ export const takeEvery = (
               apply("~", [useJavaScript("IsArray", [heap, value], context)]),
             ]),
             open(site, value, path, context, frame, throwWith, (opened, iterator, next) =>
-              takeRest(site, iterator, next, tuple([]), TAKE_LIMIT, opened, context, frame, rejoin),
+              takeRest(site, iterator, next, tuple([]), opened, context, frame, rejoin),
             ),
             ifThenElse(
               isNullish(value, context),
@@ -1130,9 +1138,6 @@ export const takeEvery = (
       ),
   );
 };
-
-// The most entries that Object.fromEntries takes from a generator.
-const ENTRY_LIMIT = 3;
 
 // Object.fromEntries of an object that a script gives an iterator, as AddEntriesFromIterable runs
 // it: each step takes one entry and reads its key and value, then converts the key, before the next
@@ -1157,12 +1162,12 @@ export const takeEntries = (
       loopIterator(
         site,
         iterator,
+        next,
         identifier("EmptyObject"),
-        ENTRY_LIMIT,
         opened,
         context,
         frame,
-        (current, object, inner, again, stop) => {
+        (current, object, entry, inner, again) => {
           const throwTo = inner.throwTo;
           const closing: Frame = {
             ...inner,
@@ -1171,45 +1176,30 @@ export const takeEntries = (
                 throwTo === undefined ? leaf(thrown.uncaught) : throwTo(closed, thrown),
               ),
           };
-          return stepIterator(
-            site,
-            iterator,
-            "next",
-            next,
-            [],
-            current,
-            context,
-            inner,
-            (after) => throwTypeError(after, site, context, inner),
-            (done) => stop(done, object),
-            (stepped, result) =>
-              readValue(site, result, stepped, context, inner, (taken, entry) =>
-                ifThenElse(
-                  isObject(site, taken, entry, context),
-                  read(site, entry, "0", taken, context, closing, (keyed, key) =>
-                    read(site, entry, "1", keyed, context, closing, (valued, value) =>
-                      runToPrimitive(
-                        site,
-                        key,
-                        "string",
-                        valued,
+          return ifThenElse(
+            isObject(site, current, entry, context),
+            read(site, entry, "0", current, context, closing, (keyed, key) =>
+              read(site, entry, "1", keyed, context, closing, (valued, value) =>
+                runToPrimitive(
+                  site,
+                  key,
+                  "string",
+                  valued,
+                  context,
+                  closing,
+                  (converted, primitive) =>
+                    again(
+                      converted,
+                      useJavaScript(
+                        "Put",
+                        [object, useJavaScript("PropertyKey", [primitive], context), value],
                         context,
-                        closing,
-                        (converted, primitive) =>
-                          again(
-                            converted,
-                            useJavaScript(
-                              "Put",
-                              [object, useJavaScript("PropertyKey", [primitive], context), value],
-                              context,
-                            ),
-                          ),
                       ),
                     ),
-                  ),
-                  throwTypeError(taken, site, context, closing),
                 ),
               ),
+            ),
+            throwTypeError(current, site, context, closing),
           );
         },
         (done, object) =>

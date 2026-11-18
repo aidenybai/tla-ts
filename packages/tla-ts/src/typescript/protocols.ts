@@ -1041,13 +1041,10 @@ const getLiteralKeys = (node: ts.Expression | undefined) => {
     : undefined;
 };
 
-// The most keys that tla-ts reads descriptors of where it lists an object's keys as it runs.
-const KEYS_LIMIT = 4;
-
 // Object.defineProperties or Object.create, which reads the descriptor under each enumerable own
 // key in turn, running its getter, reads each descriptor's fields, and then defines them all.
 // Object.create makes its object first, and gives it. An object literal gives its keys as it's
-// written, and otherwise the statement lists them as it runs and reads at most a few.
+// written, and otherwise the statement lists them as it runs and reads them in a loop.
 export const readDescriptors = (
   site: ts.CallExpression,
   values: readonly Expression[],
@@ -1092,59 +1089,34 @@ export const readDescriptors = (
         ),
     );
   };
-  // The keys and descriptors that the statement read so far, as a pair that each join passes on.
-  const readListed = (
-    current: Path,
-    target: Expression,
-    keys: Expression,
-    position: number,
-    read: Expression,
-  ): Formula => {
-    if (position > KEYS_LIMIT) {
-      return ifThenElse(
-        apply("<=", [apply("Len", [keys]), number(KEYS_LIMIT)]),
-        defineAll(
-          site,
-          target,
-          index(read, [number(1)]),
-          index(read, [number(2)]),
-          current,
-          context,
-          frame,
-          (after) => continueWith(after, target),
-        ),
-        leaf(
-          apply("Assert", [
-            boolean(false),
-            string(`tla-ts can't read the descriptors of more than ${KEYS_LIMIT} keys`),
-          ]),
-        ),
-      );
-    }
-    const heap = getHeap(current.scope, site, context);
-    const key = index(keys, [number(position)]);
-    return translateJoined(
+  // Reads the descriptor under each listed key that is still enumerable and own, in a loop that
+  // gathers the keys and descriptors that it read as a pair.
+  const readListed = (current: Path, target: Expression, keys: Expression): Formula =>
+    loopKeys(
       site,
+      keys,
+      tuple([tuple([]), tuple([])]),
       current,
       context,
-      (after, value) => readListed(after, target, keys, position + 1, value ?? read),
-      (next) =>
+      frame,
+      (inner, key, read, innerFrame, again) =>
         ifThenElse(
-          junction("And", [
-            apply("<=", [number(position), apply("Len", [keys])]),
-            useJavaScript("IsEnumerableOwn", [heap, properties, key], context),
-          ]),
+          useJavaScript(
+            "IsEnumerableOwn",
+            [getHeap(inner.scope, site, context), properties, key],
+            context,
+          ),
           readWith(
             site,
             properties,
             key,
             getReadGetters(site, context),
-            current,
+            inner,
             context,
-            frame,
+            innerFrame,
             (got, attributes) =>
-              readFields(site, attributes, got, context, frame, (after, descriptor) =>
-                next(
+              readFields(site, attributes, got, context, innerFrame, (after, descriptor) =>
+                again(
                   after,
                   tuple([
                     apply("Append", [index(read, [number(1)]), key]),
@@ -1153,10 +1125,20 @@ export const readDescriptors = (
                 ),
               ),
           ),
-          next(current, read),
+          again(inner, read),
+        ),
+      (after, read) =>
+        defineAll(
+          site,
+          target,
+          index(read, [number(1)]),
+          index(read, [number(2)]),
+          after,
+          context,
+          frame,
+          (defined) => continueWith(defined, target),
         ),
     );
-  };
   const readAll = (current: Path, target: Expression): Formula =>
     literalKeys !== undefined
       ? readLiteral(current, target, 0, [])
@@ -1171,7 +1153,7 @@ export const readDescriptors = (
               context,
             ),
             context,
-            (bound, keys) => readListed(bound, target, keys, 1, tuple([tuple([]), tuple([])])),
+            (bound, keys) => readListed(bound, target, keys),
           ),
           leaf(
             apply("Assert", [
@@ -1246,7 +1228,7 @@ export const getOwnValuesGetters = (node: ts.Node, context: Context) =>
 // Object.values, Object.entries, or Object.assign, which lists an object's own keys, and then
 // reads each that is still an enumerable own property in turn, running its getter. values and
 // entries read string keys and gather what they read, and assign reads symbols too and writes each
-// value to its target before it reads the next. The statement reads at most a few keys.
+// value to its target before it reads the next, in a loop over the keys.
 export const readOwnValues = (
   site: ts.CallExpression,
   path: Path,
@@ -1256,72 +1238,54 @@ export const readOwnValues = (
 ): Formula => {
   const method = getCallName(site);
   const getters = getOwnValueGetters(site, context);
-  const readFrom = (
-    current: Path,
-    target: Expression,
-    object: Expression,
-    keys: Expression,
-    position: number,
-    read: Expression,
-  ): Formula => {
-    if (position > KEYS_LIMIT) {
-      return ifThenElse(
-        apply("<=", [apply("Len", [keys]), number(KEYS_LIMIT)]),
-        continueWith(current, method === "assign" ? target : read),
-        leaf(
-          apply("Assert", [
-            boolean(false),
-            string(`tla-ts can't read the values of more than ${KEYS_LIMIT} keys`),
-          ]),
-        ),
-      );
-    }
-    const key = index(keys, [number(position)]);
-    const gather = (
-      after: Path,
-      value: Expression,
-      next: (inner: Path, read: Expression) => Formula,
-    ) =>
-      method === "assign"
-        ? // Object.assign writes as a strict-mode assignment, which throws where the write fails.
-          ifThenElse(
-            useJavaScript("CanPut", [getHeap(after.scope, site, context), target, key], context),
-            writeWith(
-              site,
-              target,
-              key,
-              value,
-              getSetters(site, context),
-              after,
-              context,
-              frame,
-              (written) => next(written, read),
-            ),
-            throwTypeError(after, site, context, frame),
-          )
-        : next(after, apply("Append", [read, method === "entries" ? tuple([key, value]) : value]));
-    return translateJoined(
+  // Reads each listed key that is still enumerable and own, in a loop that gathers what it read.
+  const readFrom = (current: Path, target: Expression, object: Expression, keys: Expression) =>
+    loopKeys(
       site,
+      keys,
+      tuple([]),
       current,
       context,
-      (after, value) => readFrom(after, target, object, keys, position + 1, value ?? read),
-      (next) =>
+      frame,
+      (inner, key, read, innerFrame, again) =>
         ifThenElse(
-          junction("And", [
-            apply("<=", [number(position), apply("Len", [keys])]),
-            useJavaScript(
-              "IsEnumerableOwn",
-              [getHeap(current.scope, site, context), object, key],
-              context,
-            ),
-          ]),
-          readWith(site, object, key, getters, current, context, frame, (after, value) =>
-            gather(after, value, next),
+          useJavaScript(
+            "IsEnumerableOwn",
+            [getHeap(inner.scope, site, context), object, key],
+            context,
           ),
-          next(current, read),
+          readWith(site, object, key, getters, inner, context, innerFrame, (after, value) =>
+            method === "assign"
+              ? // Object.assign writes as a strict-mode assignment, which throws where the write
+                // fails.
+                ifThenElse(
+                  useJavaScript(
+                    "CanPut",
+                    [getHeap(after.scope, site, context), target, key],
+                    context,
+                  ),
+                  writeWith(
+                    site,
+                    target,
+                    key,
+                    value,
+                    getSetters(site, context),
+                    after,
+                    context,
+                    innerFrame,
+                    (written) => again(written, read),
+                  ),
+                  throwTypeError(after, site, context, innerFrame),
+                )
+              : again(
+                  after,
+                  apply("Append", [read, method === "entries" ? tuple([key, value]) : value]),
+                ),
+          ),
+          again(inner, read),
         ),
+      (after, read) => continueWith(after, method === "assign" ? target : read),
     );
-  };
   const values = site.arguments.map((argument) =>
     method === "assign"
       ? translateObjectValue(argument, path.scope, context)
@@ -1345,7 +1309,7 @@ export const readOwnValues = (
             context,
           ),
       context,
-      (listed, keys) => readFrom(listed, target, object, keys, 1, tuple([])),
+      (listed, keys) => readFrom(listed, target, object, keys),
     ),
     method === "assign"
       ? leaf(

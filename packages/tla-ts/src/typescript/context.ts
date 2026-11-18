@@ -310,6 +310,8 @@ export interface Context {
   effects: NodeEffects;
   // Which function candidates the callees of the model's calls through values may hold.
   dispatch: Dispatch | undefined;
+  // The functions that each dispatched callee may hold.
+  calleeRuns: CalleeRuns | undefined;
 }
 
 // The types of the callees that findEffects dispatches among the function candidates, by type id in
@@ -322,6 +324,18 @@ export interface Dispatch {
   // The bits that each row tested, which the rest of the bits don't tell.
   tested: Uint32Array;
   candidateTypes: Int32Array;
+}
+
+// The functions that each callee that findEffects dispatches may hold, but for those that code only
+// calls by name, by the callee's position in order: the index of its run, whose functions run from
+// runStarts[run] to runStarts[run + 1], and a bit per run of whether the callee may hold any
+// function at all, those too.
+export interface CalleeRuns {
+  calleePositions: Int32Array;
+  calleeRuns: Int32Array;
+  runStarts: Int32Array;
+  functions: FunctionNode[];
+  heldBits: Uint32Array;
 }
 
 // The effects of the nodes of the program's files by their positions, and of the few nodes that no
@@ -740,6 +754,7 @@ export const createContext = (
     changes: undefined,
     effects: { positions: [], elsewhere: new Map(), found: [] },
     dispatch: undefined,
+    calleeRuns: undefined,
     assignedNames: new Map(
       files.map((file) => [
         file,
@@ -6111,14 +6126,7 @@ export const findSharedFunctionCandidates = (
 // function's run binds.
 export const getFunctionCandidates = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
-  const sourceFile = callee.getSourceFile();
-  const found = context.functionCandidates.has(sourceFile)
-    ? [...context.functionCandidates.entries()].flatMap((entry) =>
-        entry[0] === sourceFile ? entry[1] : (context.sharedFunctionCandidates.get(entry[0]) ?? []),
-      )
-    : findFunctionCandidates(sourceFile, context).filter((candidate) =>
-        isReached(candidate, context),
-      );
+  const found = getFileCandidates(callee.getSourceFile(), context);
   const checker = context.checker;
   const type = checker.getTypeAtLocation(callee);
   const call = callee.parent;
@@ -6150,30 +6158,186 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
       )
     );
   };
-  // A callee whose type createDispatch tested reads its row.
+  const row = isSuperAccess(callee) ? -1 : getDispatchRow(type, context);
+  return found.filter(
+    (candidate) => isDispatchAssignable(candidate, row, type, context) && isTyped(candidate),
+  );
+};
+
+// The function candidates that a callee of a file may hold where its type lets it: those of the
+// file and the shared ones of the files it imports.
+const getFileCandidates = (sourceFile: ts.SourceFile, context: Context) =>
+  context.functionCandidates.has(sourceFile)
+    ? [...context.functionCandidates.entries()].flatMap((entry) =>
+        entry[0] === sourceFile ? entry[1] : (context.sharedFunctionCandidates.get(entry[0]) ?? []),
+      )
+    : findFunctionCandidates(sourceFile, context).filter((candidate) =>
+        isReached(candidate, context),
+      );
+
+// The row that createDispatch tested a callee type in, or -1.
+const getDispatchRow = (type: ts.Type, context: Context) => {
   const dispatch = context.dispatch;
-  const rowIndex =
-    dispatch === undefined || isSuperAccess(callee)
+  const row =
+    dispatch === undefined
       ? -1
       : getLowerBound(dispatch.calleeIds, 0, dispatch.calleeIds.length, type.id);
-  const row =
-    dispatch !== undefined && rowIndex >= 0 && dispatch.calleeIds[rowIndex] === type.id
-      ? rowIndex
-      : -1;
-  const isAssignable = (candidate: FunctionNode) => {
-    const position = row < 0 ? -1 : getPosition(context.nodes, candidate);
-    const bit = position < 0 || dispatch === undefined ? -1 : dispatch.candidateTypes[position] - 1;
-    const word = row * (dispatch?.words ?? 0) + (bit >>> 5);
-    return dispatch !== undefined && bit >= 0 && (dispatch.tested[word] & (1 << (bit & 31))) !== 0
-      ? (dispatch.rows[word] & (1 << (bit & 31))) !== 0
-      : checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type);
+  return dispatch !== undefined &&
+    row < dispatch.calleeIds.length &&
+    dispatch.calleeIds[row] === type.id
+    ? row
+    : -1;
+};
+
+// Whether TypeScript lets a callee type hold a candidate, which the callee type's row tells where
+// createDispatch tested the candidate's type.
+const isDispatchAssignable = (
+  candidate: FunctionNode,
+  row: number,
+  type: ts.Type,
+  context: Context,
+) => {
+  const dispatch = context.dispatch;
+  const position = row < 0 ? -1 : getPosition(context.nodes, candidate);
+  const bit = position < 0 || dispatch === undefined ? -1 : dispatch.candidateTypes[position] - 1;
+  const word = row * (dispatch?.words ?? 0) + (bit >>> 5);
+  return dispatch !== undefined && bit >= 0 && (dispatch.tested[word] & (1 << (bit & 31))) !== 0
+    ? (dispatch.rows[word] & (1 << (bit & 31))) !== 0
+    : context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(candidate), type);
+};
+
+// Finds once the functions that each callee that findEffects dispatches may hold: the function
+// candidates that its type lets it hold, then the closures, but for those that code only calls by
+// name. Callees of one file and one type hold the same ones, which a run holds once for all of
+// them, but for a held built-in or super, which getFunctionCandidates and getClosures tell apart.
+export const findCalleeRuns = (callees: readonly ts.Expression[], context: Context): CalleeRuns => {
+  const table = context.nodes;
+  const checker = context.checker;
+  const placed = callees.filter((callee) => getPosition(table, callee) >= 0);
+  const positions = Int32Array.from(placed, (callee) => getPosition(table, callee));
+  const files = Int32Array.from(positions, (position) => table.files[position]);
+  const typeIds = Int32Array.from(placed, (callee) => checker.getTypeAtLocation(callee).id);
+  const aloneBits = new Uint32Array((placed.length + 31) >>> 5);
+  placed.forEach((callee, index) => {
+    if (isHeldBuiltInObject(callee, context) || isSuperAccess(callee)) setBit(aloneBits, index);
+  });
+  const isShared = (left: number, right: number) =>
+    !hasBit(aloneBits, left) &&
+    !hasBit(aloneBits, right) &&
+    files[left] === files[right] &&
+    typeIds[left] === typeIds[right];
+  const byKey = Int32Array.from(placed, (_, index) => index).sort(
+    (left, right) => files[left] - files[right] || typeIds[left] - typeIds[right] || left - right,
+  );
+  const runOf = new Int32Array(placed.length);
+  const starts = [0];
+  const functions: FunctionNode[] = [];
+  const heldBits = new Uint32Array((placed.length + 31) >>> 5);
+  byKey.forEach((index, order) => {
+    const previous = order > 0 ? byKey[order - 1] : -1;
+    if (previous >= 0 && isShared(previous, index)) {
+      runOf[index] = runOf[previous];
+      return;
+    }
+    const callee = placed[index];
+    const run = starts.length - 1;
+    runOf[index] = run;
+    const type = checker.getTypeAtLocation(callee);
+    const row = getDispatchRow(type, context);
+    const held = hasBit(aloneBits, index)
+      ? [...getFunctionCandidates(callee, context), ...getClosures(callee, context)]
+      : [
+          ...getFileCandidates(callee.getSourceFile(), context).filter((candidate) =>
+            isDispatchAssignable(candidate, row, type, context),
+          ),
+          ...(context.closures.get(callee.getSourceFile()) ?? []).filter((closure) =>
+            checker.isTypeAssignableTo(checker.getTypeAtLocation(closure), type),
+          ),
+        ];
+    if (held.length > 0) setBit(heldBits, run);
+    held.forEach((candidate) => {
+      if (!isOnlyCalled(candidate, context)) functions.push(candidate);
+    });
+    starts.push(functions.length);
+  });
+  const byPosition = Int32Array.from(placed, (_, index) => index).sort(
+    (left, right) => positions[left] - positions[right],
+  );
+  return {
+    calleePositions: Int32Array.from(byPosition, (index) => positions[index]),
+    calleeRuns: Int32Array.from(byPosition, (index) => runOf[index]),
+    runStarts: Int32Array.from(starts),
+    functions,
+    heldBits,
   };
-  return found.filter((candidate) => isAssignable(candidate) && isTyped(candidate));
+};
+
+// The run of the functions that a callee may hold, which findCalleeRuns found, or -1.
+export const getCalleeRun = (callee: ts.Expression, context: Context) => {
+  const runs = context.calleeRuns;
+  const position = getPosition(context.nodes, callee);
+  const index =
+    runs === undefined || position < 0
+      ? -1
+      : getLowerBound(runs.calleePositions, 0, runs.calleePositions.length, position);
+  return runs !== undefined && index >= 0 && runs.calleePositions[index] === position
+    ? runs.calleeRuns[index]
+    : -1;
 };
 
 // TypeScript's flags of a signature with a rest parameter, and of an untyped one of JavaScript.
 const SIGNATURE_REST = 1;
 const SIGNATURE_UNTYPED = 32;
+
+const NULLABLE = ts.TypeFlags.Undefined | ts.TypeFlags.Null;
+
+// The flags of the types that hold no type parameters, which TypeScript's instantiation leaves as
+// they are: the primitives but for template literals and string mappings, and any, unknown, never,
+// and object.
+const FIXED =
+  (ts.TypeFlags.StringLike |
+    ts.TypeFlags.NumberLike |
+    ts.TypeFlags.BigIntLike |
+    ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.EnumLike |
+    ts.TypeFlags.ESSymbolLike |
+    ts.TypeFlags.VoidLike |
+    ts.TypeFlags.Null |
+    ts.TypeFlags.Any |
+    ts.TypeFlags.Unknown |
+    ts.TypeFlags.Never |
+    ts.TypeFlags.NonPrimitive) &
+  ~(ts.TypeFlags.TemplateLiteral | ts.TypeFlags.StringMapping);
+
+// The answer of all of some answers, 1 and 2 for no and yes or 0 where they don't tell, which
+// fails where any fails, and of any of them, which holds where any holds, each taking the answers
+// in order only as far as they tell.
+const getEveryAnswer = (count: number, getAnswer: (index: number) => number) => {
+  const answers = new Uint8Array(count);
+  for (let index = 0; index < count; index += 1) {
+    answers[index] = getAnswer(index);
+    if (answers[index] === 1) return 1;
+  }
+  return answers.includes(0) ? 0 : 2;
+};
+
+const getSomeAnswer = (count: number, getAnswer: (index: number) => number) => {
+  const answers = new Uint8Array(count);
+  for (let index = 0; index < count; index += 1) {
+    answers[index] = getAnswer(index);
+    if (answers[index] === 2) return 2;
+  }
+  return answers.includes(0) ? 0 : 1;
+};
+
+// The starts of runs of lists laid end to end, with the end of the last.
+const getRunStarts = (runs: readonly (readonly unknown[])[]) => {
+  const starts = new Int32Array(runs.length + 1);
+  runs.forEach((run, index) => {
+    starts[index + 1] = starts[index] + run.length;
+  });
+  return starts;
+};
 
 // The distinct types of some nodes or values, in the order of their ids.
 const getDistinctTypes = (types: readonly ts.Type[]) =>
@@ -6342,62 +6506,116 @@ export const createDispatch = (
     const id = symbol === undefined ? -1 : ts.getSymbolId(symbol);
     return candidateSymbols[getLowerBound(candidateSymbols, 0, candidateSymbols.length, id)] === id;
   };
-  // Where both are function types of one call signature with no rest parameter, the candidate
-  // type a plain one with no this, and the callee type's signature has no type parameter or type
-  // predicate, TypeScript's compareSignaturesRelated relates them by the count of arguments, then
-  // each pair of parameter types, then the return types, unless the parameters at a position are
-  // both function types, which it compares as callbacks. The pairs of those types take far fewer
-  // tests than the pairs of function types: the candidate types' parameter and return types, and
-  // the callee types', each by an index, with a table each way of the answers that the tests find,
-  // 1 and 2 for no and yes.
-  const sources = candidateTypes.map((type) => {
+  // TypeScript relates a function type of TypeScript's own, not an alias's or an instantiation's,
+  // whose call signatures take no rest parameter or this, and that has nothing else, to a type of
+  // call signatures alone only through their signatures: one to the other by
+  // compareSignaturesRelated where each has one, and otherwise each of the target's to some of the
+  // source's, with their type parameters erased. The candidate types' signatures, by runs from
+  // sourceStarts[bit] to sourceStarts[bit + 1], none where TypeScript relates the type otherwise.
+  const isSignaturesOnly = (type: ts.Type) =>
+    checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
+    checker.getPropertiesOfType(type).length === 0 &&
+    checker.getIndexInfosOfType(type).length === 0;
+  const getSourceSignatures = (type: ts.Type) => {
     const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
-    return isPlainFunctionType(type) &&
-      signatures.length === 1 &&
-      (signatures[0].flags & SIGNATURE_REST) === 0 &&
-      signatures[0].thisParameter === undefined
-      ? signatures[0]
-      : undefined;
-  });
-  // A callee type may be an alias's or an instantiation's, and its signature may take a this,
-  // which TypeScript compares only to a candidate's own this, and come from a generic one, which
-  // changes only how it compares callbacks.
-  const targets = calleeTypes.map((type) => {
-    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
-    const signature = signatures.length === 1 ? signatures[0] : undefined;
     return type.flags === ts.TypeFlags.Object &&
-      ((type.objectFlags ?? 0) & (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped)) === 0 &&
-      signature !== undefined &&
-      signature.typeParameters === undefined &&
-      (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0 &&
-      signature.declaration !== undefined &&
-      !isJavaScriptFile(signature.declaration.getSourceFile().fileName) &&
-      checker.getTypePredicateOfSignature(signature) === undefined &&
-      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
-      checker.getPropertiesOfType(type).length === 0 &&
-      checker.getIndexInfosOfType(type).length === 0
-      ? signature
-      : undefined;
-  });
-  const getParts = (signature: ts.Signature | undefined) =>
-    signature === undefined
-      ? []
-      : [
-          ...signature.parameters.map((_, position) =>
-            checker.getParameterType(signature, position),
-          ),
-          checker.getReturnTypeOfSignature(signature),
-        ];
-  const sourceParts = sources.map(getParts);
-  const targetParts = targets.map(getParts);
+      type.aliasSymbol === undefined &&
+      ((type.objectFlags ?? 0) &
+        (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped | ts.ObjectFlags.Instantiated)) ===
+        0 &&
+      signatures.length > 0 &&
+      signatures.every(
+        (signature) =>
+          signature.target === undefined &&
+          signature.thisParameter === undefined &&
+          (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0 &&
+          signature.declaration !== undefined &&
+          !isJavaScriptFile(signature.declaration.getSourceFile().fileName),
+      ) &&
+      isSignaturesOnly(type)
+      ? signatures
+      : [];
+  };
+  // A callee type may be an alias's or an instantiation's, and its signatures may take a this,
+  // which TypeScript compares only to a candidate's own this, come from a generic one, which
+  // changes only how it compares callbacks, and take type parameters, which TypeScript compares as
+  // they are to a source of none where each type has one signature. A union that holds null or
+  // undefined besides one other type relates a function type as that type does, and another union
+  // as any of its types does, as the function type has no properties that it may discriminate the
+  // union by. The callee types' targets by runs from unitStarts[row] to unitStarts[row + 1], and
+  // their signatures by runs from targetStarts[unit] to targetStarts[unit + 1].
+  const getTargetSignatures = (type: ts.Type) => {
+    if (
+      type.flags !== ts.TypeFlags.Object ||
+      ((type.objectFlags ?? 0) & (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped)) !== 0
+    ) {
+      return [];
+    }
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    return signatures.length > 0 &&
+      signatures.every(
+        (signature) =>
+          (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0 &&
+          signature.declaration !== undefined &&
+          !isJavaScriptFile(signature.declaration.getSourceFile().fileName) &&
+          checker.getTypePredicateOfSignature(signature) === undefined,
+      ) &&
+      isSignaturesOnly(type)
+      ? signatures
+      : [];
+  };
+  const getUnits = (type: ts.Type) => {
+    if (!type.isUnion()) return [type];
+    const types = type.types;
+    const other =
+      types.length === 2 && (types[0].flags & NULLABLE) !== 0
+        ? types[1]
+        : types.length === 3 &&
+            (types[0].flags & NULLABLE) !== 0 &&
+            (types[1].flags & NULLABLE) !== 0
+          ? types[2]
+          : undefined;
+    return other !== undefined && (other.flags & NULLABLE) === 0 ? [other] : types;
+  };
+  const sourceRuns = candidateTypes.map(getSourceSignatures);
+  const sourceStarts = getRunStarts(sourceRuns);
+  const sourceSignatures = sourceRuns.flat();
+  const unitRuns = calleeTypes.map(getUnits);
+  const unitTypes = getDistinctTypes(unitRuns.flat());
+  const unitIds = Int32Array.from(unitTypes, (type) => type.id);
+  const unitStarts = getRunStarts(unitRuns);
+  const rowUnits = Int32Array.from(unitRuns.flat(), (type) =>
+    getLowerBound(unitIds, 0, unitIds.length, type.id),
+  );
+  const targetRuns = unitTypes.map(getTargetSignatures);
+  const targetStarts = getRunStarts(targetRuns);
+  const targetSignatures = targetRuns.flat();
+  // Where TypeScript relates two signatures, it relates them by the count of arguments, then each
+  // pair of parameter types, then the return types, unless the parameters at a position are both
+  // function types, which it compares as callbacks. A generic source takes the types that
+  // TypeScript infers from the target first, which leave a type of no type parameters as it is,
+  // such as a primitive's. The pairs of those types take far fewer tests than the pairs of
+  // function types: the signatures' parameter and return types, each by an index, with a table
+  // each way of the answers that the tests find, 1 and 2 for no and yes.
+  const getParts = (signature: ts.Signature) => [
+    ...signature.parameters.map((_, position) => checker.getParameterType(signature, position)),
+    checker.getReturnTypeOfSignature(signature),
+  ];
+  const sourceParts = sourceSignatures.map(getParts);
+  const targetParts = targetSignatures.map(getParts);
   const sourcePartTypes = getDistinctTypes(sourceParts.flat());
   const targetPartTypes = getDistinctTypes(targetParts.flat());
   const sourcePartIds = Int32Array.from(sourcePartTypes, (type) => type.id);
   const targetPartIds = Int32Array.from(targetPartTypes, (type) => type.id);
-  const getPartIndexes = (parts: readonly ts.Type[], ids: Int32Array) =>
-    Int32Array.from(parts, (part) => getLowerBound(ids, 0, ids.length, part.id));
-  const sourceIndexes = sourceParts.map((parts) => getPartIndexes(parts, sourcePartIds));
-  const targetIndexes = targetParts.map((parts) => getPartIndexes(parts, targetPartIds));
+  const sourcePartStarts = getRunStarts(sourceParts);
+  const targetPartStarts = getRunStarts(targetParts);
+  const sourceIndexes = Int32Array.from(sourceParts.flat(), (part) =>
+    getLowerBound(sourcePartIds, 0, sourcePartIds.length, part.id),
+  );
+  const targetIndexes = Int32Array.from(targetParts.flat(), (part) =>
+    getLowerBound(targetPartIds, 0, targetPartIds.length, part.id),
+  );
+  const sourceLeastArguments = Int32Array.from(sourceSignatures, getLeastArguments);
   // A parameter type that TypeScript may compare as a callback: an object type of call signatures.
   const isCallable = (type: ts.Type) => {
     const value = checker.getNonNullableType(type);
@@ -6406,8 +6624,11 @@ export const createDispatch = (
       checker.getSignaturesOfType(value, ts.SignatureKind.Call).length > 0
     );
   };
+  const isFixed = (type: ts.Type) =>
+    (type.isUnion() ? type.types : [type]).every((member) => (member.flags & FIXED) !== 0);
   const isSourceCallable = sourcePartTypes.map(isCallable);
   const isTargetCallable = targetPartTypes.map(isCallable);
+  const isSourceFixed = sourcePartTypes.map(isFixed);
   const sourceToTarget = new Uint8Array(sourcePartTypes.length * targetPartTypes.length);
   const targetToSource = new Uint8Array(targetPartTypes.length * sourcePartTypes.length);
   const isSourceRelated = (source: number, target: number) => {
@@ -6432,45 +6653,101 @@ export const createDispatch = (
     }
     return targetToSource[at] === 2;
   };
-  // The answer through the parts, 1 and 2 for no and yes, or 0 where only the whole relation tells.
-  const getPartsAnswer = (bit: number, row: number) => {
-    const source = sources[bit];
-    const target = targets[row];
-    if (source === undefined || target === undefined) return 0;
-    if (source === target) return 2;
-    const sourceCount = source.parameters.length;
-    const targetCount = target.parameters.length;
-    if (leastArguments[bit] > targetCount) return 1;
-    const kind = target.declaration?.kind;
+  // The answers through the parts, 1 and 2 for no and yes, or 0 where only the whole relation
+  // tells: of a parameter's pair, of the return types, and of two signatures, which fail where any
+  // pair fails.
+  const getParameterAnswer = (source: number, target: number, position: number) => {
+    const sourcePart = sourceIndexes[sourcePartStarts[source] + position];
+    const targetPart = targetIndexes[targetPartStarts[target] + position];
+    if (sourcePartTypes[sourcePart] === targetPartTypes[targetPart]) return 2;
+    if (
+      (sourceSignatures[source].typeParameters !== undefined && !isSourceFixed[sourcePart]) ||
+      (isSourceCallable[sourcePart] && isTargetCallable[targetPart])
+    ) {
+      return 0;
+    }
+    const kind = targetSignatures[target].declaration?.kind;
     const isStrictVariance =
       isStrictFunctionTypes &&
       kind !== ts.SyntaxKind.MethodDeclaration &&
       kind !== ts.SyntaxKind.MethodSignature &&
       kind !== ts.SyntaxKind.Constructor;
-    const sourceIndex = sourceIndexes[bit];
-    const targetIndex = targetIndexes[row];
-    for (let position = 0; position < Math.min(sourceCount, targetCount); position += 1) {
-      const sourcePart = sourceIndex[position];
-      const targetPart = targetIndex[position];
-      if (sourcePartTypes[sourcePart] === targetPartTypes[targetPart]) continue;
-      if (isSourceCallable[sourcePart] && isTargetCallable[targetPart]) return 0;
-      const isRelated =
-        (!isStrictVariance && isSourceRelated(sourcePart, targetPart)) ||
-        isTargetRelated(targetPart, sourcePart);
-      if (!isRelated) return 1;
-    }
-    const targetReturn = targetIndex[targetCount];
+    return (!isStrictVariance && isSourceRelated(sourcePart, targetPart)) ||
+      isTargetRelated(targetPart, sourcePart)
+      ? 2
+      : 1;
+  };
+  const getReturnAnswer = (source: number, target: number) => {
+    const sourceReturn = sourceIndexes[sourcePartStarts[source + 1] - 1];
+    const targetReturn = targetIndexes[targetPartStarts[target + 1] - 1];
     if ((targetPartTypes[targetReturn].flags & (ts.TypeFlags.Void | ts.TypeFlags.Any)) !== 0) {
       return 2;
     }
-    return isSourceRelated(sourceIndex[sourceCount], targetReturn) ? 2 : 1;
+    if (sourceSignatures[source].typeParameters !== undefined && !isSourceFixed[sourceReturn]) {
+      return 0;
+    }
+    return isSourceRelated(sourceReturn, targetReturn) ? 2 : 1;
+  };
+  // Where either type has more than one signature, TypeScript erases a generic source's type
+  // parameters, whose count of arguments that it then takes the least count of this doesn't tell.
+  const getSignatureAnswer = (source: number, target: number, isErased: boolean) => {
+    if (sourceSignatures[source] === targetSignatures[target]) return 2;
+    const targetCount = targetSignatures[target].parameters.length;
+    const isGeneric = sourceSignatures[source].typeParameters !== undefined;
+    if (sourceLeastArguments[source] > targetCount && !(isErased && isGeneric)) return 1;
+    if (targetSignatures[target].typeParameters !== undefined && (isErased || isGeneric)) return 0;
+    const count = Math.min(sourceSignatures[source].parameters.length, targetCount);
+    return getEveryAnswer(count + 1, (position) =>
+      position < count
+        ? getParameterAnswer(source, target, position)
+        : getReturnAnswer(source, target),
+    );
+  };
+  // Of a candidate type and a target, which fail where some target signature has no source
+  // signature that it relates to.
+  const getUnitAnswer = (bit: number, unit: number) => {
+    const sourceCount = sourceStarts[bit + 1] - sourceStarts[bit];
+    const targetCount = targetStarts[unit + 1] - targetStarts[unit];
+    const isErased = sourceCount > 1 || targetCount > 1;
+    return targetCount === 0
+      ? 0
+      : getEveryAnswer(targetCount, (targetIndex) =>
+          getSomeAnswer(sourceCount, (sourceIndex) =>
+            getSignatureAnswer(
+              sourceStarts[bit] + sourceIndex,
+              targetStarts[unit] + targetIndex,
+              isErased,
+            ),
+          ),
+        );
+  };
+  // Of a candidate type and a callee type, through the parts where the candidate type has only
+  // signatures, as some target relates it, and through the whole relation otherwise.
+  const getAnswer = (bit: number, row: number) => {
+    const candidateType = candidateTypes[bit];
+    if (sourceStarts[bit] === sourceStarts[bit + 1]) {
+      return checker.isTypeAssignableTo(candidateType, calleeTypes[row]) ? 2 : 1;
+    }
+    const units = rowUnits.subarray(unitStarts[row], unitStarts[row + 1]);
+    return units.some((unit) => {
+      const answer = getUnitAnswer(bit, unit);
+      return answer === 0
+        ? checker.isTypeAssignableTo(candidateType, unitTypes[unit])
+        : answer === 2;
+    })
+      ? 2
+      : 1;
   };
   // The answer of each group's first candidate type for the callee type being tested, by the
   // callee type's row plus one: 1 and 2 for no and yes.
   const answerRows = new Int32Array(candidateTypes.length);
   const answers = new Uint8Array(candidateTypes.length);
   calleeTypes.forEach((calleeType, row) => {
-    const isGrouped = !isCandidateSymbol(calleeType.symbol);
+    const isGrouped =
+      !isCandidateSymbol(calleeType.symbol) &&
+      !rowUnits
+        .subarray(unitStarts[row], unitStarts[row + 1])
+        .some((unit) => isCandidateSymbol(unitTypes[unit].symbol));
     candidateTypes.forEach((candidateType, bit) => {
       const isTooFew =
         parameterCounts[row] >= 0 &&
@@ -6481,13 +6758,7 @@ export const createDispatch = (
       const first = isGrouped ? firsts[bit] : bit;
       if (answerRows[first] !== row + 1) {
         answerRows[first] = row + 1;
-        const partsAnswer = getPartsAnswer(bit, row);
-        answers[first] =
-          partsAnswer !== 0
-            ? partsAnswer
-            : checker.isTypeAssignableTo(candidateType, calleeType)
-              ? 2
-              : 1;
+        answers[first] = getAnswer(bit, row);
       }
       if (answers[first] === 2) rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
     });
