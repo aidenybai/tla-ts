@@ -548,8 +548,10 @@ const inlineCall = (
   );
   context.inProgress.add(callee);
   // A statement makes the objects and runs the calls only of its own expressions, so what the scope
-  // holds for the body's nodes belongs to a call that this one runs inside.
+  // holds for the body's nodes belongs to a call that this one runs inside, but for the arguments
+  // object that this call makes, which the scope holds under the body.
   const isOutside = (entry: [ts.Node, Expression]) =>
+    (entry[0] === body && made.definitions.length > 0) ||
     ts.findAncestor(entry[0], (ancestor) => ancestor === callee) === undefined;
   const value = translateBody(
     body,

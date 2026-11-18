@@ -54244,4 +54244,34 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads the arguments object of a call through a value inside a helper that changes objects", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      function count(...values: number[]): number;
+      function count(): number {
+        if (arguments.length === 1) return arguments[0] * 2;
+        return arguments.length;
+      }
+      const double = (value: number) => value * 2;
+      const handlers: Record<string, (...values: number[]) => number> = { count, double };
+      const run = (name: string, value: number) => {
+        box.size += 1;
+        const result = handlers[name](value);
+        return result + box.size;
+      };
+      const results = [run("count", 3), run("double", 4), run("count", 5), box.size].join();
+      if (results !== "${expected}") throw new Error("results " + results);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("7,10,13,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects another count", async () => {
+      expect((await checkModel(getSource("7,10,14,3"))).failure?.message).toContain(
+        "results 7,10,13,3",
+      );
+    });
+  });
 });
