@@ -266,6 +266,17 @@ const getSimplifyParams = (items: SExpr[]) => {
   return params;
 };
 
+const GET_INFO_KEYWORDS = [
+  ":reason-unknown",
+  ":status",
+  ":version",
+  ":authors",
+  ":error-behavior",
+  ":parameters",
+  ":rlimit",
+  ":assertion-stack-levels",
+];
+
 const APPLY_PARAMETERS = new Map([
   ["print", true],
   ["print_model_converter", true],
@@ -1021,6 +1032,60 @@ export const runSmtlibScript = (
     if (follower !== reference.end)
       throw new SmtUnsupportedError("a function declaration reference with trailing terms");
     return found;
+  };
+  // get_info_cmd prints in set_next_arg, before the parser checks the rest of the command.
+  const printInfo = (list: SmtList, keyword: string) => {
+    if (keyword === ":reason-unknown") {
+      const check = state.check;
+      const reasonUnknown =
+        check === undefined
+          ? "state of the most recent check-sat command is not known"
+          : check.reasonUnknown;
+      if (reasonUnknown === undefined)
+        throw new SmtUnsupportedError("the information :reason-unknown");
+      print(`(:reason-unknown "${reasonUnknown.replaceAll('"', '\\"')}")`);
+      return;
+    }
+    if (keyword === ":rlimit") {
+      print(`(:rlimit ${state.manager.limit.count})`);
+      return;
+    }
+    if (keyword === ":error-behavior") {
+      print(
+        `(:error-behavior ${settings.isExitingOnError ? "immediate-exit" : "continued-execution"})`,
+      );
+      return;
+    }
+    if (keyword === ":name") {
+      print('(:name "Z3")');
+      return;
+    }
+    if (keyword === ":authors") {
+      print(
+        '(:authors "Leonardo de Moura, Nikolaj Bjorner, Lev Nachmanson and Christoph Wintersteiger")',
+      );
+      return;
+    }
+    if (keyword === ":version") {
+      print('(:version "5.3.2")');
+      return;
+    }
+    if (keyword === ":status") {
+      print(`(:status ${getVerdict(settings.status)})`);
+      return;
+    }
+    if (keyword === ":assertion-stack-levels") {
+      print(`(:assertion-stack-levels ${state.scopes.length})`);
+      return;
+    }
+    if (keyword === ":all-statistics" || keyword === ":parameters")
+      throw new SmtUnsupportedError(`the information ${keyword}`);
+    if (keyword !== ":?") {
+      print("unsupported");
+      printDiagnostic(`; ${keyword} line: ${list.line} position: ${list.column}`);
+    }
+    print("; Suppported get-info parameters:");
+    for (const supported of GET_INFO_KEYWORDS) print(`; (get-info ${supported})`);
   };
   // get-unsat-core and get-unsat-assumptions both print the core of the last check.
   const printCore = () => {
@@ -1925,26 +1990,12 @@ export const runSmtlibScript = (
       "get-info",
       (list) => {
         const info = list.items[1];
-        if (info?.kind !== "keyword")
-          throw new SmtParseError("invalid command argument, keyword expected", info ?? list.end);
-        const check = state.check;
-        const reasonUnknown =
-          check === undefined
-            ? "state of the most recent check-sat command is not known"
-            : check.reasonUnknown;
-        if (info.text === ":reason-unknown" && reasonUnknown !== undefined) {
-          print(`(:reason-unknown "${reasonUnknown.replaceAll('"', '\\"')}")`);
-          return;
-        }
-        if (info.text === ":rlimit") {
-          print(`(:rlimit ${state.manager.limit.count})`);
-          return;
-        }
-        if (info.text !== ":error-behavior")
-          throw new SmtUnsupportedError(`the information ${info.text}`);
-        print(
-          `(:error-behavior ${settings.isExitingOnError ? "immediate-exit" : "continued-execution"})`,
-        );
+        if (info === undefined)
+          throw new SmtParseError("invalid command, argument(s) missing", list.end);
+        if (info.kind !== "keyword")
+          throw new SmtParseError("invalid command argument, keyword expected", info);
+        printInfo(list, info.text);
+        checkArgumentCount(list, 1);
       },
     ],
     [

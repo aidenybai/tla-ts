@@ -1408,6 +1408,47 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("prints the information of get-info before it checks the rest of the command", () => {
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(get-info :name)",
+        "(get-info :authors)",
+        "(get-info :version)",
+        "(get-info :status)",
+        "(set-info :status sat)",
+        "(get-info :status)",
+        "(push 2)",
+        "(pop 1)",
+        "(get-info :assertion-stack-levels)",
+        "(get-info :foo)",
+        "(get-info :name :version)",
+        "(get-info)",
+      ]),
+    ).toEqual([
+      '(:name "Z3")',
+      '(:authors "Leonardo de Moura, Nikolaj Bjorner, Lev Nachmanson and Christoph Wintersteiger")',
+      '(:version "5.3.2")',
+      "(:status unknown)",
+      "(:status sat)",
+      "(:assertion-stack-levels 1)",
+      "unsupported",
+      "; :foo line: 11 position: 0",
+      "; Suppported get-info parameters:",
+      "; (get-info :reason-unknown)",
+      "; (get-info :status)",
+      "; (get-info :version)",
+      "; (get-info :authors)",
+      "; (get-info :error-behavior)",
+      "; (get-info :parameters)",
+      "; (get-info :rlimit)",
+      "; (get-info :assertion-stack-levels)",
+      '(:name "Z3")',
+      '(error "line 12 column 16: invalid command, too many arguments")',
+      '(error "line 13 column 9: invalid command, argument(s) missing")',
+    ]);
+  });
+
   // Z3 writes to a stream, so text without a newline starts the next line and ends the output.
   it("keeps text written without a newline", () => {
     expect(
