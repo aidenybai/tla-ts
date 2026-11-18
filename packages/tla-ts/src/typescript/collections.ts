@@ -2366,7 +2366,10 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
     context.heap !== undefined &&
     context.checker.getTypeAtLocation(receiver).getSymbol()?.name === "String";
   const operators = REGEXP_OPERATORS.get(method);
-  if (operators === undefined) return undefined;
+  // Only a string's matchAll that an array spreads gives its matches, rather than an iterator.
+  if (operators === undefined || (method === "matchAll" && (isSymbol || !isSpreadMatchAll(node)))) {
+    return undefined;
+  }
   const getCall = (regexp: ts.Expression, text: ts.Expression, rest: readonly ts.Expression[]) => ({
     method,
     operator: operators[0],
@@ -2393,7 +2396,7 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
   const limit = values.at(1);
   const isKnown =
     ((method === "match" || method === "search") && values.length === 1) ||
-    (method === "matchAll" && values.length === 1 && isSpreadMatchAll(node)) ||
+    (method === "matchAll" && values.length === 1) ||
     (method === "split" &&
       (limit === undefined ||
         (values.length === 2 &&
