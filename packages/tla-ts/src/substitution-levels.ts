@@ -12,6 +12,7 @@ import {
   type InstanceLevels,
   type OperatorLevels,
   type Scope,
+  type SectionMember,
 } from "./levels";
 
 interface InstanceCheck {
@@ -65,6 +66,7 @@ const getMaxLevel = (operator: OperatorLevels, index: number) =>
 export const createInstanceChecker = (
   getModule: (name: string) => ModuleContext,
   copies: Omit<InstanceLevels, "getInstanced">,
+  recursiveSections: WeakMap<Definition, SectionMember[]>,
 ) => {
   const analyzers = new Map<string, ModuleAnalyzer>();
   const getModuleAnalyzer = (name: string) => {
@@ -81,6 +83,7 @@ export const createInstanceChecker = (
         variables,
         getDefinition: module.getDefinition,
         instances,
+        recursiveSections,
       }),
     };
     analyzers.set(name, analyzer);

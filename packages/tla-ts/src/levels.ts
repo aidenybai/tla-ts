@@ -79,6 +79,8 @@ interface LevelContext {
   getDefinition: (name: string) => Definition | undefined;
   getQualifiedName?: (name: string) => string | undefined;
   instances: InstanceLevels;
+  // The members of every module's recursive sections, by member.
+  recursiveSections: WeakMap<Definition, SectionMember[]>;
 }
 
 export interface InstanceLevelCheck {
@@ -97,7 +99,7 @@ type Resolved =
   | { kind: "Declared"; name: string; level: number; arity: number }
   | { kind: "Defined"; levels: OperatorLevels };
 
-interface SectionMember {
+export interface SectionMember {
   definition: Definition;
   scope: Scope;
   isRechecked: boolean;
@@ -1392,6 +1394,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const staleDefinitions = new Set<Definition>();
 
   const analyzeDefinition = (definition: Definition, scope: Scope): OperatorLevels => {
+    // SANY levels another module's recursive section before this module uses its operators.
+    const members = context.recursiveSections.get(definition);
+    if (definition.isRecursive && members && !definitionLevels.has(definition)) {
+      checkRecursiveSection(members);
+    }
     const cached = definitionLevels.get(definition);
     if (cached && !staleDefinitions.delete(definition)) return cached;
     const prior = cached ?? createPlaceholder(definition, TEMPORAL_LEVEL, 0);
@@ -1630,6 +1637,11 @@ export const checkModuleLevels = (
   ];
   const statementBodies = new Set(statements.map((statement) => statement.statement));
   const sections = getRecursiveSections(new Map(), module.units, module.hasRecursiveLet);
+  sections.forEach((section) =>
+    section.members.forEach((member) =>
+      context.recursiveSections.set(member.definition, section.members),
+    ),
+  );
   const createCheck = (location: SourceLocation, run: () => void) => ({
     location,
     check: (reported: SanyError[]) => {

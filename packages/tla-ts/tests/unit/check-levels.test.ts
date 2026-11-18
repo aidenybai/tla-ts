@@ -504,6 +504,54 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    ["EXTENDS Base\nVARIABLE x\nE == V([]x, 0)", "line 4, col 6 to line 4, col 14", "V"],
+    [
+      "EXTENDS Naturals\nVARIABLE x\nI == INSTANCE Base\nE == I!V([]x, 0)",
+      "line 5, col 6 to line 5, col 16",
+      "I!V",
+    ],
+    [
+      "EXTENDS Naturals\nVARIABLE x\nE == LET J == INSTANCE Base IN J!V([]x, 0)",
+      "line 4, col 32 to line 4, col 42",
+      "J!V",
+    ],
+    [
+      "EXTENDS Naturals\nVARIABLE x\nI == INSTANCE Mid\nE == I!U([]x)",
+      "line 5, col 6 to line 5, col 13",
+      "I!U",
+    ],
+    ["EXTENDS Mid\nVARIABLE x\nE == U([]x)", "line 4, col 6 to line 4, col 11", "U"],
+    [
+      "EXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nEXTENDS Naturals\nRECURSIVE V(_, _)\nV(a, n) == IF n = 0 THEN a ELSE V(a, n - 1)\n====\nI == INSTANCE Inner\nE == I!V([]x, 0)",
+      "line 10, col 6 to line 10, col 16",
+      "I!V",
+    ],
+  ])(
+    "levels a recursive operator of another module with its section in %j like SANY",
+    async (source, location, operator) => {
+      const modules: Record<string, string> = {
+        Base: "EXTENDS Naturals\nRECURSIVE V(_, _)\nV(a, n) == IF n = 0 THEN a ELSE V(a, n - 1)",
+        Mid: "EXTENDS Base\nU(a) == V(a, 1)",
+      };
+      await expect(
+        check({
+          source: `---- MODULE M ----\n${source}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name in modules ? `---- MODULE ${name} ----\n${modules[name]}\n====` : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${location} of module M`,
+            message: `Level error in applying operator ${operator}:\nThe level of argument 1 exceeds the maximum level allowed by the operator.`,
+          },
+        ]),
+      );
+    },
+  );
+
   it("checks the levels of proof steps, their facts, and the definitions they make like SANY", async () => {
     const setError =
       "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";

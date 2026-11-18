@@ -97,6 +97,7 @@ import {
   type InstanceLevelCheck,
   type InstanceSubstitutes,
   type LetInstance,
+  type SectionMember,
 } from "./levels";
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
@@ -325,6 +326,7 @@ export const createEnvironment = (
   const warnings: SanyError[] = [];
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
+  const recursiveSections = new WeakMap<Definition, SectionMember[]>();
   const createInstanceCopy = (
     sourceKey: string,
     module: string,
@@ -354,6 +356,7 @@ export const createEnvironment = (
       getLetInstance: (instance) =>
         instance.location.range && letInstances.get(formatRange(instance.location.range)),
     },
+    recursiveSections,
   );
   const instanceActions = new Map<string, InstanceAction>();
   const instanceNames = new Map<string, string>();
@@ -1259,6 +1262,7 @@ export const createEnvironment = (
           getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
+          recursiveSections,
         },
         instanceChecks.splice(firstCheck),
         warnings,
@@ -1385,6 +1389,7 @@ export const createEnvironment = (
     entryEvaluators: new WeakMap(),
     definitionEvaluators: new WeakMap(),
     instances: instanceLevels.instances,
+    recursiveSections,
   };
   const analyzer = createLevelAnalyzer({
     constants: new Map([...constants.keys()].map((key) => [key, 0])),
@@ -1394,6 +1399,7 @@ export const createEnvironment = (
     ]),
     getDefinition: (name) => getDefinition(name, environment),
     instances: instanceLevels.instances,
+    recursiveSections,
   });
   const getEvaluationError = (body: Expression) => {
     try {
