@@ -418,6 +418,9 @@ interface ScriptState {
   tacticConverters: Goal["converters"];
   // tactic2solver's model, which it frees at its next check, assert, push or pop.
   tacticModel: ProtoModel | undefined;
+  // tactic2solver's formulas of the goal of its last unknown check without scopes, which it keeps
+  // until the next such check.
+  lastAssertions: RefVector;
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -491,6 +494,7 @@ export const runSmtlibScript = (
       fdSolver: undefined,
       tacticConverters: [],
       tacticModel: undefined,
+      lastAssertions: new RefVector(manager),
     };
   };
   let state = createState();
@@ -617,6 +621,10 @@ export const runSmtlibScript = (
         settings.parameters.get("tactic.default_tactic") ??
         getLogicStrategy(state.logic, goal.isProofsEnabled);
       const checked = checkSatUsing(compileInternalTactic(getTacticEnvironment(), strategy), goal);
+      if (checked.status === L_UNDEF && state.scopes.length === 0) {
+        state.lastAssertions.reset();
+        for (const form of goal.forms.items) state.lastAssertions.push(form);
+      }
       // tactic2solver keeps the goal's model converter until its next check.
       decConverterRefs(state.manager, state.tacticConverters);
       state.tacticConverters = goal.converters;
@@ -842,6 +850,7 @@ export const runSmtlibScript = (
     decConverterRefs(state.manager, state.tacticConverters);
     state.tacticConverters = [];
     releaseTacticModel();
+    state.lastAssertions.reset();
     state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
     state.satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"

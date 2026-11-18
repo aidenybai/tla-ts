@@ -2597,4 +2597,38 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 1412)", "sat", "(:rlimit 2838)"]);
   });
+
+  it("keeps the formulas of the goal of an unknown check until the next one, as tactic2solver does", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then simplify tseitin-cnf)")',
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(assert (or (and a b) (and (not a) c) (and b (not c))))",
+        "(check-sat)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or (and p q) (and (not p) r) (and q (not r))))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "unknown",
+      [
+        "(goals",
+        "(goal",
+        "  (or b (not a) (not c))",
+        "  (or b (not a))",
+        "  (or a b c)",
+        "  (or b c)",
+        "  (or q (not p) (not r))",
+        "  (or q (not p))",
+        "  (or p q r)",
+        "  (or q r)",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
 });
