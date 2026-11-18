@@ -883,17 +883,14 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
       !ts.isBinaryExpression(division) ||
       division.operatorToken.kind !== ts.SyntaxKind.SlashToken
     ) {
-      if (isSpecial) {
-        return useJavaScript(
-          method === "floor" ? "FloorDivide" : "TruncDivide",
-          [translate(argument), number(1)],
-          context,
-        );
-      }
-      throw new TlaTypeScriptError(
-        `Math.${method} only takes a division, as in Math.${method}(a / b)`,
-        node,
-      );
+      // Without special numbers every number is an integer, which floor and trunc keep.
+      return isSpecial
+        ? useJavaScript(
+            method === "floor" ? "FloorDivide" : "TruncDivide",
+            [translate(argument), number(1)],
+            context,
+          )
+        : translate(argument);
     }
     const left = translate(division.left);
     const right = translate(division.right);

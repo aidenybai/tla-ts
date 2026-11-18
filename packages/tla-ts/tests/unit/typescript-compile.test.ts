@@ -55736,4 +55736,153 @@ describe("BigInts", () => {
       expect((await checkModel(getOutside("2,true"))).failure?.message).toContain("3,true");
     });
   });
+
+  describe("floors and truncates a number that isn't a division where every number is an integer", () => {
+    const getSource = (expected: string) => `
+      const normalize = (count: number): number => (count > 0 ? Math.floor(count) : 0);
+      const result = [normalize(3), normalize(-2), Math.trunc(-4)].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+      export let total = 0;
+      export const step = (by: 1 | 2) => {
+        if (total < 4) total += normalize(by) - Math.trunc(by - 1);
+      };
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("3,0,-4"));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        5,
+      ]);
+    });
+
+    it("rejects another floor", async () => {
+      expect((await checkModel(getSource("3,-2,-4"))).failure?.message).toContain("result 3,0,-4");
+    });
+  });
+
+  describe("names a helper's throw apart from a script's variables named place and message", () => {
+    const getSource = (expected: number) => `
+      const box = { size: 0 };
+      const check = (value: number) => {
+        if (value > 2) throw new Error("big " + value);
+        box.size += value;
+        return value;
+      };
+      const message = [check(1), check(2)].join();
+      const place = box.size;
+      if (message !== "1,2" || place !== ${expected}) throw new Error("message " + message + " " + place);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    });
+
+    it("rejects another place", async () => {
+      expect((await checkModel(getSource(4))).failure?.message).toContain("message 1,2 3");
+    });
+  });
+
+  describe("splits with the regexp literal that a conditional picks, where the heap holds the result", () => {
+    const getSource = (expected: string) => `
+      export const syntaxError = (text: "a\\nb\\tc" | "ab", at: 1 | 5, isLoose: boolean): SyntaxError => {
+        const lines = text.slice(0, at).split(isLoose ? /\\r\\n|[\\n\\r\\t]/ : /\\r\\n|[\\n\\r]/);
+        return new SyntaxError(\`line \${lines.length}, column \${lines[lines.length - 1].length + 1}\`);
+      };
+      const outer: number[][] = [];
+      const inner: number[] = [];
+      outer.push(inner);
+      inner.push(1);
+      if (outer[0].length !== 1) throw new Error("inner " + outer[0].length);
+      const result = [syntaxError("a\\nb\\tc", 5, true).message, syntaxError("a\\nb\\tc", 5, false).message].join(";");
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("line 3, column 2;line 2, column 4"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the other regexp's split", async () => {
+      expect(
+        (await checkModel(getSource("line 3, column 2;line 3, column 2"))).failure?.message,
+      ).toContain("result line 3, column 2;line 2, column 4");
+    });
+  });
+
+  describe("calls a function that makes objects through a module's namespace object", () => {
+    const path = join(
+      import.meta.dirname,
+      "../fixtures/typescript/imports/making-through-namespace.ts",
+    );
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects objects that the calls share", async () => {
+      const wrong = source.replace('"2,1,function"', '"2,2,function"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("result 2,1,function");
+    });
+  });
+
+  describe("gives an exported action the arguments object of the call that TLC makes", () => {
+    const getSource = (invariant: string) => `
+      const width = Uint8Array.BYTES_PER_ELEMENT;
+      export let count = 0;
+      export let last = 0;
+      export function record(key: 1 | 2): void {
+        if (count >= 3) return;
+        last = (arguments[0] as number) * 10 + arguments.length * width;
+        count += 1;
+      }
+      export const isRecorded = () => ${invariant};
+      record(2);
+      if (last !== 21) throw new Error("last " + last);
+    `;
+
+    it("agrees with Node, and disables the action where it changes nothing else", async () => {
+      const result = await checkModel(getSource("count === 0 || last === 11 || last === 21"));
+      expect([result.status, result.failure]).toEqual(["deadlock", undefined]);
+    });
+
+    it("rejects another value of the arguments object", async () => {
+      expect((await checkModel(getSource("count === 0 || last === 21"))).status).toBe(
+        "invariant-violation",
+      );
+    });
+  });
+
+  describe("reads the arguments object of a call through a value inside a helper that changes objects", () => {
+    const getSource = (expected: string) => `
+      const box = { size: 0 };
+      function count(...values: number[]): number;
+      function count(): number {
+        if (arguments.length === 1) return arguments[0] * 2;
+        return arguments.length;
+      }
+      const double = (value: number) => value * 2;
+      const handlers: Record<string, (...values: number[]) => number> = { count, double };
+      const run = (name: string, value: number) => {
+        box.size += 1;
+        const result = handlers[name](value);
+        return result + box.size;
+      };
+      const results = [run("count", 3), run("double", 4), run("count", 5), box.size].join();
+      if (results !== "${expected}") throw new Error("results " + results);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("7,10,13,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects another count", async () => {
+      expect((await checkModel(getSource("7,10,14,3"))).failure?.message).toContain(
+        "results 7,10,13,3",
+      );
+    });
+  });
 });

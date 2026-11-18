@@ -653,28 +653,31 @@ const getThrown = (place: Expression, message: Expression, context: Context) => 
   return call(context.thrownName, [place, message]);
 };
 
-// Defines the operator that stops at each place, before the operators that call it.
-export const defineThrown = (context: Context) =>
-  context.thrownName === undefined
-    ? []
-    : [
-        define(
-          context.thrownName,
-          [
-            { name: "place", arity: 0 },
-            { name: "message", arity: 0 },
-          ],
-          context.throwPlaces.reduceRight<Expression>(
-            (rest, location, position) =>
-              ifExpression(
-                apply("=", [identifier("place"), number(position + 1)]),
-                locate(apply("Assert", [boolean(false), identifier("message")]), location),
-                rest,
-              ),
-            apply("Assert", [boolean(false), identifier("message")]),
+// Defines the operator that stops at each place, before the operators that call it. Its
+// parameters take fresh names, as a script's variable may be named place or message.
+export const defineThrown = (context: Context) => {
+  if (context.thrownName === undefined) return [];
+  const place = context.names.getFresh("place");
+  const message = context.names.getFresh("message");
+  return [
+    define(
+      context.thrownName,
+      [
+        { name: place, arity: 0 },
+        { name: message, arity: 0 },
+      ],
+      context.throwPlaces.reduceRight<Expression>(
+        (rest, location, position) =>
+          ifExpression(
+            apply("=", [identifier(place), number(position + 1)]),
+            locate(apply("Assert", [boolean(false), identifier(message)]), location),
+            rest,
           ),
-        ),
-      ];
+        apply("Assert", [boolean(false), identifier(message)]),
+      ),
+    ),
+  ];
+};
 
 // Compiles a helper's body once, as an operator that gives how the body ended: its kind, its value
 // or what it threw, the message and the place of the throw, and the state that it changed.

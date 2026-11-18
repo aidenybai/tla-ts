@@ -351,7 +351,13 @@ import {
   stopUnknownCall,
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
-import { getNamespaceRef, isLiteralValue, type Namespace } from "./namespaces";
+import {
+  getNamespaceModule,
+  getNamespaceRef,
+  isBindingRead,
+  isLiteralValue,
+  type Namespace,
+} from "./namespaces";
 import {
   bindFactory,
   forceHeap,
@@ -14428,9 +14434,20 @@ const isHeapCall = (
       visited.add(callee);
       return isMaking(callee.body, visited);
     });
-  if (isMethodCall(node)) {
-    const method = getCalledMethod(node.expression, context)?.method;
-    return method?.body !== undefined && isMaking(method.body, new Set([method]));
+  // A function that a namespace object holds is no method, so its call runs as a function's.
+  const method = isMethodCall(node) ? getCalledMethod(node.expression, context)?.method : undefined;
+  if (method !== undefined) {
+    return method.body !== undefined && isMaking(method.body, new Set([method]));
+  }
+  if (
+    isMethodCall(node) &&
+    !(
+      ts.isIdentifier(node.expression.expression) &&
+      getNamespaceModule(node.expression.expression, context.checker) !== undefined &&
+      isBindingRead(node.expression, context.checker)
+    )
+  ) {
+    return false;
   }
   const symbol = getSymbol(node.expression, context.checker);
   const callee =
@@ -23637,11 +23654,14 @@ export const translateAction = (
 ): Formula => {
   const heapSymbol = context.heap;
   const heap = heapSymbol === undefined ? undefined : context.variables.get(heapSymbol);
+  // The heap that the action starts from, which holds the arguments object that TLC's call makes,
+  // and which no action changes where nothing else changes it.
+  const start = heapSymbol === undefined ? undefined : scope.bindings.get(heapSymbol);
   const finish = (path: Path): Formula => {
-    const assignments = [...context.variables].map((entry) => ({
-      name: entry[1],
-      value: path.scope.bindings.get(entry[0]) ?? entry[1],
-    }));
+    const assignments = [...context.variables].map((entry) => {
+      const value = path.scope.bindings.get(entry[0]) ?? entry[1];
+      return { name: entry[1], value: entry[1] === heap && value === start ? entry[1] : value };
+    });
     const changedHeap = assignments.find(
       (assignment) => assignment.name === heap && assignment.value !== heap,
     )?.value;
