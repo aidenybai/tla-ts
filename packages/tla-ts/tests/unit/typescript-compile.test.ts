@@ -53661,4 +53661,63 @@ describe("BigInts", () => {
       ).toContain("result 2,left,1,default");
     });
   });
+
+  describe("throws the error of converting a value that a typed array's index takes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var big = new BigInt64Array(2);
+      var small = new Int8Array(2);
+      var outcomes = "";
+      try {
+        big[0] = /** @type {any} */ (null);
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        big[1] = /** @type {any} */ ("x");
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        big[5] = /** @type {any} */ (1);
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        big[0] = /** @type {any} */ ("7");
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        small[0] = /** @type {any} */ (1n);
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        small[1] = /** @type {any} */ (Symbol());
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      var result = [outcomes, big[0], small[0]].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("TypeError|SyntaxError|TypeError|ok|TypeError|TypeError|,7,0");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("TypeError|TypeError|TypeError|ok|TypeError|TypeError|,7,0");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result TypeError|SyntaxError|TypeError|ok|TypeError|TypeError|,7,0",
+      );
+    });
+  });
 });

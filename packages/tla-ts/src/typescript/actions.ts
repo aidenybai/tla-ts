@@ -13883,47 +13883,78 @@ const translateWriteStatement = (
     ts.isBinaryExpression(expression) &&
     findNodes(expression.right, (node): node is ts.Expression => isAssignment(node)).length > 0;
   const canPut = useJavaScript("CanPut", [write.heap, write.ref, write.key], context);
+  // A typed array converts the value it writes at an index first, which throws for a value that
+  // isn't a number or a BigInt of its kind.
+  const typedError =
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isElementAccessExpression(expression.left)
+      ? useJavaScript(
+          "TypedWriteError",
+          [
+            write.heap,
+            write.ref,
+            write.key,
+            translateExpression(skipCasts(expression.right), path.scope, context),
+          ],
+          context,
+        )
+      : undefined;
+  const throwTyped = (rest: Formula) =>
+    typedError === undefined
+      ? rest
+      : ifThenElse(
+          apply("=", [typedError, string("")]),
+          rest,
+          ifThenElse(
+            apply("=", [typedError, string("TypeError")]),
+            throwTypeError(path, expression, context, frame),
+            throwError("SyntaxError", path, expression, context, frame),
+          ),
+        );
   const translateWrite = (next: (path: Path) => Formula) =>
     throwOnNullish(
-      isStrictCode(expression) || isWritingRight
-        ? ifThenElse(
-            canPut,
-            shareHeap(path, assigned, context, next),
-            isStrictCode(expression)
-              ? throwTypeError(path, expression, context, frame)
-              : leaf(
-                  apply("Assert", [
-                    boolean(false),
-                    string("tla-ts can't ignore a failed write outside strict mode"),
-                  ]),
-                ),
-          )
-        : ifThenElse(
-            useJavaScript("IsThrowingSet", [write.heap, write.ref, write.key], context),
-            throwTypeError(path, expression, context, frame),
-            shareHeap(
-              path,
-              {
-                ...assigned,
-                scope: {
-                  ...assigned.scope,
-                  bindings: new Map([
-                    ...assigned.scope.bindings,
-                    [
-                      write.symbol,
-                      ifExpression(
-                        canPut,
-                        getHeap(assigned.scope, expression, context),
-                        write.heap,
-                      ),
-                    ],
-                  ]),
+      throwTyped(
+        isStrictCode(expression) || isWritingRight
+          ? ifThenElse(
+              canPut,
+              shareHeap(path, assigned, context, next),
+              isStrictCode(expression)
+                ? throwTypeError(path, expression, context, frame)
+                : leaf(
+                    apply("Assert", [
+                      boolean(false),
+                      string("tla-ts can't ignore a failed write outside strict mode"),
+                    ]),
+                  ),
+            )
+          : ifThenElse(
+              useJavaScript("IsThrowingSet", [write.heap, write.ref, write.key], context),
+              throwTypeError(path, expression, context, frame),
+              shareHeap(
+                path,
+                {
+                  ...assigned,
+                  scope: {
+                    ...assigned.scope,
+                    bindings: new Map([
+                      ...assigned.scope.bindings,
+                      [
+                        write.symbol,
+                        ifExpression(
+                          canPut,
+                          getHeap(assigned.scope, expression, context),
+                          write.heap,
+                        ),
+                      ],
+                    ]),
+                  },
                 },
-              },
-              context,
-              next,
+                context,
+                next,
+              ),
             ),
-          ),
+      ),
     );
   // A write of __proto__ runs Object.prototype's setter where the object inherits it.
   const heapSymbol = context.heap;

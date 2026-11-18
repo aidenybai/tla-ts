@@ -6416,6 +6416,13 @@ LOCAL ElementError(type, value) ==
     [] TypeOf(value) = "string" -> IF StringToBigInt(value) = Undefined THEN "SyntaxError" ELSE ""
     [] OTHER -> "TypeError"
 
+\\* The error that a write to a typed array's index throws as it converts the value, or "" where it
+\\* throws none.
+TypedWriteError(heap, ref, key, value) ==
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN ElementError(heap.objects[ref[Ref]].elementType, value)
+  ELSE ""
+
 \\* The error that converting values in order for a typed array throws first, or "" where none
 \\* does, or an object before the first that does converts through its methods.
 LOCAL ElementsError(type, values) ==
