@@ -177,7 +177,7 @@ import {
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
-import { isAnyOperand, NUMBER_OPERATIONS } from "./conversions";
+import { isAnyOperand, NUMBER_OPERATIONS, translateNumericOperation } from "./conversions";
 import { getNamespaceModule, getNamespaceName, getNamespaceRef, isBindingRead } from "./namespaces";
 import { getThisOwner, isBeforeDeclaration, isCaughtBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
@@ -2273,15 +2273,10 @@ const translateAnyOperation = (node: ts.BinaryExpression, scope: Scope, context:
             : kind === ts.SyntaxKind.LessThanEqualsToken
               ? useJavaScript("LessOrEqualPrimitives", [left, right], context)
               : useJavaScript("LessOrEqualPrimitives", [right, left], context)
-        : operation === undefined
-          ? plain(useJavaScript("AddPrimitives", [left, right], context))
-          : plain(
-              useJavaScript(
-                operation,
-                [left, right].map((primitive) => useJavaScript("ToNumber", [primitive], context)),
-                context,
-              ),
-            );
+        : plain(
+            translateNumericOperation(kind, left, right, context) ??
+              useJavaScript("AddPrimitives", [left, right], context),
+          );
       const isPrimitive = (operand: Expression) =>
         apply("\\/", [
           apply("=", [operand, identifier("Null")]),

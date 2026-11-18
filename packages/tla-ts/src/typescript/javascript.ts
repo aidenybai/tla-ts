@@ -5190,12 +5190,6 @@ ParseInt(value, radix) ==
                  [] magnitude = 0 -> NegativeZero
                  [] OTHER -> -magnitude
 
-\\* JavaScript's + of two primitives, which joins them as strings where either is a string and adds
-\\* them as numbers otherwise.
-AddPrimitives(left, right) ==
-  IF TypeOf(left) = "string" \\/ TypeOf(right) = "string"
-  THEN StringOf(left) \\o StringOf(right)
-  ELSE Add(ToNumber(left), ToNumber(right))
 
 \\* A number in a script that holds only integers, which can't hold NaN, the infinities, or -0.
 PlainNumber(value) ==
@@ -5238,6 +5232,22 @@ LOCAL StringToBigInt(value) ==
 
 \\* ToNumeric of a primitive: a BigInt as it is, and ToNumber of another.
 ToNumeric(value) == IF IsBigInt(value) THEN value ELSE ToNumber(value)
+
+\\* An arithmetic operator of two primitives, which converts them with ToNumeric: two BigInts take
+\\* the BigInt operation, and a BigInt with a number throws a TypeError.
+NumericOperation(NumberOperation(_, _), BigIntOperation(_, _), left, right) ==
+  LET numeric == <<ToNumeric(left), ToNumeric(right)>>
+  IN  CASE IsBigInt(numeric[1]) /\\ IsBigInt(numeric[2]) -> BigIntOperation(numeric[1], numeric[2])
+        [] IsBigInt(numeric[1]) \\/ IsBigInt(numeric[2]) ->
+             Assert(FALSE, "tla-ts can't throw the TypeError of mixing a BigInt with a number")
+        [] OTHER -> NumberOperation(numeric[1], numeric[2])
+
+\\* JavaScript's + of two primitives, which joins them as strings where either is a string and adds
+\\* them as numbers or as BigInts otherwise.
+AddPrimitives(left, right) ==
+  IF TypeOf(left) = "string" \\/ TypeOf(right) = "string"
+  THEN StringOf(left) \\o StringOf(right)
+  ELSE NumericOperation(Add, BigIntAdd, left, right)
 
 \\* IsLessThan of two primitives: TRUE, FALSE, or Undefined, which a NaN gives, or a string that holds
 \\* no BigInt where the other is one. Two strings compare by their code units, and a BigInt with a

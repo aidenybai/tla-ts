@@ -14,6 +14,7 @@ import {
 } from "./context";
 import { getPrimitiveArgument, STRING_METHODS, translatePrimitiveMethod } from "./collections";
 import {
+  BIGINT_OPERATORS,
   BITWISE_OPERATORS,
   concatenate,
   translateBigInt,
@@ -157,6 +158,30 @@ export const isAnyOperand = (node: ts.Expression, context: Context) =>
 
 // How a compound assignment combines the primitives that it reads and takes, as + joins a string
 // and every other operator converts to numbers. ToNumber stops at an object.
+// An arithmetic or bitwise operator of two primitives, which a BigInt pair runs as BigInts, as
+// ToNumeric keeps them.
+export const translateNumericOperation = (
+  kind: ts.SyntaxKind,
+  left: Expression,
+  right: Expression,
+  context: Context,
+) => {
+  const operation = NUMBER_OPERATIONS.get(kind) ?? BITWISE_OPERATORS.get(kind);
+  const bigIntOperation = BIGINT_OPERATORS.get(kind);
+  if (operation === undefined) return undefined;
+  return bigIntOperation === undefined
+    ? useJavaScript(
+        operation,
+        [left, right].map((primitive) => useJavaScript("ToNumber", [primitive], context)),
+        context,
+      )
+    : useJavaScript(
+        "NumericOperation",
+        [identifier(operation), identifier(bigIntOperation), left, right],
+        context,
+      );
+};
+
 export const getPrimitiveUpdate = (kind: ts.SyntaxKind, context: Context) => {
   const operator = COMPOUND_OPERATORS.get(kind);
   const operation =
@@ -168,17 +193,15 @@ export const getPrimitiveUpdate = (kind: ts.SyntaxKind, context: Context) => {
     const result =
       operation === undefined
         ? useJavaScript("AddPrimitives", [current, value], context)
-        : useJavaScript(
-            operation,
-            [current, value].map((primitive) => useJavaScript("ToNumber", [primitive], context)),
-            context,
-          );
+        : (translateNumericOperation(operator ?? kind, current, value, context) ??
+          useJavaScript("AddPrimitives", [current, value], context));
     return context.hasSpecialNumbers ? result : useJavaScript("PlainNumber", [result], context);
   };
 };
 
 const PRIMITIVE_FLAGS =
   ts.TypeFlags.NumberLike |
+  ts.TypeFlags.BigIntLike |
   ts.TypeFlags.StringLike |
   ts.TypeFlags.BooleanLike |
   ts.TypeFlags.Undefined |
@@ -553,11 +576,8 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       "number",
       (primitives) =>
         plain(
-          useJavaScript(
-            operation,
-            primitives.map((primitive) => useJavaScript("ToNumber", [primitive], context)),
-            context,
-          ),
+          translateNumericOperation(kind, primitives[0], primitives[1], context) ??
+            getUndefined(context),
         ),
       true,
     );

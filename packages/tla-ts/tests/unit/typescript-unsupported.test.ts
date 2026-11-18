@@ -14,7 +14,6 @@ const CASES: [string, string][] = [
   ["division", "count = count / 2;"],
   ["fractions", "count = 1.5;"],
   ["negative zero", "count = -0;"],
-  ["arithmetic on a value that isn't a number", "const value: any = true; count = count + value;"],
   ["incrementing a value that isn't a number", "let value: any = true; value++; count = value;"],
   ["integers past 32 bits", "count = 2147483648;"],
   ["object rest elements", "const { a, ...others } = record; count = a ?? 0;"],
@@ -96,6 +95,27 @@ it.each(CASES)("rejects %s", (_, statements) => {
   `;
   expect(() => compile(model)).toThrow(TlaTypeScriptError);
   expect(() => compile(model)).toThrow(/spec\.ts[:(]8[:,]/);
+});
+
+describe("adds a value of type any to a number as JavaScript does", () => {
+  const getModel = (bound: number) => `
+    let count = 0;
+    export const step = () => {
+      if (count >= 2) return;
+      const value: any = true;
+      count = count + value;
+    };
+    export const isSmall = () => count <= ${bound};
+  `;
+
+  it("agrees with Node", async () => {
+    const result = await check(compile(getModel(2)));
+    expect([result.status, result.distinctStates]).toEqual(["deadlock", 3]);
+  });
+
+  it("rejects a smaller bound", async () => {
+    expect((await check(compile(getModel(1)))).status).toBe("invariant-violation");
+  });
 });
 
 it("stops where a let is used before its declaration in try", async () => {

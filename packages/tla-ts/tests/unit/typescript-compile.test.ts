@@ -53322,4 +53322,41 @@ describe("BigInts", () => {
       `),
     ).toThrow("Only state variables and local lets can change: holder");
   });
+
+  describe("runs arithmetic on values of type any as ToNumeric does, with BigInts", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const run = (left: any, right: any) => {
+        box.seen.push(String(left - right), String(left * right), String(left + right));
+        box.seen.push(String(left % right));
+      };
+      run(10n, 3n);
+      run(7, 2);
+      run("8", 2);
+      run({ valueOf: () => 5n }, 2n);
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "7,30,13,1,5,14,9,1,6,16,82,0,3,10,7,1";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace(/^7/, "8");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+
+    it("stops where a BigInt meets a number", async () => {
+      const result = await checkModel(`
+        const box = { seen: [] as string[] };
+        const subtract = (left: any, right: any) => left - right;
+        box.seen.push(String(subtract(1n, 1)));
+      `);
+      expect(result.failure?.message).toContain(
+        "tla-ts can't throw the TypeError of mixing a BigInt with a number",
+      );
+    });
+  });
 });
