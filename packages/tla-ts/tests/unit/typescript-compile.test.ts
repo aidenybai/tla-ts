@@ -52337,6 +52337,11 @@ describe("BigInts", () => {
       ["arguments in a field", "var C = class { x = () => arguments; };", "SyntaxError"],
       ["arguments in a static block", "class C { static { arguments; } }", "SyntaxError"],
       ["super's private name", "class C { #x() {} m() { super.#x(); } }", "SyntaxError"],
+      [
+        "a private name in a class's heritage",
+        "var C = class extends class { x = this.#foo; } { #foo; };",
+        "TS2339",
+      ],
       ["a module's repeated function", "function x() {}\nfunction x() {}", "SyntaxError"],
       ["an export of an undeclared name", "export { missing };", "TS2304"],
       ["an import of eval", 'import eval from "./missing.js";', "SyntaxError"],
