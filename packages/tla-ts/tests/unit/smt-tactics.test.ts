@@ -1008,6 +1008,29 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ).toEqual(["sat", "(:rlimit 82)"]);
   });
 
+  it("takes arith.branch_cut_ratio in the smt tactic, whose cuts lp.int_hammer_period sets", () => {
+    const lines = [
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(declare-const z Int)",
+      "(assert (and (<= (+ (* 2 x) y) 3) (>= x 1) (or (>= y 2) (>= z 5)) (or (<= y 0) (<= z 1))))",
+    ];
+    expect(
+      run([
+        ...lines,
+        "(check-sat-using (using-params smt :arith.branch_cut_ratio 10000000))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 219)"]);
+    expect(
+      run([
+        ...lines,
+        "(check-sat-using (using-params smt :smt.arith.branch_cut_ratio 1))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 219)"]);
+  });
+
   it("runs the smt tactics of qflia that skip cuts without auto_config", () => {
     const declarations = ["(set-logic QF_LIA)", "(declare-const x Int)", "(declare-const y Int)"];
     expect(
