@@ -53956,4 +53956,29 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("5,6/5/4"))).failure?.message).toContain("seen 5,4/5/6");
     });
   });
+
+  describe("dispatches a call of a function that a type parameter types among those its constraint fits", () => {
+    const getSource = (expected: string) => `
+      const box = { total: 0 };
+      const twice = <F extends (value: number) => number>(f: F) => {
+        if (typeof f !== "function") throw new TypeError("f");
+        const run = (value: number) => f(f(value));
+        return run;
+      };
+      const inc = twice((value: number) => value + 1);
+      const double = twice((value: number) => value * 2);
+      const first = inc(1);
+      const second = double(3);
+      box.total = first * 100 + second;
+      if (box.total !== ${expected}) throw new Error("total " + box.total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("312"))).failure).toBeUndefined();
+    });
+
+    it("rejects the other function", async () => {
+      expect((await checkModel(getSource("412"))).failure?.message).toContain("total 312");
+    });
+  });
 });

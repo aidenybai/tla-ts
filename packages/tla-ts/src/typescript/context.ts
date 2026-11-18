@@ -6126,6 +6126,14 @@ export const findSharedFunctionCandidates = (
     ]),
   );
 
+// The type of the functions that a callee may hold, which is a type parameter's constraint.
+const getCalleeType = (callee: ts.Expression, checker: ts.TypeChecker) => {
+  const type = checker.getTypeAtLocation(callee);
+  return (type.flags & ts.TypeFlags.TypeParameter) !== 0
+    ? (checker.getBaseConstraintOfType(type) ?? type)
+    : type;
+};
+
 // The functions that a value whose type has calls may hold, where tla-ts can't tell which, whose
 // type TypeScript lets the value hold: those of the callee's module, and of the modules it imports
 // but for one that reads the locals of a function that runs once around it, which only that
@@ -6141,7 +6149,7 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
         isReached(candidate, context),
       );
   const checker = context.checker;
-  const type = checker.getTypeAtLocation(callee);
+  const type = getCalleeType(callee, checker);
   const call = callee.parent;
   // What super reads in an object literal is any, which a call may pass anything and whose result
   // it may use as anything, so a method it runs takes the arguments' types and gives the type that
@@ -6224,9 +6232,7 @@ export const createDispatch = (
   const dispatched = callees.filter(
     (callee) => !isHeldBuiltInObject(callee, context) && !isSuperAccess(callee),
   );
-  const calleeTypes = getDistinctTypes(
-    dispatched.map((callee) => checker.getTypeAtLocation(callee)),
-  );
+  const calleeTypes = getDistinctTypes(dispatched.map((callee) => getCalleeType(callee, checker)));
   const calleeIds = Int32Array.from(calleeTypes, (type) => type.id);
   const words = (candidateTypes.length + 31) >>> 5;
   const rows = new Uint32Array(calleeTypes.length * words);
@@ -6246,7 +6252,7 @@ export const createDispatch = (
   const tested = new Uint32Array(calleeTypes.length * words);
   calleeTypes.forEach((_, row) => tested.set(sharedBits, row * words));
   dispatched.forEach((callee) => {
-    const row = getLowerBound(calleeIds, 0, calleeIds.length, checker.getTypeAtLocation(callee).id);
+    const row = getLowerBound(calleeIds, 0, calleeIds.length, getCalleeType(callee, checker).id);
     context.functionCandidates.get(callee.getSourceFile())?.forEach((candidate) => {
       const bit = getBit(candidate);
       tested[row * words + (bit >>> 5)] |= 1 << (bit & 31);
@@ -6528,7 +6534,7 @@ export const isReached = (node: ts.Node, context: Context) => {
 // The closures that a value whose type has calls may hold, whose type TypeScript lets it hold.
 export const getClosures = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
-  const type = context.checker.getTypeAtLocation(callee);
+  const type = getCalleeType(callee, context.checker);
   // A function with properties of its own, as Object.assign(f, {}) types it, holds a closure whose
   // type fits its calls.
   const called = type.isIntersection()
