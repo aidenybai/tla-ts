@@ -276,6 +276,28 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects the arguments of a name after a prefix in a DEF clause entry, where SANY crashes", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nA == 1\nB == 2\nTHEOREM TRUE BY DEF A!B(1)\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 3",
+        "",
+        ...[
+          ["line 4, col 23 to line 4, col 23", "Selector `B' should not have argument(s)."],
+          [
+            "line 4, col 21 to line 4, col 26",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 4, col 14 to line 4, col 26", "Empty BY"],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
   it("rejects a DEF clause entry whose first child nests, where SANY reports line 2147483647", () => {
     const report = getReport({
       M: "---- MODULE M ----\nA == 1\nB == 2\nf == [x \\in {1} |-> x]\nF(x) == x\nTHEOREM TRUE BY DEF A + B + A, A /\\ B /\\ A, f[1] + B, A'', F(A)[1], A\n====\n",

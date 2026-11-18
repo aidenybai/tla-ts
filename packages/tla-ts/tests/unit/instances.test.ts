@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, parseModule, TlaSyntaxError } from "../../src";
+import { check, formatValue, parseModule, TlaSyntaxError } from "../../src";
 import { createSanyError } from "../../src/errors";
 import { checkFixture, getModuleLoader } from "./check-harness";
 
@@ -164,6 +164,43 @@ describe("INSTANCE matches TLC", () => {
       "invariant-violation",
       4,
       4,
+    ]);
+  });
+
+  it("applies recursive definitions of an instance inside LET without substitutions", async () => {
+    const inner =
+      "---- MODULE Inner ----\nEXTENDS Naturals\nr[n \\in 0..5] == IF n = 0 THEN 0 ELSE r[n - 1] + 2\nRECURSIVE R(_)\nR(n) == IF n = 0 THEN 0 ELSE R(n - 1) + 3\n====";
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = <<>>\nNext == x' = <<LET L == INSTANCE Inner IN L!r[3], LET L == INSTANCE Inner IN L!R(3), LET L == INSTANCE Inner IN L!r>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => (name === "Inner" ? inner : undefined),
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<6, 9, (0 :> 0 @@ 1 :> 2 @@ 2 :> 4 @@ 3 :> 6 @@ 4 :> 8 @@ 5 :> 10)>>",
+    ]);
+  });
+
+  it("evaluates the domain of a recursive function of a parameterized instance once per application", async () => {
+    const inner =
+      '---- MODULE Inner ----\nEXTENDS Naturals, TLC\nCONSTANT c\nr[n \\in {m \\in 0..2 : PrintT(<<"r", m>>)}] == IF n = 0 THEN c ELSE r[n - 1] + 1\n====';
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nL(p) == INSTANCE Inner WITH c <- p\nInit == x = L(1)!r[2] + L(2)!r[1]\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) => (name === "Inner" ? inner : undefined),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(printed).toEqual([
+      '<<"r", 0>>',
+      '<<"r", 1>>',
+      '<<"r", 2>>',
+      '<<"r", 0>>',
+      '<<"r", 1>>',
+      '<<"r", 2>>',
     ]);
   });
 

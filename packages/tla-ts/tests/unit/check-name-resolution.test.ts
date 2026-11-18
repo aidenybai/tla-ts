@@ -1105,6 +1105,20 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "---- MODULE Full ----\nG == 1\nH(h) == h\n====\n---- MODULE Inner ----\nL(a) == INSTANCE Full\n====\nJ(b) == INSTANCE Inner\nF == J(1)!L(2)!G = U1 /\\ J!L(2)!G = U2 /\\ J(1)!L(2, 3)!G = U3 /\\ J(1)!L!G = U4 /\\ J(1)!L(2)!H(3, 4) = U5",
+      [
+        ["line 10, col 20 to line 10, col 21", "Unknown operator: `U1'."],
+        ["line 10, col 26 to line 10, col 33", "The operator J requires 1 arguments."],
+        ["line 10, col 37 to line 10, col 38", "Unknown operator: `U2'."],
+        ["line 10, col 49 to line 10, col 54", "The operator J!L requires 1 arguments."],
+        ["line 10, col 60 to line 10, col 61", "Unknown operator: `U3'."],
+        ["line 10, col 66 to line 10, col 73", "The operator J!L requires 1 arguments."],
+        ["line 10, col 77 to line 10, col 78", "Unknown operator: `U4'."],
+        ["line 10, col 94 to line 10, col 99", "The operator J!L!H requires 1 arguments."],
+        ["line 10, col 103 to line 10, col 104", "Unknown operator: `U5'."],
+      ],
+    ],
+    [
       "THEOREM TRUE\n<1>1. CASE TRUE\n  <2>1. TRUE BY <1>1, <1>2\n  <2>2. QED BY <2>1\n<1>2. TRUE BY <2>1, <1>3\n<1>3. QED BY <1>1, <1>2, <1>3, <1>9",
       [
         ["line 4, col 23 to line 4, col 26", "Unknown operator: `<1>2'."],
@@ -2619,6 +2633,37 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("rejects the arguments of a name after a prefix in a DEF clause entry, where SANY crashes", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\n---- MODULE Inner ----\nB(x) == 2\n====\nI == INSTANCE Inner\nA == lab :: 1\nB == 2\nTHEOREM TRUE BY DEF A!B(1)\nTHEOREM TRUE BY DEF I!B(1), A!lab(1), B\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 8, col 23 to line 8, col 23", "Selector `B' should not have argument(s)."],
+          [
+            "line 8, col 21 to line 8, col 26",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 8, col 14 to line 8, col 26", "Empty BY"],
+          ["line 9, col 23 to line 9, col 23", "Selector `B' should not have argument(s)."],
+          [
+            "line 9, col 21 to line 9, col 26",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 9, col 31 to line 9, col 33", "Selector `lab' should not have argument(s)."],
+          [
+            "line 9, col 29 to line 9, col 36",
+            "DEF clause entry should describe a defined operator.",
+          ],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
   it("reports DEF clause entries of bracketed, quantified and infix shapes like SANY", async () => {
     await expect(
       check({
@@ -3870,6 +3915,40 @@ describe("name resolution matches SANY", () => {
           ["line 9, col 7 to line 9, col 10", "ASSUME/PROVE used where an expression is required."],
         ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
       ),
+    );
+  });
+
+  it("selects from a definition that an earlier definition of the same DEFINE step makes, like SANY", async () => {
+    await expect(
+      checkNames(
+        "EXTENDS Naturals\nTHEOREM T == 1 = 1\n<1>1. DEFINE Z == 1 + 2\n             W == Z!1 + 1\n             V == Z!3\n<1>2. W!1!3 = 2\n<1>3. QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        ["line 6, col 21 to line 6, col 21", "line 7, col 11 to line 7, col 11"].map(
+          (location) => ({
+            location: `${location} of module M`,
+            message: "Nonexistent operand specified by `argument selector 3'.",
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("selects a label itself, not its unresolved body, like SANY", async () => {
+    await expect(
+      checkNames("CONSTANT c\nB == lab :: -c\nD == {B!lab, 1}\nE == D!1\nG == D!1!1 \\/ E!1"),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 13 to line 3, col 13 of module M",
+          message: "Could not find declaration or definition of symbol '-.'.",
+        },
+        {
+          location: "line 3, col 13 to line 3, col 14 of module M",
+          message: "Couldn't resolve prefix operator symbol `-.'.",
+        },
+      ]),
     );
   });
 

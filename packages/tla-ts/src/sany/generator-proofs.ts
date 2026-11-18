@@ -125,6 +125,7 @@ const generateDefs = (generation: ModuleGeneration, defs: Fact[]) =>
     entryErrors.forEach((error) => generation.addError(error.location, error.message));
     if (entryErrors.length > 0) return [];
     const location = getLocation(generation.file, fact);
+    // Deviation from SANY: Generator#genIdToSelector throws an internal error on the arguments of a name after a prefix, as in DEF A!B(1); tla-ts passes them to the selector, which rejects them.
     const symbol = generateSelector(
       generation,
       getDefEntryBinder(fact) ??

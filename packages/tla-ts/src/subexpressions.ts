@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getFunctionConstruction,
   type AssumeProve,
   type Bound,
   type Declaration,
@@ -64,6 +65,7 @@ interface SelectingName {
 }
 
 const declaredArities = new WeakMap<Definition, number>();
+const letDefinitions = new WeakSet<Definition>();
 
 const resolveDefinition = (
   definition: Definition,
@@ -195,6 +197,51 @@ const createApplication = (selection: Selection, body: Expression): Expression =
   };
 };
 
+// SANY expects an operator argument only of a user-defined operator, which a standard module's built-in operators stand for.
+const getCalleeParams = (
+  expression: Expression & { kind: "Apply" },
+  callee: Definition | undefined,
+) =>
+  callee?.kind === "Operator"
+    ? callee.params
+    : STANDARD_LEVELS.get(expression.operator.slice(expression.operator.lastIndexOf("!") + 1))
+        ?.formals;
+
+const getOperatorArgument = (operand: Expression, arity: number): Expression => {
+  if (operand.kind !== "Identifier" && operand.kind !== "OperatorReference") return operand;
+  const operator = operand.kind === "Identifier" ? operand.name : operand.operator;
+  const params = Array.from({ length: arity }, (_value, index) => `argument${index}`);
+  return {
+    kind: "Lambda",
+    params,
+    body: {
+      kind: "Apply",
+      operator,
+      args: params.map((name) => ({
+        kind: "Identifier",
+        name,
+        location: operand.location,
+        resolution: LOCAL_RESOLUTION,
+      })),
+      location: operand.location,
+      ...(operand.kind === "Identifier" && { resolution: operand.resolution }),
+    },
+    operator,
+    location: operand.location,
+  };
+};
+
+const getDefinitionBody = (definition: Definition, isLet: boolean) => {
+  if (definition.kind === "Function") return getFunctionConstruction(definition, isLet);
+  const body = definition.body;
+  if (body.kind !== "Let" || body.location.range || body.body.kind !== "Identifier") return body;
+  const name = body.body.name;
+  const recursive = body.definitions.find((local) => local.name === name);
+  return recursive?.kind === "Function"
+    ? { ...body, body: getFunctionConstruction(recursive, true) }
+    : body;
+};
+
 const applyDefinition = (definition: Definition, selection: Selection) => {
   const location = selection.location;
   const params =
@@ -237,7 +284,6 @@ const selectSubexpression = (
   let selectorIndex = 0;
   let operatorIndex = -1;
   let current: Expression | undefined;
-  let unwrappedSelection: Expression | undefined;
   let isFailed = false;
   let generatedArguments = 0;
   const nulls: NullSelection[] = [];
@@ -268,6 +314,15 @@ const selectSubexpression = (
     generatedArgumentCounts.set(reference, generatedArguments);
     isFailed = true;
     return undefined;
+  };
+
+  const findCallee = (name: string) =>
+    selection.lets.flat().findLast((definition) => definition.name === name) ?? lookup(name);
+
+  const enterScopes = (node: Expression): Expression => {
+    if (node.kind !== "Let" || node.location.range) return node;
+    selection.lets.push(node.definitions);
+    return enterScopes(node.body);
   };
 
   const findDefinition = (local: Definition[] | undefined) => {
@@ -346,23 +401,21 @@ const selectSubexpression = (
         `Subexpression of  \`${found.name}' used inside the operator's definition.`,
       );
     }
-    if (definition.kind !== "Operator") {
-      throw createError(`Cannot select a subexpression of ${definition.name}`, location);
-    }
-    selection.params.push(...definition.params);
+    selection.params.push(...(definition.kind === "Operator" ? definition.params : []));
     selection.args.push(...found.args);
-    current = definition.body;
+    current = getDefinitionBody(definition, local !== undefined || letDefinitions.has(definition));
     operatorIndex = selectorIndex;
     selectorIndex++;
     return undefined;
   };
 
   const followLabels = () => {
+    let owner = current;
     while (selectorIndex < selectors.length && !isFailed) {
       const selector = selectors[selectorIndex];
       if (selector.kind !== "Name") return;
       const range = reference.selectorRanges?.[selectorIndex];
-      const found = current && findLabel(current, selector.name, [], []);
+      const found = owner && findLabel(owner, selector.name, [], []);
       const missing = `Cannot find label \`${selector.name}'.`;
       if (!found) return report(range, missing);
       found.applications.forEach((application) => checkNull(application, missing, true));
@@ -377,7 +430,9 @@ const selectSubexpression = (
       selection.params.push(...params.map((name) => ({ name, arity: 0 })));
       selection.args.push(...selector.args);
       applications.push(getExpressionArguments(selector.name, range, selector.args));
-      current = found.label.body;
+      const next = selectors[selectorIndex + 1];
+      owner = found.label.body;
+      current = next === undefined || next.kind === "Name" ? found.label : found.label.body;
       selectorIndex++;
     }
   };
@@ -391,19 +446,8 @@ const selectSubexpression = (
       report(range, noOperands);
       return;
     }
-    if (selections.has(current) && current.kind !== "Lambda" && current !== unwrappedSelection) {
-      checkNull(current, noOperands, true);
-      unwrappedSelection = current;
-      current =
-        current.kind === "Let" &&
-        current.body.kind === "Apply" &&
-        current.body.operator === SELECTION_NAME
-          ? current.body
-          : current.kind === "Selection"
-            ? current
-            : // SANY wraps a selection without parameters in $Nop, whose only operand is the selection.
-              { kind: "Tuple", elements: [current], location: current.location };
-    }
+    if (selections.has(current)) checkNull(current, noOperands, true);
+    current = enterScopes(current);
     if (current.kind === "Label") {
       current = current.body;
       selectOperand(selector);
@@ -417,6 +461,27 @@ const selectSubexpression = (
       }
       selection.lets.push(current.definitions);
       current = current.body;
+      return;
+    }
+    if (current.kind === "Lambda" && current.operator !== undefined) {
+      report(range, "Trying to select subexpression of an operator argument.");
+      return;
+    }
+    if (current.kind === "Lambda" && selector.kind !== "Bound" && selector.kind !== "At") {
+      // Deviation from SANY: SANY names a numbered selector here by its syntax node, N_StructOp; tla-ts names it by its number, as the CLI does.
+      const name = selector.kind === "Operand" ? selector.operand : getSelectorName(selector);
+      report(range, `Cannot use !${name} to select subexpression of a LAMBDA.`);
+      return;
+    }
+    if (
+      current.kind === "Lambda" &&
+      selector.kind === "Bound" &&
+      selector.args.length !== current.params.length
+    ) {
+      report(
+        range,
+        `Selector with ${selector.args.length} arguments used for LAMBDA expression taking ${current.params.length} arguments.`,
+      );
       return;
     }
     const binder = getBinder(current);
@@ -493,12 +558,17 @@ const selectSubexpression = (
       report(range, nonexistent);
       return;
     }
-    const operand = operands?.[getOperandIndex(selector.operand, operands.length)];
+    const index = getOperandIndex(selector.operand, operands?.length ?? 0);
+    const operand = operands?.[index];
     if (!operand) {
       report(range, nonexistent);
       return;
     }
-    current = operand;
+    const arity =
+      current.kind === "Apply"
+        ? (getCalleeParams(current, findCallee(current.operator))?.[index]?.arity ?? 0)
+        : 0;
+    current = arity > 0 ? getOperatorArgument(operand, arity) : operand;
   };
 
   const first = enterDefinition(undefined);
@@ -509,6 +579,7 @@ const selectSubexpression = (
     const selector = selectors[selectorIndex];
     if (selector.kind === "Name") {
       while (current?.kind === "Label") current = current.body;
+      current = current && enterScopes(current);
       if (current?.kind !== "Let") {
         report(
           reference.selectorRanges?.[selectorIndex - 1],
@@ -566,6 +637,10 @@ const selectSubexpression = (
   }
   if (isFailed) return reference;
   if (!current) throw createError("Subexpression selection failed", location);
+  if (current.kind === "Lambda" && !isOperator) {
+    report(location.range, "Selected operator argument when expression expected.");
+    return reference;
+  }
   const params = selection.params.length;
   const args = selection.args.length;
   if (params !== args) {
@@ -576,7 +651,10 @@ const selectSubexpression = (
     }
     deferToExpression(location.range, message);
   }
-  const body = wrapLets(current, selection.lets, location);
+  const body =
+    current.kind === "Lambda"
+      ? { ...current, body: wrapLets(current.body, selection.lets, location) }
+      : wrapLets(current, selection.lets, location);
   const share = (expression: Expression): Expression => ({
     kind: "Selection",
     expression,
@@ -591,7 +669,7 @@ const selectSubexpression = (
     selection,
     body.kind !== "Lambda"
       ? share(body)
-      : { ...body, body: selections.has(body) ? body.body : share(body.body), location },
+      : { ...body, body: selections.has(current) ? body.body : share(body.body), location },
   );
   nullSelections.set(selected, nulls);
   if (expressionError) operatorSelectionErrors.set(selected, expressionError);
@@ -625,6 +703,7 @@ const resolveSubexpressions = (
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
     if (expression.recursive) setDeclaredArities(expression.recursive, expression.definitions);
+    expression.definitions.forEach((definition) => letDefinitions.add(definition));
     const resolved: Definition[] = [];
     const local: Lookup = (name) =>
       resolved.find((definition) => definition.name === name) ??
@@ -632,11 +711,13 @@ const resolveSubexpressions = (
       lookup(name);
     const isLocalGoal = (name: string) =>
       !expression.definitions.some((definition) => definition.name === name) && isGoal(name);
-    expression.definitions.forEach((definition) =>
-      resolved.push(
-        resolveDefinition(definition, (child) => resolveSubexpressions(child, local, isLocalGoal)),
-      ),
-    );
+    expression.definitions.forEach((definition) => {
+      const resolvedDefinition = resolveDefinition(definition, (child) =>
+        resolveSubexpressions(child, local, isLocalGoal),
+      );
+      letDefinitions.add(resolvedDefinition);
+      resolved.push(resolvedDefinition);
+    });
     const mapped = {
       ...expression,
       definitions: resolved,
@@ -651,15 +732,10 @@ const resolveSubexpressions = (
         }
       : mapped;
   }
-  const callee = expression.kind === "Apply" ? lookup(expression.operator) : undefined;
-  // SANY expects an operator argument only of a user-defined operator, which a standard module's built-in operators stand for.
   const calleeParams =
-    callee?.kind === "Operator"
-      ? callee.params
-      : expression.kind === "Apply"
-        ? STANDARD_LEVELS.get(expression.operator.slice(expression.operator.lastIndexOf("!") + 1))
-            ?.formals
-        : undefined;
+    expression.kind === "Apply"
+      ? getCalleeParams(expression, lookup(expression.operator))
+      : undefined;
   const rebuilt =
     expression.kind === "Apply"
       ? {
@@ -846,15 +922,23 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
           return { ...body, facts: resolveFacts(body.facts), defs: resolveDefs(body.defs) };
         case "Instance":
           return resolveInstance(body, lookup, isProofGoal);
-        case "Define":
+        case "Define": {
+          const defined: Definition[] = [];
+          const local = createProofResolver(
+            (name) => defined.find((definition) => definition.name === name) ?? lookup(name),
+          );
           return {
             ...body,
-            definitions: body.definitions.map((definition) =>
-              definition.kind === "Instance"
-                ? resolveInstance(definition, lookup, isProofGoal)
-                : resolveDefinition(definition, resolveInProof),
-            ),
+            definitions: body.definitions.map((definition) => {
+              if (definition.kind === "Instance") {
+                return resolveInstance(definition, local.lookup, local.isProofGoal);
+              }
+              const resolved = resolveDefinition(definition, local.resolveInProof);
+              defined.push(resolved);
+              return resolved;
+            }),
           };
+        }
         case "Have":
         case "Case":
           return { ...body, expression: resolveInProof(body.expression) };
@@ -897,7 +981,16 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
         }),
       };
     };
-    return { lookup, resolveFacts, resolveDefs, resolveStatement, resolveStep, resolveProof };
+    return {
+      lookup,
+      isProofGoal,
+      resolveInProof,
+      resolveFacts,
+      resolveDefs,
+      resolveStatement,
+      resolveStep,
+      resolveProof,
+    };
   };
   const hasReferences =
     module.definitions.some((definition) => containsReference(definition.body)) ||

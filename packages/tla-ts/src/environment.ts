@@ -6,6 +6,7 @@ import {
   type Declaration,
   type Definition,
   type Expression,
+  type FunctionDefinition,
   type Instance,
   type Module,
   type OperatorParam,
@@ -44,8 +45,11 @@ import {
   createLocalArguments,
   createLocalIdentifier,
   getEnabledVariableName,
+  getFunctionBody,
   renameLocals,
+  withInstanceParams,
   withLetInstances,
+  withSubstitutionFrames,
 } from "./instances";
 import { overrideDefinitions, type JavaOverride } from "./java-overrides";
 import { extractModule } from "./parser";
@@ -203,20 +207,29 @@ const getNodeWord = (kind: SymbolKind) =>
 const getNodeClass = (kind: SymbolKind) =>
   kind === "Theorem" ? "ThmOrAssumpDefNode" : getNodeWord(kind);
 
-const createLocalFunction = (definition: Definition, key: string): Definition => ({
+const createLocalFunction = (definition: FunctionDefinition, key: string): Definition => ({
   kind: "Operator",
   name: key,
   params: [],
-  body: {
-    kind: "Let",
-    definitions: [definition],
-    body: createLocalIdentifier(definition.name, definition.location),
-    location: definition.location,
-  },
+  body: getFunctionBody(definition),
   isLocal: true,
   isRecursive: false,
   location: definition.location,
 });
+
+const getSubstitutionFrame = (instance: Instance): Expression => {
+  const range = instance.definitionRange
+    ? {
+        ...instance.definitionRange,
+        start: { line: instance.location.line, column: instance.location.column },
+      }
+    : instance.instanceRange;
+  return {
+    kind: "Identifier",
+    name: instance.name ?? instance.module,
+    location: { ...range.start, range },
+  };
+};
 
 const mentionsName = (expression: Expression, names: Set<string>): boolean => {
   const name = getReferencedName(expression);
@@ -526,12 +539,6 @@ export const createEnvironment = (
     });
     const params = instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` }));
     params.forEach((param) => instanceParams.add(param));
-    const substitutionRange = instance.definitionRange
-      ? {
-          ...instance.definitionRange,
-          start: { line: instance.location.line, column: instance.location.column },
-        }
-      : instance.instanceRange;
     const instantiation = createInstantiation({
       params,
       substitutions: new Map(
@@ -555,13 +562,7 @@ export const createEnvironment = (
         return key;
       },
       createName,
-      ...(declarations.length > 0 && {
-        frame: {
-          kind: "Identifier",
-          name: instance.name ?? instance.module,
-          location: { ...substitutionRange.start, range: substitutionRange },
-        },
-      }),
+      ...(declarations.length > 0 && { frame: getSubstitutionFrame(instance) }),
     });
     return getInstanceSymbols(instance, linked.exported, declarations, (key, name) => {
       const copy =
@@ -763,22 +764,25 @@ export const createEnvironment = (
       },
       createName,
     });
+    const frames = declarations.length > 0 ? [getSubstitutionFrame(instance)] : [];
     const declared = new Set(declarations.map((declaration) => declaration.name));
-    const aliases = [...linked.exported]
+    const exported = [...linked.exported]
       .filter((entry) => !declared.has(entry[0]) && entry[1].kind !== "Instance")
       .map((entry) => {
+        const name = instance.name === undefined ? entry[0] : `${instance.name}!${entry[0]}`;
         const key = instantiation.getKey(entry[1].key);
+        const copy = copies.find((candidate) => candidate.name === key);
+        const original = definitions.get(key);
+        const definition = copy ?? (original && withInstanceParams(original, instance.params));
+        if (definition) {
+          const operator =
+            definition.kind === "Operator" ? definition : createLocalFunction(definition, name);
+          return { ...operator, name, body: withSubstitutionFrames(operator.body, frames) };
+        }
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
-        const params = [...instance.params, ...ownParams];
-        return createLocalAlias(
-          instance.name === undefined ? entry[0] : `${instance.name}!${entry[0]}`,
-          key,
-          params,
-          key === entry[1].key ? ownParams : params,
-          location,
-        );
+        return createLocalAlias(name, key, [...instance.params, ...ownParams], ownParams, location);
       });
-    return [...substitutionDefinitions, ...copies, ...aliases];
+    return [...substitutionDefinitions, ...copies, ...exported];
   };
 
   const getAvailableDefinitions = (visible: Symbols) =>

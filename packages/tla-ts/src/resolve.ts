@@ -147,7 +147,7 @@ const isEmptyExpression = (expression: Expression): boolean =>
 const findNullSelection = (nulls: NullSelection[] | undefined) =>
   nulls?.find((selection) =>
     selection.isEmpty
-      ? isEmptyExpression(selection.node)
+      ? emptyExpressions.has(selection.node)
       : unresolvedExpressions.has(selection.node),
   );
 
@@ -447,13 +447,30 @@ export const getBinder = (
   }
 };
 
+// SANY parses `a /\ b /\ c` as `(a /\ b) /\ c`, so an infix junction has two operands.
+const getJunctionOperands = (expression: Expression & { kind: "And" | "Or" }) => {
+  const operands = expression.operands;
+  const range = expression.location.range;
+  const end = expression.prefixEnds?.[operands.length - 3];
+  if (expression.isBulleted || !range || !end) return operands;
+  return [
+    {
+      ...expression,
+      operands: operands.slice(0, -1),
+      prefixEnds: expression.prefixEnds?.slice(0, -1),
+      location: { ...expression.location, range: { ...range, end } },
+    },
+    operands[operands.length - 1],
+  ];
+};
+
 export const getOperands = (expression: Expression): Expression[] | undefined => {
   switch (expression.kind) {
     case "Apply":
       return expression.args;
     case "And":
     case "Or":
-      return expression.operands;
+      return getJunctionOperands(expression);
     case "If":
       return [expression.condition, expression.consequent, expression.alternative];
     case "Tuple":
@@ -1152,16 +1169,17 @@ const resolveDefinitions = (
   return resolvedScope;
 };
 
-const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) => {
-  const prefix = name.split("!")[0];
-  const binding =
-    prefix === name
-      ? undefined
-      : (lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined));
-  return binding?.kind === "Instance"
-    ? { name: prefix, arity: binding.arity, range: binding.range }
-    : undefined;
-};
+const getInstances = (names: string[], scope: LocalName | undefined, unit: Unit) =>
+  names.slice(0, -1).map((_name, index) => {
+    const prefix = names.slice(0, index + 1).join("!");
+    const binding = lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined);
+    return binding?.kind === "Instance"
+      ? { name: prefix, arity: binding.arity, range: binding.range }
+      : undefined;
+  });
+
+const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) =>
+  getInstances(name.split("!"), scope, unit)[0];
 
 const isInstanceArityReported = (
   expression: Expression,
@@ -1171,24 +1189,28 @@ const isInstanceArityReported = (
   if (!isReference(expression)) return false;
   const selectors = getSelectors(expression);
   const nameCount = selectors.findIndex((selector) => selector.kind !== "Name");
-  const instance = findInstance(
-    selectors
-      .slice(0, nameCount === -1 ? selectors.length : nameCount)
-      .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []))
-      .join("!"),
+  const names = selectors
+    .slice(0, nameCount === -1 ? selectors.length : nameCount)
+    .flatMap((selector) => (selector.kind === "Name" ? [selector] : []));
+  const instances = getInstances(
+    names.map((name) => name.name),
     scope,
     unit,
   );
-  const first = selectors[0];
-  const count = first.kind === "Name" ? first.args.length : 0;
-  if (!instance || count === instance.arity) return false;
+  const index = instances.findIndex(
+    (instance, position) =>
+      instance !== undefined &&
+      (instances[position - 1]?.arity ?? 0) + names[position].args.length !== instance.arity,
+  );
+  const instance = instances[index];
+  if (!instance) return false;
   const range =
-    (expression.kind === "Identifier" ? undefined : expression.argumentRanges?.[0]) ??
+    (expression.kind === "Identifier" ? undefined : expression.argumentRanges?.[index]) ??
     expression.location.range;
   if (range) {
     unit.errors.push({
       location: formatRange(range),
-      message: `The operator ${instance.name} requires ${instance.arity} arguments.`,
+      message: `The operator ${instance.name} requires ${instance.arity - (instances[index - 1]?.arity ?? 0)} arguments.`,
     });
   }
   return true;
@@ -1234,15 +1256,17 @@ const resolveExpressionArgument = (arg: Expression, scope: LocalName | undefined
   } else resolveExpression(arg, scope, unit);
 };
 
-const getSelectorArgumentError = (reference: Expression) => {
-  // SANY reads a reference that ends in arguments as an application, not as a selector's arguments.
+const getSelectorArgumentError = (reference: Expression, isDefEntry = false) => {
+  if (!isReference(reference)) return undefined;
+  // SANY reads a reference that ends in arguments as an application, not as a selector's arguments, outside a DEF clause.
   const selectors =
+    isDefEntry ||
     reference.kind === "Subexpression" ||
     (reference.kind === "Apply" && reference.argumentCounts?.at(-1) === 0)
       ? getSelectors(reference)
       : [];
   const index = selectors.findIndex((selector) => "args" in selector && selector.args.length > 0);
-  if (index === -1 || !isReference(reference)) return undefined;
+  if (index === -1) return undefined;
   const selector = selectors[index];
   return {
     index,
@@ -1356,7 +1380,7 @@ const resolveApply = (
   if (arity !== undefined && arity !== expression.args.length) {
     unit.errors.push({
       location: formatRange(expression.argumentsRange ?? getSpelledNameRange(expression, operator)),
-      message: `The operator ${resolveSynonym(operator)} requires ${arity - (findInstance(operator, scope, unit)?.arity ?? 0)} arguments.`,
+      message: `The operator ${resolveSynonym(operator)} requires ${arity - (getInstances(operator.split("!"), scope, unit).findLast((instance) => instance !== undefined)?.arity ?? 0)} arguments.`,
     });
   }
   if (arity !== expression.args.length) {
@@ -1461,6 +1485,7 @@ const resolveExpression = (
   if (selections.has(expression) && !unit.isGenerated) {
     const failed = findNullSelection(nullSelections.get(expression));
     if (failed) {
+      emptyExpressions.add(expression);
       matchApplications(failed.applications, scope, unit);
       unit.errors.push(failed.error);
       return;
@@ -1879,10 +1904,11 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
   const local = lookupLocal(scope, name);
   const binding = local ?? findSymbol(name, unit) ?? getModuleBinding(name, unit, range);
   if (binding === undefined && isFact(name, unit)) return true;
+  // Deviation from SANY: Generator#genIdToSelector throws an internal error on the arguments of a name after a prefix, as in DEF A!B(1); tla-ts rejects them as Generator#selectorToNode rejects a selector's arguments in a DEF clause.
   const isDefined =
     isReference(reference) &&
     getSelectors(reference).length > 1 &&
-    (binding === undefined || getSelectorArgumentError(reference))
+    (binding === undefined || getSelectorArgumentError(reference, true))
       ? isDefinitionSelected(def, reference, scope, unit)
       : name === "" || isDefinitionName(name, local, binding, range, unit);
   if (isDefined) return true;
@@ -1926,7 +1952,7 @@ const isDefinitionSelected = (
     if (range) unit.errors.push({ location: formatRange(range), message });
     return false;
   };
-  const argumentError = getSelectorArgumentError(reference);
+  const argumentError = getSelectorArgumentError(reference, true);
   if (argumentError?.index === 0) return report(argumentError.range, argumentError.message);
   const selectors = getSelectors(reference);
   const ranges = reference.selectorRanges;

@@ -67,6 +67,116 @@ describe("subexpression references match TLC", () => {
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 8 }]);
   });
 
+  it("selects through the LET that keeps a selection's or a substitution's definitions in scope", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nA == {c + 1, 7}\n====\nJ(n) == INSTANCE Inner WITH c <- n + 1\nW == {5, 6}\nK == INSTANCE Inner WITH c <- W!1\nOp == LET a == 1 IN {a + 10, LET z == 2 IN z + 1}\nQ == Op!1!1\nR == Op!1!2\nVARIABLES u, v, w, y, t\nInit == u = 0 /\\ v = 0 /\\ w = 0 /\\ y = 0 /\\ t = 0\nNext == u' = Q!1!1 /\\ v' = Q!1!2 /\\ w' = R!1!z /\\ y' = J(4)!A!1 /\\ t' = K!A!1!1\nInv == u = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.state)).toEqual([
+      { u: 0, v: 0, w: 0, y: 0, t: 0 },
+      { u: 1, v: 10, w: 2, y: 6, t: 5 },
+    ]);
+  });
+
+  it("selects the operands of an infix junction as SANY nests them", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nOp == TRUE /\\ TRUE /\\ FALSE /\\ TRUE\nOr == FALSE \\/ TRUE \\/ FALSE\nVARIABLE x\nInit == x = <<>>\nNext == x' = <<Op!1, Op!1!1, Op!1!1!2, Op!2, Or!1>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<FALSE, TRUE, TRUE, TRUE, TRUE>>",
+    ]);
+  });
+
+  it("selects an argument of an operator constant that an instance sets to a LAMBDA", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT F(_)\nVal == {F(4)}\n====\nI == INSTANCE Inner WITH F <- LAMBDA y : y + 1\nVARIABLE x\nInit == x = 0\nNext == x' = I!Val!1!1\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 4 }]);
+  });
+
+  it("selects into the definitions of an instance inside a LET", async () => {
+    const modules = new Map([
+      [
+        "Inner",
+        "---- MODULE Inner ----\nEXTENDS Naturals\nF(a) == \\A y \\in {a} : y + a = 3\nG == {7, 8}\n====",
+      ],
+      [
+        "Inner2",
+        "---- MODULE Inner2 ----\nEXTENDS Naturals\nCONSTANT c\nH(a) == \\E y \\in {a} : y + c = 5\nK == {c, 9}\n====",
+      ],
+    ]);
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nB == <<LET L == INSTANCE Inner IN L!F(1)!(2), LET L == INSTANCE Inner IN L!G!2, LET L(p) == INSTANCE Inner2 WITH c <- p IN L(3)!H(1)!(2), LET L(p) == INSTANCE Inner2 WITH c <- p IN L(3)!K!1, LET L == INSTANCE Inner2 WITH c <- 4 IN L!K!1>>\nInit == x = <<>>\nNext == x' = B\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => modules.get(name),
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<TRUE, 8, TRUE, 3, 4>>",
+    ]);
+  });
+
+  it("passes on a selected LAMBDA that uses definitions of an enclosing LET", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nAp(G(_), v) == G(v)\nF(G(_)) == G(0)\nOp == LET W == 1 IN F(LAMBDA z : z + W)\nOp2(a) == LET W == a IN F(LAMBDA z : z + W)\nOp3 == LET W == 1 IN LET V == W + 1 IN F(LAMBDA z : z + V)\nOp6 == LET W == 1 IN F(LAMBDA z : LET U == z + W IN U)\nB == <<Ap(Op!1!1, 5), Ap(Op3!1!1!1, 5), Ap(Op6!1!1, 5), Op!1!1!(2), Op2(3)!1!1!(4)!1, Op2(3)!1!1!(4)>>\nInit == x = <<>>\nNext == x' = B\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<6, 7, 6, 3, 4, 7>>",
+    ]);
+  });
+
+  it("passes on a selected operator that an operator argument names", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nF(G(_)) == G(0)\nAp(G(_), v) == G(v)\nFoo(a) == a + 1\nOp == F(Foo)\nOp4 == F(-.)\nOp5 == LET L(b) == b * 2 IN F(L)\nInit == x = <<>>\nNext == x' = <<Ap(Op!1, 4), Ap(Op4!1, 3), Ap(Op5!1!1, 5)>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<5, -3, 10>>",
+    ]);
+  });
+
+  it("selects into a function definition as into its constructor", async () => {
+    const inner =
+      "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nh[z \\in {1, 2}] == z + c\n====";
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\ng[z \\in {1, 2}] == z + 1\nr[n \\in {0, 1}] == IF n = 0 THEN 0 ELSE r[n - 1] + 1\nm[a \\in {1}, b \\in {2, 3}] == a + b\nt[<<a, b>> \\in {<<1, 2>>}] == a + b\nlg[z \\in {1, 2}] == lab(z) :: z + 1\nL(p) == INSTANCE Inner WITH c <- p\nVARIABLE x\nInit == x = <<>>\nNext == x' = <<g!1, g!(1), r!1, r!(0)!1, m!2, m!(1, 3), t!1, t!(1, 2), lg!lab(2)!1, L(5)!h!1, LET K == INSTANCE Inner WITH c <- 3 IN K!h!(2)>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => (name === "Inner" ? inner : undefined),
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<{1, 2}, 2, {0, 1}, TRUE, {2, 3}, 4, {<<1, 2>>}, 3, 2, {1, 2}, 5>>",
+    ]);
+  });
+
+  it("selects into a recursive function that an instance copies as into its constructor", async () => {
+    const inner =
+      "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nr[n \\in {0, 1, 2}] == IF n = 0 THEN c ELSE r[n - 1] + 1\nlr[n \\in {0, 1}] == lab(n) :: IF n = 0 THEN c ELSE lr[n - 1] * 2\n====";
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL(p) == INSTANCE Inner WITH c <- p\nInit == x = <<>>\nNext == x' = <<L(5)!r!1, L(5)!r!(1)!1, L(5)!r!(0), L(3)!lr!lab(1)!1, LET K == INSTANCE Inner WITH c <- 4 IN K!r!(0)>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => (name === "Inner" ? inner : undefined),
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<{0, 1, 2}, FALSE, 5, FALSE, 4>>",
+    ]);
+  });
+
   it("selects a label through an instance whose operators the instancing module does not extend", async () => {
     const result = await check({
       source:
@@ -127,6 +237,17 @@ describe("subexpression references match TLC", () => {
       source: `---- MODULE M ----\nEXTENDS Naturals\nD0 == {1}\n${Array.from(
         { length: 20 },
         (_value, index) => `D${index + 1} == {D${index}!1 + D${index}!1}`,
+      ).join("\n")}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it("resolves a chain of selections through operators with arguments in linear time", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nE1(p) == {p}\n${Array.from(
+        { length: 29 },
+        (_value, index) => `E${index + 2}(p) == E${index + 1}(p)!1`,
       ).join("\n")}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
       config: "INIT Init\nNEXT Next",
     });
@@ -455,6 +576,84 @@ describe("subexpression references into theorems match SANY", () => {
           "line 7, col 20 to line 7, col 20",
           "Nonexistent operand specified by `argument selector 2'.",
         ],
+      ],
+    ],
+    [
+      "a third operand of an infix junction",
+      "A == TRUE /\\ FALSE /\\ TRUE\nB == A!3\nC == A!1!3",
+      [
+        [
+          "line 4, col 8 to line 4, col 8",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        [
+          "line 5, col 10 to line 5, col 10",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
+      "selectors past a selected LET definition",
+      "Op == LET A == {1} IN {A, 2}\nB == Op!1!1\nD == B!1!1\nE == B!1!A\nF == Op!:!A\nG == F!1",
+      [
+        [
+          "line 5, col 10 to line 5, col 10",
+          "Nonexistent operand specified by `argument selector 1'.",
+        ],
+        ["line 6, col 8 to line 6, col 8", "A name selector here must be from a LET clause."],
+        [
+          "line 8, col 8 to line 8, col 8",
+          "Nonexistent operand specified by `argument selector 1'.",
+        ],
+      ],
+    ],
+    [
+      "a selected LAMBDA where an expression is expected",
+      "F(G(_)) == G(0)\nOp == F(LAMBDA z : z = 1)\nOp2(a) == F(LAMBDA z : z = a)\nQ == Op!1\nR == {Op!1, Op2(1)!1}",
+      [
+        ["line 6, col 6 to line 6, col 9", "Selected operator argument when expression expected."],
+        ["line 7, col 7 to line 7, col 10", "Selected operator argument when expression expected."],
+        [
+          "line 7, col 13 to line 7, col 20",
+          "Selected operator argument when expression expected.",
+        ],
+      ],
+    ],
+    [
+      "a selected operator that an operator argument names",
+      "F(G(_)) == G(0)\nFoo(a) == a\nOp == F(Foo)\nQ == Op!1\nA == Op!1!(4)\nB == Op!1!1\nAp2(G(_, _), v) == G(v, v)\nR == Ap2(Op!1, 4)\nOp2(H(_)) == F(H)\nS == Op2(Foo)!1",
+      [
+        ["line 6, col 6 to line 6, col 9", "Selected operator argument when expression expected."],
+        [
+          "line 7, col 11 to line 7, col 13",
+          "Trying to select subexpression of an operator argument.",
+        ],
+        [
+          "line 8, col 11 to line 8, col 11",
+          "Trying to select subexpression of an operator argument.",
+        ],
+        ["line 10, col 10 to line 10, col 13", "Expected arity 2 but found operator of arity 1."],
+        [
+          "line 10, col 6 to line 10, col 17",
+          "Argument number 1 to operator 'Ap2' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 12, col 6 to line 12, col 15",
+          "Selected operator argument when expression expected.",
+        ],
+      ],
+    ],
+    [
+      "selectors into a LAMBDA, naming a numbered selector by its number where SANY names its syntax node",
+      "F(G(_)) == G(0)\nOp == F(LAMBDA z : z = 1)\nC == Op!1!1\nD == Op!1!(1, 2)\nE == Op!1!<<\nH == Op!1!(1) /\\ Op!1!@",
+      [
+        ["line 5, col 11 to line 5, col 11", "Cannot use !1 to select subexpression of a LAMBDA."],
+        [
+          "line 6, col 11 to line 6, col 16",
+          "Selector with 2 arguments used for LAMBDA expression taking 1 arguments.",
+        ],
+        ["line 7, col 11 to line 7, col 12", "Cannot use !<< to select subexpression of a LAMBDA."],
+        ["line 8, col 18 to line 8, col 23", "Expected 1 arguments but found 0."],
       ],
     ],
     [
