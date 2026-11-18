@@ -761,10 +761,10 @@ export const enterFrames = (
   return entered;
 };
 
-const findFrame = (coverage: Coverage, frame: Expression, root: number) => {
+const findFrame = (coverage: Coverage, frame: Expression, root: number | undefined) => {
   for (let index = coverage.frames.length - 1; index >= 0; index--) {
     const entry = coverage.frames[index];
-    if (entry.frame === frame && entry.root === root) return entry;
+    if (entry.frame === frame && (root === undefined || entry.root === root)) return entry;
   }
   return undefined;
 };
@@ -793,12 +793,9 @@ export const runInCoverageFrames = <Result>(
   }
 };
 
-export const getSubstitutionNode = (
-  coverage: Coverage,
-  substitution: Substitution,
-  node: number,
-) => {
-  const entry = findFrame(coverage, substitution.frame, coverage.roots[node]);
+// A LazyValue counts under the cost model of the SubstInNode that made it, whatever evaluates it.
+export const getSubstitutionNode = (coverage: Coverage, substitution: Substitution) => {
+  const entry = findFrame(coverage, substitution.frame, undefined);
   if (!entry) return -1;
   const substitutionNode = coverage.substitutionNodes.get(entry.root)?.get(substitution) ?? -1;
   if (!entry.isCached || coverage.nextState === "primed") return substitutionNode;

@@ -822,7 +822,7 @@ const createRecursiveFunction = (
     );
   const coverage = context.environment.coverage;
   const node = coverage && !context.environment.callStack ? coverage.current : -1;
-  const frames = coverage && node >= 0 ? getCoverageFrames(coverage) : undefined;
+  const frames = coverage && getCoverageFrames(coverage);
   const functionValue = createLazyFunction(
     domain,
     coverage
@@ -1595,7 +1595,8 @@ const countSubstitution =
   (substitution: Substitution, evaluator: Evaluator, coverage: Coverage): Evaluator =>
   (context) => {
     const outer = coverage.current;
-    coverage.current = outer < 0 ? outer : getSubstitutionNode(coverage, substitution, outer);
+    const node = getSubstitutionNode(coverage, substitution);
+    coverage.current = node === -1 && outer < 0 ? outer : node;
     try {
       return evaluator(context);
     } finally {
@@ -2106,14 +2107,16 @@ export const getFunctionBuilder = (
     const compute = (argument: Value) =>
       body(withScope(lambdaContext, bindArgument(bounds, scope, argument)));
     const node = coverage && !environment.callStack ? coverage.current : -1;
-    const frames = coverage && node >= 0 ? getCoverageFrames(coverage) : undefined;
+    const frames = coverage && getCoverageFrames(coverage);
     const value = createLazyFunction(
       domain,
       coverage
-        ? (argument) =>
-            coverage.current === -1 && name === undefined
+        ? (argument) => {
+            const at = coverage.current === -1 && name === undefined ? -1 : node;
+            return at === coverage.current && !frames
               ? compute(argument)
-              : runInCoverageFrames(coverage, node, frames, () => compute(argument))
+              : runInCoverageFrames(coverage, at, frames, () => compute(argument));
+          }
         : compute,
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,

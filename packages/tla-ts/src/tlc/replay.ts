@@ -932,7 +932,7 @@ const visitUnchanged = (
         countCoverage(replay.coverage, node);
         const substitution = substitutedExpressions.get(expression);
         if (substitution && substitution.replacement !== expression) {
-          countCoverage(replay.coverage, getSubstitutionNode(replay.coverage, substitution, node));
+          countCoverage(replay.coverage, getSubstitutionNode(replay.coverage, substitution));
         }
       }
       const assigned = partial[index];

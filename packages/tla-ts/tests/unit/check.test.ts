@@ -2736,6 +2736,26 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts the substitution a recursive function of an instance reads in the call-stack replay, which counts nothing else in the body", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE D ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nr[n \\in 0..2] == IF n = 0 THEN c ELSE r[n - 1] + (n = 1) * 0\n====\nI(p) == INSTANCE Inner WITH c <- p\nInit == x = I(1)!r[2]\nNext == UNCHANGED x\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[0]).toEqual([
+      "line 10, col 13 to line 10, col 21 of module D: 2",
+      "|line 10, col 13 to line 10, col 18 of module D: 2",
+      "||line 9, col 34 to line 9, col 34 of module D: 2",
+      "||line 7, col 1 to line 7, col 60 of module D: 2",
+      "|||line 7, col 18 to line 7, col 60 of module D: 3",
+      "||||line 7, col 21 to line 7, col 25 of module D: 3",
+      "||||line 7, col 32 to line 7, col 32 of module D: 1",
+      "||||line 7, col 39 to line 7, col 60 of module D: 2",
+      "|||||line 7, col 39 to line 7, col 46 of module D: 2",
+      "|||||line 7, col 50 to line 7, col 60 of module D: 1",
+      "|||line 7, col 9 to line 7, col 12 of module D: 2",
+    ]);
+  });
+
   it("takes the definition an instance with parameters copies for an action of constant arguments, as TLC's Tool#getActionsAppl binds them", async () => {
     const lines = formatCoverage(
       await getInstanceCoverage(
