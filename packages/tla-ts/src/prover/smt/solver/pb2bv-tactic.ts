@@ -469,16 +469,18 @@ class Pb2Bv {
 
   run(goal: Goal) {
     const manager = this.manager;
-    for (const [index, form] of goal.forms.items.entries())
-      this.bounds.add(form, goal.getDependency(index));
-    const failed = findNonPb(manager, goal.forms.items, this.bounds);
+    const forms = goal.forms.items;
+    for (let index = 0; index < forms.length; index++)
+      this.bounds.add(forms[index], goal.getDependency(index));
+    const failed = findNonPb(manager, forms, this.bounds);
     if (failed !== undefined) this.throwNonPb(failed);
     const rewriter = new ConstraintRewriter(manager, this);
     this.rewriter = rewriter;
     const results = new RefVector(manager);
     this.results = results;
     const dependencies: (Dependency | undefined)[] = [];
-    for (const [index, form] of goal.forms.items.entries()) {
+    for (let index = 0; index < forms.length; index++) {
+      const form = forms[index];
       let atom = form;
       let isPositive = true;
       while (manager.isNot(atom)) {
@@ -493,11 +495,13 @@ class Pb2Bv {
         checkPbFree(manager, rewritten);
         results.pushOwned(rewritten);
       }
-      dependencies.push(joinDependencies(this.usedDependency, goal.getDependency(index)));
-      this.usedDependency = undefined;
+      if (goal.isCoresEnabled) {
+        dependencies.push(joinDependencies(this.usedDependency, goal.getDependency(index)));
+        this.usedDependency = undefined;
+      }
     }
-    for (const [index, result] of results.items.entries())
-      goal.update(index, result, dependencies[index]);
+    for (let index = 0; index < results.items.length; index++)
+      goal.update(index, results.items[index], dependencies[index]);
     results.reset();
     goal.depth++;
     if (!goal.isModelsEnabled) return;

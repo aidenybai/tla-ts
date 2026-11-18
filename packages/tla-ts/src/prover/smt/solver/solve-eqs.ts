@@ -80,31 +80,32 @@ export class SubstReplacer extends RewriterTpl {
 
 // default_expr_replacer empties its cache after a rewrite that used a dependency.
 class DependentSubstReplacer extends SubstReplacer {
+  dependency: Dependency | undefined = undefined;
   private usedDependency: Dependency | undefined = undefined;
 
   constructor(
     manager: AstManager,
     substitution: ObjMap<number>,
-    private dependencies: Map<number, Dependency | undefined>,
+    private dependencies: Map<number, Dependency>,
   ) {
     super(manager, substitution);
   }
 
   override getSubst(expr: number) {
     const result = super.getSubst(expr);
-    if (result !== undefined)
+    if (result !== undefined && this.dependencies.size > 0)
       this.usedDependency = joinDependencies(this.usedDependency, this.dependencies.get(expr));
     return result;
   }
 
   replace(expr: number) {
     const result = this.rewrite(expr);
-    const dependency = this.usedDependency;
-    if (dependency !== undefined) {
+    this.dependency = this.usedDependency;
+    if (this.dependency !== undefined) {
       this.reset();
       this.usedDependency = undefined;
     }
-    return { result, dependency };
+    return result;
   }
 }
 
@@ -131,7 +132,7 @@ export class SolveEqs {
   private id2level: number[] = [];
   private substIds: number[] = [];
   private substitution: ObjMap<number>;
-  private substDependencies = new Map<number, Dependency | undefined>();
+  private substDependencies = new Map<number, Dependency>();
   private definitions: Definition[] = [];
   private containsV = new Set<number>();
   private unsafeVars = new Set<number>();
@@ -549,6 +550,7 @@ export class SolveEqs {
   }
 
   private setDependencies(eqs: DependentEq[], start: number, index: number) {
+    if (!this.goal.isCoresEnabled) return;
     const dependency = this.goal.getDependency(index);
     for (let current = start; current < eqs.length; current++) eqs[current].dependency = dependency;
   }
@@ -644,14 +646,12 @@ export class SolveEqs {
       if (!manager.limit.inc()) break;
       const eq = this.next[id][0];
       const definition = replacer.replace(eq.term);
-      this.pinned.pushOwned(definition.result);
+      this.pinned.pushOwned(definition);
       manager.incRef(eq.variable);
       this.pinned.pushOwned(eq.variable);
-      this.substitution.set(eq.variable, definition.result);
-      this.substDependencies.set(
-        eq.variable,
-        joinDependencies(eq.dependency, definition.dependency),
-      );
+      this.substitution.set(eq.variable, definition);
+      const dependency = joinDependencies(eq.dependency, replacer.dependency);
+      if (dependency !== undefined) this.substDependencies.set(eq.variable, dependency);
     }
     replacer.release();
   }
@@ -665,13 +665,13 @@ export class SolveEqs {
     state.forEachIndex((index) => {
       const form = state.get(index);
       const replaced = replacer.replace(form);
-      const simplified = this.rewriter.rewrite(replaced.result);
-      manager.decRef(replaced.result);
+      const simplified = this.rewriter.rewrite(replaced);
+      manager.decRef(replaced);
       if (simplified !== form)
         goal.update(
           index,
           simplified,
-          joinDependencies(goal.getDependency(index), replaced.dependency),
+          joinDependencies(goal.getDependency(index), replacer.dependency),
         );
       manager.decRef(simplified);
     });
@@ -913,9 +913,9 @@ export class SolveEqs {
     const forms = this.goal.forms.items;
     const visited = new Set<number>();
     const collected: DependentEq[] = [];
-    for (const [index, form] of forms.entries()) {
+    for (let index = 0; index < forms.length; index++) {
       const start = collected.length;
-      this.collectNestedIn(form, visited, collected);
+      this.collectNestedIn(forms[index], visited, collected);
       this.setDependencies(collected, start, index);
     }
     if (collected.length === 0) return collected;
