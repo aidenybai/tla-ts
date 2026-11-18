@@ -47,7 +47,6 @@ export interface InstanceSubstitutes {
   substitutions: Map<string, Expression>;
 }
 
-// The definition an instance copies, and the module it comes from.
 export interface InstanceCopy extends InstanceSubstitutes {
   source: Definition;
   module: string;
@@ -61,7 +60,6 @@ export interface InstancedDefinition {
 }
 
 export interface LetInstance {
-  // Resolution rebuilds LET definitions, so a LET instance's copies are found by name.
   copies: Map<string, InstanceCopy>;
   check: () => SanyError[];
 }
@@ -887,7 +885,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       analyzeDefinition(definition, inner),
     );
     const body = analyze(expression.body, inner);
-    // SANY checks a LET's instances after its definitions and body.
     const instanceErrors = instances?.flatMap((instance) => instance.check());
     instanceErrors?.forEach((error) => errors.push(error));
     const data = {
@@ -1244,8 +1241,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return operands;
   };
 
-  // SANY wraps the body of an instanced definition in a SubstInNode. It keeps the levels of the
-  // original body and maps each declaration of the instanced module to its substitute.
   const analyzeInstanced = (
     definition: Definition,
     copy: InstanceCopy,
@@ -1634,7 +1629,6 @@ export const checkModuleLevels = (
                 analyzer.analyzeDefinition(definition, new Map()),
               ),
             ),
-          // SANY checks an instance's substitutes with the first definition it instances.
           ...instances.flatMap((instance) => {
             const substitutes = instance.substitutes;
             return substitutes

@@ -870,7 +870,6 @@ export const createModuleSubexpressions = (
   getAvailable: Lookup,
   isBoundBefore: (name: string, location: SourceLocation) => boolean,
 ) => {
-  // SANY binds a name to its first import, declaration or definition, so a later one stays unbound.
   const createLookup = (definitions: Definition[]): Lookup => {
     const byName = new Map(
       definitions.toReversed().map((definition) => [definition.name, definition]),
