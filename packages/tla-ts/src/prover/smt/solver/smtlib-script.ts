@@ -1609,8 +1609,9 @@ export const runSmtlibScript = (
         const evaluator = new ModelEvaluator(manager, model);
         const value = evaluator.rewrite(term);
         display(value);
-        manager.decRef(value);
+        // eval_cmd frees its model_evaluator before the value, and the parser frees the term last.
         evaluator.release();
+        manager.decRef(value);
         manager.decRef(term);
       },
     ],

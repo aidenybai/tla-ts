@@ -1566,4 +1566,31 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "(a (not a))",
     ]);
   });
+
+  it("frees the evaluator of eval before its value, so later terms get Z3's ids", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= x 2))",
+        "(assert (= y 3))",
+        "(check-sat)",
+        "(eval (+ (* x y) (* 2 x) (* y y y) 17 (- x y) (* x x)))",
+        "(declare-const d1 Bool)",
+        "(assert d1)",
+        "(declare-const d2 Bool)",
+        "(assert d2)",
+        "(declare-const d3 Bool)",
+        "(assert d3)",
+        "(declare-const s Bool)",
+        "(declare-const t Bool)",
+        "(declare-const u Bool)",
+        "(declare-const v Bool)",
+        "(assert (or (not s) (not t) (not u) (not v)))",
+        "(check-sat-assuming (v u t s))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["sat", "57", "unsat", "(s t v u)"]);
+  });
 });
