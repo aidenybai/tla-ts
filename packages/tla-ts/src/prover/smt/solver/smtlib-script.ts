@@ -772,6 +772,14 @@ export const runSmtlibScript = (
       useSatSolver((solver) => solver.push());
     }
   };
+  // cmd_context::init_manager runs at the first command that needs the manager.
+  const initManager = () => {
+    if (state.isProofsEnabled !== undefined) return;
+    state.isProofsEnabled = settings.parameters.get("proof") === "true";
+    if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
+    if (state.logic === undefined) state.reader.registerList();
+    resetKernel();
+  };
   // The parts of inc_sat_solver that are not ported leave its answers to the smt kernel.
   const useSatSolver = <Result>(action: (solver: IncSatSolver) => Result) => {
     const solver = state.satSolver;
@@ -1047,6 +1055,7 @@ export const runSmtlibScript = (
       return;
     }
     if (keyword === ":rlimit") {
+      initManager();
       print(`(:rlimit ${state.manager.limit.count})`);
       return;
     }
@@ -2070,12 +2079,7 @@ export const runSmtlibScript = (
     }
     // Z3's scoped_timer ends with the command that set it, so a command starts without one.
     state.manager.limit.restart(Infinity);
-    if (!MANAGERLESS_COMMANDS.has(head.text) && state.isProofsEnabled === undefined) {
-      state.isProofsEnabled = settings.parameters.get("proof") === "true";
-      if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
-      if (state.logic === undefined) state.reader.registerList();
-      resetKernel();
-    }
+    if (!MANAGERLESS_COMMANDS.has(head.text)) initManager();
     try {
       command(list);
     } catch (error) {

@@ -1380,6 +1380,12 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["(:rlimit 4)", "(:rlimit 7)", "(:rlimit 14)"]);
   });
 
+  it("initializes the manager for get-info :rlimit", () => {
+    expect(
+      run(['(echo "a")', "(get-info :rlimit)", "(declare-const p Bool)", "(get-info :rlimit)"]),
+    ).toEqual(["a", "(:rlimit 1)", "(:rlimit 1)"]);
+  });
+
   // check_sat counts one resource unit once the model of a decided goal is converted, and answers unknown when that exceeds the limit.
   it("counts the resource units of check-sat-using as Z3 does", () => {
     expect(
