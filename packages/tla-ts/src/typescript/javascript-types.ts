@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
 import { isJavaScriptFile } from "./common-js";
-import { skipCasts } from "./context";
+import { isStrictCode, skipCasts } from "./context";
 import { getRegularExpressionError } from "./early-errors";
 
 // TypeScript infers JavaScript's types without checking them, so a JavaScript value may hold
@@ -36,8 +36,8 @@ const LINT_ERRORS = new Set([6133, 6138, 6192, 6196, 6198, 6199, 6205, 7027, 702
 const PRIVATE_NAME_ERRORS = new Set([2339, 2551]);
 
 // A key that the type of the value that a read or a write names lacks, which TypeScript reads as
-// any, but where an element access names it of a primitive, whose access tla-ts makes of a value
-// of any type, as the primitive's prototype holds the key if anything does.
+// any, but where an element access outside strict mode names it of a primitive, whose access
+// tla-ts makes of a value of any type, as the primitive's prototype holds the key if anything does.
 const MISSING_KEY_ERRORS = new Set([2339, 2550, 2551, 7015, 7017, 7053]);
 
 // A value that may be null or undefined, whose type holds, which tla-ts reads as such, but for one
@@ -640,6 +640,7 @@ export const typeJavaScript = (
     const isPrimitiveRead =
       access !== undefined &&
       ts.isElementAccessExpression(access) &&
+      !isStrictCode(access) &&
       (checker.getTypeAtLocation(access.expression).flags &
         (ts.TypeFlags.StringLike |
           ts.TypeFlags.NumberLike |
