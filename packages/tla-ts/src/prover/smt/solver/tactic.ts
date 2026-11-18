@@ -1386,6 +1386,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         createSatTactic(environment.manager, getSatTacticParams(environment, params)),
     },
@@ -1404,6 +1405,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         createSatTactic(environment.manager, getSatTacticParams(environment, params)),
     },

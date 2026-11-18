@@ -1,7 +1,8 @@
 import { SmtCanceledError, SmtTacticError } from "../../../../errors";
 import type { AstManager } from "../ast";
 import type { ThSolverFactory } from "../euf/euf-solver";
-import { OVER, type Goal } from "../goal";
+import { joinDependencies, mkDependencyLeaf, OVER, type Dependency, type Goal } from "../goal";
+import { ObjMap } from "../hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ProtoModel } from "../proto-model";
 import type { SatParams } from "./config";
@@ -17,11 +18,12 @@ export const createSatTactic =
     goal.elimRedundancies();
     const solver = new Solver(params, manager.limit);
     const goal2sat = new Goal2Sat(manager, solver, params.get("ite_extra") !== false, mkThSolver);
-    goal2sat.run(goal.forms.items);
+    const dep2asm = new ObjMap<number>((expr) => manager.hashes[expr]);
+    goal2sat.runGoal(goal, dep2asm);
     goal.reset();
     const result = (() => {
       try {
-        return solver.check();
+        return solver.check([...dep2asm.values()]);
       } catch (error) {
         if (error instanceof SmtCanceledError) throw new SmtTacticError("canceled");
         throw error;
@@ -29,8 +31,19 @@ export const createSatTactic =
     })();
     if (result === L_UNDEF) goal.reasonUnknown = solver.reasonUnknown;
     const unhandledFuns = goal2sat.euf?.unhandledFunctions ?? goal2sat.unhandledFuns;
-    if (result === L_FALSE) goal.assert(manager.falseExpr);
-    else if (result === L_TRUE && unhandledFuns.length === 0) {
+    if (result === L_FALSE) {
+      const asm2dep = new Map<number, number>();
+      for (const [dep, lit] of dep2asm) asm2dep.set(lit, dep);
+      goal.assert(
+        manager.falseExpr,
+        goal.isCoresEnabled
+          ? solver.core.reduce<Dependency | undefined>(
+              (core, lit) => joinDependencies(core, mkDependencyLeaf(asm2dep.get(lit) as number)),
+              undefined,
+            )
+          : undefined,
+      );
+    } else if (result === L_TRUE && unhandledFuns.length === 0) {
       if (goal.isModelsEnabled) {
         const model = new ProtoModel(manager).mkModel();
         for (const [expr, boolVar] of goal2sat.atoms) {
@@ -48,7 +61,7 @@ export const createSatTactic =
       const converter = new Sat2GoalConverter(manager);
       sat2goal(manager, solver, goal2sat.atoms, goal, converter);
       if (goal.isModelsEnabled) goal.addDefinitions(converter.entries);
-      if (unhandledFuns.length > 0) goal.updatePrecision(OVER);
+      if (goal.isCoresEnabled || unhandledFuns.length > 0) goal.updatePrecision(OVER);
     }
     goal.depth++;
     return [goal];

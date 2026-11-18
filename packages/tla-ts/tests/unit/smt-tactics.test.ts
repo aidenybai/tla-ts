@@ -260,6 +260,44 @@ describe("tactics keep the dependencies Z3 keeps", () => {
     ).toEqual(["unsat", "(a1 a2)", "(:rlimit 140)"]);
   });
 
+  it("assumes the dependencies in the sat tactic, and loses them in a goal it leaves", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(declare-const s Bool)",
+        "(declare-const x (_ BitVec 4))",
+        "(push)",
+        "(assert (! (or p q) :named a1))",
+        "(assert (! (not p) :named a2))",
+        "(assert (! (or (not q) s) :named a3))",
+        "(assert (! (not s) :named a4))",
+        "(assert (! (or r p) :named a5))",
+        "(check-sat-using sat)",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+        "(pop)",
+        "(assert (! (or p (bvult x #x3)) :named a1))",
+        "(apply (using-params sat :max_conflicts 0))",
+      ]),
+    ).toEqual([
+      "unsat",
+      "(a4 a1 a2 a3)",
+      "(:rlimit 73)",
+      [
+        "(goals",
+        "(goal",
+        "  (or (not a1) k!0)",
+        "  (or (not p) k!0)",
+        "  (or (not (bvult x #x3)) k!0)",
+        "  (or p (bvult x #x3) (not k!0))",
+        "  :precision over :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {

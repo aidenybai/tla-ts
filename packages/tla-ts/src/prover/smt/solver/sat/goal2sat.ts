@@ -17,6 +17,7 @@ import {
 } from "../ast";
 import { EufSolver, type EufInternalizer, type ThSolverFactory } from "../euf/euf-solver";
 import { getDependencyValues, type Goal } from "../goal";
+import type { ObjMap } from "../hashtable";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
 import { NULL_LITERAL } from "./clause";
 import { PbSolver, type SatInternalizer } from "./pb-solver";
@@ -514,7 +515,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     this.cacheTrail.push(expr);
   }
 
-  private insertDep(dep: number, dep2asm: Map<number, number>) {
+  private insertDep(dep: number, dep2asm: Map<number, number> | ObjMap<number>) {
     const manager = this.manager;
     const isSign = manager.isNot(dep);
     const atom = isSign ? manager.getArg(dep, 0) : dep;
@@ -544,7 +545,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     }
   }
 
-  runGoal(goal: Goal, dep2asm: Map<number, number>) {
+  runGoal(goal: Goal, dep2asm: Map<number, number> | ObjMap<number>) {
     const manager = this.manager;
     if (this.mkThSolver !== null) this.ensureEuf();
     try {
