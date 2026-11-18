@@ -151,6 +151,9 @@ export const operandApplications = new WeakMap<Expression, ApplyExpression[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 
+// SANY generates no node for an unresolved expression.
+export const isUnresolved = (expression: Expression) => unresolvedExpressions.has(expression);
+
 // SANY's failed selection is an operator application with no operands.
 const isEmptyExpression = (expression: Expression): boolean =>
   emptyExpressions.has(expression) || findNullError(nullSelections.get(expression)) !== undefined;

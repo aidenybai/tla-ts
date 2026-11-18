@@ -4271,4 +4271,93 @@ describe("name resolution matches SANY", () => {
       );
     },
   );
+
+  it.each([
+    [
+      "a named instance of a definition and a theorem",
+      "---- MODULE Inner ----\nCONSTANT c\nL == 1 ++ 2\nTHEOREM T == 1 ++ 2\n====\nI == INSTANCE Inner WITH c <- 1",
+      [
+        [
+          "line 4, col 8 to line 4, col 9",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 4, col 6 to line 4, col 11", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 5, col 16 to line 5, col 17",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 5, col 14 to line 5, col 19", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 7, col 1 to line 7, col 31",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+        [
+          "line 7, col 1 to line 7, col 31",
+          "Substitution error, probably due to error in module being instantiated.",
+        ],
+      ],
+    ],
+    [
+      "an unnamed instance",
+      "---- MODULE Inner ----\nCONSTANT c\nL == [1]\n====\nINSTANCE Inner WITH c <- 1",
+      [
+        ["line 4, col 6 to line 4, col 6", "Unsupported expression type `['."],
+        [
+          "line 6, col 1 to line 6, col 26",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+      ],
+    ],
+    [
+      "a named instance, but not an unnamed one, of a definition from a module without parameters",
+      "---- MODULE E ----\nL == (1 ++ 2)[3]\n====\n---- MODULE Inner ----\nEXTENDS E\nCONSTANT c\n====\nI == INSTANCE Inner WITH c <- 1\nINSTANCE Inner WITH c <- 2",
+      [
+        [
+          "line 3, col 9 to line 3, col 10",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 3, col 7 to line 3, col 12", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 9, col 1 to line 9, col 31",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+      ],
+    ],
+    [
+      "an instance of a definition that another instance copies unchanged",
+      "---- MODULE E ----\nL == 1 ++ 2\n====\n---- MODULE Inner ----\nCONSTANT c\nJ == INSTANCE E\n====\nI == INSTANCE Inner WITH c <- 1",
+      [
+        [
+          "line 3, col 8 to line 3, col 9",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 3, col 6 to line 3, col 11", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 9, col 1 to line 9, col 31",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+      ],
+    ],
+    [
+      "the instance that substitutes in it first",
+      "---- MODULE E ----\nCONSTANT d\nL == 1 ++ 2\n====\n---- MODULE Inner ----\nCONSTANT c\nJ == INSTANCE E WITH d <- c\n====\nI == INSTANCE Inner WITH c <- 1",
+      [
+        [
+          "line 4, col 8 to line 4, col 9",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 4, col 6 to line 4, col 11", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 8, col 1 to line 8, col 27",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+      ],
+    ],
+  ])("reports a body SANY fails to generate in %s", async (_description, source, errors) => {
+    await expect(checkNames(source)).rejects.toThrow(
+      createSanyError(
+        errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
 });

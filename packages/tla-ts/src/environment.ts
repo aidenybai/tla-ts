@@ -65,6 +65,7 @@ import {
   getParamArities,
   isBefore,
   isTheoremDefinition,
+  isUnresolved,
   KEY_SEPARATOR,
   LOCAL_RESOLUTION,
   MODULE_START,
@@ -147,6 +148,18 @@ export interface InstanceAction {
 }
 
 const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
+
+// SANY's SubstInNode and APSubstInNode word the error for a body they can't substitute in apart.
+const SUBSTITUTION_ERRORS = [
+  {
+    kind: "Definition",
+    message: "Substitution error, probably due to error \nin module being instantiated.",
+  },
+  {
+    kind: "Theorem",
+    message: "Substitution error, probably due to error in module being instantiated.",
+  },
+];
 
 export interface LinkedModule {
   module: Module;
@@ -274,6 +287,8 @@ export const createEnvironment = (
   const root = order.parseModule(options.source);
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
+  // The definitions whose bodies SANY failed to generate.
+  const unresolvedKeys = new Set<string>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
   const instanceParams = new Set<OperatorParam>();
@@ -547,6 +562,24 @@ export const createEnvironment = (
       module,
       unit,
     );
+    // SANY substitutes into the bodies of a module with parameters, or of any module a named instance substitutes for.
+    const isSubstituted = (key: string) =>
+      instance.name === undefined
+        ? declarations.length > 0 && parameterized.get(key) === true
+        : substitutions.size > 0;
+    const range = instance.location.range;
+    if (range) {
+      const failed = [...linked.exported.values()].filter(
+        (symbol) => unresolvedKeys.has(symbol.key) && isSubstituted(symbol.key),
+      );
+      unit.reports.push({
+        location: instance.location,
+        errors: SUBSTITUTION_ERRORS.filter((error) =>
+          failed.some((symbol) => symbol.kind === error.kind),
+        ).map((error) => ({ location: formatRange(range), message: error.message })),
+        warnings: [],
+      });
+    }
     instanceChecks.push({
       module: instance.module,
       instancer: module.name,
@@ -613,6 +646,7 @@ export const createEnvironment = (
         });
       }
       if (instance.name !== undefined) qualifiedNames.set(copy, name);
+      if (unresolvedKeys.has(key) && !isSubstituted(key)) unresolvedKeys.add(copy);
       return copy;
     });
   };
@@ -1107,6 +1141,7 @@ export const createEnvironment = (
       const key = getKey(definition);
       definitions.set(key, definition);
       parameterized.set(key, !isParameterFree);
+      if (definition.kind === "Operator" && isUnresolved(definition.body)) unresolvedKeys.add(key);
     });
     resolved.definitions.forEach((definition) => {
       const symbol = getDefinitionSymbol(definition);
