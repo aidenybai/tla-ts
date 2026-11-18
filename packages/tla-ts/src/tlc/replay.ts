@@ -9,6 +9,7 @@ import {
   enterFrames,
   exitFrames,
   getCoverageNode,
+  getEnteredFrames,
   runAtCoverageNode,
   type Coverage,
 } from "../coverage";
@@ -42,7 +43,7 @@ import {
   setTrace,
   type Value,
 } from "../values";
-import { isSubstitutionDefinition, substitutionFrames } from "../instances";
+import { isSubstitutionDefinition, substitutedExpressions, substitutionFrames } from "../instances";
 import type { SuccessorGenerator } from "../successors";
 import { MESSAGE_CODE } from "./messages";
 import { getRandomSubset, nextPrime } from "./random";
@@ -147,22 +148,37 @@ const getPrefixNode = (replay: Replay, node: number) =>
 const getIdentifierName = (expression: Expression) =>
   expression.kind === "Identifier" ? expression.name : undefined;
 
+// Spec#collectPrimedLocs ignores the substitutions of an instance it enters, so a declaration there names a state variable only by its own name.
+const getNamedOccurrence = (expression: Expression, frames: Expression[]) => {
+  const substitution = substitutedExpressions.get(expression);
+  return substitution &&
+    substitution.replacement !== expression &&
+    frames.includes(substitution.frame)
+    ? substitutionFrames.get(expression)?.[0]
+    : undefined;
+};
+
 const getVariable = (
   environment: Environment,
   expression: Expression,
   scope: Scope | undefined,
+  frames?: Expression[],
 ): number | undefined => {
-  if (expression.kind === "Label") return getVariable(environment, expression.body, scope);
+  const occurrence = frames && getNamedOccurrence(expression, frames);
+  if (occurrence?.kind === "Identifier") return environment.variableIndex.get(occurrence.name);
+  if (expression.kind === "Label") return getVariable(environment, expression.body, scope, frames);
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
-  if (binding?.kind === "Thunk") return getVariable(environment, binding.expression, binding.scope);
+  if (binding?.kind === "Thunk") {
+    return getVariable(environment, binding.expression, binding.scope, frames);
+  }
   if (binding) return undefined;
   const index = environment.variableIndex.get(name);
   if (index !== undefined) return index;
   const operator = resolveGlobalOperator(name, environment);
   return operator?.kind === "Closure" && operator.params.length === 0
-    ? getVariable(environment, operator.body, operator.scope)
+    ? getVariable(environment, operator.body, operator.scope, frames)
     : undefined;
 };
 
@@ -170,19 +186,24 @@ const getPrimedVariable = (
   environment: Environment,
   expression: Expression,
   scope: Scope | undefined,
+  frames?: Expression[],
 ): number | undefined => {
-  if (expression.kind === "Prime") return getVariable(environment, expression.expression, scope);
-  if (expression.kind === "Label") return getPrimedVariable(environment, expression.body, scope);
+  if (expression.kind === "Prime") {
+    return getVariable(environment, expression.expression, scope, frames);
+  }
+  if (expression.kind === "Label") {
+    return getPrimedVariable(environment, expression.body, scope, frames);
+  }
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
   if (binding?.kind === "Thunk") {
-    return getPrimedVariable(environment, binding.expression, binding.scope);
+    return getPrimedVariable(environment, binding.expression, binding.scope, frames);
   }
   if (binding) return undefined;
   const operator = resolveGlobalOperator(name, environment);
   return operator?.kind === "Closure" && operator.params.length === 0
-    ? getPrimedVariable(environment, operator.body, operator.scope)
+    ? getPrimedVariable(environment, operator.body, operator.scope, frames)
     : undefined;
 };
 
@@ -993,9 +1014,17 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
     state: undefined,
     next: undefined,
   });
+  const frames: Expression[] = [];
   const collectUnchanged = (expression: Expression, scope: Scope | undefined): void => {
+    const occurrence = getNamedOccurrence(expression, frames);
+    if (occurrence) {
+      if (occurrence.kind === "Identifier" && environment.variableIndex.has(occurrence.name)) {
+        ranges.push(occurrence);
+      }
+      return;
+    }
     if (
-      getVariable(environment, expression, undefined) !== undefined &&
+      getVariable(environment, expression, undefined, frames) !== undefined &&
       expression.kind === "Identifier"
     ) {
       ranges.push(expression);
@@ -1008,11 +1037,26 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
     if (expression.kind !== "Identifier") return;
     const binding = lookupScope(scope, expression.name);
     const operator = binding ? undefined : resolveGlobalOperator(expression.name, environment);
-    if (operator?.kind === "Closure" && operator.params.length === 0) {
+    // Spec#collectUnchangedLocs stops at the SubstInNode of a definition an instance copies.
+    if (
+      operator?.kind === "Closure" &&
+      operator.params.length === 0 &&
+      getEnteredFrames(operator.body, frames).length === 0
+    ) {
       collectUnchanged(operator.body, operator.scope);
     }
   };
   const collect = (
+    expression: Expression,
+    scope: Scope | undefined,
+    visited: Set<Expression>,
+  ): void => {
+    const entered = getEnteredFrames(expression, frames);
+    frames.push(...entered);
+    collectExpression(expression, scope, visited);
+    frames.length -= entered.length;
+  };
+  const collectExpression = (
     expression: Expression,
     scope: Scope | undefined,
     visited: Set<Expression>,
@@ -1068,7 +1112,7 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
             return;
           }
           if (expression.operator === "=" || expression.operator === "\\in") {
-            if (getPrimedVariable(environment, expression.args[0], scope) !== undefined) {
+            if (getPrimedVariable(environment, expression.args[0], scope, frames) !== undefined) {
               ranges.push(expression);
             }
             return;

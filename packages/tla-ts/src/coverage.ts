@@ -299,6 +299,12 @@ const getBoundNames = (bounds: Bound[]) =>
     bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
   );
 
+// The SubstInNodes an expression enters, which are those of the instances it is not inside yet.
+export const getEnteredFrames = (expression: Expression, frames: Expression[]) =>
+  (substitutionFrames.get(expression) ?? []).filter(
+    (frame) => frameSubstitutions.has(frame) && !frames.includes(frame),
+  );
+
 export const buildCoverage = (
   coverage: Coverage,
   environment: Environment,
@@ -430,9 +436,7 @@ export const buildCoverage = (
 
   // SubstInNode#walkGraph visits the substitutions before the body, each as a child of the node that reaches the body.
   const walkSubstitutions = (expression: Expression, locals: Local | undefined) => {
-    const entered = (substitutionFrames.get(expression) ?? []).filter(
-      (frame) => frameSubstitutions.has(frame) && !frames.includes(frame),
-    );
+    const entered = getEnteredFrames(expression, frames);
     const parent = stack.at(-1) ?? -1;
     entered.forEach((frame) => {
       frameSubstitutions

@@ -35,7 +35,7 @@ const getCoverageCounts = async (definitions: string, config: string) => {
 };
 
 const INSTANCED_MODULE =
-  "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES x, w\nR == x + K > 0\nQ == \\A e \\in {1, 2} : R /\\ x + e + K >= K\nG == IF x > 0 THEN K ELSE 0\nA == /\\ Q\n     /\\ x' = (x + K) % 3\n     /\\ w' = w\n====";
+  "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES x, w\nR == x + K > 0\nQ == \\A e \\in {1, 2} : R /\\ x + e + K >= K\nG == IF x > 0 THEN K ELSE 0\nA == /\\ Q\n     /\\ x' = (x + K) % 3\n     /\\ w' = w\nB == x < 2 /\\ x' = x + 1 /\\ UNCHANGED w\n====";
 
 const getInstanceCoverage = (instance: string, next: string, invariant: string) =>
   check({
@@ -2283,6 +2283,42 @@ ASSUME TLCFP(a) = -887695703
       "line 6, col 15 to line 6, col 20 of module Inner: 6:18",
       "line 9, col 9 to line 9, col 24 of module Inner: 6",
       "line 10, col 9 to line 10, col 14 of module Inner: 6",
+    ]);
+  });
+
+  it("marks a primed or unchanged declaration of an instance as a state variable by its own name, as TLC's Spec#collectPrimedLocs ignores the substitutions", async () => {
+    const primed = formatCoverage(
+      await getInstanceCoverage(
+        "I == INSTANCE Inner WITH K <- M + 1, w <- y",
+        "I!A \\/ (x = 2 /\\ x' = 0 /\\ UNCHANGED y)",
+        "(ENABLED I!A) \\/ x = 2",
+      ),
+    );
+    expect(primed?.at(-1)).toEqual([
+      "line 8, col 8 to line 8, col 29 of module E: 3",
+      "|line 8, col 9 to line 8, col 19 of module E: 3",
+      "||line 5, col 1 to line 5, col 43 of module E: 15",
+      "||line 5, col 31 to line 5, col 35 of module E: 21",
+      "||line 5, col 43 to line 5, col 43 of module E: 3",
+      "||line 6, col 24 to line 6, col 42 of module Inner: 6",
+      "||line 6, col 15 to line 6, col 20 of module Inner: 3:9",
+      "||line 9, col 9 to line 9, col 24 of module Inner: 0",
+      "|||line 9, col 14 to line 9, col 24 of module Inner: 3",
+      "||line 10, col 9 to line 10, col 14 of module Inner: 3",
+    ]);
+    const unchanged = formatCoverage(
+      await getInstanceCoverage(
+        "J == INSTANCE Inner WITH K <- M, w <- y",
+        "J!B \\/ (x = 2 /\\ UNCHANGED <<x, y>>)",
+        "(ENABLED J!B) \\/ x = 2",
+      ),
+    );
+    expect(unchanged).toContainEqual([
+      "line 5, col 1 to line 5, col 39 of module E: 5",
+      "line 11, col 6 to line 11, col 10 of module Inner: 2",
+      "|line 11, col 6 to line 11, col 6 of module Inner: 3",
+      "line 11, col 15 to line 11, col 24 of module Inner: 2",
+      "line 11, col 29 to line 11, col 39 of module Inner: 2",
     ]);
   });
 
