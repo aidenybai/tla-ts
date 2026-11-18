@@ -3,7 +3,13 @@ import type { Expression, OperatorDefinition, OperatorParam, SourceLocation } fr
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS, HOST_GLOBAL_KEYS, NODE_GLOBALS } from "./built-ins";
 import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
-import { type Collection, getBuiltIn, getBuiltInPath, isHeldBuiltInObject } from "./intrinsics";
+import {
+  type Collection,
+  findBuiltInNames,
+  getBuiltIn,
+  getBuiltInPath,
+  isHeldBuiltInObject,
+} from "./intrinsics";
 import {
   type BufferName,
   getArrayMethodCall,
@@ -121,6 +127,8 @@ export interface Context {
   checker: ts.TypeChecker;
   // The nodes of the program's files, which tla-ts walks once, and the names of each symbol.
   nodes: ProgramNodes;
+  // Whether each name of the program's files names a global built-in, by its position.
+  builtInNames: Uint32Array | undefined;
   references: References;
   // What each declaration that a name names reaches by name.
   reachGraph: ReachGraph;
@@ -678,6 +686,7 @@ export const createContext = (
       },
     },
     nodes,
+    builtInNames: undefined,
     references,
     reachGraph: createReachGraph(nodes, references),
     makers: undefined,
@@ -801,6 +810,7 @@ export const createContext = (
       ]),
     ),
   };
+  context.builtInNames = findBuiltInNames(context);
   findCalledOnce(context);
   return context;
 };
