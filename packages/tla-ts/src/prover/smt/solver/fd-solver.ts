@@ -21,7 +21,6 @@ import { runEnum2Bv } from "./dt2bv-tactic";
 import { release } from "./expr-ref";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import { type Definition, Goal } from "./goal";
-import { ObjMap } from "./hashtable";
 import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
@@ -29,7 +28,6 @@ import { convertModel, getRewriterOptions } from "./tactic";
 import { UINT_MAX } from "./sat/clause";
 import type { SatParams } from "./sat/config";
 import { IncSatSolver } from "./sat/inc-sat-solver";
-import { SubstReplacer } from "./solve-eqs";
 
 const getNumBits = (value: bigint) => {
   let bound = 1n;
@@ -55,7 +53,7 @@ const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
   const state = new DependentExprState(manager, goal);
   const bounds = new BoundManager(manager);
   state.forEachIndex((index) => collectBounds(manager, bounds, goal.forms.items[index]));
-  const substitution = new ObjMap<number>((expr) => manager.hashes[expr]);
+  const substitution = new ExprSafeReplace(manager);
   const trail = new RefVector(manager);
   const sideConditions = new RefVector(manager);
   const definitions: Definition[] = [];
@@ -80,7 +78,6 @@ const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
     const replacement = offset.isZero()
       ? unsigned
       : manager.mkApp(OP_ADD, [unsigned, manager.mkNumeral(offset.num)], SORT_INT);
-    trail.push(replacement);
     definitions.push(
       { decl: manager.decls[bits], def: -1 },
       { decl: manager.decls[expr], def: replacement },
@@ -89,11 +86,10 @@ const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
       sideConditions.push(
         mkBvApp(manager, OP_ULEQ, [bits, manager.mkBvNumeral(domainSize - 1n, numBits)]),
       );
-    substitution.set(expr, replacement);
+    substitution.insert(expr, replacement);
   }
   try {
-    if (substitution.size > 0) {
-      const replacer = new SubstReplacer(manager, substitution);
+    if (substitution.sources.size > 0) {
       const context = new Bv2IntContext(manager, UINT_MAX);
       const rewriter = new Bv2IntRewriter(manager, context);
       let replaced = -1;
@@ -101,7 +97,7 @@ const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
       try {
         state.forEachIndex((index) => {
           const form = goal.forms.items[index];
-          const nextReplaced = replacer.rewrite(form);
+          const nextReplaced = substitution.apply(form);
           release(manager, replaced);
           replaced = nextReplaced;
           const nextResult = rewriter.rewrite(replaced);
@@ -114,12 +110,12 @@ const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
         release(manager, replaced);
         rewriter.release();
         context.release();
-        replacer.release();
       }
     }
     for (const condition of sideConditions.items) goal.assert(condition);
     if (definitions.length > 0) goal.addDefinitions(definitions);
   } finally {
+    substitution.release();
     sideConditions.reset();
     trail.reset();
   }

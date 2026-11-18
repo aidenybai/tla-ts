@@ -1111,4 +1111,28 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
       ["sat", '(:reason-unknown "no reason given")'],
     ]);
   });
+
+  it("replaces the bounded integers without counting steps, as expr_safe_replace does", () => {
+    expect(
+      [253, 254].map((rlimit) =>
+        run([
+          "(set-logic QF_FD)",
+          "(declare-const x Int)",
+          "(declare-const y Int)",
+          "(assert (<= 0 x))",
+          "(assert (<= x 5))",
+          "(assert (<= 1 y))",
+          "(assert (<= y 6))",
+          "(assert (= (+ x y) 7))",
+          "(assert (distinct x y))",
+          `(set-option :rlimit ${rlimit})`,
+          "(check-sat)",
+          "(get-info :reason-unknown)",
+        ]),
+      ),
+    ).toEqual([
+      ["unknown", '(:reason-unknown "sat.canceled")'],
+      ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
+    ]);
+  });
 });
