@@ -237,7 +237,6 @@ const selectSubexpression = (
   let selectorIndex = 0;
   let operatorIndex = -1;
   let current: Expression | undefined;
-  let unwrappedSelection: Expression | undefined;
   let isFailed = false;
   let generatedArguments = 0;
   const nulls: NullSelection[] = [];
@@ -268,6 +267,13 @@ const selectSubexpression = (
     generatedArgumentCounts.set(reference, generatedArguments);
     isFailed = true;
     return undefined;
+  };
+
+  // A LET without a source range only keeps definitions in scope, and SANY has no node for it.
+  const enterScopes = (node: Expression): Expression => {
+    if (node.kind !== "Let" || node.location.range) return node;
+    selection.lets.push(node.definitions);
+    return enterScopes(node.body);
   };
 
   const findDefinition = (local: Definition[] | undefined) => {
@@ -394,19 +400,8 @@ const selectSubexpression = (
       report(range, noOperands);
       return;
     }
-    if (selections.has(current) && current.kind !== "Lambda" && current !== unwrappedSelection) {
-      checkNull(current, noOperands, true);
-      unwrappedSelection = current;
-      current =
-        current.kind === "Let" &&
-        current.body.kind === "Apply" &&
-        current.body.operator === SELECTION_NAME
-          ? current.body
-          : current.kind === "Selection"
-            ? current
-            : // SANY wraps a selection without parameters in $Nop, whose only operand is the selection.
-              { kind: "Tuple", elements: [current], location: current.location };
-    }
+    if (selections.has(current)) checkNull(current, noOperands, true);
+    current = enterScopes(current);
     if (current.kind === "Label") {
       current = current.body;
       selectOperand(selector);
@@ -512,6 +507,7 @@ const selectSubexpression = (
     const selector = selectors[selectorIndex];
     if (selector.kind === "Name") {
       while (current?.kind === "Label") current = current.body;
+      current = current && enterScopes(current);
       if (current?.kind !== "Let") {
         report(
           reference.selectorRanges?.[selectorIndex - 1],

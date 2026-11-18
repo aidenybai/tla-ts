@@ -67,6 +67,18 @@ describe("subexpression references match TLC", () => {
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 8 }]);
   });
 
+  it("selects through the LET that keeps a selection's or a substitution's definitions in scope", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nA == {c + 1, 7}\n====\nJ(n) == INSTANCE Inner WITH c <- n + 1\nW == {5, 6}\nK == INSTANCE Inner WITH c <- W!1\nOp == LET a == 1 IN {a + 10, LET z == 2 IN z + 1}\nQ == Op!1!1\nR == Op!1!2\nVARIABLES u, v, w, y, t\nInit == u = 0 /\\ v = 0 /\\ w = 0 /\\ y = 0 /\\ t = 0\nNext == u' = Q!1!1 /\\ v' = Q!1!2 /\\ w' = R!1!z /\\ y' = J(4)!A!1 /\\ t' = K!A!1!1\nInv == u = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.state)).toEqual([
+      { u: 0, v: 0, w: 0, y: 0, t: 0 },
+      { u: 1, v: 10, w: 2, y: 6, t: 5 },
+    ]);
+  });
+
   it("selects a label through an instance whose operators the instancing module does not extend", async () => {
     const result = await check({
       source:
@@ -454,6 +466,21 @@ describe("subexpression references into theorems match SANY", () => {
         [
           "line 7, col 20 to line 7, col 20",
           "Nonexistent operand specified by `argument selector 2'.",
+        ],
+      ],
+    ],
+    [
+      "selectors past a selected LET definition",
+      "Op == LET A == {1} IN {A, 2}\nB == Op!1!1\nD == B!1!1\nE == B!1!A\nF == Op!:!A\nG == F!1",
+      [
+        [
+          "line 5, col 10 to line 5, col 10",
+          "Nonexistent operand specified by `argument selector 1'.",
+        ],
+        ["line 6, col 8 to line 6, col 8", "A name selector here must be from a LET clause."],
+        [
+          "line 8, col 8 to line 8, col 8",
+          "Nonexistent operand specified by `argument selector 1'.",
         ],
       ],
     ],
