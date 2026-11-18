@@ -635,10 +635,12 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       throw new TlaTypeScriptError("tla-ts can't compile a tagged template to ESCore yet", node);
     }
     if (ts.isRegularExpressionLiteral(node)) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't compile a regular expression literal to ESCore yet",
-        node,
-      );
+      // RegExpCreateLiteral (§13.2.7.3) of the literal's body and flags, as written.
+      const text = node.text;
+      const end = text.lastIndexOf("/");
+      words.add("RegExp");
+      return (state) =>
+        `RegExpCreate(${state}, ${getStr(text.slice(1, end))}, ${getStr(text.slice(end + 1))})`;
     }
     throw new TlaTypeScriptError(
       `tla-ts can't compile ${ts.SyntaxKind[node.kind]} to ESCore yet`,

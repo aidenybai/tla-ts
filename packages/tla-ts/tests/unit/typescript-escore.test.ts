@@ -162,4 +162,20 @@ describe("compiles scripts by specializing ESCore", () => {
       );
     });
   });
+
+  describe("makes a regular expression of a literal", () => {
+    const getSource = (expected: string) => `
+      const pattern = /a(b+)c/g;
+      const result = [pattern.test("xabbc"), pattern.lastIndex, "2024-01".replace(/(\\d+)-(\\d+)/, "$2/$1")].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("true,5,01/2024"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("true,4,01/2024"))).message).toContain(THREW);
+    });
+  });
 });
