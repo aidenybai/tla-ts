@@ -32,6 +32,7 @@ import {
   countCoverage,
   createChargedEnumerator,
   createProductSetEnumerator,
+  DO_NOT_RECORD,
   enterFrames,
   exitFrames,
   getCoverageNode,
@@ -154,6 +155,7 @@ export interface Thunk {
   next: State | undefined;
   cache: Value | undefined;
   isStreamed: boolean;
+  isRebuilt: boolean;
   isReleased?: boolean;
 }
 
@@ -642,6 +644,7 @@ interface LazyFunction {
   bounds: Bound[];
   body: Expression;
   scope: Scope | undefined;
+  compute: (argument: Value, self: LazyFunctionValue) => Value;
 }
 
 // Kept on the value itself, since a WeakMap entry per short-lived function slows every GC.
@@ -656,6 +659,16 @@ const keepLambda = (lambda: LazyFunction) => Object.assign(lambda.value, { lambd
 
 export const getLazyFunction = (value: Value) =>
   isKeptLazyFunction(value) ? value.lambda : undefined;
+
+// FcnLambdaValue#takeExcept copies the function without its cost model.
+const getUnrecordedApply = (functionValue: Value, coverage: Coverage) => {
+  const lambda = getLazyFunction(functionValue);
+  if (!lambda) return undefined;
+  return (argument: Value) =>
+    coverage.current === -1
+      ? lambda.compute(argument, lambda.value)
+      : runAtCoverageNode(coverage, DO_NOT_RECORD, () => lambda.compute(argument, lambda.value));
+};
 
 export const bindLazyArguments = (
   lambda: LazyFunction,
@@ -820,6 +833,7 @@ const createRecursiveFunction = (
     bounds: definition.bounds,
     body: definition.body,
     scope: bindSelf(undefined, definition.name, functionValue),
+    compute,
   });
   const rebindable: RebindableLazyFunction = Object.assign(functionValue, {
     rebind: (tracing: Environment) => {
@@ -937,7 +951,14 @@ const forceThunk = (thunk: Thunk, context: Context) => {
   const isCached =
     cache !== undefined &&
     isStateWithin(context.state, thunk.state) &&
-    isStateWithin(context.next, thunk.next);
+    isStateWithin(context.next, thunk.next) &&
+    // TLC builds the function again at each reference, and outside KeepLazy evaluates each element.
+    !(
+      thunk.isRebuilt &&
+      !context.isKeepLazy &&
+      typeof cache === "object" &&
+      cache.kind === "LazyFunction"
+    );
   if (isCached) return cache;
   const coverage = context.environment.coverage;
   const node = coverage?.current === -1 ? undefined : coverage?.values.get(thunk);
@@ -952,7 +973,12 @@ const forceThunk = (thunk: Thunk, context: Context) => {
     thunk.state = context.state;
     thunk.next = context.next;
   }
-  if (thunk.cache !== undefined && thunk.state === undefined && thunk.next === undefined) {
+  if (
+    thunk.cache !== undefined &&
+    thunk.state === undefined &&
+    thunk.next === undefined &&
+    !thunk.isRebuilt
+  ) {
     thunk.scope = undefined;
     thunk.isReleased = true;
   }
@@ -1076,6 +1102,7 @@ const createThunk = (expression: Expression, context: Context): Thunk => ({
   next: context.next,
   cache: undefined,
   isStreamed: false,
+  isRebuilt: false,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1168,6 +1195,7 @@ const callOperator = (
 interface ReevaluatedDefinitions {
   impure: ReadonlySet<Definition>;
   streamed: ReadonlySet<Definition>;
+  isFunctionRebuilt?: boolean;
 }
 
 const isRecursiveOperator = (definition: Definition) =>
@@ -1225,11 +1253,9 @@ export const bindDefinitions = (
       definition.kind === "Operator" && definition.params.length === 0 && !isRecursiveValueAtOrAfter
         ? nodes[index].parent
         : scope;
-    // A recursive function keeps one value, since its body applies that value as TLC's FcnLambdaValue applies itself.
     const isReevaluated =
-      definition.kind === "Function"
-        ? !definition.isSelfReferential && reevaluated?.impure.has(definition)
-        : definition.params.length > 0 || reevaluated?.impure.has(definition);
+      (definition.kind === "Operator" && definition.params.length > 0) ||
+      reevaluated?.impure.has(definition);
     const body =
       definition.kind === "Function" ? getFunctionConstruction(definition) : definition.body;
     nodes[index].binding = isReevaluated
@@ -1252,6 +1278,9 @@ export const bindDefinitions = (
           cache: undefined,
           isStreamed:
             definition.kind === "Operator" && (reevaluated?.streamed.has(definition) ?? false),
+          isRebuilt:
+            (definition.kind === "Operator" || !definition.isSelfReferential) &&
+            reevaluated?.isFunctionRebuilt === true,
         };
   }
   const coverage = context.environment.coverage;
@@ -1295,11 +1324,17 @@ export const getReevaluatedDefinitions = (
   environment: Environment,
 ): ReevaluatedDefinitions => ({
   impure: new Set(
-    definitions.filter((definition) => isImpureDefinition(definition, environment, "varying")),
+    definitions.filter(
+      // TLC evaluates a LET definition at each reference; caching a pure one shows only in coverage.
+      (definition) =>
+        environment.coverage !== undefined ||
+        isImpureDefinition(definition, environment, "varying"),
+    ),
   ),
   streamed: new Set(
     definitions.filter((definition) => isImpureDefinition(definition, environment, "streamed")),
   ),
+  isFunctionRebuilt: true,
 });
 
 export const isImpure = (environment: Environment) =>
@@ -1513,7 +1548,7 @@ const countEvaluator =
   (expression: Expression, evaluator: Evaluator, coverage: Coverage): Evaluator =>
   (context) => {
     const outer = coverage.current;
-    if (outer === -1 || !coverage.covered.has(expression)) return evaluator(context);
+    if (outer < 0 || !coverage.covered.has(expression)) return evaluator(context);
     const node = getCoverageNode(coverage, outer, expression);
     countCoverage(coverage, node);
     coverage.current = node;
@@ -1544,7 +1579,7 @@ const countSubstitution =
   (substitution: Substitution, evaluator: Evaluator, coverage: Coverage): Evaluator =>
   (context) => {
     const outer = coverage.current;
-    coverage.current = outer === -1 ? -1 : getSubstitutionNode(coverage, substitution, outer);
+    coverage.current = outer < 0 ? outer : getSubstitutionNode(coverage, substitution, outer);
     try {
       return evaluator(context);
     } finally {
@@ -2067,7 +2102,7 @@ export const getFunctionBuilder = (
       boundTupleLengths,
     );
     if (name !== undefined) scope = bindSelf(outer, name, value);
-    const functionValue = keepLambda({ value, bounds, body: expression.body, scope });
+    const functionValue = keepLambda({ value, bounds, body: expression.body, scope, compute });
     return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
   };
   const callStack = environment.callStack;
@@ -2118,7 +2153,7 @@ const compileFunctionConstruction = (
           : domain.factors;
       const isConverted =
         (typeof value !== "object" || value.kind !== "LazyFunction") && sets.every(isReducibleSet);
-      if (isConverted && coverage.current !== -1 && coverage.covered.has(expression)) {
+      if (isConverted && coverage.current >= 0 && coverage.covered.has(expression)) {
         chargeFunctionConstruction(coverage, coverage.current, sets);
       }
       return value;
@@ -2138,6 +2173,7 @@ const compileExcept = (
   const isKeptLazyExpression = keptLazyExpressions.has(expression);
   if (isKeptLazyExpression) keepLazy(expression.function);
   const evaluateFunction = getEvaluator(expression.function, environment);
+  const coverage = environment.coverage;
   const updates = expression.updates.map((update) => ({
     path: update.path.map((step): CompiledStep =>
       step.kind === "Field"
@@ -2170,6 +2206,7 @@ const compileExcept = (
       getKey(path[depth], context),
       (previous) => update(previous, path, depth + 1, context, value),
       isKeptLazyExpression && depth === 0,
+      coverage && getUnrecordedApply(current, coverage),
     );
   };
   return (context) => {
@@ -2233,7 +2270,7 @@ export const getLazyFilter = (
         getEvaluator(expression.predicate, tracing),
         -1,
       );
-    if (!coverage || node === -1) return { kind: "FilteredSet", base, test, source, rebind };
+    if (!coverage || node < 0) return { kind: "FilteredSet", base, test, source, rebind };
     return {
       kind: "FilteredSet",
       base,

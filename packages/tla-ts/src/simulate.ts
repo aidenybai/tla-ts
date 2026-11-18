@@ -62,6 +62,8 @@ export interface SimulationOptions extends CheckOptions {
   aril: bigint;
   isGenerating: boolean;
   scheduler: "random" | "rl" | "rlaction";
+  /** TLC's -difftrace, which also drops the steps of a printed behavior that repeat a fingerprint. */
+  isDiffTrace?: boolean;
   onSimulation: (output: SimulationOutput) => void;
 }
 
@@ -76,7 +78,7 @@ export interface SimulationStatistics {
 
 export type SimulationOutput =
   | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
-  | { kind: "behavior"; trace: TraceStep[]; isLastStateOnly: boolean }
+  | { kind: "behavior"; trace: TraceStep[]; levels: number[]; isLastStateOnly: boolean }
   | CoverageOutput
   | { kind: "progress"; statistics: SimulationStatistics }
   | { kind: "summary"; statistics: SimulationStatistics };
@@ -340,9 +342,13 @@ export const simulate = (options: SimulationOptions): number => {
   };
   const toRecord = (state: (Value | undefined)[]) =>
     search.toRecord(state.map((value) => value ?? createModelValue("null")));
-  const toTraceSteps = (trace: TraceNode[]): TraceStep[] =>
-    trace.map((node, index) => {
-      const successor = trace[index + 1] ?? node;
+  const toTraceSteps = (
+    trace: TraceNode[],
+    positions = trace.map((_node, index) => index),
+  ): TraceStep[] =>
+    positions.map((position) => {
+      const node = trace[position];
+      const successor = trace[position + 1] ?? node;
       return {
         action: node.action.name,
         label: getActionLabel(node.action, options.version, node.level === 1),
@@ -695,6 +701,28 @@ export const simulate = (options: SimulationOptions): number => {
     };
   };
 
+  const getDiffTracePositions = (trace: TraceNode[]) => {
+    const positions = [0];
+    for (let position = 1; position < trace.length; position++) {
+      const current = trace[position].state;
+      const last = trace[position - 1].state;
+      current.forEach(markNormalized);
+      last.forEach(markNormalized);
+      try {
+        // Deviation from TLC: TLCStateMut#fingerPrint throws a NullPointerException on the incomplete state of a successor error.
+        if (
+          trace[position].incomplete ||
+          runtime.getFingerprint(current) !== runtime.getFingerprint(last)
+        ) {
+          positions.push(position);
+        }
+      } catch (error) {
+        return { positions, failure: toException(error, trace[position]) };
+      }
+    }
+    return { positions, failure: undefined };
+  };
+
   const enumerableRandom = createJavaRandom(seed);
   runtime.getRandom = () => enumerableRandom;
   const errors: WorkerError[] = [];
@@ -725,7 +753,7 @@ export const simulate = (options: SimulationOptions): number => {
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );
   const reported = printed === -1 ? errors : errors.slice(0, printed + 1);
-  reported.forEach((error) => {
+  for (const error of reported) {
     if (error.violation) {
       error.failures?.forEach((failure) =>
         reportMessage(failure.code, failure.message, failure.toolMessage),
@@ -736,16 +764,38 @@ export const simulate = (options: SimulationOptions): number => {
         violation: error.violation,
       });
       printSummary();
-      return;
+      continue;
     }
     reportMessage(error.code, error.message, error.toolMessage);
+    const trace = getTrace(error.node, search.getTlcOrder());
+    const isLastStateOnly = traceDepth === INFINITE_DEPTH;
+    // Deviation from TLC: StatePrinter fingerprints each state it prints, so a VIEW that fails on one crashes TLC without -difftrace too.
+    const shown =
+      options.isDiffTrace && !isLastStateOnly
+        ? getDiffTracePositions(trace)
+        : { positions: trace.map((_node, index) => index), failure: undefined };
     output({
       kind: "behavior",
-      trace: toTraceSteps(getTrace(error.node, search.getTlcOrder())),
-      isLastStateOnly: traceDepth === INFINITE_DEPTH,
+      trace: toTraceSteps(trace, shown.positions),
+      levels: shown.positions.map((position) => trace[position].level),
+      isLastStateOnly,
     });
+    const failure = shown.failure;
+    if (failure) {
+      reportMessage(failure.code, failure.message, failure.toolMessage);
+      return getMessageExitStatus(failure.code);
+    }
+    const omitted = trace.length - shown.positions.length;
+    if (omitted > 0) {
+      reportMessage(
+        MESSAGE_CODE.general,
+        `difftrace requested: Shortened behavior by omitting finite stuttering (${omitted} states), which is an artifact of simulation mode.\n`,
+        undefined,
+        false,
+      );
+    }
     if (error.isSummarized) printSummary();
-  });
+  }
   const last = reported[reported.length - 1];
   const errorStatus = last ? getMessageExitStatus(last.code) : EXIT_STATUS.success;
   if (last) {

@@ -97,6 +97,17 @@ describe("ALIAS matches TLC", () => {
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 1 }]);
   });
 
+  it("prints each alias of a trace that the VIEW fails on, where TLC fingerprints the alias and crashes", async () => {
+    const result = await checkModule(
+      'Next == x\' = x + 1\nInv == x < 3\nView == IF x < 11 THEN x ELSE x = "s"\nAlias == [x |-> x + 10]',
+      "INVARIANT Inv\nVIEW View\nALIAS Alias",
+    );
+    expect([result.status, formatTrace(result.violation?.trace)]).toEqual([
+      "invariant-violation",
+      [["x = 10"], ["x = 11"], ["x = 12"], ["x = 13"]],
+    ]);
+  });
+
   it("prints a deadlocked initial state without the alias, as TLC does", async () => {
     const result = await checkModule("Next == x > 0 /\\ x' = x\nAlias == [y |-> x]", "ALIAS Alias");
     expect([result.status, result.violation?.trace[0].state]).toEqual(["deadlock", { x: 0 }]);

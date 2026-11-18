@@ -1155,7 +1155,7 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     );
   }
   const environment = context.environment;
-  if (environment.callStack || (environment.coverage && environment.coverage.current !== -1)) {
+  if (environment.callStack || (environment.coverage && environment.coverage.current >= 0)) {
     return replayEnabled(expression, context.scope, state, environment);
   }
   const run: Run = {

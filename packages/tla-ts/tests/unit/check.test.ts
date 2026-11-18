@@ -56,6 +56,16 @@ const formatCoverage = (result: Awaited<ReturnType<typeof check>>) =>
 const getCoverageLines = async (source: string, config: string) =>
   formatCoverage(await check({ source, config, coverage: 1 }));
 
+const formatCallStackLines = (result: Awaited<ReturnType<typeof check>>) =>
+  result.failure?.callStack
+    ?.filter((expression, index, stack) => expression !== stack[index - 1])
+    .map((expression) => {
+      const range = expression.location.range;
+      return range
+        ? `Line ${range.start.line}, column ${range.start.column} to line ${range.end.line}, column ${range.end.column} in ${range.module}`
+        : "";
+    });
+
 describe("check matches TLC", () => {
   it("evaluates every assumption in the semantics fixture", async () => {
     const result = await checkFixture("semantics", "Semantics");
@@ -1305,15 +1315,7 @@ ASSUME TLCFP(a) = -887695703
         "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = IF {x} \\subseteq {{}} THEN 1 ELSE 2\n====",
       config: "INIT Init\nNEXT Next",
     });
-    const frames = result.failure?.callStack
-      ?.filter((expression, index, stack) => expression !== stack[index - 1])
-      .map((expression) => {
-        const range = expression.location.range;
-        return range
-          ? `Line ${range.start.line}, column ${range.start.column} to line ${range.end.line}, column ${range.end.column} in ${range.module}`
-          : "";
-      });
-    expect(frames).toEqual([
+    expect(formatCallStackLines(result)).toEqual([
       "Line 4, column 9 to line 4, column 48 in M",
       "Line 4, column 14 to line 4, column 48 in M",
       "Line 4, column 17 to line 4, column 34 in M",
@@ -2118,6 +2120,193 @@ ASSUME TLCFP(a) = -887695703
       "||||line 4, col 13 to line 4, col 34 of module M: 1:3",
       "|||||line 4, col 30 to line 4, col 34 of module M: 3",
       "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+    ]);
+  });
+
+  it("counts a recursive function a LET of the initial predicate defines at each reference, as TLC builds a FcnLambdaValue there", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == LET f[n \\in 0..2] == IF n = 0 THEN 0 ELSE f[n - 1] + 1 IN x = f[2] + f[1]\nNext == UNCHANGED x\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[0]).toEqual([
+      "line 4, col 67 to line 4, col 81 of module M: 1",
+      "|line 4, col 71 to line 4, col 81 of module M: 1",
+      "||line 4, col 71 to line 4, col 74 of module M: 1",
+      "|||line 4, col 71 to line 4, col 71 of module M: 1",
+      "||||line 4, col 13 to line 4, col 62 of module M: 1",
+      "|||||line 4, col 30 to line 4, col 62 of module M: 3",
+      "||||||line 4, col 33 to line 4, col 37 of module M: 3",
+      "||||||line 4, col 51 to line 4, col 62 of module M: 2",
+      "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+      "||line 4, col 78 to line 4, col 81 of module M: 1",
+      "|||line 4, col 78 to line 4, col 78 of module M: 1",
+      "||||line 4, col 13 to line 4, col 62 of module M: 1",
+      "|||||line 4, col 30 to line 4, col 62 of module M: 2",
+      "||||||line 4, col 33 to line 4, col 37 of module M: 2",
+      "||||||line 4, col 51 to line 4, col 62 of module M: 1",
+      "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+    ]);
+  });
+
+  it("counts a definition a LET of the next-state relation makes at each reference, as TLC's getNextStates conses no LazyValue", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == LET v == {n * x : n \\in 0..1}\n        IN /\\ x < 2\n           /\\ x' = x + 1\n           /\\ x = 0 => v # {}\n           /\\ v = v\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 6, col 15 to line 6, col 19 of module M: 6",
+      "|line 6, col 15 to line 6, col 15 of module M: 7",
+      "line 7, col 15 to line 7, col 24 of module M: 6",
+      "line 8, col 15 to line 8, col 29 of module M: 6",
+      "|line 8, col 15 to line 8, col 19 of module M: 6",
+      "|line 8, col 24 to line 8, col 29 of module M: 3",
+      "||line 8, col 24 to line 8, col 24 of module M: 3",
+      "|||line 5, col 18 to line 5, col 37 of module M: 3",
+      "||||line 5, col 19 to line 5, col 23 of module M: 6",
+      "||||line 5, col 33 to line 5, col 36 of module M: 3",
+      "||line 8, col 28 to line 8, col 29 of module M: 3",
+      "line 9, col 15 to line 9, col 19 of module M: 6",
+      "|line 9, col 15 to line 9, col 15 of module M: 6",
+      "||line 5, col 18 to line 5, col 37 of module M: 6",
+      "|||line 5, col 19 to line 5, col 23 of module M: 12",
+      "|||line 5, col 33 to line 5, col 36 of module M: 6",
+      "|line 9, col 19 to line 9, col 19 of module M: 6",
+      "||line 5, col 18 to line 5, col 37 of module M: 6",
+      "|||line 5, col 19 to line 5, col 23 of module M: 12",
+      "|||line 5, col 33 to line 5, col 36 of module M: 6",
+    ]);
+  });
+
+  it("builds a function a LET of the next-state relation defines at each reference, so TLC fails to fingerprint a set of it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 1\nNext == LET f[n \\in 0..2] == 10 \\div (n * x) IN x' = f[1] + Cardinality({f})\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(formatCallStackLines(result)).toEqual([
+      "Line 5, column 49 to line 5, column 76 in M",
+      "Line 5, column 54 to line 5, column 76 in M",
+      "Line 5, column 61 to line 5, column 76 in M",
+      "Line 5, column 73 to line 5, column 75 in M",
+      "Line 5, column 74 to line 5, column 74 in M",
+      "Line 5, column 13 to line 5, column 44 in M",
+      "Line 5, column 30 to line 5, column 44 in M",
+    ]);
+    expect(result.failure?.fingerprint?.reason).toBe("The second argument of \\div is 0.");
+  });
+
+  it("builds a function a LET definition of the next-state relation without parameters yields at each reference, so TLC fails to fingerprint a set of it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 1\nNext == LET g == [n \\in 0..2 |-> 10 \\div (n * x)] IN x' = g[1] + Cardinality({g})\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(formatCallStackLines(result)).toEqual([
+      "Line 5, column 54 to line 5, column 81 in M",
+      "Line 5, column 59 to line 5, column 81 in M",
+      "Line 5, column 66 to line 5, column 81 in M",
+      "Line 5, column 78 to line 5, column 80 in M",
+      "Line 5, column 79 to line 5, column 79 in M",
+      "Line 5, column 18 to line 5, column 49 in M",
+      "Line 5, column 34 to line 5, column 48 in M",
+    ]);
+    expect(result.failure?.fingerprint?.reason).toBe("The second argument of \\div is 0.");
+  });
+
+  it("builds a function a LET of the initial predicate yields at each reference when it replays the failure, as TLC's CallStackTool does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == LET g == [n \\in 0..2 |-> 10 \\div n] IN x = g[1] + Cardinality({g})\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(formatCallStackLines(result)).toEqual([
+      "Line 4, column 9 to line 4, column 74 in M",
+      "Line 4, column 48 to line 4, column 74 in M",
+      "Line 4, column 52 to line 4, column 74 in M",
+      "Line 4, column 59 to line 4, column 74 in M",
+      "Line 4, column 71 to line 4, column 73 in M",
+      "Line 4, column 72 to line 4, column 72 in M",
+      "Line 4, column 18 to line 4, column 43 in M",
+      "Line 4, column 34 to line 4, column 42 in M",
+    ]);
+    expect(result.failure?.fingerprint?.reason).toBe("The second argument of \\div is 0.");
+  });
+
+  it("counts no application of the copy EXCEPT makes of a lazy function, as FcnLambdaValue#takeExcept drops the cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == LET f[n \\in 0..2] == 10 \\div (n + 1) IN x = [f EXCEPT ![2] = 0][1]\nNext == UNCHANGED x\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[0]).toEqual(["line 4, col 49 to line 4, col 74 of module M: 1"]);
+  });
+
+  it.each([
+    [
+      "a module",
+      "f[n \\in 0..2] == IF n = 0 THEN x ELSE f[n - 1] + 1\nInit == x = 0\nNext == x < 3 /\\ x' = [f EXCEPT ![2] = 7][1]",
+      1,
+      [
+        "line 6, col 9 to line 6, col 13 of module M: 9",
+        "|line 6, col 9 to line 6, col 9 of module M: 10",
+        "line 6, col 18 to line 6, col 44 of module M: 9",
+        "|line 6, col 23 to line 6, col 44 of module M: 9",
+        "||line 6, col 23 to line 6, col 41 of module M: 9",
+        "|||line 6, col 24 to line 6, col 24 of module M: 9",
+        "||||line 4, col 1 to line 4, col 50 of module M: 9",
+        "|||||line 4, col 18 to line 4, col 50 of module M: 36",
+        "||||||line 4, col 21 to line 4, col 25 of module M: 36",
+        "||||||line 4, col 32 to line 4, col 32 of module M: 18",
+        "||||||line 4, col 39 to line 4, col 50 of module M: 18",
+        "|||||line 4, col 9 to line 4, col 12 of module M: 9",
+      ],
+    ],
+    [
+      "a LET",
+      "Init == LET f[n \\in 0..2] == IF n = 0 THEN 0 ELSE f[n - 1] + 1 IN x = [f EXCEPT ![2] = 7][1]\nNext == UNCHANGED x",
+      0,
+      [
+        "line 4, col 67 to line 4, col 92 of module M: 1",
+        "|line 4, col 71 to line 4, col 92 of module M: 1",
+        "||line 4, col 71 to line 4, col 89 of module M: 1",
+        "|||line 4, col 72 to line 4, col 72 of module M: 1",
+        "||||line 4, col 13 to line 4, col 62 of module M: 1",
+        "|||||line 4, col 30 to line 4, col 62 of module M: 4",
+        "||||||line 4, col 33 to line 4, col 37 of module M: 4",
+        "||||||line 4, col 51 to line 4, col 62 of module M: 2",
+        "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+      ],
+    ],
+  ])(
+    "counts the applications the copy EXCEPT makes of a recursive function of %s makes of the function, which keeps its cost model",
+    async (_name, definitions, relation, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(lines?.[relation]).toEqual(expected);
+    },
+  );
+
+  it("counts no node for the reference that applies a recursive function a parameterized instance copies", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nJ(p) == INSTANCE Inner\nVARIABLE x\nInit == x = J(1)!r[2]\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      coverage: 1,
+      loadModule: (name) =>
+        name === "Inner"
+          ? "---- MODULE Inner ----\nEXTENDS Naturals\nr[n \\in 0..2] == IF n = 0 THEN 0 ELSE r[n - 1] + 1\n===="
+          : undefined,
+    });
+    expect(formatCoverage(result)?.[0]).toEqual([
+      "line 5, col 9 to line 5, col 21 of module M: 1",
+      "|line 5, col 13 to line 5, col 21 of module M: 1",
+      "||line 5, col 13 to line 5, col 18 of module M: 1",
+      "|||line 3, col 1 to line 3, col 50 of module Inner: 1",
+      "||||line 3, col 18 to line 3, col 50 of module Inner: 3",
+      "|||||line 3, col 21 to line 3, col 25 of module Inner: 3",
+      "|||||line 3, col 39 to line 3, col 50 of module Inner: 2",
+      "||||line 3, col 9 to line 3, col 12 of module Inner: 1",
     ]);
   });
 

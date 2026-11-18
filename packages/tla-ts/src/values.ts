@@ -2585,7 +2585,8 @@ export const updateFunction = (
   functionValue: Value,
   argument: Value,
   update: (previous: Value) => Value,
-  isKeptLazy = false,
+  isKeptLazy: boolean,
+  applyUnrecorded: ((argument: Value) => Value) | undefined,
 ): Value => {
   const isLazy =
     typeof functionValue === "object" &&
@@ -2600,11 +2601,12 @@ export const updateFunction = (
     }
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
+    const apply = applyUnrecorded ?? functionValue.apply;
     return setFunctionClass<LazyFunctionValue>(
       {
         kind: "LazyFunction",
         domain: functionValue.domain,
-        apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
+        apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
         source: functionValue.source,
         boundTupleLengths: functionValue.boundTupleLengths,
       },

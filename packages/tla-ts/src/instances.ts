@@ -629,14 +629,16 @@ export const createLocalIdentifier = (name: string, location: SourceLocation): E
   resolution: LOCAL_RESOLUTION,
 });
 
-export const instanceArguments = new WeakSet<Expression>();
+export const syntheticIdentifiers = new WeakSet<Expression>();
+
+const createSyntheticIdentifier = (name: string, location: SourceLocation) => {
+  const identifier = createLocalIdentifier(name, location);
+  syntheticIdentifiers.add(identifier);
+  return identifier;
+};
 
 export const createLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
-  params.map((param) => {
-    const argument = createLocalIdentifier(param.name, location);
-    instanceArguments.add(argument);
-    return argument;
-  });
+  params.map((param) => createSyntheticIdentifier(param.name, location));
 
 export const createLocalAlias = (
   name: string,
@@ -871,7 +873,7 @@ const getFunctionBody = (definition: FunctionDefinition): Expression =>
     ? {
         kind: "Let",
         definitions: [definition],
-        body: createLocalIdentifier(definition.name, definition.location),
+        body: createSyntheticIdentifier(definition.name, definition.location),
         location: { line: definition.location.line, column: definition.location.column },
       }
     : getFunctionConstruction(definition);
@@ -890,7 +892,7 @@ export const getOperatorDefinition = (definition: Definition): OperatorDefinitio
       };
 
 export const withInstanceParams = (definition: Definition, params: OperatorParam[]): Definition => {
-  if (params.length === 0) return definition;
+  if (params.length === 0) return { ...definition };
   const operator = getOperatorDefinition(definition);
   return { ...operator, params: [...params, ...operator.params] };
 };
