@@ -699,6 +699,57 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       "(:rlimit 521)",
     ]);
   });
+
+  it("pb2bv joins the dependencies of the bounds it uses", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (! (<= 0 x) :named a1))",
+        "(assert (! (<= x 1) :named a2))",
+        "(assert (! (and (<= 0 y) (<= y 1)) :named a3))",
+        "(assert (! (or (= x 0) (>= (+ y z) 2)) :named a4))",
+        "(assert (! (= x y) :named a5))",
+        "(assert (! (<= 0 z) :named a6))",
+        "(assert (! (<= z 0) :named a7))",
+        "(assert (! (>= (+ x y) 1) :named a8))",
+        "(apply pb2bv :print_dependencies true)",
+        "(check-sat-using (then pb2bv bit-blast sat))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1 a2",
+        "  true",
+        "  |- a2 a1",
+        "  true",
+        "  |- a3",
+        "  true",
+        "  |- a3",
+        "  true",
+        "  |- a4 a7 a6 a3 a1 a2",
+        "  (or (not k!0) (and k!1 k!2))",
+        "  |- a5 a3 a1 a2",
+        "  (= k!0 k!1)",
+        "  |- a6 a7",
+        "  true",
+        "  |- a7 a6",
+        "  (not k!2)",
+        "  |- a8 a3 a1 a2",
+        "  (or k!0 k!1)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a4 a7 a6 a5 a1 a8 a3 a2)",
+      "(:rlimit 148)",
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {

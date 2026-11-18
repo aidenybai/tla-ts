@@ -976,6 +976,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["cardinality.encoding", PARAM_SYMBOL, "none", true],
         ]),
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runPb2Bv(environment.manager, params, getRewriterOptions(environment.manager, params)),
     },

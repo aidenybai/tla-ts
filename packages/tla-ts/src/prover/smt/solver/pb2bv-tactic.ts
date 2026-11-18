@@ -24,7 +24,7 @@ import {
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
 import { CardPbRewriter, checkPbFree } from "./card2bv";
-import type { Definition, Goal } from "./goal";
+import { type Definition, type Dependency, type Goal, joinDependencies } from "./goal";
 import { ObjMap } from "./hashtable";
 import { getGcd, Rational } from "./rational";
 import { RefVector } from "./ref-vector";
@@ -122,6 +122,7 @@ class Pb2Bv {
   private rewriter: ConstraintRewriter | undefined;
   private pbRewriter: CardPbRewriter;
   private results: RefVector | undefined;
+  private usedDependency: Dependency | undefined = undefined;
 
   constructor(
     private manager: AstManager,
@@ -318,6 +319,13 @@ class Pb2Bv {
     return this.monLit2lit({ variable, isSigned });
   }
 
+  private addBoundsDependencies(variable: number) {
+    this.usedDependency = joinDependencies(
+      joinDependencies(this.usedDependency, this.bounds.lowerDependencies.get(variable)),
+      this.bounds.upperDependencies.get(variable),
+    );
+  }
+
   convert(atom: number, isPositive: boolean, isRoot: boolean): number {
     const manager = this.manager;
     const op = manager.getOp(atom);
@@ -326,6 +334,8 @@ class Pb2Bv {
     let pos = isPositive;
     if (op === OP_EQ) {
       if (manager.isUninterpretedConst(lhs) && manager.isUninterpretedConst(rhs)) {
+        this.addBoundsDependencies(lhs);
+        this.addBoundsDependencies(rhs);
         const lhsLit = this.mkUnit(lhs, false);
         const rhsLit = this.mkUnit(rhs, !pos);
         return this.hold(manager.mkEq(lhsLit, rhsLit));
@@ -351,6 +361,7 @@ class Pb2Bv {
     if (manager.isNumeral(lhs)) {
       const value = adjust(manager.getRationalValue(lhs));
       if (!manager.isUninterpretedConst(rhs)) this.throwNonPb(atom);
+      this.addBoundsDependencies(rhs);
       if (kind === EQ) return this.mkUnit(rhs, value.isZero() !== !pos);
       if ((value.isZero() && kind === LE) || (value.equals(Rational.one) && kind === GE))
         return manager.trueExpr;
@@ -361,6 +372,7 @@ class Pb2Bv {
     if (!manager.isNumeral(rhs) || manager.sorts[rhs] !== SORT_INT) this.throwNonPb(atom);
     const value = adjust(manager.getRationalValue(rhs));
     if (manager.isUninterpretedConst(lhs)) {
+      this.addBoundsDependencies(lhs);
       if (kind === EQ) {
         if (!value.isZero() && !value.equals(Rational.one))
           return pos ? manager.falseExpr : manager.trueExpr;
@@ -390,9 +402,12 @@ class Pb2Bv {
     }
     let bound = value;
     const polynomial: Monomial[] = monomials.map((monomial) => {
-      if (manager.isUninterpretedConst(monomial))
+      if (manager.isUninterpretedConst(monomial)) {
+        this.addBoundsDependencies(monomial);
         return { coeff: Rational.one, lit: { variable: monomial, isSigned: false } };
+      }
       const [coeffExpr, variable] = getMulArgs(monomial) as number[];
+      this.addBoundsDependencies(variable);
       const coeff = manager.getRationalValue(coeffExpr);
       if (!coeff.isNegative()) return { coeff, lit: { variable, isSigned: false } };
       bound = bound.add(coeff.neg());
@@ -454,31 +469,35 @@ class Pb2Bv {
 
   run(goal: Goal) {
     const manager = this.manager;
-    for (const form of goal.forms.items) this.bounds.add(form);
+    for (const [index, form] of goal.forms.items.entries())
+      this.bounds.add(form, goal.getDependency(index));
     const failed = findNonPb(manager, goal.forms.items, this.bounds);
     if (failed !== undefined) this.throwNonPb(failed);
     const rewriter = new ConstraintRewriter(manager, this);
     this.rewriter = rewriter;
     const results = new RefVector(manager);
     this.results = results;
-    for (const form of goal.forms.items) {
+    const dependencies: (Dependency | undefined)[] = [];
+    for (const [index, form] of goal.forms.items.entries()) {
       let atom = form;
       let isPositive = true;
       while (manager.isNot(atom)) {
         atom = manager.getArg(atom, 0);
         isPositive = !isPositive;
       }
-      if (this.isConstraintCore(atom)) {
-        results.push(this.convert(atom, isPositive, true));
-        continue;
+      if (this.isConstraintCore(atom)) results.push(this.convert(atom, isPositive, true));
+      else {
+        const simplified = rewriter.rewrite(form);
+        const rewritten = this.pbRewriter.rewrite(simplified);
+        manager.decRef(simplified);
+        checkPbFree(manager, rewritten);
+        results.pushOwned(rewritten);
       }
-      const simplified = rewriter.rewrite(form);
-      const rewritten = this.pbRewriter.rewrite(simplified);
-      manager.decRef(simplified);
-      checkPbFree(manager, rewritten);
-      results.pushOwned(rewritten);
+      dependencies.push(joinDependencies(this.usedDependency, goal.getDependency(index)));
+      this.usedDependency = undefined;
     }
-    for (const [index, result] of results.items.entries()) goal.update(index, result);
+    for (const [index, result] of results.items.entries())
+      goal.update(index, result, dependencies[index]);
     results.reset();
     goal.depth++;
     if (!goal.isModelsEnabled) return;
