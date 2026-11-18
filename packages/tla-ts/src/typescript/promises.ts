@@ -209,7 +209,7 @@ const getTasks = (path: Path, node: ts.Node) => {
 const withTasks = (path: Path, tasks: Tasks): Path => ({ ...path, tasks });
 
 // The tasks from before, where the others are the same, so that paths that changed none can join.
-const keepTasks = (tasks: Tasks, before: Tasks) =>
+export const keepTasks = (tasks: Tasks, before: Tasks) =>
   tasks.jobs === before.jobs &&
   tasks.timers === before.timers &&
   tasks.promises === before.promises &&

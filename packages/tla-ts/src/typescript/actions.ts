@@ -408,6 +408,7 @@ import {
   translateUsing,
 } from "./disposal";
 import {
+  dropLocalStacks,
   getStackCall,
   getStackFunctions,
   isStackConstruction,
@@ -7668,7 +7669,7 @@ export const inlineBody = (
     const isOwn = (entry: [ts.Node, Expression]) =>
       ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
     const getCaller = (current: Path): Path => ({
-      ...current,
+      ...dropLocalStacks(current, inner, callee, context),
       scope: {
         ...current.scope,
         previous: inner.scope.previous,
@@ -7685,12 +7686,16 @@ export const inlineBody = (
     });
     return translateJoined(node, getCaller(inner), context, continueWith, (next) => {
       const afterCall = (after: Path, value?: Expression) => next(getCaller(after), value);
+      const throwTo = frame.throwTo;
       const bodyFrame = {
         next: afterCall,
         exit: afterCall,
         breakTo: undefined,
         continueTo: undefined,
-        throwTo: frame.throwTo,
+        throwTo:
+          throwTo &&
+          ((after: Path, thrown: Thrown) =>
+            throwTo(dropLocalStacks(after, inner, callee, context), thrown)),
         yieldTo: undefined,
         awaitTo: undefined,
         inlining: new Set([...frame.inlining, callee]),
