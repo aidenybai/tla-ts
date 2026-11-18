@@ -965,13 +965,17 @@ export const createEnvironment = (
     ]
       .sort((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
       .forEach((unit) => unit.link());
-    const module = resolveModuleSubexpressions(
-      withLetInstances(parsed, (instance, lets) =>
-        instantiateLocally(instance, lets, parsed.name, getLetModule(instance)),
-      ),
-      getAvailableDefinitions(visible),
-    );
-    const isAccepted = acceptedModules.has(unlinked) && module === unlinked;
+    // SANY's checks found nothing in a module they accepted to instantiate or resolve, nor in a view
+    // of it.
+    const isAccepted = acceptedModules.has(unlinked) && parsed === unlinked;
+    const module = isAccepted
+      ? parsed
+      : resolveModuleSubexpressions(
+          withLetInstances(parsed, (instance, lets) =>
+            instantiateLocally(instance, lets, parsed.name, getLetModule(instance)),
+          ),
+          getAvailableDefinitions(visible),
+        );
     if (!isAccepted) scope.errors.push(...resolveModule(module, getUnit(module)));
     const acceptedLevels = isAccepted ? order.getPreparedModule(parsed.name)?.levels : undefined;
     module.definitions.forEach((definition, position) => {
