@@ -178,6 +178,7 @@ import {
   getConversion,
   getConversionFunctions,
   getKeyedConversionFunctions,
+  isConvertedClassKey,
   isConvertedPropertyKey,
   isConvertedStringArgument,
   isAnyOperand,
@@ -20748,6 +20749,43 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
   return { node, conversion };
 };
 
+// The first computed key of a class that a statement makes that converts an object, which runs as
+// its own statement, where the class evaluates only names and literals before it. Nothing that the
+// class evaluates before it may read what the conversion's methods change.
+const getHoistedClassKey = (statement: ts.Statement, path: Path, context: Context) => {
+  const declaration = ts.isVariableStatement(statement)
+    ? statement.declarationList.declarations.at(0)
+    : undefined;
+  const made =
+    declaration?.initializer === undefined ? statement : skipCasts(declaration.initializer);
+  if (!ts.isClassLike(made) || (made.heritageClauses ?? []).length > 0) return undefined;
+  const keys = made.members.flatMap((member) =>
+    member.name !== undefined && ts.isComputedPropertyName(member.name)
+      ? [member.name.expression]
+      : [],
+  );
+  const position = keys.findIndex((key) => !path.scope.results.has(key));
+  const node = keys.at(position);
+  const conversion =
+    position === -1 || node === undefined ? undefined : getConversion(node, context);
+  const before = keys.slice(0, position);
+  if (
+    node === undefined ||
+    conversion === undefined ||
+    !isConvertedClassKey(node, context) ||
+    !before.every(
+      (key) =>
+        ts.isIdentifier(skipCasts(key)) ||
+        ts.isLiteralExpression(skipCasts(key)) ||
+        path.scope.results.has(key),
+    )
+  ) {
+    return undefined;
+  }
+  rejectEarlyRun(node, getConversionFunctions(node, context), before, path, context);
+  return { node, conversion };
+};
+
 // The call of an array's slice, splice, or copyWithin that a statement's expression evaluates first
 // whose index arguments convert, which runs their conversions as its own statement. Nothing that the
 // statement evaluates before it may read what the conversions' methods change.
@@ -22014,6 +22052,29 @@ export const translateStatements = (
           }),
         )
       : gather(path);
+  }
+  const classKey = getHoistedClassKey(statement, path, context);
+  if (classKey !== undefined) {
+    return runConversion(
+      classKey.node,
+      classKey.conversion,
+      path,
+      context,
+      statementFrame,
+      (after, value) =>
+        translateStatements(
+          statements,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([...after.scope.results, [classKey.node, value]]),
+            },
+          },
+          context,
+          frame,
+        ),
+    );
   }
   // slice, splice, and copyWithin of an array convert the arguments they take as indices in turn,
   // once they read the array's length, and run as they would with the primitives where the

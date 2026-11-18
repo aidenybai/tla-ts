@@ -253,6 +253,17 @@ export const isConvertedStringArgument = (
   );
 };
 
+// An object that a name holds which a class field's computed key converts to a property key as the
+// class is made.
+export const isConvertedClassKey = (node: ts.Node, context: Context): node is ts.Expression =>
+  context.heap !== undefined &&
+  ts.isExpression(node) &&
+  ts.isIdentifier(skipCasts(node)) &&
+  ts.isComputedPropertyName(node.parent) &&
+  ts.isPropertyDeclaration(node.parent.parent) &&
+  ts.isClassLike(node.parent.parent.parent) &&
+  isObjectOperand(node, context);
+
 // An object that a call converts to a property key, which runs its toString and valueOf: a name's,
 // or a wrapper's that new makes, as the key
 // of Object.defineProperty, Object.getOwnPropertyDescriptor, or Object.hasOwn of an object, which
@@ -296,6 +307,15 @@ export const isConvertedPropertyKey = (node: ts.Node, context: Context): node is
 export const getConversion = (node: ts.Node, context: Context): Conversion | undefined => {
   if (context.heap === undefined) return undefined;
   // A property key converts to a primitive, which the call converts as ToPropertyKey does.
+  // ToPropertyKey keeps a symbol that the object converts to.
+  if (isConvertedClassKey(node, context)) {
+    return {
+      operands: [node],
+      hints: ["string"],
+      thrownSymbols: "none",
+      combine: (primitives) => primitives[0],
+    };
+  }
   if (isConvertedStringArgument(node, context)) {
     return {
       operands: [node],
