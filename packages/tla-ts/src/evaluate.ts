@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getFunctionConstruction,
   getReferencedName,
   isLocallyResolved,
   type Bound,
@@ -761,28 +762,29 @@ const getBoundTupleLengths = (bounds: Bound[]) =>
         bound.pattern.kind === "Tuple" ? bound.pattern.names.length : undefined,
       );
 
-const getDefinitionSource = (definition: FunctionDefinition): Expression => ({
-  kind: "FunctionConstruction",
-  bounds: definition.bounds,
-  body: definition.body,
-  location: definition.location,
-});
-
 const createRecursiveFunction = (
   definition: FunctionDefinition,
   context: Context,
 ): RebindableLazyFunction => {
   const domain = getBoundsDomain(definition.bounds, context);
+  const compute = (argument: Value, self: Value) =>
+    evaluate(
+      definition.body,
+      withScope(
+        context,
+        bindArgument(definition.bounds, bindValue(undefined, definition.name, self), argument),
+      ),
+    );
+  const coverage = context.environment.coverage;
+  const node = coverage && !context.environment.callStack ? coverage.current : -1;
   const functionValue = createLazyFunction(
     domain,
-    (argument, self) =>
-      evaluate(
-        definition.body,
-        withScope(
-          context,
-          bindArgument(definition.bounds, bindValue(undefined, definition.name, self), argument),
-        ),
-      ),
+    coverage
+      ? (argument, self) =>
+          coverage.current === -1
+            ? compute(argument, self)
+            : runAtCoverageNode(coverage, node, () => compute(argument, self))
+      : compute,
     getLazyFunctionSource(
       getLazyFunctionTemplate(definition.bounds, definition.body),
       definition.bounds,
@@ -834,9 +836,11 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
     };
   }
   if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
-  if (definition.isSelfReferential)
-    return (context) => createRecursiveFunction(definition, context);
-  return getEntryEvaluator(getDefinitionSource(definition), environment);
+  const construction = getFunctionConstruction(definition, false);
+  if (!definition.isSelfReferential) return getEntryEvaluator(construction, environment);
+  const evaluator: Evaluator = (context) => createRecursiveFunction(definition, context);
+  const coverage = environment.coverage;
+  return coverage ? countEvaluator(construction, evaluator, coverage) : evaluator;
 };
 
 const CALLER_SCOPE: Scope = {
@@ -1143,20 +1147,29 @@ interface ReevaluatedDefinitions {
   streamed: ReadonlySet<Definition>;
 }
 
-const letFunctionConstructions = new WeakMap<FunctionDefinition, Expression>();
+const isRecursiveOperator = (definition: Definition) =>
+  definition.kind === "Operator" && definition.isRecursive && definition.params.length > 0;
 
-const getLetFunctionConstruction = (definition: FunctionDefinition): Expression => {
-  const known = letFunctionConstructions.get(definition);
-  if (known) return known;
-  const construction: Expression = {
-    kind: "FunctionConstruction",
-    bounds: definition.bounds,
-    body: definition.body,
-    location: definition.location,
-    isRecursive: true,
-  };
-  letFunctionConstructions.set(definition, construction);
-  return construction;
+// TLC finds a RECURSIVE operator with parameters by its definition, not in its context, so every definition reaches it.
+const chainRecursiveOperatorsFirst = (
+  definitions: Definition[],
+  nodes: Scope[],
+  outer: Scope | undefined,
+) => {
+  let scope = outer;
+  for (let index = 0; index < definitions.length; index++) {
+    if (isRecursiveOperator(definitions[index])) {
+      nodes[index].parent = scope;
+      scope = nodes[index];
+    }
+  }
+  for (let index = 0; index < definitions.length; index++) {
+    if (!isRecursiveOperator(definitions[index])) {
+      nodes[index].parent = scope;
+      scope = nodes[index];
+    }
+  }
+  return scope;
 };
 
 export const bindDefinitions = (
@@ -1169,24 +1182,29 @@ export const bindDefinitions = (
     binding: { kind: "Value", value: false },
     parent: undefined,
   }));
-  const scope = nodes.reduce<Scope | undefined>((parent, node) => {
-    node.parent = parent;
-    return node;
-  }, context.scope);
-  let isRecursiveAtOrAfter = false;
+  let scope = context.scope;
+  let hasRecursive = false;
+  for (let index = 0; index < nodes.length; index++) {
+    nodes[index].parent = scope;
+    scope = nodes[index];
+    hasRecursive ||= definitions[index].isRecursive;
+  }
+  if (hasRecursive) scope = chainRecursiveOperatorsFirst(definitions, nodes, context.scope);
+  let isRecursiveValueAtOrAfter = false;
   for (let index = definitions.length - 1; index >= 0; index--) {
     const definition = definitions[index];
-    isRecursiveAtOrAfter ||= definition.isRecursive;
+    isRecursiveValueAtOrAfter ||=
+      definition.isRecursive && definition.kind === "Operator" && definition.params.length === 0;
     // TLC's LET evaluates an operator without parameters in the context before it, which TLCEval#tlcEval tells from an empty one.
     const ownScope =
-      definition.kind === "Operator" && definition.params.length === 0 && !isRecursiveAtOrAfter
+      definition.kind === "Operator" && definition.params.length === 0 && !isRecursiveValueAtOrAfter
         ? nodes[index].parent
         : scope;
     nodes[index].binding =
       definition.kind === "Function"
         ? {
             kind: "Thunk",
-            expression: getLetFunctionConstruction(definition),
+            expression: getFunctionConstruction(definition, true),
             scope,
             state: context.state,
             next: context.next,

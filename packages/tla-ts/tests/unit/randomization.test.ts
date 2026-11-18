@@ -159,8 +159,24 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     ]);
   });
 
+  it("draws on from where the search stopped as it rebuilds a step from an initial state, as TLC's TLCStateRandom does", async () => {
+    const outputs: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(RandomElement(1..1000)) /\\ x' = 1\nNext == A\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      seed: 4n,
+      onPrint: (line) => outputs.push(line),
+    });
+    expect([
+      outputs,
+      result.violation?.trace.map((step) => step.output ?? []),
+      result.violation?.traceOutput,
+    ]).toEqual([["773"], [[], ["379"]], ["273"]]);
+  });
+
   // Deviation from TLC: TLC draws on from where printing the trace stopped, misses the last step, evaluates B and skips the postcondition.
-  it("draws again from the seed of the state it found the error in as it rebuilds the behavior for the postcondition", async () => {
+  it("draws again from the seed of the state it found the error in once the rebuild for the postcondition misses the step", async () => {
     const result = await check({
       source:
         "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC, TLCExt\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nA == n' = n + 1 /\\ x' = RandomElement(1..1000)\nB == PrintT(<<\"B\", n>>) /\\ FALSE\nNext == A \\/ B\nInv == n < 2\nPost == PrintT(Cardinality(CounterExample.state))\n====",
@@ -169,7 +185,7 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
       onPrint: () => {},
     });
     expect([result.violation?.traceOutput, result.violation?.postconditionOutput]).toEqual([
-      [],
+      ['<<"B", 1>>'],
       ["3"],
     ]);
   });

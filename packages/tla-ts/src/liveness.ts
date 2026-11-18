@@ -27,6 +27,7 @@ import {
   type Scope,
   type Thunk,
 } from "./evaluate";
+import { letDefinitions } from "./coverage";
 import { mapChildren } from "./instances";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { isEnabled } from "./successors";
@@ -338,6 +339,9 @@ export const bindLetDefinitions = (
   );
   for (let current = bound; current && current !== scope; current = current.parent) {
     if (current.binding.kind === "Thunk") definitionThunks.add(current.binding);
+    const name = current.name;
+    const definition = expression.definitions.find((item) => item.name === name);
+    if (definition) letDefinitions.set(current, definition);
   }
   return bound;
 };

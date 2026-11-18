@@ -98,7 +98,6 @@ export const createTraceBuilder = (context: TraceContext) => {
       runtime.getBehavior = searchBehavior;
     }
   };
-  // Deviation from TLC: TLCTrace#printTrace and Worker#doPostCondition rebuild a step with the generator that already drew for its state, so they miss it; printTrace leaks a NullPointerException and doPostCondition skips the postcondition.
   const rebuildFrom = (state: Value[], level: number) => {
     current.rebuilt = { state, level };
     runtime.reseedRandom();
@@ -110,17 +109,27 @@ export const createTraceBuilder = (context: TraceContext) => {
       if (error) throw error;
       return isSameValue(value, successor[position]);
     });
-  const findStepAction = (index: number, previous: Value[], state: Value[], isHeld: boolean) => {
+  const findStepAction = (
+    index: number,
+    previous: Value[],
+    state: Value[],
+    isHeld: boolean,
+    isDrawnOn = false,
+  ) => {
     const expanding = { ...current };
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
-    rebuildFrom(previous, depths[index]);
     const key = isHeld ? state : getFingerprintState(state);
+    const isMatch = (successor: Successor) =>
+      isHeld
+        ? isEqualState(key, successor.state)
+        : isSameState(getFingerprintState(successor.state), key);
     try {
-      return context.findSuccessorAction(previous, (successor) =>
-        isHeld
-          ? isEqualState(key, successor.state)
-          : isSameState(getFingerprintState(successor.state), key),
-      );
+      current.rebuilt = { state: previous, level: depths[index] };
+      const drawn = isDrawnOn ? context.findSuccessorAction(previous, isMatch) : undefined;
+      if (drawn) return drawn;
+      // Deviation from TLC: when TLCTrace#printTrace and Worker#doPostCondition draw on and miss the step, printTrace leaks a NullPointerException and doPostCondition skips the postcondition.
+      rebuildFrom(previous, depths[index]);
+      return context.findSuccessorAction(previous, isMatch);
     } finally {
       Object.assign(current, expanding);
     }
@@ -134,40 +143,40 @@ export const createTraceBuilder = (context: TraceContext) => {
     const known = traceOptions.known ?? 1;
     const loopStart = traceOptions.loopStart;
     const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
-    const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isPrintedOnly;
+    const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isPrintedOnly && steps.length > 1;
     const initialOutput =
-      known === 0 || (steps.length > 1 && (rebuilt > 0 || isRebuiltAgain || is174))
-        ? captureOutput(context.getInitialStates).lines
+      known === 0 || (steps.length > 1 && (rebuilt > 0 || is174))
+        ? runtime.runWithNewRandom(() => captureOutput(context.getInitialStates).lines)
         : [];
-    const stepActions = steps.map((step, position) =>
-      position === 0 || step.action === "Stuttering"
+    const last = steps.length - 1;
+    const findPositionAction = (position: number, isDrawnOn = false) =>
+      position === 0 || steps[position].action === "Stuttering"
         ? { result: undefined, lines: [] }
         : captureOutput(() =>
             findStepAction(
               path[position - 1],
               steps[position - 1].state,
-              step.state,
-              known === 2 && position === steps.length - 1,
-            ),
-          ),
-    );
-    const outputs = stepActions.map((step) => step.lines);
-    if (environment.coverage && steps.length > 1) {
-      if (rebuilt > 0 && isRebuiltAgain) captureOutput(context.getInitialStates);
-      if (isRebuiltAgain) {
-        steps.slice(1).forEach((step, position) => {
-          if (step.action === "Stuttering") return;
-          captureOutput(() =>
-            findStepAction(
-              path[position],
               steps[position].state,
-              step.state,
-              known === 2 && position === steps.length - 2,
+              known === 2 && position === last,
+              isDrawnOn,
             ),
           );
-        });
-      }
-    }
+    // TLC's TLCStateRandom reseeds only for another state, so TLC rebuilds the step to a known successor drawing on from where the search stopped, unless it rebuilt a step before it.
+    const stepActions = steps.map((_step, position) =>
+      findPositionAction(position, known === 2 && position === last && last === 1 && !is174),
+    );
+    const outputs = stepActions.map((step) => step.lines);
+    const traceOutput = isRebuiltAgain
+      ? [
+          ...runtime.runWithNewRandom(() => [
+            captureOutput(context.getInitialStates).lines,
+            ...steps
+              .slice(1, last)
+              .map((_step, position) => findPositionAction(position + 1).lines),
+          ]),
+          findPositionAction(last, known === 2).lines,
+        ].flat()
+      : [];
     const prefixOutput = rebuilt > 0 ? [initialOutput, ...outputs.slice(1, rebuilt)].flat() : [];
     return {
       trace: steps.map((step, position) => {
@@ -194,7 +203,7 @@ export const createTraceBuilder = (context: TraceContext) => {
         }
         return traceStep;
       }),
-      traceOutput: isRebuiltAgain ? [initialOutput, ...outputs].flat() : [],
+      traceOutput,
     };
   };
   const findTraceSuccessor = (state: Value[], isMatch: (successor: Successor) => boolean) =>
@@ -258,15 +267,7 @@ export const createTraceBuilder = (context: TraceContext) => {
             action: context.actions[position],
           }));
     if (!lastSuccessor) return toTrace(steps, path, traceOptions);
-    const action = isReducing
-      ? findTraceSuccessor(states[index], (successor) =>
-          isSameState(successor.state, lastSuccessor.state),
-        )?.action
-      : lastSuccessor.action;
-    return toTrace([...steps, { state: lastSuccessor.state, action }], path, {
-      ...traceOptions,
-      known: 2,
-    });
+    return toTrace([...steps, lastSuccessor], path, { ...traceOptions, known: 2 });
   };
   // TLCTrace#printTrace applies the alias to every state but an initial one it prints without a successor.
   const getStateTrace = (index: number, traceOptions: TraceOptions = {}): Behavior => {
