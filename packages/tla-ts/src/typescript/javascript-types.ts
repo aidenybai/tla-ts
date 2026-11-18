@@ -324,6 +324,33 @@ const fixWrite = (
     : undefined;
 };
 
+// A function that a call takes as an argument, whose return gives a node, where the value doesn't
+// fit the type that the call's signature makes the function return. The callee may pass what the
+// function returns back to it, as reduce passes its accumulator, so that its parameters, which
+// that signature types, hold values of other types too, and the whole function becomes any.
+const getReturningCallback = (node: ts.Node) => {
+  const outer = ts.findAncestor(node, (ancestor) => !ts.isParenthesizedExpression(ancestor.parent));
+  const returning = outer?.parent;
+  const owner =
+    returning !== undefined && ts.isArrowFunction(returning) && returning.body === outer
+      ? returning
+      : returning !== undefined && ts.isReturnStatement(returning)
+        ? ts.findAncestor(returning, ts.isFunctionLike)
+        : undefined;
+  if (owner === undefined || (!ts.isArrowFunction(owner) && !ts.isFunctionExpression(owner))) {
+    return undefined;
+  }
+  const argument = ts.findAncestor(
+    owner.parent,
+    (ancestor) => !ts.isParenthesizedExpression(ancestor),
+  );
+  return argument !== undefined &&
+    (ts.isCallExpression(argument) || ts.isNewExpression(argument)) &&
+    argument.expression !== owner
+    ? owner
+    : undefined;
+};
+
 // The edits for a value of another type than what takes it: a write's target, a declaration's or a
 // property's value, an argument, which an array method that writes it makes the array's elements
 // any for, or every argument of a call whose signatures take none of them.
@@ -333,6 +360,8 @@ const fixAssigned = (
   checker: ts.TypeChecker,
 ): Edit[] | undefined => {
   if (isWritten(node)) return fixWrite(node, file, checker);
+  const callback = getReturningCallback(node);
+  if (callback !== undefined) return castExpression(callback, file);
   const parent = node.parent;
   const computed = ts.findAncestor(node, ts.isComputedPropertyName)?.parent;
   if (computed !== undefined && ts.isPropertyAssignment(computed)) {

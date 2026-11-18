@@ -55307,4 +55307,29 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a JavaScript callback whose returns don't fit the type that its call gives it", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var joined = [1, 2, 3].values().reduce((x, y) => \`(\${x}+\${y})\`);
+      var started = [1, 2, 3].reduce((x, y) => \`(\${x}+\${y})\`, 0);
+      var objects = [1].map(() => Object.defineProperty({}, "key", { value: 2, enumerable: "yes" }));
+      box.seen = [joined, started, Object.keys(objects[0]).join()].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await check(compile(getSource("((1+2)+3),(((0+1)+2)+3),key"), path))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const source = getSource("((1+2)+3),(((0+1)+2)+3),");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "seen ((1+2)+3),(((0+1)+2)+3),key",
+      );
+    });
+  });
 });
