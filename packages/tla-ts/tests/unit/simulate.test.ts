@@ -334,3 +334,23 @@ it("reports each property it fails to evaluate on the lasso before the propertie
     "Prop0",
   ]);
 });
+
+it("draws another element when a constraint drops the successor it drew, as TLC's Tool#getNextStates checks the states its INextStateFunctor keeps", () => {
+  const traces: string[][] = [];
+  const status = simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nNext == n' = n + 1 /\\ x' \\in 1..6\nCon == x % 2 = 0\nInv == n < 5\n====",
+    config: "INIT Init\nNEXT Next\nCONSTRAINT Con\nINVARIANT Inv",
+    seed: 4n,
+    traceDepth: 8,
+    traceCount: 4n,
+    aril: 0n,
+    isGenerating: true,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "behavior")
+        traces.push(output.trace.map((step) => formatValue(step.state.x)));
+    },
+  });
+  expect([status, traces]).toEqual([12, [["0", "4", "6", "6", "6", "5"]]]);
+});

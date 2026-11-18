@@ -500,10 +500,14 @@ export const simulate = (options: SimulationOptions): number => {
     isException: false,
     isSummarized: true,
   });
+  let keptSuccessors: TraceNode[] = [];
+  const generator = options.isGenerating
+    ? { random: workerRandom, hasStates: () => keptSuccessors.length > 0 }
+    : undefined;
   const getSuccessors = (current: TraceNode, index: number) => {
     const action = nextActions[index];
     const coveredAction = covered?.actions[index];
-    const successors: TraceNode[] = [];
+    keptSuccessors = [];
     let failure: WorkerError | undefined;
     runtime.deferred = undefined;
     evaluatedAction = action;
@@ -544,9 +548,9 @@ export const simulate = (options: SimulationOptions): number => {
       search.trackStatePossible(node.state);
       if (!search.satisfiesActionConstraints(current.state, node.state)) return false;
       search.trackActionPossible(current.state, node.state);
-      if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
+      if (keptSuccessors.length === getSetBound()) throw new TlaTooManyStatesError();
       if (coverage && coveredAction) coverage.secondary[coveredAction.node]++;
-      successors.push(node);
+      keptSuccessors.push(node);
       return false;
     };
     try {
@@ -566,11 +570,11 @@ export const simulate = (options: SimulationOptions): number => {
               }
             : visit,
           action.scope,
-          options.isGenerating ? workerRandom : undefined,
+          generator,
         );
       }
     } catch (error) {
-      if (error === STOP_WALK) return { successors, error: failure };
+      if (error === STOP_WALK) return { successors: keptSuccessors, error: failure };
       if (!(error instanceof TlaIncompleteSuccessorError)) throw error;
       const node = toNode(
         error.state.map((value) => value ?? createModelValue("null")),
@@ -584,9 +588,12 @@ export const simulate = (options: SimulationOptions): number => {
         nextActions.length,
         options.version,
       );
-      return { successors, error: toWorkerError(MESSAGE_CODE.incompleteSuccessor, text, node) };
+      return {
+        successors: keptSuccessors,
+        error: toWorkerError(MESSAGE_CODE.incompleteSuccessor, text, node),
+      };
     }
-    return { successors, error: failure };
+    return { successors: keptSuccessors, error: failure };
   };
   let currentNode = initialStates[0];
   const scheduler = createScheduler(
