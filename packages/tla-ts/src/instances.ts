@@ -907,10 +907,12 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
     rewrite.copies.set(key, copyKey);
     const rename = createRenamer(rewrite);
     const bindings = new Map<string, Expression>();
+    // The definition that refers to this one may bind substitutions in a LET, which this copy is outside.
+    const base = getMode(rewrite, rewrite.mode);
     const bodyRewrite =
       definition.kind === "Operator" && rewrite.mode === "Normal"
-        ? { ...rewrite, bindings, selections: new Map<Expression, Expression>() }
-        : rewrite;
+        ? { ...base, bindings, selections: new Map<Expression, Expression>() }
+        : base;
     const mapped = renameParams(
       mapDefinition(definition, (child, bound) =>
         substitute(child, bodyRewrite, bindNames(new Map(), bound, rename)),

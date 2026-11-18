@@ -220,6 +220,18 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it("substitutes a replacement an instance of an instance binds once in a function the operator it copies refers to", async () => {
+    const result = await check({
+      source:
+        "---- MODULE N ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLES a, b\ng[n \\in 0..1] == a + n\nP == g[1] + b < 3\n====\n---- MODULE Mid ----\nVARIABLES p, q\nJ == INSTANCE Inner WITH a <- p, b <- q\n====\nI == INSTANCE Mid WITH p <- x + 1, q <- y\nInit == x = 0 /\\ y = 0\nNext == x < 3 /\\ x' = x + 1 /\\ y' = y\nInv == I!J!P\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect([result.violation?.name, result.violation?.trace.map((step) => step.state.x)]).toEqual([
+      "Inv",
+      [0, 1],
+    ]);
+  });
+
   it("substitutes operator symbols at the end of a WITH clause", async () => {
     expect((await checkInstances("Symbols.cfg", "Symbols")).status).toBe("success");
   });
