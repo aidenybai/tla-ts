@@ -17,14 +17,17 @@ import { QSolver } from "./q-solver";
 import type { ThSolver } from "./th-solver";
 
 // euf::solver::get_solver: the theory solver of a family, or of quantifiers for family -1. Model
-// values have none. A goal that needs a theory the port lacks goes back to the smt kernel.
-export const mkThSolver = (ctx: EufSolver, family: number): ThSolver | null => {
-  if (family === -1) return new QSolver(ctx);
-  if (family === FAMILY_MODEL_VALUE) return null;
-  if (family === FAMILY_ARITH) return new ArithSolver(ctx, family);
-  if (family === FAMILY_ARRAY) return new ArraySolver(ctx, family);
-  if (family === FAMILY_BV) return new BvSolver(ctx, family);
-  if (family === FAMILY_DATATYPE) return new DtSolver(ctx, family);
-  if (family === FAMILY_FPA) return new FpaSolver(ctx, family);
-  throw new SmtUnsupportedError(`sat.euf theory of family ${family}`);
-};
+// values have none. A goal that needs a theory the port lacks goes back to the smt kernel. The
+// arithmetic solver reads lp.int_hammer_period, as arith::solver does through lp_settings.
+export const mkThSolver =
+  (hammerPeriod: number) =>
+  (ctx: EufSolver, family: number): ThSolver | null => {
+    if (family === -1) return new QSolver(ctx);
+    if (family === FAMILY_MODEL_VALUE) return null;
+    if (family === FAMILY_ARITH) return new ArithSolver(ctx, family, hammerPeriod);
+    if (family === FAMILY_ARRAY) return new ArraySolver(ctx, family);
+    if (family === FAMILY_BV) return new BvSolver(ctx, family);
+    if (family === FAMILY_DATATYPE) return new DtSolver(ctx, family);
+    if (family === FAMILY_FPA) return new FpaSolver(ctx, family);
+    throw new SmtUnsupportedError(`sat.euf theory of family ${family}`);
+  };

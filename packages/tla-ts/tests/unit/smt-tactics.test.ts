@@ -1632,17 +1632,38 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ).toEqual(["sat", "(:rlimit 219)"]);
   });
 
-  it("rejects the options of lp, whose cut periods the port does not read", () => {
-    expect(() =>
-      run([
-        "(set-option :lp.int_hammer_period 2)",
-        "(declare-const x Int)",
-        "(declare-const y Int)",
-        "(declare-const z Int)",
-        "(assert (and (>= (+ (* 3 x) (* 5 y) (* 7 z)) 101) (<= (+ (* 3 x) (* 5 y) (* 7 z)) 102)))",
-        "(check-sat)",
-      ]),
-    ).toThrow(new SmtUnsupportedError("the option :lp.int_hammer_period"));
+  it("gives the cube, Gomory and hnf heuristics the period of lp.int_hammer_period", () => {
+    const lines = [
+      "(set-logic QF_LIA)",
+      "(declare-const x0 Int)",
+      "(declare-const x1 Int)",
+      "(declare-const x2 Int)",
+      "(declare-const x3 Int)",
+      "(assert (and (>= (+ (* -4 x0) (* 5 x1) (* 2 x2) (* 19 x3)) 23) (<= (+ (* -4 x0) (* 5 x1) (* 2 x2) (* 19 x3)) 24)))",
+      "(assert (and (>= (+ (* -3 x0) (* -5 x1) (* -10 x2) (* -7 x3)) -5) (<= (+ (* -3 x0) (* -5 x1) (* -10 x2) (* -7 x3)) -4)))",
+      "(assert (and (>= (+ (* 18 x0) (* -11 x1) (* 18 x2) (* -10 x3)) 14) (<= (+ (* 18 x0) (* -11 x1) (* 18 x2) (* -10 x3)) 14)))",
+      "(assert (and (>= x0 -40) (<= x0 40)))",
+      "(assert (and (>= x1 -40) (<= x1 40)))",
+      "(assert (and (>= x2 -40) (<= x2 40)))",
+      "(assert (and (>= x3 -40) (<= x3 40)))",
+      "(check-sat)",
+      "(get-info :rlimit)",
+    ];
+    expect(run(lines)).toEqual(["unsat", "(:rlimit 9280)"]);
+    expect(run(["(set-option :lp.int_hammer_period 1)", ...lines])).toEqual([
+      "unsat",
+      "(:rlimit 14390)",
+    ]);
+  });
+
+  it("rejects the other options of lp, and a hammer period that is not a numeral", () => {
+    const lines = ["(declare-const x Int)", "(assert (>= (* 3 x) 101))", "(check-sat)"];
+    expect(() => run(["(set-option :lp.random_hammers false)", ...lines])).toThrow(
+      new SmtUnsupportedError("the option :lp.random_hammers"),
+    );
+    expect(() => run(["(set-option :lp.int_hammer_period foo)", ...lines])).toThrow(
+      new SmtUnsupportedError("the option :lp.int_hammer_period"),
+    );
   });
 
   it("runs the smt tactics of qflia that skip cuts without auto_config", () => {

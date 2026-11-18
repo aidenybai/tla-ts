@@ -80,6 +80,7 @@ import {
   compileInternalTactic,
   compileTactic,
   getRewriterOptions,
+  getHammerPeriod,
   getSatParams,
   getSmtTacticFailure,
   type TacticParam,
@@ -656,6 +657,7 @@ export const runSmtlibScript = (
     isFindingMacros: settings.isFindingMacros,
     isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),
+    intHammerPeriod: getHammerPeriod(settings.parameters),
   });
   const checkFdSolver = (fdSolver: FdSolver, extra: number[]) => {
     const result = fdSolver.check(extra);
@@ -807,7 +809,12 @@ export const runSmtlibScript = (
     state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
     state.satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
-        ? new IncSatSolver(state.manager, getSatParams(parameters), true, isEuf ? mkThSolver : null)
+        ? new IncSatSolver(
+            state.manager,
+            getSatParams(parameters),
+            true,
+            isEuf ? mkThSolver(getHammerPeriod(parameters)) : null,
+          )
         : undefined;
     state.fdSolver?.release();
     state.fdSolver =
@@ -2020,7 +2027,8 @@ export const runSmtlibScript = (
           (optionName.startsWith(":pp.") &&
             numericOption === undefined &&
             booleanOption === undefined) ||
-          optionName.startsWith(":lp.")
+          (optionName.startsWith(":lp.") &&
+            (optionName !== ":lp.int_hammer_period" || value?.kind !== "numeral"))
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
       },

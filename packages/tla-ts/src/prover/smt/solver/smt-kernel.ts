@@ -23,6 +23,7 @@ export class SmtKernel {
       mbqiMaxIterations: params.mbqiMaxIterations,
       relevancyLevel: params.relevancyLevel ?? 2,
       randomSeed: params.randomSeed,
+      intHammerPeriod: params.intHammerPeriod,
     });
     this.setup = params.setup;
     this.isCoreMinimizing = params.isCoreMinimizing ?? false;
