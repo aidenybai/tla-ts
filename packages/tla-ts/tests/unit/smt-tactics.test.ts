@@ -2658,4 +2658,21 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ].join("\n"),
     ]);
   });
+
+  it("frees the kernel of the smt tactic as the tactic returns, so the next check does Z3's work", () => {
+    expect(
+      run([
+        "(declare-const x0 Int)",
+        "(declare-const x1 Int)",
+        "(declare-const x3 Int)",
+        "(declare-fun f (Int) Int)",
+        "(assert (or (< (- 7 (f 5) (f 7)) (f x0)) (<= x3 (- x1 5))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(assert (= 24 (* 8 x1)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 298)", "sat", "(:rlimit 485)"]);
+  });
 });

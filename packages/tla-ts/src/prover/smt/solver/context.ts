@@ -227,6 +227,29 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this);
   }
 
+  // Z3's destructor frees in this order, which decides the ids that later terms reuse.
+  release(asserted: AssertedFormulas) {
+    const manager = this.manager;
+    const state = this.modelState;
+    this.relevancy.release();
+    if (state.kind !== "none") state.generated.model.decRef();
+    this.deleteClauses(this.auxClauses, 0);
+    this.deleteClauses(this.lemmas, 0);
+    // Z3 undoes the whole trail here, so nodes and Boolean variables go last created first.
+    this.popTrail(0);
+    this.qmanager.release();
+    if (this.isDiseqTmp !== -1) manager.decRef(this.isDiseqTmp);
+    asserted.finalize();
+    for (const assumption of this.unsatCore) manager.decRef(assumption);
+    if (state.kind === "final") state.model.decRef();
+    if (state.kind === "proto" || state.kind === "final") state.generated.model.decRef();
+    this.dynAck.release();
+    this.conflictResolution.lemmaAtoms.reset();
+    for (const theory of this.theories) theory.release();
+    this.rewriter.release();
+    asserted.release();
+  }
+
   // As in Z3, rereading the parameters drops the setup's tuning of what smt_params reads, but relevancy stays lower.
   updateParams(params: KernelParams) {
     this.params.isMbqi = params.isMbqi;

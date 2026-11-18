@@ -161,6 +161,15 @@ class Substitution {
     this.trail.shrink(size);
   }
 
+  release() {
+    for (const [key, value] of this.map) {
+      this.manager.decRef(key);
+      this.manager.decRef(value);
+    }
+    this.map.clear();
+    this.trail.reset();
+  }
+
   update(expr: number) {
     const manager = this.manager;
     if (manager.isGroundApp(expr) && manager.getOp(expr) === OP_EQ) {
@@ -227,6 +236,22 @@ export class AssertedFormulas {
     this.bvSharing = new MaxBvSharing(manager);
     this.ngLiftIte = new NgPushAppIteRw(manager);
     this.boundsElim = new ElimBoundsRw(manager);
+  }
+
+  finalize() {
+    this.names.release();
+    this.formulas.reset();
+    this.macros.release();
+    this.bvSharing.release();
+    this.rewriter.release();
+    this.substitution.release();
+  }
+
+  release() {
+    this.ngLiftIte.release();
+    this.boundsElim.release();
+    this.termIteElim.release();
+    this.patternInference.release();
   }
 
   push() {

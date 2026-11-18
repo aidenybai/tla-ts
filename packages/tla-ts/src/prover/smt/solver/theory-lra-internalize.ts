@@ -94,6 +94,10 @@ export abstract class TheoryLraInternalize extends TheoryLraAxioms {
     this.solver.settings.setRandomSeed(this.context.params.randomSeed ?? 0);
   }
 
+  override release() {
+    for (const terms of this.internalizeStates) terms.reset();
+  }
+
   private addConst(expr: number) {
     const value = this.manager.getRationalValue(expr);
     this.mkEnode(expr);

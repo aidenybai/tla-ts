@@ -169,7 +169,7 @@ export abstract class Internalizer {
   enodes: Enode[] = [];
   protected decl2enodes = new Map<number, Enode[]>();
   trueEnode: Enode;
-  private isDiseqTmp = -1;
+  protected isDiseqTmp = -1;
   falseEnode: Enode;
   protected generation = 0;
   protected cachedGeneration = new Map<number, number>();

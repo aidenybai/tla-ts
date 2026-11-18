@@ -377,16 +377,35 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
     extracted.assumptions.length === 0
       ? solveGoal(manager, goal.forms.items, kernelParams)
       : solveAssuming(manager, extracted.clauses.items, extracted.assumptions, kernelParams);
-  extracted.clauses.reset();
-  if (solved.result === L_UNDEF)
-    throw new SmtTacticError(solved.reasonUnknown ?? getSmtTacticFailure(solved.context));
+  const context = solved.context;
+  // Z3 frees the kernel as the tactic returns, after the clauses it was given.
+  const release = () => {
+    extracted.clauses.reset();
+    context.release(solved.asserted);
+  };
+  if (solved.result === L_UNDEF) {
+    const reasonUnknown = solved.reasonUnknown ?? getSmtTacticFailure(context);
+    release();
+    throw new SmtTacticError(reasonUnknown);
+  }
   goal.reset();
   if (solved.result === L_FALSE) {
-    goal.assert(environment.manager.falseExpr, mkCoreDependency(solved.context.unsatCore));
+    goal.assert(environment.manager.falseExpr, mkCoreDependency(context.unsatCore));
+    release();
     return [goal];
   }
-  if (goal.isModelsEnabled) goal.model = solved.context.getModel();
-  if (solved.context.checkCanceled()) throw new SmtTacticError("canceled");
+  const model = goal.isModelsEnabled ? context.getModel() : undefined;
+  if (model !== undefined) {
+    // model2mc keeps the kernel's model for as long as the goal's model converter lives.
+    model.incRef();
+    goal.addModelConversion(
+      () => model.copy(),
+      () => model.decRef(),
+    );
+  }
+  const isCanceled = context.checkCanceled();
+  release();
+  if (isCanceled) throw new SmtTacticError("canceled");
   return [goal];
 };
 
