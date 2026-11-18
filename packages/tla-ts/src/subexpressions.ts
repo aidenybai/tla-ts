@@ -62,7 +62,6 @@ interface SelectingName {
 }
 
 const declaredArities = new WeakMap<Definition, number>();
-// SANY generates a failed selection's arguments only up to the selector it rejects.
 const generatedArgumentCounts = new WeakMap<Expression, number>();
 const resolvedNodes = new WeakMap<Expression, Expression>();
 

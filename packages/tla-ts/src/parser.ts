@@ -478,7 +478,6 @@ const getOperatorApplication = (
   }
 };
 
-// SANY keeps an expression in parentheses as its own node, which it never reads as an operator.
 export const parenthesizedRanges = new WeakMap<Expression, SourceRange>();
 
 export const extractModule = (source: string, name: string) => {

@@ -897,7 +897,6 @@ export const createEnvironment = (
         module.definitions.toReversed().map((definition) => [definition.name, definition]),
       ),
       getKey,
-      // SANY knows the modules it processed before this one, and the inner modules defined so far.
       isModuleKnown: (name, location) =>
         name === parsed.name ||
         usedModules.has(name) ||
