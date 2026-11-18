@@ -215,6 +215,17 @@ describe("level checking matches SANY", () => {
       [["line 4, col 1 to line 4, col 37", "Argument 1 of recursive operator R is primed"]],
     ],
     [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_), S(_)\nS(p) == {[]x}\nR(p) == p' = 1 \\/ R(p)\n====",
+      [
+        ["line 5, col 1 to line 5, col 22", "Argument 1 of recursive operator R is primed"],
+        ["line 4, col 9 to line 4, col 13", "set"],
+        [
+          "line 5, col 9 to line 5, col 22",
+          "\\lor has both temporal formula and action as arguments.",
+        ],
+      ],
+    ],
+    [
       "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_), S(_)\nS(n) == R(n) \\/ x' = 1\nR(n) == S(n)\nASSUME R(1)\n====",
       [["line 6, col 1 to line 6, col 11", "assume 2"]],
     ],

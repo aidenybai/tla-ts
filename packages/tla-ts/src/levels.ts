@@ -281,12 +281,14 @@ const collectSections = (units: ModuleUnit[], scope: Scope) => {
       sections
         .at(-1)
         ?.members.push(
-          ...units.flatMap((other) =>
-            other.kind === "Definition" &&
-            other.definition.isRecursive &&
-            unit.declarations.some((declaration) => declaration.name === other.definition.name)
-              ? [{ definition: other.definition, scope }]
-              : [],
+          ...unit.declarations.flatMap((declaration) =>
+            units.flatMap((other) =>
+              other.kind === "Definition" &&
+              other.definition.isRecursive &&
+              other.definition.name === declaration.name
+                ? [{ definition: other.definition, scope }]
+                : [],
+            ),
           ),
         );
       return;
