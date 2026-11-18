@@ -20,7 +20,13 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import { Goal, getDependencyValues, mkDependencyLeaf, PRECISION_NAMES } from "./goal";
+import {
+  decConverterRefs,
+  Goal,
+  getDependencyValues,
+  mkDependencyLeaf,
+  PRECISION_NAMES,
+} from "./goal";
 import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { ResourceLimit } from "./rlimit";
@@ -58,6 +64,8 @@ import { SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
 import { mkThSolver } from "./euf/th-solvers";
+import { getHammerPeriod } from "./lp/lp-settings";
+import { UINT_MAX } from "./sat/clause";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
@@ -398,6 +406,7 @@ interface ScriptState {
   kernel: SmtKernel | undefined;
   satSolver: IncSatSolver | undefined;
   fdSolver: FdSolver | undefined;
+  tacticConverters: Goal["converters"];
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -468,6 +477,7 @@ export const runSmtlibScript = (
       kernel: undefined,
       satSolver: undefined,
       fdSolver: undefined,
+      tacticConverters: [],
     };
   };
   let state = createState();
@@ -587,12 +597,17 @@ export const runSmtlibScript = (
   };
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
   const solveWithStrategy = () => {
+    const goal = getGoal();
     try {
-      const goal = getGoal();
       const strategy =
         settings.parameters.get("tactic.default_tactic") ??
         getLogicStrategy(state.logic, goal.isProofsEnabled);
       const checked = checkSatUsing(compileInternalTactic(getTacticEnvironment(), strategy), goal);
+      // tactic2solver keeps the goal's model converter until its next check.
+      decConverterRefs(state.manager, state.tacticConverters);
+      state.tacticConverters = goal.converters;
+      goal.converters = [];
+      goal.reset();
       return {
         result: checked.status,
         context: undefined,
@@ -600,6 +615,7 @@ export const runSmtlibScript = (
         reasonUnknown: checked.reasonUnknown,
       };
     } catch (error) {
+      goal.release();
       if (!(error instanceof SmtUnsupportedError)) throw error;
       const hasQuantifiers = state.assertions.some(
         (assertion) => state.manager.hasQuantifierFlags[assertion],
@@ -640,6 +656,7 @@ export const runSmtlibScript = (
     isFindingMacros: settings.isFindingMacros,
     isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),
+    intHammerPeriod: getHammerPeriod(settings.parameters),
   });
   const checkFdSolver = (fdSolver: FdSolver, extra: number[]) => {
     const result = fdSolver.check(extra);
@@ -774,8 +791,10 @@ export const runSmtlibScript = (
     const logic = state.logic;
     const parameters = settings.parameters;
     const isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
+    const isParallel = parameters.get("parallel.enable") === "true";
     const isFdSolver =
-      ((logic === "QF_FD" || logic === "SAT") && !isProofsEnabled) || logic === "SMTFD";
+      !isParallel &&
+      (((logic === "QF_FD" || logic === "SAT") && !isProofsEnabled) || logic === "SMTFD");
     const isEuf = parameters.get("sat.euf") === "true";
     const isSatSolver =
       isFdSolver ||
@@ -784,15 +803,23 @@ export const runSmtlibScript = (
       parameters.get("sat.smt") === "true" ||
       isEuf;
     state.satSolver?.release();
+    decConverterRefs(state.manager, state.tacticConverters);
+    state.tacticConverters = [];
     state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
     state.satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
-        ? new IncSatSolver(state.manager, getSatParams(parameters), true, isEuf ? mkThSolver : null)
+        ? new IncSatSolver(
+            state.manager,
+            getSatParams(parameters),
+            true,
+            isEuf ? mkThSolver(parameters) : null,
+          )
         : undefined;
     state.fdSolver?.release();
     state.fdSolver =
       (logic === "QF_FD" || logic === "SAT") &&
       !isProofsEnabled &&
+      !isParallel &&
       !parameters.has("tactic.default_tactic")
         ? new FdSolver(state.manager, getSatParams(parameters))
         : undefined;
@@ -808,6 +835,7 @@ export const runSmtlibScript = (
     if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
     if (state.logic === undefined) state.reader.registerList();
     resetKernel();
+    if (state.kernel === undefined) state.manager.dropSmtSolverDecl();
   };
   // The parts of inc_sat_solver that are not ported leave its answers to the smt kernel.
   const useSatSolver = <Result>(action: (solver: IncSatSolver) => Result) => {
@@ -1294,6 +1322,7 @@ export const runSmtlibScript = (
               : getVerdict(checked.status),
           );
         } finally {
+          goal.release();
           state.manager.limit.pop();
         }
         validateCheck(list.end);
@@ -1580,7 +1609,7 @@ export const runSmtlibScript = (
         })();
         // apply_tactic_cmd releases the result goals and then the input goal.
         if (goals === undefined) {
-          input.reset();
+          input.release();
           return;
         }
         try {
@@ -1666,8 +1695,11 @@ export const runSmtlibScript = (
           print([...lines, "(check-sat)"].join("\n"));
           for (const assertion of assertions) manager.decRef(assertion);
         } finally {
-          for (const goal of goals) if (goal !== input) goal.reset();
-          input.reset();
+          for (const goal of goals)
+            if (goal !== input) {
+              goal.release();
+            }
+          input.release();
         }
       },
     ],
@@ -1990,7 +2022,10 @@ export const runSmtlibScript = (
           (optionName.startsWith(":pp.") &&
             numericOption === undefined &&
             booleanOption === undefined) ||
-          optionName.startsWith(":lp.")
+          (optionName.startsWith(":lp.") &&
+            (optionName !== ":lp.int_hammer_period" ||
+              value?.kind !== "numeral" ||
+              Number(value.text) > UINT_MAX))
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
       },

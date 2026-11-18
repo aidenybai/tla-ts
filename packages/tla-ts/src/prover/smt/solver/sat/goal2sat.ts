@@ -582,6 +582,8 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
   }
 
   release() {
+    for (const expr of this.atoms.keys()) this.manager.decRef(expr);
+    this.atoms.clear();
     for (let index = 0; index < this.cacheTrail.length; index++)
       this.manager.decRef(this.cacheTrail[index]);
     this.cacheTrail = [];

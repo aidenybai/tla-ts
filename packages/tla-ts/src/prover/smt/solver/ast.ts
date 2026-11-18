@@ -796,6 +796,11 @@ export class AstManager {
     this.numDecls--;
   }
 
+  dropSmtSolverDecl() {
+    this.freeSmallIds.push(FIRST_DECLARED_SMALL_ID - 1);
+    this.numDecls--;
+  }
+
   mkMacro(name: string, expr: number) {
     const decl = this.funcDecls.length;
     this.declHashes[decl] = this.getFuncDeclHash(
@@ -1128,20 +1133,6 @@ export class AstManager {
       this.algebraicNumerals[this.values[expr]].id = this.mkAlgebraicId();
     this.registerNode(expr);
     return expr;
-  }
-
-  mkSort(name: SmtSymbol) {
-    const sort = this.addSort(
-      getSymbolName(name),
-      FAMILY_USER,
-      [],
-      combineHash(
-        getSymbolHash(name),
-        getInfoHash(Z3_USER_SORT_FAMILY, this.getUserSortKind(name), []),
-      ),
-    );
-    this.mkSmallId();
-    return sort;
   }
 
   mkBvSort(width: number) {
@@ -1667,8 +1658,9 @@ export class AstManager {
     parameterHashes: number[],
     domain: number[],
     range: number,
+    z3Parameters: (number | string)[] = parameters,
   ) {
-    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
+    const key = `${op}:${name}:${z3Parameters.join(",")}:${domain.join(",")}:${range}`;
     const existing = this.datatypeDecls.get(key);
     if (existing !== undefined) return existing;
     const decl = this.addDecl(

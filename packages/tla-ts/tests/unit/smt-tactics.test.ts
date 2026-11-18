@@ -482,6 +482,423 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       ].join("\n"),
     ]);
   });
+
+  it("der keeps the dependency of the quantifier it eliminates", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (! (forall ((x Int)) (or (not (= x a)) (> (f x) 0))) :named a1))",
+        "(assert (! (< (f a) 0) :named a2))",
+        "(assert (! (> a 3) :named a3))",
+        "(apply der :print_dependencies true)",
+        "(check-sat-using (then der smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  (> (f a) 0)",
+        "  |- a2",
+        "  (< (f a) 0)",
+        "  |- a3",
+        "  (> a 3)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a1 a2)",
+      "(:rlimit 306)",
+    ]);
+  });
+
+  it("dom-simplify leaves the formulas that have dependencies and keeps them", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const x Int)",
+        "(assert p)",
+        "(assert (ite p (> x 3) q))",
+        "(assert (! (or (not p) (< x 2)) :named a1))",
+        "(assert (! (ite p (< x 0) q) :named a2))",
+        "(assert (! (or q (> x 5)) :named a3))",
+        "(apply dom-simplify :print_dependencies true)",
+        "(check-sat-using (then dom-simplify smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |-",
+        "  p",
+        "  |-",
+        "  (> x 3)",
+        "  |- a1",
+        "  (or (not p) (< x 2))",
+        "  |- a2",
+        "  (ite p (< x 0) q)",
+        "  |- a3",
+        "  (or q (> x 5))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a1)",
+      "(:rlimit 356)",
+    ]);
+  });
+
+  it("unit-subsume-simplify keeps the dependencies of the clauses it does not subsume", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (! p :named a1))",
+        "(assert (! (or p q) :named a2))",
+        "(assert (! (or (not p) r) :named a3))",
+        "(assert (! (or (not r) (not p)) :named a4))",
+        "(assert (! (or q r) :named a5))",
+        "(apply unit-subsume-simplify :print_dependencies true)",
+        "(check-sat-using (then unit-subsume-simplify smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  p",
+        "  |- a3",
+        "  (or (not p) r)",
+        "  |- a4",
+        "  (or (not r) (not p))",
+        "  :precision precise :depth 0)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a4 a1 a3)",
+      "(:rlimit 1400)",
+    ]);
+  });
+
+  it("propagate-ineqs takes no bound that has dependencies and keeps those it rewrites", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (>= x 3))",
+        "(assert (<= y 0))",
+        "(assert (! (or (<= x 2) (> z 7)) :named a1))",
+        "(assert (! (<= z 4) :named a2))",
+        "(assert (! (>= x 1) :named a3))",
+        "(apply propagate-ineqs :print_dependencies true)",
+        "(check-sat-using (then propagate-ineqs smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  (or false (> z 7))",
+        "  |- a2",
+        "  (<= z 4)",
+        "  |- a3",
+        "  (>= x 1)",
+        "  |-",
+        "  (>= x 3)",
+        "  |-",
+        "  (<= y 0)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a1 a2)",
+      "(:rlimit 397)",
+    ]);
+  });
+
+  it("solve-eqs joins the dependencies of the equations it substitutes", () => {
+    const declarations = [
+      "(set-option :produce-unsat-cores true)",
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(declare-const z Int)",
+      "(declare-const w Int)",
+      "(assert (! (= x (+ y 1)) :named a1))",
+      "(assert (! (= y (* 2 z)) :named a2))",
+      "(assert (= w (+ z 3)))",
+      "(assert (! (> (+ x w) 10) :named a3))",
+      "(assert (! (< z 1) :named a4))",
+      "(assert (! (> w 0) :named a5))",
+    ];
+    expect(
+      run([...declarations, "(apply solve-eqs :print_dependencies true)", "(get-info :rlimit)"]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a3 a2 a1",
+        "  (not (<= w 5))",
+        "  |- a4",
+        "  (not (<= 4 w))",
+        "  |- a5",
+        "  (not (<= w 0))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "(:rlimit 283)",
+    ]);
+    expect(
+      run([
+        ...declarations,
+        "(check-sat-using (then solve-eqs smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(a4 a3 a1 a2)", "(:rlimit 495)"]);
+  });
+
+  it("solve-eqs gives an equation it solves in context the dependencies of its formula", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (! (or (not p) (= x 5)) :named a1))",
+        "(assert (! p :named a2))",
+        "(assert (! (=> q (= y (+ x 1))) :named a3))",
+        "(assert (! q :named a4))",
+        "(assert (! (< (+ x y) 3) :named a5))",
+        "(assert (! (> y 0) :named a6))",
+        "(apply (using-params solve-eqs :context_solve true) :print_dependencies true)",
+        "(check-sat-using (then (using-params solve-eqs :context_solve true) smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  |- a5 a3 a4 a1 a2\n  false\n  :precision precise :depth 1)\n)",
+      "unsat",
+      "(a5 a3 a4 a1 a2)",
+      "(:rlimit 521)",
+    ]);
+  });
+
+  it("pb2bv joins the dependencies of the bounds it uses", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (! (<= 0 x) :named a1))",
+        "(assert (! (<= x 1) :named a2))",
+        "(assert (! (and (<= 0 y) (<= y 1)) :named a3))",
+        "(assert (! (or (= x 0) (>= (+ y z) 2)) :named a4))",
+        "(assert (! (= x y) :named a5))",
+        "(assert (! (<= 0 z) :named a6))",
+        "(assert (! (<= z 0) :named a7))",
+        "(assert (! (>= (+ x y) 1) :named a8))",
+        "(apply pb2bv :print_dependencies true)",
+        "(check-sat-using (then pb2bv bit-blast sat))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1 a2",
+        "  true",
+        "  |- a2 a1",
+        "  true",
+        "  |- a3",
+        "  true",
+        "  |- a3",
+        "  true",
+        "  |- a4 a7 a6 a3 a1 a2",
+        "  (or (not k!0) (and k!1 k!2))",
+        "  |- a5 a3 a1 a2",
+        "  (= k!0 k!1)",
+        "  |- a6 a7",
+        "  true",
+        "  |- a7 a6",
+        "  (not k!2)",
+        "  |- a8 a3 a1 a2",
+        "  (or k!0 k!1)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a4 a7 a6 a5 a1 a8 a3 a2)",
+      "(:rlimit 148)",
+    ]);
+  });
+
+  it("add-bounds keeps the dependencies, so qflia keeps them too", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (! (>= x 3) :named a1))",
+        "(assert (! (<= (+ x y) 1) :named a2))",
+        "(assert (! (>= y 0) :named a3))",
+        "(apply (using-params add-bounds :add_bound_lower -4 :add_bound_upper 4) :print_dependencies true)",
+        "(check-sat-using (then (using-params add-bounds :add_bound_lower -4 :add_bound_upper 4) smt))",
+        "(get-info :rlimit)",
+        "(check-sat-using qflia)",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  (>= x 3)",
+        "  |- a2",
+        "  (<= (+ x y) 1)",
+        "  |- a3",
+        "  (>= y 0)",
+        "  |-",
+        "  (<= x 4)",
+        "  |-",
+        "  (>= x (- 4))",
+        "  |-",
+        "  (<= y 4)",
+        "  |-",
+        "  (>= y (- 4))",
+        "  :precision under :depth 1)",
+        ")",
+      ].join("\n"),
+      "unknown",
+      "(:rlimit 277)",
+      "unsat",
+      "(a3 a1 a2)",
+      "(:rlimit 535)",
+    ]);
+  });
+
+  it("bv-divrem-bounds keeps the dependencies and gives its lemmas none", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const a (_ BitVec 8))",
+        "(declare-const b (_ BitVec 8))",
+        "(assert (! (= (bvurem a b) #x05) :named a1))",
+        "(assert (! (bvult b #x03) :named a2))",
+        "(assert (! (not (= b #x00)) :named a3))",
+        "(apply bv-divrem-bounds :print_dependencies true)",
+        "(check-sat-using (then bv-divrem-bounds smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  (= (bvurem a b) #x05)",
+        "  |- a2",
+        "  (bvult b #x03)",
+        "  |- a3",
+        "  (not (= b #x00))",
+        "  |-",
+        "  (or (= b #x00) (not (bvule b (bvurem a b))))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a3 a1 a2)",
+      "(:rlimit 398)",
+    ]);
+  });
+
+  it("bv1-blast keeps the dependency of each formula it splits", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(assert (! (= ((_ extract 1 0) x) #b10) :named a1))",
+        "(assert (! (= x (concat #b00 ((_ extract 1 0) y))) :named a2))",
+        "(assert (! (= ((_ extract 0 0) y) #b1) :named a3))",
+        "(apply bv1-blast :print_dependencies true)",
+        "(check-sat-using (then bv1-blast smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  (= k!3 #b0)",
+        "  |- a2",
+        "  (= k!3 k!7)",
+        "  |- a3",
+        "  (= k!7 #b1)",
+        "  |- a1",
+        "  (= k!2 #b1)",
+        "  |- a2",
+        "  (= k!2 k!6)",
+        "  |- a2",
+        "  (= k!1 #b0)",
+        "  |- a2",
+        "  (= k!0 #b0)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a3 a1 a2)",
+      "(:rlimit 341)",
+    ]);
+  });
+
+  it("a tactic that fails on unsat cores tracks the dependencies, so qfbv keeps them", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(declare-const b Bool)",
+        "(assert (! (bvult x #x05) :named a1))",
+        "(assert (! (= y (bvadd x #x01)) :named a2))",
+        "(assert (! (bvugt y #x07) :named a3))",
+        "(assert (! (or b (= x #x02)) :named a4))",
+        "(apply reduce-bv-size :print_dependencies true)",
+        "(check-sat-using (then reduce-bv-size smt))",
+        "(get-unsat-core)",
+        "(check-sat-using qfbv)",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error "tactic failed: bv-size-reduction does not support unsat core production")',
+      "unknown",
+      '(error "line 11 column 15: unsat core is not available")',
+      "unsat",
+      "(a1 a3 a2)",
+      "(:rlimit 704)",
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {
@@ -1215,17 +1632,51 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ).toEqual(["sat", "(:rlimit 219)"]);
   });
 
-  it("rejects the options of lp, whose cut periods the port does not read", () => {
-    expect(() =>
+  it("gives the cube, Gomory and hnf heuristics the period of lp.int_hammer_period", () => {
+    const lines = [
+      "(set-logic QF_LIA)",
+      "(declare-const x0 Int)",
+      "(declare-const x1 Int)",
+      "(declare-const x2 Int)",
+      "(declare-const x3 Int)",
+      "(assert (and (>= (+ (* -4 x0) (* 5 x1) (* 2 x2) (* 19 x3)) 23) (<= (+ (* -4 x0) (* 5 x1) (* 2 x2) (* 19 x3)) 24)))",
+      "(assert (and (>= (+ (* -3 x0) (* -5 x1) (* -10 x2) (* -7 x3)) -5) (<= (+ (* -3 x0) (* -5 x1) (* -10 x2) (* -7 x3)) -4)))",
+      "(assert (and (>= (+ (* 18 x0) (* -11 x1) (* 18 x2) (* -10 x3)) 14) (<= (+ (* 18 x0) (* -11 x1) (* 18 x2) (* -10 x3)) 14)))",
+      "(assert (and (>= x0 -40) (<= x0 40)))",
+      "(assert (and (>= x1 -40) (<= x1 40)))",
+      "(assert (and (>= x2 -40) (<= x2 40)))",
+      "(assert (and (>= x3 -40) (<= x3 40)))",
+      "(check-sat)",
+      "(get-info :rlimit)",
+    ];
+    expect(run(lines)).toEqual(["unsat", "(:rlimit 9280)"]);
+    expect(run(["(set-option :lp.int_hammer_period 1)", ...lines])).toEqual([
+      "unsat",
+      "(:rlimit 14390)",
+    ]);
+    expect(
       run([
-        "(set-option :lp.int_hammer_period 2)",
-        "(declare-const x Int)",
-        "(declare-const y Int)",
-        "(declare-const z Int)",
-        "(assert (and (>= (+ (* 3 x) (* 5 y) (* 7 z)) 101) (<= (+ (* 3 x) (* 5 y) (* 7 z)) 102)))",
+        "(set-option :sat.euf true)",
+        ...lines,
+        "(set-option :lp.int_hammer_period 1)",
+        "(assert (> x0 -41))",
         "(check-sat)",
+        "(get-info :rlimit)",
       ]),
-    ).toThrow(new SmtUnsupportedError("the option :lp.int_hammer_period"));
+    ).toEqual(["unsat", "(:rlimit 4414)", "unsat", "(:rlimit 7199)"]);
+  });
+
+  it("rejects the other options of lp, and a hammer period that is not an unsigned numeral", () => {
+    const lines = ["(declare-const x Int)", "(assert (>= (* 3 x) 101))", "(check-sat)"];
+    expect(() => run(["(set-option :lp.random_hammers false)", ...lines])).toThrow(
+      new SmtUnsupportedError("the option :lp.random_hammers"),
+    );
+    expect(() => run(["(set-option :lp.int_hammer_period foo)", ...lines])).toThrow(
+      new SmtUnsupportedError("the option :lp.int_hammer_period"),
+    );
+    expect(() => run(["(set-option :lp.int_hammer_period 4294967296)", ...lines])).toThrow(
+      new SmtUnsupportedError("the option :lp.int_hammer_period"),
+    );
   });
 
   it("runs the smt tactics of qflia that skip cuts without auto_config", () => {
@@ -1916,6 +2367,66 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
       ]),
     ).toEqual(["sat", "unsat", "(n)"]);
   });
+
+  it("numbers the declarations without the one Z3 makes as it starts the smt solver", () => {
+    const getModel = (options: string[]) =>
+      run([
+        ...options,
+        "(declare-datatypes ((C 0)) (((k0) (k1) (k2) (k3) (k4) (k5) (k6))))",
+        "(declare-datatypes ((D 0)) (((d0) (d1) (d2) (d3) (d4) (d5) (d6) (d7) (d8))))",
+        "(declare-const e0 C)",
+        "(declare-const e1 D)",
+        "(check-sat)",
+        "(get-model)",
+      ]);
+    const getExpected = (first: string, second: string) => [
+      "sat",
+      [
+        "(",
+        "  (define-fun e0 () C",
+        `    ${first})`,
+        "  (define-fun e1 () D",
+        `    ${second})`,
+        ")",
+      ].join("\n"),
+    ];
+    expect(getModel(["(set-logic QF_FD)"])).toEqual(getExpected("k5", "d2"));
+    expect(getModel(["(set-logic QF_DT)"])).toEqual(getExpected("k1", "d5"));
+    expect(getModel(["(set-option :parallel.enable true)", "(set-logic QF_FD)"])).toEqual(
+      getExpected("k1", "d5"),
+    );
+  });
+
+  it("makes a declared sort at its first use, as psort_user_decl does", () => {
+    const getModel = (before: string[], between: string[]) =>
+      run([
+        "(set-logic QF_FD)",
+        "(declare-sort U 0)",
+        ...before,
+        "(declare-datatypes ((C 0)) (((k0) (k1) (k2) (k3) (k4) (k5) (k6))))",
+        ...between,
+        "(declare-datatypes ((D 0)) (((d0) (d1) (d2) (d3) (d4) (d5) (d6) (d7) (d8))))",
+        "(declare-const e0 C)",
+        "(declare-const e1 D)",
+        "(check-sat)",
+        "(get-model)",
+      ]);
+    const getExpected = (first: string, second: string, isUsed: boolean) => [
+      "sat",
+      [
+        "(",
+        ...(isUsed ? ["  (define-fun u () U", "    U!val!0)"] : []),
+        "  (define-fun e0 () C",
+        `    ${first})`,
+        "  (define-fun e1 () D",
+        `    ${second})`,
+        ")",
+      ].join("\n"),
+    ];
+    expect(getModel([], [])).toEqual(getExpected("k5", "d2", false));
+    expect(getModel(["(declare-const u U)"], [])).toEqual(getExpected("k4", "d8", true));
+    expect(getModel([], ["(declare-const u U)"])).toEqual(getExpected("k5", "d8", true));
+  });
 });
 
 describe("eq2bv, as Z3 5.3.2 encodes the bounded integers", () => {
@@ -1972,5 +2483,100 @@ describe("eq2bv, as Z3 5.3.2 encodes the bounded integers", () => {
         ")",
       ].join("\n"),
     ]);
+  });
+});
+
+describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
+  it("frees the model converter of apply's goal, so the next bit-blast numbers its bits anew", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const v0 (_ BitVec 2))",
+        "(declare-const v1 (_ BitVec 2))",
+        "(assert (bvult (bvmul v0 v1) #b10))",
+        "(assert (bvuge (bvadd v1 #b01) v0))",
+        "(apply bit-blast :print false)",
+        "(apply (then simplify bit-blast))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (let ((a!1 (ite k!4",
+        "                  (ite k!5 (not (= k!7 k!6)) k!7)",
+        "                  (not (or (not k!5) (not k!6))))))",
+        "    (not a!1))",
+        "  (let ((a!1 (or k!5 (not (or (not k!4) (not k!6)))))",
+        "        (a!2 (or (not (or (not k!4) (not k!6))) (= k!7 k!6))))",
+        "    (or (not (or k!5 (= k!7 k!6))) (not a!1) (not a!2)))",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("frees the goal that repeat copies when its tactic fails", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const v0 (_ BitVec 2))",
+        "(declare-const v1 (_ BitVec 2))",
+        "(assert (bvult (bvmul v0 v1) #b10))",
+        "(assert (bvuge (bvadd v1 #b01) v0))",
+        "(apply (then bit-blast (or-else (repeat fail) skip)) :print false)",
+        "(apply (then simplify bit-blast))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (let ((a!1 (ite k!4",
+        "                  (ite k!5 (not (= k!7 k!6)) k!7)",
+        "                  (not (or (not k!5) (not k!6))))))",
+        "    (not a!1))",
+        "  (let ((a!1 (or k!5 (not (or (not k!4) (not k!6)))))",
+        "        (a!2 (or (not (or (not k!4) (not k!6))) (= k!7 k!6))))",
+        "    (or (not (or k!5 (= k!7 k!6))) (not a!1) (not a!2)))",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("frees the atoms of the sat tactic, so a second check of QF_BV does Z3's work", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const v0 (_ BitVec 8))",
+        "(declare-const v1 (_ BitVec 8))",
+        "(assert (bvsge v1 (bvor v0 v0)))",
+        "(assert (= (bvor (bvurem v1 (_ bv159 8)) (bvurem v1 v1)) (bvadd (_ bv94 8) v0)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 7583)", "sat", "(:rlimit 14970)"]);
+  });
+
+  it("frees the model that a model converter replaces, so the next check does Z3's work", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(set-option :produce-models true)",
+        "(declare-const v0 (_ BitVec 6))",
+        "(declare-const v1 (_ BitVec 6))",
+        "(declare-const p0 Bool)",
+        "(declare-const p1 Bool)",
+        "(declare-const p2 Bool)",
+        "(assert (=> (bvult (bvurem (_ bv38 6) (bvshl v1 (_ bv17 6))) (bvshl v0 v0)) (not p1)))",
+        "(assert (distinct (_ bv21 6) (_ bv22 6)))",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(assert (bvult v0 (_ bv14 6)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 0)", "sat", "sat", "(:rlimit 610)"]);
   });
 });

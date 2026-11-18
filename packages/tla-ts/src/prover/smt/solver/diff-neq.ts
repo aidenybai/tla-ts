@@ -196,10 +196,13 @@ export const diffNeq = (manager: AstManager, goal: Goal, maxK: number) => {
     if (goal.isModelsEnabled) {
       const model = solver.mkModel();
       model.incRef();
-      goal.addModelConversion((converted) => {
-        for (const [decl, value] of model.constInterps) converted.registerConst(decl, value);
-        return converted;
-      });
+      goal.addModelConversion(
+        (converted) => {
+          for (const [decl, value] of model.constInterps) converted.registerConst(decl, value);
+          return converted;
+        },
+        () => model.decRef(),
+      );
     }
     goal.reset();
   } else goal.assert(manager.falseExpr);

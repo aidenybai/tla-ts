@@ -194,11 +194,15 @@ class HornTactic {
       goal.reset();
       // model2model_converter: the interpretations go to the goal's model in table order.
       const found = context.getModel();
-      goal.addModelConversion((model) => {
-        for (const [decl, value] of found.constInterps) model.registerConst(decl, value);
-        for (const [decl, interp] of found.funcInterps) model.registerFunc(decl, interp.copy());
-        return model;
-      });
+      found.incRef();
+      goal.addModelConversion(
+        (model) => {
+          for (const [decl, value] of found.constInterps) model.registerConst(decl, value);
+          for (const [decl, interp] of found.funcInterps) model.registerFunc(decl, interp.copy());
+          return model;
+        },
+        () => found.decRef(),
+      );
     }
     return [goal];
   }

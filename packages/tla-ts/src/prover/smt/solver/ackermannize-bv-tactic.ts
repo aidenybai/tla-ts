@@ -24,14 +24,18 @@ export const runAckermannizeBv =
     const lackr = new Lackr(manager, [...goal.forms.items], rewriterOptions, true);
     const result = getEmptyCopy(goal);
     if (!lackr.mkAckermann(result, lemmaLimit)) {
+      result.release();
       lackr.release(false);
       return [goal];
     }
     const info = lackr.info;
     if (goal.isModelsEnabled)
-      result.addModelConversion((model) => convertAckrModel(info, undefined, model));
+      result.addModelConversion(
+        (model) => convertAckrModel(info, undefined, model),
+        () => info.release(),
+      );
     result.depth++;
-    lackr.release(true);
+    lackr.release(goal.isModelsEnabled);
     return [result];
   };
 
@@ -51,12 +55,20 @@ export const createQfufbvAckrTactic =
     if (status === L_FALSE) result.assert(manager.falseExpr);
     if (status === L_UNDEF) goal.depth++;
     const model = lackr.model;
-    if (goal.isModelsEnabled && status === L_TRUE && model !== undefined) {
+    const isConverted = goal.isModelsEnabled && status === L_TRUE && model !== undefined;
+    if (isConverted) {
       model.incRef();
       const info = lackr.info;
-      result.addModelConversion((converted) => convertAckrModel(info, model, converted));
+      result.addModelConversion(
+        (converted) => convertAckrModel(info, model, converted),
+        () => {
+          model.decRef();
+          info.release();
+        },
+      );
     }
-    lackr.release(status === L_TRUE);
+    if (status === L_UNDEF) result.releaseConverters();
+    lackr.release(isConverted);
     solver.release();
     return [status === L_UNDEF ? goal : result];
   };

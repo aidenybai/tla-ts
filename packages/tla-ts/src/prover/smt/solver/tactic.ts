@@ -16,6 +16,7 @@ import { createCtxSolverSimplify } from "./ctx-solver-simplify";
 import {
   type Definition,
   type Dependency,
+  decConverterRefs,
   Goal,
   getDependencyValues,
   joinDependencies,
@@ -35,6 +36,7 @@ import { runBv1Blast } from "./bv1-blast";
 import { runReduceBvSize } from "./reduce-bv-size";
 import { createSatTactic } from "./sat/sat-tactic";
 import { mkThSolver } from "./euf/th-solvers";
+import { getHammerPeriod } from "./lp/lp-settings";
 import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
 import { runElimTermIte } from "./elim-term-ite-tactic";
@@ -307,6 +309,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
       "random_seed",
       Number(getParameter(environment, "smt.random_seed", "0")),
     ),
+    intHammerPeriod: getHammerPeriod(environment.parameters),
   };
 };
 
@@ -365,7 +368,11 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
   const manager = environment.manager;
   // mk_smt_tactic: with sat.euf, the smt tactic is the sat tactic.
   if (environment.parameters.get("sat.euf") === "true")
-    return createSatTactic(manager, getSatParams(environment.parameters), mkThSolver)(goal);
+    return createSatTactic(
+      manager,
+      getSatParams(environment.parameters),
+      mkThSolver(environment.parameters),
+    )(goal);
   const kernelParams = getKernelParams(environment, params, goal);
   const extracted = extractClauses(manager, goal);
   const solved =
@@ -422,6 +429,7 @@ const runParallelSmt = (environment: TacticEnvironment) => (goal: Goal) => {
 const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrSolver => {
   const assertions = new RefVector(manager);
   let model: ProtoModel | undefined;
+  let converters: Goal["converters"] = [];
   return {
     assert: (expr) => assertions.push(expr),
     check: () => {
@@ -430,12 +438,18 @@ const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrS
       const goal = new Goal(manager);
       for (const assertion of assertions.items) goal.assert(assertion);
       const checked = checkSatUsing(getTactic(), goal);
+      // tactic2solver keeps the goal's model converter until its next check.
+      decConverterRefs(manager, converters);
+      converters = goal.converters;
+      goal.converters = [];
+      goal.reset();
       model = checked.model;
       model?.incRef();
       return checked.status;
     },
     getModel: () => model as ProtoModel,
     release: () => {
+      decConverterRefs(manager, converters);
       model?.decRef();
       assertions.reset();
     },
@@ -749,7 +763,10 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
-  ["unit-subsume-simplify", { descrs: new Map(), build: runUnitSubsume }],
+  [
+    "unit-subsume-simplify",
+    { isTrackingDependencies: true, descrs: new Map(), build: runUnitSubsume },
+  ],
   [
     "purify-arith",
     {
@@ -837,6 +854,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "solve-eqs",
     {
+      isTrackingDependencies: true,
       // Z3 never counts the occurrences that solve_eqs_max_occs bounds, so the bound has no effect.
       descrs: getDescrs("", [
         ["solve_eqs_max_occs", PARAM_UINT, UINT_MAX, true],
@@ -930,6 +948,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "propagate-ineqs",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [["bound_max_refinements", PARAM_UINT, 16, true]]),
       build: (environment) => inPlace((goal) => propagateIneqs(environment.manager, goal)),
     },
@@ -971,6 +990,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["cardinality.encoding", PARAM_SYMBOL, "none", true],
         ]),
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runPb2Bv(environment.manager, params, getRewriterOptions(environment.manager, params)),
     },
@@ -979,6 +999,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "diff-neq",
     {
       descrs: getDescrs("", [["diff_neq_max_k", PARAM_UINT, 1024, true]]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           diffNeq(environment.manager, goal, getUint(params, "diff_neq_max_k", 1024)),
@@ -1032,6 +1053,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["add_bound_lower", PARAM_NUMERAL, "-2", true],
         ["add_bound_upper", PARAM_NUMERAL, "2", true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           addBounds(
@@ -1067,6 +1089,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["nla2bv_root", PARAM_UINT, 2, true],
         ["nla2bv_divisor", PARAM_UINT, 2, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           nla2bv(environment.manager, goal, {
@@ -1105,7 +1128,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
-  ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
+  [
+    "der",
+    {
+      isTrackingDependencies: true,
+      descrs: new Map(),
+      build: (environment) => runDer(environment.manager),
+    },
+  ],
   [
     "blast-term-ite",
     {
@@ -1143,6 +1173,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["produce_models", PARAM_BOOL, false, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => rewriteUfbv(environment.manager, goal)),
     },
   ],
@@ -1150,6 +1181,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "reduce-args",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => reduceArgs(environment.manager, goal)),
     },
   ],
@@ -1172,6 +1204,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "dom-simplify",
     {
+      isTrackingDependencies: true,
       descrs: new Map(),
       build: (environment) => inPlace((goal) => domSimplify(environment.manager, goal)),
     },
@@ -1209,6 +1242,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_steps", PARAM_UINT, UINT_MAX, true],
         ["max_bits", PARAM_UINT, 4, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runElimSmallBv(
           environment.manager,
@@ -1266,17 +1300,26 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "bv_bound_chk",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runBvBoundChk(environment.manager, getUint(params, "bv_ineq_consistency_test_max", 0)),
     },
   ],
   [
     "bv-divrem-bounds",
-    { descrs: new Map(), build: (environment) => runBvDivremBounds(environment.manager) },
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => runBvDivremBounds(environment.manager),
+    },
   ],
   [
     "reduce-bv-size",
-    { descrs: new Map(), build: (environment) => runReduceBvSize(environment.manager) },
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => runReduceBvSize(environment.manager),
+    },
   ],
   [
     "bv1-blast",
@@ -1285,6 +1328,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["max_steps", PARAM_UINT, UINT_MAX],
       ]),
+      isTrackingDependencies: true,
       build: (environment) => runBv1Blast(environment.manager),
     },
   ],
@@ -1292,6 +1336,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "ackermannize_bv",
     {
       descrs: getDescrs("rewriter", [["div0_ackermann_limit", PARAM_UINT, 1000, true]]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runAckermannizeBv(
           environment.manager,
@@ -1646,16 +1691,20 @@ const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
 
 const runOrElse = (tactics: Tactic[]) => (goal: Goal) => {
   const original = goal.copy();
-  for (const tactic of tactics.slice(0, -1)) {
-    try {
-      return tactic(goal);
-    } catch (error) {
-      if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
+  try {
+    for (const tactic of tactics.slice(0, -1)) {
+      try {
+        return tactic(goal);
+      } catch (error) {
+        if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
+      }
+      goal.resetAll();
+      goal.copyFrom(original);
     }
-    goal.resetAll();
-    goal.copyFrom(original);
+    return tactics[tactics.length - 1](goal);
+  } finally {
+    original.release();
   }
-  return tactics[tactics.length - 1](goal);
 };
 
 const isEqualGoal = (first: Goal, second: Goal) => {
@@ -1671,8 +1720,16 @@ const runRepeat = (tactic: Tactic, maxDepth: number) => {
   const run = (depth: number, goal: Goal): Goal[] => {
     if (depth > maxDepth) return [goal];
     const original = goal.copy();
-    const goals = tactic(goal);
-    if (goals.length === 1 && isEqualGoal(original, goals[0])) return goals;
+    const step = (() => {
+      try {
+        const results = tactic(goal);
+        return { results, isEqual: results.length === 1 && isEqualGoal(original, results[0]) };
+      } finally {
+        original.release();
+      }
+    })();
+    const goals = step.results;
+    if (step.isEqual) return goals;
     if (goals.length === 1) return goals[0].isDecided() ? goals : run(depth + 1, goals[0]);
     const results: Goal[] = [];
     const unsatGoals: Goal[] = [];
@@ -2091,7 +2148,15 @@ export const applyDefinitions = (definitions: readonly Definition[], model: Prot
 };
 
 const applyConverter = (entry: Goal["converters"][number], model: ProtoModel) => {
-  if ("convert" in entry) return entry.convert(model);
+  if ("convert" in entry) {
+    const converted = entry.convert(model);
+    // The model_ref that the converter assigns frees the model it replaced.
+    if (converted !== model) {
+      model.incRef();
+      model.decRef();
+    }
+    return converted;
+  }
   if ("definitions" in entry) return applyDefinitions(entry.definitions, model);
   model.unregisterDecl(entry.decl);
   return model;
@@ -2160,8 +2225,11 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal) => {
   try {
     return getTacticCheck(goal, goals);
   } finally {
-    goal.reset();
-    if (Array.isArray(goals)) for (const result of goals) result.reset();
+    if (Array.isArray(goals))
+      for (const result of goals)
+        if (result !== goal) {
+          result.release();
+        }
   }
 };
 

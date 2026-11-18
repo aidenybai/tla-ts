@@ -26,6 +26,11 @@ export interface LpStats {
   nraCalls: number;
 }
 
+export const DEFAULT_HAMMER_PERIOD = 4;
+
+export const getHammerPeriod = (parameters: ReadonlyMap<string, string>) =>
+  Number(parameters.get("lp.int_hammer_period") ?? DEFAULT_HAMMER_PERIOD);
+
 export class LpSettings {
   private random = new RandomGen(0);
   readonly stats: LpStats = {
@@ -55,12 +60,12 @@ export class LpSettings {
   };
   readonly maxRowLengthForBoundPropagation = 300;
   isPropagatingEqs = true;
-  readonly intFindCubePeriod = 4;
+  intFindCubePeriod = DEFAULT_HAMMER_PERIOD;
   readonly lcubeFlips = 16;
-  readonly hnfCutPeriod = 4;
+  hnfCutPeriod = DEFAULT_HAMMER_PERIOD;
   readonly limitOnRowsForHnfCutter = 75;
   readonly limitOnColumnsForHnfCutter = 150;
-  readonly intGomoryCutPeriod = 4;
+  intGomoryCutPeriod = DEFAULT_HAMMER_PERIOD;
   dioCallsPeriod = 1;
   readonly dioCallsPeriodDecrease = 2;
   readonly dioGomoryEnablePeriod = 16;
@@ -69,6 +74,12 @@ export class LpSettings {
   readonly dioUndoMaxWork = 1000000;
 
   constructor(readonly isCanceled: (cost?: number) => boolean) {}
+
+  updateParams(hammerPeriod: number) {
+    this.intFindCubePeriod = hammerPeriod;
+    this.intGomoryCutPeriod = hammerPeriod;
+    this.hnfCutPeriod = hammerPeriod;
+  }
 
   setRandomSeed(seed: number) {
     this.random = new RandomGen(seed);

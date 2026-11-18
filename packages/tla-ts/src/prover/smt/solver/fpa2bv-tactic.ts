@@ -65,7 +65,11 @@ export const runFpa2Bv = (manager: AstManager) => (goal: Goal) => {
     goal.update(index, result, goal.getDependency(index));
     manager.decRef(result);
   }
-  if (goal.isModelsEnabled) goal.addModelConversion((model) => convertModel(converter, model));
+  if (goal.isModelsEnabled)
+    goal.addModelConversion(
+      (model) => convertModel(converter, model),
+      () => converter.reset(),
+    );
   goal.depth++;
   for (const assertion of converter.extraAssertions.items) goal.assert(assertion);
   rewriter.release();

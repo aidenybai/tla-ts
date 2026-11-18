@@ -447,7 +447,7 @@ class DominatorSimplifier {
     const args = new RefVector(manager);
     state.forEachIndex((index) => {
       state.get(index);
-      args.push(state.get(index));
+      if (state.goal.getDependency(index) === undefined) args.push(state.get(index));
     });
     const fml = this.own(manager.mkAnd(args.items));
     this.results.clear();
@@ -462,6 +462,7 @@ class DominatorSimplifier {
     const manager = this.manager;
     const goal = this.state.goal;
     const form = this.state.get(index);
+    if (goal.getDependency(index) !== undefined) return false;
     let result = this.simplifyRec(form);
     if (
       !manager.isTrue(result) &&
