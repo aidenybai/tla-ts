@@ -241,6 +241,8 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
         const isWrapped =
           builtin.isLazy === true || !(error instanceof TlaModuleError) || isFingerprinted;
         if (!isWrapped) throw error;
+        // TLC's MethodValue#eval rethrows a FingerprintException from the method as a TLCRuntimeException.
+        if (setTrace.callStack) setTrace.callStack.fingerprint = undefined;
         throw createJavaOverrideError(signature, error.message);
       }
     };

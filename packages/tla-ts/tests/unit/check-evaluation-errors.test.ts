@@ -1822,6 +1822,22 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("records a value that fails to fingerprint inside a Java method as a nested expression, as TLC's MethodValue rethrows it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, Sequences\nVARIABLE x\nInit == x = 0\nNext == SelectSeq(<<1>>, LAMBDA k : {x} = <<x>>) = <<>> /\\ x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    const ranges = result.failure?.callStack?.flatMap((expression) => {
+      const range = expression.location.range;
+      return range ? [`${range.start.line}:${range.start.column}-${range.end.column}`] : [];
+    });
+    expect([
+      result.failure?.fingerprint,
+      ranges?.filter((range, index) => range !== ranges[index - 1]),
+    ]).toEqual([undefined, ["5:9-65", "5:9-55", "5:9-48", "5:37-47", "5:37-39"]]);
+  });
+
   it("records the frames in Randomization of an error in TestRandomSetOfSubsets, which TLC evaluates from its definition", async () => {
     const result = await check({
       source:
