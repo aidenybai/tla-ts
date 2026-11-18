@@ -2703,6 +2703,39 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts the substitution a recursive function of an instance reads when it is applied, as its FcnLambdaValue keeps the substitution's LazyValue", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE C ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nr[n \\in 0..2] == IF n = 0 THEN c ELSE r[n - 1] + 1\n====\nI(p) == INSTANCE Inner WITH c <- p + x\nJ == INSTANCE Inner WITH c <- 1 + x\nInit == x = 0\nNext == x < 2 /\\ x' = I(1)!r[2] + J!r[1] + x\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 12, col 9 to line 12, col 13 of module C: 3",
+      "|line 12, col 9 to line 12, col 9 of module C: 4",
+      "line 12, col 18 to line 12, col 44 of module C: 3",
+      "|line 12, col 23 to line 12, col 44 of module C: 3",
+      "||line 12, col 23 to line 12, col 40 of module C: 3",
+      "|||line 12, col 23 to line 12, col 31 of module C: 3",
+      "||||line 12, col 23 to line 12, col 28 of module C: 3",
+      "|||||line 9, col 34 to line 9, col 38 of module C: 3",
+      "|||||line 7, col 1 to line 7, col 50 of module C: 3",
+      "||||||line 7, col 18 to line 7, col 50 of module C: 9",
+      "|||||||line 7, col 21 to line 7, col 25 of module C: 9",
+      "|||||||line 7, col 32 to line 7, col 32 of module C: 3",
+      "|||||||line 7, col 39 to line 7, col 50 of module C: 6",
+      "||||||line 7, col 9 to line 7, col 12 of module C: 3",
+      "|||line 12, col 35 to line 12, col 40 of module C: 3",
+      "||||line 12, col 35 to line 12, col 37 of module C: 3",
+      "|||||line 10, col 31 to line 10, col 35 of module C: 3",
+      "|||||line 7, col 1 to line 7, col 50 of module C: 3",
+      "||||||line 7, col 18 to line 7, col 50 of module C: 6",
+      "|||||||line 7, col 21 to line 7, col 25 of module C: 6",
+      "|||||||line 7, col 32 to line 7, col 32 of module C: 3",
+      "|||||||line 7, col 39 to line 7, col 50 of module C: 3",
+      "||||||line 7, col 9 to line 7, col 12 of module C: 3",
+      "||line 12, col 44 to line 12, col 44 of module C: 3",
+    ]);
+  });
+
   it("takes the definition an instance with parameters copies for an action of constant arguments, as TLC's Tool#getActionsAppl binds them", async () => {
     const lines = formatCoverage(
       await getInstanceCoverage(

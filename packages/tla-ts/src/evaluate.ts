@@ -35,9 +35,11 @@ import {
   DO_NOT_RECORD,
   enterFrames,
   exitFrames,
+  getCoverageFrames,
   getCoverageNode,
   getSubstitutionNode,
   runAtCoverageNode,
+  runInCoverageFrames,
   tagSubset,
   type Coverage,
   type NextStateMode,
@@ -820,13 +822,14 @@ const createRecursiveFunction = (
     );
   const coverage = context.environment.coverage;
   const node = coverage && !context.environment.callStack ? coverage.current : -1;
+  const frames = coverage && node >= 0 ? getCoverageFrames(coverage) : undefined;
   const functionValue = createLazyFunction(
     domain,
     coverage
       ? (argument, self) =>
-          coverage.current === node
+          coverage.current === node && !frames
             ? compute(argument, self)
-            : runAtCoverageNode(coverage, node, () => compute(argument, self))
+            : runInCoverageFrames(coverage, node, frames, () => compute(argument, self))
       : compute,
     getLazyFunctionSource(
       getLazyFunctionTemplate(definition.bounds, definition.body),
@@ -2103,13 +2106,14 @@ export const getFunctionBuilder = (
     const compute = (argument: Value) =>
       body(withScope(lambdaContext, bindArgument(bounds, scope, argument)));
     const node = coverage && !environment.callStack ? coverage.current : -1;
+    const frames = coverage && node >= 0 ? getCoverageFrames(coverage) : undefined;
     const value = createLazyFunction(
       domain,
       coverage
         ? (argument) =>
             coverage.current === -1 && name === undefined
               ? compute(argument)
-              : runAtCoverageNode(coverage, node, () => compute(argument))
+              : runInCoverageFrames(coverage, node, frames, () => compute(argument))
         : compute,
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,

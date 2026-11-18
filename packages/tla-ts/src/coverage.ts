@@ -59,13 +59,17 @@ export interface Coverage {
   registers: Uint8Array;
   relations: CoverageRelation[];
   substitutionNodes: Map<number, Map<Substitution, number>>;
-  frames: Expression[];
-  frameRoots: number[];
-  frameEntries: number[];
-  entryCount: number;
-  counted: Map<Substitution, number>;
-  countedWithoutNext: Map<Substitution, number>;
+  frames: CoverageFrame[];
   nextState: NextStateMode;
+}
+
+// One evaluation of a SubstInNode, whose cachable LazyValues count each substitution once.
+export interface CoverageFrame {
+  frame: Expression;
+  root: number;
+  isCached: boolean;
+  counted: Substitution[];
+  countedWithoutNext: Substitution[];
 }
 
 export type NextStateMode = "given" | "empty" | "primed";
@@ -154,11 +158,6 @@ export const createCoverage = (variableCount: number): Coverage => ({
   relations: [],
   substitutionNodes: new Map(),
   frames: [],
-  frameRoots: [],
-  frameEntries: [],
-  entryCount: 0,
-  counted: new Map(),
-  countedWithoutNext: new Map(),
   nextState: "given",
 });
 
@@ -755,10 +754,8 @@ export const enterFrames = (
   let entered = 0;
   for (let index = 0; index < frames.length; index++) {
     const frame = frames[index];
-    if (!frameSubstitutions.has(frame) || findFrame(coverage, frame, root) !== -1) continue;
-    coverage.frames.push(frame);
-    coverage.frameRoots.push(root);
-    coverage.frameEntries.push(isCached ? coverage.entryCount++ : -1);
+    if (!frameSubstitutions.has(frame) || findFrame(coverage, frame, root)) continue;
+    coverage.frames.push({ frame, root, isCached, counted: [], countedWithoutNext: [] });
     entered++;
   }
   return entered;
@@ -766,15 +763,34 @@ export const enterFrames = (
 
 const findFrame = (coverage: Coverage, frame: Expression, root: number) => {
   for (let index = coverage.frames.length - 1; index >= 0; index--) {
-    if (coverage.frames[index] === frame && coverage.frameRoots[index] === root) return index;
+    const entry = coverage.frames[index];
+    if (entry.frame === frame && entry.root === root) return entry;
   }
-  return -1;
+  return undefined;
 };
 
 export const exitFrames = (coverage: Coverage, entered: number) => {
   coverage.frames.length -= entered;
-  coverage.frameRoots.length -= entered;
-  coverage.frameEntries.length -= entered;
+};
+
+// FcnLambdaValue#apply evaluates the body in the context it was built in, which holds the LazyValues of the substitutions around it.
+export const getCoverageFrames = (coverage: Coverage) =>
+  coverage.frames.length === 0 ? undefined : coverage.frames.slice();
+
+export const runInCoverageFrames = <Result>(
+  coverage: Coverage,
+  node: number,
+  frames: CoverageFrame[] | undefined,
+  run: () => Result,
+): Result => {
+  if (!frames) return runAtCoverageNode(coverage, node, run);
+  const length = coverage.frames.length;
+  coverage.frames.push(...frames);
+  try {
+    return runAtCoverageNode(coverage, node, run);
+  } finally {
+    coverage.frames.length = length;
+  }
 };
 
 export const getSubstitutionNode = (
@@ -782,20 +798,18 @@ export const getSubstitutionNode = (
   substitution: Substitution,
   node: number,
 ) => {
-  const index = findFrame(coverage, substitution.frame, coverage.roots[node]);
-  if (index === -1) return -1;
-  const entry = coverage.frameEntries[index];
-  const substitutionNode =
-    coverage.substitutionNodes.get(coverage.frameRoots[index])?.get(substitution) ?? -1;
-  if (entry === -1 || coverage.nextState === "primed") return substitutionNode;
+  const entry = findFrame(coverage, substitution.frame, coverage.roots[node]);
+  if (!entry) return -1;
+  const substitutionNode = coverage.substitutionNodes.get(entry.root)?.get(substitution) ?? -1;
+  if (!entry.isCached || coverage.nextState === "primed") return substitutionNode;
   // LazyValue#getValue reuses a value cached without a next state for any next state, but not the reverse.
-  if (coverage.countedWithoutNext.get(substitution) === entry) return -1;
+  if (entry.countedWithoutNext.includes(substitution)) return -1;
   if (coverage.nextState === "empty") {
-    coverage.countedWithoutNext.set(substitution, entry);
+    entry.countedWithoutNext.push(substitution);
     return substitutionNode;
   }
-  if (coverage.counted.get(substitution) === entry) return -1;
-  coverage.counted.set(substitution, entry);
+  if (entry.counted.includes(substitution)) return -1;
+  entry.counted.push(substitution);
   return substitutionNode;
 };
 
