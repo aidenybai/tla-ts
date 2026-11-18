@@ -493,7 +493,6 @@ const setupQuantified = (config: SmtConfig, features: StaticFeatures) => {
   );
 };
 
-// setup_unknown(static_features&).
 const setupUnknownByFeatures = (config: SmtConfig, features: StaticFeatures, setup: SmtSetup) => {
   const hasUf = features.numUninterpretedFunctions > 0;
   const numTheories = features.numTheories + (hasUf ? 1 : 0);

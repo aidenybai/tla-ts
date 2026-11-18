@@ -514,7 +514,6 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     this.cacheTrail.push(expr);
   }
 
-  // A dependency that is not a constant or its negation gets a fresh constant equal to it.
   private insertDep(dep: number, dep2asm: Map<number, number>) {
     const manager = this.manager;
     const isSign = manager.isNot(dep);
@@ -545,7 +544,6 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     }
   }
 
-  // A formula holds when its dependencies do, and one that is its own dependency only gets its literal.
   runGoal(goal: Goal, dep2asm: Map<number, number>) {
     const manager = this.manager;
     if (this.mkThSolver !== null) this.ensureEuf();

@@ -832,7 +832,6 @@ export class PbSolver implements SatExtension, ConstraintHost {
     this.numPropagationsSincePop = 0;
   }
 
-  // gc_vars: the constraints over the variables from numVars on go with them.
   gcVars(numVars: number) {
     for (const list of [this.constraints, this.learned]) {
       let next = 0;
@@ -1421,7 +1420,6 @@ export class PbSolver implements SatExtension, ConstraintHost {
     const decl = manager.decls[expr];
     const k = getPbK(manager, decl);
     const isUnit = hasUnitCoefficients(manager, decl);
-    // A constraint asserted in a user scope gets a literal, which the scope's clause guards.
     // Deviation from Z3: convert_eq_k asserts it at the base level, so it outlives the scope.
     const isBase = isRoot && this.solver.numUserScopes === 0;
     switch (manager.getOp(expr)) {

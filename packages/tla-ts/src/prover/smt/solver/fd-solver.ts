@@ -58,7 +58,6 @@ const collectBounds = (manager: AstManager, bounds: BoundManager, form: number) 
   for (const arg of manager.getArgs(form)) collectBounds(manager, bounds, arg);
 };
 
-// simplifier_solver's formulas, which dep_expr_state updates and adds to.
 class SolverFormulas extends Goal {
   override assert(form: number, dependency?: Dependency) {
     if (this.manager.isFalse(form)) this.isInconsistent = true;
@@ -114,7 +113,7 @@ class SolverFormulas extends Goal {
   }
 }
 
-// simplifier_solver's dep_expr_state reads the formulas in place, without holding one.
+// Z3's dep_expr_state reads the formulas in place, without holding one.
 class FdState extends DependentExprState {
   declare readonly goal: SolverFormulas;
 
@@ -123,7 +122,6 @@ class FdState extends DependentExprState {
   }
 }
 
-// macro_replacer with the definition of a constant.
 class MacroReplacer extends RewriterTpl {
   constructor(
     manager: AstManager,
@@ -144,7 +142,6 @@ class MacroReplacer extends RewriterTpl {
   }
 }
 
-// model_reconstruction_trail::add_vars: the uninterpreted functions of a term.
 const addVars = (manager: AstManager, expr: number, freeVars: Set<number>) => {
   const visited = new Set<number>();
   const todo = [expr];
@@ -175,8 +172,6 @@ const releaseDefinitions = (manager: AstManager, definitions: readonly Definitio
   }
 };
 
-// model_reconstruction_trail with the hide and def entries the fd simplifiers make. A def of -1
-// hides the declaration.
 class ModelTrail {
   readonly entries: Definition[] = [];
 
@@ -194,8 +189,6 @@ class ModelTrail {
     releaseDefinitions(this.manager, this.entries.splice(size));
   }
 
-  // A formula or assumption added since the last flush reads a defined constant through its
-  // definition.
   replay(qhead: number, assumptions: RefVector, fmls: SolverFormulas) {
     const manager = this.manager;
     if (this.entries.length === 0) return;
@@ -209,8 +202,7 @@ class ModelTrail {
       if (entry.def === -1 || !freeVars.has(entry.decl)) continue;
       addVars(manager, entry.def, freeVars);
       const replacer = new MacroReplacer(manager, entry.decl, entry.def);
-      // Deviation from Z3: macro_replacer returns the rewrite of a named formula's last name, which
-      // drops the formula, where this keeps the rewritten formula.
+      // Deviation from Z3: macro_replacer returns the rewrite of a named formula's last name, which drops the formula.
       for (let index = qhead; index < fmls.forms.size; index++) {
         const form = fmls.forms.items[index];
         const replaced = replacer.rewrite(form);
@@ -227,9 +219,6 @@ class ModelTrail {
   }
 }
 
-// bounded_int2bv_simplifier: an integer constant between two bounds becomes an unsigned
-// bit-vector plus the lower bound. Its bounds and constants stay until the scope that found them
-// is popped.
 class BoundedInt2BvSimplifier {
   private readonly bounds: BoundManager[];
   private readonly bvFns: number[] = [];
@@ -367,8 +356,6 @@ class BoundedInt2BvSimplifier {
   }
 }
 
-// enum2bv_simplifier: a constant of an enumeration sort becomes a bit-vector. Its rewriter keeps
-// the constants it made until their scope is popped.
 class Enum2BvSimplifier {
   private readonly rewriter: Enum2BvRewriter;
   private readonly hidden = new Set<number>();
@@ -472,8 +459,6 @@ interface FdScope {
   isInconsistent: boolean;
 }
 
-// mk_fd_solver: simplifier_solver over inc_sat_solver, which simplifies the formulas added since
-// its last check with mk_fd_simplifier and keeps the state of the simplifiers across checks.
 export class FdSolver {
   private readonly solver: IncSatSolver;
   private readonly fmls: SolverFormulas;
@@ -547,7 +532,6 @@ export class FdSolver {
     return result;
   }
 
-  // The model of the SAT solver through the definitions of the simplifiers, made once per check.
   getModel() {
     if (this.model !== undefined) return this.model;
     const model = this.solver.getModel();
@@ -565,8 +549,6 @@ export class FdSolver {
     return this.core.items;
   }
 
-  // A variable the simplifiers define is queried through the constant of its definition, and its
-  // value is decoded from that constant's.
   getConsequences(assumptions: readonly number[], vars: readonly number[]) {
     const manager = this.manager;
     const flushed = this.flush([...assumptions, ...vars]);
@@ -627,19 +609,15 @@ export class FdSolver {
     return { result: found.result, consequences };
   }
 
-  // inc_sat_solver's assertions, for solver2tactic.
   getAssertions() {
     return this.solver.getAssertions();
   }
 
-  // get_model_converter: the definitions of the simplifiers, then the SAT solver's.
   getConverters(): Goal["converters"] {
     const definitions = retainDefinitions(this.manager, this.converter);
     return [...(definitions.length > 0 ? [{ definitions }] : []), ...this.solver.getConverters()];
   }
 
-  // The simplifiers run on the formulas added since the last flush, which then go to the SAT
-  // solver. The assumptions come back through the definitions of the simplifiers.
   private flush(assumptions: readonly number[]) {
     const manager = this.manager;
     const fmls = this.fmls;
@@ -679,7 +657,6 @@ export class FdSolver {
     rewriter.release();
   }
 
-  // The then_simplifier of mk_fd_simplifier inside simplifier_solver's own.
   private reduce() {
     const manager = this.manager;
     const fmls = this.fmls;
@@ -730,7 +707,6 @@ export class FdSolver {
   }
 }
 
-// qffd without parallel.enable: solver2tactic over a non-incremental fd solver.
 export const createFdTactic = (manager: AstManager, params: SatParams) => (goal: Goal) => {
   const solver = new FdSolver(manager, params, false);
   try {

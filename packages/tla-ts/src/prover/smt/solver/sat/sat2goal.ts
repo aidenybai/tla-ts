@@ -92,7 +92,6 @@ export class Sat2GoalConverter {
     if (this.manager.isUninterpretedConst(atom)) this.hide(atom);
   }
 
-  // The definitions with their own references, for a model converter that outlives this one.
   copyEntries() {
     const manager = this.manager;
     for (const entry of this.entries) {
@@ -137,7 +136,6 @@ export const sat2goal = (
     return;
   }
   converter.flushSmc(solver, atoms);
-  // sat2goal::imp's m_lit2expr, which its destructor releases.
   const lit2expr = new RefVector(manager);
   lit2expr.resize(2 * solver.numVars());
   for (const [expr, boolVar] of atoms) {

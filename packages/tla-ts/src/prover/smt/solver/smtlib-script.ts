@@ -363,7 +363,6 @@ interface CheckResult {
   isOptimizing: boolean;
   isFromTactic: boolean;
   model: ProtoModel | undefined;
-  // The fd solver of the check, which makes its model on demand.
   fdSolver: FdSolver | undefined;
   core: number[] | undefined;
   // check_sat_result::reason_unknown, where the port tracks it.
@@ -398,7 +397,6 @@ interface ScriptState {
   // undefined while Z3 has made no such kernel.
   kernel: SmtKernel | undefined;
   satSolver: IncSatSolver | undefined;
-  // mk_special_solver_for_logic's fd solver of QF_FD and SAT, which takes every check.
   fdSolver: FdSolver | undefined;
 }
 
@@ -708,7 +706,6 @@ export const runSmtlibScript = (
       )
         throw error;
       const context = isKernelChecking ? state.kernel?.context : undefined;
-      // check_sat_result::set_reason_unknown keeps the reason the solver has.
       const reasonUnknown = isKernelChecking
         ? state.satSolver?.reasonUnknown
         : state.fdSolver?.reasonUnknown;

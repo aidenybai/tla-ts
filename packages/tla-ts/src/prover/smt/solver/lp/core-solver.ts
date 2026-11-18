@@ -428,7 +428,6 @@ export class CoreSolver {
     }
     const entering = enteringCell.column;
     const matrix = this.matrix;
-    // The pivot charges its cells before it changes the tableau.
     if (
       this.settings.isCanceled(
         matrix.rows[this.heading[leaving]].length * matrix.columns[entering].length,

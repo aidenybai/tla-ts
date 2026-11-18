@@ -234,7 +234,6 @@ export class IncSatSolver {
     return result;
   }
 
-  // Assumptions that are not literals go through the preprocessing as a goal that tracks them.
   private internalizeAssumptions(assumptions: readonly number[]) {
     const manager = this.manager;
     const all = [...assumptions, ...this.names.items];
