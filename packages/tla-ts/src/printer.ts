@@ -343,7 +343,7 @@ const print = (expression: Expression): string[] => {
   }
 };
 
-const printDefinition = (definition: Definition) => {
+export const printDefinition = (definition: Definition) => {
   const head =
     definition.kind === "Function"
       ? concat(definition.name, "[", printBounds(definition.bounds), "]")

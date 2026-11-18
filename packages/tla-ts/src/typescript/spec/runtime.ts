@@ -14,6 +14,9 @@ const DEFINITIONS = [
                    SV("length"), DataDesc(IntV(code.length), FALSE, FALSE, TRUE))
   IN Alloc(s, o)`,
   `OrdinaryCallEvaluateBody(s, f, ctx, args) == CallCode(s, f, ctx, args, O(s, f).slots.body.id)`,
+  // A generator's body, whose slots hold the id of its code, which RunBody runs.
+  `RunGeneratorBody(s, gen) ==
+  LET slots == O(s, gen).slots IN RunBody(s, [slots.ctx EXCEPT !.gen = gen], slots.body)`,
   `UpdateValueThen(isIncrement, isPostfix, r) ==
   IF IsAbrupt(r) THEN r ELSE
   IF Val(r).type # "reference" THEN ThrowError(r.s, "ReferenceError") ELSE
@@ -37,6 +40,14 @@ const DEFINITIONS = [
   // An array literal's element at key, from the result r of evaluating it.
   `ArrayElementResult(array, key, r) ==
   IF IsAbrupt(r) THEN r ELSE CreateDataPropertyOrThrow(r.s, array, key, Val(r))`,
+  // The end of a program once its jobs ran: a throw of the reason of the first promise rejected
+  // that nothing handles, as the host that runs the program reports it.
+  `UnhandledRejection(s) ==
+  LET rejected == {i \\in 1..s.objs.size :
+                     LET o == HeapGet(s.objs, i) IN
+                     o.class = "promise" /\\ o.slots.state = "rejected" /\\ ~o.slots.isHandled}
+  IN IF rejected = {} THEN Ok(s, Undefined)
+     ELSE ThrowValue(s, HeapGet(s.objs, CHOOSE i \\in rejected : \\A j \\in rejected : i <= j).slots.result)`,
   // A statement's result r in a statement list, whose value is last's where r has none.
   `StatementResult(r, last) ==
   IF IsAbrupt(r) THEN Abrupt(r.s, UpdateEmpty(r.c, last))
@@ -170,8 +181,6 @@ export const INTERPRETER = new Set([
   "ScriptEvaluation",
   "PerformEval",
   "CreateDynamicFunction",
-  "ResumeFrame",
-  "ResumeFrames",
   "EvaluateGeneratorBody",
   "EvaluateAsyncFunctionBody",
   "EvaluateAsyncGeneratorBody",
@@ -229,6 +238,13 @@ const HOST_PATCHES = [
          IF Arg(args, 1) # Undefined \\/ ${TAILORED_CASING.has(new Intl.Locale(new Intl.DateTimeFormat().resolvedOptions().locale).language) ? "TRUE" : "FALSE"} THEN Unsupported(s, <<>>)
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
+  },
+  // A frame of a program's code, whose step is "Code" and whose arguments start with the id of the
+  // operator that resumes it, which ResumeCode runs.
+  {
+    name: "ResumeFrame",
+    from: "ResumeFrame(frame, r) ==\n  CASE ",
+    to: 'ResumeFrame(frame, r) ==\n  CASE frame.step = "Code" -> ResumeCode(frame.args, r)\n    [] ',
   },
   // A program's functions hold their source text as the program's code gives it, which
   // SourceUnits makes code units of when a program reads it.

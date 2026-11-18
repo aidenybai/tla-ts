@@ -5,6 +5,7 @@ import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
 import { getTlaString, LOCALE_METHODS } from "./runtime";
 import { specialize } from "./specialize";
+import { suspendDefinitions } from "./suspend";
 
 export interface EscoreSpec {
   name: string;
@@ -135,7 +136,7 @@ export const compileToEscore = (
       `tla-ts can't run the host's ${hostOnly}, which ESCore leaves out`,
     );
   }
-  const isQueuing = program.words.has("Promise") || program.words.has("then");
+  const isQueuing = program.isAsync || program.words.has("Promise") || program.words.has("then");
   const isIncluded = (gate: EscoreRuntime["gates"][number]) =>
     [...gate.triggers].some((word) => program.words.has(word));
   const included = runtime.gates.filter(isIncluded);
@@ -152,35 +153,38 @@ export const compileToEscore = (
   // one token rather than one for each code unit.
   const sourceString = getTlaString(sourceFile.text);
   const definitions = compact(
-    [
-      ...program.definitions.map((definition) =>
-        definition.name === "SourceText" && sourceString !== undefined
-          ? { ...definition, text: `SourceText == ${sourceString}` }
-          : definition,
-      ),
-      {
-        name: "SourceUnits",
-        arity: 1,
-        text:
-          sourceString === undefined ? "SourceUnits(t) == t" : "SourceUnits(t) == StringUnits(t)",
-      },
-      {
-        name: "RunProgram",
-        arity: 1,
-        text: isQueuing
-          ? "RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE RunJobs(p.s)"
-          : "RunProgram(s) == Program(s)",
-      },
-      {
-        name: "CallBuiltin",
-        arity: 6,
-        text: getCallBuiltin(
-          "CallBuiltin",
-          runtime.families.filter((family) => !leftOut.has(family.group)),
-          LOCALE_METHODS,
+    suspendDefinitions(
+      [
+        ...program.definitions.map((definition) =>
+          definition.name === "SourceText" && sourceString !== undefined
+            ? { ...definition, text: `SourceText == ${sourceString}` }
+            : definition,
         ),
-      },
-    ].map((definition) => ({
+        {
+          name: "SourceUnits",
+          arity: 1,
+          text:
+            sourceString === undefined ? "SourceUnits(t) == t" : "SourceUnits(t) == StringUnits(t)",
+        },
+        {
+          name: "RunProgram",
+          arity: 1,
+          text: isQueuing
+            ? "RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE UnhandledRejection(j.s)"
+            : "RunProgram(s) == Program(s)",
+        },
+        {
+          name: "CallBuiltin",
+          arity: 6,
+          text: getCallBuiltin(
+            "CallBuiltin",
+            runtime.families.filter((family) => !leftOut.has(family.group)),
+            LOCALE_METHODS,
+          ),
+        },
+      ],
+      runtime.resumableSteps,
+    ).map((definition) => ({
       name: HOOKS.has(definition.name) ? `Program${definition.name}` : definition.name,
       arity: definition.arity,
       text: foldNames(

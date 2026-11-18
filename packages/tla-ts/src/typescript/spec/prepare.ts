@@ -46,6 +46,9 @@ export interface EscoreRuntime {
   gates: Gate[];
   // The property keys that the runtime's own operators get or call.
   internalKeys: ReadonlySet<string>;
+  // The runtime's steps that take a result as their last parameter and, where it suspends, pass it
+  // on with a frame that ResumeFrame resumes.
+  resumableSteps: ReadonlySet<string>;
   // The host's globals and built-in keys that ESCore's realm lacks, at whose names a compile stops.
   hostOnlyGlobals: string[];
   hostOnlyKeys: string[];
@@ -112,35 +115,32 @@ const files = { readFile: undefined, writeFile: undefined, makeDirectory: undefi
 // parameters evaluate to, among them the realm.
 export const prepareRuntime = (directory: string): EscoreRuntime => {
   const library = createLibrary(directory);
-  const runtimeText = assembleRuntime(
-    library,
-    [
-      ...RUNTIME_DEFINITIONS,
-      ...getHostDefinitions(library),
-      ...getRealmDefinitions(library),
-      // The realm's first objects, which the runtime evaluates once, as it starts, rather than
-      // deep in the realm's properties, where building them would take a deeper stack.
-      {
-        name: "InitialObjects",
-        arity: 0,
-        text: "InitialObjects == HeapOf(IntrinsicObjects(0, 1))",
-      },
-      {
-        name: "InitialState",
-        arity: 0,
-        text: (library.definitions.get("InitialState")?.text ?? "").replace(
-          "HeapOf(IntrinsicObjects(0, 1))",
-          "InitialObjects",
-        ),
-      },
-      {
-        name: "DescribeResult",
-        arity: 1,
-        text: "DescribeResult(r) == DescribeThrown(r.s, r.c.value)",
-      },
-    ],
-    INTERPRETER,
-  );
+  const overrides = [
+    ...RUNTIME_DEFINITIONS,
+    ...getHostDefinitions(library),
+    ...getRealmDefinitions(library),
+    // The realm's first objects, which the runtime evaluates once, as it starts, rather than
+    // deep in the realm's properties, where building them would take a deeper stack.
+    {
+      name: "InitialObjects",
+      arity: 0,
+      text: "InitialObjects == HeapOf(IntrinsicObjects(0, 1))",
+    },
+    {
+      name: "InitialState",
+      arity: 0,
+      text: (library.definitions.get("InitialState")?.text ?? "").replace(
+        "HeapOf(IntrinsicObjects(0, 1))",
+        "InitialObjects",
+      ),
+    },
+    {
+      name: "DescribeResult",
+      arity: 1,
+      text: "DescribeResult(r) == DescribeThrown(r.s, r.c.value)",
+    },
+  ];
+  const runtimeText = assembleRuntime(library, overrides, INTERPRETER);
   const modules = [
     ...[...library.modules].map((entry) => prepare(entry[0], entry[1])),
     prepare("ESRuntime", runtimeText),
@@ -225,6 +225,11 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
     getView,
     families: library.families,
     internalKeys: library.internalKeys,
+    resumableSteps: new Set(
+      [...(library.definitions.get("ResumeFrame")?.text ?? "").matchAll(/frame\.step = "(\w+)"/g)]
+        .map((match) => match[1])
+        .filter((name) => overrides.every((override) => override.name !== name)),
+    ),
     gates: [...library.triggers].map((entry) => ({
       group: entry[0],
       triggers: entry[1],

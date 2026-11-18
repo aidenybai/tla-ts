@@ -17,6 +17,8 @@ interface Scope {
   isStrict: boolean;
   // The code ids of the functions that the scope's code is in, outermost first.
   isClassBody: boolean;
+  // Whether the scope's code is an async generator's, whose return awaits its value.
+  isAsyncGenerator: boolean;
 }
 
 interface NamedCode {
@@ -52,6 +54,8 @@ export interface SpecializedProgram {
   words: Set<string>;
   // The names the program's identifiers resolve, which may be the global object's.
   identifiers: Set<string>;
+  // Whether the program has an async function, whose awaits queue jobs.
+  isAsync: boolean;
 }
 
 const getUnits = (text: string) =>
@@ -461,6 +465,42 @@ const getFunctionKey = (node: ts.Node) => {
     : undefined;
 };
 
+// Whether a function is a generator, async, or both, as ESCore's function kinds name it.
+type Flavor = "normal" | "generator" | "async" | "asyncGenerator";
+
+const getFlavor = (
+  node: ts.Node & { asteriskToken?: ts.AsteriskToken; modifiers?: ts.NodeArray<ts.ModifierLike> },
+): Flavor => {
+  const isGenerator = node.asteriskToken !== undefined;
+  const isAsync =
+    node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true;
+  return isGenerator ? (isAsync ? "asyncGenerator" : "generator") : isAsync ? "async" : "normal";
+};
+
+// The intrinsic that a function of each flavor has as its prototype (FunctionPrototypeFor).
+const FUNCTION_PROTOTYPES = {
+  normal: "FunctionPrototype",
+  generator: "GeneratorFunctionPrototype",
+  async: "AsyncFunctionPrototype",
+  asyncGenerator: "AsyncGeneratorFunctionPrototype",
+};
+
+// The productions of a function declaration or expression of each flavor, as ESCore names them.
+const FUNCTION_PRODUCTIONS = {
+  normal: "Function",
+  generator: "Generator",
+  async: "AsyncFunction",
+  asyncGenerator: "AsyncGenerator",
+};
+
+// The productions of a method of each flavor.
+const METHOD_PRODUCTIONS = {
+  normal: "MethodDefinition",
+  generator: "GeneratorMethod",
+  async: "AsyncMethod",
+  asyncGenerator: "AsyncGeneratorMethod",
+};
+
 // Specializes ESCore to a script. A function reached only by a name that the script never writes
 // elsewhere, and that ESCore's own operators don't use as a key, has a body that stops the check,
 // as a call to it can only come by reflection.
@@ -481,6 +521,9 @@ export const specialize = (
   const words = new Set<string>();
   const identifiers = new Set<string>();
   const codes: { id: number; body: string }[] = [];
+  // The bodies of the generators, which RunBody runs by their number.
+  const bodies: Code[] = [];
+  let isAsync = false;
   const loops: { id: number; body: string }[] = [];
   let count = 0;
   let templateSites = 0;
@@ -494,11 +537,17 @@ export const specialize = (
     `SubSeq(SourceText, ${node.getStart() + 1}, ${node.getEnd()})`;
 
   // A function's code record, which the module evaluates once, as it has no parameters.
-  const defineRecord = (id: number, isStrict: boolean, length: number, sourceText: string) => {
+  const defineRecord = (
+    id: number,
+    isStrict: boolean,
+    length: number,
+    sourceText: string,
+    flavor: Flavor = "normal",
+  ) => {
     definitions.push({
       name: `CodeRecord${id}`,
       arity: 0,
-      text: `CodeRecord${id} == [id |-> ${id}, strict |-> ${getBool(isStrict)}, kind |-> "normal", length |-> ${length}, sourceText |-> ${sourceText}]`,
+      text: `CodeRecord${id} == [id |-> ${id}, strict |-> ${getBool(isStrict)}, kind |-> "${flavor}", length |-> ${length}, sourceText |-> ${sourceText}]`,
     });
     return `CodeRecord${id}`;
   };
@@ -1017,11 +1066,16 @@ export const specialize = (
     if (ts.isBinaryExpression(node)) return binary(node, scope);
     if (ts.isSpreadElement(node))
       throw new TlaTypeScriptError("tla-ts can't compile a spread here", node);
-    if (ts.isYieldExpression(node) || ts.isAwaitExpression(node)) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't compile a generator or an async function to ESCore yet",
-        node,
+    // Yield (§15.5.5) and Await (§15.8.5), whose results suspend the body.
+    if (ts.isYieldExpression(node)) {
+      const operand = node.expression === undefined ? undefined : value(node.expression, scope);
+      return defineCode(
+        "Yield",
+        `${node.asteriskToken === undefined ? "YieldThen" : "YieldStarThen"}(ctx, ${operand === undefined ? "Ok(s, Undefined)" : operand("s", "ctx")})`,
       );
+    }
+    if (ts.isAwaitExpression(node)) {
+      return defineCode("Await", `AwaitThen(${value(node.expression, scope)("s", "ctx")})`);
     }
     if (ts.isTaggedTemplateExpression(node)) return taggedTemplate(node, scope);
     if (ts.isRegularExpressionLiteral(node)) {
@@ -1318,27 +1372,13 @@ export const specialize = (
   const getPrivateName = (name: ts.PrivateIdentifier, state: string, context: string) =>
     `ResolvePrivateIdentifier(${state}, ${context}, ${getUnits(name.text.slice(1))})`;
 
-  const assertPlain = (
-    node: ts.Node & { asteriskToken?: ts.AsteriskToken; modifiers?: ts.NodeArray<ts.ModifierLike> },
-  ) => {
-    if (
-      node.asteriskToken !== undefined ||
-      node.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
-    ) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't compile a generator or an async function to ESCore yet",
-        node,
-      );
-    }
-  };
-
   // ClassElementEvaluation (§15.7.13) of a method, getter, or setter: its element record, with
   // the closure's home object home.
   const classElement = (
     node: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
     scope: Scope,
   ) => {
-    assertPlain(node);
+    const flavor = getFlavor(node);
     const key = propertyKey(node.name, scope);
     const kind = ts.isGetAccessorDeclaration(node)
       ? "get"
@@ -1356,7 +1396,7 @@ export const specialize = (
     const name = define(
       "Element",
       ["s", "ctx", "home"],
-      `LET k == ${key("s", "ctx")} IN IF IsAbrupt(k) THEN k ELSE LET f == CodeFunctionCreate(k.s, Intrinsic(k.s, "FunctionPrototype"), ${code}, FALSE, ctx.lex, ctx.priv) IN Ok(SetFunctionName(MakeMethod(f.s, f.v, home), f.v, Val(k), ${prefix}), ${record})`,
+      `LET k == ${key("s", "ctx")} IN IF IsAbrupt(k) THEN k ELSE LET f == CodeFunctionCreate(k.s, Intrinsic(k.s, "${FUNCTION_PROTOTYPES[flavor]}"), ${code}, FALSE, ctx.lex, ctx.priv) IN Ok(${flavor === "generator" || flavor === "asyncGenerator" ? `GiveFunctionPrototype(SetFunctionName(MakeMethod(f.s, f.v, home), f.v, Val(k), ${prefix}), "${METHOD_PRODUCTIONS[flavor]}", f.v)` : `SetFunctionName(MakeMethod(f.s, f.v, home), f.v, Val(k), ${prefix})`}, ${record})`,
     );
     return (state: string, context: string, home: string) =>
       `${name}(${state}, ${context}, ${home})`;
@@ -1388,7 +1428,7 @@ export const specialize = (
     codes.push({ id, body: "" });
     const evaluation = named(
       initializer,
-      { isStrict: true, isClassBody: false },
+      { isStrict: true, isClassBody: false, isAsyncGenerator: false },
       "O(s, f).slots.initializerName",
     );
     codes[id - 1] = {
@@ -1404,7 +1444,9 @@ export const specialize = (
     node: ts.FunctionExpression | ts.ArrowFunction,
     scope: Scope,
   ): NamedCode => {
-    assertPlain(node);
+    const flavor = getFlavor(node);
+    const prototype = FUNCTION_PROTOTYPES[flavor];
+    const production = `${FUNCTION_PRODUCTIONS[flavor]}Expression`;
     const code = functionCode(
       {
         node,
@@ -1418,32 +1460,32 @@ export const specialize = (
       ? define(
           "Arrow",
           ["s", "ctx", "name"],
-          `LET f == CodeFunctionCreate(s, Intrinsic(s, "FunctionPrototype"), ${code}, TRUE, ctx.lex, ctx.priv) IN Ok(SetFunctionName(f.s, f.v, name, <<>>), f.v)`,
+          `LET f == CodeFunctionCreate(s, Intrinsic(s, "${prototype}"), ${code}, TRUE, ctx.lex, ctx.priv) IN Ok(SetFunctionName(f.s, f.v, name, <<>>), f.v)`,
         )
       : node.name !== undefined
         ? define(
             "Closure",
             ["s", "ctx", "name"],
-            `LET env == NewDeclarativeEnvironment(s, ctx.lex) s1 == CreateImmutableBinding(env.s, env.e, ${getUnits(node.name.text)}, FALSE).s f == CodeFunctionCreate(s1, Intrinsic(s1, "FunctionPrototype"), ${code}, FALSE, env.e, ctx.priv) s2 == GiveFunctionPrototype(SetFunctionName(f.s, f.v, ${getStr(node.name.text)}, <<>>), "FunctionExpression", f.v) IN Ok(InitializeBinding(s2, env.e, ${getUnits(node.name.text)}, f.v).s, f.v)`,
+            `LET env == NewDeclarativeEnvironment(s, ctx.lex) s1 == CreateImmutableBinding(env.s, env.e, ${getUnits(node.name.text)}, FALSE).s f == CodeFunctionCreate(s1, Intrinsic(s1, "${prototype}"), ${code}, FALSE, env.e, ctx.priv) s2 == GiveFunctionPrototype(SetFunctionName(f.s, f.v, ${getStr(node.name.text)}, <<>>), "${production}", f.v) IN Ok(InitializeBinding(s2, env.e, ${getUnits(node.name.text)}, f.v).s, f.v)`,
           )
         : define(
             "Closure",
             ["s", "ctx", "name"],
-            `LET f == CodeFunctionCreate(s, Intrinsic(s, "FunctionPrototype"), ${code}, FALSE, ctx.lex, ctx.priv) IN Ok(GiveFunctionPrototype(SetFunctionName(f.s, f.v, name, <<>>), "FunctionExpression", f.v), f.v)`,
+            `LET f == CodeFunctionCreate(s, Intrinsic(s, "${prototype}"), ${code}, FALSE, ctx.lex, ctx.priv) IN Ok(GiveFunctionPrototype(SetFunctionName(f.s, f.v, name, <<>>), "${production}", f.v), f.v)`,
           );
     return (state, context, functionName) => `${name}(${state}, ${context}, ${functionName})`;
   };
 
   // InstantiateFunctionObject (§15.2.4): a result [s, c] with the function object.
   const instantiateFunction = (node: ts.FunctionDeclaration, scope: Scope): Code => {
-    assertPlain(node);
+    const flavor = getFlavor(node);
     const code = functionCode(
       { node, parameters: node.parameters, body: node.body, kind: "normal" },
       scope,
     );
     return defineCode(
       "Instantiate",
-      `LET f == CodeFunctionCreate(s, Intrinsic(s, "FunctionPrototype"), ${code}, FALSE, ctx.lex, ctx.priv) IN Ok(GiveFunctionPrototype(SetFunctionName(f.s, f.v, ${getStr(node.name?.text ?? "default")}, <<>>), "FunctionDeclaration", f.v), f.v)`,
+      `LET f == CodeFunctionCreate(s, Intrinsic(s, "${FUNCTION_PROTOTYPES[flavor]}"), ${code}, FALSE, ctx.lex, ctx.priv) IN Ok(GiveFunctionPrototype(SetFunctionName(f.s, f.v, ${getStr(node.name?.text ?? "default")}, <<>>), "${FUNCTION_PRODUCTIONS[flavor]}Declaration", f.v), f.v)`,
     );
   };
 
@@ -1452,10 +1494,18 @@ export const specialize = (
   // body's evaluation specialize to.
   const functionCode = (fn: FunctionLike, outer: Scope): string => {
     const node = fn.node;
+    const flavor = getFlavor(node);
+    if (flavor === "async" || flavor === "asyncGenerator") isAsync = true;
+    // The machinery of generators and async functions reaches the promise group's operators.
+    if (flavor !== "normal") words.add("Promise");
     const body = fn.body;
     const statements = body !== undefined && ts.isBlock(body) ? body.statements : [];
     const isStrict = outer.isStrict || outer.isClassBody || hasUseStrict(statements);
-    const scope: Scope = { isStrict, isClassBody: false };
+    const scope: Scope = {
+      isStrict,
+      isClassBody: false,
+      isAsyncGenerator: flavor === "asyncGenerator",
+    };
     const parameters = fn.parameters;
     const parameterNames = parameters.flatMap((parameter) => getBoundNames(parameter.name));
     const hasDuplicates = new Set(parameterNames).size < parameterNames.length;
@@ -1617,32 +1667,45 @@ export const specialize = (
         );
         functionState = `fs${index + 1}`;
       });
-      // The body's evaluation.
-      const evaluation =
-        body === undefined
-          ? `Ok(${functionState}, Empty)`
-          : ts.isBlock(body)
-            ? statementList(body.statements, scope)(functionState, "bodyCtx")
-            : `LET e == ${value(body, scope)(functionState, "bodyCtx")} IN IF IsAbrupt(e) THEN e ELSE Abrupt(e.s, Completion("return", Val(e), Empty))`;
-      steps.push(evaluation);
+      steps.push(getEvaluation(functionState, "bodyCtx"));
       return steps;
     };
     const key = getFunctionKey(node);
     const isUnnamed =
       key !== undefined && (occurrences.get(key) ?? 0) <= 1 && !internalKeys.has(key);
+    // A generator's code makes the generator, whose body RunBody runs from the context that
+    // instantiation gives, and an async function's starts the driver of its body.
+    const isGenerator = flavor === "generator" || flavor === "asyncGenerator";
+    if (isGenerator && !isUnnamed) {
+      bodies.push(statementList(statements, scope));
+    }
+    const bodyNumber = bodies.length;
+    const getEvaluation = (state: string, context: string) =>
+      isGenerator
+        ? `LET g == OrdinaryCreateFromConstructor(${state}, f, "${flavor === "generator" ? "GeneratorPrototype" : "AsyncGeneratorPrototype"}", "${flavor}", GeneratorSlots(${context}, [code |-> ${bodyNumber}])) IN IF IsAbrupt(g) THEN g ELSE Abrupt(g.s, Completion("return", Val(g), Empty))`
+        : body === undefined
+          ? `Ok(${state}, Empty)`
+          : ts.isBlock(body)
+            ? statementList(body.statements, scope)(state, context)
+            : `LET e == ${value(body, scope)(state, context)} IN IF IsAbrupt(e) THEN e ELSE Abrupt(e.s, Completion("return", Val(e), Empty))`;
+    const run = isUnnamed
+      ? `Assert(FALSE, "tla-ts can't call a function that its script names nowhere else")`
+      : isPlain
+        ? `LET i == PlainInstantiation(s, ctx, ${getSequence(parameterNames.map(getUnits))}, args, ${getBool(isStrict)}) IN\n  ${getEvaluation("i.s", "i.ctx")}`
+        : getSteps().join("\n  ");
+    if (flavor === "async" && !isUnnamed) {
+      definitions.push({
+        name: `AsyncBody${id}`,
+        arity: 4,
+        text: `AsyncBody${id}(s, f, ctx, args) ==\n  ${run}`,
+      });
+    }
     codes[id - 1] = {
       id,
-      body: isUnnamed
-        ? `Code${id}(s, f, ctx, args) ==\n  Assert(FALSE, "tla-ts can't call a function that its script names nowhere else")`
-        : isPlain
-          ? `Code${id}(s, f, ctx, args) ==\n  LET i == PlainInstantiation(s, ctx, ${getSequence(parameterNames.map(getUnits))}, args, ${getBool(isStrict)}) IN\n  ${
-              body === undefined
-                ? "Ok(i.s, Empty)"
-                : ts.isBlock(body)
-                  ? statementList(body.statements, scope)("i.s", "i.ctx")
-                  : `LET e == ${value(body, scope)("i.s", "i.ctx")} IN IF IsAbrupt(e) THEN e ELSE Abrupt(e.s, Completion("return", Val(e), Empty))`
-            }`
-          : `Code${id}(s, f, ctx, args) ==\n  ${getSteps().join("\n  ")}`,
+      body:
+        flavor === "async" && !isUnnamed
+          ? `Code${id}(s, f, ctx, args) ==\n  LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise")) IN\n  LET started == AsyncFunctionStep(Val(cap), AsyncBody${id}(cap.s, f, ctx, args)) IN\n  Abrupt(started.s, Completion("return", Val(cap).promise, Empty))`
+          : `Code${id}(s, f, ctx, args) ==\n  ${run}`,
     };
     const length = parameters.findIndex(
       (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
@@ -1652,6 +1715,7 @@ export const specialize = (
       isStrict,
       length === -1 ? parameters.length : length,
       fn.kind === "staticBlock" ? "<<>>" : getSourceText(node),
+      flavor,
     );
   };
 
@@ -1662,7 +1726,7 @@ export const specialize = (
     node: ts.ClassLikeDeclaration,
     binding: string | undefined,
   ): NamedCode => {
-    const scope: Scope = { isStrict: true, isClassBody: true };
+    const scope: Scope = { isStrict: true, isClassBody: true, isAsyncGenerator: false };
     const heritage = node.heritageClauses?.find(
       (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
     )?.types[0]?.expression;
@@ -1807,7 +1871,10 @@ export const specialize = (
       if (node.expression === undefined)
         return (state) => `Abrupt(${state}, Completion("return", Undefined, Empty))`;
       const result = value(node.expression, scope);
-      return (state, context) => `ReturnValueThen(${result(state, context)})`;
+      return (state, context) =>
+        scope.isAsyncGenerator
+          ? `ReturnThen(${context}, ${result(state, context)})`
+          : `ReturnValueThen(${result(state, context)})`;
     }
     if (ts.isThrowStatement(node)) {
       const thrown = value(node.expression, scope);
@@ -2149,7 +2216,7 @@ export const specialize = (
   const script = () => {
     const statements = sourceFile.statements;
     const isStrict = hasUseStrict(statements);
-    const scope: Scope = { isStrict, isClassBody: false };
+    const scope: Scope = { isStrict, isClassBody: false, isAsyncGenerator: false };
     for (const current of statements) {
       if (
         ts.isImportDeclaration(current) ||
@@ -2217,6 +2284,16 @@ export const specialize = (
         : `  ${getDispatch("id", 1, codes.length, (code) => `Code${code}(s, f, ctx, args)`)}`,
     ].join("\n"),
   });
+  definitions.push({
+    name: "RunBody",
+    arity: 3,
+    text: [
+      "RunBody(s, ctx, body) ==",
+      bodies.length === 0
+        ? `  Assert(FALSE, "tla-ts can't run a generator the program doesn't define")`
+        : `  ${getDispatch("body.code", 1, bodies.length, (number) => bodies[number - 1]("s", "ctx"))}`,
+    ].join("\n"),
+  });
   definitions.push(
     ...codes.map((code) => ({ name: `Code${code.id}`, arity: 4, text: code.body })),
     {
@@ -2243,5 +2320,6 @@ export const specialize = (
     ],
     words,
     identifiers,
+    isAsync,
   };
 };

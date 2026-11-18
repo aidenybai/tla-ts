@@ -326,6 +326,183 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("resumes a generator where it yielded", () => {
+    const getSource = (expected: string) => `
+      const log: unknown[] = [];
+      function* inner() {
+        const received = yield "i1";
+        log.push("inner got " + received);
+        return "inner done";
+      }
+      function* outer() {
+        try {
+          log.push(yield* inner());
+          log.push(1 + (yield "o1") * 2);
+          while (true) {
+            const value = yield "loop";
+            if (value === undefined) break;
+            log.push(value);
+          }
+        } catch (error) {
+          log.push("caught " + error);
+          yield "after catch";
+        } finally {
+          log.push("finally");
+        }
+      }
+      const generator = outer();
+      log.push(generator.next().value);
+      log.push(generator.next("a").value);
+      log.push(generator.next(5).value);
+      log.push(generator.next("v1").value);
+      log.push(generator.throw("boom").value);
+      log.push(generator.next().done);
+      const methods = { *pair() { yield 1; yield 2; } };
+      for (const value of methods.pair()) log.push(value);
+      class Single { *[Symbol.iterator]() { yield "c"; } }
+      log.push([...new Single()].join());
+      function* countdown(count: number): Generator<number, number> {
+        while (count > 0) yield yield* countdown(--count);
+        return 34;
+      }
+      log.push([...countdown(2)].join());
+      const result = log.join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "i1|inner got a|inner done|o1|11|loop|v1|loop|caught boom|after catch|finally|true|1|2|c|34,34,34",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "i1|inner got a|inner done|o1|11|loop|v1|loop|caught boom|after catch|finally|true|1|2|c|34,34",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("resumes an async function when the promise it awaits settles", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const settle = (value: number) => new Promise<number>((resolve) => resolve(value));
+      const add = async (left: number, right: number) => (await settle(left)) + (await settle(right));
+      class Rejecting {
+        async run(value: number) {
+          try {
+            await Promise.reject(new Error("no " + value));
+          } catch (error) {
+            return (error as Error).message;
+          }
+          return "unreached";
+        }
+      }
+      async function main() {
+        log.push(String(await add(1, 2)));
+        log.push(await new Rejecting().run(3));
+        for (const promise of [settle(4), settle(5)]) log.push(String(await promise));
+        try {
+          await (async () => {
+            throw new TypeError("t");
+          })();
+        } catch (error) {
+          log.push((error as Error).name);
+        }
+        return log.join("|");
+      }
+      log.push("sync");
+      main().then((result) => {
+        if (result !== "${expected}") throw new Error(result);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("sync|3|no 3|4|5|TypeError"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("3|no 3|4|5|TypeError|sync"))).message).toContain(THREW);
+    });
+  });
+
+  describe("queues an async generator's results as promises", () => {
+    const getSource = (expected: string) => `
+      const log: unknown[] = [];
+      async function* numbers() {
+        const received = yield 1;
+        log.push("got " + received);
+        yield await Promise.resolve(2);
+        return 3;
+      }
+      const iterator = numbers();
+      iterator
+        .next()
+        .then((first) => {
+          log.push(first.value);
+          return iterator.next("a");
+        })
+        .then((second) => {
+          log.push(second.value);
+          return iterator.next();
+        })
+        .then((last) => {
+          log.push(last.value, last.done);
+          if (log.join() !== "${expected}") throw new Error(log.join());
+        });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("1,got a,2,3,true"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("1,got a,2,3,false"))).message).toContain(THREW);
+    });
+  });
+
+  describe("awaits the value that an async generator returns", () => {
+    const getSource = (expected: string) => `
+      const actual: string[] = [];
+      async function* implicit() {}
+      async function* explicit() {
+        return undefined;
+      }
+      Promise.resolve(0)
+        .then(() => actual.push("tick 1"))
+        .then(() => actual.push("tick 2"))
+        .then(() => {
+          if (actual.join() !== "${expected}") throw new Error(actual.join());
+        });
+      implicit().next().then(() => actual.push("implicit"));
+      explicit().next().then(() => actual.push("explicit"));
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("tick 1,implicit,tick 2,explicit"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("tick 1,implicit,explicit,tick 2"))).message).toContain(
+        THREW,
+      );
+    });
+  });
+
   describe("runs the built-ins of a global that a table of names links", () => {
     const getSource = (expected: string) => `
       const result = [...new Float32Array([3, 1.5])].join();
