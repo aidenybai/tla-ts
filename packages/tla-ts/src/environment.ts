@@ -984,9 +984,12 @@ export const createEnvironment = (
     // SANY's checks found nothing in a module they accepted to instantiate or resolve, nor in a view
     // of it.
     const isAccepted = acceptedModules.has(unlinked) && parsed === unlinked;
-    // A plain module, whose names and levels SANY's checks find in one pass, links as it is.
+    // A plain module, whose names and levels SANY's checks find in one pass, links as it is, where
+    // what it extends conflicts nowhere, which only the full checks report.
     const plain =
-      isAccepted || runtime.version !== "master"
+      isAccepted ||
+      runtime.version !== "master" ||
+      reports.some((report) => report.errors.length > 0 || report.warnings.length > 0)
         ? undefined
         : checkPlainModule(parsed, {
             imported: visible,
