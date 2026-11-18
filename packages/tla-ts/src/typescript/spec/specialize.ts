@@ -1216,10 +1216,9 @@ export const specialize = (
           ? `Str(NumToString(NumFromInt(${index})))`
           : getStr(String(staticIndex));
       steps.push(
-        `LET ${name} == ${value(element, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-        `LET ${name}c == CreateDataPropertyOrThrow(${name}.s, Val(a), ${key}, Val(${name})) IN IF IsAbrupt(${name}c) THEN ${name}c ELSE`,
+        `LET ${name} == ArrayElementResult(Val(a), ${key}, ${value(element, scope)(state, "ctx")}) IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
       );
-      state = `${name}c.s`;
+      state = `${name}.s`;
       index = staticIndex === undefined ? `${index} + 1` : String(staticIndex + 1);
       staticIndex = staticIndex === undefined ? undefined : staticIndex + 1;
     });

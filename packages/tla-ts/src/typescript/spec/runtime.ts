@@ -34,6 +34,9 @@ const DEFINITIONS = [
   IF IsAbrupt(r) THEN r ELSE
   LET f == GetValue(r.s, Val(r)) IN
   IF IsAbrupt(f) THEN f ELSE Ok(f.s, [f |-> Val(f), this |-> CallThisValue(f.s, Val(r))])`,
+  // An array literal's element at key, from the result r of evaluating it.
+  `ArrayElementResult(array, key, r) ==
+  IF IsAbrupt(r) THEN r ELSE CreateDataPropertyOrThrow(r.s, array, key, Val(r))`,
   // A statement's result r in a statement list, whose value is last's where r has none.
   `StatementResult(r, last) ==
   IF IsAbrupt(r) THEN Abrupt(r.s, UpdateEmpty(r.c, last))
