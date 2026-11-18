@@ -53045,4 +53045,83 @@ describe("BigInts", () => {
       ).toContain("acd|false|3|");
     });
   });
+
+  describe("reads every key's value through getters in one loop", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      const source = {
+        get a() {
+          box.log += "a";
+          delete (source as { b?: number }).b;
+          return 1;
+        },
+        b: 2,
+        c: 3,
+        get d() {
+          box.log += "d";
+          return 4;
+        },
+        e: 5,
+        f: 6,
+        get g() {
+          box.log += "g";
+          return 7;
+        },
+      };
+      const values = Object.values(source);
+      const entries = Object.entries(source);
+      const target: Record<string, number> = {};
+      Object.assign(target, source);
+      const result = [
+        values.join("-"),
+        entries.length,
+        entries[5][0],
+        JSON.stringify(target),
+        box.log,
+      ].join("|");
+      if (result !== '${expected}') throw new Error(result);
+    `;
+    const read = '1-3-4-5-6-7|6|g|{"a":1,"c":3,"d":4,"e":5,"f":6,"g":7}|adgadgadg';
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(read))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource(read.replace("1-3-4", "1-2-3-4")))).failure?.message,
+      ).toContain("1-3-4-5-6-7|");
+    });
+  });
+
+  describe("reads every listed key's descriptor in one loop", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      const descriptors: PropertyDescriptorMap = {};
+      for (const key of ["p", "q", "r", "s", "t", "u"]) {
+        descriptors[key] = { value: key + "!", enumerable: key !== "q", writable: true };
+      }
+      Object.defineProperty(descriptors, "v", {
+        get() {
+          box.log += "v";
+          return { value: "late", enumerable: true };
+        },
+        enumerable: true,
+      });
+      const made: Record<string, string> = Object.defineProperties({}, descriptors);
+      const created: Record<string, string> = Object.create(null, descriptors);
+      const result = [Object.keys(made).join(""), made.u, made.v, created.p, box.log].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("prstuv|u!|late|p!|vv"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("pqrstuv|u!|late|p!|vv"))).failure?.message).toContain(
+        "prstuv|u!|late|p!|vv",
+      );
+    });
+  });
 });
