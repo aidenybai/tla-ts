@@ -1346,6 +1346,52 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     ]);
   });
 
+  it("prints what the ALIAS prints right before each state of a simulated behavior, as TLC's Simulator evaluates it", () => {
+    const result = runCli("tool-output", "AliasSteps", [
+      "-tool",
+      "-workers",
+      "1",
+      "-fp",
+      "0",
+      "-simulate",
+      "num=1",
+      "-depth",
+      "6",
+      "-seed",
+      "4",
+    ]);
+    expect(result.status).toBe(12);
+    const [getStep, getAlias] = ["step", "alias"].map(
+      (name) => (count: number) => `<<"${name}", ${count}>>`,
+    );
+    expect(getToolSequence(result.stdout)).toEqual([
+      "2262",
+      "2188",
+      "2220",
+      "2219",
+      "2185",
+      "2269",
+      "2190",
+      getStep(0),
+      getStep(1),
+      "2110",
+      "2121",
+      getAlias(0),
+      "2217",
+      getAlias(1),
+      "2217",
+      getAlias(2),
+      "2217",
+      "2209",
+      "2210",
+      getAlias(0),
+      getAlias(1),
+      getAlias(2),
+      "2209",
+      "2186",
+    ]);
+  });
+
   it("prints what the ALIAS prints as TLC's LiveWorker evaluates it on the loop of a counterexample", () => {
     const result = runTool("AliasLoop");
     expect(result.status).toBe(13);

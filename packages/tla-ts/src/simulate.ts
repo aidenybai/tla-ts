@@ -17,6 +17,7 @@ import { getHashMapOrder } from "./java-hash";
 import { createLivenessChecks } from "./liveness-checker";
 import {
   addActionCoverage,
+  createOutputCapture,
   getIncompleteSuccessorMessage,
   prepareSearch,
   reportAssumptionViolation,
@@ -205,11 +206,13 @@ const createScheduler = (
 
 export const simulate = (options: SimulationOptions): number => {
   const output = options.onSimulation;
-  const prepared = prepareSearch(options);
+  const capture = createOutputCapture(options.onPrint ?? console.log);
+  const prepared = prepareSearch({ ...options, onPrint: capture.print });
   const config = prepared.config;
   const specification = prepared.specification;
   const environment = prepared.environment;
   const runtime = environment.runtime;
+  capture.captureWarnings(runtime);
   const search = prepared.search;
   const seed = options.seed ?? 0n;
   const traceDepth = options.traceDepth === -1 ? INFINITE_DEPTH : options.traceDepth;
@@ -776,7 +779,13 @@ export const simulate = (options: SimulationOptions): number => {
         : { positions: trace.map((_node, index) => index), failure: undefined };
     output({
       kind: "behavior",
-      trace: toTraceSteps(trace, shown.positions),
+      // TLC's Simulator evaluates the alias of each state right before it prints the state.
+      trace: shown.positions.map((position) => {
+        const captured = capture.captureOutput(() => toTraceSteps(trace, [position])[0]);
+        return captured.lines.length > 0
+          ? { ...captured.result, aliasOutput: captured.lines }
+          : captured.result;
+      }),
       levels: shown.positions.map((position) => trace[position].level),
       isLastStateOnly,
     });

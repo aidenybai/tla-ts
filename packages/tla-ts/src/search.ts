@@ -12,6 +12,7 @@ import type {
   InitialStatesProgress,
   InitialStateViolation,
   ModuleOperator,
+  OutputLine,
   Postcondition,
   Violation,
 } from "./check";
@@ -936,6 +937,35 @@ export const createCheckEnvironment = (
     runtimeInvariants: options.runtimeInvariants,
   });
   return { order, specification };
+};
+
+/** Holds back what the spec prints and warns while it evaluates something whose output TLC prints elsewhere. */
+export const createOutputCapture = (onPrint: (text: string) => void) => {
+  let capturedLines: OutputLine[] | undefined;
+  return {
+    print: (text: string) => {
+      if (capturedLines) capturedLines.push(text);
+      else onPrint(text);
+    },
+    captureWarnings: (runtime: CheckerRuntime) => {
+      const warn = runtime.warn;
+      runtime.warn = (code, text) => {
+        if (capturedLines) capturedLines.push({ kind: "warning", code, text });
+        else warn(code, text);
+      };
+    },
+    captureOutput: <Result>(evaluate: () => Result) => {
+      const outer = capturedLines;
+      const lines: OutputLine[] = [];
+      capturedLines = lines;
+      try {
+        return { result: evaluate(), lines };
+      } finally {
+        capturedLines = outer;
+      }
+    },
+    getCapturedLines: () => capturedLines,
+  };
 };
 
 export const prepareSearch = (options: CheckOptions) => {

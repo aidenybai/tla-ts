@@ -61,6 +61,7 @@ import {
   addActionCoverage,
   createCheckEnvironment,
   createMissingOperatorError,
+  createOutputCapture,
   createSearch,
   getIncompleteSuccessorMessage,
   findAssumptionViolation,
@@ -381,30 +382,12 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
       : options.config;
-  const onPrint = options.onPrint ?? console.log;
-  let capturedLines: OutputLine[] | undefined;
-  const print = (text: string) => {
-    if (capturedLines) capturedLines.push(text);
-    else onPrint(text);
-  };
-  const captureOutput = <Result>(rebuild: () => Result) => {
-    const outer = capturedLines;
-    const lines: OutputLine[] = [];
-    capturedLines = lines;
-    try {
-      return { result: rebuild(), lines };
-    } finally {
-      capturedLines = outer;
-    }
-  };
-  const created = createCheckEnvironment(config, options, print);
+  const output = createOutputCapture(options.onPrint ?? console.log);
+  const captureOutput = output.captureOutput;
+  const created = createCheckEnvironment(config, options, output.print);
   const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
-  const reportWarning = specification.environment.runtime.warn;
-  specification.environment.runtime.warn = (code, text) => {
-    if (capturedLines) capturedLines.push({ kind: "warning", code, text });
-    else reportWarning(code, text);
-  };
+  output.captureWarnings(specification.environment.runtime);
   const coverage =
     options.coverage === undefined
       ? undefined
@@ -653,7 +636,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const addReplayed = createReplayedStates();
     return getReplayFailure(environment, (tracing) => {
       replayInitialStates(coverage ? coverageInits : getDescription().inits, tracing, (state) => {
-        reportInitialStatesProgress(replayedCount, (progress) => capturedLines?.push(progress));
+        reportInitialStatesProgress(replayedCount, (progress) =>
+          output.getCapturedLines()?.push(progress),
+        );
         replayedCount++;
         runtime.generatedStates = replayedCount;
         if (deferred.length > 0) return;
@@ -665,7 +650,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           };
           search.checkReplayedInitialState(state, tracing, addFingerprint, (violation) => {
             const traced = traces.toTrace([{ action: undefined, state }], []).trace[0];
-            capturedLines?.push(...(traced.aliasOutput ?? []), {
+            output.getCapturedLines()?.push(...(traced.aliasOutput ?? []), {
               kind: "initial-state-violation",
               ...violation,
               state: traced.state,
