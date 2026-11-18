@@ -56274,4 +56274,36 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("spreads a rest parameter whose type is a type parameter of an array's constraint", () => {
+    const getSource = (expected: string) => `
+      const liftThrowable =
+        <A extends ReadonlyArray<unknown>, B>(f: (...a: A) => B): ((...a: A) => B | undefined) =>
+        (...a) => {
+          try {
+            return f(...a);
+          } catch {
+            return undefined;
+          }
+        };
+      const divide = (left: number, right: number) => {
+        if (right === 0) throw new RangeError("zero");
+        return left / right;
+      };
+      const safe = liftThrowable(divide);
+      const box = { seen: "" };
+      const first = safe(6, 3);
+      const second = safe(1, 0);
+      box.seen = [first, second].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,"))).failure).toBeUndefined();
+    });
+
+    it("rejects a result for the throw", async () => {
+      expect((await checkModel(getSource("2,0"))).failure?.message).toContain("seen 2,");
+    });
+  });
 });

@@ -6967,7 +6967,14 @@ const isGenericFit = (
     types.every((type) =>
       type
         .getCallSignatures()
-        .some((signature) => signature.parameters.length >= getNeededCount(candidate)),
+        .some(
+          (signature) =>
+            signature.parameters.length >= getNeededCount(candidate) ||
+            (signature.declaration?.parameters.some(
+              (parameter) => ts.isParameter(parameter) && parameter.dotDotDotToken !== undefined,
+            ) ??
+              false),
+        ),
     )
   );
 };
