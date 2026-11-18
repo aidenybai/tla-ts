@@ -3890,6 +3890,23 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("selects a label itself, not its unresolved body, like SANY", async () => {
+    await expect(
+      checkNames("CONSTANT c\nB == lab :: -c\nD == {B!lab, 1}\nE == D!1\nG == D!1!1 \\/ E!1"),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 13 to line 3, col 13 of module M",
+          message: "Could not find declaration or definition of symbol '-.'.",
+        },
+        {
+          location: "line 3, col 13 to line 3, col 14 of module M",
+          message: "Couldn't resolve prefix operator symbol `-.'.",
+        },
+      ]),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),

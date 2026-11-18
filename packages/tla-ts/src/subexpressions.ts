@@ -358,11 +358,12 @@ const selectSubexpression = (
   };
 
   const followLabels = () => {
+    let owner = current;
     while (selectorIndex < selectors.length && !isFailed) {
       const selector = selectors[selectorIndex];
       if (selector.kind !== "Name") return;
       const range = reference.selectorRanges?.[selectorIndex];
-      const found = current && findLabel(current, selector.name, [], []);
+      const found = owner && findLabel(owner, selector.name, [], []);
       const missing = `Cannot find label \`${selector.name}'.`;
       if (!found) return report(range, missing);
       found.applications.forEach((application) => checkNull(application, missing, true));
@@ -377,7 +378,9 @@ const selectSubexpression = (
       selection.params.push(...params.map((name) => ({ name, arity: 0 })));
       selection.args.push(...selector.args);
       applications.push(getExpressionArguments(selector.name, range, selector.args));
-      current = found.label.body;
+      const next = selectors[selectorIndex + 1];
+      owner = found.label.body;
+      current = next === undefined || next.kind === "Name" ? found.label : found.label.body;
       selectorIndex++;
     }
   };
