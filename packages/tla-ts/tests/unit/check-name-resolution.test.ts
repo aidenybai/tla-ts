@@ -2594,6 +2594,124 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("reports DEF clause entries of bracketed, quantified and infix shapes like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nA == 1\nB == 2\nTHEOREM TRUE BY DEF CASE A -> 1 [] OTHER -> 2, [a |-> 1], [a : {}], A\nTHEOREM TRUE BY DEF [v \\in {} |-> 1], \\A v, w \\in {} : TRUE, A\nTHEOREM TRUE BY DEF LET Q == 1 IN Q, A \\X B, A /\\ B, {A \\/ B}, A\nTHEOREM TRUE BY DEF [A EXCEPT ![1] = 2], [A -> B], {A : v \\in {}}, WF_A(B), A\nTHEOREM TRUE BY DEF /\\ A\n                    /\\ B\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 4, col 26 to line 4, col 31", "Unexpected token found."],
+          ["line 4, col 26 to line 4, col 31", "Need name or step number here, not `N_CaseArm'."],
+          [
+            "line 4, col 21 to line 4, col 45",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 4, col 49 to line 4, col 55", "Unexpected token found."],
+          ["line 4, col 49 to line 4, col 55", "Need name or step number here, not `N_FieldVal'."],
+          [
+            "line 4, col 48 to line 4, col 56",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 4, col 60 to line 4, col 65", "Unexpected token found."],
+          ["line 4, col 60 to line 4, col 65", "Need name or step number here, not `N_FieldSet'."],
+          [
+            "line 4, col 59 to line 4, col 66",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 22 to line 5, col 29", "Unexpected token found."],
+          [
+            "line 5, col 22 to line 5, col 29",
+            "Need name or step number here, not `N_QuantBound'.",
+          ],
+          [
+            "line 5, col 21 to line 5, col 36",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 42 to line 5, col 52", "Unexpected token found."],
+          [
+            "line 5, col 42 to line 5, col 52",
+            "Need name or step number here, not `N_QuantBound'.",
+          ],
+          [
+            "line 5, col 39 to line 5, col 59",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 25 to line 6, col 30", "Unexpected token found."],
+          [
+            "line 6, col 25 to line 6, col 30",
+            "Need name or step number here, not `N_LetDefinitions'.",
+          ],
+          [
+            "line 6, col 21 to line 6, col 35",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 38 to line 6, col 43", "Was expecting a GeneralId."],
+          ["line 6, col 40 to line 6, col 41", "Unexpected token found."],
+          [
+            "line 6, col 40 to line 6, col 41",
+            "Need name or step number here, not `N_GenInfixOp'.",
+          ],
+          [
+            "line 6, col 38 to line 6, col 43",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 46 to line 6, col 51", "Was expecting a GeneralId."],
+          ["line 6, col 48 to line 6, col 49", "Unexpected token found."],
+          [
+            "line 6, col 48 to line 6, col 49",
+            "Need name or step number here, not `N_GenInfixOp'.",
+          ],
+          [
+            "line 6, col 46 to line 6, col 51",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 55 to line 6, col 60", "Unexpected token found."],
+          ["line 6, col 55 to line 6, col 60", "Need name or step number here, not `N_InfixExpr'."],
+          [
+            "line 6, col 54 to line 6, col 61",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 7, col 22 to line 7, col 22", "Unexpected token found."],
+          ["line 7, col 22 to line 7, col 22", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 7, col 21 to line 7, col 39",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 7, col 43 to line 7, col 43", "Unexpected token found."],
+          ["line 7, col 43 to line 7, col 43", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 7, col 42 to line 7, col 49",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 7, col 53 to line 7, col 53", "Unexpected token found."],
+          ["line 7, col 53 to line 7, col 53", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 7, col 52 to line 7, col 65",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 7, col 71 to line 7, col 71", "Unexpected token found."],
+          ["line 7, col 71 to line 7, col 71", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 7, col 68 to line 7, col 74",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 8, col 21 to line 9, col 24", "Was expecting a GeneralId."],
+          ["line 9, col 21 to line 9, col 24", "Unexpected token found."],
+          ["line 9, col 21 to line 9, col 24", "Need name or step number here, not `N_ConjItem'."],
+          [
+            "line 8, col 21 to line 9, col 24",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 8, col 14 to line 9, col 24", "Empty BY"],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
   it("rejects a number or a string as a DEF clause entry, where SANY crashes", async () => {
     await expect(
       check({
@@ -2609,6 +2727,20 @@ describe("name resolution matches SANY", () => {
           }),
         ),
       ),
+    );
+  });
+
+  it("rejects a one-item junction list as a DEF clause entry, where SANY crashes", async () => {
+    await expect(
+      check({ source: "---- MODULE M ----\nA == 1\nTHEOREM TRUE BY DEF /\\ A\n====", config: "" }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 21 to line 3, col 24 of module M",
+          message: "DEF clause entry should describe a defined operator.",
+        },
+        { location: "line 3, col 14 to line 3, col 24 of module M", message: "Empty BY" },
+      ]),
     );
   });
 

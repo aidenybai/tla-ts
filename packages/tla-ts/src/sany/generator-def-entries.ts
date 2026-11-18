@@ -31,6 +31,7 @@ const SYNTAX_KINDS = new Map<Expression["kind"], string>([
   ["SetFilter", "N_SubsetOf"],
   ["SetMap", "N_SetOfAll"],
   ["Tuple", "N_Tuple"],
+  ["Product", "N_Times"],
   ["FunctionApplication", "N_FcnAppl"],
   ["FunctionConstruction", "N_FcnConst"],
   ["FunctionSet", "N_SetOfFcns"],
@@ -87,6 +88,10 @@ const getSyntaxKind = (file: SourceFile, expression: Expression, span: TokenSpan
   if (isParenthesized(file, span)) return "N_ParenExpr";
   if (expression.kind === "String") return getTokenSource(file, span.start);
   if (expression.kind === "Apply") return getApplicationKind(file, expression, span);
+  if (expression.kind === "And" || expression.kind === "Or") {
+    if (!expression.isBulleted) return "N_InfixExpr";
+    return expression.kind === "And" ? "N_ConjList" : "N_DisjList";
+  }
   return SYNTAX_KINDS.get(expression.kind);
 };
 
@@ -106,6 +111,19 @@ const getDefEntryParts = (
     last: partSpan,
     lastKind: getSyntaxKind(file, operand, partSpan),
   });
+  const getSecondHeir = (end: number, lastKind: string) => ({
+    hasChildlessFirstChild: false,
+    last: { start: span.start + 1, end },
+    lastKind,
+  });
+  const getOperator = (left: Expression, lastKind: string) => {
+    const leftSpan = getOperandSpan(file, left);
+    return {
+      hasChildlessFirstChild: hasChildlessFirstChild(file, left, leftSpan),
+      last: { start: leftSpan.end + 1, end: leftSpan.end + 1 },
+      lastKind,
+    };
+  };
   if (isParenthesized(file, span)) {
     const inner = { start: span.start + 1, end: span.end - 1 };
     return { hasChildlessFirstChild: false, ...getPart(expression, inner) };
@@ -128,6 +146,47 @@ const getDefEntryParts = (
             lastKind: file.tokens[span.end].text,
           }
         : { hasChildlessFirstChild: false, ...getPart(first) };
+    }
+    case "Except":
+      return { hasChildlessFirstChild: false, ...getPart(expression.function) };
+    case "FunctionSet":
+      return { hasChildlessFirstChild: false, ...getPart(expression.domain) };
+    case "SetMap":
+      return { hasChildlessFirstChild: false, ...getPart(expression.expression) };
+    case "WeakFairness":
+    case "StrongFairness":
+      return { hasChildlessFirstChild: false, ...getPart(expression.subscript) };
+    case "Case":
+      return getSecondHeir(getOperandSpan(file, expression.arms[0].body).end, "N_CaseArm");
+    case "Record":
+    case "RecordSet":
+      return getSecondHeir(
+        getOperandSpan(file, expression.fields[0].value).end,
+        expression.kind === "Record" ? "N_FieldVal" : "N_FieldSet",
+      );
+    case "FunctionConstruction":
+    case "Forall":
+    case "Exists":
+      return getSecondHeir(getOperandSpan(file, expression.bounds[0].set).end, "N_QuantBound");
+    case "Let":
+      return getSecondHeir(getOperandSpan(file, expression.body).start - 2, "N_LetDefinitions");
+    case "Product":
+      return getOperator(expression.factors[0], "N_GenInfixOp");
+    case "And":
+    case "Or": {
+      if (expression.operands.length === 1) return undefined;
+      // A chain of infix junctions nests its first operand, as N_InfixExpr does.
+      if (!expression.isBulleted) {
+        return expression.operands.length === 2
+          ? getOperator(expression.operands[0], "N_GenInfixOp")
+          : undefined;
+      }
+      const item = getOperandSpan(file, expression.operands[1]);
+      return {
+        hasChildlessFirstChild: true,
+        last: { start: item.start - 1, end: item.end },
+        lastKind: expression.kind === "And" ? "N_ConjItem" : "N_DisjItem",
+      };
     }
     case "Always":
     case "Eventually":
@@ -176,13 +235,10 @@ const getDefEntryParts = (
           ...getPart(expression.args[0], { start: span.start + 1, end: span.end }),
         };
       }
-      const left = getOperandSpan(file, expression.args[0]);
-      const operator = left.end + 1;
-      return {
-        hasChildlessFirstChild: hasChildlessFirstChild(file, expression.args[0], left),
-        last: { start: operator, end: operator },
-        lastKind: kind === "N_InfixExpr" ? "N_GenInfixOp" : "N_GenPostfixOp",
-      };
+      return getOperator(
+        expression.args[0],
+        kind === "N_InfixExpr" ? "N_GenInfixOp" : "N_GenPostfixOp",
+      );
     }
   }
   return undefined;
@@ -192,8 +248,12 @@ export const getDefEntryErrors = (file: SourceFile, expression: Expression): Def
   const span = getOperandSpan(file, expression);
   const location = getSpanLocation(file, span);
   const parts = getDefEntryParts(file, expression, span);
-  if (parts === undefined && (expression.kind === "Number" || expression.kind === "String")) {
-    // Deviation from SANY: Generator#genIdToSelector throws ArrayIndexOutOfBoundsException on a number or string; tla-ts rejects it as an entry that describes no definition.
+  const isOneHeir =
+    expression.kind === "Number" ||
+    expression.kind === "String" ||
+    ((expression.kind === "And" || expression.kind === "Or") && expression.operands.length === 1);
+  if (parts === undefined && isOneHeir) {
+    // Deviation from SANY: Generator#genIdToSelector throws ArrayIndexOutOfBoundsException on a node with one heir, such as a number, a string, or a one-item junction list; tla-ts rejects it as an entry that describes no definition.
     return [{ location, message: "DEF clause entry should describe a defined operator." }];
   }
   if (parts?.hasChildlessFirstChild === undefined || parts.lastKind === undefined) return [];
