@@ -55027,19 +55027,26 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("1,,2"))).failure?.message).toContain("seen 1,,1");
     });
 
-    it("stops where an argument that calls would run before the check", () => {
-      expect(() =>
-        compile(`
-          const box = { log: "" };
-          const runner = { run: (value: string) => value.length };
-          const pick = (has: boolean) => (has ? runner : undefined);
-          const note = (value: string) => {
-            box.log += value;
-            return value;
-          };
-          const second = pick(false)?.run(note("b"));
-        `),
-      ).toThrow("Optional chaining isn't supported");
+    it("runs an argument that calls only where the receiver isn't undefined or null", async () => {
+      const getCalls = (expected: string) => `
+        const box = { log: "" };
+        const runner = { run: (value: string) => { box.log += value; return value.length; } };
+        const holder = { list: [] as string[] };
+        const pick = (has: boolean) => (has ? runner : undefined);
+        const hold = (has: boolean) => (has ? holder : undefined);
+        const note = (value: string) => {
+          box.log += "!";
+          return value;
+        };
+        const first = pick(true)?.run(note("a"));
+        const second = pick(false)?.run(note("b"));
+        hold(true)?.list.push(note("c"));
+        hold(false)?.list.push(note("d"));
+        const seen = [first, second, holder.list.join("/"), box.log].join();
+        if (seen !== "${expected}") throw new Error("seen " + seen);
+      `;
+      expect((await checkModel(getCalls("1,,c,!a!"))).failure).toBeUndefined();
+      expect((await checkModel(getCalls("1,,c,!a!!"))).failure?.message).toContain("seen 1,,c,!a!");
     });
   });
 
