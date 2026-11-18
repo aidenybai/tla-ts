@@ -1094,4 +1094,20 @@ describe("the terms the reader makes and frees, in Z3's order", () => {
       "(objectives\n ( 1)\n)",
     ]);
   });
+
+  it("reads the keywords of an assert-soft after one that left a keyword without a value, where Z3 reads a value", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert-soft p :weight 3 :id)",
+        "(assert-soft q :weight 2)",
+        "(assert-soft p)",
+        "(assert (not p))",
+        "(assert (not q))",
+        "(check-sat)",
+        "(get-objectives)",
+      ]),
+    ).toEqual(["sat", "(objectives\n ( 6)\n)"]);
+  });
 });

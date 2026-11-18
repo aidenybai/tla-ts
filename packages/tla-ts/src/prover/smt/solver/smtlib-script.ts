@@ -235,7 +235,7 @@ const BUILTIN_OPTIONS = new Set([
 
 const getParameterName = (keyword: string) => keyword.slice(1).toLowerCase().replaceAll("-", "_");
 
-// Deviation from Z3: each assert-soft starts with no parameters, where Z3 keeps those a failed one set.
+// Deviation from Z3: each assert-soft starts afresh, where Z3 keeps the parameters of a failed one and a keyword left without a value.
 const getSoftParameters = (items: SExpr[]) => {
   const parameters = { weight: Rational.one, id: null as string | null };
   for (let index = 0; index < items.length; index += 2) {
