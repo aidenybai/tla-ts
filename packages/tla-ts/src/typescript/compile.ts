@@ -13,6 +13,7 @@ import { findMakers } from "./reach-graph";
 import {
   type Closure,
   type Context,
+  type FunctionNode,
   createContext,
   createDispatch,
   findNodes,
@@ -93,7 +94,7 @@ import { createStateScope } from "./scope";
 import { translateSourceTexts } from "./source-text";
 import { classifySharedHelpers } from "./shared-calls";
 import { TlaTypeScriptError } from "../errors";
-import { translateStep } from "./steps";
+import { getUnlistedParameter, translateStep } from "./steps";
 import {
   apply,
   define,
@@ -160,6 +161,51 @@ const translateInitial = (variable: Variable, context: Context) => {
   return locate(apply("=", [name, value]), getLocation(declaration));
 };
 
+const getTag = (definition: Exported) =>
+  [...definition.tags.keys()].find((candidate) => VALUE_TAGS.has(candidate));
+
+// Whether an exported function is an action: one that changes state or returns nothing.
+const isStepExport = (definition: Exported, context: Context) => {
+  if (writesState(definition.body, context)) return true;
+  const returnType = context.checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
+  return (
+    returnType === undefined ||
+    (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
+  );
+};
+
+// Whether every call of a function throws, or never returns: a function that isn't async or a
+// generator, whose body returns nowhere and ends in a throw.
+const isAlwaysThrowing = (node: FunctionNode) => {
+  const body = node.body;
+  const isReturning = (inner: ts.Node): boolean =>
+    ts.isReturnStatement(inner) ||
+    (!ts.isFunctionLike(inner) && (ts.forEachChild(inner, isReturning) ?? false));
+  return (
+    body !== undefined &&
+    ts.isBlock(body) &&
+    node.asteriskToken === undefined &&
+    !(ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) &&
+    body.statements.length > 0 &&
+    ts.isThrowStatement(body.statements[body.statements.length - 1]) &&
+    !isReturning(body)
+  );
+};
+
+// Why the model calls no exported function: Node runs only a module's top level, so an export runs
+// only where TLC can choose its arguments, which it can't where a parameter takes values that
+// tla-ts can't list, and where a call of it may return.
+const getUncalledReason = (definition: Exported, context: Context) => {
+  if (getTag(definition) !== undefined) return undefined;
+  const parameter = getUnlistedParameter(definition, isStepExport(definition, context), context);
+  if (parameter !== undefined) {
+    return `its parameter ${parameter.name.getText()} takes values it can't list`;
+  }
+  return definition.node.parameters.length === 0 && isAlwaysThrowing(definition.node)
+    ? "every call of it throws"
+    : undefined;
+};
+
 // An exported function is a property if a tag says so, an action if it changes state, and an
 // invariant if it returns a boolean.
 const translateExported = (
@@ -168,19 +214,11 @@ const translateExported = (
   sections: Sections,
   context: Context,
 ) => {
-  const tag = [...definition.tags.keys()].find((candidate) => VALUE_TAGS.has(candidate));
+  const tag = getTag(definition);
   if (tag !== undefined) return translateProperty(definition, tag, model, sections, context);
-  if (writesState(definition.body, context)) {
-    return translateStep(definition, sections, context);
-  }
+  if (isStepExport(definition, context)) return translateStep(definition, sections, context);
   const returnType = context.checker.getSignatureFromDeclaration(definition.node)?.getReturnType();
-  if (
-    returnType === undefined ||
-    (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
-  ) {
-    return translateStep(definition, sections, context);
-  }
-  return returnType.flags & ts.TypeFlags.BooleanLike
+  return returnType !== undefined && returnType.flags & ts.TypeFlags.BooleanLike
     ? translateInvariant(definition, sections, context)
     : translateCall(definition, sections, context);
 };
@@ -1161,7 +1199,17 @@ export const compile = (
       !isHeapSetOrMap(node, context)) ||
     (ts.forEachChild(node, makesMapValue) ?? false);
   context.isEveryMapHeld = !roots.some(makesMapValue);
-  const model = readModel(sourceFile, imported, positions, context);
+  const read = readModel(sourceFile, imported, positions, context);
+  const uncalled = read.exported.flatMap((definition) => {
+    const reason = getUncalledReason(definition, context);
+    return reason === undefined ? [] : [{ definition, reason }];
+  });
+  const model = {
+    ...read,
+    exported: read.exported.filter((definition) =>
+      uncalled.every((entry) => entry.definition !== definition),
+    ),
+  };
   context.script =
     isNodeScript && model.exported.length === 0
       ? { sourceFile, isEsModule: isEsModule(sourceFile) }
@@ -1335,5 +1383,15 @@ export const compile = (
     );
   }
   rejectEndlessCount(model, sections, context);
-  return emit(getModuleName(path), program.sourceFile, model, sections, context);
+  return emit(
+    getModuleName(path),
+    program.sourceFile,
+    model,
+    sections,
+    context,
+    uncalled.map(
+      (entry) =>
+        `tla-ts calls no ${ts.getNameOfDeclaration(entry.definition.declaration)?.getText()}: ${entry.reason}`,
+    ),
+  );
 };

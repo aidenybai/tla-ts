@@ -47,7 +47,7 @@ const isBareReturn = (statement: ts.Statement): boolean =>
 const getGuard = (
   statement: ts.Statement,
   parameters: Parameter[],
-  chosen: Map<Parameter, Chosen>,
+  chosen: Pick<ReadonlySet<Parameter>, "has">,
   context: Context,
 ): Guard | undefined => {
   if (
@@ -112,6 +112,35 @@ const readGuards = (
     new Map([...chosen, [guard.parameter, { domain, isDependent: guard.isDependent }]]),
     context,
   );
+};
+
+// The first parameter of an exported function whose values TLC can't choose: one whose type has
+// values that tla-ts can't list, where no leading guard of a step chooses it from a set.
+export const getUnlistedParameter = (definition: Exported, isStep: boolean, context: Context) => {
+  const parameters = definition.node.parameters.map((node) => ({
+    node,
+    name: node.name.getText(),
+    symbol: ts.isIdentifier(node.name) ? getSymbol(node.name, context.checker) : undefined,
+  }));
+  const body = definition.body;
+  const statements = ts.isBlock(body) ? body.statements : [];
+  const findGuarded = (
+    position: number,
+    guarded: ReadonlySet<Parameter>,
+  ): ReadonlySet<Parameter> => {
+    const guard =
+      isStep && position < statements.length
+        ? getGuard(statements[position], parameters, guarded, context)
+        : undefined;
+    return guard === undefined
+      ? guarded
+      : findGuarded(position + 1, new Set([...guarded, guard.parameter]));
+  };
+  const guarded = findGuarded(0, new Set());
+  return parameters.find((parameter) => {
+    const domain = findDomain(context.checker.getTypeAtLocation(parameter.node.name), context);
+    return !guarded.has(parameter) && isInfinite(domain) && domain.isIncomparable !== true;
+  })?.node;
 };
 
 // An exported function that changes state, as an action and its disjunct of Next. Each parameter

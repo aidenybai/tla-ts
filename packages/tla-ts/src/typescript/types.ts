@@ -69,6 +69,8 @@ const MAX_ARRAY_LENGTH = 3;
 // Why a type has no finite set of values.
 interface Infinite {
   message: string;
+  // Whether TLC can't compare the values, which tla-ts could list.
+  isIncomparable?: boolean;
 }
 
 // The checker only gives type arguments of type references, which the public API can't detect.
@@ -1813,10 +1815,10 @@ const getInfinite = (type: ts.Type, reason: string, context: Context): Infinite 
 });
 
 // The first type that has no end, or the domains of every type.
-const findDomains = (types: readonly ts.Type[], context: Context) =>
+const findDomains = (types: readonly ts.Type[], context: Context, path: readonly ts.Type[]) =>
   types.reduce<Expression[] | Infinite>((domains, type) => {
     if (!Array.isArray(domains)) return domains;
-    const domain = findDomain(type, context);
+    const domain = findDomain(type, context, path);
     return isInfinite(domain) ? domain : [...domains, domain];
   }, []);
 
@@ -1917,8 +1919,17 @@ const unifyShapes = (left: Shape, right: Shape): Shape | undefined => {
 };
 
 // The set of every value that a finite type allows, which TLC enumerates.
-export const findDomain = (type: ts.Type, context: Context): Expression | Infinite => {
+// outer holds the types around this one, so a type that holds itself, such as a tree, has no end.
+export const findDomain = (
+  type: ts.Type,
+  context: Context,
+  outer: readonly ts.Type[] = [],
+): Expression | Infinite => {
   const checker = context.checker;
+  if (outer.includes(type)) {
+    return { message: `${checker.typeToString(type)} holds itself, so it has no end` };
+  }
+  const path = [...outer, type];
   if (type.flags & ts.TypeFlags.Boolean) return identifier("BOOLEAN");
   if (type.isUnion()) {
     const literalTypes = type.types
@@ -1929,11 +1940,13 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
     const others = findDomains(
       type.types.filter((member) => !literalTypes.includes(member)),
       context,
+      path,
     );
     if (!Array.isArray(others)) return others;
     if (getShape(type, context) === undefined) {
       return {
         message: `${checker.typeToString(type)} mixes values that TLC can't compare, such as a string and a number`,
+        isIncomparable: true,
       };
     }
     const enumerated = literalTypes.flatMap((member) => getLiteral(member, context) ?? []);
@@ -1961,6 +1974,7 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
     const elements = findDomains(
       isTypeReference(type) ? checker.getTypeArguments(type) : [],
       context,
+      path,
     );
     if (!Array.isArray(elements)) return elements;
     if (isSetType(type)) return apply("SUBSET", [elements[0]]);
@@ -1990,7 +2004,7 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
     return map(tuple([identifier(element)]), [bound(element, elements[0])]);
   }
   if (checker.isArrayType(type) && isTypeReference(type)) {
-    const element = findDomain(checker.getTypeArguments(type)[0], context);
+    const element = findDomain(checker.getTypeArguments(type)[0], context, path);
     if (isInfinite(element)) return element;
     const length = context.names.getFresh("length");
     return apply("UNION", [
@@ -2022,6 +2036,7 @@ export const findDomain = (type: ts.Type, context: Context): Expression | Infini
   const fields = findDomains(
     properties.map((property) => checker.getTypeOfSymbol(property)),
     context,
+    path,
   );
   if (!Array.isArray(fields)) return fields;
   const keys = properties.map((property) => property.name);

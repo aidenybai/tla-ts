@@ -621,6 +621,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
           );
         }
         const compiled = isTypeScript ? await compileTypeScriptFile(path) : undefined;
+        compiled?.notes.forEach((note) => console.log(note));
         return checkSpec(compiled?.specPath ?? path, parsed, dump, java, printer, compiled);
       }, printer),
     );
