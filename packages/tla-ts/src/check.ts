@@ -61,6 +61,7 @@ import {
   addActionCoverage,
   createCheckEnvironment,
   createMissingOperatorError,
+  createOutputCapture,
   createSearch,
   getIncompleteSuccessorMessage,
   findAssumptionViolation,
@@ -69,6 +70,7 @@ import {
   STOP_WALK,
   walkCoveredSuccessors,
   withNextStateExitCode,
+  type CliSettings,
   type CoveredAction,
 } from "./search";
 import {
@@ -194,7 +196,13 @@ export interface InitialStateViolation {
   state: Record<string, Value>;
 }
 
-export type OutputLine = string | InitialStatesProgress | InitialStateViolation;
+export interface EvaluationWarning {
+  kind: "warning";
+  code: number;
+  text: string;
+}
+
+export type OutputLine = string | InitialStatesProgress | InitialStateViolation | EvaluationWarning;
 
 export type CheckProgress =
   | { kind: "parsed" }
@@ -217,7 +225,7 @@ export type CheckProgress =
     }
   | { kind: "liveness-finished" }
   | { kind: "sequential-fallback"; string: string }
-  | { kind: "warning"; code: number; text: string }
+  | EvaluationWarning
   | { kind: "violation"; status: CheckStatus; violation: Violation }
   | ({ kind: "java-override" } & JavaOverride);
 
@@ -243,6 +251,8 @@ export interface TraceStep {
   state: Record<string, Value>;
   /** What the spec prints before this step as TLC rebuilds the trace, and before it for the first. */
   output?: OutputLine[];
+  /** What the ALIAS prints as TLC evaluates it right before it prints this step. */
+  aliasOutput?: OutputLine[];
 }
 
 export interface Violation {
@@ -368,30 +378,20 @@ const PROGRESS_INTERVAL = 60_000;
 const LIVENESS_GROWTH = 0.1;
 const LIVENESS_RATIO = 0.2;
 
-const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefined): CheckResult => {
+const searchStates = (
+  options: CheckOptions & CliSettings,
+  stateWriter: StateWriter | undefined,
+): CheckResult => {
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
       : options.config;
-  const onPrint = options.onPrint ?? console.log;
-  let capturedLines: OutputLine[] | undefined;
-  const print = (text: string) => {
-    if (capturedLines) capturedLines.push(text);
-    else onPrint(text);
-  };
-  const captureOutput = <Result>(rebuild: () => Result) => {
-    const outer = capturedLines;
-    const lines: OutputLine[] = [];
-    capturedLines = lines;
-    try {
-      return { result: rebuild(), lines };
-    } finally {
-      capturedLines = outer;
-    }
-  };
-  const created = createCheckEnvironment(config, options, print);
+  const output = createOutputCapture(options.onPrint ?? console.log);
+  const captureOutput = output.captureOutput;
+  const created = createCheckEnvironment(config, options, output.print);
   const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
+  output.captureWarnings(specification.environment.runtime, options.errorCodes);
   const coverage =
     options.coverage === undefined
       ? undefined
@@ -640,7 +640,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const addReplayed = createReplayedStates();
     return getReplayFailure(environment, (tracing) => {
       replayInitialStates(coverage ? coverageInits : getDescription().inits, tracing, (state) => {
-        reportInitialStatesProgress(replayedCount, (progress) => capturedLines?.push(progress));
+        reportInitialStatesProgress(replayedCount, (progress) =>
+          output.getCapturedLines()?.push(progress),
+        );
         replayedCount++;
         runtime.generatedStates = replayedCount;
         if (deferred.length > 0) return;
@@ -651,11 +653,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             liveness?.addInitialState(states.length, state, tracing);
           };
           search.checkReplayedInitialState(state, tracing, addFingerprint, (violation) => {
-            const traced = traces.toTrace([{ action: undefined, state }], []).trace[0].state;
-            capturedLines?.push({
+            const traced = traces.toTrace([{ action: undefined, state }], []).trace[0];
+            output.getCapturedLines()?.push(...(traced.aliasOutput ?? []), {
               kind: "initial-state-violation",
               ...violation,
-              state: traced,
+              state: traced.state,
             });
             if (!options.isContinued || violation.status !== "invariant-violation") {
               throw STOP_REPLAY;

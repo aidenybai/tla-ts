@@ -1771,6 +1771,25 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it("reports the failure of a successor it can't compare as it rebuilds the step, where TLC skips the successor and reports a TLC bug(5)", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = IF x = 1 THEN {1} \\X 2 ELSE x + 1\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([
+      result.failure?.trace.map((step) => formatValue(step.state.x)),
+      result.failure?.traceFailure?.message,
+      result.failure?.fingerprint?.reason,
+      result.failure?.exitCode,
+    ]).toEqual([
+      ["0", "1"],
+      `${UNEXPECTED_EXCEPTION}Shouldn't call isEmpty() on value 2`,
+      "Shouldn't call isEmpty() on value 2",
+      75,
+    ]);
+  });
+
   it("records where the liveness check of a state fails after a successor of it is left incomplete, like TLC", async () => {
     const result = await check({
       source:
@@ -1797,6 +1816,112 @@ describe("evaluation errors match TLC", () => {
     });
     expect(result.failure?.code).toBe(2109);
     expect([...new Set(ranges)]).toEqual(["6:7-43", "6:7-33", "6:7-12", "6:18-32", "6:18-24"]);
+  });
+
+  it("records AssertError's message after the expression it catches the failure of, as TLC evaluates it then", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x\' = x /\\ AssertError("m", 1 \\div 0) = 0\n====',
+      config: "INIT Init\nNEXT Next",
+    });
+    const ranges = result.failure?.callStack?.flatMap((expression) => {
+      const range = expression.location.range;
+      return range
+        ? [`${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`]
+        : [];
+    });
+    expect(ranges?.filter((range, index) => range !== ranges[index - 1])).toEqual([
+      "5:9-5:48",
+      "5:9-5:14",
+      "5:19-5:48",
+      "5:19-5:44",
+      "5:36-5:43",
+      "5:31-5:33",
+      "5:48-5:48",
+    ]);
+  });
+
+  it("records a value that fails to fingerprint inside a Java method as a nested expression, as TLC's MethodValue rethrows it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, Sequences\nVARIABLE x\nInit == x = 0\nNext == SelectSeq(<<1>>, LAMBDA k : {x} = <<x>>) = <<>> /\\ x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    const ranges = result.failure?.callStack?.flatMap((expression) => {
+      const range = expression.location.range;
+      return range ? [`${range.start.line}:${range.start.column}-${range.end.column}`] : [];
+    });
+    expect([
+      result.failure?.fingerprint,
+      ranges?.filter((range, index) => range !== ranges[index - 1]),
+    ]).toEqual([undefined, ["5:9-65", "5:9-55", "5:9-48", "5:37-47", "5:37-39"]]);
+  });
+
+  it("records the frames in Randomization of an error in TestRandomSetOfSubsets, which TLC evaluates from its definition", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, Randomization\nVARIABLE x\nInit == x = 0\nNext == x' = x\nInv == <<TestRandomSetOfSubsets(x - 1, 2, {1})>> /= <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    const ranges = result.failure?.callStack?.flatMap((expression) => {
+      const range = expression.location.range;
+      return range
+        ? [
+            `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+          ]
+        : [];
+    });
+    expect([
+      result.failure?.fingerprint?.reason,
+      ranges?.filter((range, index) => range !== ranges[index - 1]),
+    ]).toEqual([
+      "The first argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:\n-1",
+      [
+        "M 4:9-4:13",
+        "M 6:8-6:56",
+        "M 6:8-6:48",
+        "M 6:10-6:46",
+        "Randomization 62:15-62:71",
+        "Randomization 62:31-62:70",
+        "Randomization 62:43-62:69",
+      ],
+    ]);
+  });
+
+  it("records the frames in Bags of an error in SubBag, which TLC evaluates from its definition", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Bags\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ SubBag(x) = {}\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    const ranges = result.failure?.callStack?.flatMap((expression) => {
+      const range = expression.location.range;
+      return range
+        ? [
+            `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+          ]
+        : [];
+    });
+    expect([
+      result.failure?.message,
+      ranges?.filter((range, index) => range !== ranges[index - 1]),
+    ]).toEqual([
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to apply the operator DOMAIN to a non-function\n(an integer)\nline 106, col 58 to line 106, col 65 of module Bags",
+      [
+        "M 5:9-5:32",
+        "M 5:9-5:14",
+        "M 5:19-5:32",
+        "M 5:19-5:27",
+        "Bags 97:3-110:11",
+        "Bags 110:6-110:11",
+        "Bags 110:6-110:8",
+        "Bags 106:7-109:68",
+        "Bags 106:18-106:66",
+        "Bags 106:24-106:66",
+        "Bags 106:51-106:65",
+        "Bags 106:58-106:65",
+      ],
+    ]);
   });
 
   it.each([

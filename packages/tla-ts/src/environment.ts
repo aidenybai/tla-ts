@@ -153,6 +153,9 @@ export interface InstanceAction {
 
 const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
 
+// TLC evaluates the definitions of these modules that it doesn't override, such as Bags' SubBag.
+const SOURCE_STANDARD_MODULES = new Set(["Bags", "Randomization", "TLCExt"]);
+
 // SANY's SubstInNode and APSubstInNode word the error for a body they can't substitute in apart.
 const SUBSTITUTION_ERRORS = [
   {
@@ -360,7 +363,7 @@ export const createEnvironment = (
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
     if (cached) return cached;
-    const operators = getStandardOperators(name, options.print, runtime, options.files, builtins);
+    const operators = getStandardOperators(name, options.print, runtime, options.files);
     if (!operators) return undefined;
     STANDARD_DEPENDENCIES.get(name)?.forEach(addStandardModule);
     const exported: Symbols = new Map();
@@ -386,7 +389,7 @@ export const createEnvironment = (
   const getStandardSymbols = (name: string) => {
     const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
     if (
-      name === "TLCExt" ||
+      SOURCE_STANDARD_MODULES.has(name) ||
       [name, ...dependencies].some((module) => options.loadModule?.(module) !== undefined)
     )
       return undefined;
@@ -514,22 +517,17 @@ export const createEnvironment = (
         isKeepLazy: context.isKeepLazy,
       });
     };
-    getJavaOverrides(
-      name,
-      options.print,
-      runtime,
-      options.files,
-      builtins,
-      evaluateReplaced,
-    )?.forEach((operator) => {
-      const symbol = top.linked.visible.get(operator.name);
-      if (symbol?.kind !== "Definition") return;
-      if (symbol.arity !== operator.arity && ANNOTATED_OVERRIDE_MODULES.has(name)) return;
-      const definition = definitions.get(symbol.key);
-      if (definition) replaced.set(operator.name, definition);
-      builtins.set(symbol.key, operator);
-      definitions.delete(symbol.key);
-    });
+    getJavaOverrides(name, options.print, runtime, options.files, evaluateReplaced)?.forEach(
+      (operator) => {
+        const symbol = top.linked.visible.get(operator.name);
+        if (symbol?.kind !== "Definition") return;
+        if (symbol.arity !== operator.arity && ANNOTATED_OVERRIDE_MODULES.has(name)) return;
+        const definition = definitions.get(symbol.key);
+        if (definition) replaced.set(operator.name, definition);
+        builtins.set(symbol.key, operator);
+        definitions.delete(symbol.key);
+      },
+    );
     linkedModules.set(name, top.linked);
     dependencies.set(name, top.closure);
     useModule(name, top.closure);

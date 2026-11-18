@@ -1,4 +1,10 @@
-import { isLocallyResolved, type Bound, type Definition, type Expression } from "./ast";
+import {
+  getDefinitionExpressions,
+  isLocallyResolved,
+  type Bound,
+  type Definition,
+  type Expression,
+} from "./ast";
 import { getDefinitionLevel } from "./dependencies";
 import {
   createStackOverflowError,
@@ -17,11 +23,13 @@ import {
   getBoundElements,
   getDefinition,
   getReevaluatedDefinitions,
+  getRootKey,
   getStartupValue,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
   resolveOperator,
+  type Closure,
   type Context,
   type Environment,
   type Scope,
@@ -80,6 +88,8 @@ const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
 const definitionThunks = new WeakSet<Thunk>();
 
+const recursiveLetBodies = new WeakSet<Expression>();
+
 const JUNCTIONS = new Map<string, "And" | "Or">([
   ["/\\", "And"],
   ["\\/", "Or"],
@@ -103,12 +113,13 @@ export const getLevel = (
   environment: Environment,
   shadowed = new Set<string>(),
   visiting = new Set<object>(),
+  isLevelBound = false,
 ): number => {
   const getBodyLevel = (binding: object, body: Expression, bodyScope: Scope | undefined) => {
     if (visiting.has(binding)) return CONSTANT_LEVEL;
     visiting.add(binding);
-    const level = getLevel(body, bodyScope, environment, new Set(), visiting);
-    visiting.delete(binding);
+    const level = getLevel(body, bodyScope, environment, new Set(), visiting, isLevelBound);
+    if (!isLevelBound) visiting.delete(binding);
     return level;
   };
   const getBindingLevel = (name: string) => {
@@ -129,6 +140,11 @@ export const getLevel = (
     if (environment.variableIndex.has(name)) return VARIABLE_LEVEL;
     if (environment.constants.has(name)) return CONSTANT_LEVEL;
     const definition = getDefinition(name, environment);
+    if (definition && isLevelBound) {
+      return Math.max(
+        ...getDefinitionExpressions(definition).map((item) => getBodyLevel(item, item, undefined)),
+      );
+    }
     if (definition) return getDefinitionLevel(definition, environment);
     const builtin = environment.builtins.get(environment.substitutions.get(name) ?? name);
     if (!builtin) return undefined;
@@ -153,6 +169,7 @@ export const getLevel = (
           environment,
           bound.length === 0 ? shadowed : new Set([...shadowed, ...bound]),
           visiting,
+          isLevelBound,
         ),
       );
       return child;
@@ -187,9 +204,11 @@ export const getLevel = (
         ? undefined
         : resolveGlobalOperator(expression.operator, environment);
       if (
+        isLevelBound ||
         level === operatorLevel ||
         operator?.kind !== "Closure" ||
-        operator.params.length !== expression.args.length
+        operator.params.length !== expression.args.length ||
+        getDefinition(expression.operator, environment)?.isRecursive
       ) {
         return level;
       }
@@ -203,6 +222,12 @@ export const getLevel = (
       return getChildrenLevel(expression);
   }
 };
+
+const getLevelBound = (
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+) => getLevel(expression, scope, environment, new Set(), new Set(), true);
 
 const getUnrolledElements = (bounds: Bound[], context: Context) => {
   try {
@@ -345,8 +370,15 @@ export const bindLetDefinitions = (
     const name = current.name;
     const definition = expression.definitions.find((item) => item.name === name);
     if (definition) letDefinitions.set(current, definition);
+    if (definition?.isRecursive) recursiveLetBodies.add(definition.body);
   }
   return bound;
+};
+
+const isRecursiveClosure = (operator: Closure, environment: Environment) => {
+  if (recursiveLetBodies.has(operator.body)) return true;
+  const definition = getDefinition(getRootKey(operator.name, environment), environment);
+  return definition?.body === operator.body && definition.isRecursive;
 };
 
 export const toLiveExpression = (
@@ -361,7 +393,7 @@ export const toLiveExpression = (
     level: number,
   ): LiveExpression => {
     const atomLevel =
-      level === CONSTANT_LEVEL && !is174 ? getLevel(expression, scope, environment) : level;
+      level === CONSTANT_LEVEL && !is174 ? getLevelBound(expression, scope, environment) : level;
     if (atomLevel === CONSTANT_LEVEL) {
       const value = evaluate(expression, getConstantContext(environment, scope));
       if (typeof value !== "boolean") {
@@ -415,9 +447,13 @@ export const toLiveExpression = (
         ? lookupScope(scope, name)
         : undefined;
     if (binding?.kind === "Thunk" && !binding.isReleased && definitionThunks.has(binding)) {
-      return expandCall(expression, () =>
+      return expandCall(expression, scope, () =>
         expand(binding.expression, binding.scope, expression, scope),
       );
+    }
+    const definition = binding ? undefined : getDefinition(name, environment);
+    if (definition && getStartupValue(definition, environment) !== undefined) {
+      return toCallAtom(expression, scope);
     }
     const operator =
       binding?.kind === "Operator"
@@ -434,11 +470,14 @@ export const toLiveExpression = (
       const operands = args.map((arg) => convert(arg, scope));
       return toWhole(expression, scope, createJunction(junction, operands));
     }
-    if (operator?.kind !== "Closure") throw createCannotHandleError(expression);
-    const isRecursive =
-      !isLocallyResolved(expression) && getDefinition(name, environment)?.isRecursive === true;
+    if (operator?.kind !== "Closure") return toCallAtom(expression, scope);
+    const isRecursive = isRecursiveClosure(operator, environment);
+    if (isRecursive && !is174 && getLevelBound(expression, scope, environment) <= ACTION_LEVEL) {
+      return toCallAtom(expression, scope);
+    }
     return expandCall(
       expression,
+      scope,
       () => {
         // TLC 1.7.4 evaluates the arguments of an operator it expands.
         if (is174) {
@@ -457,8 +496,15 @@ export const toLiveExpression = (
     );
   };
 
+  const toCallAtom = (expression: Expression, scope: Scope | undefined) => {
+    const level = getLevel(expression, scope, environment);
+    if (level > ACTION_LEVEL) throw createCannotHandleError(expression);
+    return toAtom(expression, scope, level);
+  };
+
   const expandCall = (
     expression: Expression,
+    scope: Scope | undefined,
     expandBody: () => LiveExpression,
     isRecursive = false,
   ) => {
@@ -467,7 +513,7 @@ export const toLiveExpression = (
     } catch (error) {
       const isRethrown = error instanceof TlaStackOverflowError || (isRecursive && !is174);
       if (!(error instanceof TlaEvaluationError) || isRethrown) throw error;
-      throw createCannotHandleError(expression);
+      return toCallAtom(expression, scope);
     }
   };
 
@@ -541,7 +587,7 @@ export const toLiveExpression = (
     );
   };
 
-  // These forms are translated part by part at every level; any other form below the temporal level is an atom.
+  // These forms and calls are translated part by part at every level, so TLC evaluates a constant part of a called definition at startup; any other form below the temporal level is an atom.
   const convert = (expression: Expression, scope: Scope | undefined): LiveExpression => {
     const level = getLevel(expression, scope, environment);
     switch (expression.kind) {
@@ -594,7 +640,11 @@ export const toLiveExpression = (
         );
       }
     }
-    if (level <= ACTION_LEVEL) return toAtom(expression, scope, level);
+    if (level <= ACTION_LEVEL) {
+      return expression.kind === "Identifier" || expression.kind === "Apply"
+        ? convertCall(expression, scope)
+        : toAtom(expression, scope, level);
+    }
     switch (expression.kind) {
       case "Identifier":
         return convertCall(expression, scope);

@@ -17,11 +17,13 @@ import { getHashMapOrder } from "./java-hash";
 import { createLivenessChecks } from "./liveness-checker";
 import {
   addActionCoverage,
+  createOutputCapture,
   getIncompleteSuccessorMessage,
   prepareSearch,
   reportAssumptionViolation,
   STOP_WALK,
   walkCoveredSuccessors,
+  type CliSettings,
 } from "./search";
 import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor, type Successor } from "./successors";
@@ -203,13 +205,15 @@ const createScheduler = (
   };
 };
 
-export const simulate = (options: SimulationOptions): number => {
+export const simulate = (options: SimulationOptions & CliSettings): number => {
   const output = options.onSimulation;
-  const prepared = prepareSearch(options);
+  const capture = createOutputCapture(options.onPrint ?? console.log);
+  const prepared = prepareSearch({ ...options, onPrint: capture.print });
   const config = prepared.config;
   const specification = prepared.specification;
   const environment = prepared.environment;
   const runtime = environment.runtime;
+  capture.captureWarnings(runtime, options.errorCodes);
   const search = prepared.search;
   const seed = options.seed ?? 0n;
   const traceDepth = options.traceDepth === -1 ? INFINITE_DEPTH : options.traceDepth;
@@ -345,6 +349,7 @@ export const simulate = (options: SimulationOptions): number => {
   const toTraceSteps = (
     trace: TraceNode[],
     positions = trace.map((_node, index) => index),
+    isAliased = true,
   ): TraceStep[] =>
     positions.map((position) => {
       const node = trace[position];
@@ -353,7 +358,7 @@ export const simulate = (options: SimulationOptions): number => {
         action: node.action.name,
         label: getActionLabel(node.action, options.version, node.level === 1),
         state:
-          config.alias === undefined
+          config.alias === undefined || !isAliased
             ? toRecord(node.state)
             : search.evaluateAlias(
                 config.alias,
@@ -776,7 +781,15 @@ export const simulate = (options: SimulationOptions): number => {
         : { positions: trace.map((_node, index) => index), failure: undefined };
     output({
       kind: "behavior",
-      trace: toTraceSteps(trace, shown.positions),
+      // TLC prints the error state of an unbounded behavior alone, as TLCState#toString does, without the alias.
+      trace: shown.positions.map((position) => {
+        const captured = capture.captureOutput(
+          () => toTraceSteps(trace, [position], !isLastStateOnly)[0],
+        );
+        return captured.lines.length > 0
+          ? { ...captured.result, aliasOutput: captured.lines }
+          : captured.result;
+      }),
       levels: shown.positions.map((position) => trace[position].level),
       isLastStateOnly,
     });

@@ -70,6 +70,7 @@ const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefin
     if (line.kind === "initial-states-progress") {
       return printInitialStatesProgress(printer, line.count);
     }
+    if (line.kind === "warning") return printer.print(line.code, MESSAGE_LEVEL.warning, line.text);
     const headline = getInitialViolationHeadline(line.status, line.name);
     printer.print(
       headline.code,
@@ -106,6 +107,7 @@ const printTrace = (
   try {
     trace.forEach((step, index) => {
       if (index > 0 || isRebuiltAfterHeading) printTraceOutput(printer, step.output);
+      printTraceOutput(printer, step.aliasOutput);
       const isDiffed =
         printer.isDiffTrace &&
         index > 0 &&
@@ -430,6 +432,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
   const isRebuiltFirst = isCounterExample && printer.version !== "1.7.4";
   if (isRebuiltFirst) printTraceOutput(printer, violation.trace[0]?.output);
   if (violation.counts) console.log(violation.counts);
+  if (isInitial) printTraceOutput(printer, violation.trace[0].aliasOutput);
   if (headline) {
     const text = isInitial
       ? `${headline.text}\n${formatState(violation.trace[0].state)}`
