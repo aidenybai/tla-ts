@@ -2347,7 +2347,7 @@ const getNextArgument = (node: ts.CallExpression, path: Path, context: Context) 
           ts.isSpreadAssignment(property) ||
           (property.name !== undefined && ts.isComputedPropertyName(property.name))
         ) {
-          return property.name ?? inner;
+          return inner;
         }
         const next = ts.isPropertyAssignment(property)
           ? visit(property.initializer)

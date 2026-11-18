@@ -56008,4 +56008,29 @@ describe("BigInts", () => {
       expect((await check(compile(wrong, path))).failure?.message).toContain("results true,false");
     });
   });
+
+  describe("calls a bigint's method on a type parameter that typeof narrows", () => {
+    const getSource = (expected: string) => `
+      const show = <A>(self: A): string => {
+        switch (typeof self) {
+          case "bigint":
+            return self.toString(16);
+          case "number":
+            return "n" + self;
+          default:
+            return "other";
+        }
+      };
+      const result = [show(255n), show(3), show("x")].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ff,n3,other"))).failure).toBeUndefined();
+    });
+
+    it("rejects another radix", async () => {
+      await expect(checkModel(getSource("255,n3,other"))).rejects.toThrow("result ff,n3,other");
+    });
+  });
 });
