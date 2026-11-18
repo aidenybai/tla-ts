@@ -847,26 +847,33 @@ export const createEnvironment = (
     });
     const copies: Definition[] = [];
     const localCopies = new Map<string, InstanceCopy>();
+    const createLocalSubstitution = (declaration: KeyedDeclaration): Expression =>
+      !isParameterDependent(declaration)
+        ? createLocalIdentifier(`${declaration.name}${suffix}`, location)
+        : {
+            kind: "Apply",
+            operator: `${declaration.name}${suffix}`,
+            args: createLocalArguments(instance.params, location),
+            location,
+            resolution: LOCAL_RESOLUTION,
+          };
     const substitutes = {
       params: instance.params,
       substitutions: new Map(
         declarations.map((declaration): [string, Expression] => [
           declaration.key,
-          !isParameterDependent(declaration)
-            ? createLocalIdentifier(`${declaration.name}${suffix}`, location)
-            : {
-                kind: "Apply",
-                operator: `${declaration.name}${suffix}`,
-                args: createLocalArguments(instance.params, location),
-                location,
-                resolution: LOCAL_RESOLUTION,
-              },
+          explicitSubstitutions.get(declaration.name) ?? createLocalSubstitution(declaration),
         ]),
       ),
     };
     const instantiation = createInstantiation({
       params: instance.params,
-      substitutions: substitutes.substitutions,
+      substitutions: new Map(
+        declarations.map((declaration): [string, Expression] => [
+          declaration.key,
+          createLocalSubstitution(declaration),
+        ]),
+      ),
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
       getOuterDefinition: () => undefined,

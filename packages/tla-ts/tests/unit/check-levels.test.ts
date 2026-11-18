@@ -209,6 +209,26 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("levels a LET instance's definitions through an operator parameter it substitutes like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT Op(_), k\nK == Op(k)\n====\nPr(p) == p'\nI == INSTANCE Inner WITH Op <- LAMBDA p : p, k <- 1\nU == LET L(G(_)) == INSTANCE Inner WITH Op <- G, k <- x' IN L(Pr)!K\nW(G(_)) == LET L == INSTANCE Inner WITH Op <- G, k <- x' IN L!K\nV == W(Pr)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 9, col 61 to line 9, col 67", "L!K"],
+          ["line 11, col 6 to line 11, col 10", "W"],
+        ].map((error) => ({
+          location: `${error[0]} of module M`,
+          message: `Level error in applying operator ${error[1]}:\nThe permitted level of argument 1 of the operator argument 1 \nmust be at least 2.`,
+        })),
+      ),
+    );
+  });
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({
