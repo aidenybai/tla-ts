@@ -453,13 +453,15 @@ const getJunctionOperands = (expression: Expression & { kind: "And" | "Or" }) =>
   const range = expression.location.range;
   const end = expression.prefixEnds?.[operands.length - 3];
   if (expression.isBulleted || !range || !end) return operands;
-  const prefix: Expression = {
-    ...expression,
-    operands: operands.slice(0, -1),
-    prefixEnds: expression.prefixEnds?.slice(0, -1),
-    location: { ...expression.location, range: { ...range, end } },
-  };
-  return [prefix, operands[operands.length - 1]];
+  return [
+    {
+      ...expression,
+      operands: operands.slice(0, -1),
+      prefixEnds: expression.prefixEnds?.slice(0, -1),
+      location: { ...expression.location, range: { ...range, end } },
+    },
+    operands[operands.length - 1],
+  ];
 };
 
 export const getOperands = (expression: Expression): Expression[] | undefined => {
