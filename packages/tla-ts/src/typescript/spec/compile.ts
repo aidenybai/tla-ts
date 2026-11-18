@@ -19,6 +19,9 @@ export const compileToEscore = (source: string, fileName: string, library: Libra
       target: ts.ScriptTarget.ESNext,
       module: ts.ModuleKind.Preserve,
       useDefineForClassFields: true,
+      // A script runs in strict mode only where it says so, which TypeScript 6 deprecates.
+      alwaysStrict: false,
+      ignoreDeprecations: "6.0",
     },
     fileName,
     reportDiagnostics: true,

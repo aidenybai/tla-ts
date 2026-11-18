@@ -14,8 +14,8 @@ interface ScriptResult {
 
 // ESCore's evaluation nests deeper than a test's stack, so the check runs on a worker with the
 // stack that test262-engine262 gives ESCore.
-const checkScript = (source: string) => {
-  const spec = compileToEscore(`"use strict";\n${source}`, "spec.ts", library);
+const checkScript = (source: string, isStrict = true) => {
+  const spec = compileToEscore(`${isStrict ? '"use strict";' : ""}\n${source}`, "spec.ts", library);
   const worker = new Worker(
     `const { parentPort, workerData } = require("node:worker_threads");
     import(workerData.url).then(async (tla) => {
@@ -93,6 +93,28 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("rejects another result", async () => {
       expect((await checkScript(getSource("106,14,104"))).message).toContain(THREW);
+    });
+  });
+
+  describe("runs a script outside strict mode as sloppy code", () => {
+    const getSource = (expected: string) => `
+      function mapped(first: unknown) {
+        arguments[0] = 9;
+        return first;
+      }
+      function getThis(this: unknown) {
+        return this === globalThis;
+      }
+      const result = [mapped(1), getThis()].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("9,true"), false)).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("1,true"), false)).message).toContain(THREW);
     });
   });
 });
