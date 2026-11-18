@@ -1216,6 +1216,19 @@ Spec == Init /\\ [][Next]_x
     expect(report.text).toContain(`\n\n${error}\n`);
   });
 
+  it("fails a selection into a failed definition through an instance as SANY does without one", () => {
+    const error =
+      "Subexpression selection failed, probably due to an error in the selected expression.";
+    expect(
+      getReport({ M: "---- MODULE M ----\na ## b == a ## b\nU == ##(1, 2)!1\n====\n" }).text,
+    ).toContain(`line 3, col 15 to line 3, col 15 of module M\n\n${error}\n`);
+    expect(
+      getReport({
+        M: "---- MODULE M ----\n---- MODULE Inner ----\nCONSTANT c\na ## b == a ## b\n====\nI == INSTANCE Inner WITH c <- 1\nU == I!##(1, 2)!1\n====\n",
+      }).text,
+    ).toContain(`line 7, col 17 to line 7, col 17 of module M\n\n${error}\n`);
+  });
+
   it("rejects a LET without definitions", () => {
     const report = getReport({ M: "---- MODULE M ----\nD0 ==\n  LET\n  IN 1\n====\n" });
     expect(report.isFailed).toBe(true);
