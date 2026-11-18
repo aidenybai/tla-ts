@@ -31072,19 +31072,35 @@ describe("errors", () => {
       expect((await checkModel(getSource("true,false,true"))).failure).toBeDefined();
     });
 
-    it("stops at an array or a function, which it can't convert", async () => {
-      const getStop = async (value: string) =>
-        (
-          await checkModel(`
-            const made = new String("1");
-            let x: any = ${value};
-            if (isNaN(x)) throw new Error("NaN");
-          `)
-        ).failure?.message;
-      expect(await getStop("[5]")).toContain(
-        "tla-ts can't tell what this method gives where it converts an object",
-      );
-      expect(await getStop("() => 1")).toContain(
+    it("converts an array through its join", async () => {
+      const getSource = (expected: string) => `
+        const made = new String("1");
+        let a: any = [5];
+        let b: any = [1, 2];
+        let c: any = [];
+        let d: any = [" 7 "];
+        let e: any = [null];
+        let f: any = [true];
+        const result = [isNaN(a), isNaN(b), isNaN(c), isNaN(d), isNaN(e), isNaN(f)].join();
+        if (result !== "${expected}") throw new Error(result);
+      `;
+      expect(
+        (await checkModel(getSource("false,true,false,false,false,true"))).failure,
+      ).toBeUndefined();
+      expect(
+        (await checkModel(getSource("false,true,false,false,false,false"))).failure,
+      ).toBeDefined();
+    });
+
+    it("stops at a function, which it can't convert", async () => {
+      const failure = (
+        await checkModel(`
+          const made = new String("1");
+          let x: any = () => 1;
+          if (isNaN(x)) throw new Error("NaN");
+        `)
+      ).failure;
+      expect(failure?.message).toContain(
         "tla-ts can't tell what this method gives where it converts an object",
       );
     });
@@ -53224,6 +53240,287 @@ describe("BigInts", () => {
     it("rejects other values", async () => {
       const wrong = source.replace('"10,20,30"', '"10,20"');
       expect((await check(compile(wrong, path))).failure?.message).toContain("seen 10,20,30");
+    });
+  });
+
+  describe("converts the object arguments of a buffer's slice, resize, grow, and transfer once it checks the buffer", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = [];
+      var buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+      var start = { valueOf() { log.push("start"); return 2; } };
+      var end = { valueOf() { log.push("end"); return 6; } };
+      var sliced = buffer.slice(start, end);
+      buffer.resize({ valueOf() { log.push("resize"); return 12; } });
+      var thrown = "none";
+      try {
+        buffer.resize({ valueOf() { log.push("v"); return {}; }, toString() { log.push("s"); return {}; } });
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      var fixed = new ArrayBuffer(4);
+      var notResizable = "none";
+      try {
+        fixed.resize({ valueOf() { log.push("never"); return 1; } });
+      } catch (error) {
+        notResizable = error instanceof TypeError ? "TypeError" : "other";
+      }
+      var moved = buffer.transfer({ valueOf() { log.push("transfer"); return 3; } });
+      var shared = new SharedArrayBuffer(2, { maxByteLength: 8 });
+      shared.grow({ valueOf() { log.push("grow"); return 4; } });
+      var result = [sliced.byteLength, moved.byteLength, buffer.detached, shared.byteLength, thrown, notResizable, log.join()].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("4,3,true,4,TypeError,TypeError,start,end,resize,v,s,transfer,grow");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource(
+        "4,3,true,4,TypeError,TypeError,start,end,resize,v,s,transfer,never",
+      );
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 4,3,true,4,TypeError,TypeError,start,end,resize,v,s,transfer,grow",
+      );
+    });
+  });
+
+  describe("throws what converting the object maxByteLength of new of a buffer throws", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = [];
+      var options = {
+        maxByteLength: {
+          toString: function () { log.push("toString"); return {}; },
+          valueOf: function () { log.push("valueOf"); return {}; },
+        },
+      };
+      var thrown = "none";
+      try {
+        new ArrayBuffer(0, options);
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      var plain = new ArrayBuffer(2, { maxByteLength: 4 });
+      var result = [thrown, log.join(), plain.maxByteLength].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("TypeError,valueOf,toString,4");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("TypeError,toString,valueOf,4");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result TypeError,valueOf,toString,4",
+      );
+    });
+  });
+
+  describe("converts a string that isn't a numeric literal to NaN, once it trims its whitespace", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var words = "this is not a number";
+      var spaced = " 1 2 ";
+      var padded = "  7\t";
+      var arr = [1, 2, 3];
+      arr.length = " 2 ";
+      var result = [isNaN(words), Number(spaced), Number(padded), padded == 7, arr.length, Number("1_000"), Number("é")].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("true,NaN,7,true,2,NaN,NaN");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("true,12,7,true,2,NaN,NaN");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result true,NaN,7,true,2,NaN,NaN",
+      );
+    });
+  });
+
+  describe("converts the object indices of an array's slice, splice, and copyWithin", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var x = [0, 1, 2, 3, 4];
+      var arr = x.slice({ valueOf: function () { return 1; } }, 3);
+      var y = [0, 1, 2, 3];
+      var removed = y.splice(0, { valueOf: function () { return 3; } });
+      var copied = [0, 1, 2, 3].copyWithin({}, 1);
+      var thrown = "none";
+      try {
+        [].copyWithin(0, 0, { valueOf: function () { throw new RangeError("x"); } });
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [arr.join("|"), removed.join("|"), y.join("|"), copied.join("|"), thrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("1|2,0|1|2,3,1|2|3|3,RangeError");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("1|2,0|1|2,3,1|2|3|3,none");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 1|2,0|1|2,3,1|2|3|3,RangeError",
+      );
+    });
+
+    it("stops where a conversion changes the array", async () => {
+      const source = `
+        var z = [1, 2, 3];
+        var sliced = z.slice({ valueOf: function () { z.pop(); return 0; } });
+      `;
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't follow an array method whose argument's conversion changed the array",
+      );
+    });
+  });
+
+  describe("converts the object that Symbol and Symbol.for take to a string", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var calls = [];
+      var symbol = Symbol.for({ toString: function () { calls.push("for"); return "test262"; } });
+      var same = Symbol.for("test262");
+      var described = Symbol({ valueOf: function () { return 1; }, toString: function () { calls.push("d"); return 7; } });
+      var thrown = "none";
+      try {
+        var unused = Symbol.for({ toString: function () { throw new RangeError("x"); } });
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var symbolThrown = "none";
+      try {
+        var other = Symbol.for({ toString: function () { return Symbol(); } });
+      } catch (error) {
+        symbolThrown = error.constructor.name;
+      }
+      var result = [symbol.description, symbol === same, described.description, calls.join("|"), thrown, symbolThrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("test262,true,7,for|d,RangeError,TypeError");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("test262,true,7,d|for,RangeError,TypeError");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result test262,true,7,for|d,RangeError,TypeError",
+      );
+    });
+  });
+
+  describe("converts the message of a native error that isn't a string to a string", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var a = new Error(42);
+      var b = new SuppressedError(undefined, undefined, false);
+      var c = new TypeError(null);
+      var d = new RangeError(undefined);
+      var result = [typeof a.message, a.message, b.message, c.message, d.message].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("string,42,false,null,");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("number,42,false,null,");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result string,42,false,null,",
+      );
+    });
+  });
+
+  describe("converts the object message of a native error to a string once it evaluates its arguments", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var stringified = false;
+      var message = { toString() { stringified = true; return "m"; } };
+      var error = {};
+      var suppressed = {};
+      var e = new SuppressedError(error, suppressed, message);
+      var f = new TypeError({ valueOf: function () { return 1; }, toString: function () { return undefined; } });
+      var thrown = "none";
+      try {
+        var g = new RangeError({ toString: function () { throw new SyntaxError("x"); } });
+      } catch (caught) {
+        thrown = caught.constructor.name;
+      }
+      var symbolThrown = "none";
+      try {
+        var h = new Error({ toString: function () { return Symbol(); } });
+      } catch (caught) {
+        symbolThrown = caught.constructor.name;
+      }
+      var described = Symbol({ toString: function () { return undefined; } });
+      var result = [stringified, e.message, e.error === error, f.message, thrown, symbolThrown, described.description].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("true,m,true,undefined,SyntaxError,TypeError,undefined");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("true,m,true,1,SyntaxError,TypeError,undefined");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result true,m,true,undefined,SyntaxError,TypeError,undefined",
+      );
+    });
+  });
+
+  describe("converts the object computed keys of a class's fields as it makes the class", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var calls = "";
+      var symbol = Symbol("s");
+      var second = { toString: function () { calls += "e|"; return symbol; }, valueOf: function () { throw new Error("valueOf"); } };
+      var third = { toString: undefined, valueOf: function () { calls += "f|"; return 1; } };
+      class C {
+        [second] = 43;
+        [third] = 44;
+      }
+      var c = new C();
+      var thrown = "none";
+      var bad = { toString: function () { throw new RangeError("x"); } };
+      try {
+        var D = class {
+          [bad] = 1;
+        };
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [c[symbol], c[1], calls, thrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("43,44,e|f|,RangeError");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("43,44,f|e|,RangeError");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 43,44,e|f|,RangeError",
+      );
     });
   });
 });

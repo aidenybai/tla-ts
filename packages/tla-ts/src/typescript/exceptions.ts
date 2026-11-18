@@ -23,7 +23,7 @@ import { getGeneratorPrototypeRef, translateBuiltInInstanceOf } from "./intrinsi
 import { getTypeNames, useJavaScript } from "./javascript";
 import { ARRAY_ITERATOR_REPLACED, holdsArrayIteration } from "./collections";
 import type { Scope } from "./scope";
-import { getKind, isGeneratorType, isHeapArray } from "./types";
+import { getKind, isEvery, isGeneratorType, isHeapArray } from "./types";
 import { apply, boolean, field, identifier, ifExpression, record, set, string } from "./tla";
 
 export const NATIVE_ERRORS = new Set([
@@ -318,6 +318,12 @@ export const translateNewError = (
     throw new TlaTypeScriptError("Error options aren't supported", node);
   }
   const message = argumentNodes.at(held.length);
+  // A message other than undefined converts to a string.
+  const toText = (value: Expression) =>
+    message !== undefined &&
+    isEvery(context.checker.getTypeAtLocation(message), ts.TypeFlags.StringLike)
+      ? value
+      : useJavaScript("StringOf", [value], context);
   const value =
     message === undefined
       ? string("")
@@ -325,9 +331,9 @@ export const translateNewError = (
             "undefined",
           ) !== false
         ? share(translateExpression(message, scope, context), "message", context, (shared) =>
-            ifExpression(apply("=", [shared, getUndefined(context)]), string(""), shared),
+            ifExpression(apply("=", [shared, getUndefined(context)]), string(""), toText(shared)),
           )
-        : translateExpression(message, scope, context);
+        : toText(translateExpression(message, scope, context));
   if (native === classes[0]) includeError(native.name, context);
   const identity = scope.allocated.get(node);
   const error = record("Record", [

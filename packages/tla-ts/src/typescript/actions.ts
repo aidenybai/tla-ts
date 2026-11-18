@@ -180,7 +180,9 @@ import {
   getConversion,
   getConversionFunctions,
   getKeyedConversionFunctions,
+  isConvertedClassKey,
   isConvertedPropertyKey,
+  isConvertedStringArgument,
   isAnyOperand,
   isCompoundAssignment,
   isObjectOperand,
@@ -3893,7 +3895,7 @@ const translateCallStatementBody = (
       translateExpression(value, path.scope, context),
     );
     const typedArguments = tuple(typedValues);
-    const getOperation = (heap: Expression) =>
+    const getOperation = (heap: Expression, args = values) =>
       viewCall.owner === "TypedArray"
         ? useJavaScript(
             "TypedArrayMethod",
@@ -3911,20 +3913,20 @@ const translateCallStatementBody = (
           ? useJavaScript("WeakRefDeref", [heap, ref], context)
           : viewCall.owner === "FinalizationRegistry"
             ? method === "register"
-              ? useJavaScript("FinalizationRegistryRegister", [heap, ref, ...values], context)
-              : useJavaScript("FinalizationRegistryUnregister", [heap, ref, values[0]], context)
+              ? useJavaScript("FinalizationRegistryRegister", [heap, ref, ...args], context)
+              : useJavaScript("FinalizationRegistryUnregister", [heap, ref, args[0]], context)
             : viewCall.owner === "DataView"
               ? method.startsWith("get")
-                ? useJavaScript("DataViewGet", [heap, ref, type, values[0], values[1]], context)
-                : useJavaScript("DataViewSet", [heap, ref, type, ...values], context)
+                ? useJavaScript("DataViewGet", [heap, ref, type, args[0], args[1]], context)
+                : useJavaScript("DataViewSet", [heap, ref, type, ...args], context)
               : method === "slice"
                 ? useJavaScript(
                     "BufferSlice",
                     [
                       heap,
                       ref,
-                      values[0],
-                      values[1],
+                      args[0],
+                      args[1],
                       isShared,
                       translateBuiltInValue(
                         viewCall.owner === "SharedArrayBuffer"
@@ -3937,7 +3939,7 @@ const translateCallStatementBody = (
                     context,
                   )
                 : method === "resize" || method === "grow"
-                  ? useJavaScript("Resize", [heap, ref, values[0], isShared], context)
+                  ? useJavaScript("Resize", [heap, ref, args[0], isShared], context)
                   : viewCall.owner === "Atomics"
                     ? useJavaScript(
                         "AtomicsCall",
@@ -3958,7 +3960,7 @@ const translateCallStatementBody = (
                         [
                           heap,
                           ref,
-                          values[0],
+                          args[0],
                           boolean(method === "transfer"),
                           translateBuiltInValue("ArrayBuffer.prototype", expression, context),
                         ],
@@ -4256,6 +4258,49 @@ const translateCallStatementBody = (
           ),
       );
     };
+    // A buffer's slice, resize, grow, transfer, and transferToFixedLength check the buffer, then
+    // convert their arguments in order, and run as they would with the primitives where the
+    // conversions left the buffer as it was.
+    const convertedBufferValues = getConvertedBufferValues(expression, context);
+    const runConvertedBuffer = (converted: readonly ts.Expression[]) =>
+      ifThenElse(
+        useJavaScript("BufferThrowsBefore", [heap, ref, string(method), isShared], context),
+        throwTypeError(path, expression, context, frame),
+        runConversion(
+          expression,
+          {
+            operands: converted,
+            hints: converted.map(() => "number" as const),
+            combine: (primitives) => tuple([...primitives]),
+          },
+          path,
+          context,
+          frame,
+          (after, primitives) => {
+            const afterHeap = getHeap(after.scope, expression, context);
+            const args = [0, 1, 2].map((position) =>
+              position < converted.length
+                ? index(primitives, [number(position + 1)])
+                : getUndefined(context),
+            );
+            return ifThenElse(
+              apply("=", [
+                index(field(afterHeap, "objects"), [index(ref, [identifier("Ref")])]),
+                index(field(heap, "objects"), [index(ref, [identifier("Ref")])]),
+              ]),
+              runChange(after, getOperation(afterHeap, args)),
+              leaf(
+                apply("Assert", [
+                  boolean(false),
+                  string(
+                    "tla-ts can't follow a buffer method whose argument's conversion changed the buffer",
+                  ),
+                ]),
+              ),
+            );
+          },
+        ),
+      );
     // fill, slice, copyWithin, at, and join convert their arguments in order once they read the
     // typed array's length, and run as they would with the primitives where the conversions left
     // the typed array and its buffer as they were.
@@ -4332,22 +4377,28 @@ const translateCallStatementBody = (
               ? runConvertedSearch(convertedSearchValues)
               : convertedTypedValues !== undefined
                 ? runConvertedTyped(convertedTypedValues)
-                : viewCall.owner === "TypedArray" &&
-                    method === "set" &&
-                    getThrowingGetters(expression, context).length > 0
-                  ? throwFirstGetter(
-                      expression,
-                      apply("#", [setGetter, getUndefined(context)]),
-                      setGetter,
-                      typedValues[0] ?? getUndefined(context),
-                      withHeap(
-                        useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
-                      ),
-                      context,
-                      frame,
-                      runOperation(),
-                    )
-                  : runOperation();
+                : convertedBufferValues !== undefined
+                  ? runConvertedBuffer(convertedBufferValues)
+                  : viewCall.owner === "TypedArray" &&
+                      method === "set" &&
+                      getThrowingGetters(expression, context).length > 0
+                    ? throwFirstGetter(
+                        expression,
+                        apply("#", [setGetter, getUndefined(context)]),
+                        setGetter,
+                        typedValues[0] ?? getUndefined(context),
+                        withHeap(
+                          useJavaScript(
+                            "TypedArraySetBefore",
+                            [heap, ref, typedArguments],
+                            context,
+                          ),
+                        ),
+                        context,
+                        frame,
+                        runOperation(),
+                      )
+                    : runOperation();
     return bindOnce(
       path,
       receiver,
@@ -14589,9 +14640,28 @@ const isLengthConvertingBuffer = (node: ts.Expression, context: Context) => {
     (buffers[0] === "ArrayBuffer" || buffers[0] === "SharedArrayBuffer") &&
     construction?.newTarget === construction?.callee &&
     length !== undefined &&
-    !ts.isSpreadElement(length) &&
-    !isPrimitiveIndex(getCast(length), context)
+    !(construction?.arguments ?? []).some(ts.isSpreadElement) &&
+    (!isPrimitiveIndex(getCast(length), context) || isMaximumConverted(node, context))
   );
+};
+
+// new of a buffer whose options' maxByteLength may be an object, which it converts with ToIndex
+// once it converts its length.
+const isMaximumConverted = (node: ts.Expression, context: Context) => {
+  const options = getBufferConstruction(node, context)?.arguments.at(1);
+  if (options === undefined) return false;
+  const types = [options, skipCasts(options)].map((inner) =>
+    context.checker.getTypeAtLocation(inner),
+  );
+  return types.some((type) => {
+    const maximum = type.getProperty("maxByteLength");
+    const maximumType = maximum && context.checker.getTypeOfSymbol(maximum);
+    return (
+      (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+      (maximumType !== undefined &&
+        (maximumType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object)) !== 0)
+    );
+  });
 };
 
 // A call of a Date's setter with an object, which it converts to a number, running the object's
@@ -14674,6 +14744,58 @@ const getConvertedSearchValues = (node: ts.Node, context: Context) => {
     !call.values.some(ts.isSpreadElement) &&
     (isObjectOperand(call.values[1], context) || isAnyOperand(call.values[1], context))
     ? call.values.slice(1)
+    : undefined;
+};
+
+// An array literal of literals, which nothing that runs after it can change before a call reads it.
+const isLiteralArray = (node: ts.Expression) =>
+  ts.isArrayLiteralExpression(node) &&
+  node.elements.every(
+    (element) =>
+      ts.isNumericLiteral(element) ||
+      ts.isStringLiteral(element) ||
+      element.kind === ts.SyntaxKind.TrueKeyword ||
+      element.kind === ts.SyntaxKind.FalseKeyword ||
+      element.kind === ts.SyntaxKind.NullKeyword,
+  );
+
+// The array, which a name holds or a literal makes, and the arguments that slice, splice, or
+// copyWithin of it takes as indices, where one is an object or of type any.
+const getConvertedArrayValues = (node: ts.Node, context: Context) => {
+  if (
+    context.heap === undefined ||
+    !isMethodCall(node) ||
+    !(
+      ts.isIdentifier(skipCasts(node.expression.expression)) ||
+      isLiteralArray(skipCasts(node.expression.expression))
+    ) ||
+    !context.checker.isArrayType(context.checker.getTypeAtLocation(node.expression.expression)) ||
+    node.arguments.some(ts.isSpreadElement)
+  ) {
+    return undefined;
+  }
+  const count = new Map([
+    ["slice", 2],
+    ["splice", 2],
+    ["copyWithin", 3],
+  ]).get(node.expression.name.text);
+  const values = node.arguments.slice(0, count);
+  return count !== undefined &&
+    values.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
+    ? { receiver: skipCasts(node.expression.expression), values }
+    : undefined;
+};
+
+// The arguments of a buffer's slice, resize, grow, transfer, or transferToFixedLength where one
+// is an object or of type any, which the method converts in turn once it checks the buffer.
+const getConvertedBufferValues = (node: ts.Node, context: Context) => {
+  const call = getViewCall(node, context);
+  return (call?.owner === "ArrayBuffer" || call?.owner === "SharedArrayBuffer") &&
+    ["slice", "resize", "grow", "transfer", "transferToFixedLength"].includes(call.method) &&
+    !call.values.some(ts.isSpreadElement) &&
+    call.values.length <= (call.method === "slice" ? 2 : 1) &&
+    call.values.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
+    ? call.values
     : undefined;
 };
 
@@ -14917,9 +15039,36 @@ const translateNewBufferStatement = (
         !isConverted
           ? make(current, madeArguments, finish)
           : isLengthConvertingBuffer(node, context)
-            ? toIndex(current, madeArguments[0], (after, length) =>
-                make(after, [length, ...madeArguments.slice(1)], finish),
-              )
+            ? toIndex(current, madeArguments[0], (after, length) => {
+                const options = madeArguments[1] ?? getUndefined(context);
+                const afterHeap = getHeap(after.scope, node, context);
+                const maximum = useJavaScript(
+                  "Get",
+                  [afterHeap, options, string("maxByteLength")],
+                  context,
+                );
+                // A maxByteLength that converts through its methods stops once it converts, but
+                // throws what the conversion throws.
+                return isMaximumConverted(node, context)
+                  ? ifThenElse(
+                      apply("/\\", [
+                        useJavaScript("IsObjectIn", [afterHeap, options], context),
+                        useJavaScript("IsObjectIn", [afterHeap, maximum], context),
+                      ]),
+                      runToPrimitive(node, maximum, "number", after, context, frame, () =>
+                        leaf(
+                          apply("Assert", [
+                            boolean(false),
+                            string(
+                              "tla-ts can't make a buffer whose maxByteLength converts through its methods",
+                            ),
+                          ]),
+                        ),
+                      ),
+                      make(after, [length, ...madeArguments.slice(1)], finish),
+                    )
+                  : make(after, [length, ...madeArguments.slice(1)], finish);
+              })
             : ifThenElse(
                 useJavaScript(
                   "IsBuffer",
@@ -15957,7 +16106,9 @@ const getEffects = (
     getConvertedAtomicsValues(node, context) !== undefined ||
     getConvertedSubarrayValues(node, context) !== undefined ||
     getConvertedSearchValues(node, context) !== undefined ||
-    getConvertedTypedValues(node, context) !== undefined
+    getConvertedTypedValues(node, context) !== undefined ||
+    getConvertedBufferValues(node, context) !== undefined ||
+    getConvertedArrayValues(node, context) !== undefined
       ? getConversionFunctions(node, context)
       : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
         ? getKeyedConversionFunctions(node, context)
@@ -20071,6 +20222,9 @@ interface LeadingCall {
   // A new of a typed array of a value that may be an iterable, whose iterator runs as a
   // statement, so nothing after it can run before it.
   typedArray?: ts.NewExpression;
+  // A call of an array's method that converts the objects it takes as indices, which runs their
+  // methods, so nothing after it can run before it.
+  indexed?: ts.CallExpression;
 }
 
 // The first call in a node's evaluation order that only statements can run, with the nodes that
@@ -20104,7 +20258,9 @@ const findLeadingCall = (
   if ((ts.isExpression(node) || ts.isSpreadElement(node)) && path.scope.results.has(node)) {
     return none;
   }
-  if (isConvertedPropertyKey(node, context)) return { ...blocked, conversion: node };
+  if (isConvertedPropertyKey(node, context) || isConvertedStringArgument(node, context)) {
+    return { ...blocked, conversion: node };
+  }
   // An object that spreads a proxy runs its traps.
   if (ts.isObjectLiteralExpression(node) && isProxyOperation(node, context)) {
     return { call: undefined, isBlocked: true, read: node };
@@ -20415,6 +20571,13 @@ const findLeadingCall = (
     }
     const found = thenConverted(inOrder(node.arguments));
     if (found.call !== undefined || found.isBlocked) return found;
+    if (
+      getConvertedArrayValues(node, context)?.values.some(
+        (value) => !path.scope.results.has(value),
+      ) === true
+    ) {
+      return { ...blocked, indexed: node };
+    }
     if (isGeneratorType(node, context)) return blocked;
     // A call that may throw inside try runs as a statement, whose throw the try catches.
     return isStatementCall(node, path, context) ||
@@ -20752,6 +20915,63 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
     context,
   );
   return { node, conversion };
+};
+
+// The first computed key of a class that a statement makes that converts an object, which runs as
+// its own statement, where the class evaluates only names and literals before it. Nothing that the
+// class evaluates before it may read what the conversion's methods change.
+const getHoistedClassKey = (statement: ts.Statement, path: Path, context: Context) => {
+  const declaration = ts.isVariableStatement(statement)
+    ? statement.declarationList.declarations.at(0)
+    : undefined;
+  const made =
+    declaration?.initializer === undefined ? statement : skipCasts(declaration.initializer);
+  if (!ts.isClassLike(made) || (made.heritageClauses ?? []).length > 0) return undefined;
+  const keys = made.members.flatMap((member) =>
+    member.name !== undefined && ts.isComputedPropertyName(member.name)
+      ? [member.name.expression]
+      : [],
+  );
+  const position = keys.findIndex((key) => !path.scope.results.has(key));
+  const node = keys.at(position);
+  const conversion =
+    position === -1 || node === undefined ? undefined : getConversion(node, context);
+  const before = keys.slice(0, position);
+  if (
+    node === undefined ||
+    conversion === undefined ||
+    !isConvertedClassKey(node, context) ||
+    !before.every(
+      (key) =>
+        ts.isIdentifier(skipCasts(key)) ||
+        ts.isLiteralExpression(skipCasts(key)) ||
+        path.scope.results.has(key),
+    )
+  ) {
+    return undefined;
+  }
+  rejectEarlyRun(node, getConversionFunctions(node, context), before, path, context);
+  return { node, conversion };
+};
+
+// The call of an array's slice, splice, or copyWithin that a statement's expression evaluates first
+// whose index arguments convert, which runs their conversions as its own statement. Nothing that the
+// statement evaluates before it may read what the conversions' methods change.
+const getHoistedIndices = (statement: ts.Statement, path: Path, context: Context) => {
+  const evaluated = getEvaluated(statement);
+  if (evaluated === undefined) return undefined;
+  const before: ts.Node[] = [];
+  const node = findLeadingCall(evaluated, before, path, context).indexed;
+  const converted = node && getConvertedArrayValues(node, context);
+  if (node === undefined || converted === undefined) return undefined;
+  rejectEarlyRun(
+    node,
+    getConversionFunctions(node, context),
+    before.filter((inner) => ts.findAncestor(inner, (ancestor) => ancestor === node) === undefined),
+    path,
+    context,
+  );
+  return { node, ...converted };
 };
 
 // The read that a statement's expression evaluates first whose getter may change something, which
@@ -22000,6 +22220,91 @@ export const translateStatements = (
           }),
         )
       : gather(path);
+  }
+  const classKey = getHoistedClassKey(statement, path, context);
+  if (classKey !== undefined) {
+    return runConversion(
+      classKey.node,
+      classKey.conversion,
+      path,
+      context,
+      statementFrame,
+      (after, value) =>
+        translateStatements(
+          statements,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([...after.scope.results, [classKey.node, value]]),
+            },
+          },
+          context,
+          frame,
+        ),
+    );
+  }
+  // slice, splice, and copyWithin of an array convert the arguments they take as indices in turn,
+  // once they read the array's length, and run as they would with the primitives where the
+  // conversions left the array that a name holds as it was.
+  const indexed = getHoistedIndices(statement, path, context);
+  if (indexed !== undefined) {
+    const values = indexed.values;
+    const receiver = indexed.receiver;
+    return runConversion(
+      indexed.node,
+      {
+        operands: values,
+        hints: values.map(() => "number"),
+        combine: (primitives) => tuple([...primitives]),
+      },
+      path,
+      context,
+      statementFrame,
+      (after, primitives) => {
+        const run = translateStatements(
+          statements,
+          {
+            ...after,
+            scope: {
+              ...after.scope,
+              results: new Map([
+                ...after.scope.results,
+                ...values.flatMap((value, position) => {
+                  const primitive = index(primitives, [number(position + 1)]);
+                  return [[value, primitive] as const, [skipCasts(value), primitive] as const];
+                }),
+              ]),
+            },
+          },
+          context,
+          frame,
+        );
+        return ts.isIdentifier(receiver)
+          ? ifThenElse(
+              useJavaScript(
+                "ObjectKept",
+                [
+                  getHeap(path.scope, indexed.node, context),
+                  getHeap(after.scope, indexed.node, context),
+                  translateExpression(receiver, path.scope, context),
+                  translateExpression(receiver, after.scope, context),
+                ],
+                context,
+              ),
+              run,
+              leaf(
+                apply("Assert", [
+                  boolean(false),
+                  string(
+                    "tla-ts can't follow an array method whose argument's conversion changed the array",
+                  ),
+                ]),
+              ),
+            )
+          : run;
+      },
+    );
   }
   const converted = getHoistedConversion(statement, path, context);
   if (converted !== undefined) {

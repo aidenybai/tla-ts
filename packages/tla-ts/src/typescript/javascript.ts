@@ -2723,11 +2723,28 @@ LOCAL ParseFitting(text, radix) ==
 
 LOCAL Prefix(text, length) == IF Len(text) < length THEN text ELSE SubSeq(text, 1, length)
 
-\\* ToNumber of a string, without whitespace, which Use takes as its kind, its sign, and its
-\\* magnitude truncated toward 0. TLC evaluates an argument only where Use reads it, so a magnitude
-\\* too big for TLC doesn't stop the check where Use doesn't need it.
-LOCAL ReadNumber(text, Use(_, _, _)) ==
-  LET prefix == Prefix(text, 2)
+\\* The characters that trim() removes: WhiteSpace and LineTerminator.
+LOCAL Spaces ==
+  {"\\t", "\\n", "\\r", "\\f", " ", "\u000B", "\u00A0", "\uFEFF", "\u1680", "\u202F", "\u205F", "\u3000", "\u2028", "\u2029"}
+    \\cup {SubSeq("\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A", position, position) : position \\in 1..11}
+
+RECURSIVE TrimStart(_)
+TrimStart(text) ==
+  IF text # "" /\\ SubSeq(text, 1, 1) \\in Spaces THEN TrimStart(SubSeq(text, 2, Len(text))) ELSE text
+
+RECURSIVE TrimEnd(_)
+TrimEnd(text) ==
+  IF text # "" /\\ SubSeq(text, Len(text), Len(text)) \\in Spaces
+  THEN TrimEnd(SubSeq(text, 1, Len(text) - 1))
+  ELSE text
+
+\\* ToNumber of a string, without the whitespace around it, which Use takes as its kind, its sign,
+\\* and its magnitude truncated toward 0. A string that isn't a StringNumericLiteral is NaN. TLC
+\\* evaluates an argument only where Use reads it, so a magnitude too big for TLC doesn't stop the
+\\* check where Use doesn't need it.
+LOCAL ReadNumber(untrimmed, Use(_, _, _)) ==
+  LET text == TrimEnd(TrimStart(untrimmed))
+      prefix == Prefix(text, 2)
       body == SubSeq(text, 3, Len(text))
       radix == CASE prefix \\in {"0x", "0X"} -> 16
                  [] prefix \\in {"0o", "0O"} -> 8
@@ -2770,10 +2787,7 @@ LOCAL ReadNumber(text, Use(_, _, _)) ==
             Use("integer", FALSE, ParseFitting(body, radix))
        [] isDecimal -> Use(IF isExact THEN "integer" ELSE "fraction", isNegative, magnitude)
        [] text \\in {"Infinity", "+Infinity", "-Infinity"} -> Use("infinity", isNegative, 0)
-       [] \\/ CharactersOf(text) \\subseteq CharactersOf(Alphanumerics) \\cup {"+", "-", ".", "_", "!"}
-          \\/ CharactersOf(text) \\cap CharactersOf("[]{}()<>,;:#$%&*=?@^|~") # {} ->
-            Use("nan", FALSE, 0)
-       [] OTHER -> Assert(FALSE, "tla-ts can't convert " \\o ToString(text) \\o " to a number")
+       [] OTHER -> Use("nan", FALSE, 0)
 
 \\* ToLength of a string, truncated and clamped at 0.
 LOCAL ToLengthOfText(text) ==
@@ -4367,20 +4381,6 @@ BigIntToString(value, radix) ==
         [] base = 10 -> BigIntText(bigint)
         [] OTHER -> sign \\o NatRadixDigits(BigIntNat(bigint), base)
 
-\\* The characters that trim() removes: WhiteSpace and LineTerminator.
-LOCAL Spaces ==
-  {"\\t", "\\n", "\\r", "\\f", " ", "\u000B", "\u00A0", "\uFEFF", "\u1680", "\u202F", "\u205F", "\u3000", "\u2028", "\u2029"}
-    \\cup {SubSeq("\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A", position, position) : position \\in 1..11}
-
-RECURSIVE TrimStart(_)
-TrimStart(text) ==
-  IF text # "" /\\ SubSeq(text, 1, 1) \\in Spaces THEN TrimStart(SubSeq(text, 2, Len(text))) ELSE text
-
-RECURSIVE TrimEnd(_)
-TrimEnd(text) ==
-  IF text # "" /\\ SubSeq(text, Len(text), Len(text)) \\in Spaces
-  THEN TrimEnd(SubSeq(text, 1, Len(text) - 1))
-  ELSE text
 
 StringTrim(value, isStart, isEnd) ==
   LET started == IF isStart THEN TrimStart(Text(value)) ELSE Text(value)
@@ -5131,6 +5131,14 @@ ConvertWith(heap, ref, method) ==
           /\\ \\A position \\in DOMAIN ref : ref[position] = Null \\/ TypeOf(ref[position]) # "object"
           /\\ HoldsBuiltIn(heap, ref, "join", "Array.prototype.join") ->
             JoinValues(ref, ",")
+       [] /\\ path = "Array.prototype.toString"
+          /\\ IsHeap(ref)
+          /\\ ~IsProxy(heap, ref)
+          /\\ IsArray(heap, ref)
+          /\\ HoldsBuiltIn(heap, ref, "join", "Array.prototype.join")
+          /\\ LET values == ArrayLikeValues(heap, ref)
+             IN \\A position \\in DOMAIN values : ~IsRef(values[position]) /\\ ~IsSymbol(values[position]) ->
+            JoinValues(ArrayLikeValues(heap, ref), ",")
        [] IsTemporalConversion(path) -> TemporalConverted(heap, path, ref)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell what this method gives where it converts an object")
 
@@ -7031,6 +7039,20 @@ TypedArraySubarray(heap, ref, arguments, length, bufferPrototype, constructors) 
        [] begin + (IF isTracking THEN 0 ELSE count * ElementSize(view.elementType))
             > Len(buffer.bytes) -> Thrown(heap, "RangeError")
        [] OTHER -> Returned(viewing, Allocated(viewing))
+
+\\* Whether a name still holds the value it held, and the heap the object it names as it was.
+ObjectKept(heap, afterHeap, before, after) ==
+  /\\ before = after
+  /\\ IsHeap(before) => heap.objects[before[Ref]] = afterHeap.objects[before[Ref]]
+
+\\* Whether a buffer's method throws the TypeError of its checks before it converts its arguments:
+\\* of a receiver that isn't a buffer of its kind, of a resize or a grow of a buffer that can't
+\\* resize, or of an ArrayBuffer's slice of a detached buffer.
+BufferThrowsBefore(heap, ref, method, isShared) ==
+  \\/ ~IsBuffer(heap, ref)
+  \\/ heap.objects[ref[Ref]].isShared # isShared
+  \\/ method \\in {"resize", "grow"} /\\ heap.objects[ref[Ref]].maxLength = Undefined
+  \\/ method = "slice" /\\ ~isShared /\\ heap.objects[ref[Ref]].isDetached
 
 \\* Whether a typed array and the buffer it views are as they were before a conversion.
 TypedArrayKept(before, after, ref) ==
