@@ -211,6 +211,7 @@ const logoFiles = (): Plugin => ({
 });
 
 const EMPTY_ROOT = '<div id="root"></div>';
+const STYLESHEET = /<link rel="stylesheet"[^>]*href="\/([^"]+\.css)"[^>]*>/;
 
 const pages = (): Plugin => ({
   name: "pages",
@@ -236,6 +237,11 @@ const pages = (): Plugin => ({
         /compile-worker-.*\.js$/.test(fileName),
       );
       return html
+        .replace(STYLESHEET, (link, fileName) => {
+          const styles = context.bundle?.[fileName];
+          // The styles ride in the HTML, so the first paint does not wait on a second request.
+          return styles?.type === "asset" ? `<style>${styles.source}</style>` : link;
+        })
         .replace(EMPTY_ROOT, `<div id="root">${content}</div>`)
         .replace(
           "</head>",
