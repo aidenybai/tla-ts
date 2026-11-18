@@ -103,6 +103,187 @@
     0 0 0 1px var(--shadow-edge), 0 1px 2px -1px var(--shadow-edge), 0 2px 4px 0 var(--shadow-soft);
   --animate-line-fade: line-fade 1s linear infinite;
   --animate-chip-in: chip-in 200ms ease-out backwards;
+  --animate-logo-body: logo-body 1800ms steps(1) infinite;
+  --animate-logo-left-arm: logo-left-arm 1800ms steps(1) infinite;
+  --animate-logo-right-arm: logo-right-arm 1800ms steps(1) infinite;
+  --animate-logo-toe: logo-toe 1800ms steps(1) infinite;
+  --animate-logo-flip-body: logo-flip-body 1000ms steps(1);
+  --animate-logo-flip-left-arm: logo-flip-left-arm 1000ms steps(1);
+  --animate-logo-flip-right-arm: logo-flip-right-arm 1000ms steps(1);
+  --animate-logo-flip-toe: logo-flip-toe 1000ms steps(1);
+
+  /* Eleven steps: crouch, leap, four in the air, fall, land, bounce, settle, rest. */
+  @keyframes logo-flip-body {
+    0%,
+    63.636%,
+    81.818%,
+    90.909% {
+      translate: 0 0;
+      rotate: 0deg;
+    }
+    9.091% {
+      translate: 0 -2px;
+      rotate: 0deg;
+    }
+    18.182% {
+      translate: 0 -4px;
+      rotate: 90deg;
+    }
+    27.273% {
+      translate: 0 -6px;
+      rotate: 180deg;
+    }
+    36.364% {
+      translate: 0 -6px;
+      rotate: 270deg;
+    }
+    45.455% {
+      translate: 0 -4px;
+      rotate: 0deg;
+    }
+    54.545%,
+    72.727% {
+      translate: 0 -1px;
+      rotate: 0deg;
+    }
+  }
+
+  /* Both arms hang at a crouch and a landing, reach up in a leap, and level out in between. */
+  @keyframes logo-flip-left-arm {
+    0%,
+    63.636%,
+    90.909% {
+      translate: 0 0;
+    }
+    9.091%,
+    18.182%,
+    45.455%,
+    72.727%,
+    81.818% {
+      translate: 0 -2px;
+    }
+    27.273%,
+    36.364%,
+    54.545% {
+      translate: 0 -1px;
+    }
+  }
+
+  @keyframes logo-flip-right-arm {
+    0%,
+    63.636% {
+      translate: 0 2px;
+    }
+    9.091%,
+    18.182%,
+    45.455%,
+    72.727%,
+    81.818%,
+    90.909% {
+      translate: 0 0;
+    }
+    27.273%,
+    36.364%,
+    54.545% {
+      translate: 0 1px;
+    }
+  }
+
+  @keyframes logo-flip-toe {
+    0%,
+    63.636% {
+      translate: 0 1px;
+    }
+    9.091%,
+    72.727% {
+      translate: 0 0;
+    }
+  }
+
+  /* Twelve steps: two dances of four steps, then a rest and a three-step flip. */
+  @keyframes logo-body {
+    0%,
+    16.667%,
+    33.333%,
+    50%,
+    66.667% {
+      translate: 0 0;
+      rotate: 0deg;
+    }
+    8.333%,
+    25%,
+    41.667%,
+    58.333% {
+      translate: 0 -1px;
+      rotate: 0deg;
+    }
+    75% {
+      translate: 0 -2px;
+      rotate: 90deg;
+    }
+    83.333% {
+      translate: 0 -4px;
+      rotate: 180deg;
+    }
+    91.667% {
+      translate: 0 -2px;
+      rotate: 270deg;
+    }
+  }
+
+  @keyframes logo-left-arm {
+    0%,
+    33.333%,
+    66.667% {
+      translate: 0 0;
+    }
+    8.333%,
+    25%,
+    41.667%,
+    58.333%,
+    75% {
+      translate: 0 -1px;
+    }
+    16.667%,
+    50% {
+      translate: 0 -2px;
+    }
+  }
+
+  @keyframes logo-right-arm {
+    0%,
+    33.333%,
+    66.667% {
+      translate: 0 0;
+    }
+    8.333%,
+    25%,
+    41.667%,
+    58.333%,
+    75% {
+      translate: 0 1px;
+    }
+    16.667%,
+    50% {
+      translate: 0 2px;
+    }
+  }
+
+  @keyframes logo-toe {
+    0%,
+    16.667%,
+    33.333%,
+    50%,
+    66.667% {
+      translate: 0 0;
+    }
+    8.333%,
+    25%,
+    41.667%,
+    58.333% {
+      translate: 0 1px;
+    }
+  }
 
   @keyframes chip-in {
     from {
