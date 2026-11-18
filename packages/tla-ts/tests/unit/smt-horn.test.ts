@@ -259,6 +259,18 @@ describe("rule errors", () => {
     );
   });
 
+  it("names a rule || with the empty symbol rather than the null one", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-rel p (Int))",
+        "(declare-var x Int)",
+        "(rule (=> (= x (f 1)) (p x)) ||)",
+        "(query p)",
+      ]),
+    ).toEqual(getFailedQuery("Uninterpreted 'f' in :\np(#0) :- \n (= (:var 0) (f 1)).\n"));
+  });
+
   it("visits the patterns of a quantifier", () => {
     expect(
       run([
@@ -303,6 +315,20 @@ describe("rule errors", () => {
         "cannot process EXISTS quantifier in rule r2:\np(#1) :- \n p(#0),\n (= (:var 1) (+ 1 (:var 0))),\n (let ((a!1 (exists ((y Int)) (forall ((z Int)) (> (* y z (:var 2)) (:var 2))))))\n  (= a!1 true)).\n",
       ),
     );
+  });
+
+  it("rejects a quantifier in a query that the datalog engine answers", () => {
+    expect(
+      run([
+        "(set-logic HORN)",
+        "(assert (exists ((x (_ BitVec 4))) (= (bvadd x #x1) #x0)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "cannot process quantifier in rule <null>:\nquery!0() :- \n (let ((a!1 (= (exists ((x (_ BitVec 4))) (= (bvadd x #x1) #x0)) true)))\n  (not a!1)).\n")',
+    ]);
   });
 
   it("prints the term a recursive predicate is nested in", () => {

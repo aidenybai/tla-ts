@@ -1,4 +1,4 @@
-import { SmtCanceledError } from "../../../errors";
+import { SmtCanceledError, SmtTacticError } from "../../../errors";
 import {
   type AstManager,
   KIND_APP,
@@ -7,27 +7,29 @@ import {
   OP_AND,
   OP_EQ,
   OP_IMPLIES,
+  OP_OR,
   OP_UBV2INT,
   OP_ULEQ,
   SORT_BOOL,
   SORT_INT,
 } from "./ast";
+import { mkNot } from "./ast-util";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
 import { Bv2IntContext, Bv2IntRewriter } from "./bv2int-rewriter";
-import { card2bv } from "./card2bv";
+import { createCard2Bv } from "./card2bv";
+import { DependentExprState } from "./dependent-expr-state";
 import { runEnum2Bv } from "./dt2bv-tactic";
+import { release } from "./expr-ref";
 import { ExprSafeReplace } from "./expr-safe-replace";
 import { type Definition, Goal } from "./goal";
-import { ObjMap } from "./hashtable";
-import { L_FALSE, L_TRUE } from "./lbool";
+import { L_FALSE, L_TRUE, L_UNDEF } from "./lbool";
 import { RefVector } from "./ref-vector";
 import { Rewriter } from "./rewriter";
 import { convertModel, getRewriterOptions } from "./tactic";
 import { UINT_MAX } from "./sat/clause";
 import type { SatParams } from "./sat/config";
 import { IncSatSolver } from "./sat/inc-sat-solver";
-import { SubstReplacer } from "./solve-eqs";
 
 const getNumBits = (value: bigint) => {
   let bound = 1n;
@@ -50,9 +52,10 @@ const collectBounds = (manager: AstManager, bounds: BoundManager, form: number) 
 // bounded_int2bv_simplifier: an integer constant between two bounds becomes an unsigned
 // bit-vector plus the lower bound.
 const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
+  const state = new DependentExprState(manager, goal);
   const bounds = new BoundManager(manager);
-  for (const form of goal.forms.items) collectBounds(manager, bounds, form);
-  const substitution = new ObjMap<number>((expr) => manager.hashes[expr]);
+  state.forEachIndex((index) => collectBounds(manager, bounds, goal.forms.items[index]));
+  const substitution = new ExprSafeReplace(manager);
   const trail = new RefVector(manager);
   const sideConditions = new RefVector(manager);
   const definitions: Definition[] = [];
@@ -77,7 +80,6 @@ const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
     const replacement = offset.isZero()
       ? unsigned
       : manager.mkApp(OP_ADD, [unsigned, manager.mkNumeral(offset.num)], SORT_INT);
-    trail.push(replacement);
     definitions.push(
       { decl: manager.decls[bits], def: -1 },
       { decl: manager.decls[expr], def: replacement },
@@ -86,36 +88,118 @@ const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
       sideConditions.push(
         mkBvApp(manager, OP_ULEQ, [bits, manager.mkBvNumeral(domainSize - 1n, numBits)]),
       );
-    substitution.set(expr, replacement);
+    substitution.insert(expr, replacement);
   }
-  if (substitution.size > 0) {
-    const replacer = new SubstReplacer(manager, substitution);
-    const context = new Bv2IntContext(manager, UINT_MAX);
-    const rewriter = new Bv2IntRewriter(manager, context);
-    for (let index = 0; index < goal.forms.size; index++) {
-      const form = goal.forms.items[index];
-      const replaced = replacer.rewrite(form);
-      const result = rewriter.rewrite(replaced);
-      manager.decRef(replaced);
-      if (result !== form) goal.update(index, result);
-      manager.decRef(result);
+  try {
+    if (substitution.sources.size > 0) {
+      const context = new Bv2IntContext(manager, UINT_MAX);
+      const rewriter = new Bv2IntRewriter(manager, context);
+      let replaced = -1;
+      let result = -1;
+      try {
+        state.forEachIndex((index) => {
+          const form = goal.forms.items[index];
+          const nextReplaced = substitution.apply(form);
+          release(manager, replaced);
+          replaced = nextReplaced;
+          const nextResult = rewriter.rewrite(replaced);
+          release(manager, result);
+          result = nextResult;
+          if (result !== form) goal.update(index, result);
+        });
+      } finally {
+        release(manager, result);
+        release(manager, replaced);
+        rewriter.release();
+        context.release();
+      }
     }
-    rewriter.release();
-    context.release();
-    replacer.release();
+    for (const condition of sideConditions.items) goal.assert(condition);
+    if (definitions.length > 0) goal.addDefinitions(definitions);
+  } finally {
+    substitution.release();
+    sideConditions.reset();
+    trail.reset();
   }
-  for (const condition of sideConditions.items) goal.assert(condition);
-  if (definitions.length > 0) goal.addDefinitions(definitions);
-  sideConditions.reset();
-  trail.reset();
 };
 
+class SolverFormulas extends Goal {
+  override assert(form: number) {
+    if (this.manager.isFalse(form)) this.isInconsistent = true;
+    this.forms.push(form);
+  }
+
+  override update(index: number, form: number) {
+    if (this.manager.isFalse(form)) this.isInconsistent = true;
+    this.forms.set(index, form);
+  }
+
+  flattenSuffix() {
+    const manager = this.manager;
+    const forms = this.forms;
+    const seen = new Set<number>();
+    const pinned = new RefVector(manager);
+    let kept = 0;
+    for (let index = 0; index < forms.size; index++) {
+      const form = forms.items[index];
+      pinned.push(form);
+      if (seen.has(form)) continue;
+      seen.add(form);
+      if (manager.isTrue(form)) continue;
+      if (manager.getOp(form) === OP_AND) {
+        const numArgs = manager.getNumArgs(form);
+        for (let argIndex = 0; argIndex < numArgs; argIndex++)
+          this.assert(manager.getArg(form, argIndex));
+        continue;
+      }
+      if (manager.isNot(form) && manager.getOp(manager.getArg(form, 0)) === OP_OR) {
+        const disjunction = manager.getArg(form, 0);
+        const numArgs = manager.getNumArgs(disjunction);
+        for (let argIndex = 0; argIndex < numArgs; argIndex++)
+          this.assert(mkNot(manager, manager.getArg(disjunction, argIndex)));
+        continue;
+      }
+      if (index !== kept) forms.set(kept, form);
+      kept++;
+    }
+    while (forms.size > kept) forms.pop();
+    pinned.reset();
+  }
+}
+
 const runFdSimplifier = (manager: AstManager, forms: readonly number[]) => {
-  const fmls = new Goal(manager);
+  const fmls = new SolverFormulas(manager);
   for (const form of forms) fmls.assert(form);
-  runBoundedInt2Bv(manager, fmls);
-  card2bv(manager, fmls, getRewriterOptions(manager, new Map()));
-  runEnum2Bv(manager, fmls);
+  if (fmls.forms.size === 0) return fmls;
+  const state = new DependentExprState(manager, fmls);
+  const simplifiers = [
+    () => runBoundedInt2Bv(manager, fmls),
+    () => {
+      const simplifier = createCard2Bv(manager, getRewriterOptions(manager, new Map()))(state);
+      try {
+        simplifier.reduce();
+      } finally {
+        simplifier.release();
+      }
+    },
+    () => runEnum2Bv(manager, fmls, (visit) => state.forEachIndex(visit)),
+  ];
+  try {
+    if (!fmls.isInconsistent && manager.limit.inc())
+      for (const simplify of simplifiers) {
+        if (fmls.isInconsistent || !manager.limit.inc()) break;
+        try {
+          simplify();
+        } catch (error) {
+          if (!(error instanceof SmtCanceledError)) throw error;
+          break;
+        }
+        fmls.flattenSuffix();
+      }
+  } finally {
+    state.release();
+  }
+  if (!manager.limit.inc()) fmls.reset();
   return fmls;
 };
 
@@ -176,7 +260,6 @@ export const getFdConsequences = (
   const solver = new IncSatSolver(manager, params);
   try {
     for (const form of fmls.forms.items) solver.assertExpr(form);
-    if (fmls.isInconsistent) solver.assertExpr(manager.falseExpr);
     const found = solver.getConsequences(asms1, queryVars);
     const coreReplace = new ExprSafeReplace(manager);
     asms1.forEach((assumption, index) => coreReplace.insert(assumption, assumptions[index]));
@@ -244,24 +327,48 @@ export const createFdTactic = (manager: AstManager, params: SatParams) => (goal:
   const solver = new IncSatSolver(manager, params, false);
   try {
     for (const form of fmls.forms.items) solver.assertExpr(form);
-    const result = fmls.isInconsistent ? L_FALSE : solver.check();
+    const result = solver.check();
     goal.reset();
     if (result === L_TRUE) {
       const model = solver.getModel();
-      model?.incRef();
-      if (model !== null) {
-        goal.converters = [...goal.converters, ...fmls.converters];
-        goal.model = model;
-      }
+      const converted = model === null ? null : convertModel(fmls, model);
+      converted?.incRef();
+      if (converted !== null) goal.model = converted;
     } else if (result === L_FALSE) goal.assert(manager.falseExpr);
     else {
-      if (!manager.limit.inc()) throw new SmtCanceledError();
+      if (!manager.limit.inc()) throw new SmtTacticError("canceled");
       for (const form of solver.getAssertions()) goal.assert(form);
       goal.converters = [...goal.converters, ...fmls.converters, ...solver.getConverters()];
     }
     goal.depth++;
     return [goal];
   } finally {
+    solver.release();
+  }
+};
+
+export const checkFdSolver = (manager: AstManager, params: SatParams, forms: readonly number[]) => {
+  const fmls = runFdSimplifier(manager, forms);
+  const solver = new IncSatSolver(manager, params);
+  const limit = manager.limit;
+  const wasSuspended = limit.isSuspended;
+  try {
+    for (const form of fmls.forms.items) solver.assertExpr(form);
+    const result = (() => {
+      try {
+        return solver.check();
+      } catch (error) {
+        if (!(error instanceof SmtCanceledError)) throw error;
+        return L_UNDEF;
+      }
+    })();
+    const model = result === L_TRUE ? solver.getModel() : null;
+    limit.isSuspended = true;
+    const converted = model === null ? undefined : convertModel(fmls, model);
+    converted?.incRef();
+    return { result, model: converted, reasonUnknown: solver.reasonUnknown };
+  } finally {
+    limit.isSuspended = wasSuspended;
     solver.release();
   }
 };

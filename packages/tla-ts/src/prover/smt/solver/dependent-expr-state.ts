@@ -36,15 +36,18 @@ export class DependentExprState {
     const manager = this.manager;
     const goal = this.goal;
     let rewritten = -1;
-    this.forEachIndex((index) => {
-      const form = this.get(index);
-      const next = rewrite(form);
-      if (next === -1) return;
+    try {
+      this.forEachIndex((index) => {
+        const form = this.get(index);
+        const next = rewrite(form);
+        if (next === -1) return;
+        if (rewritten !== -1) manager.decRef(rewritten);
+        rewritten = next;
+        if (rewritten !== form) goal.update(index, rewritten, goal.getDependency(index));
+      });
+    } finally {
       if (rewritten !== -1) manager.decRef(rewritten);
-      rewritten = next;
-      if (rewritten !== form) goal.update(index, rewritten, goal.getDependency(index));
-    });
-    if (rewritten !== -1) manager.decRef(rewritten);
+    }
   }
 
   hasQuantifiers() {
@@ -79,8 +82,11 @@ export const runSimplifier = (
 ) => {
   const state = new DependentExprState(goal.manager, goal);
   const simplifier = create(state);
-  if (!goal.isProofsEnabled || isSupportingProofs) simplifier.reduce();
-  finishSimplifier(goal);
-  simplifier.release();
-  state.release();
+  try {
+    if (!goal.isProofsEnabled || isSupportingProofs) simplifier.reduce();
+    finishSimplifier(goal);
+  } finally {
+    simplifier.release();
+    state.release();
+  }
 };

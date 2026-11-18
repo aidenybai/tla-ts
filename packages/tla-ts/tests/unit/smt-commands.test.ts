@@ -243,6 +243,19 @@ const BV_GOAL_LINES = [
   "(assert (bvult a b))",
 ];
 
+const getSoftLines = (rlimit: number) => [
+  "(declare-const p Bool)",
+  "(declare-const q Bool)",
+  "(declare-const r Bool)",
+  "(assert (not (and (or p q) (=> q r) (= p r))))",
+  "(assert-soft p)",
+  "(assert-soft q :weight 2)",
+  "(assert-soft r)",
+  `(set-option :rlimit ${rlimit})`,
+  "(check-sat)",
+  "(get-info :reason-unknown)",
+];
+
 // One more pigeon than holes, where pI_J puts pigeon I in hole J: unsatisfiable, and too hard for
 // either solver to refute within the limits of these tests.
 const getPigeonholeLines = (holeCount: number) => {
@@ -783,6 +796,74 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "canceled")']);
   });
 
+  it("restores at pop the rlimit of the scope, as cmd_context does", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(push)",
+        "(set-option :rlimit 3)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(pop)",
+        "(check-sat)",
+        "(get-option :rlimit)",
+        "(push)",
+        "(set-option :rlimit 3)",
+        "(reset-assertions)",
+        "(pop)",
+        "(assert (> x 0))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "canceled")', "sat", "3", "sat"]);
+  });
+
+  it("bounds push by the rlimit and keeps the scopes that a canceled push leaves", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> x 0))",
+        "(assert (or (< y x) (> (+ x y) 7)))",
+        "(set-option :rlimit 2)",
+        "(push)",
+        "(set-option :rlimit 0)",
+        "(assert (< x 0))",
+        "(check-sat)",
+        "(pop)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(error "line 6 column 5: push canceled")',
+      "unsat",
+      "unsat",
+      '(:reason-unknown "canceled")',
+    ]);
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult a b))",
+        "(assert (= (bvadd a #x1) b))",
+        "(set-option :rlimit 60)",
+        "(push)",
+        "(set-option :rlimit 0)",
+        "(assert (= a b))",
+        "(check-sat)",
+        "(pop)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      '(error "line 7 column 5: max. resource limit exceeded")',
+      "unsat",
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+
   it("reports the limit that stops a push of ctx-solver-simplify as its reason", () => {
     expect(
       run([
@@ -924,6 +1005,46 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("counts the steps of a check as if the checks before it had freed their terms", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (> (+ x (ite p 1 2)) y))",
+        "(assert (or p (= x (* 2 y))))",
+        "(assert (=> (> y 3) (< x 10)))",
+        "(set-option :rlimit 40)",
+        "(check-sat-using (then blast-term-ite tseitin-cnf))",
+        "(set-option :rlimit 78)",
+        "(check-sat-using (then blast-term-ite tseitin-cnf))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", "unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
+  it("keeps the model as far as the conversion that the limit stopped got", () => {
+    expect(
+      run([
+        "(set-option :rlimit 85)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult (bvadd a b) #x7))",
+        "(assert (or (= a b) (bvugt (bvmul a #x3) b)))",
+        "(check-sat-using (then bv1-blast tseitin-cnf))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      '(error "tactic failed: max. resource limit exceeded")',
+      "(",
+      "  (define-fun b () (_ BitVec 4)",
+      "    #x0)",
+      "  (define-fun a () (_ BitVec 4)",
+      "    #x0)",
+      ")",
+    ]);
+  });
+
   // The time limit is Z3's soft timeout: check-sat gives every solver the reason timeout, which
   // the smt kernel keeps for its later checks and reports while its last search did not fail.
   it("prints the reason of a check that timed out", () => {
@@ -1000,6 +1121,58 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "canceled")']);
   });
 
+  it("reports a cancel that escapes optimization as an error of check-sat", () => {
+    expect(run(getSoftLines(1))).toEqual([
+      '(error "line 9 column 10: max. resource limit exceeded")',
+      '(:reason-unknown "unknown")',
+    ]);
+    expect(run(getSoftLines(161))).toEqual([
+      '(error "line 9 column 10: max. resource limit exceeded")',
+      '(:reason-unknown "no reason given")',
+    ]);
+    expect(run(getSoftLines(61))).toEqual([
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+    expect(run(getSoftLines(195))).toEqual([
+      '(error "line 9 column 10: push canceled")',
+      '(:reason-unknown "no reason given")',
+    ]);
+  });
+
+  it("converts the clauses of the SAT solver when maxres counts its assertions", () => {
+    expect(run(getSoftLines(230))).toEqual(["unknown", '(:reason-unknown "no reason given")']);
+    expect(run(getSoftLines(240))).toEqual(["unknown", '(:reason-unknown "sat.canceled")']);
+    expect(run(getSoftLines(258))).toEqual(["unknown", '(:reason-unknown "no reason given")']);
+    expect(run(getSoftLines(259))).toEqual(["sat", '(:reason-unknown "no reason given")']);
+  });
+
+  it("makes the auxiliary constants of the SAT solver's clauses once across its conversions", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (and (<= 0 a 1) (<= 0 b 1) (<= (+ a b) 1)))",
+        "(maximize (+ (* 2 a) (* 3 b)))",
+        "(check-sat)",
+        "(reset-assertions)",
+        "(declare-const p Bool)",
+        "(declare-const x Int)",
+        "(assert (> (ite p x 2) 1))",
+        "(apply elim-term-ite)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (> k!7 1)",
+      "  (or (not p) (= k!7 x))",
+      "  (or p (= k!7 2))",
+      "  :precision precise :depth 1)",
+      ")",
+    ]);
+  });
+
   it("prints the reason and the core of get-consequences on the finite-domain solver", () => {
     expect(
       run([
@@ -1026,6 +1199,31 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "",
       "(a)",
       '(:reason-unknown "no reason given")',
+    ]);
+  });
+
+  it("orders the model of the SAT solver by its variables, as inc_sat_solver registers them", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const c Bool)",
+        "(declare-const a Bool)",
+        "(declare-const b (_ BitVec 2))",
+        "(assert (or a c))",
+        "(assert (= b #b10))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun a () Bool",
+      "    true)",
+      "  (define-fun c () Bool",
+      "    false)",
+      "  (define-fun b () (_ BitVec 2)",
+      "    #b10)",
+      ")",
     ]);
   });
 
@@ -1216,6 +1414,28 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unsat"]);
   });
 
+  it("counts a step of the limit for each assertion of the smt kernel", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or p q))",
+        "(get-info :rlimit)",
+        "(assert (not p))",
+        "(get-info :rlimit)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 4)", "(:rlimit 7)", "(:rlimit 14)"]);
+  });
+
+  it("initializes the manager for get-info :rlimit", () => {
+    expect(
+      run(['(echo "a")', "(get-info :rlimit)", "(declare-const p Bool)", "(get-info :rlimit)"]),
+    ).toEqual(["a", "(:rlimit 1)", "(:rlimit 1)"]);
+  });
+
   // check_sat counts one resource unit once the model of a decided goal is converted, and answers unknown when that exceeds the limit.
   it("counts the resource units of check-sat-using as Z3 does", () => {
     expect(
@@ -1257,6 +1477,47 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "sat",
       '(:reason-unknown "")',
       "(:rlimit 14)",
+    ]);
+  });
+
+  it("prints the information of get-info before it checks the rest of the command", () => {
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(get-info :name)",
+        "(get-info :authors)",
+        "(get-info :version)",
+        "(get-info :status)",
+        "(set-info :status sat)",
+        "(get-info :status)",
+        "(push 2)",
+        "(pop 1)",
+        "(get-info :assertion-stack-levels)",
+        "(get-info :foo)",
+        "(get-info :name :version)",
+        "(get-info)",
+      ]),
+    ).toEqual([
+      '(:name "Z3")',
+      '(:authors "Leonardo de Moura, Nikolaj Bjorner, Lev Nachmanson and Christoph Wintersteiger")',
+      '(:version "5.3.2")',
+      "(:status unknown)",
+      "(:status sat)",
+      "(:assertion-stack-levels 1)",
+      "unsupported",
+      "; :foo line: 11 position: 0",
+      "; Suppported get-info parameters:",
+      "; (get-info :reason-unknown)",
+      "; (get-info :status)",
+      "; (get-info :version)",
+      "; (get-info :authors)",
+      "; (get-info :error-behavior)",
+      "; (get-info :parameters)",
+      "; (get-info :rlimit)",
+      "; (get-info :assertion-stack-levels)",
+      '(:name "Z3")',
+      '(error "line 12 column 16: invalid command, too many arguments")',
+      '(error "line 13 column 9: invalid command, argument(s) missing")',
     ]);
   });
 
@@ -1406,5 +1667,170 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "unknown",
       '(error "line 10 column 14: model is not available")',
     ]);
+  });
+
+  it("has no model after the limit stops the search of the incremental kernel", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> (+ x y) 2))",
+        "(push)",
+        "(set-option :rlimit 3)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      '(error "line 8 column 10: model is not available")',
+    ]);
+  });
+
+  it("bounds the tactic of apply by the rlimit", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (and (> (+ x y) 3) (or p (< (* 2 x) y)) (=> p (= x (+ y 1)))))",
+        "(set-option :rlimit 8)",
+        "(apply simplify)",
+        "(apply bit-blast)",
+      ]),
+    ).toEqual([
+      "(goals",
+      "(goal",
+      "  (not (<= (+ x y) 3))",
+      "  (or p (< (* 2 x) y))",
+      "  (=> p (= x (+ y 1)))",
+      "  :precision precise :depth 1)",
+      ")",
+      '(error "tactic failed: max. resource limit exceeded")',
+    ]);
+  });
+
+  it("keeps the reason of the SAT solver when the limit stops its internalization", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(push)",
+        "(assert (not (and (or p q) (=> q r) (= p r))))",
+        "(set-option :rlimit 1)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "no reason given")']);
+  });
+
+  it("keeps the options of proofs and cores while there are assertions", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(assert (! (> x 3) :named n))",
+        "(set-option :produce-unsat-cores true)",
+        "(set-option :produce-proofs true)",
+        "(set-option :produce-unsat-assumptions true)",
+        "(check-sat-assuming ((< x 2) p))",
+        "(get-unsat-core)",
+        "(get-option :produce-unsat-cores)",
+        "(push)",
+        "(assert p)",
+        "(pop)",
+        "(reset-assertions)",
+        "(set-option :produce-unsat-cores true)",
+        "(get-option :produce-unsat-cores)",
+      ]),
+    ).toEqual([
+      "(error \"line 4 column 33: error setting ':produce-unsat-cores', option value cannot be modified after assertions have been added\")",
+      "(error \"line 5 column 28: error setting ':produce-proofs', option value cannot be modified after assertions have been added\")",
+      "(error \"line 6 column 39: error setting ':produce-unsat-assumptions', option value cannot be modified after assertions have been added\")",
+      "unsat",
+      '(error "line 8 column 15: unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)")',
+      "false",
+      "true",
+    ]);
+  });
+
+  it("prints the assumptions of the core with get-unsat-assumptions", () => {
+    expect(
+      run([
+        "(get-option :produce-unsat-assumptions)",
+        "(set-option :produce-unsat-assumptions true)",
+        "(get-option :produce-unsat-assumptions)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(get-unsat-assumptions)",
+        "(assert (! (not a) :named n))",
+        "(assert (or b c))",
+        "(check-sat-assuming (c b))",
+        "(get-unsat-assumptions)",
+        "(check-sat-assuming (a b (not c)))",
+        "(get-unsat-assumptions)",
+        "(get-unsat-core)",
+        "(check-sat-assuming ((not b) (not c)))",
+        "(get-unsat-assumptions)",
+      ]),
+    ).toEqual([
+      "false",
+      "true",
+      '(error "line 7 column 22: unsat assumptions is not available")',
+      "sat",
+      '(error "line 11 column 22: unsat assumptions is not available")',
+      "unsat",
+      "(a)",
+      '(error "line 14 column 15: unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)")',
+      "unsat",
+      "((not b) (not c))",
+    ]);
+  });
+
+  it("prints the core of the last check once get-unsat-assumptions is enabled", () => {
+    expect(
+      run([
+        "(declare-const a Bool)",
+        "(check-sat-assuming (a (not a)))",
+        "(get-unsat-assumptions)",
+        "(set-option :produce-unsat-assumptions true)",
+        "(get-unsat-assumptions)",
+      ]),
+    ).toEqual([
+      "unsat",
+      '(error "line 3 column 22: unsat assumptions construction is not enabled, use command (set-option :produce-unsat-assumptions true)")',
+      "(a (not a))",
+    ]);
+  });
+
+  it("frees the evaluator of eval before its value, so later terms get Z3's ids", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= x 2))",
+        "(assert (= y 3))",
+        "(check-sat)",
+        "(eval (+ (* x y) (* 2 x) (* y y y) 17 (- x y) (* x x)))",
+        "(declare-const d1 Bool)",
+        "(assert d1)",
+        "(declare-const d2 Bool)",
+        "(assert d2)",
+        "(declare-const d3 Bool)",
+        "(assert d3)",
+        "(declare-const s Bool)",
+        "(declare-const t Bool)",
+        "(declare-const u Bool)",
+        "(declare-const v Bool)",
+        "(assert (or (not s) (not t) (not u) (not v)))",
+        "(check-sat-assuming (v u t s))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["sat", "57", "unsat", "(s t v u)"]);
   });
 });

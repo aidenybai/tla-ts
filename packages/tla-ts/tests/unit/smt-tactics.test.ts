@@ -955,6 +955,23 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
       `(\n  (define-fun x () Real\n    1.0)\n${bindings})`,
     ]);
   });
+
+  it("rejects uninterpreted sorts in qsat with a default_exception, which apply reports as an error", () => {
+    expect(
+      run([
+        "(declare-sort S 0)",
+        "(declare-fun a () S)",
+        "(assert (exists ((x S)) (not (= x a))))",
+        "(check-sat-using qsat)",
+        "(get-info :reason-unknown)",
+        "(apply qsat)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "qsat does not apply to uninterpreted sorts")',
+      '(error "line 6 column 11: qsat does not apply to uninterpreted sorts")',
+    ]);
+  });
 });
 
 describe("hoist_ite, as Z3 5.3.2 simplifies", () => {
@@ -1013,5 +1030,178 @@ describe("theory_pb, as Z3 5.3.2 internalizes it", () => {
         "(get-model)",
       ]),
     ).toEqual(["sat", "(\n  (define-fun y () Int\n    5)\n  (define-fun x () Int\n    0)\n)"]);
+  });
+});
+
+describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
+  const goal = [
+    "(declare-const p Bool)",
+    "(declare-const q Bool)",
+    "(declare-const r Bool)",
+    "(assert (not (and (or p q) (=> q r) (= p r))))",
+  ];
+
+  it("fails with canceled once the limit stops the preprocessing or the search of the SAT solver", () => {
+    expect(
+      run([
+        ...goal,
+        "(set-option :rlimit 100)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+        "(set-option :rlimit 155)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+    ]);
+  });
+
+  it("counts the steps of its simplifiers and leaves the SAT solver empty when the limit stops them", () => {
+    expect(
+      run([
+        ...goal,
+        "(set-option :rlimit 1)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(set-option :rlimit 166)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+        "(set-option :rlimit 167)",
+        "(check-sat-using qffd)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "unknown",
+      '(:reason-unknown "canceled")',
+      "sat",
+    ]);
+  });
+
+  it("converts the model of its SAT solver within the limit of the tactic", () => {
+    expect(
+      run([
+        "(declare-datatypes ((C 0)) (((red) (green) (blue))))",
+        "(declare-const c C)",
+        "(declare-const d C)",
+        "(declare-const p Bool)",
+        "(assert (distinct c d))",
+        "(assert (or p (not (= c red))))",
+        "(assert (=> p (= d green)))",
+        "(set-option :rlimit 280)",
+        "(check-sat-using qffd)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
+  });
+
+  it("answers check-sat of QF_FD with the finite-domain solver and the reason of its SAT solver", () => {
+    expect(
+      [1, 64, 193, 262, 280].map((rlimit) =>
+        run([
+          "(set-logic QF_FD)",
+          "(declare-datatypes ((C 0)) (((red) (green) (blue))))",
+          "(declare-const c C)",
+          "(declare-const d C)",
+          "(declare-const p Bool)",
+          "(assert (distinct c d))",
+          "(assert (or p (not (= c red))))",
+          "(assert (=> p (= d green)))",
+          `(set-option :rlimit ${rlimit})`,
+          "(check-sat)",
+          "(get-info :reason-unknown)",
+        ]),
+      ),
+    ).toEqual([
+      ["unknown", '(:reason-unknown "sat.canceled")'],
+      ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
+      ["unknown", '(:reason-unknown "no reason given")'],
+      ["unknown", '(:reason-unknown "sat.canceled")'],
+      ["sat", '(:reason-unknown "no reason given")'],
+    ]);
+  });
+
+  it("counts no steps of the simplifiers of QF_FD without assertions", () => {
+    expect(run(["(set-logic QF_FD)", "(check-sat)", "(get-info :rlimit)"])).toEqual([
+      "sat",
+      "(:rlimit 4)",
+    ]);
+  });
+
+  it("has no model after check-sat of QF_FD answers unknown", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(assert (and (<= 0 x) (<= x 5)))",
+        "(assert (or p (> x 2)))",
+        "(set-option :rlimit 5)",
+        "(check-sat)",
+        "(get-model)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(error "line 8 column 10: model is not available")',
+      "sat",
+      "(\n  (define-fun p () Bool\n    true)\n  (define-fun x () Int\n    0)\n)",
+    ]);
+  });
+
+  it("replaces the bounded integers without counting steps, as expr_safe_replace does", () => {
+    expect(
+      [253, 254].map((rlimit) =>
+        run([
+          "(set-logic QF_FD)",
+          "(declare-const x Int)",
+          "(declare-const y Int)",
+          "(assert (<= 0 x))",
+          "(assert (<= x 5))",
+          "(assert (<= 1 y))",
+          "(assert (<= y 6))",
+          "(assert (= (+ x y) 7))",
+          "(assert (distinct x y))",
+          `(set-option :rlimit ${rlimit})`,
+          "(check-sat)",
+          "(get-info :reason-unknown)",
+        ]),
+      ),
+    ).toEqual([
+      ["unknown", '(:reason-unknown "sat.canceled")'],
+      ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
+    ]);
+  });
+
+  it("keeps the formulas of QF_FD as asserted and flattens them after each simplifier", () => {
+    expect(
+      [255, 256].map((rlimit) =>
+        run([
+          "(set-logic QF_FD)",
+          "(declare-const x Int)",
+          "(declare-const y Int)",
+          "(assert (<= 0 x 5))",
+          "(assert (<= 1 y 6))",
+          "(assert (= (+ x y) 7))",
+          "(assert (distinct x y))",
+          `(set-option :rlimit ${rlimit})`,
+          "(check-sat)",
+          "(get-info :reason-unknown)",
+        ]),
+      ),
+    ).toEqual([
+      ["unknown", '(:reason-unknown "sat.canceled")'],
+      ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
+    ]);
   });
 });

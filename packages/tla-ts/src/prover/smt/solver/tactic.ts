@@ -1984,13 +1984,14 @@ interface TacticCheck {
   model: ProtoModel | undefined;
   core: Dependency | undefined;
   reasonUnknown: string | undefined;
+  isConversionCanceled: boolean;
 }
 
 // The port's declarations of division by zero leave out their domain; Z3's have two arguments.
 const DIVISION_BY_ZERO_DECLS = new Set([OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0]);
 
 // A constant of an uninterpreted sort the model lacks puts its value in that sort's universe.
-const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
+export const applyDefinitions = (definitions: readonly Definition[], model: ProtoModel) => {
   const manager = model.manager;
   const universe: number[] = [];
   let evaluator = new ModelEvaluator(manager, model);
@@ -2042,19 +2043,64 @@ const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
   return model;
 };
 
+const applyConverter = (entry: Goal["converters"][number], model: ProtoModel) => {
+  if ("convert" in entry) return entry.convert(model);
+  if ("definitions" in entry) return applyDefinitions(entry.definitions, model);
+  model.unregisterDecl(entry.decl);
+  return model;
+};
+
 export const convertModel = (goal: Goal, model: ProtoModel) =>
-  goal.converters.reduceRight((converted, entry) => {
-    if ("convert" in entry) return entry.convert(converted);
-    if ("definitions" in entry) return applyDefinitions(entry.definitions, converted);
-    converted.unregisterDecl(entry.decl);
-    return converted;
-  }, model);
+  goal.converters.reduceRight((converted, entry) => applyConverter(entry, converted), model);
 
-const getConvertedModel = (goal: Goal) =>
-  convertModel(goal, goal.model?.copy() ?? new ProtoModel(goal.manager).mkModel());
+const getConvertedModel = (goal: Goal) => {
+  let model = goal.model?.copy() ?? new ProtoModel(goal.manager).mkModel();
+  for (let index = goal.converters.length - 1; index >= 0; index--) {
+    try {
+      model = applyConverter(goal.converters[index], model);
+    } catch (error) {
+      if (!(error instanceof SmtCanceledError)) throw error;
+      return { model, isCanceled: true };
+    }
+  }
+  return { model, isCanceled: false };
+};
 
-export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
-  const undecided = { status: L_UNDEF, model: undefined, core: undefined };
+const getTacticCheck = (goal: Goal, goals: Goal[] | string | undefined): TacticCheck => {
+  const undecided = {
+    status: L_UNDEF,
+    model: undefined,
+    core: undefined,
+    isConversionCanceled: false,
+  };
+  if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
+  if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
+  if (isDecidedUnsat(goals))
+    return { ...undecided, status: L_FALSE, core: goals[0].getDependency(0), reasonUnknown: "" };
+  const isSat = isDecidedSat(goals);
+  const converted =
+    isSat ||
+    (goal.isModelsEnabled &&
+      goals.length > 0 &&
+      (goals[0].model !== undefined || goals[0].converters.length > 0))
+      ? getConvertedModel(goals[0])
+      : undefined;
+  const model = converted?.model;
+  if (converted?.isCanceled === true)
+    return { ...undecided, model, reasonUnknown: undefined, isConversionCanceled: true };
+  if (isSat)
+    return goal.manager.limit.inc()
+      ? { ...undecided, status: L_TRUE, model, reasonUnknown: "" }
+      : { ...undecided, model, reasonUnknown: "canceled" };
+  return {
+    ...undecided,
+    model,
+    reasonUnknown:
+      goals.length === 1 && goals[0].reasonUnknown !== "" ? goals[0].reasonUnknown : "unknown",
+  };
+};
+
+export const checkSatUsing = (tactic: Tactic, goal: Goal) => {
   const goals = (() => {
     try {
       return tactic(goal);
@@ -2064,39 +2110,20 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal): TacticCheck => {
       throw error;
     }
   })();
-  if (goals === undefined) return { ...undecided, reasonUnknown: undefined };
-  if (typeof goals === "string") return { ...undecided, reasonUnknown: goals };
-  if (isDecidedSat(goals)) {
-    const model = getConvertedModel(goals[0]);
-    return goal.manager.limit.inc()
-      ? { status: L_TRUE, model, core: undefined, reasonUnknown: "" }
-      : { ...undecided, model, reasonUnknown: "canceled" };
+  try {
+    return getTacticCheck(goal, goals);
+  } finally {
+    goal.reset();
+    if (Array.isArray(goals)) for (const result of goals) result.reset();
   }
-  if (isDecidedUnsat(goals))
-    return {
-      status: L_FALSE,
-      model: undefined,
-      core: goals[0].getDependency(0),
-      reasonUnknown: "",
-    };
-  return {
-    ...undecided,
-    model:
-      goal.isModelsEnabled &&
-      goals.length > 0 &&
-      (goals[0].model !== undefined || goals[0].converters.length > 0)
-        ? getConvertedModel(goals[0])
-        : undefined,
-    reasonUnknown:
-      goals.length === 1 && goals[0].reasonUnknown !== "" ? goals[0].reasonUnknown : "unknown",
-  };
 };
 
 export const applyTactic = (tactic: Tactic, goal: Goal) => {
   try {
     return tactic(goal);
   } catch (error) {
-    if (error instanceof SmtCanceledError) throw new SmtTacticError("canceled");
+    if (error instanceof SmtCanceledError)
+      throw new SmtTacticError(goal.manager.limit.getCancelMessage());
     throw error;
   }
 };

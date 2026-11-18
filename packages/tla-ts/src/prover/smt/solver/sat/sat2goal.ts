@@ -12,9 +12,9 @@ export const isLiteral = (manager: AstManager, expr: number) =>
   manager.isUninterpretedConst(expr) ||
   (manager.isNot(expr) && manager.isUninterpretedConst(manager.getArg(expr, 0)));
 
-class Sat2GoalConverter {
+export class Sat2GoalConverter {
   readonly smc = new ModelConverter();
-  var2expr: number[] = [];
+  readonly var2expr: number[] = [];
   readonly entries: Definition[] = [];
 
   constructor(private manager: AstManager) {}
@@ -22,17 +22,21 @@ class Sat2GoalConverter {
   private add(expr: number, def: number) {
     const manager = this.manager;
     manager.incRef(def);
+    manager.incDeclRef(manager.decls[expr]);
     this.entries.push({ decl: manager.decls[expr], def });
   }
 
   hide(expr: number) {
-    this.entries.push({ decl: this.manager.decls[expr], def: -1 });
+    const manager = this.manager;
+    manager.incDeclRef(manager.decls[expr]);
+    this.entries.push({ decl: manager.decls[expr], def: -1 });
   }
 
   flushSmc(solver: Solver, atoms: Map<number, number>) {
     this.smc.flush(solver.mc);
-    this.var2expr.length = solver.numVars();
-    this.var2expr.fill(-1);
+    const numVars = solver.numVars();
+    while (this.var2expr.length < numVars) this.var2expr.push(-1);
+    this.var2expr.length = numVars;
     for (const [expr, boolVar] of atoms) this.var2expr[boolVar] = expr;
     this.flushGmc();
   }
@@ -106,12 +110,12 @@ export const sat2goal = (
   solver: Solver,
   atoms: Map<number, number>,
   goal: Goal,
+  converter: Sat2GoalConverter,
 ) => {
   if (solver.atBaseLvl() && solver.isInconsistent) {
     goal.assert(manager.falseExpr);
     return;
   }
-  const converter = new Sat2GoalConverter(manager);
   converter.flushSmc(solver, atoms);
   const lit2expr = new Int32Array(2 * solver.numVars()).fill(-1);
   for (const [expr, boolVar] of atoms) {
@@ -161,5 +165,4 @@ export const sat2goal = (
   const formulas: number[] = [];
   solver.ext?.toFormulas(getExpr, formulas);
   for (const formula of formulas) goal.assert(formula);
-  goal.addDefinitions(converter.entries);
 };

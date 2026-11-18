@@ -239,7 +239,7 @@ class ConsequenceFinder {
       const result = kernel.check(assumptions);
       if (result !== L_TRUE) return result;
       if (context.qmanager.hasQuantifiers()) return L_UNDEF;
-      const model = context.getModel();
+      const model = context.getSatModel();
       for (const variable of vars) {
         const value = model.eval(variable, false);
         trail.pushOwned(value);

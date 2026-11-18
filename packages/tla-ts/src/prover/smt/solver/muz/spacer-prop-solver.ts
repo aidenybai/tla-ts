@@ -128,7 +128,7 @@ export class IucSolver {
     const result = kernel.check(this.assumptions);
     this.lastModel = undefined;
     if (result === L_TRUE) {
-      this.lastModel = kernel.context.getModel();
+      this.lastModel = kernel.context.getSatModel();
       this.lastModel.incRef();
     }
     this.lastCore = result === L_FALSE ? [...kernel.context.unsatCore] : [];

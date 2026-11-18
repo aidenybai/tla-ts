@@ -25,8 +25,8 @@ export class Hnf {
 
   constructor(private manager: AstManager) {}
 
-  setName(name: string) {
-    this.name = name === "" ? "P" : name;
+  setName(name: string | undefined) {
+    this.name = name ?? "P";
   }
 
   private isPredicate(expr: number) {

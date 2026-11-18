@@ -14,6 +14,7 @@ export class SmtKernel {
   isSetUp = false;
   private setup: SmtSetup | undefined;
   private isCoreMinimizing: boolean;
+  private scopeCount = 0;
 
   constructor(manager: AstManager, params: KernelParams) {
     this.asserted = new AssertedFormulas(manager, params.isFindingMacros);
@@ -50,7 +51,9 @@ export class SmtKernel {
     this.asserted.isPreprocessing = isPreprocessing;
   }
 
+  // context::assert_expr_core counts a step, and drops the formula once the limit is spent.
   assertExpr(expr: number) {
+    if (this.context.checkCanceled()) return;
     this.context.popToBaseLevel();
     this.asserted.assertExpr(expr);
   }
@@ -71,6 +74,7 @@ export class SmtKernel {
     limit.isSuspended = wasSuspended;
     context.push();
     this.asserted.push();
+    this.scopeCount++;
   }
 
   getAssertions() {
@@ -78,8 +82,11 @@ export class SmtKernel {
   }
 
   pop(numScopes: number) {
-    this.context.pop(numScopes);
-    for (let index = 0; index < numScopes; index++) this.asserted.pop();
+    const count = Math.min(numScopes, this.scopeCount);
+    if (count === 0) return;
+    this.context.pop(count);
+    for (let index = 0; index < count; index++) this.asserted.pop();
+    this.scopeCount -= count;
   }
 
   initAssumptions(assumptions: number[]) {
