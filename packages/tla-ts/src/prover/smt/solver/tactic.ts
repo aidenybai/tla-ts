@@ -108,7 +108,9 @@ interface ParamDescr {
   isPorted: boolean;
 }
 
-type ParamDescrs = ReadonlyMap<string, ParamDescr>;
+interface ParamDescrs {
+  get(name: string): ParamDescr | undefined;
+}
 
 export interface Tactic {
   (goal: Goal): Goal[];
@@ -1688,8 +1690,18 @@ const getParams = (
   return params;
 };
 
+// Look through the children instead of copying their tables, since the default strategy nests
+// thousands of combinators. A later child's parameter shadows an earlier child's.
 const mergeDescrs = (builders: TacticBuilder[]) => ({
-  descrs: new Map(builders.flatMap((builder) => [...builder.descrs])),
+  descrs: {
+    get: (name: string) => {
+      for (let index = builders.length - 1; index >= 0; index--) {
+        const descr = builders[index].descrs.get(name);
+        if (descr !== undefined) return descr;
+      }
+      return undefined;
+    },
+  },
   isRejectingUnknown: builders.every((builder) => builder.isRejectingUnknown),
   isTrackingDependencies: builders.every((builder) => builder.isTrackingDependencies),
 });
