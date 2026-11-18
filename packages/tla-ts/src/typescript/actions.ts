@@ -16283,7 +16283,8 @@ const getEffects = (
     getConvertedTypedValues(node, context) !== undefined ||
     getConvertedBufferValues(node, context) !== undefined ||
     getConvertedArrayValues(node, context) !== undefined ||
-    (ts.isExpression(node) && getKeyUpdate(node, context) !== undefined)
+    (ts.isExpression(node) && getKeyUpdate(node, context) !== undefined) ||
+    getTypedObjectWrite(node, context) !== undefined
       ? getConversionFunctions(node, context)
       : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
         ? getKeyedConversionFunctions(node, context)
@@ -21234,6 +21235,43 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
   return { node, conversion };
 };
 
+// A plain assignment of an object that a name holds to a primitive key of an object that a name
+// holds, which may be a typed array, which converts the object where it is one.
+const getTypedObjectWrite = (node: ts.Node, context: Context) => {
+  if (
+    context.heap === undefined ||
+    !ts.isBinaryExpression(node) ||
+    node.operatorToken.kind !== ts.SyntaxKind.EqualsToken
+  ) {
+    return undefined;
+  }
+  const access = skipCasts(node.left);
+  const value = skipCasts(node.right);
+  if (
+    !ts.isElementAccessExpression(access) ||
+    access.questionDotToken !== undefined ||
+    !ts.isIdentifier(skipCasts(access.expression)) ||
+    !ts.isIdentifier(value) ||
+    !(isObjectOperand(value, context) || isAnyOperand(value, context)) ||
+    isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression)))
+  ) {
+    return undefined;
+  }
+  const key = skipCasts(access.argumentExpression);
+  const keyNames = getTypeNames(context.checker.getTypeAtLocation(key), context.checker);
+  const objectType = context.checker.getTypeAtLocation(skipCasts(access.expression));
+  const isTypedType = (type: ts.Type): boolean =>
+    (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+    TYPED_ARRAYS.has(type.getSymbol()?.getName() ?? "") ||
+    (type.isUnion() && type.types.some(isTypedType));
+  return (ts.isNumericLiteral(key) ||
+    ts.isStringLiteral(key) ||
+    (keyNames?.every((name) => name === "number" || name === "string") ?? false)) &&
+    isTypedType(objectType)
+    ? { node, access }
+    : undefined;
+};
+
 // A compound assignment to a key that is an object that a name holds, of an object that a name
 // holds which can't be undefined or null, other than super's, and how it combines what it reads
 // with its value.
@@ -22677,6 +22715,53 @@ export const translateStatements = (
           stop("tla-ts can't read this key of this object here"),
         );
       },
+    );
+  }
+  // A write of an object to a typed array's numeric key converts it to a number or a BigInt, once
+  // the assignment evaluates it, before it checks the index.
+  const typedWrite = ts.isExpressionStatement(statement)
+    ? getTypedObjectWrite(skipCasts(statement.expression), context)
+    : undefined;
+  if (typedWrite !== undefined && !path.scope.results.has(typedWrite.node.right)) {
+    const value = typedWrite.node.right;
+    const withValue = (current: Path, primitive: Expression) =>
+      translateStatements(
+        statements,
+        {
+          ...current,
+          scope: {
+            ...current.scope,
+            results: new Map([
+              ...current.scope.results,
+              [value, primitive],
+              [skipCasts(value), primitive],
+            ]),
+          },
+        },
+        context,
+        frame,
+      );
+    const heap = getHeap(path.scope, typedWrite.node, context);
+    return ifThenElse(
+      useJavaScript(
+        "IsTypedElementWrite",
+        [
+          heap,
+          translateExpression(typedWrite.access.expression, path.scope, context),
+          translatePropertyKey(typedWrite.access.argumentExpression, path.scope, context),
+        ],
+        context,
+      ),
+      runToPrimitive(
+        typedWrite.node,
+        translateExpression(value, path.scope, context),
+        "number",
+        path,
+        context,
+        statementFrame,
+        withValue,
+      ),
+      withValue(path, translateExpression(value, path.scope, context)),
     );
   }
   const classKey = getHoistedClassKey(statement, path, context);

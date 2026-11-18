@@ -2877,6 +2877,9 @@ FirstElementGetter(heap, ref) ==
 
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
 
+\\* Whether a write to an object's key converts the value it writes: a typed array's numeric key.
+IsTypedElementWrite(heap, ref, key) == IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+
 \\* Whether a compound assignment to a key that converts reads or writes an object plainly: one that
 \\* the heap holds, which is no proxy or typed array, with no accessor at the key.
 IsPlainKeyAccess(heap, ref, key) ==

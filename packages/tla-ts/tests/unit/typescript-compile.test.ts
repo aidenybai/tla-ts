@@ -55410,4 +55410,48 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts an object that a write to a typed array's index takes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var value = { valueOf() { log += "value|"; return 7; } };
+      var sample = new Int8Array(2);
+      sample[0] = value;
+      sample[5] = value;
+      var plain = { a: 1 };
+      plain[0] = value;
+      var big = new BigInt64Array(1);
+      var bigValue = { valueOf() { log += "big|"; return 3n; } };
+      big[0] = bigValue;
+      var wrong = { valueOf() { log += "wrong|"; return 3; } };
+      var thrown = "none";
+      try {
+        big[0] = wrong;
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var bad = { valueOf() { throw new RangeError("x"); } };
+      var badThrown = "none";
+      try {
+        sample[1] = bad;
+      } catch (error) {
+        badThrown = error.constructor.name;
+      }
+      var result = [sample[0], sample[1], plain[0] === value, big[0], thrown, badThrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("7,0,true,3,TypeError,RangeError,value|value|big|wrong|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("7,0,true,3,TypeError,RangeError,value|big|wrong|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 7,0,true,3,TypeError,RangeError,value|value|big|wrong|",
+      );
+    });
+  });
 });
