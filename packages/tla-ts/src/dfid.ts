@@ -572,7 +572,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const replayExpansion = (entry: StateEntry) => {
     const tracing = createTracingEnvironment(environment);
     try {
-      const isPassed = nextActions.every((action) => {
+      const isPassed = (covered?.actions ?? nextActions).every((action) => {
         const successors: Value[][] = [];
         replaySuccessors([action], entry.state, tracing, (successor) => successors.push(successor));
         generatedCount += successors.length;
