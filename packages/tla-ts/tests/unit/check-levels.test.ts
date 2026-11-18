@@ -161,6 +161,41 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks each prefix of a chain of infix /\\ or \\/ like SANY", async () => {
+    const setError =
+      "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nA == (x' = x) /\\ [](x = 1) /\\ TRUE\nB == ((x' = x)) \\/ [](x = 1) \\/ (x' = x)\nC == ({[]x} = 1) /\\ (x' = x) /\\ []({<>x} = 1)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          [
+            "line 3, col 6 to line 3, col 26",
+            "\\land has both temporal formula and action as arguments.",
+          ],
+          [
+            "line 4, col 6 to line 4, col 28",
+            "\\lor has both temporal formula and action as arguments.",
+          ],
+          [
+            "line 4, col 6 to line 4, col 40",
+            "\\lor has both temporal formula and action as arguments.",
+          ],
+          ["line 5, col 7 to line 5, col 11", setError],
+          [
+            "line 5, col 6 to line 5, col 28",
+            "\\land has both temporal formula and action as arguments.",
+          ],
+          ["line 5, col 36 to line 5, col 40", setError],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("rejects an ASSUME above constant level like SANY", async () => {
     await expect(
       check({

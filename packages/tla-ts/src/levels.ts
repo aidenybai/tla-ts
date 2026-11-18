@@ -14,6 +14,7 @@ import {
 } from "./ast";
 import { createSanyError, formatRange, type SanyError } from "./errors";
 import { forEachChild } from "./instances";
+import { parenthesizedRanges } from "./parser";
 import { collectSemanticErrors, getBoundNames, getPatternNames } from "./resolve";
 import { resolveSynonym } from "./tlc/jar-data";
 import { STANDARD_LEVELS } from "./standard-definitions";
@@ -221,6 +222,12 @@ const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
 const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }));
 
 const LOGICAL_OPERATORS = new Set(["/\\", "\\/", "=>", "<=>"]);
+
+const isMixed = (levels: number[]) =>
+  levels.includes(ACTION_LEVEL) && levels.includes(TEMPORAL_LEVEL);
+
+const getWrittenRange = (expression: Expression) =>
+  parenthesizedRanges.get(expression) ?? expression.location.range;
 
 const isOperatorApplication = (expression: Expression) =>
   expression.kind !== "Let" && expression.kind !== "Label";
@@ -504,11 +511,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ? applyDeclared(resolved.name, resolved.level, operands)
       : applyDefined(resolved.levels, operands);
 
-  const checkJunction = (operands: Operand[], name: string) => {
-    const levels = operands.map((operand) => operand.data.level);
-    if (levels.includes(ACTION_LEVEL) && levels.includes(TEMPORAL_LEVEL)) {
-      messages.push(`${name} has both temporal formula and action as arguments`);
-    }
+  const checkJunction = (levels: number[], name: string) => {
+    if (isMixed(levels)) messages.push(`${name} has both temporal formula and action as arguments`);
   };
 
   const checkApply = (expression: Expression & { kind: "Apply" }, operands: Operand[]) => {
@@ -517,7 +521,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       messages.push("Action used where only temporal formula or state predicate allowed");
     }
     if (LOGICAL_OPERATORS.has(expression.operator)) {
-      checkJunction(operands, resolveSynonym(expression.operator));
+      checkJunction(
+        operands.map((operand) => operand.data.level),
+        resolveSynonym(expression.operator),
+      );
     }
   };
 
@@ -590,17 +597,38 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         return toOperand(expression, scope).data;
       case "And":
       case "Or": {
-        const operands = toOperands(expression.operands, scope);
         const isAnd = expression.kind === "And";
-        checkJunction(
-          operands,
-          expression.isBulleted
-            ? `${isAnd ? "Conjunction" : "Disjunction"} list`
-            : isAnd
-              ? "\\land"
-              : "\\lor",
-        );
-        return applyDefined(isAnd ? AND_LEVELS : OR_LEVELS, operands);
+        if (expression.isBulleted) {
+          const operands = toOperands(expression.operands, scope);
+          checkJunction(
+            operands.map((operand) => operand.data.level),
+            `${isAnd ? "Conjunction" : "Disjunction"} list`,
+          );
+          return applyDefined(isAnd ? AND_LEVELS : OR_LEVELS, operands);
+        }
+        // SANY nests a chain of infix /\ or \/ to the left, so it checks each prefix of the chain.
+        const name = isAnd ? "\\land" : "\\lor";
+        const start = getWrittenRange(expression.operands[0]);
+        const operands: Operand[] = [];
+        const isPrefixMixed = expression.operands.map((operand, index) => {
+          const prefix = operands.map((analyzed) => analyzed.data.level);
+          operands.push(toOperand(operand, scope));
+          if (index === 0) return false;
+          const levels = [Math.max(...prefix), operands[index].data.level];
+          const end = getWrittenRange(operand);
+          if (index === expression.operands.length - 1 || !start || !end) {
+            checkJunction(levels, name);
+            return false;
+          }
+          if (!isMixed(levels)) return false;
+          errors.push({
+            location: formatRange({ ...start, end: end.end }),
+            message: `${name} has both temporal formula and action as arguments.`,
+          });
+          return true;
+        });
+        const data = applyDefined(isAnd ? AND_LEVELS : OR_LEVELS, operands);
+        return isPrefixMixed.includes(true) ? { ...data, isCorrect: false } : data;
       }
       case "Prime":
         return applyBuiltin(PRIME_LEVELS, [expression.expression], scope);
