@@ -53226,4 +53226,41 @@ describe("BigInts", () => {
       expect((await check(compile(wrong, path))).failure?.message).toContain("seen 10,20,30");
     });
   });
+
+  describe("holds on the heap a typed array that a module makes", () => {
+    const getSource = (expected: string) => `
+      const bytes = new Uint8Array(2);
+      const increment = (target: Uint8Array) => {
+        for (let index = target.length - 1; index >= 0; index--) {
+          if (target[index] !== 0xff) {
+            target[index]++;
+            return true;
+          }
+          target[index] = 0;
+        }
+        return false;
+      };
+      bytes[1] = 0xfe;
+      increment(bytes);
+      increment(bytes);
+      if (bytes.join() !== "${expected}") throw new Error("bytes " + bytes.join());
+      export let count = 0;
+      export const step = () => {
+        if (count < 3 && increment(bytes)) count += 1;
+      };
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("1,0"));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        4,
+      ]);
+    });
+
+    it("rejects other bytes", async () => {
+      expect((await checkModel(getSource("0,0"))).failure?.message).toContain("bytes 1,0");
+    });
+  });
 });

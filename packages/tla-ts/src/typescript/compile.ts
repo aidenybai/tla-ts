@@ -114,6 +114,7 @@ import {
   getKeptIterator,
   getKind,
   getWrappedThis,
+  isBufferName,
   isCollectionName,
   isFractionKey,
   isHeapSetOrMap,
@@ -961,12 +962,16 @@ export const compile = (
       ) &&
       ["Object", "Reflect"].includes(getBuiltIn(node.expression.expression, context) ?? "")) ||
     (ts.forEachChild(node, isDescribing) ?? false);
+  // A buffer, a view of one, or a typed array is an object that only the heap makes.
+  const isMakingBuffer = (node: ts.Node): boolean =>
+    (ts.isNewExpression(node) && isBufferName(getBuiltIn(node.expression, context) ?? "")) ||
+    (ts.forEachChild(node, isMakingBuffer) ?? false);
   // A module whose code reads a module's namespace object holds it on the heap, as a script does.
   const isHeapFile =
     isScript(sourceFile) ||
     isSharing ||
     context.namespaces.size > 0 ||
-    (heap !== undefined && reached.some(isDescribing));
+    (heap !== undefined && (reached.some(isDescribing) || reached.some(isMakingBuffer)));
   context.hasOrderedCollections = isHeapFile && reached.some(usesOrder);
   const changedArrays = isHeapFile ? findChangedArrays(reached, context) : [];
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
