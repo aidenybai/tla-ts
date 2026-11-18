@@ -1298,6 +1298,16 @@ describe("name resolution matches SANY", () => {
         ],
       ],
     ],
+    [
+      "Id(a) == a\nP == Id(SUBSET)\nf == P!1",
+      [
+        ["line 3, col 9 to line 3, col 14", "The operator SUBSET requires 1 arguments."],
+        [
+          "line 4, col 8 to line 4, col 8",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkNames(source)).rejects.toThrow(
       createSanyError(
