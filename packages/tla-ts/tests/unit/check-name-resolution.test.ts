@@ -2866,6 +2866,22 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "the statement of a theorem named like an earlier definition",
+      "Foo == 1 = 1\nBar == 1\nTHEOREM Bar == Foo!1 = Undefined",
+      [
+        {
+          location: "line 4, col 24 to line 4, col 32 of module M",
+          message: "Unknown operator: `Undefined'.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 32 of module M",
+          message:
+            "Multiply-defined symbol 'Bar': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 8 of module M.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });

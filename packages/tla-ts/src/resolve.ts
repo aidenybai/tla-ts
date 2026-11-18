@@ -2329,9 +2329,13 @@ const resolveStep = (
   }
 };
 
-const resolveTheorem = (theorem: Theorem, unit: Unit, bindings: Map<string, ModuleBinding>) => {
-  const isDefinition = theorem.name !== undefined && theorem.statement.kind !== "AssumeProve";
-  const scope = isDefinition ? undefined : resolveStatement(theorem.statement, undefined, unit);
+const resolveTheorem = (
+  theorem: Theorem,
+  unit: Unit,
+  bindings: Map<string, ModuleBinding>,
+  isShared: boolean,
+) => {
+  const scope = isShared ? undefined : resolveStatement(theorem.statement, undefined, unit);
   const goal =
     theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
       ? { statement: theorem.statement, isSuffices: false, isInProof: false, keyword: undefined }
@@ -2699,6 +2703,9 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         isGenerated: false,
       }),
   });
+  // Resolution renames in place, so the definition that shares a named statement's expression resolves it alone.
+  const isShared = (statement: Expression | AssumeProve) =>
+    module.definitions.some((definition) => definition.body === statement);
   const bindDeclarations = (declarations: Declaration[], kind: "Constant" | "Variable") =>
     declarations.map((declaration) =>
       createCheck(declaration.location, undefined, false, (inner) =>
@@ -2809,8 +2816,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.assumptions.map((assumption) =>
         createCheck(assumption.location, undefined, assumption.name !== undefined, (inner) => {
-          // Resolution renames in place, so the definition that shares a named assumption's expression resolves it alone.
-          if (!module.definitions.some((definition) => definition.body === assumption.expression)) {
+          if (!isShared(assumption.expression)) {
             resolveExpression(assumption.expression, undefined, inner);
           }
           if (assumption.name !== undefined) {
@@ -2825,7 +2831,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.theorems.map((theorem) =>
         createCheck(theorem.location, undefined, theorem.name !== undefined, (inner) =>
-          resolveTheorem(theorem, inner, bindings),
+          resolveTheorem(theorem, inner, bindings, isShared(theorem.statement)),
         ),
       ),
       ...module.uses.map((use) =>

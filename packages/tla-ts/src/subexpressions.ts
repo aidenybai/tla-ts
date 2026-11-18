@@ -1089,22 +1089,19 @@ export const createModuleSubexpressions = (
     },
     resolve: (): Module => {
       resolveDefinitionsBefore(undefined);
+      // A named theorem or assumption keeps sharing its expression with its definition.
+      const getSharedBody = (statement: Expression | AssumeProve) => {
+        const definition = module.definitions.find((candidate) => candidate.body === statement);
+        return definition && (resolvedDefinitions.get(definition) ?? definition).body;
+      };
       return {
         ...module,
         definitions: module.definitions.map(
           (definition) => resolvedDefinitions.get(definition) ?? definition,
         ),
         assumptions: module.assumptions.map((assumption) => {
-          const definition = module.definitions.find(
-            (candidate) => candidate.body === assumption.expression,
-          );
-          // A named assumption keeps sharing its expression with its definition.
-          if (definition) {
-            return {
-              ...assumption,
-              expression: (resolvedDefinitions.get(definition) ?? definition).body,
-            };
-          }
+          const shared = getSharedBody(assumption.expression);
+          if (shared) return { ...assumption, expression: shared };
           return isMapped(assumption.expression)
             ? {
                 ...assumption,
@@ -1118,11 +1115,10 @@ export const createModuleSubexpressions = (
           return {
             ...theorem,
             statement:
-              statement.kind === "AssumeProve"
+              getSharedBody(statement) ??
+              (statement.kind === "AssumeProve"
                 ? resolver.resolveStatement(statement)
-                : theorem.name === undefined
-                  ? resolver.resolveStatement(getExpanded(statement))
-                  : statement,
+                : resolver.resolveStatement(getExpanded(statement))),
             proof:
               theorem.proof &&
               createProofResolver(
