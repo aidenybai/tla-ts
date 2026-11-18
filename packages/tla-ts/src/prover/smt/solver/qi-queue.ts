@@ -252,22 +252,23 @@ export class QiQueue {
     });
   }
 
+  // qi_queue::instantiate reads the cancel flag for each entry and every hundred entries checks
+  // the resource limits, which counts steps too.
   instantiate() {
+    const context = this.context;
     const entries = this.newEntries;
     this.newEntries = [];
     let sinceLastCheck = 0;
     for (const entry of entries) {
+      if (context.checkCanceled()) break;
       if (entry.cost <= EAGER_COST_THRESHOLD) this.instantiateEntry(entry);
       else if (
-        this.checker.isUnsat(
-          this.context.manager.getQuantifier(entry.quantifier).body,
-          entry.bindings,
-        )
+        this.checker.isUnsat(context.manager.getQuantifier(entry.quantifier).body, entry.bindings)
       )
         this.instantiateEntry(entry);
       else this.delayedEntries.push(entry);
       if (sinceLastCheck++ > 100) {
-        if (this.context.checkCanceled()) break;
+        if (context.isResourceLimitExceeded()) break;
         sinceLastCheck = 0;
       }
     }

@@ -186,6 +186,28 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
   });
 });
 
+describe("e-matching, as Z3 5.3.2 counts its steps", () => {
+  // qi_queue::instantiate reads the cancel flag for each entry, and the matcher reads it for each
+  // match and checks the resource limits for each candidate.
+  it("counts the steps of the matcher and of the instantiation queue", () => {
+    const lines = [
+      "(declare-fun f (Int) Int)",
+      "(declare-const a Int)",
+      "(declare-const b Int)",
+      "(assert (forall ((x Int)) (! (> (f x) x) :pattern ((f x)))))",
+      "(assert (= (f a) b))",
+      "(assert (< b a))",
+      "(check-sat)",
+      "(get-info :rlimit)",
+    ];
+    expect(run(["(set-option :smt.mbqi false)", ...lines])).toEqual(["unsat", "(:rlimit 469)"]);
+    expect(run(["(set-option :smt.mbqi false)", "(push)", ...lines])).toEqual([
+      "unsat",
+      "(:rlimit 296)",
+    ]);
+  });
+});
+
 describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {
   it("lifts the one term if-then-else out of each application with a bound variable", () => {
     expect(

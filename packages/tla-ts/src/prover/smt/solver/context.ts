@@ -1318,7 +1318,7 @@ export class Context extends Internalizer {
   }
 
   // Z3's resource_limits_exceeded reads the cancel flag twice while searching.
-  private isResourceLimitExceeded() {
+  isResourceLimitExceeded() {
     if (this.isSearching && (this.lastSearchFailure !== FAILURE_OK || this.checkCanceled()))
       return true;
     return this.checkCanceled();
