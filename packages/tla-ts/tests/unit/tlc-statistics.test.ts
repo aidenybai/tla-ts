@@ -32,6 +32,23 @@ it("stops generating successors at the first violation", async () => {
   expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
 });
 
+// Deviation from TLC: TLC finds no step for the trace once the statistics forbid it, and prints "Failed to recover the initial state from its fingerprint." with a TLC bug(4), or a bug(2) before the trace.
+it.each([
+  ["3", "2", [0, 1, 2]],
+  ["4", "3", [0, 1, 2, 3]],
+])(
+  'prints the trace of an action that reads TLCGet("stats") with the action\'s name once the statistics forbid the step (distinct < %s)',
+  async (bound, limit, expected) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < ${bound} /\\ TLCGet("stats").distinct < ${bound} /\\ x' = x + 1\nInv == x < ${limit}\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => [step.state.x, step.action, step.label])).toEqual(
+      expected.map((value) => [value, value === 0 ? undefined : "Next", undefined]),
+    );
+  },
+);
+
 it('reads TLCGet("level") as 0 in the initial predicate as it rebuilds an initial state for a trace, as TLC does', async () => {
   const printed: string[] = [];
   const result = await check({

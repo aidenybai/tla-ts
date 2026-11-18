@@ -248,6 +248,7 @@ export const createTraceBuilder = (context: TraceContext) => {
         const aliasOutput = known === 0 ? [] : getAliasOutput(position);
         const traceStep: TraceStep = {
           action: step.action,
+          // Deviation from TLC: when the next-state relation no longer yields a step, as it reads TLCGet("stats"), TLCTrace#printTrace fails with a TLC bug(2) or bug(4).
           label: action && getActionLabel(action, options.version),
           state: alias === undefined ? toRecord(step.state) : aliases[position].result,
           output: position === 0 ? prefixOutput : position < rebuilt ? [] : outputs[position],
