@@ -1415,6 +1415,14 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   ) {
     return "object";
   }
+  // A name of a function that the heap holds, whatever type a cast gives it.
+  if (
+    symbol !== undefined &&
+    context.heap !== undefined &&
+    getHeapClass(node, context) !== undefined
+  ) {
+    return "object";
+  }
   if (
     declared !== undefined &&
     symbol !== undefined &&

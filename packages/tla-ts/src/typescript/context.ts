@@ -1838,7 +1838,9 @@ export const getAnyFunction = (node: ts.Node | undefined): FunctionNode | undefi
   if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
     return node;
   }
-  return ts.isVariableDeclaration(node) ? getAnyFunction(node.initializer) : undefined;
+  return ts.isVariableDeclaration(node) && node.initializer !== undefined
+    ? getAnyFunction(skipCasts(node.initializer))
+    : undefined;
 };
 
 // The function a node is, or that a variable declaration initializes.
@@ -4256,6 +4258,17 @@ export type AccessorFunction = HeapFunction | ts.MethodDeclaration;
 
 export type HeapClass = ts.ClassLikeDeclaration | HeapFunction;
 
+// The outermost of the casts around an expression, or the expression itself.
+export const getOutermostCast = (node: ts.Expression): ts.Expression =>
+  (ts.isParenthesizedExpression(node.parent) ||
+    ts.isNonNullExpression(node.parent) ||
+    ts.isAsExpression(node.parent) ||
+    ts.isSatisfiesExpression(node.parent) ||
+    ts.isTypeAssertionExpression(node.parent)) &&
+  node.parent.expression === node
+    ? getOutermostCast(node.parent)
+    : node;
+
 export const skipCasts = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) ||
   ts.isNonNullExpression(node) ||
@@ -4793,11 +4806,12 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
   if (known !== HEAP_UNKNOWN) return known === HEAP_YES;
   // A variable or an object literal's property may name a function expression, as obj.f names
   // the function of { f: function () {} }.
+  const outermost = ts.isFunctionDeclaration(node) ? node : getOutermostCast(node);
   const nameNode = ts.isFunctionDeclaration(node)
     ? node.name
-    : (ts.isVariableDeclaration(node.parent) || ts.isPropertyAssignment(node.parent)) &&
-        node.parent.initializer === node
-      ? node.parent.name
+    : (ts.isVariableDeclaration(outermost.parent) || ts.isPropertyAssignment(outermost.parent)) &&
+        outermost.parent.initializer === outermost
+      ? outermost.parent.name
       : undefined;
   const symbol =
     nameNode === undefined || !ts.isIdentifier(nameNode)
@@ -4853,7 +4867,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     symbol !== undefined &&
     node.body !== undefined &&
     isPlain(node) &&
-    isOnce(node.parent, context) &&
+    isOnce(outermost.parent, context) &&
     !isAssigned(symbol, sourceFile, context) &&
     ((named === undefined
       ? findNodes(sourceFile, (child): child is ts.Expression =>
@@ -4926,7 +4940,7 @@ export const getHeapClass = (node: ts.Expression, context: Context): HeapClass |
   const declaration = getValueDeclaration(getSymbol(inPlace, context.checker), context);
   const found =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
-      ? declaration.initializer
+      ? declaration.initializer && skipCasts(declaration.initializer)
       : declaration !== undefined &&
           ts.isPropertyDeclaration(declaration) &&
           declaration.initializer !== undefined &&

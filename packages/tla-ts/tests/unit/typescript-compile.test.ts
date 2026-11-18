@@ -53442,4 +53442,38 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("constructs a function that a cast gives a constructor's type", () => {
+    const getSource = (expected: string) => `
+      interface Primitive {
+        readonly value: unknown;
+        describe(): string;
+      }
+      interface PrimitiveClass {
+        new (value: unknown): Primitive;
+      }
+      const Proto = {
+        describe(this: Primitive) {
+          return "Success:" + String(this.value);
+        },
+      };
+      const ExitPrimitive = function (this: any, value: unknown) {
+        this.value = value;
+      } as unknown as PrimitiveClass;
+      ExitPrimitive.prototype = Proto;
+      const made = new ExitPrimitive(1);
+      const result = [made.describe(), Object.getPrototypeOf(made) === Proto].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("Success:1,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another prototype", async () => {
+      expect((await checkModel(getSource("Success:1,false"))).failure?.message).toContain(
+        "result Success:1,true",
+      );
+    });
+  });
 });
