@@ -55662,4 +55662,48 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the object that BigInt takes to a primitive with the number hint", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var o = {
+        valueOf: function () {
+          log += "valueOf|";
+          return 44;
+        },
+        toString: function () {
+          throw new RangeError("unreachable");
+        },
+      };
+      var first = true;
+      var v = {
+        [Symbol.toPrimitive]: function (hint) {
+          log += hint + "|";
+          return "42";
+        },
+      };
+      var bad = { valueOf: function () { return Symbol(); } };
+      var thrown = "none";
+      try {
+        var never = BigInt(bad);
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [BigInt(o), BigInt(v), thrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("44,42,TypeError,valueOf|number|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("44,42,TypeError,valueOf|string|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 44,42,TypeError,valueOf|number|",
+      );
+    });
+  });
 });

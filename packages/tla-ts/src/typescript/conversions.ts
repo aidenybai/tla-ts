@@ -553,6 +553,16 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
         true,
       );
     }
+    // BigInt converts its value to a primitive with the number hint, and then to a BigInt.
+    if (node.expression.text === "BigInt") {
+      return make(
+        [argument],
+        "number",
+        (primitives) => useJavaScript("BigIntOfPrimitive", [primitives[0]], context),
+        false,
+        true,
+      );
+    }
     // isNaN and isFinite convert their value to a number.
     if (
       (node.expression.text === "isNaN" || node.expression.text === "isFinite") &&
@@ -788,11 +798,13 @@ export const getKeyedConversionFunctions = (node: ts.Node, context: Context) =>
 
 // The Symbol.toPrimitive methods that tla-ts calls, which can't see the hint that it doesn't pass.
 // A call, such as a regexp's protocol, may convert many values, so it runs only the methods that
-// read neither their hint nor their arguments, as each one's body would copy into each.
+// read neither their hint nor their arguments, as each one's body would copy into each, but for a
+// call that converts its argument once.
 const getExoticMethods = (node: ts.Node, context: Context) =>
   getMethods(node, "@@toPrimitive", context).filter(
     (method) =>
       !ts.isCallExpression(node) ||
+      getConversion(node, context) !== undefined ||
       (getParameters(method).length === 0 &&
         findNodes(method, ts.isIdentifier).every((name) => name.text !== "arguments")),
   );

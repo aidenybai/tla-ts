@@ -5259,6 +5259,13 @@ LOCAL StringToBigInt(value) ==
             Undefined
        [] OTHER -> BigIntOf(Prefix(text, 1) = "-", NatOfDigits(unsigned, radix, <<>>))
 
+\\* BigInt(value) of the primitive that ToPrimitive gives: a string's integer, or ToBigInt of another.
+BigIntOfPrimitive(value) ==
+  CASE TypeOf(value) = "string" /\\ StringToBigInt(value) # Undefined -> StringToBigInt(value)
+    [] TypeOf(value) = "string" ->
+         Assert(FALSE, "tla-ts can't throw the SyntaxError of converting this string to a BigInt")
+    [] OTHER -> ToBigInt(value)
+
 \\* ToNumeric of a primitive: a BigInt as it is, and ToNumber of another.
 ToNumeric(value) == IF IsBigInt(value) THEN value ELSE ToNumber(value)
 
