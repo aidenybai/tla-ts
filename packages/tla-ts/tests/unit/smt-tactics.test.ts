@@ -2607,6 +2607,46 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
     ]);
   });
 
+  // The order or-else frees what its children hold sets the ids the next bit-blast takes.
+  it("frees the children of or-else first to last", () => {
+    expect(
+      run([
+        "(declare-const y Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(push)",
+        "(assert (forall ((x Int)) (> (+ x 0 y) (* 1 a))))",
+        "(assert (and (<= 0 a) (<= a 1) (<= 0 b) (<= b 1) (> (+ a b (* 0 y)) 0)))",
+        "(apply (or-else (then simplify elim-uncnstr fail) (then simplify lia2card fail) skip) :print false)",
+        "(pop)",
+        "(declare-const v0 (_ BitVec 3))",
+        "(declare-const v1 (_ BitVec 3))",
+        "(assert (bvult (bvmul v0 v1) #b010))",
+        "(assert (bvuge (bvadd v1 #b001) v0))",
+        "(apply (then simplify bit-blast))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (let ((a!1 (= (or (not k!2) (not k!6) (not k!3) (not k!5))",
+        "                (= (or (not k!3) (not k!6)) (or (not k!2) (not k!7))))))",
+        "    (= a!1 (or (not k!4) (not k!5))))",
+        "  (let ((a!1 (not (= k!7 (or (not k!5) (not k!6)))))",
+        "        (a!2 (or k!3 (not (or (not k!2) (not k!5)))))",
+        "        (a!3 (or (not (or (not k!2) (not k!5))) (= k!6 k!5))))",
+        "  (let ((a!4 (or (not (or k!3 (= k!6 k!5))) (not a!2) (not a!3))))",
+        "    (or (not (or k!4 a!1)) (not (or k!4 (not a!4))) (not (or a!1 (not a!4))))))",
+        "  (let ((a!1 (ite k!2",
+        "                  (ite k!3 (not (= k!6 k!5)) k!6)",
+        "                  (not (or (not k!3) (not k!5))))))",
+        "    (not a!1))",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("frees the atoms of the sat tactic, so a second check of QF_BV does Z3's work", () => {
     expect(
       run([

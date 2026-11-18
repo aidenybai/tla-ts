@@ -1812,6 +1812,24 @@ const checkHasArgument = (list: SmtList, combinator: string) => {
     );
 };
 
+// nary_tactical frees its children first to last, where and-then frees its last child first.
+const buildFirstToLast = (
+  environment: TacticEnvironment,
+  children: TacticBuilder[],
+  params: TacticParams,
+) => {
+  const destructors = environment.destructors;
+  const built = children.map((child) => {
+    const start = destructors.length;
+    const tactic = child.build(params);
+    return { tactic, destructors: destructors.splice(start) };
+  });
+  destructors.push(() => {
+    for (const child of built) destroyTactics(child.destructors);
+  });
+  return built.map((child) => child.tactic);
+};
+
 const compile = (
   environment: TacticEnvironment,
   sexpr: SExpr,
@@ -1875,7 +1893,7 @@ const compile = (
       if (children.length === 1) return children[0];
       return {
         ...mergeDescrs(children),
-        build: (params) => runOrElse(children.map((child) => child.build(params))),
+        build: (params) => runOrElse(buildFirstToLast(environment, children, params)),
       };
     }
     // Z3 runs these children in threads, and running them in order is one schedule it may pick.
@@ -1885,7 +1903,7 @@ const compile = (
       if (children.length === 1) return children[0];
       return {
         ...mergeDescrs(children),
-        build: (params) => runOrElse(children.map((child) => child.build(params))),
+        build: (params) => runOrElse(buildFirstToLast(environment, children, params)),
       };
     }
     case "par-then": {
