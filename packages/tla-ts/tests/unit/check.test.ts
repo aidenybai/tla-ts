@@ -56,6 +56,16 @@ const formatCoverage = (result: Awaited<ReturnType<typeof check>>) =>
 const getCoverageLines = async (source: string, config: string) =>
   formatCoverage(await check({ source, config, coverage: 1 }));
 
+const formatCallStackLines = (result: Awaited<ReturnType<typeof check>>) =>
+  result.failure?.callStack
+    ?.filter((expression, index, stack) => expression !== stack[index - 1])
+    .map((expression) => {
+      const range = expression.location.range;
+      return range
+        ? `Line ${range.start.line}, column ${range.start.column} to line ${range.end.line}, column ${range.end.column} in ${range.module}`
+        : "";
+    });
+
 describe("check matches TLC", () => {
   it("evaluates every assumption in the semantics fixture", async () => {
     const result = await checkFixture("semantics", "Semantics");
@@ -1305,15 +1315,7 @@ ASSUME TLCFP(a) = -887695703
         "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = IF {x} \\subseteq {{}} THEN 1 ELSE 2\n====",
       config: "INIT Init\nNEXT Next",
     });
-    const frames = result.failure?.callStack
-      ?.filter((expression, index, stack) => expression !== stack[index - 1])
-      .map((expression) => {
-        const range = expression.location.range;
-        return range
-          ? `Line ${range.start.line}, column ${range.start.column} to line ${range.end.line}, column ${range.end.column} in ${range.module}`
-          : "";
-      });
-    expect(frames).toEqual([
+    expect(formatCallStackLines(result)).toEqual([
       "Line 4, column 9 to line 4, column 48 in M",
       "Line 4, column 14 to line 4, column 48 in M",
       "Line 4, column 17 to line 4, column 34 in M",
@@ -2181,15 +2183,7 @@ ASSUME TLCFP(a) = -887695703
         "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 1\nNext == LET f[n \\in 0..2] == 10 \\div (n * x) IN x' = f[1] + Cardinality({f})\n====",
       config: "INIT Init\nNEXT Next",
     });
-    const frames = result.failure?.callStack
-      ?.filter((expression, index, stack) => expression !== stack[index - 1])
-      .map((expression) => {
-        const range = expression.location.range;
-        return range
-          ? `Line ${range.start.line}, column ${range.start.column} to line ${range.end.line}, column ${range.end.column} in ${range.module}`
-          : "";
-      });
-    expect(frames).toEqual([
+    expect(formatCallStackLines(result)).toEqual([
       "Line 5, column 49 to line 5, column 76 in M",
       "Line 5, column 54 to line 5, column 76 in M",
       "Line 5, column 61 to line 5, column 76 in M",
