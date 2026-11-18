@@ -53696,6 +53696,29 @@ describe("BigInts", () => {
       expect((await check(compileScript(getSource("function")))).failure).toBeUndefined();
     });
 
+    it("stops at a key of a primitive that an element access names and its type lacks", async () => {
+      const result = await check(
+        compileScript(`
+          var box = { seen: "" };
+          var symbol = Symbol("66");
+          symbol[62] = 0;
+          box.seen = String(symbol[62]);
+        `),
+      );
+      expect(result.failure?.message).toContain("tla-ts can't read the properties of Symbol");
+    });
+
+    it("stops at a script's JavaScript that TypeScript's checker fails on", () => {
+      expect(() =>
+        compileScript(`
+          var items = {};
+          items[Symbol.iterator] = function () {
+            return 1;
+          };
+        `),
+      ).toThrow("tla-ts can't type this JavaScript, as TypeScript fails");
+    });
+
     it.each([
       ["shared === 1", "shared === 2", "shared"],
       ["this.loose === 5", "this.loose === 6", "this"],
