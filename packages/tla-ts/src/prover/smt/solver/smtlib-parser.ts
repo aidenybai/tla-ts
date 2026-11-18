@@ -3081,26 +3081,30 @@ export const createSmtlibReader = (
     };
   };
 
-  const commitDatatypes = (defs: DatatypeDef[], missing: string[], at: SExpr, end: SExpr) => {
+  const checkMissingSorts = (missing: string[], at: SExpr) => {
     if (missing.length > 0)
       throw new SmtParseError(`invalid datatype declaration, unknown sort '${missing[0]}'`, at);
+  };
+
+  const checkDuplicateAccessors = (def: DatatypeDef, at: SExpr) => {
+    const names = def.constructors.flatMap((constructor) =>
+      constructor.accessors.map((accessor) => accessor.name),
+    );
+    const duplicated = names.find((name, index) => names.indexOf(name) !== index);
+    if (duplicated !== undefined)
+      throw new SmtParseError(
+        `invalid datatype declaration, repeated accessor identifier '${duplicated}'`,
+        at,
+      );
+  };
+
+  const commitDatatypes = (defs: DatatypeDef[], end: SExpr) => {
     const sorts = mkDatatypes(manager, defs);
     if (typeof sorts === "string") throw new SmtParseError(sorts, end);
     for (const def of defs) undo.push(() => removeDatatype(manager, def.name));
     defs.forEach((def, index) => {
       if (def.parameters.length === 0) insertDatatypeDecls(sorts[index], end);
     });
-    for (const def of defs) {
-      const names = def.constructors.flatMap((constructor) =>
-        constructor.accessors.map((accessor) => accessor.name),
-      );
-      const duplicated = names.find((name, index) => names.indexOf(name) !== index);
-      if (duplicated !== undefined)
-        throw new SmtParseError(
-          `invalid datatype declaration, repeated accessor identifier '${duplicated}'`,
-          at,
-        );
-    }
   };
 
   const declareSortDecl = (name: string, decl: SortDecl, at: SExpr) => {
@@ -3206,20 +3210,23 @@ export const createSmtlibReader = (
     if (list.items.length > 3)
       throw new SmtParseError("invalid datatype declaration", list.items[3]);
     if (defs.length === 0) return;
-    commitDatatypes(defs, missing, declaration, list.end);
-    if (isSmt26) return;
-    for (const def of defs)
-      declareSortDecl(
-        def.name,
-        {
-          kind: "datatype",
-          name: def.name,
-          arity: def.parameters.length,
-          siblings: defs.length > 1 ? names : [],
-          instances: new Map(),
-        },
-        list.end,
-      );
+    checkMissingSorts(missing, declaration);
+    commitDatatypes(defs, list.end);
+    for (const def of defs) {
+      checkDuplicateAccessors(def, declaration);
+      if (!isSmt26)
+        declareSortDecl(
+          def.name,
+          {
+            kind: "datatype",
+            name: def.name,
+            arity: def.parameters.length,
+            siblings: defs.length > 1 ? names : [],
+            instances: new Map(),
+          },
+          list.end,
+        );
+    }
   };
 
   const declareDatatype = (list: SmtList) => {
@@ -3231,12 +3238,10 @@ export const createSmtlibReader = (
       missing,
       name.text,
     );
-    commitDatatypes(
-      [mkDatatypeDef(manager, name.text, body.parameters, body.constructors)],
-      missing,
-      name,
-      list.items[3] ?? list.end,
-    );
+    const def = mkDatatypeDef(manager, name.text, body.parameters, body.constructors);
+    checkMissingSorts(missing, name);
+    checkDuplicateAccessors(def, name);
+    commitDatatypes([def], list.items[3] ?? list.end);
     expectEnd(list.items[3], "invalid end of datatype declaration, ')' expected");
   };
 

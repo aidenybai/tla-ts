@@ -698,6 +698,28 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("rejects a repeated accessor before declare-datatype makes its datatype", () => {
+    expect(
+      run([
+        "(declare-datatype H ((h1 (s1 Int) (s1 Int)) (h2)))",
+        "(declare-datatype F2 ((c1 (acc Int)) (c2 (acc Bool))))",
+        "(declare-const u H)",
+        "(declare-const v F2)",
+        "(assert (= v (c2 true)))",
+        "(assert ((_ is h1) u))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 19: invalid datatype declaration, repeated accessor identifier 's1'\")",
+      "(error \"line 2 column 18: invalid datatype declaration, repeated accessor identifier 'acc'\")",
+      '(error "line 5 column 21: unknown constant c2 (Bool) ")',
+      '(error "line 6 column 20: datatype constructors have not been created")',
+      "sat",
+      '(error "line 8 column 10: datatype constructors have not been created")',
+    ]);
+  });
+
   it("names the declaration that lacks a symbol, and takes _ and as only for define-const", () => {
     expect(
       run([
