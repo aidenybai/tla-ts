@@ -2299,6 +2299,35 @@ const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context
 const getRootCall = (node: ts.Expression | undefined): ts.Expression | undefined =>
   node !== undefined && ts.isPropertyAccessExpression(node) ? getRootCall(node.expression) : node;
 
+// Runs a call that an argument makes before the call that takes it, with the objects that its own
+// expressions make, such as the typed array whose method it calls.
+const runArgumentCall = (
+  call: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula =>
+  allocateAll(
+    getAllocated(call, context).filter((inner) => !path.scope.allocated.has(inner)),
+    path,
+    context,
+    (allocated) => translateCallStatement(call, allocated, context, frame, continueWith),
+  );
+
+// The root call of the first argument that a call evaluates next, after the literals and the
+// arguments that it already ran, which run the same before or after it.
+const getNextArgument = (
+  node: ts.CallExpression,
+  results: ReadonlyMap<ts.Expression, Expression>,
+) =>
+  getRootCall(
+    node.arguments.find((argument) => {
+      const root = getRootCall(argument);
+      return !isLiteralValue(argument) && (root === undefined || !results.has(root));
+    }),
+  );
+
 // The typed array constructors by their element types, through which a typed array's method makes a
 // typed array.
 const translateTypedConstructors = (site: ts.Node, context: Context) =>
@@ -2806,7 +2835,7 @@ const translateCallStatementBody = (
       ),
     );
   }
-  const first = getRootCall(expression.arguments.at(0));
+  const first = getNextArgument(expression, path.scope.results);
   if (
     first !== undefined &&
     ts.isCallExpression(first) &&
@@ -2814,7 +2843,7 @@ const translateCallStatementBody = (
     !isGeneratorType(first, context) &&
     isStatementCall(first, path, context)
   ) {
-    return translateCallStatement(first, path, context, frame, (after, value) =>
+    return runArgumentCall(first, path, context, frame, (after, value) =>
       translateCallStatement(
         expression,
         {
@@ -16082,7 +16111,7 @@ const translateCheckedDeclarations = (
   const outer = initializer && getReadCall(initializer);
   const first =
     outer !== undefined && ts.isCallExpression(outer)
-      ? getRootCall(outer.arguments.at(0))
+      ? getNextArgument(outer, path.scope.results)
       : undefined;
   if (
     outer !== undefined &&
@@ -16097,7 +16126,7 @@ const translateCheckedDeclarations = (
       getBuiltIn(outer.expression.expression, context) !== undefined) ||
       getEarlyReads([first], [outer.expression], path, context).length === 0)
   ) {
-    return translateCallStatement(first, path, context, frame, (after, value) =>
+    return runArgumentCall(first, path, context, frame, (after, value) =>
       translateDeclarations(
         declarations,
         {

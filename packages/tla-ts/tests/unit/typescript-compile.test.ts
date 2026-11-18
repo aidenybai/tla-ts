@@ -55918,4 +55918,30 @@ describe("BigInts", () => {
       ).toThrow("Unsupported expression: (body: () => number) => body() * 3");
     });
   });
+
+  describe("runs each argument's call that only statements run, in order, with the typed array it calls a method of", () => {
+    const getSource = (expected: string) => `
+      const log: number[] = [];
+      const record = (value: number) => {
+        log.push(value);
+        return new Uint8Array(2).fill(value);
+      };
+      const sum = (head: Uint8Array, bytes: Uint8Array, count: number) =>
+        head[0] * 10 + bytes[count - 1] + bytes.length;
+      const total = sum(record(7), new Uint8Array(4).fill(5), 4);
+      const second = sum(record(1), record(2), 2);
+      const result = [total, second, log.join("-")].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("79,14,7-1-2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("79,14,7-2-1"))).failure?.message).toContain(
+        "result 79,14,7-1-2",
+      );
+    });
+  });
 });
