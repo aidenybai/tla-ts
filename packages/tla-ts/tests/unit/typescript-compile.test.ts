@@ -16362,18 +16362,22 @@ describe("errors", () => {
     expect((await checkModel(getSource("isLoose(first, second)"))).failure?.message).toContain(
       '"loose"',
     );
-    expect(() =>
-      compile(`
-        const createAdd = (amount: number) => {
-          const add = (value: number) => value + amount;
-          return add;
-        };
-        const addTwo = createAdd(2);
-        const addThree = createAdd(3);
-        const box = { size: 1 };
-        if (addTwo === addThree) throw new Error("same");
-      `),
-    ).toThrow("tla-ts can't use a function that a factory returns as a value");
+  });
+
+  it("takes the functions that a factory's calls return as values, each its own closure", async () => {
+    const getSource = (expected: string) => `
+      const createAdd = (amount: number) => {
+        const add = (value: number) => value + amount;
+        return add;
+      };
+      const addTwo = createAdd(2);
+      const addThree = createAdd(3);
+      const box = { size: 1 };
+      const seen = [addTwo === addThree, addTwo(1), addThree(1)].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    expect((await checkModel(getSource("false,3,4"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,3,4"))).failure?.message).toContain("seen false,3,4");
   });
 
   it("runs a function that calls itself where a statement changed what it reads", async () => {
@@ -37255,14 +37259,10 @@ describe("buffers", () => {
     it.each([
       [
         "writes a number",
-        "const value: any = 1; let thrown = ''; try { new BigInt64Array(1)[0] = value; } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('number');",
-        "tla-ts can't throw the TypeError of converting a number to a BigInt",
+        "const value: any = 1; let thrown = ''; try { new BigInt64Array(1)[0] = value; } catch (error) { thrown = error instanceof TypeError ? 'type' : 'other'; } if (thrown !== 'type') throw new Error('number');",
+        "const value: any = 1; let thrown = ''; try { new BigInt64Array(1)[0] = value; } catch (error) { thrown = error instanceof TypeError ? 'type' : 'other'; } if (thrown === 'type') throw new Error('number');",
+        "number",
       ],
-    ])("stops where a script %s", async (_, source, message) => {
-      expect((await checkModel(source)).failure?.message).toContain(message);
-    });
-
-    it.each([
       [
         "converts a string that isn't decimal digits",
         "const texts: any = ['1e3']; let thrown = ''; try { new BigInt64Array(texts); } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('syntax');",
@@ -54741,6 +54741,50 @@ describe("BigInts", () => {
     });
   });
 
+  describe("writes the properties of a function value that the heap holds", () => {
+    const getSource = (expected: string) => `
+      const make = (k: number) => {
+        const doubled = k * 2;
+        const read = () => doubled;
+        return read;
+      };
+      const g = () => 1;
+      const held = g as typeof g & { c?: number };
+      held.c = 3;
+      held.c += 1;
+      const made = make(1) as (() => number) & { tag?: number };
+      made.tag = 5;
+      made["tag"] = 6;
+      const had = "c" in held;
+      delete held.c;
+      const seen = [had, "c" in held, made.tag + made(), held()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,8,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the first write kept", async () => {
+      expect((await checkModel(getSource("true,false,7,1"))).failure?.message).toContain(
+        "seen true,false,8,1",
+      );
+    });
+
+    it("stops where a sloppy function's object isn't on the heap", async () => {
+      const sloppy = `
+        function g() {
+          return 1;
+        }
+        const held = g as typeof g & { c?: number };
+        held.c = 3;
+      `;
+      expect((await checkModel(sloppy)).failure?.message).toContain(
+        "tla-ts can't read this function as an object",
+      );
+    });
+  });
+
   it("stops at a read of a built-in object that a cast gives a record's type", () => {
     expect(() =>
       compile(`
@@ -54902,6 +54946,147 @@ describe("BigInts", () => {
     ])("rejects %s read otherwise", async (from, to, message) => {
       const source = getSource("function").replace(from, to);
       expect((await check(compileScript(source))).failure?.message).toContain(message);
+    });
+  });
+
+  describe("runs a function that an arguments object's element holds, among those of the program", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const pipeArguments = <A,>(self: A, args: IArguments): unknown => {
+        switch (args.length) {
+          case 0:
+            return self;
+          case 1:
+            return args[0](self);
+          case 2:
+            return args[1](args[0](self));
+          default: {
+            let ret = self;
+            for (let i = 0, len = args.length; i < len; i++) {
+              ret = args[i](ret);
+            }
+            return ret;
+          }
+        }
+      };
+      interface Pipeable {
+        value: number;
+        pipe(...fns: Array<(value: any) => any>): unknown;
+      }
+      const Prototype = {
+        pipe(this: Pipeable) {
+          return pipeArguments(this, arguments);
+        },
+      };
+      const make = (value: number): Pipeable => {
+        const made = Object.create(Prototype);
+        made.value = value;
+        return made;
+      };
+      const double = (box: Pipeable) => make(box.value * 2);
+      const read = (box: Pipeable) => box.value;
+      const first = make(3);
+      const one = first.pipe(read);
+      const two = first.pipe(double, read);
+      const three = make(1).pipe(double, double, read);
+      const seen = [one, two, three].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,6,4"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("3,6,5"))).failure?.message).toContain("seen 3,6,4");
+    });
+  });
+
+  describe("ends a call at its method's own ?. where the receiver is undefined", () => {
+    const getSource = (expected: string) => `
+      const target = { id: 1 };
+      const refs = new Map<number, WeakRef<{ id: number }>>();
+      refs.set(1, new WeakRef(target));
+      const find = (id: number) => {
+        const found = refs.get(id)?.deref();
+        if (!found) {
+          refs.delete(id);
+          return null;
+        }
+        return found.id;
+      };
+      const seen = [find(1), find(2), refs.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another size", async () => {
+      expect((await checkModel(getSource("1,,2"))).failure?.message).toContain("seen 1,,1");
+    });
+
+    it("stops where an argument that calls would run before the check", () => {
+      expect(() =>
+        compile(`
+          const box = { log: "" };
+          const runner = { run: (value: string) => value.length };
+          const pick = (has: boolean) => (has ? runner : undefined);
+          const note = (value: string) => {
+            box.log += value;
+            return value;
+          };
+          const second = pick(false)?.run(note("b"));
+        `),
+      ).toThrow("Optional chaining isn't supported");
+    });
+  });
+
+  describe("takes the function that a factory's call returns as a value, as a closure", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      const createDispatcher =
+        (primitive: string) =>
+        (initial: number): [string, number] => {
+          box.log += primitive;
+          return [primitive, initial + 1];
+        };
+      const useAction = createDispatcher("Action");
+      const useForm = createDispatcher("Form");
+      const dispatcher = { useAction, useForm };
+      const first = dispatcher.useAction(1);
+      const second = dispatcher.useForm(2);
+      const third = useAction(3);
+      const seen = [first.join("/"), second.join("/"), third.join("/"), box.log].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("Action/2,Form/3,Action/4,ActionFormAction"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects one closure for both", async () => {
+      expect(
+        (await checkModel(getSource("Action/2,Form/3,Action/4,ActionActionAction"))).failure
+          ?.message,
+      ).toContain("seen Action/2,Form/3,Action/4,ActionFormAction");
+    });
+  });
+
+  describe("runs a namespace's function that makes objects as a statement", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/namespace-call.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = source.replace('"5,7"', '"5,8"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("seen 5,7");
     });
   });
 
@@ -56031,6 +56216,87 @@ describe("BigInts", () => {
 
     it("rejects another radix", async () => {
       await expect(checkModel(getSource("255,n3,other"))).rejects.toThrow("result ff,n3,other");
+    });
+  });
+
+  describe("carries a time zone's table only into a script that reaches Temporal", () => {
+    const getModule = (zone: string) =>
+      printModule(
+        compile(`
+          const zone = "Europe/London";
+          const label = ${zone}.toLowerCase();
+          if (label !== "europe/london") throw new Error("label " + label);
+        `).source,
+      );
+
+    it("leaves the table out of a script without Temporal", () => {
+      const module = getModule("zone");
+      expect(module).toContain("UsedTimeZones == <<>>");
+      expect(module).not.toContain('key |-> "europe/london"');
+    });
+
+    it("carries the table into a script with Temporal", () => {
+      expect(getModule("new Temporal.ZonedDateTime(0n, zone).timeZoneId")).toContain(
+        'key |-> "europe/london"',
+      );
+    });
+  });
+
+  describe("runs a catch once for the places in its try that throw", () => {
+    const getSource = (expected: string) => `
+      const first = new Error("first");
+      const second = new Error("second");
+      function run() {
+        const stack = new DisposableStack();
+        stack.use({ [Symbol.dispose]() { throw first; } });
+        stack.use({ [Symbol.dispose]() { throw second; } });
+        stack.dispose();
+      }
+      function check(): string {
+        try {
+          run();
+        } catch (error) {
+          if (error instanceof SuppressedError) {
+            return [error.error === first, error.suppressed === second].join("/");
+          }
+          return "other";
+        }
+        return "none";
+      }
+      const seen = check();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true/true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the errors in the other order", async () => {
+      expect((await checkModel(getSource("false/false"))).failure?.message).toContain(
+        "seen true/true",
+      );
+    });
+  });
+
+  describe("disposes with a stack's own dispose where a resource holds it as its dispose method", () => {
+    const getSource = (expected: string) => `
+      let seen = "none";
+      const outer = new DisposableStack();
+      outer.use({ [Symbol.dispose]: DisposableStack.prototype.dispose });
+      try {
+        outer.dispose();
+      } catch (error) {
+        seen = error instanceof TypeError ? "type" : "other";
+      }
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type"))).failure).toBeUndefined();
+    });
+
+    it("rejects a disposal that doesn't throw", async () => {
+      expect((await checkModel(getSource("none"))).failure?.message).toContain("seen type");
     });
   });
 });

@@ -244,6 +244,10 @@ export interface Context {
   // The built-in methods that each file reads as values, as obj.pop = Array.prototype.pop does,
   // which a call of a key whose type doesn't tell which function it holds may run.
   storedBuiltIns: ReadonlyMap<ts.SourceFile, ReadonlySet<string>>;
+  // Whether the script may hold a DisposableStack's dispose or disposeAsync as a value, which a
+  // resource may then dispose with: it reads a key of that name other than to call it, or names
+  // the key in a string.
+  isStackMethodHeld: boolean;
   // The closures of each file, which a call through a value whose type has calls may run.
   closures: ReadonlyMap<ts.SourceFile, readonly Closure[]>;
   // The vars, parameters, and declared functions of the functions of a script that run once, which
@@ -743,6 +747,7 @@ export const createContext = (
     doubles: new Set(),
     heapCollections: new Set(),
     storedBuiltIns: new Map(),
+    isStackMethodHeld: true,
     closures: new Map(),
     onceLocals: new Set(),
     onceFunctions: new Set(),
@@ -3978,6 +3983,26 @@ const isValueArgument = (node: ts.Node, context: Context) => {
   );
 };
 
+// Whether each call of a function is a factory's call, which stands for the function it returns.
+const isFactoryCalled = (maker: ts.Node, context: Context) => {
+  const name = ts.isFunctionDeclaration(maker)
+    ? maker.name
+    : ts.isVariableDeclaration(maker.parent) && ts.isIdentifier(maker.parent.name)
+      ? maker.parent.name
+      : undefined;
+  const symbol = name === undefined ? undefined : getSymbol(name, context.checker);
+  return (
+    symbol === undefined ||
+    findReferences(symbol, maker.getSourceFile(), context).every(
+      (reference) =>
+        reference === name ||
+        !ts.isCallExpression(reference.parent) ||
+        reference.parent.expression !== reference ||
+        getFactoryCall(reference.parent, context) !== undefined,
+    )
+  );
+};
+
 export const isClosure = (node: ts.Node, context: Context): node is Closure =>
   context.heap !== undefined && isOutliving(node, context);
 
@@ -4069,7 +4094,8 @@ export const isOutliving = (node: ts.Node, context: Context): node is Closure =>
               (declaration) => getAnyFunction(declaration) !== undefined,
             )
           : ts.isFunctionDeclaration(statement),
-      );
+      ) &&
+    isFactoryCalled(maker, context);
   const isReturned =
     isReturnOf(node) ||
     (heldSymbol !== undefined &&
@@ -5718,6 +5744,24 @@ export const getFactoryCall = (
   );
   const body = factory?.body;
   if (factory === undefined || !isPlain(factory) || body === undefined) return undefined;
+  // A factory's call stands for the function it returns only where the script calls the name that
+  // holds it; another read takes the function as a value, which a closure on the heap is.
+  const holder = ts.isVariableDeclaration(node.parent) ? node.parent.name : undefined;
+  const held =
+    holder !== undefined && ts.isIdentifier(holder)
+      ? getSymbol(holder, context.checker)
+      : undefined;
+  if (
+    context.heap !== undefined &&
+    held !== undefined &&
+    findReferences(held, node.getSourceFile(), context).some(
+      (reference) =>
+        reference !== holder &&
+        !(ts.isCallExpression(reference.parent) && reference.parent.expression === reference),
+    )
+  ) {
+    return undefined;
+  }
   const returned = ts.isBlock(body) ? body.statements.at(-1) : undefined;
   const statements = ts.isBlock(body) ? body.statements.slice(0, -1) : [];
   const variables = statements.flatMap((statement) =>

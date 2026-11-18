@@ -647,8 +647,8 @@ export const compile = (
     ? [sourceFile, ...files].flatMap(getLiterals)
     : [];
   const normals = [...new Set([...literals, ...literals.flatMap(getForms)])];
-  // The named time zones whose tables the module reads: those that a string literal names, itself
-  // or in an ISO string's annotation, in any case.
+  // The named time zones whose tables the module reads: in a script that reaches Temporal, those
+  // that a string literal names, itself or in an ISO string's annotation, in any case.
   const getZoneNames = (node: ts.Node): string[] => [
     ...(ts.isStringLiteralLike(node) && node.text.length <= LONG_LITERAL
       ? [node.text, ...[...node.text.matchAll(/\[!?([^\]=]+)\]/g)].map((match) => match[1])]
@@ -657,7 +657,10 @@ export const compile = (
   ];
   const timeZones = [
     ...new Set(
-      [sourceFile, ...files]
+      ([sourceFile, ...files].some((file) => /\bTemporal\b/.test(file.text))
+        ? [sourceFile, ...files]
+        : []
+      )
         .flatMap(getZoneNames)
         .map((name) => name.toLowerCase())
         .filter((name) => Object.hasOwn(TIME_ZONES, name)),
@@ -1031,6 +1034,22 @@ export const compile = (
           ),
         ),
       ]),
+    );
+    const isDisposeKey = (node: ts.Node) =>
+      (ts.isPropertyAccessExpression(node) &&
+        ["dispose", "disposeAsync"].includes(node.name.text) &&
+        node.expression.getText() !== "Symbol") ||
+      (ts.isElementAccessExpression(node) &&
+        ["Symbol.dispose", "Symbol.asyncDispose"].includes(node.argumentExpression.getText()));
+    context.isStackMethodHeld = program.files.some(
+      (file) =>
+        findNodes(
+          file,
+          (inner): inner is ts.Node =>
+            (isDisposeKey(inner) &&
+              !(ts.isCallExpression(inner.parent) && inner.parent.expression === inner)) ||
+            (ts.isStringLiteralLike(inner) && ["dispose", "disposeAsync"].includes(inner.text)),
+        ).length > 0,
     );
     // The functions that a call through a value may run, found once for every call: those of
     // each file that the model reaches.
