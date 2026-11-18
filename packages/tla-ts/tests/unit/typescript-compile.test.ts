@@ -56378,4 +56378,29 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("stops where it runs a method that only an interface declares, among a call's candidates", () => {
+    const getSource = (expected: string) => `
+      interface System {
+        getCurrentDirectory(): string;
+      }
+      const systems: System[] = [];
+      const sys: System | undefined = systems[0];
+      const host = sys ? { getCurrentDirectory: () => sys.getCurrentDirectory() } : undefined;
+      const names: Array<() => string> = [() => "a", () => "b"];
+      const pick = (index: number) => names[index]();
+      const result = [pick(0), pick(1), host === undefined].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node, as no call runs the method", async () => {
+      expect((await checkModel(getSource("a,b,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another pick", async () => {
+      expect((await checkModel(getSource("a,a,true"))).failure?.message).toContain(
+        "result a,b,true",
+      );
+    });
+  });
 });
