@@ -1,4 +1,5 @@
 import {
+  getFunctionConstruction,
   isLocallyResolved,
   type Bound,
   type Definition,
@@ -333,10 +334,14 @@ export const buildCoverage = (
       definition.kind === "Function"
         ? getBoundNames(definition.bounds)
         : definition.params.map((param) => param.name);
-    walk(definition.body, bindNames(names, resolved.scope));
     if (definition.kind === "Function") {
-      getBoundSets(definition.bounds).forEach((set) => walk(set, resolved.scope));
-    }
+      // Only a LET definition has a scope.
+      const construction = getFunctionConstruction(definition, resolved.scope !== undefined);
+      enter(construction, definition.location.range, () => {
+        walk(definition.body, bindNames(names, resolved.scope));
+        getBoundSets(definition.bounds).forEach((set) => walk(set, resolved.scope));
+      });
+    } else walk(definition.body, bindNames(names, resolved.scope));
     walking.pop();
   };
 

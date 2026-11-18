@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getFunctionConstruction,
   getReferencedName,
   isLocallyResolved,
   type Bound,
@@ -761,28 +762,29 @@ const getBoundTupleLengths = (bounds: Bound[]) =>
         bound.pattern.kind === "Tuple" ? bound.pattern.names.length : undefined,
       );
 
-const getDefinitionSource = (definition: FunctionDefinition): Expression => ({
-  kind: "FunctionConstruction",
-  bounds: definition.bounds,
-  body: definition.body,
-  location: definition.location,
-});
-
 const createRecursiveFunction = (
   definition: FunctionDefinition,
   context: Context,
 ): RebindableLazyFunction => {
   const domain = getBoundsDomain(definition.bounds, context);
+  const compute = (argument: Value, self: Value) =>
+    evaluate(
+      definition.body,
+      withScope(
+        context,
+        bindArgument(definition.bounds, bindValue(undefined, definition.name, self), argument),
+      ),
+    );
+  const coverage = context.environment.coverage;
+  const node = coverage && !context.environment.callStack ? coverage.current : -1;
   const functionValue = createLazyFunction(
     domain,
-    (argument, self) =>
-      evaluate(
-        definition.body,
-        withScope(
-          context,
-          bindArgument(definition.bounds, bindValue(undefined, definition.name, self), argument),
-        ),
-      ),
+    coverage
+      ? (argument, self) =>
+          coverage.current === -1
+            ? compute(argument, self)
+            : runAtCoverageNode(coverage, node, () => compute(argument, self))
+      : compute,
     getLazyFunctionSource(
       getLazyFunctionTemplate(definition.bounds, definition.body),
       definition.bounds,
@@ -834,9 +836,11 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
     };
   }
   if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
-  if (definition.isSelfReferential)
-    return (context) => createRecursiveFunction(definition, context);
-  return getEntryEvaluator(getDefinitionSource(definition), environment);
+  const construction = getFunctionConstruction(definition, false);
+  if (!definition.isSelfReferential) return getEntryEvaluator(construction, environment);
+  const evaluator: Evaluator = (context) => createRecursiveFunction(definition, context);
+  const coverage = environment.coverage;
+  return coverage ? countEvaluator(construction, evaluator, coverage) : evaluator;
 };
 
 const CALLER_SCOPE: Scope = {
@@ -1143,22 +1147,6 @@ interface ReevaluatedDefinitions {
   streamed: ReadonlySet<Definition>;
 }
 
-const letFunctionConstructions = new WeakMap<FunctionDefinition, Expression>();
-
-const getLetFunctionConstruction = (definition: FunctionDefinition): Expression => {
-  const known = letFunctionConstructions.get(definition);
-  if (known) return known;
-  const construction: Expression = {
-    kind: "FunctionConstruction",
-    bounds: definition.bounds,
-    body: definition.body,
-    location: definition.location,
-    isRecursive: true,
-  };
-  letFunctionConstructions.set(definition, construction);
-  return construction;
-};
-
 const isRecursiveOperator = (definition: Definition) =>
   definition.kind === "Operator" && definition.isRecursive && definition.params.length > 0;
 
@@ -1216,7 +1204,7 @@ export const bindDefinitions = (
       definition.kind === "Function"
         ? {
             kind: "Thunk",
-            expression: getLetFunctionConstruction(definition),
+            expression: getFunctionConstruction(definition, true),
             scope,
             state: context.state,
             next: context.next,

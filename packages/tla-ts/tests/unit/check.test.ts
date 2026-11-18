@@ -2014,6 +2014,35 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts a function definition as a node over its body and domain, as SANY's $RecursiveFcnSpec and $NonRecursiveFcnSpec are in TLC's cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\ng[n \\in 0..x] == IF n = 0 THEN 0 ELSE g[n - 1]\nh[n \\in 0..x] == n + x\nL == LET f[n \\in 0..2] == IF n = 0 THEN 0 ELSE f[n - 1]\n         k[n \\in 0..2] == n + x\n     IN f[2] = 0 /\\ k[1] >= 0 /\\ g[x] = 0 /\\ h[0] = x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == L\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines?.[2]).toEqual([
+      "line 11, col 8 to line 11, col 8 of module M: 3",
+      "|line 7, col 10 to line 7, col 31 of module M: 3",
+      "|line 6, col 10 to line 6, col 55 of module M: 3",
+      "||line 6, col 27 to line 6, col 55 of module M: 9",
+      "|||line 6, col 30 to line 6, col 34 of module M: 9",
+      "|||line 6, col 48 to line 6, col 55 of module M: 6",
+      "||line 6, col 18 to line 6, col 21 of module M: 3",
+      "|line 8, col 9 to line 8, col 53 of module M: 3",
+      "||line 8, col 9 to line 8, col 41 of module M: 3",
+      "|||line 8, col 9 to line 8, col 29 of module M: 3",
+      "|||line 8, col 34 to line 8, col 41 of module M: 3",
+      "||||line 8, col 34 to line 8, col 37 of module M: 3",
+      "|||||line 8, col 34 to line 8, col 34 of module M: 3",
+      "||||||line 4, col 1 to line 4, col 46 of module M: 3",
+      "|||||||line 4, col 18 to line 4, col 46 of module M: 6",
+      "||||||||line 4, col 21 to line 4, col 25 of module M: 6",
+      "||||||||line 4, col 39 to line 4, col 46 of module M: 3",
+      "|||||||line 4, col 9 to line 4, col 12 of module M: 3",
+      "|||||line 8, col 36 to line 8, col 36 of module M: 3",
+      "||line 8, col 46 to line 8, col 53 of module M: 3",
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",
