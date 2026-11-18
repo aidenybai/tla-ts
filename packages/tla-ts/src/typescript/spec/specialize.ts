@@ -59,6 +59,18 @@ const getUnits = (text: string) =>
 
 const getStr = (text: string) => `Str(${getUnits(text)})`;
 
+// A state that no code names, which a code's text holds where the code reads its state.
+const NO_STATE = "NoState";
+
+// The value of code that evaluates to the same value in every state, if it does.
+const getConstant = (code: Code) => {
+  const text = code(NO_STATE, "ctx");
+  const match = /^Ok\(NoState, (.*)\)$/s.exec(text);
+  return match === null || match[1].includes(NO_STATE) || /\bctx\b/.test(match[1])
+    ? undefined
+    : match[1];
+};
+
 const getLimbs = (value: bigint) => {
   const limbs: number[] = [];
   for (let rest = value; rest > 0n; rest >>= 15n) limbs.push(Number(rest & 32767n));
@@ -597,12 +609,14 @@ export const specialize = (
     );
   };
 
-  // ArgumentListEvaluation (§13.3.8.1): a result whose value is the list of arguments.
+  // ArgumentListEvaluation (§13.3.8.1): a result whose value is the list of arguments. An
+  // argument whose evaluation is a value whatever the state, such as a literal's, is that value in
+  // the list, and a list of such arguments needs no definition of its own.
   const argumentList = (args: readonly ts.Expression[], scope: Scope): Code => {
     if (args.length === 0) return (state) => `Ok(${state}, <<>>)`;
     const steps: string[] = [];
     let state = "s";
-    let list = "<<>>";
+    const values: string[] = [];
     args.forEach((argument, index) => {
       const name = `a${index + 1}`;
       if (ts.isSpreadElement(argument)) {
@@ -611,16 +625,23 @@ export const specialize = (
           `LET ${name}i == GetIterator(${name}.s, Val(${name}), "sync") IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
           `LET ${name}l == IteratorToList(${name}i.s, Val(${name}i), <<>>) IN IF IsAbrupt(${name}l) THEN ${name}l ELSE`,
         );
-        list = `${list} \\o Val(${name}l)`;
+        values.push(`Val(${name}l)`);
         state = `${name}l.s`;
-      } else {
-        steps.push(
-          `LET ${name} == ${value(argument, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-        );
-        list = list === "<<>>" ? `<<Val(${name})>>` : `Append(${list}, Val(${name}))`;
-        state = `${name}.s`;
+        return;
       }
+      const code = value(argument, scope);
+      const constant = getConstant(code);
+      if (constant !== undefined) {
+        values.push(`<<${constant}>>`);
+        return;
+      }
+      steps.push(`LET ${name} == ${code(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`);
+      values.push(`<<Val(${name})>>`);
+      state = `${name}.s`;
     });
+    // The list, with runs of single values as one sequence.
+    const list = values.join(" \\o ").replace(/>> \\o <</g, ", ");
+    if (steps.length === 0) return (current) => `Ok(${current}, ${list})`;
     return defineCode("Arguments", `${steps.join("\n  ")}\n  Ok(${state}, ${list})`);
   };
 
@@ -646,10 +667,10 @@ export const specialize = (
     const shortCircuit =
       node.questionDotToken === undefined
         ? ""
-        : `IF IsNullish(Val(f)) THEN Abrupt(f.s, Completion("nullish", Undefined, Empty)) ELSE `;
+        : `IF IsNullish(Val(c).f) THEN Abrupt(c.s, Completion("nullish", Undefined, Empty)) ELSE `;
     return defineCode(
       "Call",
-      `LET r == ${base("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE LET f == GetValue(r.s, Val(r)) IN IF IsAbrupt(f) THEN f ELSE ${shortCircuit}CallArgumentsThen(Val(f), CallThisValue(f.s, Val(r)), FALSE, ${args("f.s", "ctx")})`,
+      `LET c == CalleeThen(${base("s", "ctx")}) IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsThen(Val(c).f, Val(c).this, FALSE, ${args("c.s", "ctx")})`,
     );
   };
 
@@ -1492,11 +1513,22 @@ export const specialize = (
             : `LET ab == CreateMutableBinding(ao.s, env, N("arguments"), FALSE) IN`,
           `LET s2 == InitializeBinding(ab.s, env, N("arguments"), ao.v).s IN`,
         );
-      } else steps.push("LET s2 == s1 IN");
+      }
       // Steps 24-26: each parameter bound to its argument, or its initializer's value.
       const paramContext = "[ctx EXCEPT !.lex = env]";
-      let state = "s2";
+      let state = argumentsNeeded ? "s2" : "s1";
       parameters.forEach((parameter, index) => {
+        if (
+          ts.isIdentifier(parameter.name) &&
+          parameter.initializer === undefined &&
+          parameter.dotDotDotToken === undefined
+        ) {
+          steps.push(
+            `LET b${index + 1} == ${binding(parameter.name, scope)(state, paramContext, `Arg(args, ${index + 1})`, hasDuplicates ? "NoEnv" : "env")} IN IF IsAbrupt(b${index + 1}) THEN b${index + 1} ELSE`,
+          );
+          state = `b${index + 1}.s`;
+          return;
+        }
         const argument =
           parameter.dotDotDotToken !== undefined
             ? `CreateArrayFromList(${state}, IF ${index + 1} > Len(args) THEN <<>> ELSE SubSeq(args, ${index + 1}, Len(args)))`
@@ -1553,17 +1585,21 @@ export const specialize = (
           `LET s4h == CreateVarBindings(s4, varEnv, ${getSequence(hoistedNames.map(getUnits))}, varEnv, FALSE, {}) IN`,
           `LET s4a == HoldEnvs([s4h EXCEPT !.hoisted = @ \\cup {${hoisted.map((declaration) => `<<varEnv, ${getSite(declaration)}>>`).join(", ")}}]) IN`,
         );
-      } else steps.push("LET s4a == s4 IN");
+      }
+      const varState = hoisted.length > 0 ? "s4a" : "s4";
       // Steps 30-34: the lexical environment and its bindings.
-      steps.push(
-        isStrict
-          ? "LET lexEnv == varEnv s5 == s4a IN"
-          : "LET le == NewDeclarativeEnvironment(s4a, varEnv) lexEnv == le.e s5 == le.s IN",
-        `LET bodyCtx == [ctx EXCEPT !.lex = lexEnv, !.var = varEnv] IN`,
-        `LET s6 == ${lexical.reduce((current, declaration) => `CreateLexicalNames(${current}, lexEnv, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)})`, "s5")} IN`,
-      );
+      if (!isStrict) {
+        steps.push(`LET le == NewDeclarativeEnvironment(${varState}, varEnv) IN`);
+      }
+      const lexEnv = isStrict ? "varEnv" : "le.e";
+      steps.push(`LET bodyCtx == [ctx EXCEPT !.lex = ${lexEnv}, !.var = varEnv] IN`);
+      if (lexical.length > 0) {
+        steps.push(
+          `LET s6 == ${lexical.reduce((current, declaration) => `CreateLexicalNames(${current}, ${lexEnv}, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)})`, isStrict ? varState : "le.s")} IN`,
+        );
+      }
       // Step 36: the functions.
-      let functionState = "s6";
+      let functionState = lexical.length > 0 ? "s6" : isStrict ? varState : "le.s";
       functions.forEach((declaration, index) => {
         const instantiate = instantiateFunction(declaration, scope);
         steps.push(

@@ -29,6 +29,11 @@ const DEFINITIONS = [
              ELSE BigInt(IF isIncrement THEN BigIntAdd(v.value, BigIntFromInt(1)) ELSE BigIntSub(v.value, BigIntFromInt(1)))
       p == PutValue(num.s, Val(ref), new)
   IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, IF isPostfix THEN v ELSE new)`,
+  // A call's function and this value, from the result r of evaluating its callee.
+  `CalleeThen(r) ==
+  IF IsAbrupt(r) THEN r ELSE
+  LET f == GetValue(r.s, Val(r)) IN
+  IF IsAbrupt(f) THEN f ELSE Ok(f.s, [f |-> Val(f), this |-> CallThisValue(f.s, Val(r))])`,
   // A statement's result r in a statement list, whose value is last's where r has none.
   `StatementResult(r, last) ==
   IF IsAbrupt(r) THEN Abrupt(r.s, UpdateEmpty(r.c, last))
