@@ -53543,4 +53543,35 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the object computed keys of a class's methods as it makes the class", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var calls = "";
+      var symbol = Symbol("s");
+      var second = { toString: function () { calls += "e|"; return symbol; } };
+      var third = { toString: undefined, valueOf: function () { calls += "f|"; return 1; } };
+      var other = { toString: function () { calls += "g|"; return "g"; } };
+      class C {
+        [second] = 43;
+        [third]() { return 44; }
+        static [other]() { return 45; }
+      }
+      var c = new C();
+      var result = [c[symbol], c[1](), C["g"](), Object.getOwnPropertyNames(C.prototype).join("|"), calls].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("43,44,45,1|constructor,e|f|g|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("43,44,45,1|constructor,f|e|g|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 43,44,45,1|constructor,e|f|g|",
+      );
+    });
+  });
 });

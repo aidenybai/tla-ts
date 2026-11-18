@@ -253,14 +253,14 @@ export const isConvertedStringArgument = (
   );
 };
 
-// An object that a name holds which a class field's computed key converts to a property key as the
-// class is made.
+// An object that a name holds which a class element's computed key converts to a property key as
+// the class is made.
 export const isConvertedClassKey = (node: ts.Node, context: Context): node is ts.Expression =>
   context.heap !== undefined &&
   ts.isExpression(node) &&
   ts.isIdentifier(skipCasts(node)) &&
   ts.isComputedPropertyName(node.parent) &&
-  ts.isPropertyDeclaration(node.parent.parent) &&
+  ts.isClassElement(node.parent.parent) &&
   ts.isClassLike(node.parent.parent.parent) &&
   isObjectOperand(node, context);
 
