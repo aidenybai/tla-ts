@@ -36,6 +36,8 @@ export interface Library {
   // The words that reach each group of parts whose objects only its built-ins make: the names of
   // its globals and of its constructors' own properties.
   triggers: Map<string, Set<string>>;
+  // The names that ESCore's own operators use as property keys, such as toString and then.
+  internalKeys: Set<string>;
   // The realm's properties with a string key, by the intrinsic that holds each, as the property
   // tables list them.
   properties: { owner: string; key: string }[];
@@ -188,6 +190,13 @@ export const createLibrary = (directory: string): Library => {
       group: groupOf.get(`${match[1]}Builtin`) ?? "",
     })),
     triggers,
+    internalKeys: new Set(
+      [...definitions.values()]
+        .filter((definition) => !definition.name.endsWith("Properties"))
+        .flatMap((definition) =>
+          [...definition.text.matchAll(/\b(?:SV|N)\("([^"]+)"\)/g)].map((match) => match[1]),
+        ),
+    ),
     properties,
     modules,
   };

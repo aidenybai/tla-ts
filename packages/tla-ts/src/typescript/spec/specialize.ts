@@ -429,7 +429,41 @@ const getDispatch = (
   return `IF ${id} <= ${middle} THEN ${getDispatch(id, low, middle, getArm)} ELSE ${getDispatch(id, middle + 1, high, getArm)}`;
 };
 
-export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
+// The name that a function is reached by, other than as a value where it's written: a declaration's
+// or method's, or that of the property or variable a function expression initializes.
+const getFunctionKey = (node: ts.Node) => {
+  const named =
+    ts.isFunctionDeclaration(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node)
+      ? node.name
+      : (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
+          (ts.isPropertyAssignment(node.parent) || ts.isVariableDeclaration(node.parent)) &&
+          node.parent.initializer === node
+        ? node.parent.name
+        : undefined;
+  return named !== undefined && (ts.isIdentifier(named) || ts.isStringLiteral(named))
+    ? named.text
+    : undefined;
+};
+
+// Specializes ESCore to a script. A function reached only by a name that the script never writes
+// elsewhere, and that ESCore's own operators don't use as a key, has a body that stops the check,
+// as a call to it can only come by reflection.
+export const specialize = (
+  sourceFile: ts.SourceFile,
+  internalKeys: ReadonlySet<string>,
+): SpecializedProgram => {
+  // How many times the script writes each name, as an identifier or a string.
+  const occurrences = new Map<string, number>();
+  const countNames = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node) || ts.isStringLiteralLike(node)) {
+      occurrences.set(node.text, (occurrences.get(node.text) ?? 0) + 1);
+    }
+    ts.forEachChild(node, countNames);
+  };
+  countNames(sourceFile);
   const definitions: GeneratedDefinition[] = [];
   const words = new Set<string>();
   const identifiers = new Set<string>();
@@ -1428,114 +1462,8 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     const parameterBindings = argumentsNeeded ? [...parameterNames, "arguments"] : parameterNames;
     const id = codes.length + 1;
     codes.push({ id, body: "" });
-    const steps: string[] = [];
-    // Step 19-20: the environment that holds the parameters.
-    steps.push(
-      !isStrict && hasExpressions
-        ? `LET pe == NewDeclarativeEnvironment(s, ctx.lex) env == pe.e s1 == CreateBindings(pe.s, env, ${getSequence(parameterNames.map(getUnits))}, ${getBool(isStrict)}, ${getBool(hasDuplicates)}) IN`
-        : `LET env == ctx.lex s1 == CreateBindings(s, env, ${getSequence(parameterNames.map(getUnits))}, ${getBool(isStrict)}, ${getBool(hasDuplicates)}) IN`,
-    );
-    // Step 22: the arguments object.
-    if (argumentsNeeded) {
-      steps.push(
-        isStrict || !isSimple
-          ? `LET ao == CreateUnmappedArgumentsObject(s1, args) IN`
-          : `LET ao == CreateMappedArgumentsObjectOf(s1, f, ${getSequence(parameterNames.map(getUnits))}, args, env) IN`,
-        isStrict
-          ? `LET ab == CreateImmutableBinding(ao.s, env, N("arguments"), FALSE) IN`
-          : `LET ab == CreateMutableBinding(ao.s, env, N("arguments"), FALSE) IN`,
-        `LET s2 == InitializeBinding(ab.s, env, N("arguments"), ao.v).s IN`,
-      );
-    } else steps.push("LET s2 == s1 IN");
-    // Steps 24-26: each parameter bound to its argument, or its initializer's value.
-    const paramContext = "[ctx EXCEPT !.lex = env]";
-    let state = "s2";
-    parameters.forEach((parameter, index) => {
-      const argument =
-        parameter.dotDotDotToken !== undefined
-          ? `CreateArrayFromList(${state}, IF ${index + 1} > Len(args) THEN <<>> ELSE SubSeq(args, ${index + 1}, Len(args)))`
-          : `Ok(${state}, IF ${index + 1} <= Len(args) THEN args[${index + 1}] ELSE Undefined)`;
-      steps.push(`LET v${index + 1} == ${argument} IN`);
-      const initializer = parameter.initializer;
-      const bound =
-        initializer === undefined
-          ? `v${index + 1}`
-          : `IF Val(v${index + 1}) # Undefined THEN v${index + 1} ELSE ${
-              ts.isIdentifier(parameter.name)
-                ? named(
-                    initializer,
-                    scope,
-                    getStr(parameter.name.text),
-                  )(`v${index + 1}.s`, paramContext)
-                : value(initializer, scope)(`v${index + 1}.s`, paramContext)
-            }`;
-      steps.push(
-        `LET w${index + 1} == ${bound} IN IF IsAbrupt(w${index + 1}) THEN w${index + 1} ELSE`,
-        `LET b${index + 1} == ${binding(parameter.name, scope)(`w${index + 1}.s`, paramContext, `Val(w${index + 1})`, hasDuplicates ? "NoEnv" : "env")} IN IF IsAbrupt(b${index + 1}) THEN b${index + 1} ELSE`,
-      );
-      state = `b${index + 1}.s`;
-    });
-    // Steps 27-28: the var bindings, in their own environment when parameters have expressions.
-    const varNames = dedupe(varScoped.names);
-    if (!hasExpressions) {
-      steps.push(
-        `LET varEnv == env s4 == CreateVarBindings(${state}, env, ${getSequence(varNames.filter((name) => !parameterBindings.includes(name)).map(getUnits))}, env, FALSE, {}) IN`,
-      );
-    } else {
-      steps.push(
-        `LET ve == NewDeclarativeEnvironment(${state}, env) varEnv == ve.e s4 == CreateVarBindings(ve.s, ve.e, ${getSequence(varNames.map(getUnits))}, env, TRUE, {${parameterBindings
-          .filter((name) => !functionNames.includes(name))
-          .map(getUnits)
-          .join(", ")}}) IN`,
-      );
-    }
-    // Step 32.a (§B.3.2.1): outside strict mode, var bindings for the block functions that no
-    // parameter names, and the sites whose evaluation then sets them.
-    const hoisted = isStrict
-      ? []
-      : getHoistableFunctions(statements).filter(
-          (declaration) => !parameterBindings.includes(declaration.name?.text ?? "*default*"),
-        );
-    if (hoisted.length > 0) {
-      const hoistedNames = dedupe(
-        hoisted.map((declaration) => declaration.name?.text ?? "*default*"),
-      ).filter(
-        (name) =>
-          !varNames.includes(name) && !parameterBindings.includes(name) && name !== "arguments",
-      );
-      steps.push(
-        `LET s4h == CreateVarBindings(s4, varEnv, ${getSequence(hoistedNames.map(getUnits))}, varEnv, FALSE, {}) IN`,
-        `LET s4a == HoldEnvs([s4h EXCEPT !.hoisted = @ \\cup {${hoisted.map((declaration) => `<<varEnv, ${getSite(declaration)}>>`).join(", ")}}]) IN`,
-      );
-    } else steps.push("LET s4a == s4 IN");
-    // Steps 30-34: the lexical environment and its bindings.
-    steps.push(
-      isStrict
-        ? "LET lexEnv == varEnv s5 == s4a IN"
-        : "LET le == NewDeclarativeEnvironment(s4a, varEnv) lexEnv == le.e s5 == le.s IN",
-      `LET bodyCtx == [ctx EXCEPT !.lex = lexEnv, !.var = varEnv] IN`,
-      `LET s6 == ${lexical.reduce((current, declaration) => `CreateLexicalNames(${current}, lexEnv, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)})`, "s5")} IN`,
-    );
-    // Step 36: the functions.
-    let functionState = "s6";
-    functions.forEach((declaration, index) => {
-      const instantiate = instantiateFunction(declaration, scope);
-      steps.push(
-        `LET fo${index + 1} == ${instantiate(functionState, "bodyCtx")} IN`,
-        `LET fs${index + 1} == SetMutableBinding(fo${index + 1}.s, varEnv, ${getUnits(declaration.name?.text ?? "*default*")}, Val(fo${index + 1}), FALSE).s IN`,
-      );
-      functionState = `fs${index + 1}`;
-    });
-    // The body's evaluation.
-    const evaluation =
-      body === undefined
-        ? `Ok(${functionState}, Empty)`
-        : ts.isBlock(body)
-          ? statementList(body.statements, scope)(functionState, "bodyCtx")
-          : `LET e == ${value(body, scope)(functionState, "bodyCtx")} IN IF IsAbrupt(e) THEN e ELSE Abrupt(e.s, Completion("return", Val(e), Empty))`;
-    steps.push(evaluation);
     // A function whose parameters are names that its body declares nothing beside instantiates
-    // through one shared operator, as the steps above fold to the same few for all of them.
+    // through one shared operator, as the steps below fold to the same few for all of them.
     const isPlain =
       isSimple &&
       !hasDuplicates &&
@@ -1544,17 +1472,131 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       lexical.length === 0 &&
       functions.length === 0 &&
       (isStrict || getHoistableFunctions(statements).length === 0);
-    const plainEvaluation =
-      body === undefined
-        ? "Ok(i.s, Empty)"
-        : ts.isBlock(body)
-          ? statementList(body.statements, scope)("i.s", "i.ctx")
-          : `LET e == ${value(body, scope)("i.s", "i.ctx")} IN IF IsAbrupt(e) THEN e ELSE Abrupt(e.s, Completion("return", Val(e), Empty))`;
+    const getSteps = () => {
+      const steps: string[] = [];
+      // Step 19-20: the environment that holds the parameters.
+      steps.push(
+        !isStrict && hasExpressions
+          ? `LET pe == NewDeclarativeEnvironment(s, ctx.lex) env == pe.e s1 == CreateBindings(pe.s, env, ${getSequence(parameterNames.map(getUnits))}, ${getBool(isStrict)}, ${getBool(hasDuplicates)}) IN`
+          : `LET env == ctx.lex s1 == CreateBindings(s, env, ${getSequence(parameterNames.map(getUnits))}, ${getBool(isStrict)}, ${getBool(hasDuplicates)}) IN`,
+      );
+      // Step 22: the arguments object.
+      if (argumentsNeeded) {
+        steps.push(
+          isStrict || !isSimple
+            ? `LET ao == CreateUnmappedArgumentsObject(s1, args) IN`
+            : `LET ao == CreateMappedArgumentsObjectOf(s1, f, ${getSequence(parameterNames.map(getUnits))}, args, env) IN`,
+          isStrict
+            ? `LET ab == CreateImmutableBinding(ao.s, env, N("arguments"), FALSE) IN`
+            : `LET ab == CreateMutableBinding(ao.s, env, N("arguments"), FALSE) IN`,
+          `LET s2 == InitializeBinding(ab.s, env, N("arguments"), ao.v).s IN`,
+        );
+      } else steps.push("LET s2 == s1 IN");
+      // Steps 24-26: each parameter bound to its argument, or its initializer's value.
+      const paramContext = "[ctx EXCEPT !.lex = env]";
+      let state = "s2";
+      parameters.forEach((parameter, index) => {
+        const argument =
+          parameter.dotDotDotToken !== undefined
+            ? `CreateArrayFromList(${state}, IF ${index + 1} > Len(args) THEN <<>> ELSE SubSeq(args, ${index + 1}, Len(args)))`
+            : `Ok(${state}, IF ${index + 1} <= Len(args) THEN args[${index + 1}] ELSE Undefined)`;
+        steps.push(`LET v${index + 1} == ${argument} IN`);
+        const initializer = parameter.initializer;
+        const bound =
+          initializer === undefined
+            ? `v${index + 1}`
+            : `IF Val(v${index + 1}) # Undefined THEN v${index + 1} ELSE ${
+                ts.isIdentifier(parameter.name)
+                  ? named(
+                      initializer,
+                      scope,
+                      getStr(parameter.name.text),
+                    )(`v${index + 1}.s`, paramContext)
+                  : value(initializer, scope)(`v${index + 1}.s`, paramContext)
+              }`;
+        steps.push(
+          `LET w${index + 1} == ${bound} IN IF IsAbrupt(w${index + 1}) THEN w${index + 1} ELSE`,
+          `LET b${index + 1} == ${binding(parameter.name, scope)(`w${index + 1}.s`, paramContext, `Val(w${index + 1})`, hasDuplicates ? "NoEnv" : "env")} IN IF IsAbrupt(b${index + 1}) THEN b${index + 1} ELSE`,
+        );
+        state = `b${index + 1}.s`;
+      });
+      // Steps 27-28: the var bindings, in their own environment when parameters have expressions.
+      const varNames = dedupe(varScoped.names);
+      if (!hasExpressions) {
+        steps.push(
+          `LET varEnv == env s4 == CreateVarBindings(${state}, env, ${getSequence(varNames.filter((name) => !parameterBindings.includes(name)).map(getUnits))}, env, FALSE, {}) IN`,
+        );
+      } else {
+        steps.push(
+          `LET ve == NewDeclarativeEnvironment(${state}, env) varEnv == ve.e s4 == CreateVarBindings(ve.s, ve.e, ${getSequence(varNames.map(getUnits))}, env, TRUE, {${parameterBindings
+            .filter((name) => !functionNames.includes(name))
+            .map(getUnits)
+            .join(", ")}}) IN`,
+        );
+      }
+      // Step 32.a (§B.3.2.1): outside strict mode, var bindings for the block functions that no
+      // parameter names, and the sites whose evaluation then sets them.
+      const hoisted = isStrict
+        ? []
+        : getHoistableFunctions(statements).filter(
+            (declaration) => !parameterBindings.includes(declaration.name?.text ?? "*default*"),
+          );
+      if (hoisted.length > 0) {
+        const hoistedNames = dedupe(
+          hoisted.map((declaration) => declaration.name?.text ?? "*default*"),
+        ).filter(
+          (name) =>
+            !varNames.includes(name) && !parameterBindings.includes(name) && name !== "arguments",
+        );
+        steps.push(
+          `LET s4h == CreateVarBindings(s4, varEnv, ${getSequence(hoistedNames.map(getUnits))}, varEnv, FALSE, {}) IN`,
+          `LET s4a == HoldEnvs([s4h EXCEPT !.hoisted = @ \\cup {${hoisted.map((declaration) => `<<varEnv, ${getSite(declaration)}>>`).join(", ")}}]) IN`,
+        );
+      } else steps.push("LET s4a == s4 IN");
+      // Steps 30-34: the lexical environment and its bindings.
+      steps.push(
+        isStrict
+          ? "LET lexEnv == varEnv s5 == s4a IN"
+          : "LET le == NewDeclarativeEnvironment(s4a, varEnv) lexEnv == le.e s5 == le.s IN",
+        `LET bodyCtx == [ctx EXCEPT !.lex = lexEnv, !.var = varEnv] IN`,
+        `LET s6 == ${lexical.reduce((current, declaration) => `CreateLexicalNames(${current}, lexEnv, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)})`, "s5")} IN`,
+      );
+      // Step 36: the functions.
+      let functionState = "s6";
+      functions.forEach((declaration, index) => {
+        const instantiate = instantiateFunction(declaration, scope);
+        steps.push(
+          `LET fo${index + 1} == ${instantiate(functionState, "bodyCtx")} IN`,
+          `LET fs${index + 1} == SetMutableBinding(fo${index + 1}.s, varEnv, ${getUnits(declaration.name?.text ?? "*default*")}, Val(fo${index + 1}), FALSE).s IN`,
+        );
+        functionState = `fs${index + 1}`;
+      });
+      // The body's evaluation.
+      const evaluation =
+        body === undefined
+          ? `Ok(${functionState}, Empty)`
+          : ts.isBlock(body)
+            ? statementList(body.statements, scope)(functionState, "bodyCtx")
+            : `LET e == ${value(body, scope)(functionState, "bodyCtx")} IN IF IsAbrupt(e) THEN e ELSE Abrupt(e.s, Completion("return", Val(e), Empty))`;
+      steps.push(evaluation);
+      return steps;
+    };
+    const key = getFunctionKey(node);
+    const isUnnamed =
+      key !== undefined && (occurrences.get(key) ?? 0) <= 1 && !internalKeys.has(key);
     codes[id - 1] = {
       id,
-      body: isPlain
-        ? `Code${id}(s, f, ctx, args) ==\n  LET i == PlainInstantiation(s, ctx, ${getSequence(parameterNames.map(getUnits))}, args, ${getBool(isStrict)}) IN\n  ${plainEvaluation}`
-        : `Code${id}(s, f, ctx, args) ==\n  ${steps.join("\n  ")}`,
+      body: isUnnamed
+        ? `Code${id}(s, f, ctx, args) ==\n  Assert(FALSE, "tla-ts can't call a function that its script names nowhere else")`
+        : isPlain
+          ? `Code${id}(s, f, ctx, args) ==\n  LET i == PlainInstantiation(s, ctx, ${getSequence(parameterNames.map(getUnits))}, args, ${getBool(isStrict)}) IN\n  ${
+              body === undefined
+                ? "Ok(i.s, Empty)"
+                : ts.isBlock(body)
+                  ? statementList(body.statements, scope)("i.s", "i.ctx")
+                  : `LET e == ${value(body, scope)("i.s", "i.ctx")} IN IF IsAbrupt(e) THEN e ELSE Abrupt(e.s, Completion("return", Val(e), Empty))`
+            }`
+          : `Code${id}(s, f, ctx, args) ==\n  ${getSteps().join("\n  ")}`,
     };
     const length = parameters.findIndex(
       (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,

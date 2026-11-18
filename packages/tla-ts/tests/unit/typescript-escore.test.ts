@@ -428,4 +428,20 @@ describe("compiles scripts by specializing ESCore", () => {
       ).toContain(THREW);
     });
   });
+
+  describe("stops at a call to a function that its script names nowhere else", () => {
+    it("runs a script that never calls it", async () => {
+      expect(
+        (await checkScript("function unused() { return 1; } const used = () => 2; used();"))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("stops where the script reaches it by a name it makes", async () => {
+      expect(
+        (await checkScript('function unused() { return 1; } (globalThis as any)["un" + "used"]();'))
+          .message,
+      ).toContain("tla-ts can't call a function that its script names nowhere else");
+    });
+  });
 });

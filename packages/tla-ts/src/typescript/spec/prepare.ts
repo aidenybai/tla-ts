@@ -43,6 +43,8 @@ export interface EscoreRuntime {
   getView: (text: string, leaves: readonly string[]) => PreparedModule;
   families: Family[];
   gates: Gate[];
+  // The property keys that the runtime's own operators get or call.
+  internalKeys: ReadonlySet<string>;
   // The host's globals and built-in keys that ESCore's realm lacks, at whose names a compile stops.
   hostOnlyGlobals: string[];
   hostOnlyKeys: string[];
@@ -73,7 +75,9 @@ ${[...HOOKS.keys()].map((hook) => `CONSTANT ${hook} <- Program${hook}`).join("\n
 const EMPTY_PROGRAM = [
   "---- MODULE ProgramCode ----",
   "EXTENDS ESRuntime",
-  ...[...HOOKS].map((hook) => `Program${hook[0]}(${hook[1]}) == Unsupported(s, <<>>)`),
+  ...[...HOOKS].map(
+    (hook) => `Program${hook[0]}(${hook[1]}) == Assert(FALSE, "a program without code")`,
+  ),
   "RunProgram(s) == Ok(s, Undefined)",
   "====",
   "",
@@ -200,6 +204,7 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
     modules: [numbers, bigNats],
     getView,
     families: library.families,
+    internalKeys: library.internalKeys,
     gates: [...library.triggers].map((entry) => ({
       group: entry[0],
       triggers: entry[1],

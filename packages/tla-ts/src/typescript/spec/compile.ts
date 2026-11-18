@@ -91,7 +91,7 @@ export const compileToEscore = (
     true,
     ts.ScriptKind.JS,
   );
-  const program = specialize(sourceFile);
+  const program = specialize(sourceFile, runtime.internalKeys);
   const hostOnly =
     runtime.hostOnlyGlobals.find((name) => program.identifiers.has(name)) ??
     runtime.hostOnlyKeys.find((key) => program.words.has(key));
@@ -137,7 +137,7 @@ export const compileToEscore = (
       arity: definition.arity,
       text: foldNames(
         definition.text.replace(
-          /\b(?:CallCode|LoopIteration|CallBuiltin)\b/g,
+          new RegExp(`\\b(?:${[...HOOKS.keys()].join("|")})\\b`, "g"),
           (name) => `Program${name}`,
         ),
       ),
