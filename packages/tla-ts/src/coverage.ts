@@ -263,6 +263,15 @@ const bindNames = (names: string[], locals: Local | undefined) =>
     locals,
   );
 
+const bindLocalDefinitions = (definitions: Definition[], locals: Local | undefined) => {
+  const inner = definitions.reduce<Local | undefined>(
+    (parent, definition) => ({ name: definition.name, definition, scope: undefined, parent }),
+    locals,
+  );
+  for (let local = inner; local !== locals && local; local = local.parent) local.scope = inner;
+  return inner;
+};
+
 const getBoundNames = (bounds: Bound[]) =>
   bounds.flatMap((bound) =>
     bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
@@ -333,8 +342,8 @@ export const buildCoverage = (
         ? getBoundNames(definition.bounds)
         : definition.params.map((param) => param.name);
     if (definition.kind === "Function") {
-      const construction = getFunctionConstruction(definition, resolved.scope !== undefined);
-      enter(construction, definition.location.range, () => {
+      const isLet = resolved.scope !== undefined;
+      enter(getFunctionConstruction(definition, isLet), definition.location.range, () => {
         walk(definition.body, bindNames(names, resolved.scope));
         getBoundSets(definition.bounds).forEach((set) => walk(set, resolved.scope));
       });
@@ -418,13 +427,7 @@ export const buildCoverage = (
         else enter(expression, range, () => walk(expression.expression, locals));
         return;
       case "Let": {
-        const inner = expression.definitions.reduce<Local | undefined>(
-          (parent, definition) => ({ name: definition.name, definition, scope: undefined, parent }),
-          locals,
-        );
-        for (let local = inner; local !== locals && local; local = local.parent) {
-          local.scope = inner;
-        }
+        const inner = bindLocalDefinitions(expression.definitions, locals);
         expression.definitions.forEach((definition) => {
           if (definition.kind === "Operator") letBodies.set(definition.body, expression.body);
         });
@@ -592,14 +595,9 @@ export const buildCoverage = (
     const scoped: Definition[] = [];
     for (let node = scope; node; node = node.parent) {
       const definition = letDefinitions.get(node);
-      if (definition) scoped.push(definition);
+      if (definition) scoped.unshift(definition);
     }
-    const locals = scoped.reduceRight<Local | undefined>(
-      (parent, definition) => ({ name: definition.name, definition, scope: undefined, parent }),
-      undefined,
-    );
-    for (let local = locals; local; local = local.parent) local.scope = locals;
-    return locals;
+    return bindLocalDefinitions(scoped, undefined);
   };
 
   coverage.relations.forEach((relation) => {
