@@ -1430,8 +1430,8 @@ const getDeclarations = (definitions: LazyDefinition[]) =>
     .map((item) => `let ${item.name}; const ${item.name}f = () => ${item.value.emit()};`)
     .join(" ");
 
-const isBuiltin = (program: Program, frame: Frame, operator: string, name: string) =>
-  operator === name && !frame.scope.has(name) && !program.environment.definitions.has(name);
+const isBuiltin = (frame: Frame, operator: string, name: string) =>
+  operator === name && !frame.scope.has(name);
 
 const bindCode = (scope: TierScope, name: string, type: Type, code: string) =>
   withBinding(scope, name, {
@@ -1811,7 +1811,7 @@ const compileBound = (
       },
     };
   }
-  if (setExpression.kind === "Apply" && isBuiltin(program, frame, setExpression.operator, "..")) {
+  if (setExpression.kind === "Apply" && isBuiltin(frame, setExpression.operator, "..")) {
     const [low, high] = setExpression.args.map((arg) =>
       expectInt(compileValue(program, arg, frame)),
     );
@@ -1823,10 +1823,7 @@ const compileBound = (
       },
     };
   }
-  if (
-    setExpression.kind === "Apply" &&
-    isBuiltin(program, frame, setExpression.operator, "SUBSET")
-  ) {
+  if (setExpression.kind === "Apply" && isBuiltin(frame, setExpression.operator, "SUBSET")) {
     const base = compileValue(program, setExpression.args[0], frame);
     getSetElement(base);
     return {
@@ -1842,7 +1839,7 @@ const compileBound = (
   const isInterval =
     setExpression.kind === "FunctionSet" &&
     setExpression.domain.kind === "Apply" &&
-    isBuiltin(program, frame, setExpression.domain.operator, "..");
+    isBuiltin(frame, setExpression.domain.operator, "..");
   // A domain that isn't constant, such as DOMAIN s, has sequences for functions only where it's an
   // interval 1..n.
   if (
@@ -2051,8 +2048,8 @@ const getDefinitionBody = (program: Program, expression: Expression, frame: Fram
     : undefined;
 };
 
-const isUnion = (program: Program, expression: Expression & { kind: "Apply" }, frame: Frame) =>
-  expression.args.length === 2 && isBuiltin(program, frame, expression.operator, "\\cup");
+const isUnion = (expression: Expression & { kind: "Apply" }, frame: Frame) =>
+  expression.args.length === 2 && isBuiltin(frame, expression.operator, "\\cup");
 
 const getApplied = (program: Program, expression: Expression, frame: Frame) =>
   expression.kind === "Apply" && !frame.scope.has(expression.operator)
@@ -2064,13 +2061,13 @@ const isStructural = (program: Program, expression: Expression, frame: Frame): b
   const body =
     getDefinitionBody(program, expression, frame) ?? getApplied(program, expression, frame)?.body;
   if (body) return isStructural(program, body, { ...frame, scope: new Map() });
-  if (expression.kind === "Apply" && isUnion(program, expression, frame)) {
+  if (expression.kind === "Apply" && isUnion(expression, frame)) {
     return expression.args.some((set) => isStructural(program, set, frame));
   }
   if (
     expression.kind === "Apply" &&
     expression.args.length === 2 &&
-    isBuiltin(program, frame, expression.operator, "\\")
+    isBuiltin(frame, expression.operator, "\\")
   ) {
     return (
       isStructural(program, expression.args[0], frame) &&
@@ -2097,7 +2094,7 @@ const compileMembership = (
     !isConstantExpression(program, setExpression.domain, frame.scope)
   ) {
     const domain = setExpression.domain;
-    if (domain.kind !== "Apply" || !isBuiltin(program, frame, domain.operator, "..")) {
+    if (domain.kind !== "Apply" || !isBuiltin(frame, domain.operator, "..")) {
       return unsupported();
     }
     const [low, high] = domain.args.map((arg) => expectInt(compileValue(program, arg, frame)));
@@ -2184,7 +2181,7 @@ const compileMembership = (
   const sets =
     setExpression.kind !== "Apply"
       ? undefined
-      : isUnion(program, setExpression, frame) &&
+      : isUnion(setExpression, frame) &&
           (isStructural(program, setExpression, frame) ||
             setExpression.args.some((set) => {
               if (!isConstantExpression(program, set, frame.scope)) return false;
@@ -2193,7 +2190,7 @@ const compileMembership = (
             }))
         ? setExpression.args
         : setExpression.args.length === 1 &&
-            isBuiltin(program, frame, setExpression.operator, "UNION") &&
+            isBuiltin(frame, setExpression.operator, "UNION") &&
             setExpression.args[0].kind === "SetEnumeration"
           ? setExpression.args[0].elements
           : undefined;
@@ -2214,7 +2211,7 @@ const compileMembership = (
   if (
     setExpression.kind === "Apply" &&
     setExpression.args.length === 2 &&
-    isBuiltin(program, frame, setExpression.operator, "\\")
+    isBuiltin(frame, setExpression.operator, "\\")
   ) {
     const [kept, removed] = setExpression.args;
     const isInfinite = () => {
@@ -3022,9 +3019,7 @@ const compileBuiltin = (
     };
   }
   const isSubSeq = (arg: Expression): arg is ApplyExpression =>
-    arg.kind === "Apply" &&
-    arg.args.length === 3 &&
-    isBuiltin(program, frame, arg.operator, "SubSeq");
+    arg.kind === "Apply" && arg.args.length === 3 && isBuiltin(frame, arg.operator, "SubSeq");
   // Two subsequences are equal when their elements are, which the tier compares where they are.
   if ((operator === "=" || operator === "#" || operator === "/=") && args.every(isSubSeq)) {
     const element = createVar();
@@ -3800,11 +3795,7 @@ const compileSequenceConstruction = (
       };
     }
     const [low, high] = set.args;
-    if (
-      !isBuiltin(program, frame, set.operator, "..") ||
-      low.kind !== "Number" ||
-      low.value !== 1
-    ) {
+    if (!isBuiltin(frame, set.operator, "..") || low.kind !== "Number" || low.value !== 1) {
       return undefined;
     }
     const end = expectInt(compileValue(program, high, frame));

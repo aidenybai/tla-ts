@@ -61,6 +61,7 @@ import {
   collectSemanticErrors,
   getArity,
   getFunctionArity,
+  getKeyName,
   getParamArities,
   isBefore,
   isTheoremDefinition,
@@ -557,8 +558,8 @@ export const createEnvironment = (
       substitutions: replacements,
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
-      getOuterDefinition: (name) =>
-        module.definitions.find((definition) => definition.name === name),
+      getOuterDefinition: (key) =>
+        module.definitions.find((definition) => unit.getKey(definition) === key),
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create) => {
         const key = createName(`${name}@${module.name}`);
@@ -914,8 +915,7 @@ export const createEnvironment = (
       functionArity: getFunctionArity(definition),
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
-    const getKey = (definition: Definition) =>
-      parsed === root ? definition.name : `${definition.name}${KEY_SEPARATOR}${scope.id}`;
+    const getKey = (definition: Definition) => `${definition.name}${KEY_SEPARATOR}${scope.id}`;
     const instanced = new Map<Instance, Symbols>();
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
     const getLetModule = (instance: Instance) => {
@@ -1133,22 +1133,23 @@ export const createEnvironment = (
   linkOrder.push(...linkOrder.splice(linkOrder.indexOf(linkedRoot), 1));
   if (warnings.length > 0 && !options.isSanyReported) options.print(formatSanyWarnings(warnings));
   const runtimeInvariants = options.runtimeInvariants ?? [];
+  const rootKeys = new Map<string, string>();
   runtimeInvariants.forEach((invariant) => {
     if (invariant.module === undefined) return;
     linkedModules.set(root.name, linkedRoot);
     const linked = getLinkedModule(invariant.module, root.name);
     linkOrder.splice(linkOrder.indexOf(linked), 1);
-    const definition = definitions.get(linked.visible.get(invariant.name)?.key ?? invariant.name);
-    if (definition) definitions.set(invariant.name, definition);
+    const key = linked.visible.get(invariant.name)?.key;
+    if (key !== undefined && definitions.has(key)) rootKeys.set(invariant.name, key);
   });
-  linkedRoot.visible.forEach((symbol, name) => {
-    const definition = definitions.get(symbol.key);
-    if (definition && symbol.key !== name) definitions.set(name, definition);
-  });
+  linkedRoot.visible.forEach((symbol, name) => rootKeys.set(name, symbol.key));
   moduleOperators.forEach((operator) => {
-    const definition = operator.key === undefined ? undefined : definitions.get(operator.key);
-    if (operator.kind !== "postcondition" && definition) {
-      definitions.set(operator.operator, definition);
+    if (
+      operator.kind !== "postcondition" &&
+      operator.key !== undefined &&
+      definitions.has(operator.key)
+    ) {
+      rootKeys.set(operator.operator, operator.key);
     }
   });
 
@@ -1210,6 +1211,7 @@ export const createEnvironment = (
   const environment: Environment = {
     runtime,
     definitions,
+    rootKeys,
     builtins,
     constants,
     substitutions,
@@ -1254,7 +1256,7 @@ export const createEnvironment = (
     if (error) {
       const addendum = isEvalException(error) ? "" : ` - specifically: ${error.message}`;
       throw new TlaConfigError(
-        `The configuration file substitutes constant ${name} with non-constant ${target}${addendum}`,
+        `The configuration file substitutes constant ${name} with non-constant ${getKeyName(target)}${addendum}`,
       );
     }
   });

@@ -3089,3 +3089,47 @@ console.log(JSON.stringify(await tlaTs.check(${JSON.stringify(options)})));`;
     expect(JSON.parse(output)).toEqual(JSON.parse(JSON.stringify(await check(options))));
   });
 });
+
+describe("check names what the root module defines as the spec spells it", () => {
+  const source = [
+    "---- MODULE Root ----",
+    "EXTENDS Naturals, TLC",
+    "VARIABLE x",
+    "Init == x = 0",
+    "Inc == x' = (x + 1) % 3",
+    "Next == Inc",
+    "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)",
+    "Small == x < 2",
+    "Live == <>(x = 5)",
+    "Up == [][x' > x]_x",
+    "Bad == x' = CHOOSE y \\in {} : TRUE",
+    "View == x",
+    "Alias == [x |-> x]",
+    "====",
+  ].join("\n");
+
+  it.each([
+    ["an invariant", "SPECIFICATION Spec\nINVARIANT Small\nVIEW View\nALIAS Alias", "Small"],
+    ["a temporal property", "SPECIFICATION Spec\nPROPERTY Live", "Live"],
+    ["an action property", "INIT Init\nNEXT Next\nPROPERTY Up", "Up"],
+    ["an error in an action", "INIT Init\nNEXT Bad", "Init"],
+  ])("in the result and output of %s", async (_title, config, name) => {
+    const output: unknown[] = [];
+    const result = await check({
+      source,
+      config,
+      coverage: 1,
+      onPrint: (text) => output.push(text),
+      onProgress: (progress) => output.push(progress),
+    });
+    const text = JSON.stringify([result, output], (key, value: unknown) =>
+      key === "callStack" || key === "liveCallStack"
+        ? undefined
+        : typeof value === "bigint"
+          ? String(value)
+          : value,
+    );
+    expect(text).toContain(name);
+    expect(text).not.toContain("@Root");
+  });
+});

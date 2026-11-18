@@ -382,7 +382,7 @@ interface Instantiation {
   substitutions: Map<string, Expression>;
   variables: Set<string>;
   getDefinition: (key: string) => Definition | undefined;
-  getOuterDefinition: (name: string) => Definition | undefined;
+  getOuterDefinition: (key: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
   addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
   createName: (name: string) => string;

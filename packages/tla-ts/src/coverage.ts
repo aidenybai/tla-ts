@@ -17,7 +17,7 @@ import {
   type Substitution,
 } from "./instances";
 import { SELECTION_NAME } from "./resolve";
-import type { Environment, Scope } from "./evaluate";
+import { getRootKey, type Environment, type Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
 import {
@@ -246,7 +246,9 @@ export const getCoverageLabel = (
   actionBody?: SourceRange,
 ) => {
   const definition =
-    name === undefined || actionHead ? undefined : environment.definitions.get(name);
+    name === undefined || actionHead
+      ? undefined
+      : environment.definitions.get(getRootKey(name, environment));
   const head = actionHead ?? (definition?.kind === "Operator" ? definition.head : undefined);
   const range = getRelationRange(expression);
   const label = actionHead ? name : definition?.name;

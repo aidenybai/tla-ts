@@ -173,6 +173,9 @@ const isKey = (name: string) => {
   return index > 0 && index < name.length - 1;
 };
 
+export const getKeyName = (key: string) =>
+  isKey(key) ? key.slice(0, key.lastIndexOf(KEY_SEPARATOR)) : key;
+
 const CORE_SYMBOLS: Symbols = new Map([
   ...["~>", "-+->", "\\cdot", "\\X"].map((name): [string, ModuleSymbol] => [
     name,

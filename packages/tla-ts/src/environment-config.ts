@@ -160,7 +160,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
         else
           setOperator(key, {
             kind: "Builtin",
-            name: key,
+            name: assignment.name,
             arity,
             evaluate: () => value,
             evaluateUnary: undefined,
@@ -294,9 +294,6 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       definition.location,
     );
     linked.definitions.set(key, alias);
-    linked.root.visible.forEach((symbol, name) => {
-      if (symbol.key === key && name !== key) linked.definitions.set(name, alias);
-    });
   });
   linked.operatorConstants.forEach((value, name) => constants.set(name, value));
   const unassigned = declaredConstants.filter(

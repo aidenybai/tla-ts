@@ -22,6 +22,7 @@ import {
 import {
   describeRange,
   getDefinition,
+  getRootKey,
   type CallStack,
   type FingerprintFailure,
   type State,
@@ -418,7 +419,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       loopStart,
       modelValues: getModelValues().map((value) => value.name),
       isDefined: (name) =>
-        environment.definitions.has(name) ||
         environment.constants.has(name) ||
         [...environment.definitions.keys()].some((key) =>
           key.startsWith(`${name}${KEY_SEPARATOR}`),
@@ -1695,7 +1695,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         text: `The stuttering counterexample above may be caused by the absence of a behavior specification (SPECIFICATION). Only INIT and NEXT have been provided, so TLC permits infinite stuttering. To rule out such counterexamples, use SPECIFICATION Spec, with Spec asserting a suitable fairness constraint ${book}`,
       };
     }
-    const range = getDefinition(name, environment)?.location.range;
+    const range = getDefinition(getRootKey(name, environment), environment)?.location.range;
     if (spec.temporals.length > 0 || !range) return undefined;
     return {
       code: MESSAGE_CODE.noFairnessButProperty,

@@ -252,6 +252,31 @@ describe("INSTANCE matches TLC", () => {
       ),
     ).not.toThrow();
   });
+
+  it.each([
+    ["a root infix operator", "a + b == 99", "I!Two = 4"],
+    ["a root constant operator", "Nat == {7}", "I!Small = {1}"],
+    ["a root operator", "Len(s) == 42", "I!Length = 2"],
+    ["an operator the root extends", "EXTENDS Plus", "I!Two = 4"],
+    ["a root operator around a LET INSTANCE", "a + b == 99", "LET J == INSTANCE N IN J!Two = 4"],
+  ])(
+    "keeps a standard operator in an instanced module apart from %s of the same name",
+    async (_title, unit, assumption) => {
+      const modules = new Map([
+        [
+          "N",
+          "---- MODULE N ----\nEXTENDS Naturals, Sequences\nTwo == 2 + 2\nSmall == Nat \\cap {1}\nLength == Len(<<1, 2>>)\n====",
+        ],
+        ["Plus", "---- MODULE Plus ----\na + b == 99\n===="],
+      ]);
+      const result = await check({
+        source: `---- MODULE M ----\n${unit}\nI == INSTANCE N\nASSUME ${assumption}\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) => modules.get(name),
+      });
+      expect(result.status).toBe("success");
+    },
+  );
 });
 
 const INNER_MODULES: Record<string, string> = {
