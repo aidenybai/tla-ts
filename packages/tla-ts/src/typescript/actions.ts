@@ -7555,6 +7555,22 @@ export const enterClosure = (
       : [...environment.captures, environment.held];
   const written = environment.captures.filter((symbol) => isAssigned(symbol, closure, context));
   const heapSymbol = context.heap;
+  const entered = enterScope(
+    closure,
+    value,
+    getHeap(path.scope, closure, context),
+    path.scope,
+    context,
+  );
+  // A local that the closure copies and changes in place, as push changes an array that's a
+  // sequence, changes the copy alone, which a read after the call can't see, so the read stops.
+  const getKept = (symbol: ts.Symbol, after: Path) =>
+    !written.includes(symbol) && after.scope.bindings.get(symbol) !== entered.bindings.get(symbol)
+      ? apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't read ${symbol.name} after a closure changes its copy in place`),
+        ])
+      : path.scope.bindings.get(symbol);
   const leave = (after: Path): Path => ({
     ...after,
     mutable: new Set(
@@ -7578,7 +7594,7 @@ export const enterClosure = (
       bindings: new Map([
         ...[...after.scope.bindings].filter((entry) => !captures.includes(entry[0])),
         ...captures.flatMap((symbol): [ts.Symbol, Expression][] => {
-          const kept = path.scope.bindings.get(symbol);
+          const kept = path.scope.bindings.has(symbol) ? getKept(symbol, after) : undefined;
           return kept === undefined ? [] : [[symbol, kept]];
         }),
         ...(heapSymbol === undefined || written.length === 0
@@ -7610,7 +7626,7 @@ export const enterClosure = (
     {
       ...path,
       mutable: new Set([...path.mutable, ...written]),
-      scope: enterScope(closure, value, getHeap(path.scope, closure, context), path.scope, context),
+      scope: entered,
     },
     {
       ...frame,
