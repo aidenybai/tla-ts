@@ -175,9 +175,9 @@ export const createModuleView = (prepared: PreparedModule) => {
       unit.kind === "Definition" ? { ...unit, definition: getStandIn(unit.definition) } : unit,
     ),
   };
-  // A view of a module that carries values adds every text of the module to TLC's order of
-  // strings, in which alone its values' strings keep the order they were evaluated in.
-  const allTexts = {
+  // A view of a module that carries values adds all of the module's texts to TLC's order of
+  // strings, which its values' strings keep the order of.
+  const allTexts = prepared.texts ?? {
     parsed: unitTextsInOrder.flatMap((texts) => texts.parsed),
     strings: unitTextsInOrder.flatMap((texts) => texts.strings),
   };

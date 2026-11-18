@@ -438,6 +438,12 @@ export const rankString = (text: string) => {
 
 export const getStringRank = (text: string) => stringOrder.ranks[rankString(text)];
 
+// The strings ranked so far, in their order.
+export const getRankedStrings = () => {
+  const ranks = stringOrder.ranks;
+  return Object.keys(ranks).sort((left, right) => ranks[left] - ranks[right]);
+};
+
 const compareStrings = (left: string, right: string) => {
   if (left === right) return 0;
   const ranks = stringOrder.ranks;

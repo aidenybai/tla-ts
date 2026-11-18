@@ -8,7 +8,7 @@ import { tokenize } from "../../lexer";
 import { parseModuleTokens } from "../../parser";
 import { createCheckEnvironment } from "../../search";
 import { getParsedTexts, type PreparedModule } from "../../tlc/order";
-import type { Value } from "../../values";
+import { getRankedStrings, type Value } from "../../values";
 import { createModuleView } from "../../module-view";
 import { assembleRuntime, createLibrary, type Family, getDependencies, HOOKS } from "./library";
 import {
@@ -169,8 +169,12 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
     () => {},
   ).specification;
   evaluateStartupDefinitions(started.startupDefinitions, started.environment);
+  // The strings of the values, some of which only evaluating them makes, keep their order in a
+  // check that ranks every string the runtime ranked as it started before any of a program's.
+  const strings = getRankedStrings();
   const [numbers, bigNats, runtime] = accepted.map((prepared) => ({
     ...prepared,
+    texts: prepared.name === "ESRuntime" ? { parsed: strings, strings: [] } : prepared.texts,
     values: new Map(
       prepared.module.definitions.flatMap((definition): [Definition, Value][] => {
         const value = getStartupValue(definition, started.environment);
