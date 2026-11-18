@@ -257,23 +257,30 @@ const selectSubexpression = (
   };
 
   const findDefinition = (local: Definition[] | undefined) => {
+    const start = reference.selectorRanges?.[selectorIndex];
     const names: string[] = [];
     const args: Expression[] = [];
     while (selectorIndex < selectors.length) {
       const selector = selectors[selectorIndex];
       if (selector.kind !== "Name" && !local) return undefined;
-      if (selector.kind !== "Name") throw createError("Expected an operator name", location);
-      names.push(selector.name);
-      args.push(...selector.args);
-      const name = names.join("!");
-      const definition = local
-        ? local.find((candidate) => getSourceName(candidate) === name)
-        : lookup(name);
-      if (definition)
-        return { definition, name, args, earlier: args.length - selector.args.length };
+      if (selector.kind === "Name") {
+        names.push(selector.name);
+        args.push(...selector.args);
+        const name = names.join("!");
+        const definition = local
+          ? local.find((candidate) => getSourceName(candidate) === name)
+          : lookup(name);
+        if (definition)
+          return { definition, name, args, earlier: args.length - selector.args.length };
+      }
       selectorIndex++;
     }
-    throw createError(`Unknown operator ${names.join("!")}`, location);
+    const end =
+      reference.selectorRanges?.[selectors.findLastIndex((selector) => selector.kind === "Name")];
+    return report(
+      start && end && { ...start, end: end.end },
+      `Unknown operator: \`${names.join("!")}'.`,
+    );
   };
 
   const enterDefinition = (local: Definition[] | undefined) => {

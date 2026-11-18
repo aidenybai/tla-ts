@@ -796,6 +796,14 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "Op == {LET L(a) == a IN L(1)}\nB == Op!1!M!N\nC == Op!1!M!1\nD == Op!1!M(1)",
+      [
+        ["line 3, col 11 to line 3, col 13", "Unknown operator: `M!N'."],
+        ["line 4, col 11 to line 4, col 11", "Unknown operator: `M'."],
+        ["line 5, col 11 to line 5, col 11", "Unknown operator: `M'."],
+      ],
+    ],
+    [
       "CONSTANT c, f\nOp == [f EXCEPT ![1] = 2, ![2] = 3]\nOp2 == [f EXCEPT ![1] = 2]\nA == Op!1 /\\ Op!2 /\\ Op!3 /\\ Op!4 /\\ Op!>> /\\ Op2!>> /\\ Op!<< /\\ Op!@\nTHEOREM T == [f EXCEPT ![1] = 2] = f\nB == T!1!1 /\\ T!1!2 /\\ T!1!3 /\\ T!1!>> /\\ T!1!@\nTHEOREM U == ASSUME c PROVE [f EXCEPT ![1] = 2, ![2] = 3] = f\nC == U!2!1!1 /\\ U!2!1!2 /\\ U!2!1!4 /\\ U!2!1!>> /\\ U!2!1!@\nUSE U!2!1!2",
       [
         ["line 5, col 17 to line 5, col 17", exceptSelection],
