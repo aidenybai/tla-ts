@@ -61,12 +61,18 @@ type Resolved =
 interface SectionMember {
   definition: Definition;
   scope: Scope;
+  isRechecked: boolean;
 }
 
 interface RecursiveSection {
   location: SourceLocation;
   members: SectionMember[];
 }
+
+type SectionEvent = { scope: Scope; depth: number } & (
+  | { kind: "Recursive"; location: SourceLocation; definitions: Definition[] }
+  | { kind: "Definition"; definition: Definition }
+);
 
 type Operand =
   | { kind: "Value"; data: LevelData }
@@ -269,63 +275,93 @@ const createPlaceholder = (definition: Definition, maxLevel: number, weight: num
   };
 };
 
-// Generator#processRecursive opens a recursive section, which holds every definition until each
-// operator it declares is defined, and every definition nested in those.
-const collectSections = (units: ModuleUnit[], scope: Scope) => {
-  const sections: RecursiveSection[] = [];
-  const pending = new Set<string>();
-  units.forEach((unit) => {
+// Generator makes a definition's node after its body's, and a RECURSIVE operator's at its declaration.
+const getUnitEvents = (units: ModuleUnit[], scope: Scope, depth: number): SectionEvent[] =>
+  units.flatMap((unit): SectionEvent[] => {
     if (unit.kind === "Recursive") {
-      if (pending.size === 0) sections.push({ location: unit.location, members: [] });
-      unit.declarations.forEach((declaration) => pending.add(declaration.name));
-      sections
-        .at(-1)
-        ?.members.push(
-          ...unit.declarations.flatMap((declaration) =>
+      return [
+        {
+          kind: "Recursive",
+          location: unit.location,
+          definitions: unit.declarations.flatMap((declaration) =>
             units.flatMap((other) =>
               other.kind === "Definition" &&
               other.definition.isRecursive &&
               other.definition.name === declaration.name
-                ? [{ definition: other.definition, scope }]
+                ? [other.definition]
                 : [],
             ),
           ),
-        );
-      return;
+          scope,
+          depth,
+        },
+      ];
     }
-    if (unit.kind !== "Definition") return;
+    if (unit.kind === "Assumption")
+      return getExpressionEvents(unit.assumption.expression, scope, depth);
+    if (unit.kind === "Theorem" && unit.theorem.statement.kind !== "AssumeProve") {
+      return getExpressionEvents(unit.theorem.statement, scope, depth);
+    }
+    if (unit.kind !== "Definition") return [];
     const definition = unit.definition;
-    const nested = collectLetSections(
-      getDefinitionBody(definition),
-      bindFormals(scope, getFormals(definition)),
-    );
-    if (pending.size === 0) {
-      sections.push(...nested);
-      return;
-    }
-    sections
-      .at(-1)
-      ?.members.push(
-        ...nested.flatMap((section) => section.members),
-        ...(pending.delete(definition.name) ? [] : [{ definition, scope }]),
-      );
+    return [
+      ...getExpressionEvents(
+        getDefinitionBody(definition),
+        bindFormals(scope, getFormals(definition)),
+        depth,
+      ),
+      { kind: "Definition", definition, scope, depth },
+    ];
   });
-  return sections;
+
+const getExpressionEvents = (
+  expression: Expression,
+  scope: Scope,
+  depth: number,
+): SectionEvent[] => {
+  if (expression.kind === "Let") {
+    const inner = createLetScope(expression, scope);
+    return [
+      ...getUnitEvents(getLetUnits(expression), inner, depth + 1),
+      ...getExpressionEvents(expression.body, inner, depth),
+    ];
+  }
+  const events: SectionEvent[] = [];
+  forEachChild(expression, (child, bound) =>
+    events.push(...getExpressionEvents(child, bindFormals(scope, toFormals(bound)), depth)),
+  );
+  return events;
 };
 
-const collectLetSections = (expression: Expression, scope: Scope): RecursiveSection[] => {
-  if (expression.kind !== "Let") {
-    const sections: RecursiveSection[] = [];
-    forEachChild(expression, (child, bound) =>
-      sections.push(...collectLetSections(child, bindFormals(scope, toFormals(bound)))),
-    );
-    return sections;
-  }
-  const inner = createLetScope(expression, scope);
-  return [
-    ...collectSections(getLetUnits(expression), inner),
-    ...collectLetSections(expression.body, inner),
-  ];
+// Generator#processRecursive opens a recursive section unless one is open, and every definition
+// made before each declared operator is defined joins it.
+const getRecursiveSections = (events: SectionEvent[]) => {
+  const sections: RecursiveSection[] = [];
+  const pending = new Map<number, Set<string>>();
+  const isOpen = () => [...pending.values()].some((names) => names.size > 0);
+  events.forEach((event) => {
+    const names = pending.get(event.depth) ?? new Set<string>();
+    pending.set(event.depth, names);
+    if (event.kind === "Recursive") {
+      if (!isOpen()) sections.push({ location: event.location, members: [] });
+      event.definitions.forEach((definition) => names.add(definition.name));
+      sections.at(-1)?.members.push(
+        ...event.definitions.map((definition) => ({
+          definition,
+          scope: event.scope,
+          isRechecked: true,
+        })),
+      );
+      return;
+    }
+    if (!isOpen() || (event.definition.isRecursive && names.delete(event.definition.name))) return;
+    sections.at(-1)?.members.push({
+      definition: event.definition,
+      scope: event.scope,
+      isRechecked: names.size > 0,
+    });
+  });
+  return sections;
 };
 
 const getLetUnits = (expression: LetExpression) =>
@@ -670,7 +706,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const analyzeLet = (expression: LetExpression, scope: Scope) => {
     const inner = createLetScope(expression, scope);
     if (expression.recursive) {
-      collectSections(getLetUnits(expression), inner).forEach((section) =>
+      getRecursiveSections(getExpressionEvents(expression, scope, 0)).forEach((section) =>
         checkRecursiveSection(section.members),
       );
     }
@@ -1116,7 +1152,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         level: Math.max(levels.level, level),
         params: new Set([...levels.params, ...params]),
       });
-      if (!member.definition.isRecursive) staleDefinitions.add(member.definition);
+      if (member.isRechecked && !member.definition.isRecursive) {
+        staleDefinitions.add(member.definition);
+      }
     });
     members.forEach(recheck);
   };
@@ -1285,14 +1323,7 @@ export const checkModuleLevels = (
     })),
   ];
   const statementBodies = new Set(statements.map((statement) => statement.statement));
-  const sections = [
-    ...collectSections(module.units, new Map()),
-    ...statements.flatMap((statement) =>
-      statement.statement.kind === "AssumeProve"
-        ? []
-        : collectLetSections(statement.statement, new Map()),
-    ),
-  ];
+  const sections = getRecursiveSections(getUnitEvents(module.units, new Map(), 0));
   // ModuleNode#levelCheck checks its recursive sections, then every definition, then named theorems
   // and assumptions, then the rest in order.
   return {
