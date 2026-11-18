@@ -530,17 +530,6 @@ export const getEnabledFailure = (expression: Expression) => {
   return undefined;
 };
 
-const visitRandomChoice = (generator: SuccessorGenerator, choices: (() => boolean)[]) => {
-  const start = Math.floor(generator.random.nextDouble() * choices.length);
-  const prime = nextPrime(generator.random);
-  let isProduced = false;
-  for (let attempt = 0; attempt < choices.length; attempt++) {
-    isProduced = choices[(start + attempt * prime) % choices.length]() || isProduced;
-    if (generator.kept > 0) return isProduced;
-  }
-  return isProduced;
-};
-
 const getRandomOrder = (replay: Replay, set: Value, elements: Value[]) => {
   const runtime = replay.environment.runtime;
   const order = getRandomSubset(elements.length, set, runtime.getRandom(), runtime.version);
@@ -625,27 +614,39 @@ const visitApplication = (
     }
     case "Or": {
       const operands = expression.operands;
+      const isWhole = expression.isBulleted || operands.length === 2;
       const generator = replay.generator;
       if (generator) {
-        return visitRandomChoice(
-          generator,
-          expression.isBulleted || operands.length === 2
-            ? operands.map((operand) => () => visit(replay, operand, items, scope, partial, node))
-            : [
-                () =>
-                  visitAt(
-                    replay,
-                    getPrefix(expression, operands.length - 1),
-                    items,
-                    scope,
-                    partial,
-                    getPrefixNode(replay, node),
-                  ),
-                () => visit(replay, operands[operands.length - 1], items, scope, partial, node),
-              ],
-        );
+        const count = isWhole ? operands.length : 2;
+        const start = Math.floor(generator.random.nextDouble() * count);
+        const prime = nextPrime(generator.random);
+        let isProduced = false;
+        for (let attempt = 0; attempt < count; attempt++) {
+          const choice = (start + attempt * prime) % count;
+          const isChoiceProduced =
+            isWhole || choice === 1
+              ? visit(
+                  replay,
+                  operands[isWhole ? choice : operands.length - 1],
+                  items,
+                  scope,
+                  partial,
+                  node,
+                )
+              : visitAt(
+                  replay,
+                  getPrefix(expression, operands.length - 1),
+                  items,
+                  scope,
+                  partial,
+                  getPrefixNode(replay, node),
+                );
+          isProduced = isChoiceProduced || isProduced;
+          if (generator.kept > 0) return isProduced;
+        }
+        return isProduced;
       }
-      if (expression.isBulleted || operands.length === 2) {
+      if (isWhole) {
         return operands.reduce(
           (isProduced, operand) =>
             visit(replay, operand, items, scope, partial, node) || isProduced,

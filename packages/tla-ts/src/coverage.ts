@@ -790,7 +790,9 @@ export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number, 
   }
   const node = coverage.values.get(set);
   if (node !== undefined) coverage.secondary[node] += size;
-  order.forEach((subset) => tagSubset(coverage, set, subset));
+  for (let position = 0; position < order.length; position++) {
+    tagSubset(coverage, set, order[position]);
+  }
 };
 
 export const createChargedEnumerator = (
