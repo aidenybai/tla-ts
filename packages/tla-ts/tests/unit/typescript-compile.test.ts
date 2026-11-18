@@ -55397,4 +55397,26 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("disposes with a stack's own dispose where a resource holds it as its dispose method", () => {
+    const getSource = (expected: string) => `
+      let seen = "none";
+      const outer = new DisposableStack();
+      outer.use({ [Symbol.dispose]: DisposableStack.prototype.dispose });
+      try {
+        outer.dispose();
+      } catch (error) {
+        seen = error instanceof TypeError ? "type" : "other";
+      }
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type"))).failure).toBeUndefined();
+    });
+
+    it("rejects a disposal that doesn't throw", async () => {
+      expect((await checkModel(getSource("none"))).failure?.message).toContain("seen type");
+    });
+  });
 });

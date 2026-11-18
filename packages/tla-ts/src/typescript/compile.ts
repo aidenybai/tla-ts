@@ -1032,6 +1032,22 @@ export const compile = (
         ),
       ]),
     );
+    const isDisposeKey = (node: ts.Node) =>
+      (ts.isPropertyAccessExpression(node) &&
+        ["dispose", "disposeAsync"].includes(node.name.text) &&
+        node.expression.getText() !== "Symbol") ||
+      (ts.isElementAccessExpression(node) &&
+        ["Symbol.dispose", "Symbol.asyncDispose"].includes(node.argumentExpression.getText()));
+    context.isStackMethodHeld = program.files.some(
+      (file) =>
+        findNodes(
+          file,
+          (inner): inner is ts.Node =>
+            (isDisposeKey(inner) &&
+              !(ts.isCallExpression(inner.parent) && inner.parent.expression === inner)) ||
+            (ts.isStringLiteralLike(inner) && ["dispose", "disposeAsync"].includes(inner.text)),
+        ).length > 0,
+    );
     // The functions that a call through a value may run, found once for every call: those of
     // each file that the model reaches.
     context.closures = new Map(
