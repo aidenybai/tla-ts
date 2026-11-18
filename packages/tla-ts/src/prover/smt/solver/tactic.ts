@@ -1991,8 +1991,9 @@ interface TacticCheck {
 // The port's declarations of division by zero leave out their domain; Z3's have two arguments.
 const DIVISION_BY_ZERO_DECLS = new Set([OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0]);
 
-// A constant of an uninterpreted sort the model lacks puts its value in that sort's universe.
-const applyDefinitions = (definitions: Definition[], model: ProtoModel) => {
+// generic_model_converter::operator(): a definition of -1 hides the declaration, and a constant of
+// an uninterpreted sort the model lacks puts its value in that sort's universe.
+export const applyDefinitions = (definitions: readonly Definition[], model: ProtoModel) => {
   const manager = model.manager;
   const universe: number[] = [];
   let evaluator = new ModelEvaluator(manager, model);
