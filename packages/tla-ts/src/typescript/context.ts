@@ -5871,8 +5871,19 @@ export const getFactoryCall = (
 
 // The function that a callee or callback names: one written in place, one declared elsewhere, one
 // that a factory returns, or a method of a known class.
-const resolve = (node: ts.Expression, context: Context) => {
+const resolve = (node: ts.Expression, context: Context, depth = 0): FunctionNode | undefined => {
   const declaration = getValueDeclaration(getNamedSymbol(skipCasts(node), context), context);
+  // A const that another name's function initializes, as const isEffect = core.isEffect does.
+  const alias =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
+    declaration.initializer !== undefined &&
+    (ts.isIdentifier(skipCasts(declaration.initializer)) ||
+      ts.isPropertyAccessExpression(skipCasts(declaration.initializer))) &&
+    depth < 8
+      ? skipCasts(declaration.initializer)
+      : undefined;
   return (
     getAnyFunction(skipCasts(node)) ??
     getAnyFunction(declaration) ??
@@ -5880,7 +5891,8 @@ const resolve = (node: ts.Expression, context: Context) => {
       ? getFactoryCall(declaration.initializer, context)?.closure
       : undefined) ??
     getMethod(node, context) ??
-    getObjectFunction(node, context)
+    getObjectFunction(node, context) ??
+    (alias === undefined ? undefined : resolve(alias, context, depth + 1))
   );
 };
 
@@ -5893,7 +5905,12 @@ const findProgramReferences = (symbol: ts.Symbol, context: Context) =>
 // Whether a node is the object of a property read that nothing writes or deletes through.
 const isReadReceiver = (node: ts.Node) => {
   const access = node.parent;
-  if (!ts.isPropertyAccessExpression(access) || access.expression !== node) return false;
+  if (
+    !(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) ||
+    access.expression !== node
+  ) {
+    return false;
+  }
   const parent = access.parent;
   const isWritten =
     (ts.isBinaryExpression(parent) &&
@@ -5993,32 +6010,79 @@ const getReadOnlyObject = (
     : undefined;
 };
 
-// The function that a read of an object's property gives, in a script without a heap, where the
-// object is one that only reads of its properties reach, and the literal writes the function under
-// the name, which reads no this.
+// The string that a key gives where the script writes it: a string literal, or a const that a
+// string literal initializes.
+const getKeyText = (node: ts.Expression, context: Context): string | undefined => {
+  if (ts.isStringLiteralLike(node)) return node.text;
+  const declaration = ts.isIdentifier(node)
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
+    : undefined;
+  return declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
+    declaration.initializer !== undefined &&
+    ts.isStringLiteralLike(declaration.initializer)
+    ? declaration.initializer.text
+    : undefined;
+};
+
+// The function that a read of an object's property gives, where the object is one that only reads
+// of its properties reach, and the literal writes the function under the key, which reads no this.
+// With a heap, no member of the literal reads this, which could change the object, and the function
+// is no closure, whose environment only a call through its value binds, and reads no local of a
+// function around it, unless the read runs in the function that holds the const.
 export const getObjectFunction = (node: ts.Expression, context: Context) => {
   const inner = skipCasts(node);
-  // A script whose heap holds its objects reads the function from the heap.
-  if (context.heap !== undefined || !ts.isPropertyAccessExpression(inner)) return undefined;
-  const object = getReadOnlyObject(inner.expression, context);
+  if (!ts.isPropertyAccessExpression(inner) && !ts.isElementAccessExpression(inner)) {
+    return undefined;
+  }
+  const key = ts.isPropertyAccessExpression(inner)
+    ? inner.name.text
+    : getKeyText(inner.argumentExpression, context);
+  // A literal's __proto__ sets its prototype, and a read of __proto__ reads the prototype.
+  const object =
+    key === undefined || key === "__proto__"
+      ? undefined
+      : getReadOnlyObject(inner.expression, context);
+  const getName = (name: ts.PropertyName) =>
+    ts.isIdentifier(name) || ts.isStringLiteral(name)
+      ? name.text
+      : ts.isComputedPropertyName(name)
+        ? getKeyText(name.expression, context)
+        : undefined;
+  const isKnown = (property: ts.ObjectLiteralElementLike) =>
+    !ts.isSpreadAssignment(property) &&
+    property.name !== undefined &&
+    getName(property.name) !== undefined;
   const properties = (object?.properties ?? []).filter(
-    (property) =>
-      property.name !== undefined &&
-      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
-      property.name.text === inner.name.text,
+    (property) => property.name !== undefined && getName(property.name) === key,
   );
   const property =
-    properties.length === 1 && object?.properties.every((other) => !ts.isSpreadAssignment(other))
-      ? properties[0]
-      : undefined;
+    properties.length === 1 && object?.properties.every(isKnown) ? properties[0] : undefined;
   const found =
     property !== undefined && ts.isPropertyAssignment(property)
       ? getAnyFunction(skipCasts(property.initializer))
       : undefined;
+  const isThis = (inside: ts.Node) =>
+    findNodes(inside, (node): node is ts.Node => node.kind === ts.SyntaxKind.ThisKeyword).length >
+    0;
+  const owner = (inside: ts.Node) => ts.findAncestor(inside.parent, ts.isFunctionLike);
+  const isOuterLocal = (name: ts.Identifier) => {
+    const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
+    return (
+      declaration !== undefined &&
+      found !== undefined &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === found) === undefined &&
+      owner(declaration) !== undefined
+    );
+  };
   return found !== undefined &&
-    (ts.isArrowFunction(found) ||
-      findNodes(found, (node): node is ts.Node => node.kind === ts.SyntaxKind.ThisKeyword)
-        .length === 0)
+    object !== undefined &&
+    (ts.isArrowFunction(found) || !isThis(found)) &&
+    (context.heap === undefined ||
+      (!isThis(object) &&
+        !isClosure(found, context) &&
+        (owner(inner) === owner(object) || !findNodes(found, ts.isIdentifier).some(isOuterLocal))))
     ? found
     : undefined;
 };

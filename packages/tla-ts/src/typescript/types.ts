@@ -115,11 +115,14 @@ export const mayBeSetOrMapType = (type: ts.Type) =>
 export const mayBeSequenceType = (type: ts.Type, checker: ts.TypeChecker) =>
   (type.isUnion() ? type.types : [type]).some((member) => isSequenceType(member, checker));
 
-// Whether every member of a type, such as each literal in a union, has the given flags.
+// Whether every member of a type, such as each literal in a union, has the given flags, where every
+// value of an intersection has each member's kind, as typeof narrows a type parameter to A & bigint.
 export const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
   type.isUnion()
     ? type.types.every((member) => isEvery(member, flags))
-    : (type.flags & flags) !== 0;
+    : type.isIntersection()
+      ? type.types.some((member) => isEvery(member, flags))
+      : (type.flags & flags) !== 0;
 
 // The plain objects that built-in functions take or give.
 // The type of each typed array's elements.
