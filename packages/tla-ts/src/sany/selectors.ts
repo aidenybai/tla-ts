@@ -319,6 +319,7 @@ export const createSelectorResolver =
               allArgs.push(...walk.definitionArgs);
               walk.definitionArityFound = 0;
               walk.definitionArgs = [];
+              // Deviation from SANY: Generator#selectorToNode throws NullPointerException on an instance's substitutions around a definition whose body failed; tla-ts fails the selection as SANY does without the instance.
               let body: LevelNode | undefined = definition.body;
               while (body?.kind === "SubstIn") {
                 substInPrefix.push(body);
@@ -551,7 +552,7 @@ export const createSelectorResolver =
           if (walk.node === undefined || isAbsent(walk.node))
             return generator.addError(
               getItemLocation(),
-              `An unexpected null node specified by '${getSelectorItemName(item)}'.\nThis is probably due to a previous error.`,
+              `An unexpected null node specified by '${getSelectorItemName(items[walk.index])}'.\nThis is probably due to a previous error.`,
             );
           if (walk.index !== items.length - 1) {
             const next = items[walk.index + 1];

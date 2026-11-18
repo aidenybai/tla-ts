@@ -194,6 +194,7 @@ interface CodeBinding {
     getScope: () => TierScope;
     isNext: boolean;
   };
+  isSelf?: boolean;
 }
 
 interface OperatorBinding {
@@ -3271,8 +3272,13 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         : unsupported();
     case "String":
       return compileConstant(program, expression.value);
-    case "Identifier":
+    case "Identifier": {
+      const binding = frame.scope.get(expression.name);
+      if (expression.resolution?.isSelf && (binding?.kind !== "Code" || !binding.isSelf)) {
+        return unsupported();
+      }
       return compileIdentifier(program, expression.name, frame);
+    }
     case "Apply": {
       const names: LazyDefinition[] = [];
       const expansion = getExpansion(program, expression, frame, names);
@@ -3703,20 +3709,22 @@ const bindFunction = (
   if (definition.bounds.length !== 1 || bound.pattern.kind !== "Name") return unsupported();
   const name = getName(program, "l");
   const type = createLambda();
-  const inner: TierScope = withBinding(frame.scope, definition.name, {
+  const getBinding = (isSelf: boolean): CodeBinding => ({
     kind: "Code",
     compiled: { type, emit: () => getLazyCode(name) },
     source: undefined,
-    function: { definition, type, getScope: () => inner, isNext: frame.isNext },
+    function: { definition, type, getScope: () => body, isNext: frame.isNext },
+    isSelf,
   });
+  const body = withBinding(frame.scope, definition.name, getBinding(true));
   names.push({
     name,
     value: compileLambda(program, type, bound.pattern.name, bound.set, definition.body, {
       ...frame,
-      scope: inner,
+      scope: body,
     }),
   });
-  return inner;
+  return withBinding(frame.scope, definition.name, getBinding(false));
 };
 
 // Binds the definitions of a LET, each compiled where the LET is.

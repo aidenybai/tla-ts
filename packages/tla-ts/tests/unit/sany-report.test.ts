@@ -205,6 +205,25 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("declares the operator symbols of a LET's RECURSIVE statements, as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nR ==\n  LET\n    RECURSIVE _**_\n    x ** y == x ** y\n    RECURSIVE _^#\n    x^# == x^#\n  IN 1 ** 2\nS == LET RECURSIVE _++_ IN 1\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 9, col 20 to line 9, col 23 of module M",
+        "",
+        "Symbol ++ declared in RECURSIVE statement but not defined.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("locates the tuple of an EXCEPT path at the part of its update SANY picks", () => {
     const report = getReport({
       M: "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nB == [f EXCEPT ![1][[]x, 2] = 1]\nC == [f EXCEPT ![1][2][[]x, 3] = ((1))]\n====\n",
@@ -1195,6 +1214,64 @@ Spec == Init /\\ [][Next]_x
     const report = getReport({ M: `---- MODULE M ----\nCONSTANT S\n${unit}\n====\n` });
     expect(report.isFailed).toBe(true);
     expect(report.text).toContain(`\n\n${error}\n`);
+  });
+
+  it("fails a selection into a failed definition through an instance as SANY does without one", () => {
+    const error =
+      "Subexpression selection failed, probably due to an error in the selected expression.";
+    expect(
+      getReport({ M: "---- MODULE M ----\na ## b == a ## b\nU == ##(1, 2)!1\n====\n" }).text,
+    ).toContain(`line 3, col 15 to line 3, col 15 of module M\n\n${error}\n`);
+    expect(
+      getReport({
+        M: "---- MODULE M ----\n---- MODULE Inner ----\nCONSTANT c\na ## b == a ## b\n====\nI == INSTANCE Inner WITH c <- 1\nU == I!##(1, 2)!1\n====\n",
+      }).text,
+    ).toContain(`line 7, col 17 to line 7, col 17 of module M\n\n${error}\n`);
+  });
+
+  it.each([
+    ["Op0 == lab:: 1 |- 2\nU == Op0!1", "line 3, col 6 to line 3, col 8", "Op0"],
+    [
+      "Op0 == {lab:: 1 |- 2}\nU == Op0!1!1",
+      "line 3, col 10 to line 3, col 10",
+      "argument selector 1",
+    ],
+  ])(
+    "reports a selection through a failed label in %j at the selector before it",
+    (unit, location, name) => {
+      expect(getReport({ M: `---- MODULE M ----\n${unit}\n====\n` }).text).toContain(
+        `${location} of module M\n\nAn unexpected null node specified by '${name}'.\nThis is probably due to a previous error.\n`,
+      );
+    },
+  );
+
+  it("rejects a LET without definitions", () => {
+    const report = getReport({ M: "---- MODULE M ----\nD0 ==\n  LET\n  IN 1\n====\n" });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(
+      '***Parse Error***\nEncountered "IN" at line 4, column 3 and token "LET" \n\nResidual stack trace follows:\nLet Definitions starting at line 4, column 3.\n',
+    );
+  });
+
+  it.each([
+    [
+      "RECURSIVE _ ^# _",
+      'Was expecting "==== or more Module body"\nEncountered "_" at line 3, column 16 and token "^#" ',
+    ],
+    [
+      "RECURSIVE _ ++",
+      'Was expecting "_"\nEncountered "Beginning of definition" at line 4, column 1 and token "++" ',
+    ],
+    [
+      "F(_ ^+ _) == 1",
+      'Was expecting "COMMA or )"\nEncountered "_" at line 3, column 8 and token "^+" ',
+    ],
+  ])("rejects the operator symbol declaration %j of the wrong fixity", (unit, error) => {
+    const report = getReport({
+      M: `---- MODULE M ----\nEXTENDS Naturals\n${unit}\nx == 1\n====\n`,
+    });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(`***Parse Error***\n${error}\n`);
   });
 
   it("reports a file without a module as a parse error", () => {

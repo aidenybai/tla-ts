@@ -27,7 +27,6 @@ import {
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { bindLetDefinitions, getLevel } from "./liveness";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
-import { SELECTION_NAME } from "./resolve";
 import { LITERAL_KINDS } from "./tlc/replay";
 import { resolveSynonym } from "./tlc/jar-data";
 import { getSanyStandardModules } from "./sany/modules";
@@ -399,9 +398,7 @@ const getActions = (
   }
   const args = getArguments(expression);
   const calledName = isLocallyResolved(expression)
-    ? called.name === SELECTION_NAME
-      ? "LAMBDA"
-      : called.name
+    ? called.name
     : (environment.instanceNames.get(getOperatorName(expression) ?? "") ?? called.name);
   const callAction = (): SpecAction[] => [
     {

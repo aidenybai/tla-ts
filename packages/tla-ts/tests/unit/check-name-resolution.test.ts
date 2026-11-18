@@ -34,6 +34,11 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("fails to parse an EXTENDS of a name that is not an identifier", async () => {
+    await expect(checkNames("EXTENDS)Sequences")).rejects.toBeInstanceOf(TlaSyntaxError);
+    await expect(checkNames("EXTENDS +, Sequences")).rejects.toBeInstanceOf(TlaSyntaxError);
+  });
+
   it.each([
     ["an operator from a module that is not extended", "EXTENDS Naturals\nf == 1 :> 2"],
     ["an operator that a standard module only instantiates locally", "EXTENDS TLC\nf == 1 + 1"],
@@ -1428,6 +1433,97 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "a constant",
+      "I0 == INSTANCE Inner WITH F <- LAMBDA c : 1",
+      "line 3, col 39 to line 3, col 39",
+      "c",
+      "line 2, col 10 to line 2, col 10",
+    ],
+    [
+      "a parameter of the instance",
+      "I0(p) == INSTANCE Inner WITH F <- LAMBDA p : 1",
+      "line 3, col 42 to line 3, col 42",
+      "p",
+      "line 3, col 4 to line 3, col 4",
+    ],
+    [
+      "an earlier definition",
+      "G == 1\nI0 == INSTANCE Inner WITH F <- LAMBDA G : 1",
+      "line 4, col 39 to line 4, col 39",
+      "G",
+      "line 3, col 1 to line 3, col 6",
+    ],
+    [
+      "an earlier instance",
+      "J == INSTANCE Inner WITH F <- LAMBDA q : 1\nI0 == INSTANCE Inner WITH F <- LAMBDA J : 1",
+      "line 4, col 39 to line 4, col 39",
+      "J",
+      "line 3, col 1 to line 3, col 42",
+    ],
+  ])(
+    "rejects a LAMBDA parameter of a substitution named after %s",
+    async (_, body, location, name, existing) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nCONSTANT c\n${body}\n====\n`,
+          config: "",
+          loadModule: (module) =>
+            module === "Inner" ? "---- MODULE Inner ----\nCONSTANT F(_)\n====\n" : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${location} of module M`,
+            message: `Multiply-defined symbol '${name}': this definition or declaration conflicts \nwith the one at ${existing} of module M.`,
+          },
+        ]),
+      );
+    },
+  );
+
+  it.each([
+    ["Op0 == lab:: 1 |- 2\nU == Op0!2!1", "line 3, col 6 to line 3, col 8", "Op0", 14],
+    [
+      "Op0 == {lab:: 1 |- 2}\nU == Op0!1!1",
+      "line 3, col 10 to line 3, col 10",
+      "argument selector 1",
+      15,
+    ],
+  ])(
+    "reports a selection through a failed label in %j at the selector before it",
+    async (source, location, name, column) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError([
+          {
+            location: `line 2, col ${column + 2} to line 2, col ${column + 3} of module M`,
+            message: "Could not find declaration or definition of symbol '|-'.",
+          },
+          {
+            location: `line 2, col ${column} to line 2, col ${column + 5} of module M`,
+            message: "Couldn't resolve infix operator symbol `|-'.",
+          },
+          {
+            location: `${location} of module M`,
+            message: `An unexpected null node specified by '${name}'.\nThis is probably due to a previous error.`,
+          },
+        ]),
+      );
+    },
+  );
+
+  it.each([
+    ["F == LET G == 1 IN [TRUE]", "line 2, col 20 to line 2, col 20"],
+    ["F(a) == a\nG == F([TRUE])", "line 3, col 8 to line 3, col 8"],
+  ])("rejects a bracket without a subscript in %j", async (source, location) => {
+    await expect(checkNames(source)).rejects.toThrow(
+      createSanyError([
+        { location: `${location} of module M`, message: "Unsupported expression type `['." },
+      ]),
+    );
+  });
+
   it("passes an operator argument through an operator a LET instantiates", async () => {
     const result = await check({
       source:
@@ -1465,6 +1561,27 @@ describe("name resolution matches SANY", () => {
         warnings: [],
       },
     });
+  });
+
+  it("locates the identifier of an unbounded CHOOSE at the CHOOSE", async () => {
+    await expect(checkNames("F == CHOOSE v : CHOOSE v : TRUE")).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 2, col 17 to line 2, col 22 of module M",
+          message:
+            "Multiply-defined symbol 'v': this definition or declaration conflicts \nwith the one at line 2, col 6 to line 2, col 11 of module M.",
+        },
+      ]),
+    );
+  });
+
+  it("reads EXTENDS as the first field of a record, not as a module's EXTENDS", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nASSUME [EXTENDS |-> 3, a |-> 1].a = 1\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("success");
   });
 
   it("imports the name of an instance a module defines like SANY", async () => {
@@ -3709,6 +3826,25 @@ describe("name resolution matches SANY", () => {
       );
     },
   );
+
+  it("reports a parameterized instance name passed as an operator argument as incomplete, like SANY", async () => {
+    await expect(
+      checkNames(
+        "---- MODULE I ----\nCONSTANT c\nK == c\n====\nJ(x) == INSTANCE I WITH c <- x\nAp(P(_)) == P(1)\nB == Ap(J)",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 8, col 9 to line 8, col 9 of module M",
+          message: "Operator name J is incomplete.",
+        },
+        {
+          location: "line 8, col 6 to line 8, col 10 of module M",
+          message: "Argument number 1 to operator 'Ap' \nshould be a 1-parameter operator.",
+        },
+      ]),
+    );
+  });
 
   it("accepts an instance name as a fact like SANY", async () => {
     await expect(

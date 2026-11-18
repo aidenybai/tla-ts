@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getDefinitionExpressions,
   getFunctionConstruction,
   type AssumeProve,
   type Bound,
@@ -19,6 +20,7 @@ import {
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 import {
   getSourceName,
+  hasLetInstance,
   mapChildren,
   mapDefinition,
   substitutionFrames,
@@ -289,17 +291,22 @@ const selectSubexpression = (
   let selectorIndex = 0;
   let operatorIndex = -1;
   let current: Expression | undefined;
-  let enteredBody: Expression | undefined;
   let isFailed = false;
   let generatedArguments = 0;
   const nulls: NullSelection[] = [];
   const applications: SelectionArguments[] = [];
+  const entered: Definition[] = [];
   let expressionError: SanyError | undefined;
   const deferToExpression = (range: SourceRange | undefined, message: string) => {
     if (!expressionError && range) expressionError = { location: formatRange(range), message };
   };
-  const checkNull = (node: Expression | undefined, message: string, isEmpty = false) => {
-    const range = reference.selectorRanges?.[selectorIndex];
+  const checkNull = (
+    node: Expression | undefined,
+    message: string,
+    isEmpty = false,
+    index = selectorIndex,
+  ) => {
+    const range = reference.selectorRanges?.[index];
     if (node && range) {
       nulls.push({
         node,
@@ -410,7 +417,7 @@ const selectSubexpression = (
     selection.params.push(...(definition.kind === "Operator" ? definition.params : []));
     selection.args.push(...found.args);
     current = getDefinitionBody(definition);
-    enteredBody ??= definition.body;
+    entered.push(definition);
     operatorIndex = selectorIndex;
     selectorIndex++;
     return undefined;
@@ -457,6 +464,13 @@ const selectSubexpression = (
     current = enterScopes(current);
     if (current.kind === "Label") {
       current = current.body;
+      // SANY checks the body of a label it passes against the selector before it.
+      checkNull(
+        current,
+        `An unexpected null node specified by '${getSelectorName(selectors[selectorIndex - 1])}'.\nThis is probably due to a previous error.`,
+        false,
+        selectorIndex - 1,
+      );
       selectOperand(selector);
       return;
     }
@@ -658,13 +672,18 @@ const selectSubexpression = (
     }
     deferToExpression(location.range, message);
   }
-  const frames = enteredBody === undefined ? undefined : substitutionFrames.get(enteredBody);
-  const getFramed = (expression: Expression) =>
-    frames && current !== enteredBody ? withSubstitutionFrames(expression, frames) : expression;
+  const frames = entered.flatMap((definition) =>
+    definition.kind === "Operator" && definition.body !== current
+      ? (substitutionFrames.get(definition.body) ?? [])
+      : [],
+  );
   const body =
     current.kind === "Lambda"
-      ? { ...current, body: wrapLets(getFramed(current.body), selection.lets, location) }
-      : wrapLets(getFramed(current), selection.lets, location);
+      ? {
+          ...current,
+          body: wrapLets(withSubstitutionFrames(current.body, frames), selection.lets, location),
+        }
+      : wrapLets(withSubstitutionFrames(current, frames), selection.lets, location);
   const share = (expression: Expression): Expression => ({
     kind: "Selection",
     expression,
@@ -739,24 +758,46 @@ const resolveSubexpressions = (
         }
       : mapped;
   }
-  const calleeParams =
-    expression.kind === "Apply"
-      ? getCalleeParams(expression, lookup(expression.operator))
+  const resolveArguments = (args: Expression[], params: OperatorParam[] | undefined) =>
+    args.map((arg, index) =>
+      resolveSubexpressions(
+        arg,
+        lookup,
+        isGoal,
+        params !== undefined && params[index]?.arity !== 0,
+      ),
+    );
+  const getSelectorParams = (selectors: Selector[]) => {
+    const callee = selectors.every((selector) => selector.kind === "Name")
+      ? lookup(selectors.map(getSelectorName).join("!"))
       : undefined;
+    return callee?.kind === "Operator" ? callee.params : undefined;
+  };
   const rebuilt =
     expression.kind === "Apply"
       ? {
           ...expression,
-          args: expression.args.map((arg, index) =>
-            resolveSubexpressions(
-              arg,
-              lookup,
-              isGoal,
-              calleeParams !== undefined && calleeParams[index]?.arity !== 0,
-            ),
+          args: resolveArguments(
+            expression.args,
+            getCalleeParams(expression, lookup(expression.operator)),
           ),
         }
-      : mapChildren(expression, (child) => resolveSubexpressions(child, lookup, isGoal));
+      : expression.kind === "Subexpression"
+        ? {
+            ...expression,
+            selectors: expression.selectors.map((selector, index) =>
+              "args" in selector
+                ? {
+                    ...selector,
+                    args: resolveArguments(
+                      selector.args,
+                      getSelectorParams(expression.selectors.slice(0, index + 1)),
+                    ),
+                  }
+                : selector,
+            ),
+          }
+        : mapChildren(expression, (child) => resolveSubexpressions(child, lookup, isGoal));
   const children = getChildren(expression);
   const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
     ? expression
@@ -824,9 +865,17 @@ const createLookup = (definitions: Definition[]): Lookup => {
 };
 
 export const resolveInstanceSubexpressions = (instance: Instance, module: Module): Instance =>
-  resolveInstance(instance, createLookup(module.definitions), () => false);
+  resolveInstance(
+    instance,
+    (name) => module.definitions.findLast((definition) => definition.name === name),
+    () => false,
+  );
 
-export const resolveModuleSubexpressions = (module: Module, available: Definition[]): Module => {
+export const createModuleSubexpressions = (
+  module: Module,
+  expand: ((expression: Expression) => Expression) | undefined,
+  getAvailable: Lookup,
+) => {
   const goals = new Set(
     module.theorems.flatMap((theorem) =>
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve" ? [theorem.name] : [],
@@ -884,9 +933,12 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       }
       return resolvedDefinitions.get(definition) ?? definition;
     };
-  const proofLookup = createLookup([...available, ...module.definitions]);
   const isGoal = (name: string) => goals.has(name);
-  const definitionLookup = createLookup([...available, ...module.definitions, ...clauses]);
+  const getExpanded = (expression: Expression) => (expand ? expand(expression) : expression);
+  const getOwnDefinition = createLookup(module.definitions);
+  const getClause = createLookup(clauses);
+  const proofLookup: Lookup = (name) => getOwnDefinition(name) ?? getAvailable(name);
+  const definitionLookup: Lookup = (name) => getClause(name) ?? proofLookup(name);
   const resolve = (expression: Expression, location: SourceLocation) =>
     resolveSubexpressions(
       expression,
@@ -999,54 +1051,85 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       resolveProof,
     };
   };
-  const hasReferences =
-    module.definitions.some((definition) => containsReference(definition.body)) ||
-    module.assumptions.some((assumption) => containsReference(assumption.expression));
-  if (hasReferences) {
-    [...module.definitions, ...clauses]
-      .toSorted((left, right) => compareLocations(left.location, right.location))
-      .forEach((definition) =>
-        resolvedDefinitions.set(
-          definition,
-          resolveDefinition(definition, (expression) => resolve(expression, definition.location)),
+  const isMapped = (expression: Expression) =>
+    containsReference(expression) || (expand !== undefined && hasLetInstance(expression));
+  const ordered = [
+    ...module.definitions.map((definition) => ({ definition, isClause: false })),
+    ...clauses.map((definition) => ({ definition, isClause: true })),
+  ].toSorted((left, right) =>
+    compareLocations(left.definition.location, right.definition.location),
+  );
+  let resolvedCount = 0;
+  const resolveDefinitionsBefore = (location: SourceLocation | undefined) => {
+    for (; resolvedCount < ordered.length; resolvedCount++) {
+      const entry = ordered[resolvedCount];
+      const definition = entry.definition;
+      if (location && !isBefore(definition.location, location)) return;
+      if (!getDefinitionExpressions(definition).some(isMapped)) continue;
+      resolvedDefinitions.set(
+        definition,
+        resolveDefinition(definition, (expression) =>
+          resolve(entry.isClause ? expression : getExpanded(expression), definition.location),
         ),
       );
-  }
-  const resolved = {
-    ...module,
-    theorems: module.theorems.map((theorem) => {
-      const resolver = createProofResolver(getVisibleLookup(proofLookup, theorem.location));
-      return {
-        ...theorem,
-        statement:
-          theorem.name !== undefined && theorem.statement.kind !== "AssumeProve"
-            ? theorem.statement
-            : resolver.resolveStatement(theorem.statement),
-        proof:
-          theorem.proof &&
-          createProofResolver(getVisibleLookup(proofLookup, theorem.proof.location)).resolveProof(
-            theorem.proof,
-          ),
-      };
-    }),
-    uses: module.uses.map((use) => {
-      const resolver = createProofResolver(getVisibleLookup(proofLookup, use.location));
-      return {
-        ...use,
-        facts: resolver.resolveFacts(use.facts),
-        defs: resolver.resolveDefs(use.defs),
-      };
-    }),
+    }
   };
-  if (!hasReferences) return resolved;
   return {
-    ...resolved,
-    definitions: module.definitions.map(
-      (definition) => resolvedDefinitions.get(definition) ?? definition,
-    ),
-    assumptions: module.assumptions.map((assumption) => ({
-      ...assumption,
-      expression: resolve(assumption.expression, assumption.location),
-    })),
+    getDefinitionsBefore: (location: SourceLocation): Lookup => {
+      resolveDefinitionsBefore(location);
+      return (name) => {
+        const last = getOwnDefinition(name);
+        const definition =
+          last === undefined || isBefore(last.location, location)
+            ? last
+            : module.definitions.findLast(
+                (candidate) => candidate.name === name && isBefore(candidate.location, location),
+              );
+        return definition && (resolvedDefinitions.get(definition) ?? definition);
+      };
+    },
+    resolve: (): Module => {
+      resolveDefinitionsBefore(undefined);
+      return {
+        ...module,
+        definitions: module.definitions.map(
+          (definition) => resolvedDefinitions.get(definition) ?? definition,
+        ),
+        assumptions: module.assumptions.map((assumption) =>
+          isMapped(assumption.expression)
+            ? {
+                ...assumption,
+                expression: resolve(getExpanded(assumption.expression), assumption.location),
+              }
+            : assumption,
+        ),
+        theorems: module.theorems.map((theorem) => {
+          const resolver = createProofResolver(getVisibleLookup(proofLookup, theorem.location));
+          const statement = theorem.statement;
+          return {
+            ...theorem,
+            statement:
+              statement.kind === "AssumeProve"
+                ? resolver.resolveStatement(statement)
+                : theorem.name === undefined
+                  ? resolver.resolveStatement(getExpanded(statement))
+                  : statement,
+            proof:
+              theorem.proof &&
+              createProofResolver(
+                getVisibleLookup(proofLookup, theorem.proof.location),
+              ).resolveProof(theorem.proof),
+          };
+        }),
+        uses: module.uses.map((use) => {
+          const resolver = createProofResolver(getVisibleLookup(proofLookup, use.location));
+          return {
+            ...use,
+            facts: resolver.resolveFacts(use.facts),
+            defs: resolver.resolveDefs(use.defs),
+          };
+        }),
+      };
+    },
   };
 };
