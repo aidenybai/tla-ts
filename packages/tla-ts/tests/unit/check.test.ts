@@ -2358,6 +2358,28 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("orders the actions of an instance by its definition and keeps each of them, where TLC keeps one action per location", async () => {
+    const result = await getInstanceCoverage(
+      "I == INSTANCE Inner WITH K <- M, w <- y",
+      "(x = 2 /\\ x' = 0 /\\ UNCHANGED y) \\/ I!B \\/ I!A",
+      "x < 3",
+    );
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 6, col 1 to line 6, col 4 of module E",
+      "I!A line 5, col 1 to line 5, col 1 of module E",
+      "I!B line 5, col 1 to line 5, col 1 of module E",
+      "Next line 7, col 1 to line 7, col 4 of module E (7 10 7 39)",
+      "Inv line 8, col 1 to line 8, col 3 of module E",
+    ]);
+    expect(formatCoverage(result)?.[2]).toEqual([
+      "line 5, col 1 to line 5, col 39 of module E: 5",
+      "line 11, col 6 to line 11, col 10 of module Inner: 2",
+      "|line 11, col 6 to line 11, col 6 of module Inner: 3",
+      "line 11, col 15 to line 11, col 24 of module Inner: 2",
+      "line 11, col 29 to line 11, col 39 of module Inner: 2",
+    ]);
+  });
+
   it("orders the substitutions of an instance as SANY infers them from the instanced module's symbol table", async () => {
     const result = await check({
       source:

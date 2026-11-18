@@ -1114,21 +1114,25 @@ const compareRanges = (left: SourceRange | undefined, right: SourceRange | undef
   );
 };
 
+// TLC's Action#pred for an instance's action is the SubstInNode, which SANY locates at the instance's definition.
+const getPredicateRange = (expression: Expression) =>
+  (substitutionFrames.get(expression) ?? []).find((frame) => frameSubstitutions.has(frame))
+    ?.location.range ?? expression.location.range;
+
+// Deviation from TLC: CostModelCreator#report keeps one action per location, so it drops all but one action of an instance.
+const compareActions = (left: CoverageRelation, right: CoverageRelation) =>
+  compareRanges(getPredicateRange(left.expression), getPredicateRange(right.expression)) ||
+  compareRanges(left.expression.location.range, right.expression.location.range);
+
 const getReportedRelations = (coverage: Coverage) =>
   KIND_ORDER.flatMap((kind) => {
     const relations = coverage.relations.filter((relation) => relation.kind === kind);
     if (kind !== "next") return relations;
     return relations
-      .toSorted((left, right) =>
-        compareRanges(left.expression.location.range, right.expression.location.range),
-      )
+      .toSorted(compareActions)
       .filter(
         (relation, index, sorted) =>
-          index === 0 ||
-          compareRanges(
-            sorted[index - 1].expression.location.range,
-            relation.expression.location.range,
-          ) !== 0,
+          index === 0 || compareActions(sorted[index - 1], relation) !== 0,
       );
   });
 
