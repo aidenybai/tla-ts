@@ -1269,6 +1269,35 @@ describe("name resolution matches SANY", () => {
         ],
       ],
     ],
+    [
+      "Id(a) == a\na^+ == a\nB == [1]\nF == (zz + 1)[2 ++ 3]\nP == Id(^+)\nD == [1].a\nf == B!1 /\\ F!1 /\\ P!1 /\\ D!1",
+      [
+        ["line 4, col 6 to line 4, col 6", "Unsupported expression type `['."],
+        [
+          "line 5, col 10 to line 5, col 10",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        ["line 5, col 7 to line 5, col 12", "Couldn't resolve infix operator symbol `+'."],
+        ["line 6, col 9 to line 6, col 10", "The operator ^+ requires 1 arguments."],
+        ["line 7, col 6 to line 7, col 6", "Unsupported expression type `['."],
+        [
+          "line 8, col 8 to line 8, col 8",
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        ],
+        [
+          "line 8, col 15 to line 8, col 15",
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        ],
+        [
+          "line 8, col 22 to line 8, col 22",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+        [
+          "line 8, col 29 to line 8, col 29",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkNames(source)).rejects.toThrow(
       createSanyError(
