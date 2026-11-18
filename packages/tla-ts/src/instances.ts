@@ -965,7 +965,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
   };
 };
 
-const hasLetInstance = (expression: Expression): boolean =>
+export const hasLetInstance = (expression: Expression): boolean =>
   (expression.kind === "Let" && expression.instances !== undefined) ||
   getChildren(expression).some(hasLetInstance);
 

@@ -193,6 +193,15 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it("selects in a function's domain when nothing else in the module selects", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nS == {1, 2} \\cup {3}\nf[n \\in S!1] == n\nASSUME f[1] = 1\nInit == x = DOMAIN f\nNext == UNCHANGED x\nInv == x = {1, 2}\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.status).toBe("success");
+  });
+
   it("selects into a recursive function that an instance copies as into its constructor", async () => {
     const inner =
       "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nr[n \\in {0, 1, 2}] == IF n = 0 THEN c ELSE r[n - 1] + 1\nlr[n \\in {0, 1}] == lab(n) :: IF n = 0 THEN c ELSE lr[n - 1] * 2\n====";

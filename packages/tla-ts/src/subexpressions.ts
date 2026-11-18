@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getDefinitionExpressions,
   getFunctionConstruction,
   type AssumeProve,
   type Bound,
@@ -19,6 +20,7 @@ import {
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
 import {
   getSourceName,
+  hasLetInstance,
   mapChildren,
   mapDefinition,
   substitutionFrames,
@@ -1046,10 +1048,8 @@ export const createModuleSubexpressions = (
       resolveProof,
     };
   };
-  const isMapped =
-    expand !== undefined ||
-    module.definitions.some((definition) => containsReference(definition.body)) ||
-    module.assumptions.some((assumption) => containsReference(assumption.expression));
+  const isMapped = (expression: Expression) =>
+    containsReference(expression) || (expand !== undefined && hasLetInstance(expression));
   const ordered = [
     ...module.definitions.map((definition) => ({ definition, isClause: false })),
     ...clauses.map((definition) => ({ definition, isClause: true })),
@@ -1058,11 +1058,11 @@ export const createModuleSubexpressions = (
   );
   let resolvedCount = 0;
   const resolveDefinitionsBefore = (location: SourceLocation | undefined) => {
-    if (!isMapped) return;
     for (; resolvedCount < ordered.length; resolvedCount++) {
       const entry = ordered[resolvedCount];
       const definition = entry.definition;
       if (location && !isBefore(definition.location, location)) return;
+      if (!getDefinitionExpressions(definition).some(isMapped)) continue;
       resolvedDefinitions.set(
         definition,
         resolveDefinition(definition, (expression) =>
@@ -1092,12 +1092,14 @@ export const createModuleSubexpressions = (
         definitions: module.definitions.map(
           (definition) => resolvedDefinitions.get(definition) ?? definition,
         ),
-        assumptions: isMapped
-          ? module.assumptions.map((assumption) => ({
-              ...assumption,
-              expression: resolve(getExpanded(assumption.expression), assumption.location),
-            }))
-          : module.assumptions,
+        assumptions: module.assumptions.map((assumption) =>
+          isMapped(assumption.expression)
+            ? {
+                ...assumption,
+                expression: resolve(getExpanded(assumption.expression), assumption.location),
+              }
+            : assumption,
+        ),
         theorems: module.theorems.map((theorem) => {
           const resolver = createProofResolver(getVisibleLookup(proofLookup, theorem.location));
           const statement = theorem.statement;
