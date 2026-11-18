@@ -419,6 +419,15 @@ const getWrittenRange = (expression: Expression) =>
 const isOperatorApplication = (expression: Expression) =>
   expression.kind !== "Let" && expression.kind !== "Label";
 
+const getApplicationError = (operator: OperatorLevels, detail: string) =>
+  `Level error in applying operator ${resolveSynonym(operator.name)}:\n${detail}`;
+
+const getExceedingError = (operator: OperatorLevels, index: number) =>
+  getApplicationError(
+    operator,
+    `The level of argument ${index + 1} exceeds the maximum level allowed by the operator`,
+  );
+
 export const createLevelAnalyzer = (context: LevelContext) => {
   const definitionLevels = new Map<Definition, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
@@ -471,22 +480,53 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     bound: string[] = [],
   ) => {
     const isBound = (name: string) => bound.includes(name);
-    const exceeding = operands.flatMap((operand, index) =>
-      operand.data.level > getMaxLevel(operator, index) ? [{ operand, index }] : [],
-    );
-    exceeding
-      .filter((entry) => operator.isCorrect && entry.operand.data.isCorrect)
-      .forEach((entry) =>
-        messages.push(
-          `Level error in applying operator ${resolveSynonym(operator.name)}:\nThe level of argument ${entry.index + 1} exceeds the maximum level allowed by the operator`,
-        ),
-      );
     const getOperand = (formal: string) => {
       const index = operator.formals.findIndex((param) => param.name === formal);
       return index === -1 ? undefined : operands[index];
     };
     const hasCondition = (operandIndex: number, otherIndex: number, argumentIndex: number) =>
       operator.conditions.has(getConditionKey(operandIndex, otherIndex, argumentIndex));
+    let isLevelCorrect = true;
+    for (let index = 0; index < operands.length; index++) {
+      const operand = operands[index];
+      if (operand.data.level > getMaxLevel(operator, index)) {
+        if (operator.isCorrect && operand.data.isCorrect) {
+          messages.push(getExceedingError(operator, index));
+        }
+        isLevelCorrect = false;
+      }
+      if (operand.kind !== "Operator") continue;
+      const argument = operand.data;
+      const arity = operator.formals[index]?.arity ?? 0;
+      for (let position = 0; position < arity; position++) {
+        const minimum = operator.minMaxLevels[index]?.[position] ?? 0;
+        if (getMaxLevel(argument, position) >= minimum) continue;
+        if (operator.isCorrect && argument.isCorrect) {
+          messages.push(
+            getApplicationError(
+              operator,
+              `The permitted level of argument ${position + 1} of the operator argument ${index + 1} \nmust be at least ${minimum}`,
+            ),
+          );
+        }
+        isLevelCorrect = false;
+      }
+      for (let otherIndex = 0; otherIndex < operands.length; otherIndex++) {
+        const other = operands[otherIndex];
+        for (let position = 0; position < arity; position++) {
+          if (
+            !hasCondition(index, otherIndex, position) ||
+            other.data.level <= getMaxLevel(argument, position)
+          ) {
+            continue;
+          }
+          if (argument.isCorrect && other.data.isCorrect) {
+            messages.push(getExceedingError(operator, otherIndex));
+          }
+          isLevelCorrect = false;
+        }
+      }
+    }
     const data = createData(
       Math.max(
         operator.level,
@@ -497,7 +537,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ),
     );
     data.isCorrect =
-      exceeding.length === 0 &&
+      isLevelCorrect &&
       operands.every((operand) => operand.data.isCorrect) &&
       ranges.every((range) => range.isCorrect);
     operator.params.forEach((param) => data.params.add(param));

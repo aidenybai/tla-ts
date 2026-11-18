@@ -100,6 +100,41 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks an operator argument against the levels the operator applies it to", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nPr(p) == p'\nAp(F(_), a) == F(a)\nAp2(F(_, _), a, b) == F(a, b)\nOnPrime(F(_)) == F(x')\nOnBox2(F(_, _)) == F([](x = 1), 1)\nTwice(F(_), a) == F(F(a))\nA == Ap(Pr, x')\nB == OnPrime(Pr)\nC == Twice(LAMBDA q : q' = q, x)\nD == Ap(Pr, x)\nE == OnBox2(\\cup)\nG == Ap2(\\cup, [](x = 1), 1)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          [
+            "line 9, col 6 to line 9, col 15",
+            "Level error in applying operator Ap:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+          ],
+          [
+            "line 10, col 6 to line 10, col 16",
+            "Level error in applying operator OnPrime:\nThe permitted level of argument 1 of the operator argument 1 \nmust be at least 2.",
+          ],
+          [
+            "line 11, col 6 to line 11, col 32",
+            "Level error in applying operator Twice:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+          ],
+          [
+            "line 13, col 6 to line 13, col 17",
+            "Level error in applying operator OnBox2:\nThe permitted level of argument 1 of the operator argument 1 \nmust be at least 3.",
+          ],
+          [
+            "line 14, col 6 to line 14, col 28",
+            "Level error in applying operator Ap2:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+          ],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({
