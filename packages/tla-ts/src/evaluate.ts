@@ -1159,6 +1159,8 @@ const getLetFunctionConstruction = (definition: FunctionDefinition): Expression 
   return construction;
 };
 
+const isRecursiveDefinition = (definition: Definition) => definition.isRecursive;
+
 export const bindDefinitions = (
   definitions: Definition[],
   context: Context,
@@ -1173,7 +1175,13 @@ export const bindDefinitions = (
     node.parent = parent;
     return node;
   }, context.scope);
+  const isSequential = !definitions.some(isRecursiveDefinition);
   definitions.forEach((definition, index) => {
+    // TLC's LET evaluates an operator without parameters in the context before it, which TLCEval#tlcEval tells from an empty one.
+    const ownScope =
+      definition.kind === "Operator" && definition.params.length === 0 && isSequential
+        ? nodes[index].parent
+        : scope;
     nodes[index].binding =
       definition.kind === "Function"
         ? {
@@ -1193,13 +1201,13 @@ export const bindDefinitions = (
                 name: definition.name,
                 params: definition.params,
                 body: definition.body,
-                scope,
+                scope: ownScope,
               },
             }
           : {
               kind: "Thunk",
               expression: definition.body,
-              scope,
+              scope: ownScope,
               state: context.state,
               next: context.next,
               cache: undefined,

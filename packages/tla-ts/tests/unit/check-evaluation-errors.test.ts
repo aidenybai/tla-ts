@@ -1434,6 +1434,30 @@ describe("evaluation errors match TLC", () => {
     expect(prints).toEqual(Array.from({ length: 13 }, () => '"d"  TRUE'));
   });
 
+  it("caches a constant TLCEval argument in the first LET definition without parameters only, whose context TLC leaves empty", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nL == LET a == TLCEval(Print("a", TRUE))\n         b == TLCEval(Print("b", TRUE))\n     IN a /\\ b /\\ x >= 0\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == L\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"a"  TRUE', '"b"  TRUE', '"b"  TRUE', '"b"  TRUE']);
+  });
+
+  it("evaluates a LET definition without parameters that calls a RECURSIVE operator defined after it, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = LET RECURSIVE f(_)\n                c == f(2)\n                f(n) == IF n = 0 THEN 0 ELSE f(n - 1) + 1\n            IN c\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
+  });
+
   it("rejects EXCEPT at an argument that is not a tuple of a lazy function of two arguments", async () => {
     const pairs = [1, 2].flatMap((first) =>
       [0, 1, 2, 3, 4].map((second) => `<<${first}, ${second}>> :> 100`),
