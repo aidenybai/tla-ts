@@ -7691,13 +7691,6 @@ CopyWithinFirstGetter(heap, ref, target, start, end) ==
      THEN GetterOf(heap, ref, ToString(first))
      ELSE Undefined
 
-\\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
-\\* backward where the indices it copies to overlap the end of those it copies from, where only the
-\\* indices that the object or its prototypes hold, and those that copy over them, change. The
-\\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
-LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
-  CopyWithinOf(heap, ref, LengthOf(heap, ref), target, start, end)
-
 \\* Whether copyWithin of an array that a name holds, whose arguments' conversion changed the
 \\* array, copies through the elements the array holds after, with the length it read before.
 IsCopiedWithin(heap, afterHeap, before, after) ==
@@ -7708,7 +7701,11 @@ IsCopiedWithin(heap, afterHeap, before, after) ==
   /\\ ~afterHeap.objects[before[Ref]].isOpaque
   /\\ ~HasLongLength(heap, before)
 
-\\* copyWithin with the length that it read.
+\\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
+\\* backward where the indices it copies to overlap the end of those it copies from, where only the
+\\* indices that the object or its prototypes hold, and those that copy over them, change. The
+\\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
+\\* It copies with the length that it read.
 CopyWithinOf(heap, ref, length, target, start, end) ==
   LET to == ClampedIndex(target, length)
       from == ClampedIndex(start, length)
@@ -7722,6 +7719,9 @@ CopyWithinOf(heap, ref, length, target, start, end) ==
   IN IF count <= 0
      THEN [heap |-> heap, value |-> ref, isThrown |-> FALSE]
      ELSE [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
+
+LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
+  CopyWithinOf(heap, ref, LengthOf(heap, ref), target, start, end)
 
 ArrayLikeCopyWithin(heap, ref, target, start, end) ==
   IF HasLongLength(heap, ref)
