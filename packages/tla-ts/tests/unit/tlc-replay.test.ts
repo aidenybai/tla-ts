@@ -140,6 +140,17 @@ describe("the call stack of a replayed failure matches TLC", () => {
     ]).toEqual(["error", 75, ["9.9-9.24", "9.15-9.23"]]);
   });
 
+  it("reports a failed invariant once under -continue, where TLC reports it again with the code of its error", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\n${HEADER}\nInit == x = 0\nNext == x' = x + 1\nInv == x < 2 \\/ Assert(FALSE, "bound")\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      isContinued: true,
+    });
+    expect([result.failure?.code, result.failure?.exitCode, result.failure?.trace.length]).toEqual([
+      2111, 76, 3,
+    ]);
+  });
+
   it("exits with the code of a standard module's failure in an action property", async () => {
     const failure = await getFailure(
       "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == [][1 \\div (1 - x) = 1]_x",

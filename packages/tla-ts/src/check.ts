@@ -1504,6 +1504,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     );
   };
   // Deviation from TLC: under -continue, TLC's Worker reports a state whose next-state relation failed as deadlocked, or else reports the failure twice as its replay fails again.
+  // Deviation from TLC: under -continue, ModelChecker#doNextEvalFailed rethrows a failed invariant to Worker#doNextFailed, which reports it again with the code of its error.
   const reportNextStateFailure = (
     error: unknown,
     index: number,
