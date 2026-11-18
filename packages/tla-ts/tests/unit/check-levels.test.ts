@@ -817,6 +817,20 @@ describe("level checking matches SANY", () => {
       ],
     ],
     [
+      "THEOREM ASSUME NEW TEMPORAL f PROVE TRUE\n<1>1. CASE x = 1\n  <2>1. TAKE y \\in {x}\n  <2> QED\n<1>2. ASSUME NEW ACTION g PROVE TRUE\n  <2>1. HAVE x = 1\n  <2> QED\n<1>3. ASSUME NEW TEMPORAL h PROVE TRUE\n  <2>1. HAVE x = 1\n  <2> QED\n<1> QED",
+      [
+        [
+          "line 11, col 9 to line 11, col 18",
+          "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        ],
+        ["line 4, col 7 to line 4, col 16", "Non-constant CASE for temporal goal."],
+        [
+          "line 5, col 9 to line 5, col 22",
+          "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        ],
+      ],
+    ],
+    [
       "THEOREM ASSUME NEW TEMPORAL F, NEW k \\in F PROVE TRUE\nTHEOREM ASSUME NEW ACTION A, NEW j \\in A PROVE TRUE",
       [["line 3, col 32 to line 3, col 42", "Level error:\nTemporal formula used as set."]],
     ],

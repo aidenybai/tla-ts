@@ -1499,12 +1499,10 @@ export const analyzeAssumeProve = (
           message: "Level error:\nTemporal formula used as set.",
         });
       }
-      inner.set(assumption.name, {
-        kind: "Formal",
-        arity: assumption.arity,
-        level: NEW_SYMBOL_LEVELS[assumption.level],
-      });
-      return set ? [set] : [];
+      const level = NEW_SYMBOL_LEVELS[assumption.level];
+      inner.set(assumption.name, { kind: "Formal", arity: assumption.arity, level });
+      // SANY levels a NEW declaration at its kind's level, so NEW TEMPORAL makes a temporal goal.
+      return [set ?? createData(level)];
     }
     return [
       assumption.kind === "AssumeProve"
