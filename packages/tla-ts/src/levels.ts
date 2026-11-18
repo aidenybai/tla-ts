@@ -472,9 +472,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   ) => {
     const isBound = (name: string) => bound.includes(name);
     const exceeding = operands.flatMap((operand, index) =>
-      operand.kind === "Value" && operand.data.level > getMaxLevel(operator, index)
-        ? [{ operand, index }]
-        : [],
+      operand.data.level > getMaxLevel(operator, index) ? [{ operand, index }] : [],
     );
     exceeding
       .filter((entry) => operator.isCorrect && entry.operand.data.isCorrect)

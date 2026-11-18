@@ -36,6 +36,24 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks the level of an operator argument against its parameter", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nHiC(G(_)) == G(1) = 1\nF == {HiC(LAMBDA p : [](x = p)) : v \\in {1}}\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 7 to line 4, col 31 of module M",
+          message:
+            "Level error in applying operator HiC:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        },
+      ]),
+    );
+  });
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({
