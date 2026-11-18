@@ -1117,6 +1117,15 @@ export const createEnvironment = (
         const definition = symbol && definitions.get(symbol.key);
         return definition ? { ...definition, name } : scope.getDefinition(name);
       },
+      (name, location) =>
+        bound.has(name) ||
+        parsed.instances.some(
+          (instance) =>
+            isBefore(instance.location, location) && instanced.get(instance)?.has(name) === true,
+        ) ||
+        declarations.some(
+          (declaration) => declaration.name === name && isBefore(declaration.location, location),
+        ),
     );
     const linkNested = (nested: Module) => {
       const visibleModules = getVisibleModules();
@@ -1184,9 +1193,10 @@ export const createEnvironment = (
         (instance) =>
           getStandardSymbols(instance.module) ?? getLinkedModule(instance.module, parsed.name),
       );
-    const resolved = resolveModule(module, getUnit(module));
+    const unit = getUnit(module);
+    const resolved = resolveModule(module, unit);
     scope.errors.push(...resolved.errors);
-    module.definitions.forEach((definition) => {
+    unit.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);
       parameterized.set(key, !isParameterFree);

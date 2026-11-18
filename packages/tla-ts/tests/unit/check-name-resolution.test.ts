@@ -2575,6 +2575,112 @@ describe("name resolution matches SANY", () => {
       })),
       [],
     ],
+    [
+      "a selection into a name defined twice",
+      "Foo == 1 = 1\nFoo == TRUE\nX == Foo!1",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 11 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 11 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Foo.  \nThis duplicates the one at line 2, col 1 to line 2, col 12 of module M.",
+        },
+      ],
+    ],
+    [
+      "a selection from an inner module into a name defined twice",
+      "Foo == 1 = 1\nFoo == TRUE\n---- MODULE Inner ----\nX == Foo!1\n====",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 11 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 11 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Foo.  \nThis duplicates the one at line 2, col 1 to line 2, col 12 of module M.",
+        },
+      ],
+    ],
+    [
+      "a selection through an instance into a name its module defines twice",
+      "---- MODULE Inner ----\nFoo == 1 = 1\nLOCAL Foo == TRUE\n====\nI == INSTANCE Inner\nX == I!Foo!1",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 17 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 4, col 1 to line 4, col 17 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Foo.  \nThis duplicates the one at line 3, col 1 to line 3, col 12 of module M.",
+        },
+      ],
+    ],
+    [
+      "a selection into a theorem name an instance imported first",
+      "---- MODULE Base ----\nFoo == 1 = 1\n====\nINSTANCE Base\nTHEOREM Foo == TRUE\nX == Foo!1",
+      [
+        {
+          location: "line 6, col 1 to line 6, col 19 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 12 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection into a definition named like a later ASSUME/PROVE theorem",
+      "Foo == {1, 2, 3}\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\nX == Foo!3",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 37 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 16 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection from an inner module into an ASSUME/PROVE theorem named like a later definition",
+      "THEOREM Foo == ASSUME TRUE PROVE TRUE\nFoo == {1, 2, 3}\n---- MODULE Inner ----\nX == Foo!3\n====",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 16 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+        {
+          location: "line 3, col 1 to line 3, col 16 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 37 of module M.",
+        },
+        {
+          location: "line 5, col 10 to line 5, col 10 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection from an inner module into an ASSUME/PROVE theorem",
+      "THEOREM Foo == ASSUME TRUE PROVE TRUE\n---- MODULE Inner ----\nX == Foo!3\n====",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 10 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
