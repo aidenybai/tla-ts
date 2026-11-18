@@ -56348,4 +56348,34 @@ describe("BigInts", () => {
       expect((await check(compile(wrong, path))).status).toBe("assumption-violation");
     });
   });
+
+  describe("tests instanceof of a built-in on a type parameter's value that typeof narrows", () => {
+    const getSource = (expected: string) => `
+      const box = { size: Uint8Array.BYTES_PER_ELEMENT };
+      const describe = <A>(self: A): string => {
+        switch (typeof self) {
+          case "function":
+          case "object": {
+            if (self === null) return "null";
+            if (self instanceof Date) return "date";
+            return "object";
+          }
+          default:
+            return "other";
+        }
+      };
+      const result = [describe(new Date(5)), describe(box), describe(null), describe(1)].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("date,object,null,other"))).failure).toBeUndefined();
+    });
+
+    it("rejects another kind", async () => {
+      expect((await checkModel(getSource("object,object,null,other"))).failure?.message).toContain(
+        "result date,object,null,other",
+      );
+    });
+  });
 });
