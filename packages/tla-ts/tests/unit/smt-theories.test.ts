@@ -294,6 +294,18 @@ describe("a distinct of more than two arguments", () => {
     ]);
   });
 
+  it("stays a distinct when qe-light rewrites it", () => {
+    expect(
+      run([
+        ...declareConsts("Int", ["a", "b", "c"]),
+        "(assert (exists ((x Int)) (and (= x a) (distinct x b c))))",
+        "(apply qe-light)",
+      ]),
+    ).toEqual([
+      ["(goals", "(goal", "  (distinct a b c)", "  :precision precise :depth 1)", ")"].join("\n"),
+    ]);
+  });
+
   it("is blasted by propagate-values under its parameter blast_distinct", () => {
     expect(
       run([
