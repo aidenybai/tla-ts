@@ -1074,6 +1074,19 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return merged;
   };
 
+  const checkPrimedArguments = (members: SectionMember[]) =>
+    members.forEach((member) => {
+      const range = member.definition.location.range;
+      if (!member.definition.isRecursive || !range) return;
+      analyzeDefinition(member.definition, member.scope).maxLevels.forEach((level, index) => {
+        if (level >= ACTION_LEVEL) return;
+        errors.push({
+          location: formatRange(range),
+          message: `Argument ${index + 1} of recursive operator ${resolveSynonym(member.definition.name)} is primed`,
+        });
+      });
+    });
+
   // ModuleNode#levelCheck checks a recursive section twice, first with each recursive operator at the
   // constant level and taking action-level arguments, then with the highest level the first pass found.
   const checkRecursiveSection = (members: SectionMember[]) => {
@@ -1090,16 +1103,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       return analyzeDefinition(member.definition, member.scope);
     };
     members.forEach((member) => {
-      const levels = recheck(member);
-      const range = member.definition.location.range;
-      if (!member.definition.isRecursive || !range) return;
-      levels.maxLevels.forEach((level, index) => {
-        if (level >= ACTION_LEVEL) return;
-        errors.push({
-          location: formatRange(range),
-          message: `Argument ${index + 1} of recursive operator ${resolveSynonym(member.definition.name)} is primed`,
-        });
-      });
+      recheck(member);
+      checkPrimedArguments([member]);
     });
     const firstPass = recursive.map((member) => analyzeDefinition(member.definition, member.scope));
     const level = Math.max(CONSTANT_LEVEL, ...firstPass.map((levels) => levels.level));
@@ -1116,7 +1121,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     members.forEach(recheck);
   };
 
-  return { analyze, analyzeDefinition, checkRecursiveSection, toOperand, errors };
+  return {
+    analyze,
+    analyzeDefinition,
+    checkPrimedArguments,
+    checkRecursiveSection,
+    toOperand,
+    errors,
+  };
 };
 
 export const analyzeAssumeProve = (
@@ -1273,25 +1285,35 @@ export const checkModuleLevels = (
     })),
   ];
   const statementBodies = new Set(statements.map((statement) => statement.statement));
+  const sections = [
+    ...collectSections(module.units, new Map()),
+    ...statements.flatMap((statement) =>
+      statement.statement.kind === "AssumeProve"
+        ? []
+        : collectLetSections(statement.statement, new Map()),
+    ),
+  ];
   // ModuleNode#levelCheck checks its recursive sections, then every definition, then named theorems
   // and assumptions, then the rest in order.
   return {
-    sections: [
-      ...collectSections(module.units, new Map()),
-      ...statements.flatMap((statement) =>
-        statement.statement.kind === "AssumeProve"
-          ? []
-          : collectLetSections(statement.statement, new Map()),
-      ),
-    ].map((section) => ({
+    sections: sections.map((section) => ({
       location: section.location,
       check: (reported: SanyError[]) => {
         analyzer.checkRecursiveSection(section.members);
         reported.push(...analyzer.errors.splice(0));
       },
     })),
-    check: () =>
+    check: (isInner: boolean) =>
       [
+        // An inner module's ModuleNode#levelCheck reruns the first pass over its recursive sections,
+        // which checks their arguments for primes against what the second pass found.
+        (isInner ? sections : []).map((section) => ({
+          location: section.location,
+          check: (reported: SanyError[]) => {
+            analyzer.checkPrimedArguments(section.members);
+            reported.push(...analyzer.errors.splice(0));
+          },
+        })),
         module.definitions
           .filter(
             (definition) => !definition.name.includes("!") && !statementBodies.has(definition.body),

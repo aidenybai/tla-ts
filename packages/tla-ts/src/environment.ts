@@ -433,7 +433,7 @@ export const createEnvironment = (
         levelChecks.flatMap((check) => check.sections),
         warnings,
       ),
-      ...levelChecks.flatMap((check) => check.check()),
+      ...levelChecks.flatMap((check) => check.check(check !== levelChecks.at(-1))),
     ].filter(
       (error, index, all) =>
         all.findIndex(

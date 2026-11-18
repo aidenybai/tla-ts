@@ -254,6 +254,14 @@ describe("level checking matches SANY", () => {
         ["line 7, col 6 to line 7, col 10", "set"],
       ],
     ],
+    [
+      "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE w\nRECURSIVE R(_), S(_)\nR(p) == S(p)\nS(p) == p' = 1 \\/ S(p)\n====\nC == {[]x}\n====",
+      [
+        ["line 7, col 1 to line 7, col 22", "Argument 1 of recursive operator S is primed"],
+        ["line 6, col 1 to line 6, col 12", "Argument 1 of recursive operator R is primed"],
+        ["line 9, col 6 to line 9, col 10", "set"],
+      ],
+    ],
   ])("checks recursive sections first and twice like SANY: %j", async (source, errors) => {
     const messages: Record<string, string> = {
       set: "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
