@@ -36,6 +36,29 @@ it("sorts the records of the initial states, which TLC's simulator normalizes", 
   ]);
 });
 
+it.each(["[a : {0}, b : {1}]", '[{"a", "b"} -> {1}]'])(
+  "sorts a record an invariant checks against %s, which TLC's member sorts in place",
+  (set) => {
+    const messages: string[] = [];
+    simulate({
+      source: `---- MODULE M ----\nVARIABLE q\nId(a, c) == a\nInit == q = [b |-> 1, a |-> 2]\nNext == UNCHANGED q\nInv == q \\in ${set}\n====`,
+      config: SAFETY_CONFIG,
+      seed: 4n,
+      traceDepth: 5,
+      traceCount: 1n,
+      aril: 0n,
+      isGenerating: false,
+      scheduler: "random",
+      onSimulation: (output) => {
+        if (output.kind === "message" && output.isError) messages.push(output.message);
+      },
+    });
+    expect(messages).toEqual([
+      "Invariant Inv is violated by the initial state:\nq = [a |-> 2, b |-> 1]\n",
+    ]);
+  },
+);
+
 it('reports a violation in the step that sets TLCSet("exit"), which TLC\'s simulator drops', () => {
   const body =
     'Init == p = 0 /\\ q = 0\nNext == TLCSet("exit", TLCGet("level") > 3) /\\ p\' = p + 1 /\\ q\' = p + 1\nInv == q < 4';
@@ -214,5 +237,100 @@ it("binds CounterExample to the lasso of a behavior that violates a temporal pro
       '<< {<<1, [x |-> 0]>>, <<2, [x |-> 1]>>, <<3, [x |-> 2]>>},\n   {<<1, "A", 2>>, <<2, "A", 3>>, <<3, "B", 1>>} >>',
     ],
     ['<<{<<1, [a |-> 0, n |-> 1]>>}, {<<1, "UnnamedAction", 1>>}>>'],
+  ]);
+});
+
+const getViewLassos = (values: string, property: string) => {
+  const lassos: [unknown[][], number | undefined][] = [];
+  simulate({
+    source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES n, k\nInit == n = 0 /\\ k = 0\nNext == k < 5 /\\ k' = k + 1 /\\ n' = ${values}[k + 1]\nSpec == Init /\\ [][Next]_<<n, k>>\nProp == ${property}\nView == n\n====`,
+    config: "SPECIFICATION Spec\nPROPERTY Prop\nVIEW View\nCHECK_DEADLOCK FALSE",
+    seed: 4n,
+    traceDepth: 6,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: () => {},
+    onProgress: (progress) => {
+      if (progress.kind !== "violation") return;
+      lassos.push([
+        progress.violation.trace.map((step) => [step.state.n, step.state.k]),
+        progress.violation.loopStart,
+      ]);
+    },
+  });
+  return lassos;
+};
+
+it("reports the lasso TLC's LiveCheck1 finds in a behavior that revisits a state", () => {
+  expect(getViewLassos("<<1, 2, 3, 2, 4>>", "[]((n /= 9 => n /= 9) => [](n = 3))")).toEqual([
+    [
+      [
+        [0, 0],
+        [1, 1],
+        [2, 2],
+      ],
+      2,
+    ],
+  ]);
+});
+
+// Deviation from TLC: TLC shows the first four states of the behavior, then a step from the fourth back to itself.
+it("shows the states of the lasso it finds past a revisited state", () => {
+  expect(getViewLassos("<<1, 0, 2, 3, 4>>", "<>[](n = 1)")).toEqual([
+    [
+      [
+        [0, 0],
+        [1, 1],
+        [0, 2],
+        [2, 3],
+        [3, 4],
+        [4, 5],
+      ],
+      5,
+    ],
+  ]);
+});
+
+// Deviation from TLC: TLC's LiveCheck1 goes on from no node that a revisited state reaches, so it reports no violation.
+it("finds a violation past a revisited state, which TLC's LiveCheck1 misses", () => {
+  expect(getViewLassos("<<1, 0, 2, 3, 4>>", "[](n = 2 => [](n = 2))")).toEqual([
+    [
+      [
+        [0, 0],
+        [1, 1],
+        [0, 2],
+        [2, 3],
+        [3, 4],
+        [4, 5],
+      ],
+      5,
+    ],
+  ]);
+});
+
+it("reports each property it fails to evaluate on the lasso before the properties the lasso violates, as TLC's Liveness does", () => {
+  const reported: string[] = [];
+  simulate({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x\' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\nProp0 == <>(x = 5)\nProp1 == <>(x = "a")\n====',
+    config: "SPECIFICATION Spec\nPROPERTY Prop0\nPROPERTY Prop1",
+    seed: 4n,
+    traceDepth: 5,
+    traceCount: 2n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "message" && output.isError) reported.push(output.message);
+    },
+    onProgress: (progress) => {
+      if (progress.kind === "violation") reported.push(...(progress.violation.properties ?? []));
+    },
+  });
+  expect(reported).toEqual([
+    'TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check equality of integer 0 with non-integer:\n"a"',
+    "Prop0",
   ]);
 });

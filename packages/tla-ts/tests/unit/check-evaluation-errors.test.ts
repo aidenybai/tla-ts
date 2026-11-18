@@ -1412,6 +1412,82 @@ describe("evaluation errors match TLC", () => {
     expect(prints).toEqual(['"a"  7', '"a"  7', '"a"  7']);
   });
 
+  it("evaluates a constant TLCEval argument once under a LET of operators with parameters, but again under an operator argument", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nOp(G(_)) == TLCEval(Print(G("o"), TRUE))\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == x >= 0 /\\ LET F(a) == a IN TLCEval(Print(F("l"), TRUE)) /\\ Op(F)\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"l"  TRUE', '"o"  TRUE', '"o"  TRUE', '"o"  TRUE']);
+  });
+
+  it("evaluates a constant TLCEval argument again in an operator without parameters called under a bound name, whose context TLC passes on", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nD == TLCEval(Print("d", TRUE)) /\\ x >= 0\nD2 == D\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == /\\ \\A i \\in 1..2 : D\n       /\\ \\A i \\in 1..2 : D2\n       /\\ D\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(Array.from({ length: 13 }, () => '"d"  TRUE'));
+  });
+
+  it("evaluates a constant TLCEval argument again in a selection or CASE under a bound name, whose context TLC passes on", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nE == TLCEval(Print("e", TRUE)) /\\ TRUE\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == /\\ \\A i \\in 1..2 : E!1 /\\ x >= 0\n       /\\ \\A i \\in 1..2 : CASE x >= 0 -> TLCEval(Print("c", TRUE))\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual([
+      '"e"  TRUE',
+      ...Array.from({ length: 3 }, () => [
+        '"e"  TRUE',
+        '"e"  TRUE',
+        '"c"  TRUE',
+        '"c"  TRUE',
+      ]).flat(),
+    ]);
+  });
+
+  it("caches a constant TLCEval argument in the first LET definition without parameters only, whose context TLC leaves empty", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nL == LET a == TLCEval(Print("a", TRUE))\n         b == TLCEval(Print("b", TRUE))\n     IN a /\\ b /\\ x >= 0\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == L\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"a"  TRUE', '"b"  TRUE', '"b"  TRUE', '"b"  TRUE']);
+  });
+
+  it("caches a constant TLCEval argument in the first LET definition without parameters after a RECURSIVE operator, which TLC leaves out of the context", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nL == LET RECURSIVE r(_)\n         r(n) == IF n = 0 THEN 0 ELSE r(n - 1)\n         a == TLCEval(Print("a", TRUE))\n         b == TLCEval(Print("b", TRUE))\n     IN a /\\ b /\\ r(1) = 0 /\\ x >= 0\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == L\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"a"  TRUE', '"b"  TRUE', '"b"  TRUE', '"b"  TRUE']);
+  });
+
+  it("evaluates a LET definition without parameters that calls a RECURSIVE operator defined after it, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = LET RECURSIVE f(_)\n                c == f(2)\n                f(n) == IF n = 0 THEN 0 ELSE f(n - 1) + 1\n            IN c\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      2,
+      1,
+    ]);
+  });
+
   it("rejects EXCEPT at an argument that is not a tuple of a lazy function of two arguments", async () => {
     const pairs = [1, 2].flatMap((first) =>
       [0, 1, 2, 3, 4].map((second) => `<<${first}, ${second}>> :> 100`),
@@ -1634,6 +1710,49 @@ describe("evaluation errors match TLC", () => {
     });
     expect(result.failure?.code).toBe(2109);
     expect([...new Set(ranges)]).toEqual(["7:50-51", "5:7-12", "7:41-48", "7:46-46"]);
+  });
+
+  it("records where the liveness check fails as it generates again the successors of a state left incomplete, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Sequences\nVARIABLES x, z\nInit == x = <<0>> /\\ z = 0\nA0 == x' = x\nA1 == x' = x /\\ (Tail(x) /\\ TRUE) /\\ z' = z\nNext == A0 \\/ A1\nSpec == Init /\\ [][Next]_<<x, z>>\nProp == [](z = 0 => (z = 0 ~> x = <<>>))\nConstraint == x' /= x\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop\nACTION_CONSTRAINT Constraint",
+    });
+    const ranges = result.failure?.callStack?.map((expression) => {
+      const range = expression.location.range;
+      return range && `${range.start.line}:${range.start.column}-${range.end.column}`;
+    });
+    expect(result.failure?.code).toBe(2109);
+    expect([...new Set(ranges)]).toEqual(["6:7-43", "6:7-33", "6:7-12", "6:18-32", "6:18-24"]);
+  });
+
+  it.each([
+    [
+      'Assert(FALSE, "bound")',
+      'The first argument of Assert evaluated to FALSE; the second argument was:\n"bound"',
+    ],
+    ["<<x>>[3] = 0", "Attempted to access index 3 of tuple\n<<1>>\nwhich is out of bounds."],
+  ])(
+    "exits with TLC's general error code when its rerun of the initial states stops at a violation before %s fails again",
+    async (failure, message) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x \\in 0..1 /\\ y \\in {0, 1} /\\ (x = 0 \\/ ${failure})\nNext == UNCHANGED <<x, y>>\nInv == y = 0\nView == x\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+      });
+      expect([result.failure?.message, result.failure?.exitCode]).toEqual([message, 255]);
+    },
+  );
+
+  it("exits with the code of the error the liveness check of an initial state fails with, as TLC's rerun finds that state seen", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nA == x' = CHOOSE t \\in {0, 1} : t /= x /\\ UNCHANGED y\nSpec == Init /\\ [][A]_<<x, y>>\nProp == <>(ENABLED A)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+    });
+    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+      "In evaluation, the identifier y is either undefined or not an operator.\nline 4, col 53 to line 4, col 53 of module M",
+      151,
+    ]);
   });
 
   it("reports a value where the initial or next-state relation expects a formula like TLC", async () => {

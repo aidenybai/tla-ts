@@ -12,6 +12,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
+import type { OutputLine } from "../../src/check";
 import { UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
 import { formatState } from "../../src/values";
@@ -31,6 +32,16 @@ const getCoverageCounts = async (definitions: string, config: string) => {
       ? counts
       : `${relation.distinct}:${relation.generated} ${counts}`;
   });
+};
+
+const getCoverageLines = async (source: string, config: string) => {
+  const result = await check({ source, config, coverage: 1 });
+  return result.coverage?.relations.map((relation) =>
+    relation.expressions.map(
+      (expression) =>
+        `${"|".repeat(expression.depth)}${expression.location}: ${expression.count}${expression.cost > 0 ? `:${expression.cost}` : ""}`,
+    ),
+  );
 };
 
 describe("check matches TLC", () => {
@@ -1098,6 +1109,28 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("reads TLCGet in every state through a constant substituted with it, as TLC's level bound does", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT G(_)\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == PrintT(G("level"))\n====',
+      config: "CONSTANT G <- TLCGet\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["1", "2", "3"]);
+  });
+
+  it("reads the behavior through a constant substituted with Trace, as TLC does", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, Sequences, TLC, TLCExt\nCONSTANT G\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == PrintT(Len(G))\n====",
+      config: "CONSTANT G <- Trace\nINIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["1", "2", "3"]);
+  });
+
   it("overrides definitions and ignores undeclared names assigned by the configuration", async () => {
     const result = await check({
       source:
@@ -1369,6 +1402,30 @@ ASSUME TLCFP(a) = -887695703
     ).toEqual([["line 5, col 8 to line 5, col 9 of module M", 1]]);
   });
 
+  it.each([
+    ["an invariant", "INVARIANT P", "P == x # 1"],
+    ["an action property", "PROPERTY P", "P == [][x' # 1]_x"],
+  ])(
+    "prints the trace of %s it continues past without rebuilding it, as TLC's Worker does",
+    async (_name, config, property) => {
+      const outputs: OutputLine[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0 /\\ PrintT("i")\nNext == PrintT(<<"n", x>>) /\\ x < 2 /\\ x' = x + 1\n${property}\n====`,
+        config: `INIT Init\nNEXT Next\n${config}`,
+        isContinued: true,
+        onProgress: (progress) => {
+          if (progress.kind !== "violation") return;
+          const violation = progress.violation;
+          outputs.push(
+            ...violation.trace.flatMap((step) => step.output ?? []),
+            ...(violation.traceOutput ?? []),
+          );
+        },
+      });
+      expect(outputs).toEqual(['<<"n", 0>>']);
+    },
+  );
+
   it("counts the coverage of an action under ENABLED in an invariant", async () => {
     const result = await check({
       source:
@@ -1453,6 +1510,23 @@ ASSUME TLCFP(a) = -887695703
     ).toEqual(["2:2 2", "2:4 4"]);
   });
 
+  it("adds a state to the behavior graph after an invariant fails to evaluate in its successor, as TLC's Worker does", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == PrintT(<<"n", x>>) /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nInv == x < 1 \\/ CHOOSE e \\in {} : TRUE\nP == <>(x = 5)\n====`,
+      config: "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY P",
+    });
+    expect(result.failure?.traceOutput).toEqual(Array(4).fill('<<"n", 0>>'));
+  });
+
+  it("counts the successors the behavior graph generates again for a deadlocked state, as TLC does", async () => {
+    expect(
+      await getCoverageCounts(
+        "Init == x = 1\nNext == x = 0 /\\ x' = x\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nP == [](x = 1 => [](x = 1))",
+        "SPECIFICATION Spec\nPROPERTY P",
+      ),
+    ).toEqual(["2:2 2", "0:0 2 0"]);
+  });
+
   it.each([
     [
       "as TLC prints the trace",
@@ -1534,6 +1608,345 @@ ASSUME TLCFP(a) = -887695703
       expect(await getCoverageCounts(definitions, config)).toEqual(expected);
     },
   );
+
+  it.each([
+    [
+      "\\in",
+      "B == x' \\in {1, 2, 3} /\\ IF x' = 1 THEN TRUE ELSE y' = x'",
+      [
+        "line 6, col 6 to line 6, col 21 of module C: 3",
+        "|line 6, col 13 to line 6, col 21 of module C: 2:5",
+        "line 6, col 29 to line 6, col 34 of module C: 4",
+        "line 6, col 41 to line 6, col 44 of module C: 1",
+        "line 6, col 51 to line 6, col 57 of module C: 2",
+      ],
+    ],
+    [
+      "\\E",
+      "B == x < 5 /\\ \\E e \\in {1, 2, 3}, f \\in {4, 5} : x' = e /\\ IF e = 1 THEN TRUE ELSE y' = f",
+      [
+        "line 6, col 6 to line 6, col 10 of module C: 1",
+        "|line 6, col 6 to line 6, col 6 of module C: 2",
+        "line 6, col 50 to line 6, col 55 of module C: 6",
+        "|line 6, col 55 to line 6, col 55 of module C: 7",
+        "line 6, col 63 to line 6, col 67 of module C: 7",
+        "line 6, col 74 to line 6, col 77 of module C: 2",
+        "line 6, col 84 to line 6, col 89 of module C: 4",
+        "line 6, col 24 to line 6, col 32 of module C: 2:11",
+        "line 6, col 41 to line 6, col 46 of module C: 2:4",
+      ],
+    ],
+  ])(
+    "charges a set per element the successors draw from it under %s, as TLC's enumerators do",
+    async (_name, action, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE C ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nA == x < 2 /\\ x' = x + 1 /\\ y' = y\n${action}\nNext == A \\/ B\n====`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(lines?.[2]).toEqual(expected);
+    },
+  );
+
+  it("charges a set per element a quantifier or CHOOSE draws from it, as TLC's enumerators do", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE K ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv1 == \\E e \\in {0, 1, 2, 3} : e = x\nInv2 == (CHOOSE e \\in {0, 1, 2, 3} : e >= x) >= 0\nInv3 == \\A e, f \\in {0, 1, 2} : e + f # x + 5\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv1\nINVARIANT Inv2\nINVARIANT Inv3",
+    );
+    expect(lines?.slice(2)).toEqual([
+      [
+        "line 6, col 9 to line 6, col 37 of module K: 3",
+        "|line 6, col 33 to line 6, col 37 of module K: 6",
+        "|line 6, col 18 to line 6, col 29 of module K: 3:9",
+      ],
+      [
+        "line 7, col 9 to line 7, col 49 of module K: 3",
+        "|line 7, col 10 to line 7, col 43 of module K: 3",
+        "||line 7, col 38 to line 7, col 43 of module K: 6",
+        "||line 7, col 23 to line 7, col 34 of module K: 3:6",
+      ],
+      [
+        "line 8, col 9 to line 8, col 45 of module K: 3",
+        "|line 8, col 33 to line 8, col 45 of module K: 27",
+        "|line 8, col 21 to line 8, col 29 of module K: 3:51",
+      ],
+    ]);
+  });
+
+  it("charges the set a filter or map draws from and the set it builds, as TLC does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE F ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv1 == {e \\in 0..2 : e >= x} # {7}\nInv2 == \\E e \\in {f \\in {0, 1, 2} : f >= x} : e = 2\nInv3 == \\E e \\in {f + 1 : f \\in {0, 1, 2}} : e = x + 1\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv1\nINVARIANT Inv2\nINVARIANT Inv3",
+    );
+    expect(lines?.slice(2)).toEqual([
+      [
+        "line 6, col 9 to line 6, col 35 of module F: 3",
+        "|line 6, col 9 to line 6, col 29 of module F: 3",
+        "||line 6, col 23 to line 6, col 28 of module F: 9",
+        "||line 6, col 16 to line 6, col 19 of module F: 3",
+        "|line 6, col 33 to line 6, col 35 of module F: 3",
+      ],
+      [
+        "line 7, col 9 to line 7, col 51 of module F: 3",
+        "|line 7, col 47 to line 7, col 51 of module F: 6",
+        "|line 7, col 18 to line 7, col 43 of module F: 3:9",
+        "||line 7, col 37 to line 7, col 42 of module F: 9",
+        "||line 7, col 25 to line 7, col 33 of module F: 3:12",
+      ],
+      [
+        "line 8, col 9 to line 8, col 54 of module F: 3",
+        "|line 8, col 46 to line 8, col 54 of module F: 6",
+        "|line 8, col 18 to line 8, col 42 of module F: 3:9",
+        "||line 8, col 19 to line 8, col 23 of module F: 9",
+        "||line 8, col 33 to line 8, col 41 of module F: 3:12",
+      ],
+    ]);
+  });
+
+  it("charges the sets of \\, \\cap and \\cup as TLC's SetEnumValue does, through a state's value too", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE S ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = {0, 1}\nNext == x < 2 /\\ x' = x + 1 /\\ y' = y\nInv1 == \\E e \\in {0, 1, 2} \\ {x} : e # x\nInv2 == \\E e \\in y \\cup {x} : e = x\nInv3 == \\E e \\in {x} \\cup y : e = x\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv1\nINVARIANT Inv2\nINVARIANT Inv3",
+    );
+    expect([lines?.[0], ...(lines?.slice(2) ?? [])]).toEqual([
+      [
+        "line 4, col 18 to line 4, col 27 of module S: 3",
+        "|line 4, col 22 to line 4, col 27 of module S: 3:9",
+      ],
+      [
+        "line 6, col 9 to line 6, col 40 of module S: 3",
+        "|line 6, col 36 to line 6, col 40 of module S: 3",
+        "|line 6, col 18 to line 6, col 32 of module S: 3",
+        "||line 6, col 18 to line 6, col 26 of module S: 3:6",
+        "||line 6, col 30 to line 6, col 32 of module S: 3",
+      ],
+      [
+        "line 7, col 9 to line 7, col 35 of module S: 3",
+        "|line 7, col 31 to line 7, col 35 of module S: 6",
+        "|line 7, col 18 to line 7, col 27 of module S: 3",
+        "||line 7, col 18 to line 7, col 18 of module S: 3",
+        "||line 7, col 25 to line 7, col 27 of module S: 3:6",
+        "|||line 7, col 26 to line 7, col 26 of module S: 3",
+      ],
+      [
+        "line 8, col 9 to line 8, col 35 of module S: 3",
+        "|line 8, col 31 to line 8, col 35 of module S: 6",
+        "|line 8, col 18 to line 8, col 27 of module S: 3",
+      ],
+    ]);
+  });
+
+  it("charges a set of functions per function a successor, quantifier or CHOOSE draws, as TLC's SetOfFcnsValue does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE F ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x \\in [{1, 2} -> BOOLEAN] /\\ y \\in [{1, 2} -> {0, 1}]\nNext == UNCHANGED <<x, y>>\nInv1 == \\E f \\in [{1, 2} -> {0, 1}] : f = y\nInv2 == (CHOOSE f \\in [{1, 2} -> {0, 1}] : f = y) = y\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv1\nINVARIANT Inv2",
+    );
+    expect([lines?.[0], ...(lines?.slice(2) ?? [])]).toEqual([
+      [
+        "line 4, col 15 to line 4, col 33 of module F: 1:8",
+        "|line 4, col 16 to line 4, col 21 of module F: 1",
+        "|line 4, col 26 to line 4, col 32 of module F: 1",
+        "line 4, col 38 to line 4, col 61 of module F: 16",
+        "|line 4, col 44 to line 4, col 61 of module F: 4:32",
+        "||line 4, col 45 to line 4, col 50 of module F: 4",
+        "||line 4, col 55 to line 4, col 60 of module F: 4:40",
+      ],
+      [
+        "line 6, col 9 to line 6, col 43 of module F: 16",
+        "|line 6, col 39 to line 6, col 43 of module F: 40",
+        "|line 6, col 18 to line 6, col 35 of module F: 16:248",
+        "||line 6, col 19 to line 6, col 24 of module F: 16",
+        "||line 6, col 29 to line 6, col 34 of module F: 16:160",
+      ],
+      [
+        "line 7, col 9 to line 7, col 53 of module F: 16",
+        "|line 7, col 10 to line 7, col 48 of module F: 16",
+        "||line 7, col 44 to line 7, col 48 of module F: 40",
+        "||line 7, col 23 to line 7, col 40 of module F: 16:232",
+        "|||line 7, col 24 to line 7, col 29 of module F: 16",
+        "|||line 7, col 34 to line 7, col 39 of module F: 16:160",
+        "|line 7, col 53 to line 7, col 53 of module F: 16",
+      ],
+    ]);
+  });
+
+  it("counts the body of a lazy function under its constructor, and not in the rerun for a call stack, as TLC's FcnLambdaValue does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Integers\nVARIABLES x\nInit == x = 2\nNext == x' = 0 /\\ [i \\in {x} |-> <<i>>[4]][x] = 0\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 5, col 9 to line 5, col 14 of module E: 0",
+      "line 5, col 19 to line 5, col 49 of module E: 2",
+      "|line 5, col 19 to line 5, col 45 of module E: 2",
+      "||line 5, col 19 to line 5, col 42 of module E: 2",
+      "|||line 5, col 34 to line 5, col 41 of module E: 1",
+      "|||line 5, col 26 to line 5, col 28 of module E: 2",
+      "||line 5, col 44 to line 5, col 44 of module E: 2",
+    ]);
+  });
+
+  it("charges a function constructor its domain and size, as TLC's FcnLambdaValue#toFcnRcd does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Integers\nVARIABLES y, z\nInit == z = 1 /\\ y = [p \\in {1, 2} |-> z]\nNext == z' = 2 /\\ y' = [p \\in {1, 2} |-> z + 1]\nInv == y = [p \\in {1, 2} |-> z] \\/ z = 2\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines).toEqual([
+      [
+        "line 4, col 18 to line 4, col 41 of module E: 1",
+        "|line 4, col 22 to line 4, col 41 of module E: 1:2",
+        "||line 4, col 40 to line 4, col 40 of module E: 2",
+        "||line 4, col 29 to line 4, col 34 of module E: 1:3",
+      ],
+      [
+        "line 5, col 9 to line 5, col 14 of module E: 3",
+        "line 5, col 19 to line 5, col 47 of module E: 3",
+        "|line 5, col 24 to line 5, col 47 of module E: 3:6",
+        "||line 5, col 42 to line 5, col 46 of module E: 6",
+        "||line 5, col 31 to line 5, col 36 of module E: 3:9",
+      ],
+      [
+        "line 6, col 8 to line 6, col 40 of module E: 3",
+        "|line 6, col 8 to line 6, col 31 of module E: 3",
+        "||line 6, col 8 to line 6, col 8 of module E: 3",
+        "||line 6, col 12 to line 6, col 31 of module E: 3:6",
+        "|||line 6, col 30 to line 6, col 30 of module E: 6",
+        "|||line 6, col 19 to line 6, col 24 of module E: 3:9",
+        "|line 6, col 36 to line 6, col 40 of module E: 1",
+      ],
+    ]);
+  });
+
+  it("charges a set of records per record a successor or quantifier draws, as TLC's SetOfRcdsValue does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in [a : 0..1, b : BOOLEAN]\nNext == \\/ x.a = 0 /\\ x' \\in [a : {x.a, 1}, b : {TRUE}]\n        \\/ x.a = 1 /\\ x' = [a |-> 1 - x.a, b |-> x.b]\n        \\/ \\E r \\in [b : {x.b}, a : 0..1] : x' = r\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect([lines?.[0], lines?.[1], lines?.[3]]).toEqual([
+      [
+        "line 4, col 9 to line 4, col 37 of module E: 4",
+        "|line 4, col 15 to line 4, col 37 of module E: 1:8",
+        "||line 4, col 16 to line 4, col 23 of module E: 1",
+        "||line 4, col 26 to line 4, col 36 of module E: 1",
+      ],
+      [
+        "line 5, col 12 to line 5, col 18 of module E: 6",
+        "|line 5, col 12 to line 5, col 14 of module E: 4",
+        "line 5, col 23 to line 5, col 55 of module E: 4",
+        "|line 5, col 30 to line 5, col 55 of module E: 2:8",
+        "||line 5, col 35 to line 5, col 42 of module E: 2:6",
+        "|||line 5, col 36 to line 5, col 38 of module E: 2",
+        "||line 5, col 49 to line 5, col 54 of module E: 2:10",
+        "|||line 5, col 50 to line 5, col 53 of module E: 2",
+      ],
+      [
+        "line 7, col 45 to line 7, col 50 of module E: 8",
+        "line 7, col 21 to line 7, col 41 of module E: 4:36",
+        "|line 7, col 26 to line 7, col 30 of module E: 4:20",
+        "||line 7, col 27 to line 7, col 29 of module E: 4",
+        "|line 7, col 33 to line 7, col 40 of module E: 4",
+      ],
+    ]);
+  });
+
+  it("charges a filter of a set of records or functions per element it draws, as TLC's SetPredValue does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in {r \\in [a : 0..1, b : BOOLEAN] : r.a = 0}\nNext == x' \\in {r \\in [a : 0..1, b : BOOLEAN] : r.b = ~x.b}\nInv1 == \\E r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.a = x.a} : r = x\nInv2 == (CHOOSE r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.b = x.b} : TRUE).b = x.b\nInv3 == \\A r \\in {s \\in {f \\in [{1} -> {0, 1}] : f[1] >= x.a} : s[1] > 0} : r[1] = 1\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv1\nINVARIANT Inv2\nINVARIANT Inv3",
+    );
+    expect(lines).toEqual([
+      [
+        "line 4, col 9 to line 4, col 55 of module E: 2",
+        "|line 4, col 15 to line 4, col 55 of module E: 1:4",
+        "||line 4, col 48 to line 4, col 54 of module E: 4",
+        "||line 4, col 22 to line 4, col 44 of module E: 1:8",
+        "|||line 4, col 23 to line 4, col 30 of module E: 1",
+        "|||line 4, col 33 to line 4, col 43 of module E: 1",
+      ],
+      [
+        "line 5, col 9 to line 5, col 59 of module E: 8",
+        "|line 5, col 16 to line 5, col 59 of module E: 4:16",
+        "||line 5, col 49 to line 5, col 58 of module E: 16",
+        "||line 5, col 23 to line 5, col 45 of module E: 4:32",
+        "|||line 5, col 24 to line 5, col 31 of module E: 4",
+        "|||line 5, col 34 to line 5, col 44 of module E: 4",
+      ],
+      [
+        "line 6, col 9 to line 6, col 68 of module E: 4",
+        "|line 6, col 64 to line 6, col 68 of module E: 6",
+        "|line 6, col 18 to line 6, col 60 of module E: 4:34",
+        "||line 6, col 51 to line 6, col 59 of module E: 16",
+        "||line 6, col 25 to line 6, col 47 of module E: 4:32",
+        "|||line 6, col 26 to line 6, col 33 of module E: 4",
+        "|||line 6, col 36 to line 6, col 46 of module E: 4",
+      ],
+      [
+        "line 7, col 9 to line 7, col 81 of module E: 4",
+        "|line 7, col 9 to line 7, col 75 of module E: 4",
+        "||line 7, col 10 to line 7, col 72 of module E: 4",
+        "|||line 7, col 69 to line 7, col 72 of module E: 4",
+        "|||line 7, col 23 to line 7, col 65 of module E: 4:28",
+        "||||line 7, col 56 to line 7, col 64 of module E: 16",
+        "||||line 7, col 30 to line 7, col 52 of module E: 4:32",
+        "|||||line 7, col 31 to line 7, col 38 of module E: 4",
+        "|||||line 7, col 41 to line 7, col 51 of module E: 4",
+        "|line 7, col 79 to line 7, col 81 of module E: 4",
+      ],
+      [
+        "line 8, col 9 to line 8, col 84 of module E: 4",
+        "|line 8, col 77 to line 8, col 84 of module E: 4",
+        "|line 8, col 18 to line 8, col 73 of module E: 4:18",
+        "||line 8, col 65 to line 8, col 72 of module E: 6",
+        "||line 8, col 25 to line 8, col 61 of module E: 4:8",
+        "|||line 8, col 50 to line 8, col 60 of module E: 8",
+        "|||line 8, col 32 to line 8, col 46 of module E: 4:8",
+        "||||line 8, col 33 to line 8, col 35 of module E: 4",
+        "||||line 8, col 40 to line 8, col 45 of module E: 4:12",
+      ],
+    ]);
+  });
+
+  it("charges a set on the left of \\subseteq per element it draws until one is missing, as TLC's EnumerableValue#isSubsetEq does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in 0..2\nNext == x' = (x + 1) % 3\nInv == {0, 1} \\subseteq {x, 0, 1} /\\ ({0, 2} \\subseteq {x} \\/ TRUE)\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines?.[2]).toEqual([
+      "line 6, col 8 to line 6, col 67 of module E: 3",
+      "|line 6, col 8 to line 6, col 33 of module E: 3",
+      "||line 6, col 8 to line 6, col 13 of module E: 3:9",
+      "||line 6, col 25 to line 6, col 33 of module E: 3",
+      "|line 6, col 39 to line 6, col 66 of module E: 3",
+      "||line 6, col 39 to line 6, col 58 of module E: 3",
+      "|||line 6, col 39 to line 6, col 44 of module E: 3:4",
+      "|||line 6, col 56 to line 6, col 58 of module E: 3",
+      "||line 6, col 63 to line 6, col 66 of module E: 3",
+    ]);
+  });
+
+  it("charges SUBSET for each element drawn from a subset it gives, as TLC's SubsetValue gives each subset its cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Naturals, FiniteSets\nVARIABLES x, y\nInit == x = 0 /\\ y \\in SUBSET {1, 2} /\\ \\A e \\in y : e > 1\nNext == UNCHANGED <<x, y>>\nInv == Cardinality({s \\in SUBSET {1, 2} : s \\subseteq y}) > 0\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect([lines?.[0], lines?.[2]]).toEqual([
+      [
+        "line 4, col 18 to line 4, col 36 of module E: 2",
+        "|line 4, col 24 to line 4, col 36 of module E: 1:7",
+        "||line 4, col 31 to line 4, col 36 of module E: 1",
+        "line 4, col 41 to line 4, col 58 of module E: 4",
+        "|line 4, col 54 to line 4, col 58 of module E: 3",
+        "|line 4, col 50 to line 4, col 50 of module E: 4",
+      ],
+      [
+        "line 6, col 8 to line 6, col 61 of module E: 2",
+        "|line 6, col 8 to line 6, col 57 of module E: 2",
+        "||line 6, col 20 to line 6, col 56 of module E: 2:11",
+        "|||line 6, col 43 to line 6, col 55 of module E: 8",
+        "|||line 6, col 27 to line 6, col 39 of module E: 2:9",
+        "||||line 6, col 34 to line 6, col 39 of module E: 2",
+      ],
+    ]);
+  });
 
   it.each([
     [
@@ -1930,6 +2343,48 @@ describe("initial predicate and next-state relation match TLC", () => {
       "INIT Init\nNEXT Next",
     );
     expect(result.generatedStates).toBe(21);
+  });
+
+  it.each([
+    ["", undefined],
+    [" with coverage", 1],
+  ])(
+    "evaluates a LET definition again at each reference in an action, but once under ENABLED%s, as TLC's Tool does",
+    async (_title, coverage) => {
+      const prints: string[] = [];
+      await check({
+        coverage,
+        source:
+          '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ LET r == PrintT(<<"next", x>>) IN x\' = IF r /\\ r THEN x + 1 ELSE x\nInv == ENABLED (LET r == PrintT(<<"enabled", x>>) IN x\' = IF r /\\ r THEN x ELSE x)\n====',
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual([
+        '<<"enabled", 0>>',
+        '<<"next", 0>>',
+        '<<"next", 0>>',
+        '<<"enabled", 1>>',
+      ]);
+    },
+  );
+
+  it("draws a LET definition's random subset again at each reference in an action, as TLC's Tool#getNextStates does", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC, Randomization\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ LET s == RandomSubset(1, 1..100) IN PrintT(<<"n", s, s>>) /\\ x\' = x + 1\nInv == LET s == RandomSubset(1, 1..100) IN PrintT(<<"i", s, s>>)\nInv2 == ENABLED (LET s == RandomSubset(1, 1..100) IN PrintT(<<"e", s, s>>) /\\ x\' = x)\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nINVARIANT Inv2\nCHECK_DEADLOCK FALSE",
+      seed: 4n,
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual([
+      '<<"i", {10}, {10}>>',
+      '<<"e", {78}, {78}>>',
+      '<<"n", {7}, {100}>>',
+      '<<"e", {7}, {7}>>',
+      '<<"n", {1}, {49}>>',
+      '<<"e", {65}, {65}>>',
+    ]);
   });
 
   it("reports initial states without a next-state action", async () => {

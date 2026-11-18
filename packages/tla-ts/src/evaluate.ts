@@ -22,7 +22,19 @@ import {
 } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
-import { countCoverage, getCoverageNode, runAtCoverageNode, type Coverage } from "./coverage";
+import {
+  chargeContexts,
+  chargeFunctionConstruction,
+  chargeSetOperation,
+  costCoverage,
+  countCoverage,
+  createChargedEnumerator,
+  createProductSetEnumerator,
+  getCoverageNode,
+  runAtCoverageNode,
+  tagSubset,
+  type Coverage,
+} from "./coverage";
 import { MESSAGE_CODE } from "./tlc/messages";
 import type { CheckerRuntime } from "./runtime";
 import {
@@ -30,6 +42,7 @@ import {
   isExpressionImpure,
   isImpureDefinition,
   isNonconstant,
+  isTlcEvalReached,
   type DefinitionFacts,
 } from "./dependencies";
 import { contextualApplications, substitutionFrames } from "./instances";
@@ -561,6 +574,31 @@ export const forEachBinding = (
   visit: (scope: Scope | undefined) => boolean,
 ) => forEachBoundElement(bounds, getBoundElements(bounds, context), context.scope, visit);
 
+const forEachChargedBinding = (
+  bounds: Bound[],
+  context: Context,
+  coverage: Coverage,
+  visit: (scope: Scope | undefined) => boolean,
+) => {
+  const bounded = mapBoundSets(bounds, (set) => {
+    const value = evaluate(set, context);
+    return {
+      value,
+      elements: getQuantifierElements(value, set, context.environment.runtime.version),
+    };
+  });
+  const sets = bounded.map((item) => item.elements);
+  const charge = chargeContexts(
+    coverage,
+    bounded.map((item) => item.value),
+    sets,
+  );
+  return forEachBoundElement(bounds, sets, context.scope, (scope) => {
+    charge();
+    return visit(scope);
+  });
+};
+
 const getBoundsDomain = (bounds: Bound[], context: Context): Value => {
   const sets = mapBoundSets(bounds, (set) => evaluate(set, context));
   return sets.length === 1 ? sets[0] : { kind: "ProductSet", factors: sets };
@@ -801,14 +839,27 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
   return getEntryEvaluator(getDefinitionSource(definition), environment);
 };
 
+const CALLER_SCOPE: Scope = {
+  name: "",
+  binding: { kind: "Value", value: false },
+  parent: undefined,
+};
+
 const getDefinitionEvaluator = (definition: Definition, environment: Environment): Evaluator => {
   const compiled = environment.definitionEvaluators.get(definition);
   if (compiled) return compiled;
   const body = compileDefinitionBody(definition, environment);
   const definitionId = environment.facts.ids.get(definition);
   const startupValues = environment.startupValues;
-  const evaluator: Evaluator =
-    definitionId === undefined
+  const isInCallerContext =
+    definition.kind === "Operator" &&
+    definition.params.length === 0 &&
+    isTlcEvalReached(definition.body, environment);
+  const evaluator: Evaluator = isInCallerContext
+    ? (context) =>
+        (definitionId === undefined ? undefined : startupValues[definitionId]) ??
+        body(withScope(context, isTlcContextEmpty(context.scope) ? undefined : CALLER_SCOPE))
+    : definitionId === undefined
       ? (context) => body(withScope(context, undefined))
       : (context) => startupValues[definitionId] ?? body(withScope(context, undefined));
   environment.definitionEvaluators.set(definition, evaluator);
@@ -1122,7 +1173,15 @@ export const bindDefinitions = (
     node.parent = parent;
     return node;
   }, context.scope);
-  definitions.forEach((definition, index) => {
+  let isRecursiveAtOrAfter = false;
+  for (let index = definitions.length - 1; index >= 0; index--) {
+    const definition = definitions[index];
+    isRecursiveAtOrAfter ||= definition.isRecursive;
+    // TLC's LET evaluates an operator without parameters in the context before it, which TLCEval#tlcEval tells from an empty one.
+    const ownScope =
+      definition.kind === "Operator" && definition.params.length === 0 && !isRecursiveAtOrAfter
+        ? nodes[index].parent
+        : scope;
     nodes[index].binding =
       definition.kind === "Function"
         ? {
@@ -1142,19 +1201,19 @@ export const bindDefinitions = (
                 name: definition.name,
                 params: definition.params,
                 body: definition.body,
-                scope,
+                scope: ownScope,
               },
             }
           : {
               kind: "Thunk",
               expression: definition.body,
-              scope,
+              scope: ownScope,
               state: context.state,
               next: context.next,
               cache: undefined,
               isStreamed: reevaluated?.streamed.has(definition) ?? false,
             };
-  });
+  }
   const coverage = context.environment.coverage;
   if (coverage && coverage.current !== -1) {
     nodes.forEach((node) => {
@@ -1184,7 +1243,9 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
   if (global?.kind === "Definition") {
     return getDefinitionEvaluator(global.definition, context.environment)(context);
   }
-  const builtin = context.environment.builtins.get(name);
+  const builtin = context.environment.builtins.get(
+    context.environment.substitutions.get(name) ?? name,
+  );
   if (builtin?.arity === 0) return builtin.evaluate([], context);
   throw new TlaEvaluationError(
     `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
@@ -1195,7 +1256,9 @@ export const getReevaluatedDefinitions = (
   definitions: Definition[],
   environment: Environment,
 ): ReevaluatedDefinitions => ({
-  impure: new Set(definitions.filter((definition) => isImpureDefinition(definition, environment))),
+  impure: new Set(
+    definitions.filter((definition) => isImpureDefinition(definition, environment, "varying")),
+  ),
   streamed: new Set(
     definitions.filter((definition) => isImpureDefinition(definition, environment, "streamed")),
   ),
@@ -1401,9 +1464,21 @@ const countEvaluator =
     coverage.current = node;
     try {
       const value = evaluator(context);
-      if (typeof value === "object" && expression.kind === "SetEnumeration") {
-        coverage.values.set(value, node);
-      }
+      const isTagged =
+        expression.kind === "SetEnumeration" ||
+        ((expression.kind === "SetFilter" || expression.kind === "SetMap") &&
+          isReducibleSet(value)) ||
+        (expression.kind === "SetFilter" &&
+          typeof value === "object" &&
+          value.kind === "FilteredSet") ||
+        ((expression.kind === "FunctionSet" || expression.kind === "RecordSet") &&
+          typeof value === "object" &&
+          value.kind === expression.kind) ||
+        (expression.kind === "Apply" &&
+          expression.operator === "SUBSET" &&
+          typeof value === "object" &&
+          value.kind === "Subset");
+      if (typeof value === "object" && isTagged) coverage.values.set(value, node);
       return value;
     } finally {
       coverage.current = outer;
@@ -1553,6 +1628,26 @@ const compileClosureCall = (
   };
 };
 
+// TLC's LET conses only its arity-0 definitions onto the context that TLCEval#tlcEval caches under when it is empty.
+const isTlcContextEmpty = (scope: Scope | undefined) => {
+  for (let node = scope; node !== undefined; node = node.parent) {
+    const binding = node.binding;
+    if (
+      binding.kind !== "Operator" ||
+      binding.operator.kind !== "Closure" ||
+      binding.operator.params.length === 0
+    ) {
+      return false;
+    }
+    let letScope = binding.operator.scope;
+    while (letScope !== undefined && letScope !== node) letScope = letScope.parent;
+    if (letScope !== node) return false;
+  }
+  return true;
+};
+
+const SET_OPERATORS = new Set(["\\cup", "\\cap", "\\"]);
+
 const compileApply = (
   expression: Expression & { kind: "Apply" },
   environment: Environment,
@@ -1597,7 +1692,7 @@ const compileApply = (
       !contextualApplications.has(expression) && !isNonconstant(args[0], environment);
     const tlcEvalValues = environment.tlcEvalValues;
     return (context) => {
-      if (!isCached || context.scope !== undefined) {
+      if (!isCached || !isTlcContextEmpty(context.scope)) {
         return global.evaluate(getLazyArguments(args, context), context);
       }
       const cached = tlcEvalValues.get(expression);
@@ -1616,7 +1711,39 @@ const compileApply = (
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);
     const subset = getSubsetOperator(expression, global.evaluateBinary);
-    return (context) => subset(left(context), right(context));
+    const coverage = environment.coverage;
+    if (!coverage) return (context) => subset(left(context), right(context));
+    return (context) => {
+      const leftValue = left(context);
+      const rightValue = right(context);
+      if (
+        typeof leftValue !== "object" ||
+        leftValue.kind !== "Set" ||
+        !coverage.values.has(leftValue)
+      ) {
+        return subset(leftValue, rightValue);
+      }
+      const missing = leftValue.elements.findIndex((element) => !isElementOf(element, rightValue));
+      costCoverage(coverage, leftValue, (missing === -1 ? leftValue.elements.length : missing) + 1);
+      return missing === -1;
+    };
+  }
+  const coverage = environment.coverage;
+  const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
+  if (coverage && combine && SET_OPERATORS.has(expression.operator) && args.length === 2) {
+    const left = getEvaluator(args[0], environment);
+    const right = getEvaluator(args[1], environment);
+    return (context) => {
+      const leftValue = left(context);
+      const rightValue = right(context);
+      return chargeSetOperation(
+        coverage,
+        expression.operator,
+        leftValue,
+        rightValue,
+        combine(leftValue, rightValue),
+      );
+    };
   }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
   if (expression.operator === "\\cdot" && args.length === 2) {
@@ -1649,6 +1776,18 @@ const compileQuantifier = (
   const isForall = expression.kind === "Forall";
   const body = getEvaluator(expression.body, environment);
   const bound = expression.bounds[0];
+  const coverage = environment.coverage;
+  if (coverage) {
+    return (context) => {
+      const isFound = forEachChargedBinding(
+        expression.bounds,
+        context,
+        coverage,
+        (scope) => expectBooleanBody(body(withScope(context, scope)), expression) !== isForall,
+      );
+      return isFound ? !isForall : isForall;
+    };
+  }
   if (expression.bounds.length === 1 && bound.pattern.kind === "Name") {
     const name = bound.pattern.name;
     const set = getEvaluator(bound.set, environment);
@@ -1796,13 +1935,22 @@ export const getFunctionBuilder = (
   const template = getLazyFunctionTemplate(bounds, expression.body);
   const boundTupleLengths = getBoundTupleLengths(bounds);
   const bodyNames = getScopeNames(expression.body);
+  const coverage = environment.coverage;
   const createLazy = (domain: Value, context: Context) => {
     const scope = trimScope(context.scope, bodyNames);
     const lambdaContext = withScope(context, scope);
+    const compute = (argument: Value) =>
+      body(withScope(lambdaContext, bindArgument(bounds, scope, argument)));
+    const node = coverage && !environment.callStack ? coverage.current : -1;
     const functionValue = keepLambda({
       value: createLazyFunction(
         domain,
-        (argument) => body(withScope(lambdaContext, bindArgument(bounds, scope, argument))),
+        coverage
+          ? (argument) =>
+              coverage.current === -1
+                ? compute(argument)
+                : runAtCoverageNode(coverage, node, () => compute(argument))
+          : compute,
         getLazyFunctionSource(template, bounds, domain),
         boundTupleLengths,
       ),
@@ -1854,6 +2002,23 @@ const compileFunctionConstruction = (
 ): Evaluator => {
   const build = getFunctionBuilder(expression, environment).build;
   const bounds = expression.bounds;
+  const coverage = environment.coverage;
+  if (coverage) {
+    return (context) => {
+      const domain = getBoundsDomain(bounds, context);
+      const value = build(domain, context);
+      const sets =
+        bounds.length === 1 || typeof domain !== "object" || domain.kind !== "ProductSet"
+          ? [domain]
+          : domain.factors;
+      const isConverted =
+        (typeof value !== "object" || value.kind !== "LazyFunction") && sets.every(isReducibleSet);
+      if (isConverted && coverage.current !== -1 && coverage.covered.has(expression)) {
+        chargeFunctionConstruction(coverage, coverage.current, sets);
+      }
+      return value;
+    };
+  }
   if (bounds.length === 1 && bounds[0].pattern.kind === "Name") {
     const set = getEvaluator(bounds[0].set, environment);
     return (context) => build(set(context), context);
@@ -1933,22 +2098,13 @@ export const getLazyFilter = (
     predicate: predicateNode,
   };
   const coverage = environment.coverage;
-  const testCovered = (node: number, isMember: boolean, test: () => Value) => {
-    if (!coverage || node === -1) return test();
-    if (!isMember) coverage.secondary[node]++;
-    const value = runAtCoverageNode(coverage, isMember ? -1 : node, test);
-    if (!isMember && value === true) coverage.secondary[node]++;
-    return value;
-  };
   const createFiltered = (
     base: Value,
     context: Context,
     evaluator: Evaluator,
     node: number,
-  ): RebindableFilteredSet => ({
-    kind: "FilteredSet",
-    base,
-    test: (element, isMember) => {
+  ): RebindableFilteredSet => {
+    const test = (element: Value, isMember: boolean) => {
       if (
         pattern.kind === "Tuple" &&
         getSequenceElements(element)?.length !== pattern.names.length
@@ -1957,25 +2113,42 @@ export const getLazyFilter = (
           `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`,
         );
       }
-      const value = testCovered(node, isMember, () =>
-        evaluator(withScope(context, bindPattern(context.scope, pattern, element))),
-      );
+      const value = evaluator(withScope(context, bindPattern(context.scope, pattern, element)));
       if (typeof value !== "boolean") {
         throw new TlaEvaluationError(
           `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateNode} yielded non-Boolean value.`,
         );
       }
       return value;
-    },
-    source,
-    rebind: (tracing) =>
+    };
+    const rebind = (tracing: Environment) =>
       createFiltered(
         base,
         { ...context, environment: tracing },
         getEvaluator(expression.predicate, tracing),
         -1,
-      ),
-  });
+      );
+    if (!coverage || node === -1) return { kind: "FilteredSet", base, test, source, rebind };
+    return {
+      kind: "FilteredSet",
+      base,
+      test: (element, isMember) =>
+        runAtCoverageNode(coverage, isMember ? -1 : node, () => test(element, isMember)),
+      startPass: (isMaterialized) => {
+        const draws = createProductSetEnumerator(coverage, base);
+        return (element) => {
+          draws?.next();
+          tagSubset(coverage, base, element);
+          coverage.secondary[node]++;
+          const value = runAtCoverageNode(coverage, node, () => test(element, false));
+          if (isMaterialized && value) coverage.secondary[node]++;
+          return value;
+        };
+      },
+      source,
+      rebind,
+    };
+  };
   return (base: Value, context: Context, node = -1) =>
     createFiltered(base, context, predicate, node);
 };
@@ -2049,20 +2222,21 @@ const compileSetComprehension = (
         if (expectFilterPredicate(value, expression)) addBoundedElement(kept, element);
         else if (isUniform) break;
       }
-      if (coverage && coverage.current !== -1) {
-        coverage.secondary[coverage.current] += size + kept.length;
-      }
+      if (coverage) costCoverage(coverage, base, size + 1);
       return createNormalizedSet(kept);
     };
   }
   if (expression.kind === "SetMap") {
     const mapped = getEvaluator(expression.expression, environment);
+    const coverage = environment.coverage;
     return (context) => {
       const elements: Value[] = [];
-      forEachBinding(expression.bounds, context, (scope) => {
+      const add = (scope: Scope | undefined) => {
         addBoundedElement(elements, mapped(withScope(context, scope)));
         return false;
-      });
+      };
+      if (coverage) forEachChargedBinding(expression.bounds, context, coverage, add);
+      else forEachBinding(expression.bounds, context, add);
       return createEnumeratedSet(elements);
     };
   }
@@ -2076,16 +2250,15 @@ const compileSetComprehension = (
   }
   const body = getEvaluator(expression.body, environment);
   const evaluateSet = getEvaluator(set, environment);
+  const coverage = environment.coverage;
   return (context) => {
-    const elements = getChoiceElements(
-      evaluateSet(context),
-      expression,
-      set,
-      context.environment.runtime.version,
-    );
+    const base = evaluateSet(context);
+    const elements = getChoiceElements(base, expression, set, context.environment.runtime.version);
+    const enumerator = coverage && createChargedEnumerator(coverage, base, elements, true);
     let chosen: Value | undefined;
     const pattern = expression.pattern;
     someElement(elements, (element) => {
+      enumerator?.next();
       if (
         pattern.kind === "Tuple" &&
         getSequenceElements(element)?.length !== pattern.names.length
@@ -2099,8 +2272,9 @@ const compileSetComprehension = (
       chosen = getBoundValue(pattern, scope);
       return true;
     });
-    if (chosen === undefined) throw createNoChoiceError(expression);
-    return chosen;
+    if (chosen !== undefined) return chosen;
+    enumerator?.next();
+    throw createNoChoiceError(expression);
   };
 };
 

@@ -1093,10 +1093,16 @@ const compileAction = (
     case "Let": {
       const body = getChildRunner(expression.body);
       const reevaluated = getReevaluatedDefinitions(expression.definitions, environment);
+      // TLC's Tool#enabled binds a LET's definitions to lazy values it caches, where Tool#getNextStates evaluates them at every use.
+      const cached = { impure: new Set<Definition>(), streamed: reevaluated.streamed };
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(
           run,
-          bindDefinitions(expression.definitions, getContext(run, scope, partial), reevaluated),
+          bindDefinitions(
+            expression.definitions,
+            getContext(run, scope, partial),
+            run.isEnabled ? cached : reevaluated,
+          ),
           partial,
           action,
           isFixed,
@@ -1286,6 +1292,20 @@ export const getInitialStates = (
   return states;
 };
 
+export const createIncompleteSuccessorError = (
+  partial: State,
+  action: string | undefined,
+  environment: Environment,
+) => {
+  const missing = environment.variables.filter((_name, index) => partial[index] === undefined);
+  return new TlaIncompleteSuccessorError(
+    `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${missing.join(", ")}`,
+    partial,
+    action,
+    missing,
+  );
+};
+
 export const forEachSuccessor = (
   expression: Expression,
   state: Value[],
@@ -1294,6 +1314,7 @@ export const forEachSuccessor = (
   scope?: Scope,
   generator?: JavaRandom,
   onUnsatisfied?: Run["onUnsatisfied"],
+  onIncomplete?: (state: State, action: string | undefined) => void,
 ) => {
   const run: Run = {
     environment,
@@ -1314,15 +1335,11 @@ export const forEachSuccessor = (
     (partial, action) => {
       if (run.isStopped) return;
       if (!isComplete(partial)) {
-        const missing = environment.variables.filter(
-          (_name, index) => partial[index] === undefined,
-        );
-        throw new TlaIncompleteSuccessorError(
-          `Successor state is not completely specified by action ${action ?? "Next"}. The following variables are not assigned: ${missing.join(", ")}`,
-          partial,
-          action,
-          missing,
-        );
+        if (onIncomplete) {
+          onIncomplete(partial, action);
+          return;
+        }
+        throw createIncompleteSuccessorError(partial, action, environment);
       }
       run.successors++;
       run.isStopped = onSuccessor({ state: partial, action });

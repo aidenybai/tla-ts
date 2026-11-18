@@ -73,8 +73,7 @@ const withErrorExitCode = <Result>(run: () => Result) => {
 const withCheckerExitCode = (checker: LivenessChecker): LivenessChecker => ({
   branches: checker.branches,
   solutions: checker.solutions,
-  addInitialState: (index, state, tracing) =>
-    withErrorExitCode(() => checker.addInitialState(index, state, tracing)),
+  addInitialState: checker.addInitialState,
   addState: (index, state, successors, tracing) =>
     withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
   storeState: checker.storeState,
@@ -98,8 +97,8 @@ export const withLivenessChecksExitCode = (
   return (
     checks && {
       solutions: checks.solutions,
-      createChecker: (search, solutions) =>
-        withCheckerExitCode(checks.createChecker(search, solutions)),
+      findTraceViolation: (trace, fingerprints) =>
+        withErrorExitCode(() => checks.findTraceViolation(trace, fingerprints)),
     }
   );
 };

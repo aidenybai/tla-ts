@@ -677,7 +677,7 @@ export const getInterpretedAtoms = (environment: Environment): LiveAtoms<Value[]
   },
 });
 
-const evaluateLive = <State>(
+export const evaluateLive = <State>(
   expression: LiveExpression,
   state: State,
   next: State | undefined,

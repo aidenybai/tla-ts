@@ -440,7 +440,7 @@ const checkSpec = async (
         aril: args.aril,
         isGenerating: args.mode === "generate",
         scheduler: args.scheduler,
-        onSimulation: (output) => printSimulation(printer, output),
+        onSimulation: (output) => printSimulation(printer, output, timing.startTime),
       });
       printFinished();
       return status;
@@ -449,7 +449,7 @@ const checkSpec = async (
       const status = checkDepthFirst({
         ...options,
         maxDepth: args.dfidDepth,
-        onOutput: (output) => printDepthFirst(printer, output),
+        onOutput: (output) => printDepthFirst(printer, output, timing.startTime),
       });
       printFinished();
       return status;

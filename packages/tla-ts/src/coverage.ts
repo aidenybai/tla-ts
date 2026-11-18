@@ -10,7 +10,13 @@ import { formatRange } from "./errors";
 import type { Environment, Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
-import type { Value } from "./values";
+import {
+  getCardinality,
+  isEmptySet,
+  isReducibleSet,
+  type IntervalValue,
+  type Value,
+} from "./values";
 
 export type CoverageKind = "init" | "next" | "invariant" | "constraint" | "implied";
 
@@ -47,6 +53,11 @@ export interface Coverage {
 export interface CoverageReport {
   variables: CoverageVariable[];
   relations: CoverageRelationReport[];
+}
+
+export interface CoverageOutput {
+  kind: "coverage";
+  coverage: CoverageReport;
 }
 
 interface CoverageVariable {
@@ -116,6 +127,17 @@ export const createCoverage = (variableCount: number): Coverage => ({
   values: new WeakMap(),
   registers: new Uint8Array(variableCount * REGISTERS),
   relations: [],
+});
+
+export const createCoverageEnvironment = (
+  environment: Environment,
+  coverage: Coverage,
+): Environment => ({
+  ...environment,
+  evaluators: new WeakMap(),
+  entryEvaluators: new WeakMap(),
+  definitionEvaluators: new WeakMap(),
+  coverage,
 });
 
 const addNode = (
@@ -603,6 +625,170 @@ export const runAtCoverageNode = <Result>(
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
   const node = typeof value === "object" ? coverage.values.get(value) : undefined;
   if (node !== undefined) coverage.secondary[node] += cost;
+};
+
+export const chargeSetOperation = (
+  coverage: Coverage,
+  operator: string,
+  left: Value,
+  right: Value,
+  result: Value,
+): Value => {
+  const receiver = isReducibleSet(left)
+    ? left
+    : operator !== "\\" && isReducibleSet(right)
+      ? right
+      : undefined;
+  if (receiver === undefined || typeof result !== "object") return result;
+  const other = receiver === left ? right : left;
+  if (operator === "\\cup") {
+    if (isEmptySet(receiver) || !isReducibleSet(other)) return result;
+    const otherNode = coverage.values.get(other);
+    if (otherNode !== undefined) coverage.secondary[otherNode] += getCardinality(other) + 1;
+  }
+  const node = operator === "\\cup" ? undefined : coverage.values.get(receiver);
+  if (coverage.values.get(result) === node) return result;
+  const isShared = result === left || result === right || coverage.values.has(result);
+  const charged = isShared ? { ...result } : result;
+  if (node !== undefined) coverage.values.set(charged, node);
+  return charged;
+};
+
+interface ChargedEnumerator {
+  next: () => boolean;
+  reset: () => void;
+}
+
+const createListEnumerator = (coverage: Coverage, node: number | undefined, size: number) => {
+  let position = 0;
+  return {
+    next: () => {
+      if (node !== undefined) coverage.secondary[node]++;
+      return position++ < size;
+    },
+    reset: () => {
+      position = 0;
+    },
+  };
+};
+
+const createProductEnumerator = (
+  coverage: Coverage,
+  node: number,
+  sets: Value[],
+): ChargedEnumerator => {
+  if (sets.some((set) => isEmptySet(set))) return { next: () => false, reset: () => undefined };
+  const enumerators = sets.map((set) =>
+    createEnumerator(coverage, set, getCardinality(set), false),
+  );
+  const advance = () => {
+    for (let index = enumerators.length - 1; index > 0; index--) {
+      if (enumerators[index].next()) return true;
+      enumerators[index].reset();
+      enumerators[index].next();
+    }
+    return enumerators.length > 0 && enumerators[0].next();
+  };
+  let isDone = !enumerators.every((enumerator) => enumerator.next());
+  return {
+    next: () => {
+      if (isDone) return false;
+      coverage.secondary[node] += Math.max(enumerators.length, 1);
+      isDone = !advance();
+      return true;
+    },
+    reset: () => {
+      enumerators.forEach((enumerator) => {
+        enumerator.reset();
+        enumerator.next();
+      });
+      isDone = false;
+    },
+  };
+};
+
+export const createProductSetEnumerator = (coverage: Coverage, set: Value) => {
+  const node = typeof set === "object" ? coverage.values.get(set) : undefined;
+  if (node === undefined || typeof set !== "object") return undefined;
+  if (set.kind === "RecordSet") return createProductEnumerator(coverage, node, set.sets);
+  if (set.kind !== "FunctionSet") return undefined;
+  return createProductEnumerator(
+    coverage,
+    node,
+    Array.from({ length: getCardinality(set.domain) }, () => set.range),
+  );
+};
+
+const createEnumerator = (
+  coverage: Coverage,
+  set: Value,
+  size: number,
+  isNormalized: boolean,
+): ChargedEnumerator => {
+  const node = typeof set === "object" ? coverage.values.get(set) : undefined;
+  if (
+    typeof set === "object" &&
+    (set.kind === "Subset" || (!isNormalized && set.kind === "FilteredSet"))
+  ) {
+    return createListEnumerator(coverage, undefined, size);
+  }
+  const elements = createProductSetEnumerator(coverage, set);
+  if (!elements || node === undefined) return createListEnumerator(coverage, node, size);
+  if (!isNormalized) return elements;
+  let count = 0;
+  while (elements.next()) count++;
+  coverage.secondary[node] += count;
+  return createListEnumerator(coverage, node, count);
+};
+
+export const tagSubset = (coverage: Coverage, set: Value, subset: Value) => {
+  const node =
+    typeof set === "object" && set.kind === "Subset" ? coverage.values.get(set) : undefined;
+  if (node !== undefined && typeof subset === "object") coverage.values.set(subset, node);
+};
+
+export const createChargedEnumerator = (
+  coverage: Coverage,
+  set: Value,
+  list: Value[] | IntervalValue,
+  isNormalized: boolean,
+) => {
+  const size = Array.isArray(list) ? list.length : list.high - list.low + 1;
+  if (typeof set !== "object" || set.kind !== "Subset" || !Array.isArray(list)) {
+    return createEnumerator(coverage, set, size, isNormalized);
+  }
+  list.forEach((subset) => tagSubset(coverage, set, subset));
+  return createListEnumerator(coverage, undefined, size);
+};
+
+const chargeBindings = (enumerators: ChargedEnumerator[]) => {
+  enumerators.every((enumerator) => enumerator.next());
+  return () => {
+    for (let index = 0; index < enumerators.length; index++) {
+      if (enumerators[index].next() || index === enumerators.length - 1) return;
+      enumerators[index].reset();
+      enumerators[index].next();
+    }
+  };
+};
+
+export const chargeContexts = (
+  coverage: Coverage,
+  sets: Value[],
+  lists: (Value[] | IntervalValue)[],
+) =>
+  chargeBindings(
+    sets.map((set, index) => createChargedEnumerator(coverage, set, lists[index], true)),
+  );
+
+export const chargeFunctionConstruction = (coverage: Coverage, node: number, sets: Value[]) => {
+  const sizes = sets.map((set) => getCardinality(set));
+  const advance = chargeBindings(
+    sets.map((set, index) => createEnumerator(coverage, set, sizes[index], false)),
+  );
+  const size = sizes.reduce((product, setSize) => product * setSize, 1);
+  for (let index = 0; index < size; index++) advance();
+  coverage.secondary[node] += size;
 };
 
 const getLeadingZeros = (value: bigint) => {

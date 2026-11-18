@@ -107,6 +107,7 @@ export interface FilteredSetValue extends LazySet {
   kind: "FilteredSet";
   base: Value;
   test: (element: Value, isMember: boolean) => boolean;
+  startPass?: (isMaterialized: boolean) => (element: Value) => boolean;
   source?: FilteredSetSource;
 }
 
@@ -286,6 +287,13 @@ const forgetWrittenOrder = (value: Value): void => {
   if (value.kind === "Set") return value.elements.forEach(forgetWrittenOrder);
   value.writtenKeys = undefined;
   value.range.forEach(forgetWrittenOrder);
+};
+
+// TLC's SetOfRcdsValue#member and SetOfFcnsValue#member normalize the record or function they check in place.
+const forgetOwnWrittenOrder = (value: Value) => {
+  if (isWrittenOrderUsed && typeof value === "object" && value.kind === "Function") {
+    value.writtenKeys = undefined;
+  }
 };
 
 const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key === "string");
@@ -1588,7 +1596,9 @@ const enumerateSet = (
       }
       return toFiniteSet(
         createEnumeratedSet(
-          getStreamedElements(value.base).filter((element) => value.test(element, false)),
+          getStreamedElements(value.base).filter(
+            value.startPass?.(true) ?? ((element) => value.test(element, false)),
+          ),
         ),
       ).elements;
     case "Union": {
@@ -1814,6 +1824,8 @@ const someElementOfStream = (value: ObjectValue, visit: (element: Value) => bool
     );
   }
   if (value.kind === "FilteredSet" && isTlcEnumerable(value.base)) {
+    const test = value.startPass?.(false);
+    if (test) return someStreamedElement(value.base, (element) => test(element) && visit(element));
     return someStreamedElement(
       value.base,
       (element) => value.test(element, false) && visit(element),
@@ -2213,6 +2225,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
           `Attempted to check if \n${formatValue(element)}\nwhich is not a TLC function value, is in the set of functions:\n${prettyPrint(formatValue(set))}`,
         );
       }
+      forgetOwnWrittenOrder(element);
       const functionValue = toFiniteFunction(element);
       const low = getIntervalLow(element, functionValue.domain);
       const isDomain =
@@ -2225,6 +2238,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       return isDomain && functionValue.range.every((item) => isElementOf(item, set.range));
     }
     case "RecordSet": {
+      forgetOwnWrittenOrder(element);
       const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
       if (!functionValue || !isRecordDomain(functionValue.domain)) {
         if (isModelValue(element)) return isModelValueMember(element, set);

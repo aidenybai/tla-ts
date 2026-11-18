@@ -2,8 +2,9 @@ import type { Expression, SourceLocation } from "../ast";
 import { TlaEvaluationError } from "../errors";
 import { isConstantLevel } from "../dependencies";
 import {
+  chargeContexts,
   countCoverage,
-  costCoverage,
+  createChargedEnumerator,
   getCoverageNode,
   runAtCoverageNode,
   type Coverage,
@@ -308,12 +309,13 @@ const visitAt = (
       case "Let": {
         const context = getContext(replay, scope, partial);
         const definitions = expression.definitions;
-        const bound = replay.coverage
-          ? bindDefinitions(definitions, context, {
-              impure: new Set(definitions),
-              streamed: new Set(),
-            })
-          : bindDefinitions(definitions, context);
+        const bound =
+          replay.coverage && !replay.isEnabled
+            ? bindDefinitions(definitions, context, {
+                impure: new Set(definitions),
+                streamed: new Set(),
+              })
+            : bindDefinitions(definitions, context);
         return visit(replay, expression.body, items, bound, partial, node);
       }
       case "Label":
@@ -435,11 +437,6 @@ const createItem = (
   rest: ActionItem | undefined,
 ): ActionItem => ({ kind, expression, scope, node, rest });
 
-const getEnumerated = (replay: Replay, set: Value, elements: Value[]) => {
-  if (replay.coverage) costCoverage(replay.coverage, set, elements.length + 1);
-  return elements;
-};
-
 const visitAssignment = (
   replay: Replay,
   expression: Expression & { kind: "Apply" },
@@ -474,11 +471,15 @@ const visitAssignment = (
   }
   if (!isTlcEnumerable(set))
     throw new TlaEvaluationError("The right side of \\IN is not enumerable.");
-  return getEnumerated(replay, set, getStreamedElements(set)).reduce<boolean>(
-    (isProduced, element) =>
-      proceed(replay, items, assign(partial, index, element), node) || isProduced,
-    false,
-  );
+  const elements = getStreamedElements(set);
+  const enumerator =
+    replay.coverage && createChargedEnumerator(replay.coverage, set, elements, false);
+  const isProduced = elements.reduce<boolean>((isProduced, element) => {
+    enumerator?.next();
+    return proceed(replay, items, assign(partial, index, element), node) || isProduced;
+  }, false);
+  enumerator?.next();
+  return isProduced;
 };
 
 const ASSIGNMENT_OPERATORS = new Set(["=", "\\in", "\\subseteq"]);
@@ -521,19 +522,26 @@ const getBindings = (
 ) => {
   const bindings: (Scope | undefined)[] = [];
   const version = replay.environment.runtime.version;
-  const sets = runAt(replay, node, () =>
+  const bounded = runAt(replay, node, () =>
     mapBoundSets(expression.bounds, (set) => {
       const value = evaluate(set, context);
-      const elements = getQuantifierElements(value, set, version);
-      if (Array.isArray(elements)) getEnumerated(replay, value, elements);
-      return elements;
+      return { value, elements: getQuantifierElements(value, set, version) };
     }),
   );
+  const sets = bounded.map((item) => item.elements);
   forEachBoundElement(expression.bounds, sets, context.scope, (bound) => {
     bindings.push(bound);
     return false;
   });
-  return bindings;
+  const coverage = replay.coverage;
+  const charge =
+    coverage &&
+    chargeContexts(
+      coverage,
+      bounded.map((item) => item.value),
+      sets,
+    );
+  return { bindings, charge };
 };
 
 const visitApplication = (
@@ -608,14 +616,17 @@ const visitApplication = (
       );
       return isPrefixProduced || isLastProduced;
     }
-    case "Exists":
-      return getBindings(replay, expression, context, node).reduce(
-        (isProduced, bound) =>
-          visit(replay, expression.body, items, bound, partial, node) || isProduced,
-        false,
-      );
+    case "Exists": {
+      const bound = getBindings(replay, expression, context, node);
+      return bound.bindings.reduce((isProduced, scope) => {
+        bound.charge?.();
+        return visit(replay, expression.body, items, scope, partial, node) || isProduced;
+      }, false);
+    }
     case "Forall": {
-      const bounds = getBindings(replay, expression, context, node);
+      const bound = getBindings(replay, expression, context, node);
+      const bounds = bound.bindings;
+      bounds.forEach(() => bound.charge?.());
       if (bounds.length === 0) return proceed(replay, items, partial, node);
       const rest = bounds
         .slice(1)

@@ -749,6 +749,54 @@ describe("the CLI reports results like TLC", () => {
       /^Running depth-first search Model-Checking with fp 0 and seed 0 with 1 worker on \d+ cores with \d+MB heap and 64MB offheap memory \[pid: \d+\] \(.+, Node\.js .+\)\.$/,
     );
   });
+
+  it("reports the coverage of a simulation, again with its last progress, and of a depth-first search", () => {
+    const getCoverage = (args: string[]) => {
+      const lines = getSteadyLines(runCliWith("cli-output", [...args, "Coverage"]).stdout);
+      const start = lines.findIndex((line) => line.startsWith("The coverage statistics"));
+      return lines.slice(
+        start,
+        lines.findIndex((line, index) => index > start && line.includes("states generated")),
+      );
+    };
+    const heading =
+      "The coverage statistics at _ (see https://explain.tlapl.us/module-coverage-statistics for how to interpret the following statistics).";
+    const simulation = [
+      heading,
+      "<x line 3, col 10 to line 3, col 10 of module Coverage>: 0",
+      "<Init line 4, col 1 to line 4, col 4 of module Coverage>: 2:2",
+      "  line 4, col 9 to line 4, col 20 of module Coverage: 2",
+      "  |line 4, col 15 to line 4, col 20 of module Coverage: 1:3",
+      "<A line 5, col 1 to line 5, col 1 of module Coverage>: 6:6",
+      "  line 5, col 6 to line 5, col 10 of module Coverage: 6",
+      "  |line 5, col 6 to line 5, col 6 of module Coverage: 8",
+      "  line 5, col 15 to line 5, col 24 of module Coverage: 6",
+      "<B line 6, col 1 to line 6, col 1 of module Coverage>: 6:6",
+      "  line 6, col 6 to line 6, col 24 of module Coverage: 6",
+      "<Inv line 8, col 1 to line 8, col 3 of module Coverage>",
+      "  line 8, col 8 to line 8, col 13 of module Coverage: 14",
+      "End of statistics.",
+    ];
+    expect(
+      getCoverage(["-simulate", "num=3", "-depth", "4", "-seed", "4", "-coverage", "1"]),
+    ).toEqual([...simulation, ...simulation]);
+    expect(getCoverage(["-dfid", "3", "-coverage", "1"])).toEqual([
+      heading,
+      "<x line 3, col 10 to line 3, col 10 of module Coverage>: 0",
+      "<Init line 4, col 1 to line 4, col 4 of module Coverage>: 2:2",
+      "  line 4, col 9 to line 4, col 20 of module Coverage: 2",
+      "  |line 4, col 15 to line 4, col 20 of module Coverage: 1:3",
+      "<A line 5, col 1 to line 5, col 1 of module Coverage>: 0:5",
+      "  line 5, col 6 to line 5, col 24 of module Coverage: 5",
+      "<B line 6, col 1 to line 6, col 1 of module Coverage>: 0:3",
+      "  line 6, col 6 to line 6, col 10 of module Coverage: 3",
+      "  |line 6, col 6 to line 6, col 6 of module Coverage: 5",
+      "  line 6, col 15 to line 6, col 24 of module Coverage: 3",
+      "<Inv line 8, col 1 to line 8, col 3 of module Coverage>",
+      "  line 8, col 8 to line 8, col 13 of module Coverage: 4",
+      "End of statistics.",
+    ]);
+  });
 });
 
 describe("the CLI answers PickSuccessor from standard input like TLC", () => {
@@ -1126,6 +1174,7 @@ describe("the CLI takes several specs and globs", () => {
     expect(result.status).toBe(10);
     expect(getCheckedSpecs(result.stdout)).toEqual([
       "Checking AssumptionFalse.tla with AssumptionFalse.cfg",
+      "Checking Coverage.tla with Coverage.cfg",
       "Checking EventualAction.tla with EventualAction.cfg",
       "Checking FailedAssert.tla with FailedAssert.cfg",
       "Checking FailedInitialInvariant.tla with FailedInitialInvariant.cfg",

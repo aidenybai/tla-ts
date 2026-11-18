@@ -107,8 +107,7 @@ interface TupType {
 interface SeqType {
   kind: "Seq";
   element: Type;
-  // The sparse function a sequence becomes when it meets one in the sparse pass.
-  target?: MapType;
+  target?: SeqType | MapType;
 }
 
 // A record of several shapes starts with the position of its shape.
@@ -529,6 +528,7 @@ const unify = (left: Type, right: Type): void => {
     return unify(leftType.values, rightType.values);
   }
   if (leftType.kind === "Seq" && rightType.kind === "Seq") {
+    rightType.target = leftType;
     return unify(leftType.element, rightType.element);
   }
   if (leftType.kind === "Set" && rightType.kind === "Set") {
@@ -4072,8 +4072,12 @@ const compileStep = (
     if (!isEnabled && primed.some((code) => code === undefined)) return () => "H.deopt();";
     return () => getEmitCode(primed);
   }
-  // With warnings on, TLC evaluates what is left once every variable is assigned, without branching.
-  if (program.environment.runtime.isWarningEnabled && primed.every((code) => code !== undefined)) {
+  // With warnings on, TLC evaluates what is left of a step once every variable is assigned, without branching, but not under ENABLED.
+  if (
+    !isEnabled &&
+    program.environment.runtime.isWarningEnabled &&
+    primed.every((code) => code !== undefined)
+  ) {
     const guards = pending.map((item) => {
       if (item.expression.kind !== "Unchanged") {
         return expectBool(

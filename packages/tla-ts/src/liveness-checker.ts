@@ -22,6 +22,7 @@ import {
   type Solution,
   type Tableau,
 } from "./tableau";
+import { findTraceLasso, type TraceLasso } from "./trace-liveness";
 import { isSameValue, type Value } from "./values";
 
 export interface LiveSuccessor<State = Value[]> {
@@ -51,9 +52,14 @@ export interface LivenessChecker {
   getViolatedProperties: (path: Value[][], cycleStart: number) => string[];
 }
 
+export interface TraceViolation extends TraceLasso {
+  properties: string[];
+  failures: TlaEvaluationError[];
+}
+
 export interface LivenessChecks {
   solutions: Solution[];
-  createChecker: (search: SearchGraph<Value[]>, solutions: Solution[]) => LivenessChecker;
+  findTraceViolation: (trace: Value[][], fingerprints: bigint[]) => TraceViolation | undefined;
 }
 
 export interface LiveGraph<State> {
@@ -77,7 +83,13 @@ export interface SearchGraph<State> {
     index: number,
     state: State,
     onSuccessors: (successors: LiveSuccessor<State>[]) => void,
+    replay?: Environment,
   ) => void;
+}
+
+interface Tracing {
+  atoms: LiveAtoms<Value[]>;
+  replay: Environment | undefined;
 }
 
 export interface LiveEvaluation<State> {
@@ -261,13 +273,14 @@ const getLiveFormula = (
   const fairness = temporals.map((item) =>
     toLiveExpression(item.expression, item.scope, environment),
   );
-  const negations = properties.map((property) =>
-    createUnary("Not", toLiveExpression(property.expression, property.scope, environment)),
+  const checks = properties.map((property) =>
+    toLiveExpression(property.expression, property.scope, environment),
   );
+  const negations = checks.map((check) => createUnary("Not", check));
   const violation = negations.length === 1 ? negations[0] : createJunction("Or", negations);
   const formula =
     fairness.length === 0 ? violation : createJunction("And", [...fairness, violation]);
-  return { formula, negations };
+  return { formula, checks };
 };
 
 export type LiveAtom = LiveState | LiveEnabled | LiveAction;
@@ -322,6 +335,42 @@ export const getLiveExpressions = (solutions: Solution[]) =>
     getAtomExpressions(atom).map((item) => item.expression),
   );
 
+const isSharingResults = (formula: LiveExpression, environment: Environment) => {
+  const formulaAtoms = new Set<LiveAtom>();
+  collectAtoms(formula, formulaAtoms);
+  const checked = [...formulaAtoms].flatMap(getAtomExpressions);
+  return checked.every((item) => item.scope === undefined)
+    ? !isExpressionImpure(
+        checked.map((item) => item.expression),
+        environment,
+        "repeated",
+      )
+    : !hasRepeatedEffects(environment);
+};
+
+const getViolatedProperties = (
+  properties: TemporalProperty[],
+  checks: LiveExpression[],
+  path: Value[][],
+  cycleStart: number,
+  environment: Environment,
+  failures?: TlaEvaluationError[],
+) => [
+  ...new Set(
+    properties
+      .filter((_property, position) => {
+        try {
+          return !evaluateOnLasso(checks[position], path, cycleStart, 0, environment);
+        } catch (error) {
+          if (!failures || !(error instanceof TlaEvaluationError)) throw error;
+          failures.push(error);
+          return false;
+        }
+      })
+      .map((property) => property.name),
+  ),
+];
+
 export const createLivenessChecks = (
   properties: TemporalProperty[],
   temporals: ScopedExpression[],
@@ -329,73 +378,25 @@ export const createLivenessChecks = (
 ): LivenessChecks | undefined => {
   if (properties.length === 0) return undefined;
   const live = getLiveFormula(properties, temporals, environment);
-  // A check evaluated once for a state shows what TLC shows when no check repeats an effect. A
-  // definition TLC evaluates as it starts repeats nothing, but a scope can bind any definition.
-  const formulaAtoms = new Set<LiveAtom>();
-  collectAtoms(live.formula, formulaAtoms);
-  const checked = [...formulaAtoms].flatMap(getAtomExpressions);
-  const isShared = checked.every((item) => item.scope === undefined)
-    ? !isExpressionImpure(
-        checked.map((item) => item.expression),
-        environment,
-        "repeated",
-      )
-    : !hasRepeatedEffects(environment);
+  const solutions = getSolutions(live.formula);
+  const atoms = getInterpretedAtoms(environment);
+  const isShared = isSharingResults(live.formula, environment);
   return {
-    solutions: getSolutions(live.formula),
-    createChecker: (search, solutions) => {
-      const tracing = { environment, atoms: getInterpretedAtoms(environment) };
-      const graph = createLiveGraph(
-        solutions,
-        {
-          atoms: {
-            holdsState: (atom, state) => tracing.atoms.holdsState(atom, state),
-            holdsAction: (atom, state, next) => tracing.atoms.holdsAction(atom, state, next),
-          },
-          isShared,
-          isSame: isSameState,
-          evaluateFrom: (source, evaluate) => {
-            environment.runtime.setLivenessSource(source);
-            try {
-              return evaluate();
-            } finally {
-              environment.runtime.setLivenessSource(undefined);
-            }
-          },
-        },
-        search,
-        environment.runtime.version !== "1.7.4",
+    solutions,
+    findTraceViolation: (trace, fingerprints) => {
+      const lasso = findTraceLasso(trace, fingerprints, solutions, atoms, isShared);
+      if (!lasso) return undefined;
+      // Liveness#findViolatedProperties reports a property it fails to evaluate on the lasso and goes on.
+      const failures: TlaEvaluationError[] = [];
+      const violated = getViolatedProperties(
+        properties,
+        live.checks,
+        lasso.positions.map((position) => trace[position]),
+        lasso.cyclePosition - 1,
+        environment,
+        failures,
       );
-      const traceWith = <Result>(replay: Environment | undefined, run: () => Result) => {
-        if (replay === undefined) return run();
-        tracing.atoms = getInterpretedAtoms(replay);
-        try {
-          return run();
-        } finally {
-          tracing.atoms = getInterpretedAtoms(environment);
-        }
-      };
-      return {
-        branches: graph.branches,
-        solutions,
-        addInitialState: (index, state, replay) =>
-          traceWith(replay, () => graph.addInitialState(index, state)),
-        addState: (index, state, successors, replay) =>
-          traceWith(replay, () => graph.addState(index, state, successors, replay !== undefined)),
-        storeState: graph.storeState,
-        getStateCounts: graph.getStateCounts,
-        findViolation: graph.findViolation,
-        getViolatedProperties: (path, cycleStart) => [
-          ...new Set(
-            properties
-              .filter(
-                (_property, position) =>
-                  !evaluateOnLasso(live.negations[position].body, path, cycleStart, 0, environment),
-              )
-              .map((property) => property.name),
-          ),
-        ],
-      };
+      return { ...lasso, properties: violated, failures };
     },
   };
 };
@@ -406,8 +407,60 @@ export const createLivenessChecker = (
   environment: Environment,
   search: SearchGraph<Value[]>,
 ): LivenessChecker | undefined => {
-  const checks = createLivenessChecks(properties, temporals, environment);
-  return checks?.createChecker(search, checks.solutions);
+  if (properties.length === 0) return undefined;
+  const live = getLiveFormula(properties, temporals, environment);
+  const isShared = isSharingResults(live.formula, environment);
+  const solutions = getSolutions(live.formula);
+  const tracing: Tracing = { atoms: getInterpretedAtoms(environment), replay: undefined };
+  const graph = createLiveGraph(
+    solutions,
+    {
+      atoms: {
+        holdsState: (atom, state) => tracing.atoms.holdsState(atom, state),
+        holdsAction: (atom, state, next) => tracing.atoms.holdsAction(atom, state, next),
+      },
+      isShared,
+      isSame: isSameState,
+      evaluateFrom: (source, evaluate) => {
+        environment.runtime.setLivenessSource(source);
+        try {
+          return evaluate();
+        } finally {
+          environment.runtime.setLivenessSource(undefined);
+        }
+      },
+    },
+    {
+      getFingerprint: search.getFingerprint,
+      forEachActionSuccessors: (index, state, onSuccessors) =>
+        search.forEachActionSuccessors(index, state, onSuccessors, tracing.replay),
+    },
+    environment.runtime.version !== "1.7.4",
+  );
+  const traceWith = <Result>(replay: Environment | undefined, run: () => Result) => {
+    if (replay === undefined) return run();
+    tracing.atoms = getInterpretedAtoms(replay);
+    tracing.replay = replay;
+    try {
+      return run();
+    } finally {
+      tracing.atoms = getInterpretedAtoms(environment);
+      tracing.replay = undefined;
+    }
+  };
+  return {
+    branches: graph.branches,
+    solutions,
+    addInitialState: (index, state, replay) =>
+      traceWith(replay, () => graph.addInitialState(index, state)),
+    addState: (index, state, successors, replay) =>
+      traceWith(replay, () => graph.addState(index, state, successors, replay !== undefined)),
+    storeState: graph.storeState,
+    getStateCounts: graph.getStateCounts,
+    findViolation: graph.findViolation,
+    getViolatedProperties: (path, cycleStart) =>
+      getViolatedProperties(properties, live.checks, path, cycleStart, environment),
+  };
 };
 
 export const createLiveGraph = <State>(

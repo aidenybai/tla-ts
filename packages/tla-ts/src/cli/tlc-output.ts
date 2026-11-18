@@ -472,7 +472,11 @@ const printSuccess = (printer: MessagePrinter, optimistic: number, actual: numbe
     ].join("\n"),
   );
 
-export const printDepthFirst = (printer: MessagePrinter, output: DepthFirstOutput) => {
+export const printDepthFirst = (
+  printer: MessagePrinter,
+  output: DepthFirstOutput,
+  startTime: number,
+) => {
   switch (output.kind) {
     case "message":
       printer.print(
@@ -480,6 +484,9 @@ export const printDepthFirst = (printer: MessagePrinter, output: DepthFirstOutpu
         output.isError ? MESSAGE_LEVEL.error : MESSAGE_LEVEL.none,
         printer.isTool ? output.toolMessage : output.message,
       );
+      return;
+    case "coverage":
+      printCoverage(printer, output.coverage, startTime);
       return;
     case "behavior":
       output.states.forEach((state, index) =>
@@ -635,7 +642,11 @@ export const printStartupBanner = (printer: MessagePrinter, args: TlcArguments) 
   );
 };
 
-export const printSimulation = (printer: MessagePrinter, output: SimulationOutput) => {
+export const printSimulation = (
+  printer: MessagePrinter,
+  output: SimulationOutput,
+  startTime: number,
+) => {
   const print = printer.print;
   switch (output.kind) {
     case "message":
@@ -644,6 +655,9 @@ export const printSimulation = (printer: MessagePrinter, output: SimulationOutpu
         output.isError ? MESSAGE_LEVEL.error : MESSAGE_LEVEL.none,
         printer.isTool ? output.toolMessage : output.message,
       );
+      return;
+    case "coverage":
+      printCoverage(printer, output.coverage, startTime);
       return;
     case "behavior": {
       const last = output.trace[output.trace.length - 1];

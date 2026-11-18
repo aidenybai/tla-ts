@@ -1,4 +1,5 @@
 import { getChildren, getReferencedName, isLocallyResolved, type Expression } from "./ast";
+import { isTlcEvalReached } from "./dependencies";
 import {
   bindValue,
   expectBooleanBody,
@@ -168,12 +169,10 @@ const getFreeNames = (expression: Expression, names = new Set<string>()) => {
   return names;
 };
 
-const getDelegateContext = (
-  generator: Generator,
-  expression: Expression,
-  frame: Frame,
-  isEveryLocalCaptured = false,
-) => {
+const getDelegateContext = (generator: Generator, expression: Expression, frame: Frame) => {
+  if (frame.locals.size === 0) return frame.context;
+  // TLC caches a constant TLCEval only where no name is bound, so a delegate that reaches one sees every local.
+  const isEveryLocalCaptured = isTlcEvalReached(expression, generator.environment);
   const freeNames = getFreeNames(expression);
   const captured = [...frame.locals].filter(
     (entry) => isEveryLocalCaptured || freeNames.has(entry[0]),
@@ -186,13 +185,8 @@ const getDelegateContext = (
   return `extend(${frame.context}, ${names}, [${captured.map((entry) => entry[1]).join(", ")}])`;
 };
 
-const generateDelegate = (
-  generator: Generator,
-  expression: Expression,
-  frame: Frame,
-  isEveryLocalCaptured = false,
-) =>
-  `${addReference(generator, getEvaluator(expression, generator.environment))}(${getDelegateContext(generator, expression, frame, isEveryLocalCaptured)})`;
+const generateDelegate = (generator: Generator, expression: Expression, frame: Frame) =>
+  `${addReference(generator, getEvaluator(expression, generator.environment))}(${getDelegateContext(generator, expression, frame)})`;
 
 const generateHelper = (
   generator: Generator,
@@ -334,8 +328,6 @@ const generateApply = (
     const domain = addReference(generator, getDomainOperator(expression));
     return `${domain}(${generateExpression(generator, args[0], frame)})`;
   }
-  // TLC caches a constant TLCEval only where no name is bound, so the delegate sees every local.
-  if (builtin.name === "TLCEval") return generateDelegate(generator, expression, frame, true);
   if (builtin.name === "\\subseteq" && builtin.evaluateBinary && args.length === 2) {
     const subset = addReference(generator, getSubsetOperator(expression, builtin.evaluateBinary));
     return `${subset}(${generateExpression(generator, args[0], frame)}, ${generateExpression(generator, args[1], frame)})`;

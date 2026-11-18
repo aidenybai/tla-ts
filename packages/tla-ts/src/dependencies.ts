@@ -30,6 +30,7 @@ const ACTION_LEVEL_FLAGS = VARIABLE_LEVEL_FLAGS | 64;
 const TEMPORAL_LEVEL_FLAGS = ACTION_LEVEL_FLAGS | 128;
 const RANDOM = 256;
 const ABOVE_CONSTANT_BOUND = 512;
+const TLC_EVAL = 1024;
 
 const ACTION_KINDS = new Set<Expression["kind"]>([
   "Prime",
@@ -141,7 +142,7 @@ const collectLocalFacts = (
       const variableIndex = environment.variableIndex.get(name);
       if (
         variableIndex !== undefined ||
-        environment.builtins.get(name)?.isStateLevel ||
+        environment.builtins.get(target)?.isStateLevel ||
         (definition && environment.variableIndex.has(definition.name))
       ) {
         row[0] |= nonconstantFlags;
@@ -168,6 +169,7 @@ const collectLocalFacts = (
         }
         if (STREAMED_BUILTINS.has(target)) row[0] |= STREAMED;
         if (RANDOM_BUILTINS.has(target)) row[0] |= RANDOM;
+        if (target === "TLCEval") row[0] |= TLC_EVAL;
         if (!isOverridden && isImpureBuiltin(target, environment)) row[0] |= READS_IMPURE;
         const builtin = environment.builtins.get(target);
         if (
@@ -256,7 +258,7 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
   return closed;
 };
 
-const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM;
+const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM | TLC_EVAL;
 const READ_MASK = NONCONSTANT | READS_IMPURE;
 const STARTUP_MASK = NONCONSTANT | ABOVE_CONSTANT_BOUND;
 
@@ -369,6 +371,9 @@ export const isImpureDefinition = (
   environment: Environment,
   effect: keyof typeof EFFECT_FLAGS = "any",
 ) => (getRow(definition, environment)[0] & EFFECT_FLAGS[effect]) !== 0;
+
+export const isTlcEvalReached = (expression: Expression, environment: Environment) =>
+  (getExpressionsRow([expression], environment)[0] & TLC_EVAL) !== 0;
 
 export const getDefinitionLevel = (definition: Definition, environment: Environment) => {
   const flags = getRow(definition, environment)[0] & TEMPORAL_LEVEL_FLAGS;

@@ -8,7 +8,7 @@ import {
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, getMessageExitStatus } from "./exit-codes";
 import type { TraceFailure } from "./check";
-import { getCodedMessage } from "./tlc/messages";
+import { getCodedMessage, isEvalException } from "./tlc/messages";
 import { getFingerprintError, getHeldValues, markFingerprinted, type Value } from "./values";
 
 export interface ReplayFailure {
@@ -30,11 +30,10 @@ export interface FailureOptions {
 
 const getInitialExitCode = (error: TlaEvaluationError) => {
   const coded = getCodedMessage(error.message);
-  return coded &&
-    !coded.isEvalException &&
-    getMessageExitStatus(coded.code) === EXIT_STATUS.configParseError
-    ? EXIT_STATUS.configParseError
-    : getErrorExitCode(error);
+  return (
+    getExitCode(error) ??
+    (coded && !isEvalException(error) ? getMessageExitStatus(coded.code) : EXIT_STATUS.error)
+  );
 };
 
 const getReplayExitCode = (error: TlaEvaluationError): number => {

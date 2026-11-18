@@ -17,7 +17,11 @@ import type {
 import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import {
   addCoverageRelation,
+  buildCoverage,
+  createCoverage,
+  createCoverageEnvironment,
   getCoverageLabel,
+  getCoverageReport,
   runAtCoverageNode,
   type Coverage,
   type CoverageKind,
@@ -67,10 +71,12 @@ import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty 
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
+import { createIncompleteSuccessorError } from "./successors";
 import {
   getSpecDescription,
   getSpecificationValue,
   getSubscriptVariables,
+  type SpecAction,
   type SpecDescription,
 } from "./spec-description";
 import { getRepresentative, getSymmetryGroup, type Images } from "./symmetry";
@@ -83,6 +89,7 @@ import {
   withHeadline,
 } from "./tlc/messages";
 import { createTlcOrder } from "./tlc/order";
+import { getPrimedRanges, walkSuccessors } from "./tlc/replay";
 import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
 import {
@@ -680,7 +687,7 @@ const getStateChecks = (named: NamedExpression[], environment: Environment): Sta
     );
   });
 
-const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] | undefined) => {
+const isUnchangedFor = (stateCheck: StateCheck, state: State, parent: Value[] | undefined) => {
   const variables = stateCheck.variables;
   if (!parent || !variables) return false;
   for (let index = 0; index < variables.length; index++) {
@@ -771,10 +778,10 @@ export interface Search {
     tracing: Environment,
     addFingerprint: () => boolean,
   ) => boolean;
-  satisfiesConstraints: (state: Value[], parent?: Value[]) => boolean;
+  satisfiesConstraints: (state: State, parent?: Value[]) => boolean;
   findFailedInitialPredicate: (state: Value[]) => NamedExpression | undefined;
   findViolatedActionProperty: (state: Value[], next: Value[]) => ActionProperty | undefined;
-  satisfiesActionConstraints: (state: Value[], next: Value[]) => boolean;
+  satisfiesActionConstraints: (state: Value[], next: State) => boolean;
   getExcludingConstraints: (state: Value[], next: Value[]) => string[];
   trackStatePossible: (state: Value[]) => void;
   trackActionPossible: (state: Value[], next: Value[]) => void;
@@ -927,7 +934,13 @@ export const prepareSearch = (options: CheckOptions) => {
   const created = createCheckEnvironment(config, options, options.onPrint ?? console.log);
   const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
-  const environment = specification.environment;
+  const coverage =
+    options.coverage === undefined
+      ? undefined
+      : createCoverage(specification.environment.variables.length);
+  const environment = coverage
+    ? createCoverageEnvironment(specification.environment, coverage)
+    : specification.environment;
   let description: SpecDescription | undefined;
   const getDescription = () =>
     (description ??= getSpecDescription(config, environment, specification.instanceActions));
@@ -942,8 +955,70 @@ export const prepareSearch = (options: CheckOptions) => {
     specification.moduleOperators,
     specification.runtimeInvariants,
   );
-  return { config, specification, environment, search, getDescription };
+  const getCoverage = () =>
+    coverage &&
+    getCoverageReport(
+      coverage,
+      environment,
+      specification.variableLocations,
+      search?.getTlcOrder() ?? [],
+    );
+  return { config, specification, environment, search, getDescription, coverage, getCoverage };
 };
+
+export interface CoveredAction extends SpecAction {
+  node: number;
+}
+
+export const STOP_WALK = new Error("The walk stopped");
+
+export const addActionCoverage = (
+  coverage: Coverage,
+  environment: Environment,
+  description: SpecDescription,
+) => {
+  const addRelations = (kind: "init" | "next", actions: SpecAction[]) =>
+    actions.map((action): CoveredAction => ({
+      ...action,
+      node: addCoverageRelation(
+        coverage,
+        kind,
+        getCoverageLabel(action.name, action.expression, environment),
+        action.expression,
+        action.scope,
+      ),
+    }));
+  const inits = addRelations("init", description.inits);
+  const actions = addRelations("next", description.actions);
+  buildCoverage(coverage, environment, getPrimedRanges(actions, environment));
+  return { inits, actions };
+};
+
+export const walkCoveredSuccessors = (
+  coverage: Coverage,
+  action: CoveredAction,
+  state: Value[],
+  environment: Environment,
+  onState: (successor: Value[]) => void,
+  onIncomplete = (partial: State, name: string | undefined): void => {
+    throw createIncompleteSuccessorError(partial, name, environment);
+  },
+) =>
+  walkSuccessors(
+    action,
+    action.node,
+    state,
+    environment,
+    (successor) => {
+      coverage.primary[action.node]++;
+      onState(successor);
+    },
+    (partial) => {
+      coverage.primary[action.node]++;
+      onIncomplete(partial, action.name);
+      return true;
+    },
+  );
 
 export const reportAssumptionViolation = (
   assumptions: Assumption[],
@@ -1096,8 +1171,8 @@ export const createSearch = (
   const evaluateCovered = (
     covered: Coverage,
     check: CoveredCheck,
-    state: Value[],
-    next: Value[] | undefined,
+    state: State,
+    next: State | undefined,
   ) => {
     try {
       return runAtCoverageNode(covered, check.node, () =>
@@ -1115,7 +1190,7 @@ export const createSearch = (
     coverage && covered
       ? runAtCoverageNode(coverage, covered.node, () => holdsLikeTlc(covered.expression, context))
       : holdsLikeTlc(expression, context);
-  const satisfiesCovered = (checks: CoveredCheck[], state: Value[], next?: Value[]) => {
+  const satisfiesCovered = (checks: CoveredCheck[], state: State, next?: State) => {
     if (!coverage) return undefined;
     for (const check of checks) {
       const value = evaluateCovered(coverage, check, state, next);
@@ -1269,7 +1344,7 @@ export const createSearch = (
           )
           .join("")
       : prettyPrint(formatValue(getViewValue(expression, state)));
-  const holdsActionConstraint = (constraint: NamedExpression, state: Value[], next: Value[]) =>
+  const holdsActionConstraint = (constraint: NamedExpression, state: Value[], next: State) =>
     holdsLikeTlc(
       constraint.expression,
       getContext(environment, state, next),

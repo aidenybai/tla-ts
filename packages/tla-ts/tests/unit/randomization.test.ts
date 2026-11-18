@@ -159,6 +159,21 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     ]);
   });
 
+  // Deviation from TLC: TLC draws on from where printing the trace stopped, misses the last step, evaluates B and skips the postcondition.
+  it("draws again from the seed of the state it found the error in as it rebuilds the behavior for the postcondition", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC, TLCExt\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nA == n' = n + 1 /\\ x' = RandomElement(1..1000)\nB == PrintT(<<\"B\", n>>) /\\ FALSE\nNext == A \\/ B\nInv == n < 2\nPost == PrintT(Cardinality(CounterExample.state))\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post",
+      seed: 4n,
+      onPrint: () => {},
+    });
+    expect([result.violation?.traceOutput, result.violation?.postconditionOutput]).toEqual([
+      [],
+      ["3"],
+    ]);
+  });
+
   it("draws once for a constant TLCEval in the next-state relation", async () => {
     const result = await check({
       source:
