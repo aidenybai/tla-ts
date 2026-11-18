@@ -901,7 +901,7 @@ export const runSmtlibScript = (
     if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
     if (state.logic === undefined) state.reader.registerList();
     resetKernel();
-    if (state.kernel === undefined) state.manager.dropSmtSolverDecl();
+    if (state.kernel === undefined) state.manager.dropSmtSolverZero();
   };
   // The parts of inc_sat_solver that are not ported leave its answers to the smt kernel.
   const useSatSolver = <Result>(action: (solver: IncSatSolver) => Result) => {

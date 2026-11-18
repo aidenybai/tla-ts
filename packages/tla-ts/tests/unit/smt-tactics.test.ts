@@ -2427,6 +2427,19 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     );
   });
 
+  // The 1-bit zero of the smt solver's bit2int is older than x, so theory_bv's mk_eq makes a new
+  // atom (= #b0 x) as it copies the zero's bit to x.
+  it("keeps the 1-bit zero Z3 makes as it starts the smt solver", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 1))",
+        "(assert (= x #b0))",
+        "(check-sat-using smt)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 50)"]);
+  });
+
   it("makes a declared sort at its first use, as psort_user_decl does", () => {
     const getModel = (before: string[], between: string[]) =>
       run([

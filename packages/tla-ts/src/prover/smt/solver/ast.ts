@@ -699,9 +699,10 @@ export class AstManager {
   private appHandles = new Int32Array(1024).fill(-1);
   private appHashes = new Int32Array(1024);
   private numApps = 0;
-  private nextSmallId = FIRST_DECLARED_SMALL_ID;
+  // The 1-bit zero made at startup takes the last small id before the declared ones.
+  private nextSmallId = FIRST_DECLARED_SMALL_ID - 1;
   private freeSmallIds: number[] = [];
-  private numDecls = FIRST_DECLARED_SMALL_ID;
+  private numDecls = FIRST_DECLARED_SMALL_ID - 1;
   private signatureDecls = new Map<number | string, SignatureDecl>();
   private declRefCounts: number[] = [];
   readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
@@ -728,6 +729,7 @@ export class AstManager {
   readonly falseExpr: number;
   readonly piExpr: number;
   readonly eulerExpr: number;
+  private readonly smtSolverZero: number;
   isHiDiv0 = true;
   maxChar = 196607;
   charBits = 18;
@@ -765,6 +767,10 @@ export class AstManager {
     this.eulerExpr = this.mkApp(OP_E, [], SORT_REAL);
     this.incRef(this.piExpr);
     this.incRef(this.eulerExpr);
+    // The bit2int of the smt solver's asserted_formulas makes a 1-bit zero when Z3 starts, so
+    // equalities with it put it first.
+    this.smtSolverZero = this.mkBvNumeral(0n, 1);
+    this.incRef(this.smtSolverZero);
     this.nextId = FIRST_FREE_ID;
   }
 
@@ -773,7 +779,7 @@ export class AstManager {
   }
 
   getNumAsts() {
-    return this.numLive + FIRST_FREE_ID - 4 + this.numDecls;
+    return this.numLive + FIRST_FREE_ID - 5 + this.numDecls;
   }
 
   private getSignatureDecl(key: number | string) {
@@ -796,9 +802,8 @@ export class AstManager {
     this.numDecls--;
   }
 
-  dropSmtSolverDecl() {
-    this.freeSmallIds.push(FIRST_DECLARED_SMALL_ID - 1);
-    this.numDecls--;
+  dropSmtSolverZero() {
+    this.decRef(this.smtSolverZero);
   }
 
   mkMacro(name: string, expr: number) {
