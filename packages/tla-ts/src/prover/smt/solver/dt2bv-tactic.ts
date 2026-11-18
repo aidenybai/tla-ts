@@ -276,7 +276,7 @@ export const runEnum2Bv = (
       const next = rewriter.rewrite(goal.forms.items[index]);
       release(manager, rewritten);
       rewritten = next;
-      goal.update(index, rewritten);
+      goal.update(index, rewritten, goal.getDependency(index));
     });
     const bounds = new RefVector(manager);
     for (const bound of rewriter.bounds.items) bounds.push(bound);

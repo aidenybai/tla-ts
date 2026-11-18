@@ -576,7 +576,7 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   try {
     for (let index = 0; !goal.isInconsistent && index < size; index++) {
       const result = nnf.apply(goal.forms.items[index], definitions);
-      goal.update(index, result);
+      goal.update(index, result, goal.getDependency(index));
       manager.decRef(result);
     }
   } catch (error) {
@@ -762,6 +762,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["elim_inverses", PARAM_BOOL, true, true],
         ]),
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) => {
         const manager = environment.manager;
         const elimRemParams = new Map([...params, ["elim_rem", true]]);
@@ -912,6 +913,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["produce_models", PARAM_BOOL, false, true],
         ["norm_int_only", PARAM_BOOL, true, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) => {
           checkParams(REWRITER_DESCRS, params);
@@ -1213,7 +1215,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
-  ["dt2bv", { descrs: new Map(), build: (environment) => createDt2BvTactic(environment.manager) }],
+  [
+    "dt2bv",
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => createDt2BvTactic(environment.manager),
+    },
+  ],
   ["eq2bv", { descrs: new Map(), build: (environment) => createEq2BvTactic(environment.manager) }],
   [
     "bit-blast",
@@ -1422,12 +1431,17 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   [
     "snf",
-    { descrs: NNF_DESCRS, build: (environment, params) => runNnf(environment.manager, params) },
+    {
+      descrs: NNF_DESCRS,
+      isTrackingDependencies: true,
+      build: (environment, params) => runNnf(environment.manager, params),
+    },
   ],
   [
     "nnf",
     {
       descrs: NNF_DESCRS,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runNnf(environment.manager, new Map([...params, ["mode", "full"]])),
     },

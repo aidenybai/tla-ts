@@ -321,6 +321,73 @@ describe("tactics keep the dependencies Z3 keeps", () => {
     ]);
   });
 
+  it("keeps the dependencies in nnf, normalize-bounds, purify-arith and dt2bv", () => {
+    const check = (lines: string[], tactic: string) =>
+      run([
+        "(set-option :produce-unsat-cores true)",
+        ...lines,
+        `(check-sat-using ${tactic})`,
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]);
+    expect(
+      check(
+        [
+          "(declare-const p Bool)",
+          "(declare-const q Bool)",
+          "(declare-const r Bool)",
+          "(assert (! (= p (and q r)) :named a1))",
+          "(assert (! (not (= q (or p r))) :named a2))",
+          "(assert (! q :named a3))",
+          "(assert (! r :named a4))",
+        ],
+        "(then nnf smt)",
+      ),
+    ).toEqual(["unsat", "(a4 a2 a3)", "(:rlimit 293)"]);
+    expect(
+      check(
+        [
+          "(declare-const x Int)",
+          "(declare-const y Int)",
+          "(assert (! (>= x 3) :named a1))",
+          "(assert (! (>= y (- 2)) :named a2))",
+          "(assert (! (<= (+ x y) 0) :named a3))",
+          "(assert (! (<= x 10) :named a4))",
+        ],
+        "(then normalize-bounds smt)",
+      ),
+    ).toEqual(["unsat", "(a3 a1 a2)", "(:rlimit 258)"]);
+    expect(
+      check(
+        [
+          "(declare-const x Int)",
+          "(declare-const y Int)",
+          "(assert (! (= (div x 2) 3) :named a1))",
+          "(assert (! (= (mod x 2) 1) :named a2))",
+          "(assert (! (< x 7) :named a3))",
+          "(assert (! (> y (div y 3)) :named a4))",
+        ],
+        "(then purify-arith smt)",
+      ),
+    ).toEqual(["unsat", "(a3 a1 a2)", "(:rlimit 719)"]);
+    expect(
+      check(
+        [
+          "(declare-datatypes ((Color 0)) (((red) (green) (blue))))",
+          "(declare-const c Color)",
+          "(declare-const d Color)",
+          "(declare-const p Bool)",
+          "(assert (! (or (= c red) (= c green)) :named a1))",
+          "(assert (! (not (= c red)) :named a2))",
+          "(assert (! (= d c) :named a3))",
+          "(assert (! (or p (not (= d green))) :named a4))",
+          "(assert (! (not p) :named a5))",
+        ],
+        "(then dt2bv simplify bit-blast sat)",
+      ),
+    ).toEqual(["unsat", "(a4 a1 a3 a5 a2)", "(:rlimit 173)"]);
+  });
+
   it("internalizes the assertions of the smt tactic once when it assumes the names", () => {
     expect(
       run([
