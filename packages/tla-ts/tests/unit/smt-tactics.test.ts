@@ -1749,3 +1749,41 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ).toEqual(["sat", "unsat", "(n)"]);
   });
 });
+
+describe("eq2bv, as Z3 5.3.2 encodes the bounded integers", () => {
+  it("names the bit-vector of each integer in the order of its hash table", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (>= x 0))",
+        "(assert (<= x 3))",
+        "(assert (or (= x 1) (= x 2) (= x 5)))",
+        "(assert (=> p (= x 3)))",
+        "(assert (or (= y 0) (= y 4)))",
+        "(assert (<= y 7))",
+        "(assert (>= y 0))",
+        "(apply eq2bv)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  true",
+        "  true",
+        "  (or (= z!1 #b001) (= z!1 #b010) (= z!1 #b101))",
+        "  (=> p (= z!1 #b011))",
+        "  (or (= z!0 #b000) (= z!0 #b100))",
+        "  true",
+        "  true",
+        "  (bvule #b000 z!0)",
+        "  (bvule z!0 #b100)",
+        "  (bvule #b001 z!1)",
+        "  (bvule z!1 #b011)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+});

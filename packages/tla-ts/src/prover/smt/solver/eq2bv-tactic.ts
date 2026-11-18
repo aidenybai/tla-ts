@@ -11,6 +11,7 @@ import {
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
 import type { Goal } from "./goal";
+import { ObjMap } from "./hashtable";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
@@ -88,7 +89,7 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
   const bounds = new BoundManager(manager);
   const trail = new RefVector(manager);
   const fd = new Map<number, number>();
-  const max = new Map<number, Rational>();
+  const max = new ObjMap<Rational>((expr) => manager.hashes[expr]);
   const nonFd = new Set<number>();
   const hasEq = new Set<number>();
   const converter: BvModelConverter = { bvToInt: new Map(), vars: [], values: [] };
@@ -147,7 +148,7 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
     }
   };
   for (const form of goal.forms.items) collectFd(form);
-  for (const variable of max.keys()) if (nonFd.has(variable)) max.delete(variable);
+  for (const variable of [...max.keys()]) if (nonFd.has(variable)) max.delete(variable);
   for (const [variable, maximum] of max) {
     const upper = bounds.uppers.get(variable);
     const lower = bounds.lowers.get(variable);
