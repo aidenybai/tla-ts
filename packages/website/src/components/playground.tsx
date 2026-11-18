@@ -1,6 +1,7 @@
 import { CaretDown, GearSix } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { cn } from "cn";
+import outlines from "virtual:outlines";
 import { createPartsContext } from "@/lib/utils";
 import type { Compilation } from "../compile-worker";
 import { getHighlightColors } from "../highlight-colors";
@@ -8,7 +9,7 @@ import { getLineHoveredName, getLineMarks } from "../line-marks";
 import { createHighlighter } from "../highlighter";
 import { PLAYGROUND_EXAMPLES } from "../playground-examples";
 import type { RunResult } from "../run-worker";
-import type { Mark, Source } from "../site-data";
+import type { Mark, Source, Token } from "../site-data";
 import { useCompile } from "../use-compile";
 import { useIsHydrated } from "../use-is-hydrated";
 import { useMediaQuery } from "../use-media-query";
@@ -19,10 +20,9 @@ import { Connector } from "./connector";
 import { Logo } from "./logo";
 import { RunIcon } from "./run-icon";
 import { Result } from "./parts";
-import { Spinner } from "./spinner";
 import { getStateNames } from "../search";
 import { useSearchPath } from "./search-cell";
-import { StateGraph } from "./state-graph";
+import { StateGraph, StateGraphSkeleton } from "./state-graph";
 import { useTheme } from "./theme-switcher";
 import { Verdict } from "./verdict";
 import { Button } from "./ui/button";
@@ -47,6 +47,7 @@ interface PlaygroundState {
   selectExample: (fileName: string) => void;
   compilation: Compilation | undefined;
   tla: Source | undefined;
+  outline: Token[][];
   sourceMarks: Mark[];
   outputMarks: Mark[];
   outputLineMarks: Mark[][];
@@ -83,6 +84,14 @@ export const PlaygroundRoot = (props: PartProps) => {
     void createHighlighter().then((nextHighlight) => setHighlight(() => nextHighlight));
   }, []);
   const tlaText = compiler.compilation?.tla;
+  const outlineText = outlines[file.fileName] ?? file.source;
+  const outline = useMemo(
+    () =>
+      outlineText
+        .split("\n")
+        .map((line) => line.split("\t").map((content) => ({ content, style: {} }))),
+    [outlineText],
+  );
   const tla = useMemo(
     () => (tlaText === undefined ? undefined : highlight?.(tlaText, "tlaplus")),
     [highlight, tlaText],
@@ -94,8 +103,8 @@ export const PlaygroundRoot = (props: PartProps) => {
   const sourceMarks = (isMapped && compiler.compilation?.sourceMarks) || NO_MARKS;
   const outputMarks = (isMapped && compiler.compilation?.outputMarks) || NO_MARKS;
   const outputLineMarks = useMemo(
-    () => getLineMarks((tlaText ?? "").split("\n"), outputMarks),
-    [tlaText, outputMarks],
+    () => getLineMarks((tlaText ?? outlineText).split("\n"), outputMarks),
+    [tlaText, outlineText, outputMarks],
   );
   const colors = useMemo(
     () => getHighlightColors(outputMarks.map((mark) => mark.name)),
@@ -149,6 +158,7 @@ export const PlaygroundRoot = (props: PartProps) => {
         },
         compilation: compiler.compilation,
         tla,
+        outline,
         sourceMarks,
         outputMarks,
         outputLineMarks,
@@ -275,6 +285,8 @@ export const PlaygroundPanes = () => {
       ?.querySelector(`[data-line="${search?.states.find((found) => found.isFailing)?.line}"]`)
       ?.scrollIntoView({ block: "center" });
   }, [search]);
+  // Until the first compilation lands, the pane shows the outline of what it will hold.
+  const isSkeleton = state.tla === undefined && state.error === undefined;
   const source = (
     <Pane name="source">
       <CodeEditor
@@ -292,14 +304,10 @@ export const PlaygroundPanes = () => {
   );
   const output = (
     <Pane name="output">
-      {state.tla === undefined && state.error === undefined && (
-        <div
-          role="status"
-          aria-label="Compiling"
-          className="flex size-full items-center justify-center text-faint transition-opacity delay-150 duration-150 ease-out starting:opacity-0"
-        >
-          <Spinner className="size-5" />
-        </div>
+      {isSkeleton && (
+        <span role="status" className="sr-only">
+          Compiling
+        </span>
       )}
       {state.error && (
         <p role="alert" className="mb-3 text-sm break-words text-destructive">
@@ -308,6 +316,8 @@ export const PlaygroundPanes = () => {
       )}
       <code
         ref={outputRef}
+        aria-hidden={isSkeleton || undefined}
+        data-skeleton={isSkeleton ? "" : undefined}
         onPointerOver={(event) =>
           state.setHoveredName(
             event.target instanceof HTMLElement ? event.target.dataset.region : undefined,
@@ -315,11 +325,14 @@ export const PlaygroundPanes = () => {
         }
         onPointerLeave={() => state.setHoveredName(undefined)}
         className={cn(
-          "@container block font-mono text-[13px]/[1.7] text-foreground pointer-coarse:text-[16px]/[1.7] transition-opacity duration-150 ease-out",
-          (state.isCompiling || state.error) && "opacity-50 delay-200",
+          "@container block font-mono text-[13px]/[1.7] pointer-coarse:text-[16px]/[1.7] transition-opacity duration-150 ease-out",
+          isSkeleton
+            ? "animate-pulse text-transparent select-none motion-reduce:animate-none"
+            : "text-foreground",
+          state.tla && (state.isCompiling || state.error) && "opacity-50 delay-200",
         )}
       >
-        {state.tla?.lines
+        {(state.tla?.lines ?? (isSkeleton ? state.outline : []))
           .map((tokens, index) => ({ tokens, number: index + 1 }))
           .map((line) => (
             <CodeLine
@@ -359,10 +372,9 @@ export const PlaygroundPanes = () => {
         />
         <Result.Body>
           {state.isRunning ? (
-            <span className="flex items-center gap-2 text-faint">
-              <Spinner />
-              Checking…
-            </span>
+            <Result.Skeleton>
+              <StateGraphSkeleton />
+            </Result.Skeleton>
           ) : (
             state.result && (
               <>

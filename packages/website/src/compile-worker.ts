@@ -21,6 +21,7 @@ export interface Compilation {
 
 export interface CompileResponse {
   source: string;
+  fileName: string;
   compilation?: Compilation;
   error?: string;
 }
@@ -39,6 +40,7 @@ self.onmessage = (event: MessageEvent<CompileRequest>) => {
     const printed = printRegions(compiled);
     self.postMessage({
       source: event.data.source,
+      fileName: event.data.fileName,
       compilation: {
         name: compiled.name,
         tla: printed.text.trimEnd(),
@@ -55,6 +57,10 @@ self.onmessage = (event: MessageEvent<CompileRequest>) => {
     } satisfies CompileResponse);
   } catch (error) {
     if (!(error instanceof TlaError)) throw error;
-    self.postMessage({ source: event.data.source, error: error.message } satisfies CompileResponse);
+    self.postMessage({
+      source: event.data.source,
+      fileName: event.data.fileName,
+      error: error.message,
+    } satisfies CompileResponse);
   }
 };

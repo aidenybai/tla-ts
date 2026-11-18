@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { globSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
@@ -7,6 +7,7 @@ import react from "@vitejs/plugin-react";
 import { createServer, defineConfig, type Plugin } from "vite-plus";
 import { printModule } from "../tla-ts/src/printer";
 import { compile } from "../tla-ts/src/typescript/compile";
+import { printRegions } from "../tla-ts/src/typescript/regions";
 import { createHighlighter } from "./src/highlighter";
 import { LOGO_PATH } from "./src/logo";
 import type { Benchmark, CompiledExample, ReferenceBlock, ReferenceSection } from "./src/site-data";
@@ -17,6 +18,10 @@ const EXAMPLE_PATHS = [
   "./src/examples/likes.ts",
   "../tla-ts/tests/fixtures/typescript/cli/failing/overdraft.ts",
   "../tla-ts/tests/fixtures/typescript/examples/hour-clock/hour-clock.ts",
+];
+const PLAYGROUND_PATHS = [
+  "./src/examples/counter.ts",
+  "../tla-ts/tests/fixtures/typescript/examples/*/*.ts",
 ];
 const GENERATED_NAMES = new Set(["vars", "Init", "Next", "Spec"]);
 const BENCHMARK_ROW =
@@ -46,6 +51,28 @@ const getExample = (
       .filter((name) => !GENERATED_NAMES.has(name)),
   };
 };
+
+// The shape of the TLA+ a file compiles to: its tokens, split by tabs, with their letters, digits,
+// and symbols masked. The playground draws it while its compiler loads, so the real text lands
+// where the outline was.
+const getOutline = (path: string, highlight: Awaited<ReturnType<typeof createHighlighter>>) =>
+  highlight(
+    printRegions(
+      compile(readFileSync(path, "utf8").trim(), path.slice(path.lastIndexOf("/") + 1)),
+    ).text.trimEnd(),
+    "tlaplus",
+  )
+    .lines.map((tokens) =>
+      tokens
+        .map((token) =>
+          token.content
+            .replace(/[A-Za-z_]/g, "a")
+            .replace(/\d/g, "0")
+            .replace(/[^\sa0]/g, "."),
+        )
+        .join("\t"),
+    )
+    .join("\n");
 
 const getBenchmarks = (): Benchmark[] => {
   const readme = readFileSync(README_URL, "utf8");
@@ -118,6 +145,26 @@ const siteData = (): Plugin => ({
       `export const install = ${JSON.stringify(highlight("npm install tla-ts", "shellscript"))};`,
       `export const reference = ${JSON.stringify(getReference(highlight))};`,
     ].join("\n");
+  },
+});
+
+const OUTLINES = "virtual:outlines";
+
+const outlines = (): Plugin => ({
+  name: "outlines",
+  resolveId: (id) => (id === OUTLINES ? `\0${OUTLINES}` : undefined),
+  async load(id) {
+    if (id !== `\0${OUTLINES}`) return undefined;
+    const highlight = await createHighlighter();
+    const paths = globSync([...EXAMPLE_PATHS, ...PLAYGROUND_PATHS], {
+      cwd: fileURLToPath(new URL(".", import.meta.url)),
+    }).map((path) => fileURLToPath(new URL(path, import.meta.url)));
+    for (const path of paths) this.addWatchFile(path);
+    return `export default ${JSON.stringify(
+      Object.fromEntries(
+        paths.map((path) => [path.slice(path.lastIndexOf("/") + 1), getOutline(path, highlight)]),
+      ),
+    )};`;
   },
 });
 
@@ -201,7 +248,15 @@ const pages = (): Plugin => ({
 });
 
 export default defineConfig({
-  plugins: [react(), tailwindcss(), siteData(), typescriptLibraries(), logoFiles(), pages()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    siteData(),
+    outlines(),
+    typescriptLibraries(),
+    logoFiles(),
+    pages(),
+  ],
   build: {
     rollupOptions: {
       input: [

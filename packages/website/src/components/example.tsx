@@ -208,7 +208,7 @@ export const ExampleGraph = () => {
   const state = exampleContext.useParts();
   return (
     state.result?.search && (
-      <div className="absolute top-10 left-full ml-8 w-60 max-xl:hidden">
+      <div className="absolute top-10 left-full ml-8 w-60 transition-[opacity,translate] duration-200 ease-out max-xl:hidden starting:opacity-0 motion-safe:starting:-translate-x-2">
         <StateGraph
           search={state.result.search}
           limit={12}
