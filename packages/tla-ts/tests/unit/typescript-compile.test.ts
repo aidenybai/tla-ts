@@ -57754,4 +57754,33 @@ describe("runs the script's methods in a conversion inside at most one other", (
       "tla-ts can't tell what this method gives where it converts an object",
     );
   });
+
+  describe("runs the first operand of a comma in a for-in head once, then iterates the second", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      let warned = false;
+      const make = (config: Record<string, unknown>) => {
+        let key: string | null = null;
+        const names: string[] = [];
+        for (const name in (warned || "key" in config || ((warned = true), box.seen.push("warn")),
+        "id" in config && (box.seen.push("id"), (key = "" + config.id)),
+        config))
+          names.push(name);
+        return [key, names.join("+")].join(":");
+      };
+      box.seen.push(make({ a: 1 }), make({ id: 7, b: 2 }));
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "warn,id,:a,7:id+b";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = "warn,id,id,:a,7:id+b";
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
 });

@@ -19115,6 +19115,37 @@ const translateLoop = (
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
+  // A for-of or a for-in over a comma runs the comma's first operand as a statement, which may
+  // assign where a branch runs, and then iterates what the second gives.
+  const head = ts.isForInStatement(loop) || ts.isForOfStatement(loop) ? loop.expression : undefined;
+  const comma = head === undefined ? undefined : getCast(head);
+  if (
+    head !== undefined &&
+    comma !== undefined &&
+    isComma(comma) &&
+    !path.scope.results.has(comma)
+  ) {
+    return translateExpressionStatement(comma.left, path, context, frame, (after) => {
+      const value = translateExpression(comma.right, after.scope, context);
+      return translateLoop(
+        loop,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([
+              ...after.scope.results,
+              [comma, value],
+              ...(comma === head ? [] : [[head, value] as const]),
+            ]),
+          },
+        },
+        context,
+        frame,
+        continueWith,
+      );
+    });
+  }
   const isYielding = frame.yieldTo !== undefined && hasYield(loop.statement);
   // A state machine runs a while, a do-while, or a for that yields as jumps to its head.
   const loopTo = frame.loopTo;
@@ -21619,9 +21650,14 @@ const getEvaluated = (statement: ts.Statement) =>
         ? statement.expression
         : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
           ? statement.expression
-          : ts.isForOfStatement(statement) || ts.isForInStatement(statement)
+          : (ts.isForOfStatement(statement) || ts.isForInStatement(statement)) &&
+              !isComma(getCast(statement.expression))
             ? statement.expression
             : undefined;
+
+// A comma, whose first operand a loop runs as a statement before it iterates what the second gives.
+const isComma = (node: ts.Expression): node is ts.BinaryExpression =>
+  ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.CommaToken;
 
 // The call inside a statement's expression that runs as its own statement first, other than one
 // that the statement itself runs.
