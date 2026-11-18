@@ -16130,16 +16130,15 @@ const getEffects = (
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
   context: Context,
 ): Effects => {
+  // A function or a method of any kind that runs, which resolves once for all of them.
+  const isRun = (inner: FunctionNode) =>
+    isPlain(inner) || isAnyGenerator(inner) || isAsyncFunction(inner);
   const getFunctionNode = (expression: ts.Expression) => {
     const symbol = getSymbol(expression, context.checker);
     return (
       (symbol && functions.get(symbol)) ??
-      getCallee(expression, context) ??
-      getFunctionOfKind(expression, context, isAnyGenerator) ??
-      getFunctionOfKind(expression, context, isAsyncFunction) ??
-      getCalledMethod(expression, context)?.method ??
-      getCalledMethod(expression, context, isAnyGenerator)?.method ??
-      getCalledMethod(expression, context, isAsyncFunction)?.method
+      getFunctionOfKind(expression, context, isRun) ??
+      getCalledMethod(expression, context, isRun)?.method
     );
   };
   const written =
