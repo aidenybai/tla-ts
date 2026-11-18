@@ -1423,6 +1423,7 @@ const parse = (
           if (isTlapm && isAt("RECURSIVE")) throw createUnexpected("Unexpected keyword RECURSIVE");
           if (accept("RECURSIVE")) {
             recursive.push(...declareRecursive());
+            openModules[openModules.length - 1].hasRecursiveLet = true;
             continue;
           }
           const unit = parseDefinition(!isTlapm && accept("LOCAL"));
@@ -2685,6 +2686,7 @@ const parse = (
       theorems: [],
       uses: [],
       units: [],
+      hasRecursiveLet: false,
     };
     openModules.push(module);
     recursiveScopes.push(new Set());

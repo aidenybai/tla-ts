@@ -272,7 +272,11 @@ const createPlaceholder = (definition: Definition, maxLevel: number, weight: num
   };
 };
 
-const getRecursiveSections = (base: Scope, root: ModuleUnit[] | LetExpression) => {
+const getRecursiveSections = (
+  base: Scope,
+  root: ModuleUnit[] | LetExpression,
+  hasRecursiveLet = true,
+) => {
   const sections: RecursiveSection[] = [];
   const pending: Set<string>[] = [];
   const frames: ScopeFrame[] = [];
@@ -373,6 +377,7 @@ const getRecursiveSections = (base: Scope, root: ModuleUnit[] | LetExpression) =
         );
         return;
       }
+      if (pendingCount === 0 && !hasRecursiveLet) return;
       if (unit.kind === "Assumption") walkExpression(unit.assumption.expression);
       else if (unit.kind === "Theorem" && unit.theorem.statement.kind !== "AssumeProve") {
         walkExpression(unit.theorem.statement);
@@ -1342,7 +1347,7 @@ export const checkModuleLevels = (
     })),
   ];
   const statementBodies = new Set(statements.map((statement) => statement.statement));
-  const sections = getRecursiveSections(new Map(), module.units);
+  const sections = getRecursiveSections(new Map(), module.units, module.hasRecursiveLet);
   const createCheck = (location: SourceLocation, run: () => void) => ({
     location,
     check: (reported: SanyError[]) => {

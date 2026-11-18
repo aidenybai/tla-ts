@@ -524,6 +524,7 @@ export interface Module {
   theorems: Theorem[];
   uses: UseOrHide[];
   units: ModuleUnit[];
+  hasRecursiveLet: boolean;
 }
 
 export const getDefinitionExpressions = (definition: Definition) =>
