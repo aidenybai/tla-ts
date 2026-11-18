@@ -151,7 +151,6 @@ export const operandApplications = new WeakMap<Expression, ApplyExpression[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 
-// SANY generates no node for an unresolved expression.
 export const isUnresolved = (expression: Expression) => unresolvedExpressions.has(expression);
 
 // SANY's failed selection is an operator application with no operands.
@@ -2866,8 +2865,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
   );
   return {
     errors: semanticErrors,
-    // SANY's symbol table keeps the first binding of a name, so a definition that lost it is not part of the module.
-    definitions: module.definitions.filter((definition) =>
+    boundDefinitions: module.definitions.filter((definition) =>
       isSameRange(bindings.get(definition.name)?.range, definition.location.range),
     ),
   };

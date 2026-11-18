@@ -287,8 +287,7 @@ export const createEnvironment = (
   const root = order.parseModule(options.source);
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
-  // The definitions whose bodies SANY failed to generate.
-  const unresolvedKeys = new Set<string>();
+  const unresolvedBodyKeys = new Set<string>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
   const instanceParams = new Set<OperatorParam>();
@@ -570,7 +569,7 @@ export const createEnvironment = (
     const range = instance.location.range;
     if (range) {
       const failed = [...linked.exported.values()].filter(
-        (symbol) => unresolvedKeys.has(symbol.key) && isSubstituted(symbol.key),
+        (symbol) => unresolvedBodyKeys.has(symbol.key) && isSubstituted(symbol.key),
       );
       unit.reports.push({
         location: instance.location,
@@ -646,7 +645,7 @@ export const createEnvironment = (
         });
       }
       if (instance.name !== undefined) qualifiedNames.set(copy, name);
-      if (unresolvedKeys.has(key) && !isSubstituted(key)) unresolvedKeys.add(copy);
+      if (unresolvedBodyKeys.has(key) && !isSubstituted(key)) unresolvedBodyKeys.add(copy);
       return copy;
     });
   };
@@ -1141,9 +1140,11 @@ export const createEnvironment = (
       const key = getKey(definition);
       definitions.set(key, definition);
       parameterized.set(key, !isParameterFree);
-      if (definition.kind === "Operator" && isUnresolved(definition.body)) unresolvedKeys.add(key);
+      if (definition.kind === "Operator" && isUnresolved(definition.body)) {
+        unresolvedBodyKeys.add(key);
+      }
     });
-    resolved.definitions.forEach((definition) => {
+    resolved.boundDefinitions.forEach((definition) => {
       const symbol = getDefinitionSymbol(definition);
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
