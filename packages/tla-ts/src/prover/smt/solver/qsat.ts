@@ -1,4 +1,9 @@
-import { SmtInvariantError, SmtTacticError, SmtUnsupportedError } from "../../../errors";
+import {
+  SmtDefaultError,
+  SmtInvariantError,
+  SmtTacticError,
+  SmtUnsupportedError,
+} from "../../../errors";
 import {
   type AstManager,
   FAMILY_BASIC,
@@ -542,7 +547,7 @@ class Qsat {
     for (const innerVar of vars.items) this.predAbs.hidden.push(manager.decls[innerVar]);
     for (const innerVar of vars.items)
       if (manager.isUninterpretedSort(manager.sorts[innerVar]))
-        throw new SmtTacticError("qsat does not apply to uninterpreted sorts");
+        throw new SmtDefaultError("qsat does not apply to uninterpreted sorts");
   }
 
   private initializeLevels() {

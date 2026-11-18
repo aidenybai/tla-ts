@@ -955,6 +955,23 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
       `(\n  (define-fun x () Real\n    1.0)\n${bindings})`,
     ]);
   });
+
+  it("rejects uninterpreted sorts in qsat with a default_exception, which apply reports as an error", () => {
+    expect(
+      run([
+        "(declare-sort S 0)",
+        "(declare-fun a () S)",
+        "(assert (exists ((x S)) (not (= x a))))",
+        "(check-sat-using qsat)",
+        "(get-info :reason-unknown)",
+        "(apply qsat)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "qsat does not apply to uninterpreted sorts")',
+      '(error "line 6 column 11: qsat does not apply to uninterpreted sorts")',
+    ]);
+  });
 });
 
 describe("hoist_ite, as Z3 5.3.2 simplifies", () => {
