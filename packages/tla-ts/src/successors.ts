@@ -934,6 +934,7 @@ const compileRandomExists = (
   };
 };
 
+// Deviation from TLC: Tool#getNextStates in -generate throws an UnsupportedOperationException at a CASE, which tla-ts takes as the model checker does.
 const compileRandomAction = (expression: Expression, environment: Environment) => {
   if (expression.kind === "Exists") return compileRandomExists(expression, environment);
   if (expression.kind !== "Or") return undefined;

@@ -390,3 +390,25 @@ it("counts the expressions of an action in -generate, as TLC's Tool#getNextState
     "line 5, col 54 to line 5, col 79 of module M: 8",
   ]);
 });
+
+// Deviation from TLC: Tool#getNextStates in -generate throws an UnsupportedOperationException at a CASE.
+it("takes the arm of a CASE in -generate as the model checker does", () => {
+  const traces: string[][] = [];
+  const status = simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == CASE x < 3 -> x' = x + 1 [] OTHER -> x' = 0\nInv == x < 3\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    seed: 4n,
+    traceDepth: 5,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: true,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "behavior") {
+        traces.push(output.trace.map((step) => formatValue(step.state.x)));
+      }
+    },
+  });
+  expect([status, traces]).toEqual([12, [["0", "1", "2", "3"]]]);
+});
