@@ -622,7 +622,6 @@ export const STANDARD_DEPENDENCIES = new Map([
   ["Sequences", ["Naturals"]],
   ["FiniteSets", ["Naturals", "Sequences"]],
   ["TLC", ["Naturals", "Sequences", "FiniteSets"]],
-  ["Randomization", ["Naturals", "FiniteSets", "Sequences"]],
   ["_Possible", ["TLC", "TLCExt", "Naturals", "Sequences", "FiniteSets", "Integers"]],
   ["Json", ["Sequences", "FiniteSets", "TLC", "Naturals"]],
   ["TLCExt", ["TLC", "Integers", "Naturals", "Sequences", "FiniteSets"]],
