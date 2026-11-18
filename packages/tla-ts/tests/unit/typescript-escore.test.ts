@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
-import { describe, expect, it } from "vite-plus/test";
+import { afterAll, describe, expect, it } from "vite-plus/test";
 import { compileToEscore } from "../../src/typescript/spec/compile";
 import { createLibrary } from "../../src/typescript/spec/library";
 
@@ -12,38 +12,41 @@ interface ScriptResult {
   message: string | undefined;
 }
 
-// ESCore's evaluation nests deeper than a test's stack, so the check runs on a worker with the
-// stack that test262-engine262 gives ESCore.
+// ESCore's evaluation nests deeper than a test's stack, so checks run on one worker with the
+// stack that test262-engine262 gives ESCore, which imports tla-ts once for them all.
+const worker = new Worker(
+  `const { parentPort, workerData } = require("node:worker_threads");
+  const loading = import(workerData.url);
+  parentPort.on("message", async (spec) => {
+    const tla = await loading;
+    const result = await tla.check({
+      source: spec.source,
+      config: spec.config,
+      loadModule: (name) => workerData.modules[name],
+      onPrint: () => {},
+    });
+    parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message });
+  });`,
+  {
+    eval: true,
+    workerData: {
+      url: pathToFileURL(join(import.meta.dirname, "../../dist/index.js")).href,
+      modules: Object.fromEntries(library.modules),
+    },
+    resourceLimits: { stackSizeMb: 256 },
+  },
+);
+worker.unref();
+afterAll(() => worker.terminate());
+
+const pending: ((result: ScriptResult) => void)[] = [];
+worker.on("message", (result: ScriptResult & { id: number }) => pending[result.id](result));
+
 const checkScript = (source: string, isStrict = true) => {
   const spec = compileToEscore(`${isStrict ? '"use strict";' : ""}\n${source}`, "spec.ts", library);
-  const worker = new Worker(
-    `const { parentPort, workerData } = require("node:worker_threads");
-    import(workerData.url).then(async (tla) => {
-      const result = await tla.check({
-        source: workerData.source,
-        config: workerData.config,
-        loadModule: (name) => workerData.modules[name],
-        onPrint: () => {},
-      });
-      parentPort.postMessage({ status: result.status, message: result.failure?.message });
-    });`,
-    {
-      eval: true,
-      workerData: {
-        url: pathToFileURL(join(import.meta.dirname, "../../dist/index.js")).href,
-        source: spec.source,
-        config: spec.config,
-        modules: Object.fromEntries(library.modules),
-      },
-      resourceLimits: { stackSizeMb: 256 },
-    },
-  );
-  return new Promise<ScriptResult>((resolve, reject) => {
-    worker.once("message", (result: ScriptResult) => {
-      void worker.terminate();
-      resolve(result);
-    });
-    worker.once("error", reject);
+  return new Promise<ScriptResult>((resolve) => {
+    worker.postMessage({ id: pending.length, source: spec.source, config: spec.config });
+    pending.push(resolve);
   });
 };
 
