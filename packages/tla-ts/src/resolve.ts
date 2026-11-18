@@ -23,7 +23,7 @@ import {
   type Theorem,
   type UseOrHide,
 } from "./ast";
-import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
+import { formatRange, TlaSyntaxError, type CodedSanyError, type SanyError } from "./errors";
 import { defEntryErrors, getDefEntryBinder, parenthesizedRanges } from "./parser";
 import { formatSanyLocation } from "./sany/nodes";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -2627,24 +2627,21 @@ export const resolveSubstitutions = (
 
 interface SemanticUnit {
   location: SourceLocation;
-  check: (reported: SanyError[], warned: SanyError[]) => void;
+  check: (reported: CodedSanyError[], warned: SanyError[]) => void;
 }
 
+export const isSameSanyError = (left: CodedSanyError, right: CodedSanyError) =>
+  left.location === right.location && left.message === right.message && left.code === right.code;
+
 export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError[]) => {
-  const errors: SanyError[] = [];
-  const addUnique = (list: SanyError[], item: SanyError) => {
-    if (
-      list.every(
-        (existing) => existing.location !== item.location || existing.message !== item.message,
-      )
-    ) {
-      list.push(item);
-    }
+  const errors: CodedSanyError[] = [];
+  const addUnique = (list: CodedSanyError[], item: CodedSanyError) => {
+    if (!list.some((existing) => isSameSanyError(existing, item))) list.push(item);
   };
   units
     .toSorted((left, right) => compareLocations(left.location, right.location))
     .forEach((unit) => {
-      const reported: SanyError[] = [];
+      const reported: CodedSanyError[] = [];
       const warned: SanyError[] = [];
       try {
         unit.check(reported, warned);

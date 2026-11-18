@@ -295,6 +295,7 @@ const getInvariants = (names: string[], environment: Environment) => {
     constants: new Set(environment.constants.keys()),
     variables: new Set(environment.variables),
     getDefinition: (name) => environment.definitions.get(name),
+    instances: environment.instances,
   });
   return names.flatMap((name) => {
     const definition = getConfigPredicate("invariant", name, environment);

@@ -135,6 +135,100 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    [
+      "a constant module",
+      "CONSTANT Op(_), k\nK == Op(k)",
+      "I == INSTANCE Inner WITH Op <- LAMBDA p : 1, k <- x'\nU == [](I!K)\nW == LET L == INSTANCE Inner WITH Op <- LAMBDA p : 1, k <- x' IN [](L!K)\nJ == INSTANCE Inner WITH Op <- LAMBDA p : 1, k <- (x')'",
+      [
+        ["line 8, col 6 to line 8, col 12", "[] followed by action not of form [A]_v."],
+        ["line 9, col 66 to line 9, col 72", "[] followed by action not of form [A]_v."],
+        [
+          "line 10, col 51 to line 10, col 55",
+          "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+      ],
+    ],
+    [
+      "a module with variables",
+      "CONSTANT Op(_), k\nVARIABLE z\nK == Op(k)",
+      "Eq(p) == p = 1\nI == INSTANCE Inner WITH Op <- Eq, k <- [](x = 1), z <- x\nU == I!K\nJ == INSTANCE Inner WITH Op <- Eq, k <- (x')', z <- x",
+      [
+        [
+          "line 11, col 41 to line 11, col 45",
+          "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+        [
+          "line 9, col 1 to line 9, col 57",
+          "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+        ],
+        [
+          "line 9, col 1 to line 9, col 57",
+          "Level error when instantiating module 'Inner':\nThe level of the argument 0 of the operator Op' \nmust be at most 2.",
+        ],
+      ],
+    ],
+  ])(
+    "levels the definitions of an instance of %s through its substitutes like SANY",
+    async (_, inner, definitions, errors) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\n${inner}\n====\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
+  it("checks a LET instance with the LET, after its body, like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT k\nVARIABLE z\nK == k\n====\nI == INSTANCE Inner WITH k <- x, z <- x\nD == LET L == INSTANCE Inner WITH k <- x, z <- x IN [](x')\nE == [](x')\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 9, col 53 to line 9, col 58", "[] followed by action not of form [A]_v."],
+          [
+            "line 9, col 10 to line 9, col 48",
+            "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+          ],
+          ["line 10, col 6 to line 10, col 11", "[] followed by action not of form [A]_v."],
+          [
+            "line 8, col 1 to line 8, col 39",
+            "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+          ],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("levels a LET instance's definitions through an operator parameter it substitutes like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT Op(_), k\nK == Op(k)\n====\nPr(p) == p'\nI == INSTANCE Inner WITH Op <- LAMBDA p : p, k <- 1\nU == LET L(G(_)) == INSTANCE Inner WITH Op <- G, k <- x' IN L(Pr)!K\nW(G(_)) == LET L == INSTANCE Inner WITH Op <- G, k <- x' IN L!K\nV == W(Pr)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 9, col 61 to line 9, col 67", "L!K"],
+          ["line 11, col 6 to line 11, col 10", "W"],
+        ].map((error) => ({
+          location: `${error[0]} of module M`,
+          message: `Level error in applying operator ${error[1]}:\nThe permitted level of argument 1 of the operator argument 1 \nmust be at least 2.`,
+        })),
+      ),
+    );
+  });
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({
@@ -635,6 +729,23 @@ describe("level checking matches SANY", () => {
       [
         ["line 4, col 6 to line 4, col 15", "[] followed by action not of form [A]_v."],
         ["line 5, col 6 to line 5, col 15", "<> followed by action not of form <<A>>_v."],
+      ],
+    ],
+    [
+      "Pr(p) == p'\nPrime(F(_), a) == F(a)'\nD == Prime(Pr, []x)",
+      [
+        [
+          "line 5, col 6 to line 5, col 19",
+          "Level error in applying operator Prime:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+        [
+          "line 5, col 6 to line 5, col 19",
+          "Level error in applying operator Prime:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+        ],
+        [
+          "line 5, col 6 to line 5, col 19",
+          "Level error in applying operator Prime:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+        ],
       ],
     ],
   ])("reports every error SANY reports in %j", async (definitions, errors) => {
