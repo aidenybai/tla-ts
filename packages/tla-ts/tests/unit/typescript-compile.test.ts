@@ -56158,4 +56158,48 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none"))).failure?.message).toContain("seen type");
     });
   });
+
+  describe("makes and runs a closure that an operand of ?? gives, which a generic function makes", () => {
+    const getSource = (expected: string) => `
+      interface Reducer<A> {
+        combine: (self: A, that: A) => A;
+        initialValue: A;
+        combineAll: (collection: ReadonlyArray<A>) => A;
+      }
+      function make<A>(
+        combine: (self: A, that: A) => A,
+        initialValue: A,
+        combineAll?: (collection: ReadonlyArray<A>) => A,
+      ): Reducer<A> {
+        return {
+          combine,
+          initialValue,
+          combineAll:
+            combineAll ??
+            ((collection) => {
+              let out = initialValue;
+              for (const value of collection) {
+                out = combine(out, value);
+              }
+              return out;
+            }),
+        };
+      }
+      const Sum = make<number>((self, that) => self + that, 0);
+      const Max = make<number>((self, that) => (self > that ? self : that), 0, () => 99);
+      const total = Sum.combineAll([1, 2, 3]);
+      const most = Max.combineAll([1, 2]);
+      const seen = [total, most].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("6,99"))).failure).toBeUndefined();
+    });
+
+    it("rejects the default kept", async () => {
+      expect((await checkModel(getSource("6,2"))).failure?.message).toContain("seen 6,99");
+    });
+  });
 });
