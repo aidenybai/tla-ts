@@ -2722,11 +2722,28 @@ LOCAL ParseFitting(text, radix) ==
 
 LOCAL Prefix(text, length) == IF Len(text) < length THEN text ELSE SubSeq(text, 1, length)
 
-\\* ToNumber of a string, without whitespace, which Use takes as its kind, its sign, and its
-\\* magnitude truncated toward 0. TLC evaluates an argument only where Use reads it, so a magnitude
-\\* too big for TLC doesn't stop the check where Use doesn't need it.
-LOCAL ReadNumber(text, Use(_, _, _)) ==
-  LET prefix == Prefix(text, 2)
+\\* The characters that trim() removes: WhiteSpace and LineTerminator.
+LOCAL Spaces ==
+  {"\\t", "\\n", "\\r", "\\f", " ", "\u000B", "\u00A0", "\uFEFF", "\u1680", "\u202F", "\u205F", "\u3000", "\u2028", "\u2029"}
+    \\cup {SubSeq("\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A", position, position) : position \\in 1..11}
+
+RECURSIVE TrimStart(_)
+TrimStart(text) ==
+  IF text # "" /\\ SubSeq(text, 1, 1) \\in Spaces THEN TrimStart(SubSeq(text, 2, Len(text))) ELSE text
+
+RECURSIVE TrimEnd(_)
+TrimEnd(text) ==
+  IF text # "" /\\ SubSeq(text, Len(text), Len(text)) \\in Spaces
+  THEN TrimEnd(SubSeq(text, 1, Len(text) - 1))
+  ELSE text
+
+\\* ToNumber of a string, without the whitespace around it, which Use takes as its kind, its sign,
+\\* and its magnitude truncated toward 0. A string that isn't a StringNumericLiteral is NaN. TLC
+\\* evaluates an argument only where Use reads it, so a magnitude too big for TLC doesn't stop the
+\\* check where Use doesn't need it.
+LOCAL ReadNumber(untrimmed, Use(_, _, _)) ==
+  LET text == TrimEnd(TrimStart(untrimmed))
+      prefix == Prefix(text, 2)
       body == SubSeq(text, 3, Len(text))
       radix == CASE prefix \\in {"0x", "0X"} -> 16
                  [] prefix \\in {"0o", "0O"} -> 8
@@ -2769,10 +2786,7 @@ LOCAL ReadNumber(text, Use(_, _, _)) ==
             Use("integer", FALSE, ParseFitting(body, radix))
        [] isDecimal -> Use(IF isExact THEN "integer" ELSE "fraction", isNegative, magnitude)
        [] text \\in {"Infinity", "+Infinity", "-Infinity"} -> Use("infinity", isNegative, 0)
-       [] \\/ CharactersOf(text) \\subseteq CharactersOf(Alphanumerics) \\cup {"+", "-", ".", "_", "!"}
-          \\/ CharactersOf(text) \\cap CharactersOf("[]{}()<>,;:#$%&*=?@^|~") # {} ->
-            Use("nan", FALSE, 0)
-       [] OTHER -> Assert(FALSE, "tla-ts can't convert " \\o ToString(text) \\o " to a number")
+       [] OTHER -> Use("nan", FALSE, 0)
 
 \\* ToLength of a string, truncated and clamped at 0.
 LOCAL ToLengthOfText(text) ==
@@ -4366,20 +4380,6 @@ BigIntToString(value, radix) ==
         [] base = 10 -> BigIntText(bigint)
         [] OTHER -> sign \\o NatRadixDigits(BigIntNat(bigint), base)
 
-\\* The characters that trim() removes: WhiteSpace and LineTerminator.
-LOCAL Spaces ==
-  {"\\t", "\\n", "\\r", "\\f", " ", "\u000B", "\u00A0", "\uFEFF", "\u1680", "\u202F", "\u205F", "\u3000", "\u2028", "\u2029"}
-    \\cup {SubSeq("\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200A", position, position) : position \\in 1..11}
-
-RECURSIVE TrimStart(_)
-TrimStart(text) ==
-  IF text # "" /\\ SubSeq(text, 1, 1) \\in Spaces THEN TrimStart(SubSeq(text, 2, Len(text))) ELSE text
-
-RECURSIVE TrimEnd(_)
-TrimEnd(text) ==
-  IF text # "" /\\ SubSeq(text, Len(text), Len(text)) \\in Spaces
-  THEN TrimEnd(SubSeq(text, 1, Len(text) - 1))
-  ELSE text
 
 StringTrim(value, isStart, isEnd) ==
   LET started == IF isStart THEN TrimStart(Text(value)) ELSE Text(value)

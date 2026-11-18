@@ -52874,4 +52874,29 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts a string that isn't a numeric literal to NaN, once it trims its whitespace", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var words = "this is not a number";
+      var spaced = " 1 2 ";
+      var padded = "  7\t";
+      var arr = [1, 2, 3];
+      arr.length = " 2 ";
+      var result = [isNaN(words), Number(spaced), Number(padded), padded == 7, arr.length, Number("1_000"), Number("é")].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("true,NaN,7,true,2,NaN,NaN");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("true,12,7,true,2,NaN,NaN");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result true,NaN,7,true,2,NaN,NaN",
+      );
+    });
+  });
 });
