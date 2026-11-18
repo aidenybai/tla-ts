@@ -498,6 +498,20 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("finds a parameter of a combinator in its first child that has it", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(assert (> a 5))",
+        "(check-sat-using (using-params (then simplify ctx-simplify) :rewriter.max_steps 4294967295))",
+        "(check-sat-using (using-params (then ctx-simplify simplify) :rewriter.max_steps 4294967295))",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(error "line 4 column 80: invalid using-params combinator, unknown parameter rewriter.max_steps")',
+    ]);
+  });
+
   it("takes a whole decimal as a probe constant and rejects any other decimal", () => {
     expect(
       run([

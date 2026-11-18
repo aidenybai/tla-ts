@@ -56,7 +56,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
   });
   if (!assertForms(context, asserted, forms)) {
     manager.limit.release();
-    return { result: L_UNDEF, context, reasonUnknown: "canceled" };
+    return { result: L_UNDEF, context, asserted, reasonUnknown: "canceled" };
   }
   context.setupContext(params.setup, true, asserted);
   context.internalizeAssertions(asserted);
@@ -65,7 +65,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
   const result =
     theoryAssumptions.length === 0 ? context.search() : context.checkResearching(asserted, []);
   manager.limit.release();
-  return { result, context };
+  return { result, context, asserted };
 };
 
 export const solveAssertions = (
@@ -99,12 +99,12 @@ export const solveAssuming = (
   });
   if (!assertForms(context, asserted, assertions)) {
     manager.limit.release();
-    return { result: L_UNDEF, context, reasonUnknown: "canceled" };
+    return { result: L_UNDEF, context, asserted, reasonUnknown: "canceled" };
   }
   context.setupContext(params.setup, false, asserted);
   const result = context.checkResearching(asserted, assumptions);
   manager.limit.release();
-  return { result, context };
+  return { result, context, asserted };
 };
 
 export const getVerdict = (result: number): Verdict =>

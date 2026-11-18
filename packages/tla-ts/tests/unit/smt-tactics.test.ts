@@ -1006,6 +1006,8 @@ describe("the optimizer releases what Z3 releases", () => {
         write: () => {},
         parameters: new Map(),
         hasDefinitions: () => false,
+        destructors: [],
+        cleanups: [],
       },
       { getBaseModel: () => null, setModel: () => {} },
       {
@@ -1278,6 +1280,33 @@ describe("the arithmetic probes, as Z3 5.3.2 measures a goal", () => {
       "max-deg 3 avg-deg 1.25",
       "max-bw 20 avg-bw 6.83333",
       '(error "tactic failed: fail-if tactic")',
+    ]);
+  });
+
+  it("finds no QF_AUFLIA goal once an array is selected from", () => {
+    const probe =
+      '(apply (and-then (if is-qfauflia (echo "qfauflia") (echo "other")) (fail-if (> 1 0))))';
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-const j Int)",
+        "(declare-const a (Array Int Int))",
+        "(declare-fun f (Int) (Array Int Int))",
+        "(assert (> j 0))",
+        "(assert (= a (f j)))",
+        probe,
+        "(assert (> (select a j) 0))",
+        probe,
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "qfauflia",
+      '(error "tactic failed: fail-if tactic")',
+      "other",
+      '(error "tactic failed: fail-if tactic")',
+      "sat",
+      "(:rlimit 318)",
     ]);
   });
 });
@@ -2630,5 +2659,120 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
         ")",
       ].join("\n"),
     ]);
+  });
+
+  it("frees the kernel of the smt tactic as the tactic returns, so the next check does Z3's work", () => {
+    expect(
+      run([
+        "(declare-const x0 Int)",
+        "(declare-const x1 Int)",
+        "(declare-const x3 Int)",
+        "(declare-fun f (Int) Int)",
+        "(assert (or (< (- 7 (f 5) (f 7)) (f x0)) (<= x3 (- x1 5))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(assert (= 24 (* 8 x1)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 298)", "sat", "(:rlimit 485)"]);
+  });
+
+  it("frees the propagated atoms of the kernel's assertions after the rest of the kernel", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (<= (+ (* 4 y) (* 1 z) x) (+ (* 3 y) z (* 3 x))))",
+        "(assert (distinct (+ z y x) -4))",
+        "(assert (not (< (+ z y) 2)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(declare-const u Int)",
+        "(declare-const v Int)",
+        "(declare-const w Int)",
+        "(assert (= (+ x z w 7) -4))",
+        "(assert (= (+ v x 0) 1))",
+        "(assert (<= (+ u (* 3 w) 5) (+ w 3)))",
+        "(assert (>= (+ x w (* 4 z)) (+ (* 2 x) v (* 1 w) 0)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 408)", "sat", "(:rlimit 882)"]);
+  });
+});
+
+describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
+  it("keeps the cache of lia2card's rewriter across the checks", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then lia2card smt)")',
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (> (+ a b) 5))",
+        "(assert (< (- a b) 3))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 191)", "sat", "(:rlimit 357)"]);
+  });
+
+  it("forgets the sorts dt2bv saw in an earlier check", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then dt2bv smt)")',
+        "(declare-datatypes ((C 0)) (((r) (g) (b))))",
+        "(declare-fun f (C) Int)",
+        "(declare-const x C)",
+        "(declare-const y Real)",
+        "(assert (= (^ 2.0 y) 3.0))",
+        "(assert (not (= x r)))",
+        "(push)",
+        "(assert (= (f x) 1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(pop)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 567)", "unknown", "(:rlimit 1053)"]);
+  });
+
+  it("reads tactic.default_tactic as it makes the solver", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        '(set-option :tactic.default_tactic "(then fail smt)")',
+        "(assert (> a 5))",
+        "(check-sat)",
+        "(reset-assertions)",
+        "(assert (> a 5))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["sat", "unknown", '(:reason-unknown "fail tactic")']);
+  });
+
+  it("reads the sat parameters as each check runs its tactic", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then simplify sat)")',
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(assert (or a b))",
+        "(assert (or a (not b)))",
+        "(assert (or (not a) c))",
+        "(assert (or (not a) (not c)))",
+        "(check-sat)",
+        "(set-option :sat.max_conflicts 0)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "unknown", '(:reason-unknown "no reason given")', "(:rlimit 87)"]);
   });
 });

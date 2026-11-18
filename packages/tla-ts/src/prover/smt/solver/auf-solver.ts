@@ -195,6 +195,11 @@ export class AufSolver {
     this.ks.reset();
   }
 
+  release() {
+    this.reset();
+    this.resetEvalCache();
+  }
+
   setModel(model: ProtoModel) {
     this.resetEvalCache();
     this.model = model;

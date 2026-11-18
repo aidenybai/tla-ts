@@ -136,6 +136,8 @@ export abstract class Theory {
 
   restartEh() {}
 
+  release() {}
+
   getPhase(_boolVar: BoolVar) {
     return L_UNDEF;
   }

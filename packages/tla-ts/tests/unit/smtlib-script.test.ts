@@ -1731,6 +1731,26 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("takes an array's default from its selects in the order of the hashes of their indices", () => {
+    expect(
+      run([
+        "(declare-const a (Array Int Int))",
+        "(assert (= (select a 5) 10))",
+        "(assert (= (select a 1) 11))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 11) 5 10))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("assigns the Boolean macros in the order of cmd_context's dictionary, which a pop does not shrink", () => {
     expect(
       run([

@@ -151,6 +151,8 @@ export const operandApplications = new WeakMap<Expression, ApplyExpression[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 
+export const isUnresolved = (expression: Expression) => unresolvedExpressions.has(expression);
+
 // SANY's failed selection is an operator application with no operands.
 const isEmptyExpression = (expression: Expression): boolean =>
   emptyExpressions.has(expression) || findNullError(nullSelections.get(expression)) !== undefined;
@@ -1270,6 +1272,7 @@ const resolveExpressionArgument = (arg: Expression, scope: LocalName | undefined
   const selectionError = operatorSelectionErrors.get(arg);
   // Deviation from SANY: SANY names its internal node kind here, where tla-ts words it as for a name.
   if (arg.kind === "Lambda" && arg.operator !== undefined) {
+    unresolvedExpressions.add(arg);
     report(`The operator ${resolveSynonym(arg.operator)} requires 1 arguments.`);
   } else if (selectionError) {
     unit.errors.push(selectionError);
@@ -1277,6 +1280,7 @@ const resolveExpressionArgument = (arg: Expression, scope: LocalName | undefined
     unresolvedExpressions.add(arg);
     report("LAMBDA expression used where an expression is required.");
   } else if (arg.kind === "OperatorReference") {
+    unresolvedExpressions.add(arg);
     const operator = arg.operator;
     const argArity = getSymbolArity(arg, operator, scope, unit);
     if (argArity !== undefined) {
@@ -1707,6 +1711,11 @@ const resolveExpression = (
             : undefined;
       const arity = name === undefined ? undefined : findBinding(name, scope, unit)?.functionArity;
       resolveExpression(applied, scope, unit);
+      // SANY generates neither the arguments nor the application of a function it failed to generate.
+      if (unresolvedExpressions.has(applied)) {
+        unresolvedExpressions.add(expression);
+        return;
+      }
       const count = expression.args.length;
       if (arity === undefined || count < 2 || arity === count || isEmptyExpression(applied)) {
         resolveAll(expression.args);
@@ -1744,6 +1753,7 @@ const resolveExpression = (
       if (isSubexpressionReported(expression, scope, unit)) emptyExpressions.add(expression);
       return;
     case "Bracket": {
+      unresolvedExpressions.add(expression);
       const range = expression.location.range;
       if (range) {
         unit.errors.push({
@@ -2717,7 +2727,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         ),
       ),
     );
-  return collectSemanticErrors(
+  const semanticErrors = collectSemanticErrors(
     [
       ...module.units.flatMap((item): SemanticUnit[] => {
         const section =
@@ -2853,4 +2863,10 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     ],
     unit.warnings,
   );
+  return {
+    errors: semanticErrors,
+    boundDefinitions: module.definitions.filter((definition) =>
+      isSameRange(bindings.get(definition.name)?.range, definition.location.range),
+    ),
+  };
 };

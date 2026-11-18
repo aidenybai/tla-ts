@@ -1269,6 +1269,45 @@ describe("name resolution matches SANY", () => {
         ],
       ],
     ],
+    [
+      "Id(a) == a\na^+ == a\nB == [1]\nF == (zz + 1)[2 ++ 3]\nP == Id(^+)\nD == [1].a\nf == B!1 /\\ F!1 /\\ P!1 /\\ D!1",
+      [
+        ["line 4, col 6 to line 4, col 6", "Unsupported expression type `['."],
+        [
+          "line 5, col 10 to line 5, col 10",
+          "Could not find declaration or definition of symbol '+'.",
+        ],
+        ["line 5, col 7 to line 5, col 12", "Couldn't resolve infix operator symbol `+'."],
+        ["line 6, col 9 to line 6, col 10", "The operator ^+ requires 1 arguments."],
+        ["line 7, col 6 to line 7, col 6", "Unsupported expression type `['."],
+        [
+          "line 8, col 8 to line 8, col 8",
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        ],
+        [
+          "line 8, col 15 to line 8, col 15",
+          "Subexpression selection failed, probably due to an error in the selected expression.",
+        ],
+        [
+          "line 8, col 22 to line 8, col 22",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+        [
+          "line 8, col 29 to line 8, col 29",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+      ],
+    ],
+    [
+      "Id(a) == a\nP == Id(SUBSET)\nf == P!1",
+      [
+        ["line 3, col 9 to line 3, col 14", "The operator SUBSET requires 1 arguments."],
+        [
+          "line 4, col 8 to line 4, col 8",
+          "An unexpected null node specified by 'argument selector 1'.\nThis is probably due to a previous error.",
+        ],
+      ],
+    ],
   ])("reports %j at the range SANY reports", async (source, errors) => {
     await expect(checkNames(source)).rejects.toThrow(
       createSanyError(
@@ -4175,6 +4214,160 @@ describe("name resolution matches SANY", () => {
           message: "Definition of Map has different arity than its RECURSIVE declaration.",
         },
       ]),
+    );
+  });
+
+  it.each([
+    [
+      "an operator defined twice",
+      "Foo == 1\nFoo(a) == 2",
+      "I == INSTANCE Inner WITH c <- 1\nU == I!Foo(1)",
+      [
+        ["line 5, col 1 to line 5, col 11", "Operator Foo already defined or declared."],
+        [
+          "line 5, col 1 to line 5, col 11",
+          "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 4, col 1 to line 4, col 8 of module M.",
+        ],
+        ["line 8, col 11 to line 8, col 13", "The operator I!Foo requires 0 arguments."],
+      ],
+    ],
+    [
+      "an operator named like a theorem",
+      "THEOREM Foo == TRUE\nFoo(a) == 2",
+      "I == INSTANCE Inner WITH c <- 1\nU == I!Foo(1)",
+      [
+        ["line 5, col 1 to line 5, col 11", "Operator Foo already defined or declared."],
+        [
+          "line 5, col 1 to line 5, col 11",
+          "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 4, col 1 to line 4, col 19 of module M.",
+        ],
+        ["line 8, col 11 to line 8, col 13", "The operator I!Foo requires 0 arguments."],
+      ],
+    ],
+    [
+      "a built-in operator",
+      "a -+-> b == 1",
+      "I == INSTANCE Inner WITH c <- 1\nU == I!-+->",
+      [
+        ["line 4, col 1 to line 4, col 13", "Operator -+-> already defined or declared."],
+        [
+          "line 4, col 1 to line 4, col 13",
+          "Symbol -+-> is a built-in operator, and cannot be redefined.",
+        ],
+        ["line 7, col 6 to line 7, col 11", "Unknown operator: `I!-+->'."],
+      ],
+    ],
+    [
+      "a built-in operator through an unnamed instance",
+      "a -+-> b == 1",
+      "INSTANCE Inner WITH c <- 1",
+      [
+        ["line 4, col 1 to line 4, col 13", "Operator -+-> already defined or declared."],
+        [
+          "line 4, col 1 to line 4, col 13",
+          "Symbol -+-> is a built-in operator, and cannot be redefined.",
+        ],
+      ],
+    ],
+  ])(
+    "leaves out of an instance %s that SANY doesn't bind",
+    async (_description, definitions, instance, errors) => {
+      await expect(
+        checkNames(`---- MODULE Inner ----\nCONSTANT c\n${definitions}\n====\n${instance}`),
+      ).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
+  it.each([
+    [
+      "a named instance of a definition and a theorem",
+      "---- MODULE Inner ----\nCONSTANT c\nL == 1 ++ 2\nTHEOREM T == 1 ++ 2\n====\nI == INSTANCE Inner WITH c <- 1",
+      [
+        [
+          "line 4, col 8 to line 4, col 9",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 4, col 6 to line 4, col 11", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 5, col 16 to line 5, col 17",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 5, col 14 to line 5, col 19", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 7, col 1 to line 7, col 31",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+        [
+          "line 7, col 1 to line 7, col 31",
+          "Substitution error, probably due to error in module being instantiated.",
+        ],
+      ],
+    ],
+    [
+      "an unnamed instance",
+      "---- MODULE Inner ----\nCONSTANT c\nL == [1]\n====\nINSTANCE Inner WITH c <- 1",
+      [
+        ["line 4, col 6 to line 4, col 6", "Unsupported expression type `['."],
+        [
+          "line 6, col 1 to line 6, col 26",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+      ],
+    ],
+    [
+      "a named instance, but not an unnamed one, of a definition from a module without parameters",
+      "---- MODULE E ----\nL == (1 ++ 2)[3]\n====\n---- MODULE Inner ----\nEXTENDS E\nCONSTANT c\n====\nI == INSTANCE Inner WITH c <- 1\nINSTANCE Inner WITH c <- 2",
+      [
+        [
+          "line 3, col 9 to line 3, col 10",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 3, col 7 to line 3, col 12", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 9, col 1 to line 9, col 31",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+      ],
+    ],
+    [
+      "an instance of a definition that another instance copies unchanged",
+      "---- MODULE E ----\nL == 1 ++ 2\n====\n---- MODULE Inner ----\nCONSTANT c\nJ == INSTANCE E\n====\nI == INSTANCE Inner WITH c <- 1",
+      [
+        [
+          "line 3, col 8 to line 3, col 9",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 3, col 6 to line 3, col 11", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 9, col 1 to line 9, col 31",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+      ],
+    ],
+    [
+      "the instance that substitutes in it first",
+      "---- MODULE E ----\nCONSTANT d\nL == 1 ++ 2\n====\n---- MODULE Inner ----\nCONSTANT c\nJ == INSTANCE E WITH d <- c\n====\nI == INSTANCE Inner WITH c <- 1",
+      [
+        [
+          "line 4, col 8 to line 4, col 9",
+          "Could not find declaration or definition of symbol '++'.",
+        ],
+        ["line 4, col 6 to line 4, col 11", "Couldn't resolve infix operator symbol `++'."],
+        [
+          "line 8, col 1 to line 8, col 27",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+      ],
+    ],
+  ])("reports a body SANY fails to generate in %s", async (_description, source, errors) => {
+    await expect(checkNames(source)).rejects.toThrow(
+      createSanyError(
+        errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
     );
   });
 });

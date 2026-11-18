@@ -65,6 +65,7 @@ import {
   getParamArities,
   isBefore,
   isTheoremDefinition,
+  isUnresolved,
   KEY_SEPARATOR,
   LOCAL_RESOLUTION,
   MODULE_START,
@@ -150,6 +151,18 @@ const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
 
 // TLC evaluates the definitions of these modules that it doesn't override, such as Bags' SubBag.
 const SOURCE_STANDARD_MODULES = new Set(["Bags", "Randomization", "TLCExt"]);
+
+// SANY's SubstInNode and APSubstInNode word the error for a body they can't substitute in apart.
+const SUBSTITUTION_ERRORS = [
+  {
+    kind: "Definition",
+    message: "Substitution error, probably due to error \nin module being instantiated.",
+  },
+  {
+    kind: "Theorem",
+    message: "Substitution error, probably due to error in module being instantiated.",
+  },
+];
 
 export interface LinkedModule {
   module: Module;
@@ -277,6 +290,7 @@ export const createEnvironment = (
   const root = order.parseModule(options.source);
   const definitions = new Map<string, Definition>();
   const parameterized = new Map<string, boolean>();
+  const unresolvedBodyKeys = new Set<string>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
   const instanceParams = new Set<OperatorParam>();
@@ -545,6 +559,24 @@ export const createEnvironment = (
       module,
       unit,
     );
+    // SANY substitutes into the bodies of a module with parameters, or of any module a named instance substitutes for.
+    const isSubstituted = (key: string) =>
+      instance.name === undefined
+        ? declarations.length > 0 && parameterized.get(key) === true
+        : substitutions.size > 0;
+    const range = instance.location.range;
+    if (range) {
+      const failed = [...linked.exported.values()].filter(
+        (symbol) => unresolvedBodyKeys.has(symbol.key) && isSubstituted(symbol.key),
+      );
+      unit.reports.push({
+        location: instance.location,
+        errors: SUBSTITUTION_ERRORS.filter((error) =>
+          failed.some((symbol) => symbol.kind === error.kind),
+        ).map((error) => ({ location: formatRange(range), message: error.message })),
+        warnings: [],
+      });
+    }
     instanceChecks.push({
       module: instance.module,
       instancer: module.name,
@@ -611,6 +643,7 @@ export const createEnvironment = (
         });
       }
       if (instance.name !== undefined) qualifiedNames.set(copy, name);
+      if (unresolvedBodyKeys.has(key) && !isSubstituted(key)) unresolvedBodyKeys.add(copy);
       return copy;
     });
   };
@@ -862,7 +895,6 @@ export const createEnvironment = (
       ]),
       ...scope.symbols,
     ]);
-    const importedAt = new Map<string, SourceLocation>();
     const extendsReport: ModuleReport = { location: MODULE_START, errors: [], warnings: [] };
     const reports = [extendsReport];
     const mergeExtended = (symbols: Symbols) =>
@@ -1072,7 +1104,6 @@ export const createEnvironment = (
           instanced.set(instance, symbols);
           symbols.forEach((symbol, name) => {
             if (visible.has(name)) return;
-            importedAt.set(name, instance.location);
             visible.set(name, symbol);
             if (!instance.isLocal) exported.set(name, symbol);
           });
@@ -1101,20 +1132,18 @@ export const createEnvironment = (
         (instance) =>
           getStandardSymbols(instance.module) ?? getLinkedModule(instance.module, parsed.name),
       );
-    scope.errors.push(...resolveModule(module, getUnit(module)));
+    const resolved = resolveModule(module, getUnit(module));
+    scope.errors.push(...resolved.errors);
     module.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);
       parameterized.set(key, !isParameterFree);
-      const symbol = getDefinitionSymbol(definition);
-      const importedLocation = importedAt.get(definition.name);
-      if (
-        symbol.kind === "Theorem" &&
-        visible.get(definition.name)?.kind === "Theorem" &&
-        (importedLocation === undefined || isBefore(importedLocation, definition.location))
-      ) {
-        return;
+      if (definition.kind === "Operator" && isUnresolved(definition.body)) {
+        unresolvedBodyKeys.add(key);
       }
+    });
+    resolved.boundDefinitions.forEach((definition) => {
+      const symbol = getDefinitionSymbol(definition);
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
