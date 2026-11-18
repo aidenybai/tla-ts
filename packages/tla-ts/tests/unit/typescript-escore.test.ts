@@ -311,4 +311,37 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource("3,1"))).message).toContain(THREW);
     });
   });
+
+  describe("keeps private names in each class's private environment", () => {
+    const getSource = (expected: string) => `
+      class Counter {
+        #count = 0;
+        static #made = 0;
+        get #doubled() { return this.#count * 2; }
+        constructor() { Counter.#made++; }
+        increment() { this.#count += 1; return this; }
+        get doubled() { return this.#doubled; }
+        static made() { return Counter.#made; }
+        static has(value: object) { return #count in value; }
+      }
+      const counter = new Counter().increment().increment();
+      new Counter();
+      let isRejected = false;
+      try {
+        Counter.prototype.increment.call({});
+      } catch (error) {
+        isRejected = error instanceof TypeError;
+      }
+      const result = [counter.doubled, Counter.made(), Counter.has(counter), Counter.has({}), isRejected].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("4,2,true,false,true"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("4,2,true,true,true"))).message).toContain(THREW);
+    });
+  });
 });

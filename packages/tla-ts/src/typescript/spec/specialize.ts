@@ -437,11 +437,15 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     scope: Scope,
   ): Code => {
     const strict = getBool(scope.isStrict);
+    if (ts.isPropertyAccessExpression(node) && ts.isPrivateIdentifier(node.name)) {
+      const base = chainBase(node.expression, node.questionDotToken !== undefined, scope);
+      return defineCode(
+        "Member",
+        `LET r == ${base("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE Ok(r.s, Reference(Val(r), ${getPrivateName(node.name, "r.s", "ctx")}, TRUE, Empty))`,
+      );
+    }
     const key = ts.isPropertyAccessExpression(node)
       ? (() => {
-          if (ts.isPrivateIdentifier(node.name)) {
-            throw new TlaTypeScriptError("tla-ts can't compile a private name to ESCore yet", node);
-          }
           words.add(node.name.text);
           return undefined;
         })()
@@ -902,7 +906,12 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       return assignment(node, scope);
     }
     if (ts.isPrivateIdentifier(node.left)) {
-      throw new TlaTypeScriptError("tla-ts can't compile a private name to ESCore yet", node);
+      // #x in o (§13.10.1), with PrivateInThen's steps.
+      const right = value(node.right, scope);
+      return defineCode(
+        "PrivateIn",
+        `LET r == ${right("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE IF ~IsObject(Val(r)) THEN ThrowTypeError(r.s) ELSE Ok(r.s, Bool(PrivateElementFind(r.s, Val(r), ${getPrivateName(node.left, "r.s", "ctx")}) # Empty))`,
+      );
     }
     const left = value(node.left, scope);
     const right = value(node.right, scope);
@@ -1157,8 +1166,16 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       const key = value(name.expression, scope);
       return (state, context) => `ToPropertyKeyThen(${key(state, context)})`;
     }
-    throw new TlaTypeScriptError("tla-ts can't compile a private name to ESCore yet", name);
+    if (ts.isPrivateIdentifier(name)) {
+      return (state, context) => `Ok(${state}, ${getPrivateName(name, state, context)})`;
+    }
+    throw new TlaTypeScriptError("tla-ts can't compile this property name to ESCore yet", name);
   };
+
+  // The Private Name of a private identifier in the running private environment
+  // (ResolvePrivateIdentifier, §9.2.1.1), whose names ESCore holds without the #.
+  const getPrivateName = (name: ts.PrivateIdentifier, state: string, context: string) =>
+    `ResolvePrivateIdentifier(${state}, ${context}, ${getUnits(name.text.slice(1))})`;
 
   const assertPlain = (
     node: ts.Node & { asteriskToken?: ts.AsteriskToken; modifiers?: ts.NodeArray<ts.ModifierLike> },
@@ -1446,8 +1463,8 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
   };
 
   // ClassDefinitionEvaluation (§15.7.14) of a class whose elements are methods, accessors,
-  // fields, and static blocks with names that aren't private: a result with the class's
-  // constructor, named by binding or else by the name it's called with.
+  // fields, and static blocks: a result with the class's constructor, named by binding or else by
+  // the name it's called with.
   const classDefinition = (
     node: ts.ClassLikeDeclaration,
     binding: string | undefined,
@@ -1461,20 +1478,28 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       (member) => !ts.isConstructorDeclaration(member) && !ts.isSemicolonClassElement(member),
     );
     for (const element of elements) {
-      if (element.name !== undefined && ts.isPrivateIdentifier(element.name)) {
-        throw new TlaTypeScriptError("tla-ts can't compile a private name to ESCore yet", element);
-      }
       if (ts.canHaveDecorators(element) && ts.getDecorators(element)?.length)
         throw new TlaTypeScriptError("tla-ts can't compile a decorator to ESCore yet", element);
     }
     if (ts.getDecorators(node)?.length)
       throw new TlaTypeScriptError("tla-ts can't compile a decorator to ESCore yet", node);
     const className = binding === undefined ? "name" : getStr(binding);
+    // PrivateBoundIdentifiers (§15.7.3): the class's private names, each once.
+    const privateNames = dedupe(
+      elements.flatMap((element) =>
+        element.name !== undefined && ts.isPrivateIdentifier(element.name)
+          ? [element.name.text.slice(1)]
+          : [],
+      ),
+    );
     const steps = [
       "LET env == NewDeclarativeEnvironment(s, ctx.lex)",
-      `    s1 == ${binding === undefined ? "env.s" : `CreateImmutableBinding(env.s, env.e, ${getUnits(binding)}, TRUE).s`}`,
-      "    cctx == [ctx EXCEPT !.lex = env.e] IN",
-      `LET h == ${heritage === undefined ? "Ok(s1, Empty)" : value(heritage, scope)("s1", "cctx")} IN IF IsAbrupt(h) THEN h ELSE`,
+      `    s0 == ${binding === undefined ? "env.s" : `CreateImmutableBinding(env.s, env.e, ${getUnits(binding)}, TRUE).s`}`,
+      `    priv == NewPrivateEnvironment(s0, ctx.priv, ${getSequence(privateNames.map(getUnits))})`,
+      "    s1 == priv.s",
+      "    cctx == [ctx EXCEPT !.lex = env.e, !.priv = priv.env] IN",
+      // The heritage runs in the class's scope with the outer private environment.
+      `LET h == ${heritage === undefined ? "Ok(s1, Empty)" : value(heritage, scope)("s1", "WithLex(ctx, env.e)")} IN IF IsAbrupt(h) THEN h ELSE`,
       `LET parents == ${heritage === undefined ? `Ok(h.s, [proto |-> Intrinsic(h.s, "ObjectPrototype"), ctor |-> Intrinsic(h.s, "FunctionPrototype")])` : "ClassParents(h.s, Val(h))"} IN IF IsAbrupt(parents) THEN parents ELSE`,
       "LET proto == OrdinaryObjectCreate(parents.s, Val(parents).proto) IN",
       constructor === undefined
@@ -1535,9 +1560,14 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     });
     const instanceFields = records.filter((record) => record.kind === "field" && !record.isStatic);
     const statics = records.filter((record) => record.kind !== "method" && record.isStatic);
+    const getRecords = (list: typeof records) =>
+      getSequence(list.map((record) => `Val(${record.name})`));
+    // The private methods and accessors go on each instance as it's made, and the static ones on
+    // the class now (§15.7.14 steps 30-34).
     steps.push(
-      `LET sf == SetO(${state}, F, [O(${state}, F) EXCEPT !.slots = [privateMethods |-> <<>>, fields |-> ${getSequence(instanceFields.map((record) => `Val(${record.name})`))}, initializers |-> Empty] @@ @]) IN`,
-      `LET sb == ${binding === undefined ? "sf" : `InitializeBinding(sf, env.e, ${getUnits(binding)}, F).s`} IN`,
+      `LET sf == SetO(${state}, F, [O(${state}, F) EXCEPT !.slots = [privateMethods |-> PrivateMethodsOf(${getRecords(methods.filter((record) => !record.isStatic))}, <<>>), fields |-> ${getRecords(instanceFields)}, initializers |-> Empty] @@ @]) IN`,
+      `LET sm == AddPrivateMethods(sf, F, PrivateMethodsOf(${getRecords(methods.filter((record) => record.isStatic))}, <<>>)) IN IF IsAbrupt(sm) THEN sm ELSE`,
+      `LET sb == ${binding === undefined ? "sm.s" : `InitializeBinding(sm.s, env.e, ${getUnits(binding)}, F).s`} IN`,
       `LET st == StaticElementsEvaluation(sb, F, ${getSequence(statics.map((record) => `Val(${record.name})`))}) IN IF IsAbrupt(st) THEN st ELSE Ok(st.s, F)`,
     );
     const name = define("Class", ["s", "ctx", "name"], steps.join("\n  "));

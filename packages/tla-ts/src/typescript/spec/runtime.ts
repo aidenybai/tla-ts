@@ -30,7 +30,7 @@ const DEFINITIONS = [
   IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, IF isPostfix THEN v ELSE new)`,
   `InitializeReferencedThen(ref, r) == IF IsAbrupt(r) THEN r ELSE InitializeReferencedBinding(r.s, ref, Val(r))`,
   `DefineElementOn(home, r, enumerable) ==
-  IF IsAbrupt(r) THEN r ELSE
+  IF IsAbrupt(r) \\/ Val(r).key.type = "private" THEN r ELSE
   LET e == Val(r)
       d == DefinePropertyOrThrow(r.s, home, e.key,
              CASE e.kind = "method" -> DataDesc(e.value, TRUE, enumerable, TRUE)
