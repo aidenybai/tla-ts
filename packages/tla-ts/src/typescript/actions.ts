@@ -18046,7 +18046,7 @@ const bindElement = (
 
 // Binds what a for-of's declaration takes from an element, where a using declaration adds it to
 // the iteration's resources, which the body's frame disposes.
-const bindIteration = (
+export const bindIteration = (
   declared: ts.ForInitializer,
   element: Expression,
   source: ts.Expression | undefined,
@@ -19190,12 +19190,15 @@ const translateLoop = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const isYielding = frame.yieldTo !== undefined && hasYield(loop.statement);
-  // A state machine runs a while, a do-while, or a for that yields as jumps to its head.
+  // A state machine runs a while, a do-while, a for, or a for-of that yields as jumps to its head.
   const loopTo = frame.loopTo;
   const isJumped =
     isYielding &&
     loopTo !== undefined &&
-    (ts.isWhileStatement(loop) || ts.isDoStatement(loop) || ts.isForStatement(loop));
+    (ts.isWhileStatement(loop) ||
+      ts.isDoStatement(loop) ||
+      ts.isForStatement(loop) ||
+      (ts.isForOfStatement(loop) && loop.awaitModifier === undefined));
   const unrolled =
     isYielding && !isJumped && ts.isForStatement(loop) ? getCounts(loop, context) : undefined;
   if (unrolled !== undefined || (isYielding && !isJumped && isForever(loop))) {
@@ -19469,7 +19472,11 @@ const translateIterations = (
       ...(machine?.machine?.outer ?? []),
       ...getSteppedOuter(loop, path, context),
     ]),
-  ].filter((symbol) => !path.scope.uninitialized.has(symbol));
+  ].filter(
+    // A value that the path doesn't bind, such as an array that the heap holds and a generator's
+    // body changes through its own name, has no value to pass to the loop.
+    (symbol) => !path.scope.uninitialized.has(symbol) && path.scope.bindings.has(symbol),
+  );
   // The iterator reads each element as the loop reaches it, which a copy of the elements matches
   // only while the body changes no object. Where it may, each step reads the array's length and
   // elements again, as an array iterator does. A set's or a map's iterator steps through its

@@ -57913,4 +57913,57 @@ describe("runs the script's methods in a conversion inside at most one other", (
       );
     });
   });
+
+  describe("runs a generator's loops in for-ofs and finally blocks as a state machine", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      function* walk(items: number[]) {
+        for (const item of items) {
+          if (item === 2) continue;
+          for (let step = 0; step < item; step++) yield item * 10 + step;
+          if (item === 5) break;
+        }
+        try {
+          yield -1;
+        } finally {
+          let count = 0;
+          while (count < 3) {
+            box.log += count;
+            count++;
+            yield 100 + count;
+          }
+        }
+      }
+      const walked: number[] = [];
+      const items = [1, 2, 3, 5, 7];
+      for (const value of walk(items)) walked.push(value);
+      function* grow(items: number[]) {
+        for (const item of items) {
+          if (items.length < 4) items.push(item + 1);
+          yield item;
+        }
+      }
+      const grown: number[] = [];
+      const seeds = [4, 6];
+      for (const value of grow(seeds)) grown.push(value);
+      const single = [3];
+      const early = walk(single);
+      early.next();
+      early.next();
+      const closed = early.return(9 as never);
+      const result = [walked.join(" "), box.log, grown.join(" "), closed.value, closed.done].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "10 30 31 32 50 51 52 53 54 -1 101 102 103|012|4 6 5 7|9|true";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("4 6 5 7", "4 6 5")))).failure?.message,
+      ).toContain(expected);
+    });
+  });
 });
