@@ -24,6 +24,18 @@ describe("level checking matches SANY", () => {
     await expect(checkDefinition(definition)).rejects.toThrow(message);
   });
 
+  it("checks the range shared by bounded variables once, for the first", async () => {
+    await expect(checkDefinition("\\E v, w \\in [](x = 1) : TRUE")).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 6 to line 3, col 33 of module M",
+          message:
+            "Level error in applying operator $BoundedExists:\nThe level of the range for the bounded variable line 3, col 9 to line 3, col 9 of module M \nexceeds the maximum level allowed by the operator.",
+        },
+      ]),
+    );
+  });
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({

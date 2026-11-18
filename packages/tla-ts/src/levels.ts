@@ -677,13 +677,15 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     bound = getBoundNames(bounds),
   ) => {
     const operands = toOperands(expressions, bindFormals(scope, toFormals(bound)));
-    const ranges = bounds.map((range) => analyze(range.set, scope));
+    // SANY checks the range of x, y \in S once, for x.
+    const groups = bounds.filter((range, index) => range.set !== bounds[index - 1]?.set);
+    const ranges = groups.map((range) => analyze(range.set, scope));
     const data = applyDefined(operator, operands, ranges, bound);
     ranges.forEach((range, index) => {
       if (range.level <= ACTION_LEVEL) return;
       data.isCorrect = false;
       if (!range.isCorrect) return;
-      const pattern = bounds[index].pattern;
+      const pattern = groups[index].pattern;
       const symbol = pattern.ranges?.[0];
       messages.push(
         `Level error in applying operator ${operator.name}:\nThe level of the range for the bounded variable ${symbol ? formatRange(symbol) : getPatternNames(pattern)[0]} \nexceeds the maximum level allowed by the operator`,
