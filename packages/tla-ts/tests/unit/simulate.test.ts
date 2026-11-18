@@ -36,6 +36,29 @@ it("sorts the records of the initial states, which TLC's simulator normalizes", 
   ]);
 });
 
+it.each(["[a : {0}, b : {1}]", '[{"a", "b"} -> {1}]'])(
+  "sorts a record an invariant checks against %s, which TLC's member sorts in place",
+  (set) => {
+    const messages: string[] = [];
+    simulate({
+      source: `---- MODULE M ----\nVARIABLE q\nId(a, c) == a\nInit == q = [b |-> 1, a |-> 2]\nNext == UNCHANGED q\nInv == q \\in ${set}\n====`,
+      config: SAFETY_CONFIG,
+      seed: 4n,
+      traceDepth: 5,
+      traceCount: 1n,
+      aril: 0n,
+      isGenerating: false,
+      scheduler: "random",
+      onSimulation: (output) => {
+        if (output.kind === "message" && output.isError) messages.push(output.message);
+      },
+    });
+    expect(messages).toEqual([
+      "Invariant Inv is violated by the initial state:\nq = [a |-> 2, b |-> 1]\n",
+    ]);
+  },
+);
+
 it('reports a violation in the step that sets TLCSet("exit"), which TLC\'s simulator drops', () => {
   const body =
     'Init == p = 0 /\\ q = 0\nNext == TLCSet("exit", TLCGet("level") > 3) /\\ p\' = p + 1 /\\ q\' = p + 1\nInv == q < 4';

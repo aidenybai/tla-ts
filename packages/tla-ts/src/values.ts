@@ -290,6 +290,13 @@ const forgetWrittenOrder = (value: Value): void => {
   value.range.forEach(forgetWrittenOrder);
 };
 
+// TLC's SetOfRcdsValue#member and SetOfFcnsValue#member normalize the record or function they check in place.
+const forgetOwnWrittenOrder = (value: Value) => {
+  if (isWrittenOrderUsed && typeof value === "object" && value.kind === "Function") {
+    value.writtenKeys = undefined;
+  }
+};
+
 const isRecordDomain = (domain: Value[]) => domain.every((key) => typeof key === "string");
 
 const isRecordMismatch = (left: Value[], right: Value[]) =>
@@ -2219,6 +2226,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
           `Attempted to check if \n${formatValue(element)}\nwhich is not a TLC function value, is in the set of functions:\n${prettyPrint(formatValue(set))}`,
         );
       }
+      forgetOwnWrittenOrder(element);
       const functionValue = toFiniteFunction(element);
       const low = getIntervalLow(element, functionValue.domain);
       const isDomain =
@@ -2231,6 +2239,7 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       return isDomain && functionValue.range.every((item) => isElementOf(item, set.range));
     }
     case "RecordSet": {
+      forgetOwnWrittenOrder(element);
       const functionValue = isFunctionValue(element) ? toFiniteFunction(element) : undefined;
       if (!functionValue || !isRecordDomain(functionValue.domain)) {
         if (isModelValue(element)) return isModelValueMember(element, set);
