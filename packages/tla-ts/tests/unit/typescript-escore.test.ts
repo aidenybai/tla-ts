@@ -314,6 +314,7 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript('Date.parse("Thu Jan 01 1970");')).message).toContain(
         "tla-ts can't",
       );
+      expect((await checkScript('"I".toLocaleLowerCase("tr");')).message).toContain("tla-ts can't");
     });
   });
 
@@ -397,6 +398,14 @@ describe("compiles scripts by specializing ESCore", () => {
       expect(
         (await checkScript(getSource("undefined,undefined,undefined2"), false)).message,
       ).toContain(THREW);
+    });
+
+    it("stops at a block function named arguments where the editions disagree", async () => {
+      const source = `(function () {
+        typeof arguments;
+        { function arguments() {} }
+      })();`;
+      expect((await checkScript(source, false)).message).toContain("tla-ts can't");
     });
   });
 

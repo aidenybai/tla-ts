@@ -74,8 +74,11 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
   const recursive = new Set<string>();
   const visit = (definition: CodeDefinition) => {
     isVisited.set(definition.name, false);
-    for (const name of definition.text.slice(definition.text.indexOf("==")).match(/\b[A-Z]\w*/g) ??
-      []) {
+    // A name inside a string, such as SourceText's, is text rather than a read.
+    for (const name of definition.text
+      .slice(definition.text.indexOf("=="))
+      .replace(/"(?:[^"\\]|\\.)*"/g, "")
+      .match(/\b[A-Z]\w*/g) ?? []) {
       const read = byName.get(name);
       if (read === undefined) continue;
       if (isVisited.get(name) === false) recursive.add(name);

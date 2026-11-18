@@ -4424,6 +4424,11 @@ const runTest = async (path: string): Promise<TestRun> => {
   // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
   // Node runs it as a module.
   const program = isSloppy ? annotated : `"use strict"; ${annotated}`;
+  // The ESCore backend compiles a program as a script, which differs from a module in its this,
+  // its top-level await and where its var bindings live.
+  if (ESCORE !== undefined && metadata.isModule) {
+    return { id, outcome: "untranslatable", reason: "tla-ts can't compile a module to ESCore yet" };
+  }
   // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
   // import of the test's .js path to the test's code rather than to the .js that Node runs.
   if (isLinked) writeFileSync(programPath, program);

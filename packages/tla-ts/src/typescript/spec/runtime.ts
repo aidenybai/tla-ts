@@ -187,6 +187,8 @@ export const LOCALE_METHODS = [
   "toLocaleDateString",
   "toLocaleTimeString",
   "localeCompare",
+  "toLocaleLowerCase",
+  "toLocaleUpperCase",
 ];
 
 const HOST_PATCHES = [
@@ -201,11 +203,23 @@ const HOST_PATCHES = [
     to: `ELSE Unsupported(r.s, <<>>)`,
   },
   {
+    name: "ZonedConstructorTimeZone",
+    from: `ELSE ThrowError(r.s, "RangeError")`,
+    to: `ELSE Unsupported(r.s, <<>>)`,
+  },
+  {
     name: "ParseISODateTime",
     from: `TPLower(calendar.calendar) # N("iso8601") THEN ThrowError(s, "RangeError")`,
     to: `TPLower(calendar.calendar) # N("iso8601") THEN Unsupported(s, <<>>)`,
   },
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
+  // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which
+  // CallBuiltin stops at as locale-sensitive only by their own names.
+  {
+    name: "StringProperties",
+    from: `SV("toLocaleLowerCase"), "String", "toLowerCase", 0),\n     M("StringPrototype", SV("toLocaleUpperCase"), "String", "toUpperCase", 0)`,
+    to: `SV("toLocaleLowerCase"), "String", "toLocaleLowerCase", 0),\n     M("StringPrototype", SV("toLocaleUpperCase"), "String", "toLocaleUpperCase", 0)`,
+  },
   // A program's functions hold their source text as the program's code gives it, which
   // SourceUnits makes code units of when a program reads it.
   {

@@ -1568,11 +1568,21 @@ export const specialize = (
       }
       // Step 32.a (§B.3.2.1): outside strict mode, var bindings for the block functions that no
       // parameter names, and the sites whose evaluation then sets them.
-      const hoisted = isStrict
-        ? []
-        : getHoistableFunctions(statements).filter(
-            (declaration) => !parameterBindings.includes(declaration.name?.text ?? "*default*"),
-          );
+      const hoistable = isStrict ? [] : getHoistableFunctions(statements);
+      // ESCore keeps the earlier editions' reading, where a block function named arguments
+      // leaves the arguments object, and Node, as the current edition, makes it the function.
+      if (
+        argumentsNeeded &&
+        hoistable.some((declaration) => declaration.name?.text === "arguments")
+      ) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't tell whether a block function named arguments replaces the arguments object",
+          node,
+        );
+      }
+      const hoisted = hoistable.filter(
+        (declaration) => !parameterBindings.includes(declaration.name?.text ?? "*default*"),
+      );
       if (hoisted.length > 0) {
         const hoistedNames = dedupe(
           hoisted.map((declaration) => declaration.name?.text ?? "*default*"),
