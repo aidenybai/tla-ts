@@ -1190,6 +1190,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "occf",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => occf(environment.manager, goal)),
     },
   ],

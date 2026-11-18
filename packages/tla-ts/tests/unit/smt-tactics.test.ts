@@ -408,6 +408,26 @@ describe("tactics keep the dependencies Z3 keeps", () => {
     ).toEqual(["unsat", "(a4 a2 a1)", "(:rlimit 207)"]);
   });
 
+  it("keeps the dependency of each clause that occf rewrites", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (! (or (> x 2) (< y 0) (> (+ x y) 5) p) :named a1))",
+        "(assert (! (or (> x 2) (< y 0) (not p)) :named a2))",
+        "(assert (! (<= x 2) :named a3))",
+        "(assert (! (>= y 0) :named a4))",
+        "(assert (or (> (+ x y) 5) (< y 0)))",
+        "(assert (! (< (+ x y) 3) :named a5))",
+        "(check-sat-using (then occf smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(a4 a5)", "(:rlimit 463)"]);
+  });
+
   it("internalizes the assertions of the smt tactic once when it assumes the names", () => {
     expect(
       run([
