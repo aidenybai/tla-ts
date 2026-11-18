@@ -1229,6 +1229,22 @@ Spec == Init /\\ [][Next]_x
     ).toContain(`line 7, col 17 to line 7, col 17 of module M\n\n${error}\n`);
   });
 
+  it.each([
+    ["Op0 == lab:: 1 |- 2\nU == Op0!1", "line 3, col 6 to line 3, col 8", "Op0"],
+    [
+      "Op0 == {lab:: 1 |- 2}\nU == Op0!1!1",
+      "line 3, col 10 to line 3, col 10",
+      "argument selector 1",
+    ],
+  ])(
+    "reports a selection through a failed label in %j at the selector before it",
+    (unit, location, name) => {
+      expect(getReport({ M: `---- MODULE M ----\n${unit}\n====\n` }).text).toContain(
+        `${location} of module M\n\nAn unexpected null node specified by '${name}'.\nThis is probably due to a previous error.\n`,
+      );
+    },
+  );
+
   it("rejects a LET without definitions", () => {
     const report = getReport({ M: "---- MODULE M ----\nD0 ==\n  LET\n  IN 1\n====\n" });
     expect(report.isFailed).toBe(true);

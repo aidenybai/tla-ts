@@ -299,8 +299,13 @@ const selectSubexpression = (
   const deferToExpression = (range: SourceRange | undefined, message: string) => {
     if (!expressionError && range) expressionError = { location: formatRange(range), message };
   };
-  const checkNull = (node: Expression | undefined, message: string, isEmpty = false) => {
-    const range = reference.selectorRanges?.[selectorIndex];
+  const checkNull = (
+    node: Expression | undefined,
+    message: string,
+    isEmpty = false,
+    index = selectorIndex,
+  ) => {
+    const range = reference.selectorRanges?.[index];
     if (node && range) {
       nulls.push({
         node,
@@ -458,6 +463,13 @@ const selectSubexpression = (
     current = enterScopes(current);
     if (current.kind === "Label") {
       current = current.body;
+      // SANY checks the body of a label it passes against the selector before it.
+      checkNull(
+        current,
+        `An unexpected null node specified by '${getSelectorName(selectors[selectorIndex - 1])}'.\nThis is probably due to a previous error.`,
+        false,
+        selectorIndex - 1,
+      );
       selectOperand(selector);
       return;
     }

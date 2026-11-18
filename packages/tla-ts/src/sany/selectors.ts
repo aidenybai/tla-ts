@@ -552,7 +552,7 @@ export const createSelectorResolver =
           if (walk.node === undefined || isAbsent(walk.node))
             return generator.addError(
               getItemLocation(),
-              `An unexpected null node specified by '${getSelectorItemName(item)}'.\nThis is probably due to a previous error.`,
+              `An unexpected null node specified by '${getSelectorItemName(items[walk.index])}'.\nThis is probably due to a previous error.`,
             );
           if (walk.index !== items.length - 1) {
             const next = items[walk.index + 1];

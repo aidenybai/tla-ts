@@ -1484,6 +1484,36 @@ describe("name resolution matches SANY", () => {
   );
 
   it.each([
+    ["Op0 == lab:: 1 |- 2\nU == Op0!2!1", "line 3, col 6 to line 3, col 8", "Op0", 14],
+    [
+      "Op0 == {lab:: 1 |- 2}\nU == Op0!1!1",
+      "line 3, col 10 to line 3, col 10",
+      "argument selector 1",
+      15,
+    ],
+  ])(
+    "reports a selection through a failed label in %j at the selector before it",
+    async (source, location, name, column) => {
+      await expect(checkNames(source)).rejects.toThrow(
+        createSanyError([
+          {
+            location: `line 2, col ${column + 2} to line 2, col ${column + 3} of module M`,
+            message: "Could not find declaration or definition of symbol '|-'.",
+          },
+          {
+            location: `line 2, col ${column} to line 2, col ${column + 5} of module M`,
+            message: "Couldn't resolve infix operator symbol `|-'.",
+          },
+          {
+            location: `${location} of module M`,
+            message: `An unexpected null node specified by '${name}'.\nThis is probably due to a previous error.`,
+          },
+        ]),
+      );
+    },
+  );
+
+  it.each([
     ["F == LET G == 1 IN [TRUE]", "line 2, col 20 to line 2, col 20"],
     ["F(a) == a\nG == F([TRUE])", "line 3, col 8 to line 3, col 8"],
   ])("rejects a bracket without a subscript in %j", async (source, location) => {
