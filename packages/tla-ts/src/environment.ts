@@ -1129,6 +1129,20 @@ export const createEnvironment = (
     builtins,
     variables,
   });
+  const runtimeVariables = ["TLCGet", "Trace", "CounterExample"].filter((name) =>
+    builtins.has(name),
+  );
+  // A prepared module's levels hold here where it reads none of the operators that this analysis
+  // takes as variables.
+  const isPreparedLevelsLinked = preparedTexts.every(
+    (texts) => texts !== undefined && !runtimeVariables.some((name) => texts.includes(name)),
+  );
+  const analyzer = createLevelAnalyzer({
+    constants: new Set(constants.keys()),
+    variables: new Set([...variables, ...runtimeVariables]),
+    getDefinition: (name) => getDefinition(name, environment),
+    getPreparedLevels: (name) => (isPreparedLevelsLinked ? preparedLevels.get(name) : undefined),
+  });
   const environment: Environment = {
     runtime,
     definitions,
@@ -1147,21 +1161,8 @@ export const createEnvironment = (
     definitionEvaluators: new WeakMap(),
     initRunners: new WeakMap(),
     nextRunners: new WeakMap(),
+    getOperatorLevels: analyzer.getOperatorLevels,
   };
-  const runtimeVariables = ["TLCGet", "Trace", "CounterExample"].filter((name) =>
-    builtins.has(name),
-  );
-  // A prepared module's levels hold here where it reads none of the operators that this analysis
-  // takes as variables.
-  const isPreparedLevelsLinked = preparedTexts.every(
-    (texts) => texts !== undefined && !runtimeVariables.some((name) => texts.includes(name)),
-  );
-  const analyzer = createLevelAnalyzer({
-    constants: new Set(constants.keys()),
-    variables: new Set([...variables, ...runtimeVariables]),
-    getDefinition: (name) => getDefinition(name, environment),
-    getPreparedLevels: (name) => (isPreparedLevelsLinked ? preparedLevels.get(name) : undefined),
-  });
   const getEvaluationError = (body: Expression) => {
     try {
       evaluate(body, { environment, scope: undefined, state: undefined, next: undefined });
