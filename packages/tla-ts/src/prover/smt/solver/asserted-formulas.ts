@@ -161,12 +161,15 @@ class Substitution {
     this.trail.shrink(size);
   }
 
-  release() {
+  cleanup() {
     for (const [key, value] of this.map) {
       this.manager.decRef(key);
       this.manager.decRef(value);
     }
     this.map.clear();
+  }
+
+  release() {
     this.trail.reset();
   }
 
@@ -244,7 +247,7 @@ export class AssertedFormulas {
     this.macros.release();
     this.bvSharing.release();
     this.rewriter.release();
-    this.substitution.release();
+    this.substitution.cleanup();
   }
 
   release() {
@@ -252,6 +255,7 @@ export class AssertedFormulas {
     this.boundsElim.release();
     this.termIteElim.release();
     this.patternInference.release();
+    this.substitution.release();
   }
 
   push() {

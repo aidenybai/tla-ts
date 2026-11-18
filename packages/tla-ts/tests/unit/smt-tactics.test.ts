@@ -2677,6 +2677,30 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 298)", "sat", "(:rlimit 485)"]);
   });
+
+  it("frees the propagated atoms of the kernel's assertions after the rest of the kernel", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (<= (+ (* 4 y) (* 1 z) x) (+ (* 3 y) z (* 3 x))))",
+        "(assert (distinct (+ z y x) -4))",
+        "(assert (not (< (+ z y) 2)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(declare-const u Int)",
+        "(declare-const v Int)",
+        "(declare-const w Int)",
+        "(assert (= (+ x z w 7) -4))",
+        "(assert (= (+ v x 0) 1))",
+        "(assert (<= (+ u (* 3 w) 5) (+ w 3)))",
+        "(assert (>= (+ x w (* 4 z)) (+ (* 2 x) v (* 1 w) 0)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 408)", "sat", "(:rlimit 882)"]);
+  });
 });
 
 describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
