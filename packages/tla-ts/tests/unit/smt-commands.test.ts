@@ -1067,6 +1067,10 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "unknown",
       '(:reason-unknown "max. resource limit exceeded")',
     ]);
+    expect(run(getSoftLines(195))).toEqual([
+      '(error "line 9 column 10: push canceled")',
+      '(:reason-unknown "no reason given")',
+    ]);
   });
 
   it("converts the clauses of the SAT solver when maxres counts its assertions", () => {
