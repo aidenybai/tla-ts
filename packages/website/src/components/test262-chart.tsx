@@ -126,11 +126,18 @@ export const Test262Chart = () => {
             <span
               key={tick.label}
               style={{ left: `${getX(tick.index)}%` }}
-              className={cn("absolute top-0 flex flex-col gap-1", tick.isTight && "max-sm:hidden")}
+              className={cn(
+                "absolute top-0 flex w-0 flex-col items-start gap-1",
+                tick.isTight && "max-sm:hidden",
+              )}
             >
               <span className="h-1.5 w-px bg-input" />
               <span
-                className={cn("leading-5 whitespace-nowrap", tick.index > 0 && "-translate-x-1/2")}
+                className={cn(
+                  "leading-5 whitespace-nowrap",
+                  tick.index > 0 && "-translate-x-1/2",
+                  tick.index === LAST_INDEX && "-translate-x-full",
+                )}
               >
                 {tick.label}
               </span>
