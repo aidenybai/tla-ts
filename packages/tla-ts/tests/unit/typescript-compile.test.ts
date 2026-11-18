@@ -53650,4 +53650,29 @@ describe("BigInts", () => {
       );
     });
   });
+
+  it("fires a stop in a value that a statement reads before a call that throws in it", async () => {
+    const source = `
+      var box = { seen: "" };
+      function get() {
+        return /** @type {any} */ (undefined);
+      }
+      function thrower() {
+        throw new Error("after");
+      }
+      function run() {
+        var read = 0;
+        try {
+          (read = get().x), thrower();
+        } catch (error) {
+          box.seen = error instanceof TypeError ? "type" : error.message;
+        }
+      }
+      run();
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
+  });
+
 });
