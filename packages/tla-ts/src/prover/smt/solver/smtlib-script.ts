@@ -774,8 +774,10 @@ export const runSmtlibScript = (
     const logic = state.logic;
     const parameters = settings.parameters;
     const isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
+    const isParallel = parameters.get("parallel.enable") === "true";
     const isFdSolver =
-      ((logic === "QF_FD" || logic === "SAT") && !isProofsEnabled) || logic === "SMTFD";
+      !isParallel &&
+      (((logic === "QF_FD" || logic === "SAT") && !isProofsEnabled) || logic === "SMTFD");
     const isEuf = parameters.get("sat.euf") === "true";
     const isSatSolver =
       isFdSolver ||
@@ -793,6 +795,7 @@ export const runSmtlibScript = (
     state.fdSolver =
       (logic === "QF_FD" || logic === "SAT") &&
       !isProofsEnabled &&
+      !isParallel &&
       !parameters.has("tactic.default_tactic")
         ? new FdSolver(state.manager, getSatParams(parameters))
         : undefined;
@@ -808,6 +811,7 @@ export const runSmtlibScript = (
     if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
     if (state.logic === undefined) state.reader.registerList();
     resetKernel();
+    if (state.kernel === undefined) state.manager.dropSmtSolverDecl();
   };
   // The parts of inc_sat_solver that are not ported leave its answers to the smt kernel.
   const useSatSolver = <Result>(action: (solver: IncSatSolver) => Result) => {

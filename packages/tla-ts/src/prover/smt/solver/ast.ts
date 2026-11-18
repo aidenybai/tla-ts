@@ -796,6 +796,13 @@ export class AstManager {
     this.numDecls--;
   }
 
+  // FIRST_DECLARED_SMALL_ID counts a declaration that Z3 makes as it starts its smt solver, so the
+  // next declaration of a manager without that solver takes its id.
+  dropSmtSolverDecl() {
+    this.freeSmallIds.push(FIRST_DECLARED_SMALL_ID - 1);
+    this.numDecls--;
+  }
+
   mkMacro(name: string, expr: number) {
     const decl = this.funcDecls.length;
     this.declHashes[decl] = this.getFuncDeclHash(

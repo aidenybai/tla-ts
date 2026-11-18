@@ -2333,6 +2333,35 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
       ]),
     ).toEqual(["sat", "unsat", "(n)"]);
   });
+
+  it("numbers the declarations without the one Z3 makes as it starts the smt solver", () => {
+    const getModel = (options: string[]) =>
+      run([
+        ...options,
+        "(declare-datatypes ((C 0)) (((k0) (k1) (k2) (k3) (k4) (k5) (k6))))",
+        "(declare-datatypes ((D 0)) (((d0) (d1) (d2) (d3) (d4) (d5) (d6) (d7) (d8))))",
+        "(declare-const e0 C)",
+        "(declare-const e1 D)",
+        "(check-sat)",
+        "(get-model)",
+      ]);
+    const getExpected = (first: string, second: string) => [
+      "sat",
+      [
+        "(",
+        "  (define-fun e0 () C",
+        `    ${first})`,
+        "  (define-fun e1 () D",
+        `    ${second})`,
+        ")",
+      ].join("\n"),
+    ];
+    expect(getModel(["(set-logic QF_FD)"])).toEqual(getExpected("k5", "d2"));
+    expect(getModel(["(set-logic QF_DT)"])).toEqual(getExpected("k1", "d5"));
+    expect(getModel(["(set-option :parallel.enable true)", "(set-logic QF_FD)"])).toEqual(
+      getExpected("k1", "d5"),
+    );
+  });
 });
 
 describe("eq2bv, as Z3 5.3.2 encodes the bounded integers", () => {
