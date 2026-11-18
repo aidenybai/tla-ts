@@ -1368,11 +1368,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const levels = copy
       ? analyzeInstanced(definition, copy, scope)
       : analyzeOperator(
-            definition.name,
-            getFormals(definition),
-            getDefinitionBody(definition),
-            scope,
-          );
+          definition.name,
+          getFormals(definition),
+          getDefinitionBody(definition),
+          scope,
+        );
     const merged = {
       ...levels,
       level: Math.max(prior.level, levels.level),
