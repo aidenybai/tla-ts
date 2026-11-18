@@ -832,6 +832,24 @@ export class PbSolver implements SatExtension, ConstraintHost {
     this.numPropagationsSincePop = 0;
   }
 
+  gcVars(numVars: number) {
+    this.gcConstraintVars(numVars, this.constraints);
+    this.gcConstraintVars(numVars, this.learned);
+  }
+
+  private gcConstraintVars(numVars: number, constraints: Constraint[]) {
+    let next = 0;
+    for (let index = 0; index < constraints.length; index++) {
+      const constraint = constraints[index];
+      if (constraint.getMaxVar() >= numVars) {
+        constraint.clearWatch(this);
+        constraint.nullifyTrackingLiteral(this);
+        this.deallocate(constraint);
+      } else constraints[next++] = constraint;
+    }
+    constraints.length = next;
+  }
+
   popReinit() {
     const toReinit = this.constraintToReinit;
     let size = this.constraintToReinitLastSize;
@@ -1470,7 +1488,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
       k = k.add(Rational.of(BigInt(wlits.coeffs[index])));
     }
     const bound = this.checkUnsigned(k);
-    if (isRoot) {
+    if (isRoot && this.solver.numUserScopes === 0) {
       this.addRootPbGe(wlits, bound, isSign);
       return NULL_LITERAL;
     }
@@ -1482,7 +1500,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
   private convertPbGe(expr: number, isRoot: boolean, isSign: boolean) {
     const bound = this.checkUnsigned(getPbK(this.manager, this.manager.decls[expr]));
     const wlits = this.convertPbWlits(expr);
-    if (isRoot) {
+    if (isRoot && this.solver.numUserScopes === 0) {
       this.addRootPbGe(wlits, bound, isSign);
       return NULL_LITERAL;
     }
@@ -1495,7 +1513,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
     const solver = this.solver;
     let k = getPbK(this.manager, this.manager.decls[expr]);
     const wlits = this.convertPbWlits(expr);
-    const isBaseAssert = isRoot && !isSign;
+    const isBaseAssert = isRoot && !isSign && solver.numUserScopes === 0;
     const lit1 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
     const lit2 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
     this.addPbGe(lit1, wlits, Number(BigInt.asUintN(32, k.num)), false);
@@ -1528,7 +1546,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
   private convertAtLeastK(expr: number, k: Rational, isRoot: boolean, isSign: boolean) {
     const lits = this.convertPbArgs(expr);
     let bound = k.compare(Rational.of(BigInt(lits.length))) > 0 ? lits.length + 1 : Number(k.num);
-    if (isRoot) {
+    if (isRoot && this.solver.numUserScopes === 0) {
       if (isSign) {
         for (let index = 0; index < lits.length; index++) lits[index] ^= 1;
         bound = lits.length + 1 - bound;
@@ -1547,7 +1565,7 @@ export class PbSolver implements SatExtension, ConstraintHost {
     for (let index = 0; index < lits.length; index++) lits[index] ^= 1;
     const bound1 = k.compare(Rational.of(BigInt(lits.length))) >= 0 ? lits.length : Number(k.num);
     let bound = lits.length - bound1;
-    if (isRoot) {
+    if (isRoot && this.solver.numUserScopes === 0) {
       if (isSign) {
         for (let index = 0; index < lits.length; index++) lits[index] ^= 1;
         bound = lits.length + 1 - bound;
@@ -1564,7 +1582,8 @@ export class PbSolver implements SatExtension, ConstraintHost {
   private convertEqK(expr: number, k: Rational, isRoot: boolean, isSign: boolean) {
     const solver = this.solver;
     const lits = this.convertPbArgs(expr);
-    const isBaseAssert = isRoot && !isSign;
+    // Deviation from Z3: convert_eq_k asserts at the base level in a user scope too, so the constraint outlives the pop.
+    const isBaseAssert = isRoot && !isSign && solver.numUserScopes === 0;
     const lit1 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
     const lit2 = isBaseAssert ? NULL_LITERAL : 2 * solver.mkVar(true);
     const bound = k.compare(Rational.of(BigInt(lits.length))) > 0 ? lits.length + 1 : Number(k.num);

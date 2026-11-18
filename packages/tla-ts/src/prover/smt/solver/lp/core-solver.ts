@@ -426,11 +426,16 @@ export class CoreSolver {
       this.status = LP_INFEASIBLE;
       return;
     }
-    if (this.settings.isCanceled()) {
+    const entering = enteringCell.column;
+    const matrix = this.matrix;
+    if (
+      this.settings.isCanceled(
+        matrix.rows[this.heading[leaving]].length * matrix.columns[entering].length,
+      )
+    ) {
       this.status = LP_CANCELLED;
       return;
     }
-    const entering = enteringCell.column;
     const newValue = this.getValForLeaving(leaving);
     const theta = this.x[leaving].sub(newValue).div(enteringCell.coeff);
     this.x[leaving] = newValue;
@@ -461,12 +466,11 @@ export class CoreSolver {
         return;
       }
       this.oneIterationTableauRows();
-    } while (
-      this.status !== LP_OPTIMAL &&
-      this.status !== LP_INFEASIBLE &&
-      this.status !== LP_CANCELLED &&
-      !this.isFeasible()
-    );
+      if (this.settings.isCanceled()) {
+        this.status = LP_CANCELLED;
+        break;
+      }
+    } while (this.status !== LP_OPTIMAL && this.status !== LP_INFEASIBLE && !this.isFeasible());
   }
 
   solve() {

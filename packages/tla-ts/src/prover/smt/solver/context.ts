@@ -1,4 +1,4 @@
-import { SmtInvariantError } from "../../../errors";
+import { SmtCanceledError, SmtInvariantError } from "../../../errors";
 import type { AssertedFormulas } from "./asserted-formulas";
 import {
   AstManager,
@@ -7,13 +7,16 @@ import {
   FAMILY_BASIC,
   FAMILY_BV,
   FAMILY_CHAR,
+  FAMILY_DATALOG_RELATION,
   FAMILY_DATATYPE,
+  FAMILY_FF,
   FAMILY_FINITE_SET,
   FAMILY_FPA,
   FAMILY_PB,
   FAMILY_POLY,
   FAMILY_RECFUN,
   FAMILY_SEQ,
+  FAMILY_SPECIAL_RELATIONS,
   KIND_APP,
   KIND_QUANTIFIER,
   KIND_VAR,
@@ -66,6 +69,7 @@ import { TheoryDatatype } from "./theory-datatype";
 import { TheoryFiniteSet } from "./theory-finite-set";
 import { TheoryPb } from "./theory-pb";
 import { TheoryPolymorphism } from "./theory-polymorphism";
+import { TheoryWithoutTerms } from "./theory-without-terms";
 import { TheoryLra } from "./theory-lra";
 import { shrink } from "./array";
 import {
@@ -132,6 +136,15 @@ const THEORY_MAKERS = new Map<number, (context: Context) => Theory>([
   [FAMILY_FINITE_SET, (context) => new TheoryFiniteSet(context)],
   [FAMILY_POLY, (context) => new TheoryPolymorphism(context)],
   [FAMILY_PB, (context) => new TheoryPb(context)],
+  [
+    FAMILY_DATALOG_RELATION,
+    (context) => new TheoryWithoutTerms(context, FAMILY_DATALOG_RELATION, "datalog"),
+  ],
+  [FAMILY_FF, (context) => new TheoryWithoutTerms(context, FAMILY_FF, "finite-field")],
+  [
+    FAMILY_SPECIAL_RELATIONS,
+    (context) => new TheoryWithoutTerms(context, FAMILY_SPECIAL_RELATIONS, "unknown"),
+  ],
 ]);
 
 // get_luby
@@ -268,8 +281,8 @@ export class Context extends Internalizer {
     return family < 0 ? undefined : this.theoryByFamily[family];
   }
 
-  checkCanceled() {
-    if (this.manager.limit.inc()) return false;
+  checkCanceled(cost = 1) {
+    if (this.manager.limit.inc(cost)) return false;
     this.lastSearchFailure = FAILURE_CANCELED;
     return true;
   }
@@ -1219,7 +1232,7 @@ export class Context extends Internalizer {
       const theory = this.theories[this.finalCheckIndex];
       const check = theory === undefined ? qmanager.finalCheckEh(true) : theory.finalCheckEh(level);
       if (theory !== undefined) maxLevel = Math.max(maxLevel, theory.numFinalCheckLevels());
-      const isCanceled = theory === this.arith && this.checkCanceled();
+      const isCanceled = theory !== undefined && this.checkCanceled();
       if (isCanceled) failure = FAILURE_CANCELED;
       else if (theory !== undefined && check === FC_GIVEUP) {
         failure = FAILURE_THEORY;
@@ -1334,6 +1347,7 @@ export class Context extends Internalizer {
   getModel() {
     if (this.isInconsistent()) return undefined;
     if (this.modelState.kind === "final") return this.modelState.model;
+    if (!this.manager.limit.inc()) return undefined;
     const generated =
       this.modelState.kind === "proto" ? this.modelState.generated : this.mkProtoModel();
     if (generated === undefined) return undefined;
@@ -1346,8 +1360,9 @@ export class Context extends Internalizer {
 
   getSatModel() {
     const model = this.getModel();
-    if (model === undefined) throw new SmtInvariantError("a sat answer without a model");
-    return model;
+    if (model !== undefined) return model;
+    if (this.manager.limit.isExhausted()) throw new SmtCanceledError();
+    throw new SmtInvariantError("a sat answer without a model");
   }
 
   validateModel(model: ProtoModel) {

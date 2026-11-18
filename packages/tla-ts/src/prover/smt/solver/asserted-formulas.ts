@@ -253,6 +253,8 @@ export class AssertedFormulas {
 
   private forcePush() {
     for (; this.numLazyScopes > 0; this.numLazyScopes--) {
+      this.reduce();
+      this.commit();
       this.substitution.push();
       this.scopes.push({ numFormulas: this.formulas.size, isInconsistent: this.isInconsistent });
       this.names.push();

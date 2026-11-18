@@ -1202,6 +1202,77 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("leaves out the variables that only the assumptions of get-consequences bring in", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or p q))",
+        "(get-consequences (r) (r p))",
+        "(get-consequences (r (not p)) (r p q))",
+      ]),
+    ).toEqual(["sat", "", "sat", "", "(=> r r)", "(=> (not p) (not p))", "(=> (not p) q)"]);
+  });
+
+  // The SAT solver gives up on the dependency, which goal2sat takes before the bit-blasting.
+  it("tracks the assumptions of get-consequences that are not literals through the preprocessing", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(assert (=> a b))",
+        "(assert (=> (and b c) (not a)))",
+        "(get-consequences ((and a c)) (a b c))",
+        "(get-consequences ((or a c)) (a b c))",
+        "(declare-const x (_ BitVec 4))",
+        "(assert (bvult x #x5))",
+        "(get-consequences ((= x #x3)) (x))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unsat",
+      "",
+      "sat",
+      "",
+      "unknown",
+      "",
+      '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun = ((_ BitVec 4) (_ BitVec 4)) Bool)',
+      ')")',
+    ]);
+  });
+
+  it("assumes the named assertions in get-consequences on the finite-domain solver", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_FD)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(declare-const d Bool)",
+        "(assert (=> a b))",
+        "(assert (! (or c d) :named n1))",
+        "(get-consequences ((and a (not b))) (a b c))",
+        "(get-unsat-core)",
+        "(get-consequences ((=> c a) (not d)) (a b c d))",
+      ]),
+    ).toEqual([
+      "unsat",
+      "",
+      "((and a (not b)))",
+      "sat",
+      "",
+      "(=> (and n1 (not d) (=> c a)) a)",
+      "(=> (and n1 (not d) (=> c a)) b)",
+      "(=> (and n1 (not d)) c)",
+      "(=> (not d) (not d))",
+    ]);
+  });
+
   it("orders the model of the SAT solver by its variables, as inc_sat_solver registers them", () => {
     expect(
       run([
@@ -1428,6 +1499,102 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["(:rlimit 4)", "(:rlimit 7)", "(:rlimit 14)"]);
+  });
+
+  it("reduces the asserted formulas when the first assertion after push opens its scope", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(push)",
+        "(get-info :rlimit)",
+        "(assert p)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 9)", "(:rlimit 12)"]);
+  });
+
+  it("counts a step of the limit after the final check of each theory", () => {
+    expect(
+      run([
+        "(set-logic QF_AUFLIA)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const a (Array Int Int))",
+        "(declare-const x Int)",
+        "(push)",
+        "(assert (= (f x) (select a x)))",
+        "(assert (> x 2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 98)"]);
+  });
+
+  it("counts the final checks of the theories without terms that setup_unknown registers", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(push)",
+        "(assert (= x y))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 62)"]);
+  });
+
+  it("counts a step of the limit when the smt kernel builds a model", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or p q))",
+        "(push 1)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 69)",
+      "(",
+      "  (define-fun p () Bool",
+      "    true)",
+      "  (define-fun q () Bool",
+      "    false)",
+      ")",
+      "(:rlimit 72)",
+    ]);
+  });
+
+  it("builds a model in the smt tactic only for a goal that produces models", () => {
+    const lines = [
+      "(declare-const p Bool)",
+      "(declare-const q Bool)",
+      "(assert (or p q))",
+      "(check-sat-using smt)",
+      "(get-info :rlimit)",
+    ];
+    expect(run(lines)).toEqual(["sat", "(:rlimit 50)"]);
+    expect(run(["(set-option :produce-models false)", ...lines])).toEqual(["sat", "(:rlimit 49)"]);
+  });
+
+  it("charges each pivot of the simplex the cells it touches", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(push)",
+        "(assert (>= (+ x y z) 10))",
+        "(assert (<= (- x y) 3))",
+        "(assert (>= (+ y (* 2 z)) 7))",
+        "(assert (<= (+ x z) 5))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 206)"]);
   });
 
   it("initializes the manager for get-info :rlimit", () => {

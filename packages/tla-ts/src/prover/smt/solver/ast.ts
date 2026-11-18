@@ -36,6 +36,9 @@ export const FAMILY_LABEL = 11;
 export const FAMILY_PB = 12;
 export const FAMILY_RECFUN = 13;
 export const FAMILY_POLY = 14;
+export const FAMILY_DATALOG_RELATION = 15;
+export const FAMILY_FF = 16;
+export const FAMILY_SPECIAL_RELATIONS = 17;
 
 export const OP_TRUE = 0;
 export const OP_FALSE = 1;

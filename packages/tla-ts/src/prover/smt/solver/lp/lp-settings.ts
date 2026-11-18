@@ -68,7 +68,7 @@ export class LpSettings {
   readonly isDioIgnoringBigNums = true;
   readonly dioUndoMaxWork = 1000000;
 
-  constructor(readonly isCanceled: () => boolean) {}
+  constructor(readonly isCanceled: (cost?: number) => boolean) {}
 
   setRandomSeed(seed: number) {
     this.random = new RandomGen(seed);

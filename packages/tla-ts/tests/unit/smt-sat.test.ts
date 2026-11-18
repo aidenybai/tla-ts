@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import { SmtCanceledError } from "../../src/errors";
+import { AstManager, SORT_BOOL } from "../../src/prover/smt/solver/ast";
 import { L_UNDEF } from "../../src/prover/smt/solver/lbool";
 import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
+import { IncSatSolver } from "../../src/prover/smt/solver/sat/inc-sat-solver";
 import { Solver } from "../../src/prover/smt/solver/sat/solver";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
@@ -116,6 +118,22 @@ describe("sat2goal", () => {
     );
   });
 
+  it("frees the terms of its conversions once the incremental solver is released", () => {
+    const manager = new AstManager(new ResourceLimit(Infinity));
+    const [p, q, r] = [0, 1, 2].map(() => manager.mkFreshConst(null, SORT_BOOL));
+    for (const atom of [p, q, r]) manager.incRef(atom);
+    const negations = [p, q, r].map((atom) => manager.mkNot(atom));
+    const solver = new IncSatSolver(manager, new Map());
+    solver.assertExpr(manager.mkOr([p, q]));
+    solver.check();
+    solver.assertExpr(manager.mkOr([negations[0], r]));
+    solver.check();
+    const converted = [...solver.getAssertions()];
+    expect(converted.length).toBe(2);
+    solver.release();
+    expect([...converted, ...negations].filter((expr) => manager.ids[expr] !== -1)).toEqual([]);
+  });
+
   it("adds the equalities of the egraph in sat.euf mode", () => {
     expect(
       run([
@@ -200,5 +218,97 @@ describe("sat solver", () => {
     solver.userPop(1);
     expect(solver.value(second)).toBe(1);
     expect(limit.isSuspended).toBe(false);
+  });
+
+  it("drops the cardinality constraints over the variables of a popped scope", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic sat)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(declare-const d Bool)",
+        "(declare-const e Bool)",
+        "(declare-const f Bool)",
+        "(declare-const g Bool)",
+        "(assert ((_ at-least 1) a b))",
+        "(push 1)",
+        "(assert ((_ pbeq 2 1 1 1) a c d))",
+        "(check-sat)",
+        "(pop 1)",
+        "(push 1)",
+        "(assert (not a))",
+        "(assert (and e (not f) g))",
+        "(check-sat)",
+      ]),
+    ).toBe("sat\nsat");
+  });
+
+  it("keeps the cardinality constraints of a user scope to that scope", () => {
+    const getScript = (constraint: string) => [
+      "(set-option :tactic.default_tactic sat)",
+      "(declare-const a Bool)",
+      "(declare-const b Bool)",
+      "(declare-const c Bool)",
+      "(declare-const d Bool)",
+      "(assert ((_ at-most 3) a b c d))",
+      "(check-sat)",
+      "(push 1)",
+      `(assert ${constraint})`,
+      "(check-sat)",
+      "(pop 1)",
+      "(assert a)",
+      "(assert b)",
+      "(check-sat)",
+    ];
+    expect(run(getScript("((_ at-most 1) a b c d)"))).toBe("sat\nsat\nsat");
+    expect(run(getScript("((_ pbeq 1 1 1 1 1) a b c d)"))).toBe("sat\nsat\nsat");
+  });
+
+  it("drops a pseudo-Boolean equality of nine literals with its user scope, where Z3 keeps it", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic sat)",
+        ...["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(
+          (name) => `(declare-const ${name} Bool)`,
+        ),
+        "(assert ((_ at-most 8) a b c d e f g h i))",
+        "(check-sat)",
+        "(push 1)",
+        "(assert ((_ pbeq 1 1 1 1 1 1 1 1 1 1) a b c d e f g h i))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert a)",
+        "(assert b)",
+        "(check-sat)",
+      ]),
+    ).toBe("sat\nsat\nsat");
+  });
+
+  it("declares each function it gives up on in the reason", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-sort U 0)",
+        "(declare-fun a_rather_long_predicate_name_that_goes_on_and_on (U U U U (_ BitVec 8) U U U U U U U) Bool)",
+        "(declare-const u U)",
+        "(declare-const v U)",
+        "(declare-const b (_ BitVec 8))",
+        "(assert (a_rather_long_predicate_name_that_goes_on_and_on u u u u b u u u u u u u))",
+        "(assert (or (= u v) (= v u)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toBe(
+      [
+        "unknown",
+        '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun a_rather_long_predicate_name_that_goes_on_and_on',
+        "             (U U U U (_ BitVec 8) U U U U U U U)",
+        "             Bool)",
+        "(declare-fun = (U U) Bool)",
+        "(declare-fun = (U U) Bool)",
+        ')")',
+      ].join("\n"),
+    );
   });
 });

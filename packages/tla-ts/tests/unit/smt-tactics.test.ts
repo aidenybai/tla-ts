@@ -930,6 +930,54 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ]);
   });
 
+  it("sets up the smt tactic without the static features under auto_config false", () => {
+    const lines = [
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(assert (<= (+ x (* 2 y)) 3))",
+    ];
+    expect(
+      run([
+        ...lines,
+        "(check-sat-using (using-params smt :auto_config false))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 95)"]);
+    expect(
+      run([
+        "(set-option :smt.auto_config false)",
+        ...lines,
+        "(check-sat-using (using-params smt :auto_config true))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 82)"]);
+  });
+
+  it("runs the smt tactics of qflia that skip cuts without auto_config", () => {
+    const declarations = ["(set-logic QF_LIA)", "(declare-const x Int)", "(declare-const y Int)"];
+    expect(
+      run([
+        ...declarations,
+        "(assert (>= (+ x y) 3))",
+        "(assert (<= (- x y) 1))",
+        "(assert (>= (+ (* 2 x) (* 3 y)) 7))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 410)"]);
+    expect(
+      run([
+        ...declarations,
+        "(assert (and (<= 0 x) (<= x 50) (<= 0 y) (<= y 50)))",
+        "(assert (>= (+ x y) 30))",
+        "(assert (<= (- x y) 1))",
+        "(assert (>= (+ (* 2 x) (* 3 y)) 71))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 558)"]);
+  });
+
   it("completes the models of nlsat and nlqsat with false, as a model rather than a proto_model does", () => {
     const bools = ["(declare-const b0 Bool)", "(declare-const b1 Bool)", "(declare-const b2 Bool)"];
     const bindings =
@@ -1203,5 +1251,139 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
       ["unknown", '(:reason-unknown "sat.canceled")'],
       ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
     ]);
+  });
+
+  it("keeps one finite-domain solver across the checks and scopes of QF_FD", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(assert (or a b))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 23)", "sat", "(:rlimit 33)"]);
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :produce-models true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (and (<= 0 x) (<= x 5) (<= 2 y) (<= y 9)))",
+        "(assert (< x y))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+        "(push 1)",
+        "(assert (= x 4))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+        "(pop 1)",
+        "(assert (> y 7))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]).join("\n"),
+    ).toBe(
+      [
+        "sat",
+        "(\n  (define-fun y () Int\n    9)\n  (define-fun x () Int\n    0)\n)",
+        "(:rlimit 688)",
+        "sat",
+        "(\n  (define-fun y () Int\n    9)\n  (define-fun x () Int\n    4)\n)",
+        "(:rlimit 771)",
+        "sat",
+        "(\n  (define-fun y () Int\n    9)\n  (define-fun x () Int\n    4)\n)",
+        "(:rlimit 1010)",
+      ].join("\n"),
+    );
+  });
+
+  it("checks the assumptions of QF_FD with the finite-domain solver", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :produce-models true)",
+        "(declare-datatypes ((C 0)) (((red) (green) (blue))))",
+        "(declare-const c C)",
+        "(declare-const d C)",
+        "(declare-const p Bool)",
+        "(assert (not (= c d)))",
+        "(check-sat)",
+        "(get-model)",
+        "(push 1)",
+        "(assert (= c blue))",
+        "(check-sat-assuming (p))",
+        "(get-model)",
+        "(pop 1)",
+        "(check-sat-assuming ((not p)))",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]).join("\n"),
+    ).toBe(
+      [
+        "sat",
+        "(\n  (define-fun c () C\n    blue)\n  (define-fun d () C\n    green)\n  (define-fun p () Bool\n    false)\n)",
+        "sat",
+        "(\n  (define-fun p () Bool\n    true)\n  (define-fun c () C\n    blue)\n  (define-fun d () C\n    green)\n)",
+        "sat",
+        "(\n  (define-fun p () Bool\n    false)\n  (define-fun c () C\n    blue)\n  (define-fun d () C\n    green)\n)",
+        "(:rlimit 342)",
+      ].join("\n"),
+    );
+  });
+
+  it("converts the model of QF_FD when it is first asked for", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (and (<= 0 x) (<= x 5) (<= 2 y) (<= y 9)))",
+        "(assert (< x y))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-value (x))",
+        "(get-info :rlimit)",
+        "(get-value (x))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 680)", "((x 0))", "(:rlimit 689)", "((x 0))", "(:rlimit 690)"]);
+  });
+
+  it("counts the steps of a QF_FD check that gives up", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const p Bool)",
+        "(declare-fun f (Bool) Bool)",
+        "(assert (= (f p) (f (not p))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(push 1)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(pop 1)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 93)", "unknown", "(:rlimit 97)"]);
+  });
+
+  it("keeps a named formula of QF_FD that reads a constant the simplifiers define", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(assert (and (<= 0 x) (<= x 3)))",
+        "(check-sat)",
+        "(assert (! (= x 7) :named n))",
+        "(check-sat)",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["sat", "unsat", "(n)"]);
   });
 });

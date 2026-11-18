@@ -7,12 +7,15 @@ import {
   FAMILY_ARRAY,
   FAMILY_BV,
   FAMILY_CHAR,
+  FAMILY_DATALOG_RELATION,
   FAMILY_DATATYPE,
+  FAMILY_FF,
   FAMILY_FINITE_SET,
   FAMILY_FPA,
   FAMILY_POLY,
   FAMILY_RECFUN,
   FAMILY_SEQ,
+  FAMILY_SPECIAL_RELATIONS,
 } from "./ast";
 import { SmtDefaultError } from "../../../errors";
 import { collectStaticFeatures, isDense, type StaticFeatures } from "./static-features";
@@ -117,10 +120,13 @@ const UNKNOWN_THEORIES = [
   FAMILY_BV,
   FAMILY_DATATYPE,
   FAMILY_RECFUN,
+  FAMILY_DATALOG_RELATION,
   FAMILY_SEQ,
   FAMILY_CHAR,
   FAMILY_FPA,
+  FAMILY_FF,
   FAMILY_FINITE_SET,
+  FAMILY_SPECIAL_RELATIONS,
   FAMILY_POLY,
 ];
 
@@ -408,9 +414,8 @@ const setupLra = (config: SmtConfig) => {
   config.theories.push(FAMILY_ARITH);
 };
 
-// setup_ff, without the finite field theory the port does not have.
 const setupFf = (config: SmtConfig) => {
-  config.theories.push(FAMILY_BV);
+  config.theories.push(FAMILY_BV, FAMILY_FF);
 };
 
 const setupQfBvre = (config: SmtConfig) => {
@@ -473,16 +478,18 @@ const setupQuantified = (config: SmtConfig, features: StaticFeatures) => {
   config.theories.push(
     FAMILY_DATATYPE,
     FAMILY_BV,
+    FAMILY_DATALOG_RELATION,
     FAMILY_SEQ,
     FAMILY_CHAR,
     FAMILY_FINITE_SET,
     FAMILY_FPA,
+    FAMILY_FF,
     FAMILY_RECFUN,
+    FAMILY_SPECIAL_RELATIONS,
     FAMILY_POLY,
   );
 };
 
-// setup_unknown(static_features&), without the finite fields the port does not have.
 const setupUnknownByFeatures = (config: SmtConfig, features: StaticFeatures, setup: SmtSetup) => {
   const hasUf = features.numUninterpretedFunctions > 0;
   const numTheories = features.numTheories + (hasUf ? 1 : 0);

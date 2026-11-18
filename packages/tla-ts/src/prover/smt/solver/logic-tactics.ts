@@ -19,7 +19,8 @@ const QFLIA_PREAMBLE =
   ":lia2card.max_range 1 :lia2card.max_ite_nesting 1) elim-uncnstr)";
 
 const getNoCutSmt = (seed: number) =>
-  `(using-params smt :smt.logic QF_LIA :arith.branch_cut_ratio 10000000 :random_seed ${seed})`;
+  `(using-params smt :auto_config false :smt.logic QF_LIA :arith.branch_cut_ratio 10000000 ` +
+  `:random_seed ${seed})`;
 
 const LIA2SAT =
   "(and-then (fail-if is-unbounded) (fail-if produce-proofs) (fail-if produce-unsat-cores) " +
@@ -42,7 +43,8 @@ const PB =
 
 const BOUNDED =
   `(and-then (fail-if is-unbounded) (or-else (try-for ${getNoCutSmt(100)} 5000) (try-for ` +
-  "(using-params smt :arith.branch_cut_ratio 10000000 :random_seed 200 :relevancy 0) 5000) " +
+  "(using-params smt :auto_config false :arith.branch_cut_ratio 10000000 :random_seed 200 " +
+  ":relevancy 0) 5000) " +
   `(try-for ${getNoCutSmt(300)} 15000)) fail-if-undecided)`;
 
 const QFLIA =
@@ -223,7 +225,8 @@ const UFBV_PREPROCESSOR =
   `(and-then ${DER_FP} simplify) simplify)`;
 
 const UFBV =
-  `(using-params (and-then (repeat ${UFBV_PREPROCESSOR} 2) smt) :mbqi true ` +
+  `(using-params (and-then (repeat ${UFBV_PREPROCESSOR} 2) (using-params smt :auto_config false)) ` +
+  ":mbqi true " +
   ":mbqi.max_iterations 4294967295 :elim_and true)";
 
 const QFBV_PREAMBLE =

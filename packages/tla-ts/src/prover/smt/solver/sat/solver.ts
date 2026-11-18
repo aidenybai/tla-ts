@@ -59,6 +59,7 @@ export interface SatExtension {
   pop(numScopes: number): void;
   userPush?(): void;
   userPop?(numScopes: number): void;
+  gcVars?(numVars: number): void;
   popReinit(): void;
   simplify(): void;
   gc(): void;
@@ -1875,6 +1876,7 @@ export class Solver {
     };
     gcClauses(this.learned);
     gcClauses(this.clauses);
+    this.ext?.gcVars?.(maxVar);
     let next = 0;
     for (const lit of this.trail) if (lit >> 1 < maxVar) this.trail[next++] = lit;
     this.trail.length = next;

@@ -9,7 +9,7 @@ export abstract class TheoryLraState extends Theory {
 
   constructor(context: Context) {
     super(context, FAMILY_ARITH);
-    this.solver = new LarSolver(() => context.checkCanceled());
+    this.solver = new LarSolver((cost) => context.checkCanceled(cost));
   }
 
   protected isIntExpr(expr: number) {

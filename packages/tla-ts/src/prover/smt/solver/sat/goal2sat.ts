@@ -13,8 +13,10 @@ import {
   OP_OR,
   OP_TRUE,
   OP_XOR,
+  SORT_BOOL,
 } from "../ast";
 import { EufSolver, type EufInternalizer, type ThSolverFactory } from "../euf/euf-solver";
+import { getDependencyValues, type Goal } from "../goal";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
 import { NULL_LITERAL } from "./clause";
 import { PbSolver, type SatInternalizer } from "./pb-solver";
@@ -26,6 +28,12 @@ const PRINT_ENVIRONMENT = {
   isClashing: () => false,
 };
 
+interface UnhandledFun {
+  decl: number;
+  domain: number[];
+  range: number;
+}
+
 interface Frame {
   expr: number;
   isRoot: boolean;
@@ -35,7 +43,7 @@ interface Frame {
 
 export class Goal2Sat implements SatInternalizer, EufInternalizer {
   readonly atoms = new Map<number, number>();
-  readonly unhandledFuns: number[] = [];
+  readonly unhandledFuns: UnhandledFun[] = [];
   private frames: Frame[] = [];
   private results: number[] = [];
   private app2lit = new Map<number, number>();
@@ -213,7 +221,11 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     } else {
       if (!manager.isUninterpretedConst(expr)) {
         if (!manager.isApp(expr)) this.throwOpNotHandled(expr);
-        this.unhandledFuns.push(manager.decls[expr]);
+        this.unhandledFuns.push({
+          decl: manager.decls[expr],
+          domain: manager.getArgs(expr).map((arg) => manager.sorts[arg]),
+          range: manager.sorts[expr],
+        });
       }
       lit = 2 * this.mkBoolVar(expr) + (isSign ? 1 : 0);
     }
@@ -502,13 +514,25 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     this.cacheTrail.push(expr);
   }
 
-  // insert_dep on an assumption, an uninterpreted constant or its negation.
-  getAssumptionLit(assumption: number) {
+  private insertDep(dep: number, dep2asm: Map<number, number>) {
     const manager = this.manager;
-    const isNot = manager.isNot(assumption);
-    this.convertAtom(isNot ? manager.getArg(assumption, 0) : assumption, false, false);
+    const isSign = manager.isNot(dep);
+    const atom = isSign ? manager.getArg(dep, 0) : dep;
+    const newDep = manager.isUninterpretedConst(atom)
+      ? atom
+      : manager.mkFreshConst("dep", SORT_BOOL);
+    if (newDep !== atom) this.process(manager.mkEq(newDep, atom), true);
+    this.convertAtom(newDep, false, false);
     const lit = this.results.pop() as number;
-    return isNot ? lit ^ 1 : lit;
+    dep2asm.set(dep, isSign ? lit ^ 1 : lit);
+  }
+
+  assumptions(assumptions: readonly number[], dep2asm: Map<number, number>) {
+    try {
+      for (const assumption of assumptions) this.insertDep(assumption, dep2asm);
+    } finally {
+      this.reset();
+    }
   }
 
   run(forms: readonly number[]) {
@@ -516,10 +540,40 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     try {
       for (const form of forms) this.process(form, true);
     } finally {
-      this.frames = [];
-      this.results = [];
-      this.app2lit = new Map();
-      this.lit2app = new Map();
+      this.reset();
     }
+  }
+
+  runGoal(goal: Goal, dep2asm: Map<number, number>) {
+    const manager = this.manager;
+    if (this.mkThSolver !== null) this.ensureEuf();
+    try {
+      forms: for (let index = 0; index < goal.forms.size; index++) {
+        const form = goal.forms.items[index];
+        const dependency = goal.getDependency(index);
+        if (dependency === undefined) {
+          this.process(form, true);
+          continue;
+        }
+        const clause = [form];
+        const deps = getDependencyValues(dependency);
+        for (let depIndex = 0; depIndex < deps.length; depIndex++) {
+          const dep = deps[depIndex];
+          this.insertDep(dep, dep2asm);
+          if (dep === form) continue forms;
+          clause.push(manager.isNot(dep) ? manager.getArg(dep, 0) : manager.mkNot(dep));
+        }
+        this.process(manager.mkOr(clause), true);
+      }
+    } finally {
+      this.reset();
+    }
+  }
+
+  private reset() {
+    this.frames = [];
+    this.results = [];
+    this.app2lit = new Map();
+    this.lit2app = new Map();
   }
 }
