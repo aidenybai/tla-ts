@@ -2633,6 +2633,37 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("rejects the arguments of a name after a prefix in a DEF clause entry, where SANY crashes", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\n---- MODULE Inner ----\nB(x) == 2\n====\nI == INSTANCE Inner\nA == lab :: 1\nB == 2\nTHEOREM TRUE BY DEF A!B(1)\nTHEOREM TRUE BY DEF I!B(1), A!lab(1), B\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 8, col 23 to line 8, col 23", "Selector `B' should not have argument(s)."],
+          [
+            "line 8, col 21 to line 8, col 26",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 8, col 14 to line 8, col 26", "Empty BY"],
+          ["line 9, col 23 to line 9, col 23", "Selector `B' should not have argument(s)."],
+          [
+            "line 9, col 21 to line 9, col 26",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 9, col 31 to line 9, col 33", "Selector `lab' should not have argument(s)."],
+          [
+            "line 9, col 29 to line 9, col 36",
+            "DEF clause entry should describe a defined operator.",
+          ],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
   it("reports DEF clause entries of bracketed, quantified and infix shapes like SANY", async () => {
     await expect(
       check({

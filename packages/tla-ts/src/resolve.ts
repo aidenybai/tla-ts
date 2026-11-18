@@ -1241,15 +1241,17 @@ const resolveExpressionArgument = (arg: Expression, scope: LocalName | undefined
   } else resolveExpression(arg, scope, unit);
 };
 
-const getSelectorArgumentError = (reference: Expression) => {
-  // SANY reads a reference that ends in arguments as an application, not as a selector's arguments.
+const getSelectorArgumentError = (reference: Expression, isDefEntry = false) => {
+  if (!isReference(reference)) return undefined;
+  // SANY reads a reference that ends in arguments as an application, not as a selector's arguments, outside a DEF clause.
   const selectors =
+    isDefEntry ||
     reference.kind === "Subexpression" ||
     (reference.kind === "Apply" && reference.argumentCounts?.at(-1) === 0)
       ? getSelectors(reference)
       : [];
   const index = selectors.findIndex((selector) => "args" in selector && selector.args.length > 0);
-  if (index === -1 || !isReference(reference)) return undefined;
+  if (index === -1) return undefined;
   const selector = selectors[index];
   return {
     index,
@@ -1887,10 +1889,11 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
   const local = lookupLocal(scope, name);
   const binding = local ?? findSymbol(name, unit) ?? getModuleBinding(name, unit, range);
   if (binding === undefined && isFact(name, unit)) return true;
+  // Deviation from SANY: Generator#genIdToSelector throws an internal error on the arguments of a name after a prefix, as in DEF A!B(1); tla-ts rejects them as Generator#selectorToNode rejects a selector's arguments in a DEF clause.
   const isDefined =
     isReference(reference) &&
     getSelectors(reference).length > 1 &&
-    (binding === undefined || getSelectorArgumentError(reference))
+    (binding === undefined || getSelectorArgumentError(reference, true))
       ? isDefinitionSelected(def, reference, scope, unit)
       : name === "" || isDefinitionName(name, local, binding, range, unit);
   if (isDefined) return true;
@@ -1934,7 +1937,7 @@ const isDefinitionSelected = (
     if (range) unit.errors.push({ location: formatRange(range), message });
     return false;
   };
-  const argumentError = getSelectorArgumentError(reference);
+  const argumentError = getSelectorArgumentError(reference, true);
   if (argumentError?.index === 0) return report(argumentError.range, argumentError.message);
   const selectors = getSelectors(reference);
   const ranges = reference.selectorRanges;
