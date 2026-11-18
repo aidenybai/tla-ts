@@ -2411,6 +2411,30 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("names an action by the LET definition it applies and splits the definition's body, as TLC's Tool#getActionsAppl does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nG == y < 1 /\\ y' = y + 1 /\\ x' = x\nInit == x = 0 /\\ y = 0\nNext == \\/ LET Gct == G IN Gct\n        \\/ LET Hct == x = 2 /\\ x' = 0 /\\ y' = y IN Hct\n        \\/ LET Kct(k) == y = k /\\ y' = 0 /\\ x' = x IN Kct(1)\n        \\/ LET Lct == \\/ x = 0 /\\ y = 1 /\\ x' = 1 /\\ y' = 1\n                      \\/ x = 1 /\\ y = 1 /\\ x' = 2 /\\ y' = 1 IN Lct\nInv == x < 2\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      coverage: 1,
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([
+      undefined,
+      "G line 4, col 6 to line 4, col 34 of module M",
+      "Lct line 9, col 26 to line 9, col 59 of module M",
+      "Lct line 10, col 26 to line 10, col 59 of module M",
+    ]);
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 5, col 1 to line 5, col 4 of module M",
+      "G line 4, col 1 to line 4, col 1 of module M",
+      "Hct line 7, col 16 to line 7, col 18 of module M",
+      "Kct line 8, col 16 to line 8, col 21 of module M",
+      "Lct line 9, col 16 to line 9, col 18 of module M (9 26 9 59)",
+      "Lct line 9, col 16 to line 9, col 18 of module M (10 26 10 59)",
+      "Inv line 11, col 1 to line 11, col 3 of module M",
+    ]);
+  });
+
   it("orders the substitutions of an instance as SANY infers them from the instanced module's symbol table", async () => {
     const result = await check({
       source:
