@@ -3963,6 +3963,26 @@ const isValueArgument = (node: ts.Node, context: Context) => {
   );
 };
 
+// Whether each call of a function is a factory's call, which stands for the function it returns.
+const isFactoryCalled = (maker: ts.Node, context: Context) => {
+  const name = ts.isFunctionDeclaration(maker)
+    ? maker.name
+    : ts.isVariableDeclaration(maker.parent) && ts.isIdentifier(maker.parent.name)
+      ? maker.parent.name
+      : undefined;
+  const symbol = name === undefined ? undefined : getSymbol(name, context.checker);
+  return (
+    symbol === undefined ||
+    findReferences(symbol, maker.getSourceFile(), context).every(
+      (reference) =>
+        reference === name ||
+        !ts.isCallExpression(reference.parent) ||
+        reference.parent.expression !== reference ||
+        getFactoryCall(reference.parent, context) !== undefined,
+    )
+  );
+};
+
 export const isClosure = (node: ts.Node, context: Context): node is Closure =>
   context.heap !== undefined && isOutliving(node, context);
 
@@ -4054,7 +4074,8 @@ export const isOutliving = (node: ts.Node, context: Context): node is Closure =>
               (declaration) => getAnyFunction(declaration) !== undefined,
             )
           : ts.isFunctionDeclaration(statement),
-      );
+      ) &&
+    isFactoryCalled(maker, context);
   const isReturned =
     isReturnOf(node) ||
     (heldSymbol !== undefined &&

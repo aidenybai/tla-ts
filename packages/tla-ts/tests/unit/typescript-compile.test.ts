@@ -16362,18 +16362,22 @@ describe("errors", () => {
     expect((await checkModel(getSource("isLoose(first, second)"))).failure?.message).toContain(
       '"loose"',
     );
-    expect(() =>
-      compile(`
-        const createAdd = (amount: number) => {
-          const add = (value: number) => value + amount;
-          return add;
-        };
-        const addTwo = createAdd(2);
-        const addThree = createAdd(3);
-        const box = { size: 1 };
-        if (addTwo === addThree) throw new Error("same");
-      `),
-    ).toThrow("tla-ts can't use a function that a factory returns as a value");
+  });
+
+  it("takes the functions that a factory's calls return as values, each its own closure", async () => {
+    const getSource = (expected: string) => `
+      const createAdd = (amount: number) => {
+        const add = (value: number) => value + amount;
+        return add;
+      };
+      const addTwo = createAdd(2);
+      const addThree = createAdd(3);
+      const box = { size: 1 };
+      const seen = [addTwo === addThree, addTwo(1), addThree(1)].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    expect((await checkModel(getSource("false,3,4"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("true,3,4"))).failure?.message).toContain("seen false,3,4");
   });
 
   it("runs a function that calls itself where a statement changed what it reads", async () => {
