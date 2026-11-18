@@ -70,6 +70,7 @@ import {
   STOP_WALK,
   walkCoveredSuccessors,
   withNextStateExitCode,
+  type CliSettings,
   type CoveredAction,
 } from "./search";
 import {
@@ -377,7 +378,10 @@ const PROGRESS_INTERVAL = 60_000;
 const LIVENESS_GROWTH = 0.1;
 const LIVENESS_RATIO = 0.2;
 
-const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefined): CheckResult => {
+const searchStates = (
+  options: CheckOptions & CliSettings,
+  stateWriter: StateWriter | undefined,
+): CheckResult => {
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
@@ -387,7 +391,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const created = createCheckEnvironment(config, options, output.print);
   const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
-  output.captureWarnings(specification.environment.runtime);
+  output.captureWarnings(specification.environment.runtime, options.errorCodes);
   const coverage =
     options.coverage === undefined
       ? undefined

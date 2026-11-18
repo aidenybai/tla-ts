@@ -23,6 +23,7 @@ import {
   reportAssumptionViolation,
   STOP_WALK,
   walkCoveredSuccessors,
+  type CliSettings,
 } from "./search";
 import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor, type Successor } from "./successors";
@@ -204,7 +205,7 @@ const createScheduler = (
   };
 };
 
-export const simulate = (options: SimulationOptions): number => {
+export const simulate = (options: SimulationOptions & CliSettings): number => {
   const output = options.onSimulation;
   const capture = createOutputCapture(options.onPrint ?? console.log);
   const prepared = prepareSearch({ ...options, onPrint: capture.print });
@@ -212,7 +213,7 @@ export const simulate = (options: SimulationOptions): number => {
   const specification = prepared.specification;
   const environment = prepared.environment;
   const runtime = environment.runtime;
-  capture.captureWarnings(runtime);
+  capture.captureWarnings(runtime, options.errorCodes);
   const search = prepared.search;
   const seed = options.seed ?? 0n;
   const traceDepth = options.traceDepth === -1 ? INFINITE_DEPTH : options.traceDepth;

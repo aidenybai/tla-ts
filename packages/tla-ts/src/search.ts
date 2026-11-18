@@ -43,6 +43,7 @@ import {
   TlaConfigError,
   TlaEvaluationError,
   TlaModuleError,
+  TlaWarningAsError,
   UNEXPECTED_EXCEPTION,
   formatRange,
 } from "./errors";
@@ -115,6 +116,7 @@ import {
 export interface CliSettings {
   readLine?: () => string | undefined;
   runtimeInvariants?: RuntimeInvariant[];
+  errorCodes?: number[];
 }
 
 interface EnvironmentSettings
@@ -946,9 +948,11 @@ export const createOutputCapture = (onPrint: (text: string) => void) => {
       if (capturedLines) capturedLines.push(text);
       else onPrint(text);
     },
-    captureWarnings: (runtime: CheckerRuntime) => {
+    captureWarnings: (runtime: CheckerRuntime, errorCodes: number[] = []) => {
       const warn = runtime.warn;
       runtime.warn = (code, text) => {
+        // TLC's MP#printWarning fails on a warning -messagesAsErrors lists, even one whose output tla-ts holds back.
+        if (errorCodes.includes(code)) throw new TlaWarningAsError(code, text);
         if (capturedLines) capturedLines.push({ kind: "warning", code, text });
         else warn(code, text);
       };

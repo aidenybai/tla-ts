@@ -1523,4 +1523,31 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     expect(result.stdout).toContain("The formula Small is a state-level formula");
     expect(result.stdout).toContain("Invariant Small is violated.");
   });
+
+  it("fails on a warning -messagesAsErrors lists as the replay for the call stack raises it, as TLC's MP#printWarning does", () => {
+    const result = runCli("tool-output", "PromotedWarning", [
+      "-tool",
+      "-workers",
+      "1",
+      "-messagesAsErrors",
+      "2143",
+    ]);
+    expect(result.status).toBe(75);
+    expect(getToolSequence(result.stdout)).toEqual([
+      "2262",
+      "2187",
+      "2220",
+      "2219",
+      "2185",
+      "2189",
+      "2102",
+      "2143",
+      "2103",
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+    expect(result.stdout).toContain("6. Line 5, column 26 to line 5, column 26 in PromotedWarning");
+  });
 });
