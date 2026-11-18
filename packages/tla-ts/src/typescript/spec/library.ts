@@ -118,9 +118,11 @@ const getStub = (definition: Definition) =>
   `${definition.name}(${getParameters(definition.arity)}) ==\n  Assert(FALSE, "tla-ts can't run ${definition.name}, which a compiled spec leaves out of ESCore")`;
 
 // The module ESRuntime: every ESCore definition, with the overrides in place of ESCore's and a
-// stub that stops the check in place of each operator in cut. A compiled program's code is its
-// operator constants CallCode and LoopIteration, which a config substitutes, so that one runtime
-// serves every program. CallBuiltin stops at the built-ins in stoppedMethods.
+// stub that stops the check in place of each operator in cut. A compiled program's code takes the
+// place of CallCode and LoopIteration, which the config overrides, so that one runtime serves
+// every program. They are definitions rather than operator constants, whose arguments' levels
+// SANY's checks would trace through every operator that calls them. CallBuiltin stops at the
+// built-ins in stoppedMethods.
 export const assembleRuntime = (
   library: Library,
   overrides: readonly GeneratedDefinition[],
@@ -163,7 +165,9 @@ export const assembleRuntime = (
     [
       "---- MODULE ESRuntime ----",
       "EXTENDS Integers, Sequences, FiniteSets, TLC, ESNumber",
-      "CONSTANTS None, Empty, Absent, CallCode(_, _, _, _, _), LoopIteration(_, _, _, _)",
+      "CONSTANTS None, Empty, Absent",
+      `CallCode(s, f, ctx, args, id) == Assert(FALSE, "tla-ts can't run code without a program")`,
+      `LoopIteration(s, ctx, loop, v) == Assert(FALSE, "tla-ts can't run code without a program")`,
       // TLC computes the level of each definition without parameters by walking the bodies of
       // the operators it applies, along every path, so Init reaches the program only through
       // an operator argument, whose body TLC doesn't walk.
