@@ -1773,8 +1773,15 @@ export const isBooleanType = (type: ts.Type) => isEvery(type, ts.TypeFlags.Boole
 export const isBooleanLike = (node: ts.Expression, context: Context) =>
   isBooleanType(context.checker.getTypeAtLocation(node));
 
-export const isNumberLike = (node: ts.Expression, context: Context) =>
-  isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.NumberLike | ts.TypeFlags.Never);
+// A value of a generic type, such as Parameters<F>["length"], holds one of its constraint's.
+export const isNumberLike = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getTypeAtLocation(node);
+  const fixed =
+    (type.flags & (ts.TypeFlags.TypeParameter | ts.TypeFlags.IndexedAccess)) !== 0
+      ? (context.checker.getBaseConstraintOfType(type) ?? type)
+      : type;
+  return isEvery(fixed, ts.TypeFlags.NumberLike | ts.TypeFlags.Never);
+};
 
 // A primitive that ToNumber converts without running a method.
 export const isPrimitiveIndex = (node: ts.Expression, context: Context) =>

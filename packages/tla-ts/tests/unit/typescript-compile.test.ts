@@ -56202,4 +56202,27 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("6,2"))).failure?.message).toContain("seen 6,99");
     });
   });
+
+  describe("compares a value whose generic type's constraint is a number as a number", () => {
+    const getSource = (expected: string) => `
+      const box = { n: 0 };
+      const atLeast = <F extends (...args: Array<any>) => any>(
+        arity: Parameters<F>["length"],
+        count: number,
+      ) => count >= arity;
+      const pair = (a: number, b: number) => a + b;
+      const seen = [atLeast<typeof pair>(2, 3), atLeast<typeof pair>(2, 1)].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("true,true"))).failure?.message).toContain(
+        "seen true,false",
+      );
+    });
+  });
 });
