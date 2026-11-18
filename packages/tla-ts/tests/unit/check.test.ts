@@ -200,6 +200,22 @@ describe("check matches TLC", () => {
     ).rejects.toThrow(TlaSyntaxError);
   });
 
+  it.each([
+    ["", 0, 0],
+    ["\n\n", 2, 1],
+    ["x\r\ny\r\n", 2, 3],
+    ["garbage\nmore ====", 2, 9],
+    ["x\n\tab\t", 2, 16],
+    ["----  M ----\nA == 1\n====\n", 3, 5],
+  ])(
+    "reports a source %j without a module header at SANY's end of file",
+    async (source, line, column) => {
+      await expect(check({ source, config: "" })).rejects.toMatchObject({
+        failure: { line, column },
+      });
+    },
+  );
+
   it("exposes TLC's level, counters, and registers through TLCGet and TLCSet", async () => {
     const results = await Promise.all(
       ["Runtime", "Distinct", "Generated"].map((name) => checkFixture("runtime", "Runtime", name)),

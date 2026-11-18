@@ -1,4 +1,5 @@
 import { TlaSyntaxError } from "./errors";
+import { getEndOfFile } from "./sany/lexer";
 
 type TokenKind =
   | "Identifier"
@@ -479,8 +480,17 @@ export const matchBasedNumber = (source: string, index: number, isTlapm = false)
 
 export const tokenize = (source: string, isTlapm = false): Token[] => {
   const headerMatch = MODULE_HEADER.exec(source);
-  if (!headerMatch)
-    throw new TlaSyntaxError("Expected a module header such as ---- MODULE Name ----");
+  if (!headerMatch) {
+    // SANY skips the text before a module header, so it fails at the end of the file.
+    const end = getEndOfFile(source);
+    const reason = "Expected a module header such as ---- MODULE Name ----";
+    throw new TlaSyntaxError(`${reason} at line ${end.line}, column ${end.column}`, undefined, {
+      reason,
+      line: end.line,
+      column: end.column,
+      isEnd: true,
+    });
+  }
   const tokens: Token[] = [];
   // Each name is one string object, so looking a name up in a scope compares pointers.
   const names = new Map<string, string>();

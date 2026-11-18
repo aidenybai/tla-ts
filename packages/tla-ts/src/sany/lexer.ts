@@ -355,6 +355,15 @@ const getPositions = (source: string) => {
   return { lines, columns };
 };
 
+// JavaCC places the end of the file at the file's last character.
+export const getEndOfFile = (source: string) => {
+  const positions = getPositions(source);
+  return {
+    line: positions.lines[source.length - 1] ?? 0,
+    column: positions.columns[source.length - 1] ?? 0,
+  };
+};
+
 const STRING_PREFIX = /"(?:[^"\n\r\\]|\\[ntrf\\"])*\\?/y;
 const LITERAL_PREFIXES = new Set(
   [...LITERALS.keys()].flatMap((image) =>
@@ -382,8 +391,7 @@ export const createSanyLexer = (source: string) => {
     beginColumn: positions.columns[start] ?? 0,
     next: undefined,
   });
-  // JavaCC places the end of the file at the file's last character.
-  const getEndOfFile = () => createToken(getKind("EOF"), source.length - 1, 0);
+  const createEndOfFile = () => createToken(getKind("EOF"), source.length - 1, 0);
   const getLexicalError = (start: number, end: number, after: string) => {
     const index = end - 1;
     const line = positions.lines[index];
@@ -437,7 +445,7 @@ export const createSanyLexer = (source: string) => {
       }
       nextOffset++;
     }
-    return getEndOfFile();
+    return createEndOfFile();
   };
   const getNextToken = (): SanyToken | string => {
     if (mode === "DEFAULT") return getSkippingToken(DEFAULT_PATTERNS);
@@ -462,7 +470,7 @@ export const createSanyLexer = (source: string) => {
         return token;
       }
     }
-    return getEndOfFile();
+    return createEndOfFile();
   };
   return getNextToken;
 };
