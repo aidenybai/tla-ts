@@ -416,6 +416,19 @@ const getLiteralKey = (name: ts.PropertyName) => {
   return undefined;
 };
 
+// A dispatch on an id from low to high as a balanced tree of comparisons, which TLC and tla-ts
+// evaluate in log n steps where a CASE takes n.
+const getDispatch = (
+  id: string,
+  low: number,
+  high: number,
+  getArm: (id: number) => string,
+): string => {
+  if (low === high) return getArm(low);
+  const middle = Math.floor((low + high) / 2);
+  return `IF ${id} <= ${middle} THEN ${getDispatch(id, low, middle, getArm)} ELSE ${getDispatch(id, middle + 1, high, getArm)}`;
+};
+
 export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
   const definitions: GeneratedDefinition[] = [];
   const words = new Set<string>();
@@ -2086,12 +2099,9 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     arity: 5,
     text: [
       "CallCode(s, f, ctx, args, id) ==",
-      ...(codes.length === 0
-        ? [`  Assert(FALSE, "tla-ts can't call a function the program doesn't define")`]
-        : codes.map(
-            (code, index) =>
-              `  ${index === 0 ? "CASE" : "  []"} id = ${code.id} -> Code${code.id}(s, f, ctx, args)`,
-          )),
+      codes.length === 0
+        ? `  Assert(FALSE, "tla-ts can't call a function the program doesn't define")`
+        : `  ${getDispatch("id", 1, codes.length, (code) => `Code${code}(s, f, ctx, args)`)}`,
     ].join("\n"),
   });
   definitions.push(
@@ -2101,12 +2111,9 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       arity: 4,
       text: [
         "LoopIteration(s, ctx, loop, v) ==",
-        ...(loops.length === 0
-          ? [`  Assert(FALSE, "tla-ts can't run a loop the program doesn't have")`]
-          : loops.map(
-              (current, index) =>
-                `  ${index === 0 ? "CASE" : "  []"} loop.id = ${current.id} -> Loop${current.id}(s, ctx, loop, v)`,
-            )),
+        loops.length === 0
+          ? `  Assert(FALSE, "tla-ts can't run a loop the program doesn't have")`
+          : `  ${getDispatch("loop.id", 1, loops.length, (loop) => `Loop${loop}(s, ctx, loop, v)`)}`,
       ].join("\n"),
     },
     ...loops.map((current) => ({
