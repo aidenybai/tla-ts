@@ -2573,6 +2573,12 @@ ASSUME TLCFP(a) = -887695703
       "I(1, 1)!Q /\\ I(M, 0)!G >= 0",
       "I!A line 5, col 1 to line 5, col 7",
     ],
+    [
+      "I( p ,q  ) == INSTANCE Inner WITH K <- p + q, w <- y",
+      "\\E p \\in {1, 2} : I(p, M)!A",
+      "I(1, 1)!Q /\\ I(M, 0)!G >= 0",
+      "I!A line 5, col 1 to line 5, col 10",
+    ],
   ])(
     "names the action of %s by the left side of the definition, as TLC's Action#getDeclaration does",
     async (instance, next, invariant, label) => {

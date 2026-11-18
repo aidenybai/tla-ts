@@ -142,18 +142,6 @@ export interface InstanceAction {
   body: SourceRange | undefined;
 }
 
-// TLC names an instance's action by the left side of its definition, or by the whole INSTANCE without one.
-const getInstanceHead = (instance: Instance): SourceRange | undefined => {
-  const range = instance.location.range;
-  if (!range || instance.name === undefined) return range;
-  // The parser keeps no range for the parenthesis that closes the parameters.
-  const last = instance.params.at(-1)?.location?.range;
-  const end = last
-    ? { line: last.end.line, column: last.end.column + 1 }
-    : { line: range.start.line, column: range.start.column + instance.name.length - 1 };
-  return { module: range.module, start: range.start, end };
-};
-
 const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
 
 export interface LinkedModule {
@@ -610,7 +598,6 @@ export const createEnvironment = (
       createName,
       frame,
     });
-    const head = getInstanceHead(instance);
     return getInstanceSymbols(instance, linked.exported, declarations, (key, name) => {
       const copy =
         instance.name === undefined
@@ -620,7 +607,7 @@ export const createEnvironment = (
         instanceActions.set(copy, {
           name,
           location: instance.location,
-          head,
+          head: instance.head ?? instance.location.range,
           body: frame?.location.range,
         });
       }

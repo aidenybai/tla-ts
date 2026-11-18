@@ -413,6 +413,7 @@ export interface Instance {
   location: SourceLocation;
   instanceRange: SourceRange;
   definitionRange?: SourceRange;
+  head?: SourceRange;
 }
 
 export interface NewSymbol {
