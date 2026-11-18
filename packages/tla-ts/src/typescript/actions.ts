@@ -322,6 +322,7 @@ import {
   translateComputedKey,
   translateObjectChange,
   translateObjectValue,
+  translateFunctionObject,
   getSuperLookup,
   isFunctionValue,
   getOwnFunctionKeys,
@@ -955,7 +956,12 @@ const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWr
       (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
       0;
   if (!isAny) rejectAnyReceiver(receiver, context);
-  if (!isBuiltIn && !isAny && getKind(receiver, context) !== "object") return undefined;
+  // A function is an object where the heap or the built-in objects hold it, and the write stops
+  // where it's another.
+  const isFunction = isFunctionValue(receiver, context);
+  if (!isBuiltIn && !isAny && !isFunction && getKind(receiver, context) !== "object") {
+    return undefined;
+  }
   const symbol = context.heap;
   const heap = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
   if (symbol === undefined || heap === undefined || !path.mutable.has(symbol)) {
@@ -964,7 +970,9 @@ const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWr
   return {
     symbol,
     heap,
-    ref: translateObjectValue(receiver, path.scope, context),
+    ref: isFunction
+      ? translateFunctionObject(receiver, path.scope, context)
+      : translateObjectValue(receiver, path.scope, context),
     key: ts.isPropertyAccessExpression(node)
       ? string(node.name.text)
       : translatePropertyKey(node.argumentExpression, path.scope, context),
@@ -1243,6 +1251,18 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
           ),
         ),
     };
+  }
+  // A function is no record, so only the heap holds its properties.
+  if (
+    (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    getTypeNames(context.checker.getTypeAtLocation(node.expression), context.checker)?.includes(
+      "function",
+    ) === true
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't write a property of a function where no heap holds objects",
+      node,
+    );
   }
   if (ts.isPropertyAccessExpression(node)) {
     if (getKind(node.expression, context) !== "other") {
@@ -2758,14 +2778,19 @@ const translateCallStatementBody = (
       ),
     );
   }
-  // A ?. before the method that the call reads, as in frames.at(-1)?.heirs.push(node), ends the
-  // whole call where its base is undefined or null, before any argument runs.
+  // A ?. before the method that the call reads, as in frames.at(-1)?.heirs.push(node), or at it,
+  // as in refs.get(id)?.deref(), ends the whole call where its base is undefined or null.
   const getLinks = (link: ts.Expression): ts.Expression[] =>
     ts.isOptionalChain(link) ? [link, ...getLinks(link.expression)] : [];
   const method = expression.expression;
+  // The method's own ?. ends the call before its arguments, which run first where they call.
   const optional = (
     ts.isPropertyAccessExpression(method) || ts.isElementAccessExpression(method)
-      ? getLinks(method.expression)
+      ? getLinks(
+          expression.arguments.some((argument) => hasCall(argument, context))
+            ? method.expression
+            : method,
+        )
       : []
   )
     .filter(
@@ -14501,6 +14526,11 @@ const isAnyMember = (node: ts.Expression, context: Context) => {
 // The functions that a call through a value may run, which may be none that the script writes.
 // Whether a call may run any of the functions and closures whose type its callee's type allows,
 // where tla-ts can't tell which it runs.
+// An element of an arguments object, which holds whatever a call passes.
+const isArgumentsElement = (node: ts.Expression, context: Context) =>
+  ts.isElementAccessExpression(node) &&
+  context.checker.getTypeAtLocation(skipCasts(node.expression)).getSymbol()?.name === "IArguments";
+
 const isDispatchedCall = (
   node: ts.CallExpression,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
@@ -14524,8 +14554,10 @@ const isDispatchedCall = (
           ts.isNumericLiteral(callee.argumentExpression) ||
           isConvertedElementKey(skipCasts(callee.argumentExpression), context))
       ) &&
+      !isArgumentsElement(callee, context) &&
       !isAnyMember(callee, context)) ||
-    declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
+    (declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) &&
+      !isArgumentsElement(callee, context)) ||
     (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
     getCalledMethod(callee, context) !== undefined ||
     getBoundBuiltIn(callee, context) !== undefined ||
