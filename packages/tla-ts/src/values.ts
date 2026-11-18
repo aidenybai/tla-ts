@@ -1689,7 +1689,6 @@ export const toFiniteSet = (value: Value): SetValue => {
   if (lazy?.enumerated) return lazy.enumerated;
   const sets = setTrace.sets;
   sets?.push(value);
-  // Enumerating a lazy set other than a literal evaluates the spec, which must not stop halfway.
   const isOuterSorting = isSortingLiteral;
   isSortingLiteral = isOuterSorting && lazy?.kind === "MixedSet";
   const elements = enumerateSet(value);
