@@ -347,7 +347,13 @@ import {
   stopUnknownCall,
 } from "./intrinsics";
 import { getTypeNames, getURICall, translateToNumber, useJavaScript } from "./javascript";
-import { getNamespaceRef, isLiteralValue, type Namespace } from "./namespaces";
+import {
+  getNamespaceModule,
+  getNamespaceRef,
+  isBindingRead,
+  isLiteralValue,
+  type Namespace,
+} from "./namespaces";
 import {
   bindFactory,
   forceHeap,
@@ -14140,9 +14146,20 @@ const isHeapCall = (
       visited.add(callee);
       return isMaking(callee.body, visited);
     });
-  if (isMethodCall(node)) {
-    const method = getCalledMethod(node.expression, context)?.method;
-    return method?.body !== undefined && isMaking(method.body, new Set([method]));
+  // A function that a namespace object holds is no method, so its call runs as a function's.
+  const method = isMethodCall(node) ? getCalledMethod(node.expression, context)?.method : undefined;
+  if (method !== undefined) {
+    return method.body !== undefined && isMaking(method.body, new Set([method]));
+  }
+  if (
+    isMethodCall(node) &&
+    !(
+      ts.isIdentifier(node.expression.expression) &&
+      getNamespaceModule(node.expression.expression, context.checker) !== undefined &&
+      isBindingRead(node.expression, context.checker)
+    )
+  ) {
+    return false;
   }
   const symbol = getSymbol(node.expression, context.checker);
   const callee =

@@ -54200,4 +54200,21 @@ describe("BigInts", () => {
       ).toContain("result line 3, column 2;line 2, column 4");
     });
   });
+
+  describe("calls a function that makes objects through a module's namespace object", () => {
+    const path = join(
+      import.meta.dirname,
+      "../fixtures/typescript/imports/making-through-namespace.ts",
+    );
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects objects that the calls share", async () => {
+      const wrong = source.replace('"2,1,function"', '"2,2,function"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("result 2,1,function");
+    });
+  });
 });
