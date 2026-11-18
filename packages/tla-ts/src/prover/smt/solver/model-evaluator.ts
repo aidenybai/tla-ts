@@ -65,9 +65,12 @@ export class ModelEvaluator extends RewriterTpl {
       ...TACTIC_REWRITER_OPTIONS,
       bv: { ...DEFAULT_BV_OPTIONS, isHiDiv0: manager.isHiDiv0, isMkbv2num: true },
       isExpandingSelects: true,
-      isKeepingDistinct: true,
     });
     this.rewriter.releaseResult = () => this.setLastResult(-1);
+  }
+
+  getModelCompletion() {
+    return this.isModelCompletion;
   }
 
   setModelCompletion(isModelCompletion: boolean) {

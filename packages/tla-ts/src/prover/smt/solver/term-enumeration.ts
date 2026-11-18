@@ -1,4 +1,5 @@
 import type { AstManager } from "./ast";
+import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
 const STATE_LEAVES = 0;
 const STATE_OPERATORS = 1;
@@ -109,6 +110,7 @@ export class TermEnumeration {
   private isProgress = false;
   private sortsProduced = new Set<number>();
   private children: ChildrenIterator | null = null;
+  private rewriter: Rewriter;
   current: number | null;
 
   constructor(
@@ -119,6 +121,7 @@ export class TermEnumeration {
     private pin: (term: number) => void,
   ) {
     this.bank = new TermBank(manager);
+    this.rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
     this.leaves = decls.filter((decl) => manager.funcDecls[decl].domain.length === 0);
     this.operators = decls.filter((decl) => manager.funcDecls[decl].domain.length > 0);
     this.current = this.findNext();
@@ -128,12 +131,23 @@ export class TermEnumeration {
     if (this.current !== null) this.current = this.findNext();
   }
 
+  release() {
+    this.rewriter.release();
+  }
+
   private addTerm(term: number, cost: number) {
-    if (this.seen.has(term)) return null;
-    this.seen.add(term);
-    this.pin(term);
-    this.bank.add(term, cost);
-    return term;
+    const manager = this.manager;
+    manager.incRef(term);
+    const simplified = this.rewriter.rewrite(term);
+    const isSeen = this.seen.has(simplified);
+    if (!isSeen) {
+      this.seen.add(simplified);
+      this.pin(simplified);
+      this.bank.add(simplified, cost);
+    }
+    manager.decRef(simplified);
+    manager.decRef(term);
+    return isSeen ? null : simplified;
   }
 
   private mkTerm(decl: number, args: number[]) {

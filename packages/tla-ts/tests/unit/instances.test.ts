@@ -63,6 +63,22 @@ describe("INSTANCE matches TLC", () => {
     expect(prints).toEqual([1, 2, 2, 1, 3, 3, 2].map((value) => `<<"eval", ${value}>>  ${value}`));
   });
 
+  it("evaluates each definition a named instance of a parameter-free module copies at startup, as SANY gives each its own OpDefNode", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC\nI == INSTANCE Inner\nK == PrintT("K")\nJ == INSTANCE Inner\nL == PrintT("L")\nVARIABLE x\nInit == x = <<I!g, J!h, K>>\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Inner"
+          ? '---- MODULE Inner ----\nEXTENDS TLC\ng == PrintT("g")\nh == PrintT("h")\n===='
+          : undefined,
+      onPrint: (text) => prints.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(prints).toEqual(['"g"', '"h"', '"h"', '"g"', '"K"', '"h"', '"g"', '"L"']);
+  });
+
   it("reports violations through instantiated operators", async () => {
     const result = await checkInstances("Violation.cfg");
     expect(result.status).toBe("invariant-violation");
@@ -217,6 +233,18 @@ describe("INSTANCE matches TLC", () => {
       '<<"r", 0>>',
       '<<"r", 1>>',
       '<<"r", 2>>',
+    ]);
+  });
+
+  it("substitutes a replacement an instance of an instance binds once in a function the operator it copies refers to", async () => {
+    const result = await check({
+      source:
+        "---- MODULE N ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLES a, b\ng[n \\in 0..1] == a + n\nP == g[1] + b < 3\n====\n---- MODULE Mid ----\nVARIABLES p, q\nJ == INSTANCE Inner WITH a <- p, b <- q\n====\nI == INSTANCE Mid WITH p <- x + 1, q <- y\nInit == x = 0 /\\ y = 0\nNext == x < 3 /\\ x' = x + 1 /\\ y' = y\nInv == I!J!P\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect([result.violation?.name, result.violation?.trace.map((step) => step.state.x)]).toEqual([
+      "Inv",
+      [0, 1],
     ]);
   });
 

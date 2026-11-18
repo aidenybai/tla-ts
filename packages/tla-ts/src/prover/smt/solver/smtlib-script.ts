@@ -60,12 +60,12 @@ import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { FdSolver } from "./fd-solver";
+import { checkParameterValue } from "./gparams";
 import { SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
 import { mkThSolver } from "./euf/th-solvers";
 import { getHammerPeriod } from "./lp/lp-settings";
-import { UINT_MAX } from "./sat/clause";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
@@ -235,6 +235,7 @@ const BUILTIN_OPTIONS = new Set([
 
 const getParameterName = (keyword: string) => keyword.slice(1).toLowerCase().replaceAll("-", "_");
 
+// Deviation from Z3: each assert-soft starts afresh, where Z3 keeps the parameters of a failed one and a keyword left without a value.
 const getSoftParameters = (items: SExpr[]) => {
   const parameters = { weight: Rational.one, id: null as string | null };
   for (let index = 0; index < items.length; index += 2) {
@@ -242,14 +243,18 @@ const getSoftParameters = (items: SExpr[]) => {
     if (keyword.kind !== "keyword")
       throw new SmtParseError("invalid command argument, keyword expected", keyword);
     const name = getParameterName(keyword.text);
+    if (name !== "weight" && name !== "id")
+      throw new SmtParseError("invalid keyword argument", keyword);
     const value = items[index + 1];
-    if (name === "weight" && (value?.kind === "numeral" || value?.kind === "decimal")) {
-      const [whole, fraction = ""] = value.text.split(".");
-      parameters.weight = Rational.of(BigInt(whole + fraction), 10n ** BigInt(fraction.length));
+    if (value === undefined) continue;
+    if (name === "weight") {
+      if (value.kind !== "numeral" && value.kind !== "decimal")
+        throw new SmtParseError("invalid command argument, numeral expected", value);
+      parameters.weight = Rational.fromDecimal(value.text);
       continue;
     }
-    if (name !== "id" || !isSymbol(value))
-      throw new SmtUnsupportedError(`the parameter :${name} of assert-soft`);
+    if (!isSymbol(value))
+      throw new SmtParseError("invalid command argument, symbol expected", value);
     parameters.id = value.text;
   }
   return parameters;
@@ -372,6 +377,7 @@ interface CheckResult {
   isFromTactic: boolean;
   model: ProtoModel | undefined;
   fdSolver: FdSolver | undefined;
+  satSolver: IncSatSolver | undefined;
   core: number[] | undefined;
   // check_sat_result::reason_unknown, where the port tracks it.
   reasonUnknown?: string;
@@ -394,6 +400,7 @@ interface ScriptState {
   // The objective of each soft constraint, in the order they were asserted.
   softTrail: number[];
   optimizer: OptContext | undefined;
+  checkedObjectives: number;
   scopes: Scope[];
   check: CheckResult | undefined;
   isProofsEnabled: boolean | undefined;
@@ -407,6 +414,10 @@ interface ScriptState {
   satSolver: IncSatSolver | undefined;
   fdSolver: FdSolver | undefined;
   tacticConverters: Goal["converters"];
+  tacticModel: ProtoModel | undefined;
+  lastAssertions: RefVector;
+  // The solver takes the flag of models when it is made, and only produce-models changes it.
+  isSolverProducingModels: boolean;
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -468,6 +479,7 @@ export const runSmtlibScript = (
       objectives: [],
       softTrail: [],
       optimizer: undefined,
+      checkedObjectives: 0,
       scopes: [],
       check: undefined,
       isProofsEnabled: undefined,
@@ -478,6 +490,9 @@ export const runSmtlibScript = (
       satSolver: undefined,
       fdSolver: undefined,
       tacticConverters: [],
+      tacticModel: undefined,
+      lastAssertions: new RefVector(manager),
+      isSolverProducingModels: settings.isProducingModels,
     };
   };
   let state = createState();
@@ -526,6 +541,7 @@ export const runSmtlibScript = (
       manager.incRef(form);
       return form;
     });
+    state.checkedObjectives = objectives.length;
     state.optimizer ??= new OptContext(
       manager,
       {
@@ -541,7 +557,6 @@ export const runSmtlibScript = (
       objectives,
     );
     const optimizer = state.optimizer;
-    clearCheck();
     state.manager.limit.push(settings.rlimit);
     try {
       const hasAssumptions = extra.length > 0 || hasNames();
@@ -597,17 +612,24 @@ export const runSmtlibScript = (
   };
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
   const solveWithStrategy = () => {
-    const goal = getGoal();
+    releaseTacticModel();
+    const goal = getGoal(state.isSolverProducingModels);
     try {
       const strategy =
         settings.parameters.get("tactic.default_tactic") ??
         getLogicStrategy(state.logic, goal.isProofsEnabled);
       const checked = checkSatUsing(compileInternalTactic(getTacticEnvironment(), strategy), goal);
+      if (checked.status === L_UNDEF && state.scopes.length === 0) {
+        state.lastAssertions.reset();
+        for (const form of goal.forms.items) state.lastAssertions.push(form);
+      }
       // tactic2solver keeps the goal's model converter until its next check.
       decConverterRefs(state.manager, state.tacticConverters);
       state.tacticConverters = goal.converters;
       goal.converters = [];
       goal.reset();
+      checked.model?.incRef();
+      state.tacticModel = checked.model;
       return {
         result: checked.status,
         context: undefined,
@@ -671,6 +693,7 @@ export const runSmtlibScript = (
     };
   };
   const checkSat = (extra: number[], end: SmtToken) => {
+    clearCheck();
     const deadline = Date.now() + options.timeLimitMs;
     state.manager.limit.restart(deadline);
     // opt::context::optimize answers as the search of the hard constraints does: once they are
@@ -709,6 +732,7 @@ export const runSmtlibScript = (
         isFromTactic,
         model: solved.model,
         fdSolver,
+        satSolver: isKernelChecking && !isFromTactic ? state.satSolver : undefined,
         core: solved.core ?? solved.context?.unsatCore ?? [],
         reasonUnknown: getReasonUnknown(solved, deadline),
       });
@@ -744,12 +768,18 @@ export const runSmtlibScript = (
     const check = state.check;
     if (!settings.isProducingModels || check === undefined || check.status === L_FALSE)
       throw new SmtParseError("model is not available", list.end);
-    if (check.model !== undefined) return check.model;
+    if (check.model !== undefined) {
+      check.model.incRef();
+      return check.model;
+    }
     if (check.isOptimizing) throw new SmtUnsupportedError("the models of optimization");
     if (check.context === undefined && check.status !== L_TRUE)
       throw check.isFromTactic
         ? new SmtParseError("model is not available", list.end)
         : new SmtUnsupportedError("the model of a canceled search");
+    const satModel = check.satSolver?.getModel();
+    if (satModel === null) throw new SmtParseError("model is not available", list.end);
+    if (satModel !== undefined) return satModel;
     const context = check.context;
     const model =
       check.fdSolver !== undefined
@@ -758,14 +788,22 @@ export const runSmtlibScript = (
           ? new ProtoModel(state.manager)
           : context.getModel();
     if (model === undefined) throw new SmtParseError("model is not available", list.end);
-    if (check.fdSolver !== undefined) return model;
+    if (check.fdSolver === undefined) {
+      model.incRef();
+      check.model = model;
+    }
     model.incRef();
-    check.model = model;
     return model;
   };
   const clearCheck = () => {
     state.check?.model?.decRef();
+    const satSolver = state.check?.satSolver;
+    if (satSolver !== undefined && satSolver !== state.satSolver) satSolver.release();
     state.check = undefined;
+  };
+  const releaseTacticModel = () => {
+    state.tacticModel?.decRef();
+    state.tacticModel = undefined;
   };
   // cmd_context::validate_check_sat_result runs after the answer is printed.
   const validateCheck = (end: SmtToken) => {
@@ -783,6 +821,7 @@ export const runSmtlibScript = (
       isFromTactic: false,
       model: undefined,
       fdSolver: undefined,
+      satSolver: undefined,
       core: undefined,
       ...result,
     };
@@ -802,9 +841,12 @@ export const runSmtlibScript = (
       parameters.get("tactic.default_tactic") === "sat" ||
       parameters.get("sat.smt") === "true" ||
       isEuf;
-    state.satSolver?.release();
+    if (state.satSolver !== state.check?.satSolver) state.satSolver?.release();
     decConverterRefs(state.manager, state.tacticConverters);
     state.tacticConverters = [];
+    releaseTacticModel();
+    state.lastAssertions.reset();
+    state.isSolverProducingModels = settings.isProducingModels;
     state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
     state.satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
@@ -872,7 +914,7 @@ export const runSmtlibScript = (
       return {
         result,
         context: undefined,
-        model: result === L_TRUE ? (solver.getModel() ?? undefined) : undefined,
+        model: undefined,
         core: result === L_FALSE ? [...solver.getUnsatCore()] : undefined,
         reasonUnknown: solver.reasonUnknown,
       };
@@ -932,10 +974,10 @@ export const runSmtlibScript = (
     );
     return state.datalog;
   };
-  const getGoal = (isTrackingDependencies = false) => {
+  const getGoal = (isModelsEnabled: boolean, isTrackingDependencies = false) => {
     const goal = new Goal(state.manager);
     goal.isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
-    goal.isModelsEnabled = settings.isProducingModels;
+    goal.isModelsEnabled = isModelsEnabled;
     goal.isCoresEnabled = settings.isProducingUnsatCores;
     for (const [index, assertion] of state.assertions.entries())
       goal.assert(
@@ -955,7 +997,7 @@ export const runSmtlibScript = (
         "Frontend does not support simultaneous generation of proofs and unsat cores",
         end,
       );
-    return getGoal(isTrackingDependencies);
+    return getGoal(settings.isProducingModels, isTrackingDependencies);
   };
   const hasNames = () => state.names.some((name) => name !== -1);
   // parse_check_sat shrinks the expression stack once the check has run.
@@ -1181,6 +1223,7 @@ export const runSmtlibScript = (
           state.manager.decRef(assertion.formula);
           throw new SmtParseError(logicError, follower);
         }
+        clearCheck();
         state.assertions.push(assertion.formula);
         state.assertionTexts.push(
           text.slice(term.offset, (term.kind === "list" ? term.end : term).endOffset).trim(),
@@ -1198,8 +1241,8 @@ export const runSmtlibScript = (
           manager.incRef(answer);
           state.names.push(answer);
         }
+        releaseTacticModel();
         assertInKernel(assertion.formula, state.names[state.names.length - 1]);
-        clearCheck();
         if (follower !== list.end)
           throw new SmtParseError("invalid assert command, ')' expected", follower);
       },
@@ -1410,7 +1453,10 @@ export const runSmtlibScript = (
       (list) => {
         const formula = state.reader.parseTerm(list.items[1] ?? list.end);
         if (state.manager.sorts[formula] !== SORT_BOOL)
-          throw new SmtParseError("Invalid type for expression. Expected Boolean type.", list.end);
+          throw new SmtParseError(
+            "Invalid type for expression. Expected Boolean type.",
+            list.items[2] ?? list.end,
+          );
         const parameters = getSoftParameters(list.items.slice(2));
         resetOptimizer();
         const existing = state.objectives.findIndex(
@@ -1448,6 +1494,7 @@ export const runSmtlibScript = (
           const limit = state.manager.limit;
           limit.push(settings.rlimit);
           try {
+            releaseTacticModel();
             state.kernel?.push();
             useSatSolver((solver) => solver.push());
             state.fdSolver?.push();
@@ -1476,6 +1523,7 @@ export const runSmtlibScript = (
         if (count > 0) {
           state.isIncremental = true;
           const scope = state.scopes[state.scopes.length - count];
+          releaseTacticModel();
           state.kernel?.pop(count);
           useSatSolver((solver) => solver.pop(count));
           state.fdSolver?.pop(count);
@@ -1507,6 +1555,7 @@ export const runSmtlibScript = (
         restoreAssertions(0);
         resetOptimizer();
         releaseObjectives(0, 0);
+        state.checkedObjectives = 0;
         state.scopes = state.scopes.map((scope) => ({
           ...scope,
           assertions: 0,
@@ -1753,15 +1802,18 @@ export const runSmtlibScript = (
           throw new SmtParseError("invalid command argument, keyword expected", parameter);
         if (parameter !== undefined) throw new SmtUnsupportedError("the parameters of eval");
         const model = getModel(list);
-        if (term === -1) throw new SmtParseError("no arguments passed to eval", list.end);
+        if (term === -1) {
+          model.decRef();
+          throw new SmtParseError("no arguments passed to eval", list.end);
+        }
         const manager = state.manager;
         manager.incRef(term);
         const evaluator = new ModelEvaluator(manager, model);
         const value = evaluator.rewrite(term);
         display(value);
-        // eval_cmd frees its model_evaluator before the value, and the parser frees the term last.
         evaluator.release();
         manager.decRef(value);
+        model.decRef();
         manager.decRef(term);
       },
     ],
@@ -1776,32 +1828,41 @@ export const runSmtlibScript = (
           );
         const manager = state.manager;
         const exprs = terms.items.map((item) => state.reader.parseTerm(item));
-        if (exprs.length === 0)
-          throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
-        const extra = list.items[2];
-        if (
-          extra?.kind === "keyword" &&
-          (extra.text === ":model-index" || extra.text === ":model_index")
-        )
-          throw new SmtUnsupportedError("the model index of get-value");
-        if (extra !== undefined)
-          throw new SmtParseError("invalid get-value command, ')' expected", extra);
-        const model = getModel(list);
-        pendingText += "(";
-        model.compact();
-        // Z3 prints each term as the script spells it, from the end of the term before.
-        const offsets = [
-          terms.offset + 1,
-          ...terms.items.map((item) => (item.kind === "list" ? item.end : item).endOffset),
-        ];
-        exprs.forEach((expr, index) => {
-          manager.incRef(expr);
-          const value = model.eval(expr, true);
-          pendingText += `${index > 0 ? "\n " : ""}(${text.slice(offsets[index], offsets[index + 1]).trim()} ${format(value)})`;
-          manager.decRef(value);
-          manager.decRef(expr);
-        });
-        print(")");
+        for (const expr of exprs) manager.incRef(expr);
+        let model: ProtoModel | undefined;
+        try {
+          if (exprs.length === 0)
+            throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
+          const extra = list.items[2];
+          if (
+            extra?.kind === "keyword" &&
+            (extra.text === ":model-index" || extra.text === ":model_index")
+          )
+            throw new SmtUnsupportedError("the model index of get-value");
+          if (extra !== undefined)
+            throw new SmtParseError("invalid get-value command, ')' expected", extra);
+          model = getModel(list);
+          pendingText += "(";
+          model.compact();
+          // Z3 prints each term as the script spells it, from the end of the term before.
+          const offsets = [
+            terms.offset + 1,
+            ...terms.items.map((item) => (item.kind === "list" ? item.end : item).endOffset),
+          ];
+          for (const [index, expr] of exprs.entries()) {
+            const isCompleting = model.getModelCompletion();
+            const value = model.eval(expr, true);
+            pendingText += `${index > 0 ? "\n " : ""}(${text.slice(offsets[index], offsets[index + 1]).trim()} ${format(value)})`;
+            manager.decRef(value);
+            // Z3 restores the completion once the value is gone, which resets the model's cache.
+            model.setModelCompletion(isCompleting);
+          }
+          print(")");
+        } finally {
+          state.reader.releaseTerms();
+          for (const expr of exprs) manager.decRef(expr);
+          model?.decRef();
+        }
       },
     ],
     [
@@ -1812,21 +1873,29 @@ export const runSmtlibScript = (
         const model = getModel(list);
         const assignments = state.reader.getConstantMacros().flatMap((macro) => {
           if (manager.sorts[macro.body] !== SORT_BOOL) return [];
+          const isCompleting = model.getModelCompletion();
           const value = model.eval(macro.body, true);
           const assignment = `(${getQuotedName(macro.name)} ${manager.isTrue(value)})`;
           const isDecided = manager.isTrue(value) || manager.isFalse(value);
           manager.decRef(value);
+          model.setModelCompletion(isCompleting);
           return isDecided ? [assignment] : [];
         });
         print(`(${assignments.join(" ")})`);
+        model.decRef();
       },
     ],
     [
       "get-objectives",
-      () => {
+      (list) => {
+        if (state.objectives.length !== state.checkedObjectives)
+          throw new SmtParseError("check-sat has not been called with latest objectives", list.end);
+        if (state.objectives.length === 0) {
+          print("(objectives\n)");
+          return;
+        }
         const optimizer = state.optimizer;
-        if (optimizer === undefined || state.check === undefined)
-          throw new SmtUnsupportedError("the command get-objectives");
+        if (optimizer === undefined) throw new SmtUnsupportedError("the command get-objectives");
         print(optimizer.getObjectives(format));
       },
     ],
@@ -1869,6 +1938,7 @@ export const runSmtlibScript = (
         }
         model.addRecFuns();
         print(`(\n${printModel(manager, getPrintEnvironment(), model, 2)})`);
+        model.decRef();
       },
     ],
     [
@@ -1957,7 +2027,10 @@ export const runSmtlibScript = (
             `error setting '${keyword}', option value cannot be modified after assertions have been added`,
             value ?? list.end,
           );
-        if (keyword === ":produce-models") settings.isProducingModels = isTrue;
+        if (keyword === ":produce-models") {
+          settings.isProducingModels = isTrue;
+          state.isSolverProducingModels = isTrue;
+        }
         if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
         if (keyword === ":produce-unsat-assumptions") settings.isProducingUnsatAssumptions = isTrue;
         if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
@@ -1986,7 +2059,24 @@ export const runSmtlibScript = (
           !BUILTIN_OPTIONS.has(keyword) &&
           value !== undefined &&
           value.kind !== "list";
-        if (isParameter) settings.parameters.set(getParameterName(keyword), value.text);
+        if (isParameter) {
+          // Z3 checks a numeral as the string of its rational, so 1.5 becomes 3/2.
+          checkParameterValue(
+            getParameterName(keyword),
+            value.kind === "decimal"
+              ? Rational.fromDecimal(value.text).toString()
+              : value.kind === "numeral" || value.kind === "bitvector"
+                ? BigInt(value.text.replace("#", "0")).toString()
+                : value.text,
+            value,
+          );
+          settings.parameters.set(getParameterName(keyword), value.text);
+          // Z3 reads the parameters model and unsat_core again whenever any parameter is set.
+          const model = settings.parameters.get("model");
+          if (model !== undefined) settings.isProducingModels = model === "true";
+          if (settings.parameters.get("unsat_core") === "true")
+            settings.isProducingUnsatCores = true;
+        }
         if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
         if (
           !BUILTIN_OPTIONS.has(keyword) &&
@@ -2023,9 +2113,7 @@ export const runSmtlibScript = (
             numericOption === undefined &&
             booleanOption === undefined) ||
           (optionName.startsWith(":lp.") &&
-            (optionName !== ":lp.int_hammer_period" ||
-              value?.kind !== "numeral" ||
-              Number(value.text) > UINT_MAX))
+            (optionName !== ":lp.int_hammer_period" || value?.kind !== "numeral"))
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
       },

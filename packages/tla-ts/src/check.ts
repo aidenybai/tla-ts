@@ -618,16 +618,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const rejectIncompleteInitialState = (partial: (Value | undefined)[]) => {
     throw setExitCode(new TlaIllegalStateError([...partial]), EXIT_STATUS.error);
   };
-  const getCoveredInitialStates = () => {
-    const initialStates: Value[][] = [];
-    replayInitialStates(
-      coverageInits,
-      environment,
-      (state) => initialStates.push(state),
-      rejectIncompleteInitialState,
-    );
-    return initialStates;
-  };
   const createReplayedStates = () => {
     const replayed = unstoredFingerprint ? [unstoredFingerprint] : [];
     return (state: Value[], callStack: CallStack | undefined) => {
@@ -826,8 +816,22 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const toRecord = search.toRecord;
   const getUncoveredInitialStates = () =>
     spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
-  const getSpecInitialStates = () =>
-    coverage ? getCoveredInitialStates() : getUncoveredInitialStates();
+  const forEachSpecInitialState = (onState: (state: Value[]) => void) => {
+    if (coverage) {
+      replayInitialStates(coverageInits, environment, onState, rejectIncompleteInitialState);
+      return;
+    }
+    if (spec.init === undefined) return;
+    forEachInitialState(
+      spec.init,
+      environment,
+      (state) => {
+        onState(state);
+        return false;
+      },
+      spec.scope,
+    );
+  };
   const isUnfingerprintable = (state: Value[]) => {
     try {
       return getFingerprintState(state).some((value) => getFingerprintError(value) !== undefined);
@@ -1001,7 +1005,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     depths,
     tracedSteps,
     captureOutput,
-    getInitialStates: getSpecInitialStates,
+    forEachInitialState: forEachSpecInitialState,
     getUncoveredInitialStates,
     findSuccessorAction,
   });

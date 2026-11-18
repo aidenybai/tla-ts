@@ -412,3 +412,106 @@ it("takes the arm of a CASE in -generate as the model checker does", () => {
   });
   expect([status, traces]).toEqual([12, [["0", "1", "2", "3"]]]);
 });
+
+const getDiffTraceOutputs = (definitions: string, isDiffTrace: boolean) => {
+  const outputs: string[] = [];
+  const status = simulate({
+    source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES y, z\nInit == y = 0 /\\ z = 0\n${definitions}\n====`,
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+    seed: 4n,
+    traceDepth: 6,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    isDiffTrace,
+    onSimulation: (output) => {
+      if (output.kind === "message" && (output.isError || output.code === 1000)) {
+        outputs.push(output.message);
+      }
+      if (output.kind === "behavior") {
+        output.trace.forEach((step, index) =>
+          outputs.push(`${output.levels[index]}: ${formatValue(step.state.y)}`),
+        );
+      }
+    },
+  });
+  return [status, outputs];
+};
+
+it("drops a step under -difftrace whose VIEW repeats the last one's, as TLC's Simulator#printBehavior does", () => {
+  const definitions = "Next == y' = y + 1 /\\ z' = 1 - z\nInv == y < 4\nView == y \\div 2";
+  expect(getDiffTraceOutputs(definitions, true)).toEqual([
+    12,
+    [
+      "Invariant Inv is violated.",
+      "1: 0",
+      "3: 2",
+      "5: 4",
+      "difftrace requested: Shortened behavior by omitting finite stuttering (2 states), which is an artifact of simulation mode.\n",
+    ],
+  ]);
+});
+
+const FAILING_VIEW =
+  "Next == y' = y + 1 /\\ z' = z\nInv == y < 3\nView == IF y < 2 THEN y ELSE y = \"s\"";
+
+it("stops at a step whose VIEW fails under -difftrace, as TLC's Simulator#printBehavior does", () => {
+  expect(getDiffTraceOutputs(FAILING_VIEW, true)).toEqual([
+    255,
+    [
+      "Invariant Inv is violated.",
+      "1: 0",
+      "2: 1",
+      'TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check equality of integer 2 with non-integer:\n"s"',
+    ],
+  ]);
+});
+
+it("prints each step whose VIEW fails without -difftrace, where TLC's StatePrinter fingerprints the step and crashes", () => {
+  expect(getDiffTraceOutputs(FAILING_VIEW, false)).toEqual([
+    12,
+    ["Invariant Inv is violated.", "1: 0", "2: 1", "3: 2", "4: 3"],
+  ]);
+});
+
+it("prints a state whose function the RL scheduler fails to fingerprint, where TLC's StatePrinter fingerprints the state and crashes", () => {
+  const outputs: string[] = [];
+  const status = simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, z\nRf[n \\in 0..2] == IF n = 0 THEN z ELSE Rf[n - 1] + 1\nInit == x = Rf /\\ z = 1\nNext == UNCHANGED <<x, z>>\n====",
+    config: "INIT Init\nNEXT Next",
+    seed: 4n,
+    traceDepth: 3,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "rl",
+    onSimulation: (output) => {
+      if (output.kind === "message" && output.isError) outputs.push(output.message);
+      if (output.kind === "behavior") {
+        output.trace.forEach((step) => outputs.push(formatValue(step.state.x)));
+      }
+    },
+  });
+  expect([status, outputs]).toEqual([
+    151,
+    [
+      "In evaluation, the identifier z is either undefined or not an operator.\nline 4, col 33 to line 4, col 33 of module M",
+      "[n \\in 0..2 |-> <expression line 4, col 19 to line 4, col 52 of module M>]",
+    ],
+  ]);
+});
+
+it("keeps the incomplete step of a successor error under -difftrace, where TLC's TLCStateMut#fingerPrint crashes", () => {
+  const definitions =
+    "Next == \\/ y < 2 /\\ y' = y + 1 /\\ z' = z\n        \\/ y = 2 /\\ y' = y + 1\nInv == TRUE\nView == y \\div 2";
+  const outputs = getDiffTraceOutputs(definitions, true);
+  expect(outputs[1]).toEqual([
+    "Successor state is not completely specified by action Next of the next-state relation. The following variable is not defined: z.\n",
+    "1: 0",
+    "3: 2",
+    "4: 3",
+    "difftrace requested: Shortened behavior by omitting finite stuttering (1 states), which is an artifact of simulation mode.\n",
+  ]);
+});

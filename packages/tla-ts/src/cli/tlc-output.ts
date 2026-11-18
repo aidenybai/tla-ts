@@ -98,6 +98,7 @@ const printTrace = (
   printer: MessagePrinter,
   trace: TraceStep[],
   mode: keyof typeof TRACE_MODES,
+  levels?: number[],
 ) => {
   const heading = TRACE_MODES[mode].heading;
   const isRebuiltAfterHeading = mode === "counter-example" && printer.version === "1.7.4";
@@ -112,7 +113,7 @@ const printTrace = (
       printer.print(
         MESSAGE_CODE.statePrint2,
         MESSAGE_LEVEL.state,
-        `${index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? trace[index - 1].state : undefined)}`,
+        `${levels?.[index] ?? index + 1}: <${step.label ?? step.action ?? "Initial predicate"}>\n${formatState(step.state, isDiffed ? trace[index - 1].state : undefined)}`,
       );
     });
   } catch (error) {
@@ -667,7 +668,7 @@ export const printSimulation = (
     case "behavior": {
       const last = output.trace[output.trace.length - 1];
       if (!output.isLastStateOnly) {
-        printTrace(printer, output.trace, "simulation");
+        printTrace(printer, output.trace, "simulation", output.levels);
         return;
       }
       print(MESSAGE_CODE.errorState, MESSAGE_LEVEL.none, "The error state is:\n");

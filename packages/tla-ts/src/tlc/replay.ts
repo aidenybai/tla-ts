@@ -107,7 +107,7 @@ const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Re
 };
 
 const getNode = (replay: Replay, node: number, expression: Expression) =>
-  replay.coverage ? getCoverageNode(replay.coverage, node, expression) : -1;
+  replay.coverage && node >= 0 ? getCoverageNode(replay.coverage, node, expression) : -1;
 
 const runAt = <Result>(replay: Replay, node: number, run: () => Result) =>
   replay.coverage ? runAtCoverageNode(replay.coverage, node, run) : run();
@@ -432,7 +432,13 @@ const visitFramed = (
                 streamed: new Set(),
               }),
             )
-          : bindDefinitions(definitions, context);
+          : bindDefinitions(
+              definitions,
+              context,
+              replay.isEnabled
+                ? undefined
+                : { impure: new Set(), streamed: new Set(), isFunctionRebuilt: true },
+            );
         return visit(replay, expression.body, items, bound, partial, node);
       }
       case "Label":
@@ -926,7 +932,7 @@ const visitUnchanged = (
         countCoverage(replay.coverage, node);
         const substitution = substitutedExpressions.get(expression);
         if (substitution && substitution.replacement !== expression) {
-          countCoverage(replay.coverage, getSubstitutionNode(replay.coverage, substitution, node));
+          countCoverage(replay.coverage, getSubstitutionNode(replay.coverage, substitution));
         }
       }
       const assigned = partial[index];
@@ -1000,7 +1006,9 @@ const createReplay = (
   environment,
   callStack: environment.callStack,
   coverage:
-    kind === "enabled" && environment.coverage?.current === -1 ? undefined : environment.coverage,
+    kind === "enabled" && environment.coverage !== undefined && environment.coverage.current < 0
+      ? undefined
+      : environment.coverage,
   isInit: kind === "init",
   isEnabled: kind === "enabled",
   current,

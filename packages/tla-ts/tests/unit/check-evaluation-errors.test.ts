@@ -1075,6 +1075,33 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each(["INVARIANT Bad", "CONSTRAINT Bad", "ACTION_CONSTRAINT BadA", "PROPERTY Prop"])(
+    "evaluates a failing %s once under coverage before the replay, as TLC does",
+    async (configLine) => {
+      const prints: string[] = [];
+      const result = await check({
+        source:
+          '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE v\nInit == v = 0\nNext == v\' = 1 - v\nBad == PrintT("a") /\\ v \\div 0 = 1\nBadA == PrintT("a") /\\ v\' \\div 0 = 1\nProp == [][BadA]_v\n====',
+        config: `INIT Init\nNEXT Next\n${configLine}`,
+        coverage: 1,
+        onPrint: (text) => prints.push(text),
+      });
+      expect([prints, result.failure?.traceOutput]).toEqual([['"a"'], ['"a"']]);
+    },
+  );
+
+  it("reports the error of the evaluation under coverage of a failing invariant, before printing a recursive function makes TLC enumerate it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE v\nfib[n \\in 0..3] == IF n < 2 THEN n ELSE fib[n - 1] + fib[n - 2]\nInit == v = 0\nNext == UNCHANGED v\nInv == v = 0 /\\ fib[7] = 1\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      coverage: 1,
+    });
+    expect(result.failure?.message).toBe(
+      "In applying the function\n(0 :> 0 @@ 1 :> 1 @@ 2 :> 1 @@ 3 :> 2),\nthe first argument is:\n7\nwhich is not in its domain.\n",
+    );
+  });
+
   it("adds a state to the behavior graph after a violation by a successor it never stored", async () => {
     const result = await check({
       source:

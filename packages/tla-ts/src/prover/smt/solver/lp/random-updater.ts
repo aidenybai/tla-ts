@@ -64,7 +64,7 @@ const getFreedomInterval = (solver: LarSolver, column: number): FreedomInterval 
 const shiftVar = (solver: LarSolver, column: number) => {
   if (solver.isFixed(column) || solver.isBase(column) || solver.settings.isCanceled()) return false;
   const interval = getFreedomInterval(solver, column);
-  if (interval === undefined) return false;
+  if (interval === undefined || solver.settings.isCanceled()) return false;
   const settings = solver.settings;
   const value = solver.getValue(column);
   const multiple = interval.multiple;

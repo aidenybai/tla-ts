@@ -49,3 +49,52 @@ it("starts the random generator over from the seed at each level, as TLC's new D
   });
   expect(prints).toEqual(["731", "731", "919"]);
 });
+
+it("replays the step whose invariant fails to evaluate with the actions it counts under coverage, as TLC's DFIDModelChecker does", () => {
+  const outputs: DepthFirstOutput[] = [];
+  checkDepthFirst({
+    source:
+      "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE v\nInit == v = 0\nNext == v' = 1 - v\nBad == PrintT(v) /\\ (v = 1 => v \\div 0 = 1)\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Bad",
+    maxDepth: 3,
+    coverage: 1,
+    onPrint: () => {},
+    onOutput: (output) => outputs.push(output),
+  });
+  const relations = outputs.flatMap((output) =>
+    output.kind === "coverage" ? output.coverage.relations : [],
+  );
+  const messages = outputs.flatMap((output) => (output.kind === "message" ? [output.message] : []));
+  expect([
+    relations.map((relation) => [
+      relation.label,
+      relation.expressions.map(
+        (expression) =>
+          `${"|".repeat(expression.depth)}${expression.location}: ${expression.count}`,
+      ),
+    ]),
+    messages.at(-1),
+  ]).toEqual([
+    [
+      [
+        "Init line 4, col 1 to line 4, col 4 of module M",
+        ["line 4, col 9 to line 4, col 13 of module M: 1"],
+      ],
+      [
+        "Next line 5, col 1 to line 5, col 4 of module M",
+        ["line 5, col 9 to line 5, col 18 of module M: 2"],
+      ],
+      [
+        "Bad line 6, col 1 to line 6, col 3 of module M",
+        [
+          "line 6, col 8 to line 6, col 43 of module M: 2",
+          "|line 6, col 8 to line 6, col 16 of module M: 2",
+          "|line 6, col 22 to line 6, col 42 of module M: 2",
+          "||line 6, col 22 to line 6, col 26 of module M: 2",
+          "||line 6, col 31 to line 6, col 42 of module M: 1",
+        ],
+      ],
+    ],
+    "3 states generated, 2 distinct states found.",
+  ]);
+});

@@ -233,9 +233,7 @@ const getUint = (params: TacticParams, name: string, defaultValue: number) => {
 
 const getNumeral = (params: TacticParams, name: string, defaultValue: string) => {
   const value = params.get(name);
-  const parts = (typeof value === "string" ? value : defaultValue).split(".");
-  const fraction = parts[1] ?? "";
-  return Rational.of(BigInt(parts[0] + fraction), 10n ** BigInt(fraction.length));
+  return Rational.fromDecimal(typeof value === "string" ? value : defaultValue);
 };
 
 export const getRewriterOptions = (manager: AstManager, params: TacticParams): RewriterOptions => ({
@@ -245,7 +243,7 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   isSortingStore: getBool(params, "sort_store", false),
   isPullingCheapIte: getBool(params, "pull_cheap_ite", false),
   isPushingIteBv: getBool(params, "push_ite_bv", false),
-  isKeepingDistinct: !getBool(params, "blast_distinct", false),
+  isBlastingDistinct: getBool(params, "blast_distinct", false),
   blastDistinctThreshold: getUint(params, "blast_distinct_threshold", UINT_MAX),
   localCtxLimit: getBool(params, "local_ctx", false)
     ? getUint(params, "local_ctx_limit", UINT_MAX)
@@ -719,7 +717,12 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
-          propagateValues(environment.manager, goal, getUint(params, "max_rounds", 4)),
+          propagateValues(
+            environment.manager,
+            goal,
+            getUint(params, "max_rounds", 4),
+            getRewriterOptions(environment.manager, params),
+          ),
         ),
     },
   ],
@@ -832,7 +835,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
             simplifyGoal(manager, goal, {
               ...getRewriterOptions(manager, params),
               isEliminatingAnd: true,
-              isKeepingDistinct: false,
+              isBlastingDistinct: true,
             });
             if (!goal.isDecided()) tseitinCnf(manager, goal);
           } finally {

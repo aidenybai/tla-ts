@@ -32,11 +32,14 @@ import {
   countCoverage,
   createChargedEnumerator,
   createProductSetEnumerator,
+  DO_NOT_RECORD,
   enterFrames,
   exitFrames,
+  getCoverageFrames,
   getCoverageNode,
   getSubstitutionNode,
   runAtCoverageNode,
+  runInCoverageFrames,
   tagSubset,
   type Coverage,
   type NextStateMode,
@@ -102,6 +105,7 @@ import {
   toFiniteSet,
   updateFunction,
   valuesEqual,
+  type CostModel,
   type FilteredSetValue,
   type LazyFunctionSource,
   type LazyFunctionValue,
@@ -155,6 +159,7 @@ export interface Thunk {
   next: State | undefined;
   cache: Value | undefined;
   isStreamed: boolean;
+  isRebuilt: boolean;
   isReleased?: boolean;
 }
 
@@ -648,6 +653,7 @@ interface LazyFunction {
   bounds: Bound[];
   body: Expression;
   scope: Scope | undefined;
+  compute: (argument: Value, self: LazyFunctionValue) => Value;
 }
 
 // Kept on the value itself, since a WeakMap entry per short-lived function slows every GC.
@@ -662,6 +668,16 @@ const keepLambda = (lambda: LazyFunction) => Object.assign(lambda.value, { lambd
 
 export const getLazyFunction = (value: Value) =>
   isKeptLazyFunction(value) ? value.lambda : undefined;
+
+// FcnLambdaValue#takeExcept copies the function without its cost model.
+const getUnrecordedApply = (functionValue: Value, coverage: Coverage) => {
+  const lambda = getLazyFunction(functionValue);
+  if (!lambda) return undefined;
+  return (argument: Value) =>
+    coverage.current === -1
+      ? lambda.compute(argument, lambda.value)
+      : runAtCoverageNode(coverage, DO_NOT_RECORD, () => lambda.compute(argument, lambda.value));
+};
 
 export const bindLazyArguments = (
   lambda: LazyFunction,
@@ -773,6 +789,7 @@ const createLazyFunction = (
   compute: (argument: Value, self: LazyFunctionValue) => Value,
   source: LazyFunctionSource | undefined,
   boundTupleLengths: (number | undefined)[] | undefined,
+  costModel: CostModel | undefined,
 ) => {
   const self: LazyFunctionValue = {
     kind: "LazyFunction",
@@ -781,7 +798,7 @@ const createLazyFunction = (
     boundTupleLengths,
     apply: (argument) => compute(argument, self),
   };
-  return self;
+  return costModel ? Object.assign(self, { costModel }) : self;
 };
 
 const getBoundTupleLengths = (bounds: Bound[]) =>
@@ -791,11 +808,14 @@ const getBoundTupleLengths = (bounds: Bound[]) =>
         bound.pattern.kind === "Tuple" ? bound.pattern.names.length : undefined,
       );
 
+const getRecursiveCostModel = (coverage: Coverage | undefined, node: number) =>
+  coverage && node >= 0 ? { secondary: coverage.secondary, node } : undefined;
+
 const createRecursiveFunction = (
   definition: FunctionDefinition,
   context: Context,
+  domain: Value,
 ): RebindableLazyFunction => {
-  const domain = getBoundsDomain(definition.bounds, context);
   const compute = (argument: Value, self: Value) =>
     evaluate(
       definition.body,
@@ -806,13 +826,14 @@ const createRecursiveFunction = (
     );
   const coverage = context.environment.coverage;
   const node = coverage && !context.environment.callStack ? coverage.current : -1;
+  const frames = coverage && getCoverageFrames(coverage);
   const functionValue = createLazyFunction(
     domain,
     coverage
       ? (argument, self) =>
-          coverage.current === -1
+          coverage.current === node && !frames
             ? compute(argument, self)
-            : runAtCoverageNode(coverage, node, () => compute(argument, self))
+            : runInCoverageFrames(coverage, node, frames, () => compute(argument, self))
       : compute,
     getLazyFunctionSource(
       getLazyFunctionTemplate(definition.bounds, definition.body),
@@ -820,16 +841,22 @@ const createRecursiveFunction = (
       domain,
     ),
     getBoundTupleLengths(definition.bounds),
+    getRecursiveCostModel(coverage, node),
   );
   keepLambda({
     value: functionValue,
     bounds: definition.bounds,
     body: definition.body,
     scope: bindSelf(undefined, definition.name, functionValue),
+    compute,
   });
   const rebindable: RebindableLazyFunction = Object.assign(functionValue, {
     rebind: (tracing: Environment) => {
-      const rebound = createRecursiveFunction(definition, { ...context, environment: tracing });
+      const rebound = createRecursiveFunction(
+        definition,
+        { ...context, environment: tracing },
+        functionValue.domain,
+      );
       rebound.enumerated = functionValue.enumerated;
       return rebound;
     },
@@ -867,7 +894,8 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
   if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
   const construction = getFunctionConstruction(definition);
   if (!definition.isSelfReferential) return getEntryEvaluator(construction, environment);
-  const evaluator: Evaluator = (context) => createRecursiveFunction(definition, context);
+  const evaluator: Evaluator = (context) =>
+    createRecursiveFunction(definition, context, getBoundsDomain(definition.bounds, context));
   const coverage = environment.coverage;
   return coverage ? countEvaluator(construction, evaluator, coverage) : evaluator;
 };
@@ -941,7 +969,14 @@ const forceThunk = (thunk: Thunk, context: Context) => {
   const isCached =
     cache !== undefined &&
     isStateWithin(context.state, thunk.state) &&
-    isStateWithin(context.next, thunk.next);
+    isStateWithin(context.next, thunk.next) &&
+    // TLC builds the function again at each reference, and outside KeepLazy evaluates each element.
+    !(
+      thunk.isRebuilt &&
+      !context.isKeepLazy &&
+      typeof cache === "object" &&
+      cache.kind === "LazyFunction"
+    );
   if (isCached) return cache;
   const coverage = context.environment.coverage;
   const node = coverage?.current === -1 ? undefined : coverage?.values.get(thunk);
@@ -956,7 +991,12 @@ const forceThunk = (thunk: Thunk, context: Context) => {
     thunk.state = context.state;
     thunk.next = context.next;
   }
-  if (thunk.cache !== undefined && thunk.state === undefined && thunk.next === undefined) {
+  if (
+    thunk.cache !== undefined &&
+    thunk.state === undefined &&
+    thunk.next === undefined &&
+    !thunk.isRebuilt
+  ) {
     thunk.scope = undefined;
     thunk.isReleased = true;
   }
@@ -1080,6 +1120,7 @@ const createThunk = (expression: Expression, context: Context): Thunk => ({
   next: context.next,
   cache: undefined,
   isStreamed: false,
+  isRebuilt: false,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1172,6 +1213,7 @@ const callOperator = (
 interface ReevaluatedDefinitions {
   impure: ReadonlySet<Definition>;
   streamed: ReadonlySet<Definition>;
+  isFunctionRebuilt?: boolean;
 }
 
 const isRecursiveOperator = (definition: Definition) =>
@@ -1229,11 +1271,9 @@ export const bindDefinitions = (
       definition.kind === "Operator" && definition.params.length === 0 && !isRecursiveValueAtOrAfter
         ? nodes[index].parent
         : scope;
-    // A recursive function keeps one value, since its body applies that value as TLC's FcnLambdaValue applies itself.
     const isReevaluated =
-      definition.kind === "Function"
-        ? !definition.isSelfReferential && reevaluated?.impure.has(definition)
-        : definition.params.length > 0 || reevaluated?.impure.has(definition);
+      (definition.kind === "Operator" && definition.params.length > 0) ||
+      reevaluated?.impure.has(definition);
     const body =
       definition.kind === "Function" ? getFunctionConstruction(definition) : definition.body;
     nodes[index].binding = isReevaluated
@@ -1256,6 +1296,9 @@ export const bindDefinitions = (
           cache: undefined,
           isStreamed:
             definition.kind === "Operator" && (reevaluated?.streamed.has(definition) ?? false),
+          isRebuilt:
+            (definition.kind === "Operator" || !definition.isSelfReferential) &&
+            reevaluated?.isFunctionRebuilt === true,
         };
   }
   const coverage = context.environment.coverage;
@@ -1299,11 +1342,17 @@ export const getReevaluatedDefinitions = (
   environment: Environment,
 ): ReevaluatedDefinitions => ({
   impure: new Set(
-    definitions.filter((definition) => isImpureDefinition(definition, environment, "varying")),
+    definitions.filter(
+      // TLC evaluates a LET definition at each reference; caching a pure one shows only in coverage.
+      (definition) =>
+        environment.coverage !== undefined ||
+        isImpureDefinition(definition, environment, "varying"),
+    ),
   ),
   streamed: new Set(
     definitions.filter((definition) => isImpureDefinition(definition, environment, "streamed")),
   ),
+  isFunctionRebuilt: true,
 });
 
 export const isImpure = (environment: Environment) =>
@@ -1517,7 +1566,7 @@ const countEvaluator =
   (expression: Expression, evaluator: Evaluator, coverage: Coverage): Evaluator =>
   (context) => {
     const outer = coverage.current;
-    if (outer === -1 || !coverage.covered.has(expression)) return evaluator(context);
+    if (outer < 0 || !coverage.covered.has(expression)) return evaluator(context);
     const node = getCoverageNode(coverage, outer, expression);
     countCoverage(coverage, node);
     coverage.current = node;
@@ -1548,7 +1597,8 @@ const countSubstitution =
   (substitution: Substitution, evaluator: Evaluator, coverage: Coverage): Evaluator =>
   (context) => {
     const outer = coverage.current;
-    coverage.current = outer === -1 ? -1 : getSubstitutionNode(coverage, substitution, outer);
+    const node = getSubstitutionNode(coverage, substitution);
+    coverage.current = node === -1 && outer < 0 ? outer : node;
     try {
       return evaluator(context);
     } finally {
@@ -1582,12 +1632,16 @@ const getCoverageEvaluator = (expression: Expression, evaluator: Evaluator, cove
       coverage,
     );
   }
+  const replaced = (frames ?? []).flatMap((frame) => {
+    const outer = substitutedExpressions.get(frame);
+    return outer && outer.replacement !== frame ? [outer] : [];
+  });
   return countEvaluator(
     expression,
-    countSubstitution(
-      substitution,
-      countEvaluator(substitution.replacement, evaluator, coverage),
-      coverage,
+    [...replaced, substitution].reduceRight(
+      (inner, item) =>
+        countSubstitution(item, countEvaluator(item.replacement, inner, coverage), coverage),
+      evaluator,
     ),
     coverage,
   );
@@ -2059,19 +2113,23 @@ export const getFunctionBuilder = (
     const compute = (argument: Value) =>
       body(withScope(lambdaContext, bindArgument(bounds, scope, argument)));
     const node = coverage && !environment.callStack ? coverage.current : -1;
+    const frames = coverage && getCoverageFrames(coverage);
     const value = createLazyFunction(
       domain,
       coverage
-        ? (argument) =>
-            coverage.current === -1
+        ? (argument) => {
+            const target = coverage.current === -1 && name === undefined ? -1 : node;
+            return target === coverage.current && !frames
               ? compute(argument)
-              : runAtCoverageNode(coverage, node, () => compute(argument))
+              : runInCoverageFrames(coverage, target, frames, () => compute(argument));
+          }
         : compute,
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,
+      name === undefined ? undefined : getRecursiveCostModel(coverage, node),
     );
     if (name !== undefined) scope = bindSelf(outer, name, value);
-    const functionValue = keepLambda({ value, bounds, body: expression.body, scope });
+    const functionValue = keepLambda({ value, bounds, body: expression.body, scope, compute });
     return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
   };
   const callStack = environment.callStack;
@@ -2122,7 +2180,7 @@ const compileFunctionConstruction = (
           : domain.factors;
       const isConverted =
         (typeof value !== "object" || value.kind !== "LazyFunction") && sets.every(isReducibleSet);
-      if (isConverted && coverage.current !== -1 && coverage.covered.has(expression)) {
+      if (isConverted && coverage.current >= 0 && coverage.covered.has(expression)) {
         chargeFunctionConstruction(coverage, coverage.current, sets);
       }
       return value;
@@ -2142,6 +2200,7 @@ const compileExcept = (
   const isKeptLazyExpression = keptLazyExpressions.has(expression);
   if (isKeptLazyExpression) keepLazy(expression.function);
   const evaluateFunction = getEvaluator(expression.function, environment);
+  const coverage = environment.coverage;
   const updates = expression.updates.map((update) => ({
     path: update.path.map((step): CompiledStep =>
       step.kind === "Field"
@@ -2174,6 +2233,7 @@ const compileExcept = (
       getKey(path[depth], context),
       (previous) => update(previous, path, depth + 1, context, value),
       isKeptLazyExpression && depth === 0,
+      coverage && getUnrecordedApply(current, coverage),
     );
   };
   return (context) => {
@@ -2237,7 +2297,7 @@ export const getLazyFilter = (
         getEvaluator(expression.predicate, tracing),
         -1,
       );
-    if (!coverage || node === -1) return { kind: "FilteredSet", base, test, source, rebind };
+    if (!coverage || node < 0) return { kind: "FilteredSet", base, test, source, rebind };
     return {
       kind: "FilteredSet",
       base,

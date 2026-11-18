@@ -126,6 +126,11 @@ export interface LazyFunctionSource {
   body: string;
 }
 
+export interface CostModel {
+  secondary: number[];
+  node: number;
+}
+
 export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
@@ -135,6 +140,17 @@ export interface LazyFunctionValue {
   functionClass?: FunctionClass;
   enumerated?: FunctionValue;
   isFingerprinted?: boolean;
+}
+
+interface CountedLazyFunctionValue extends LazyFunctionValue {
+  costModel: CostModel;
+}
+
+interface LazyFunctionCopy extends LazyFunctionValue {
+  original: LazyFunctionValue;
+  replacedKey: Value;
+  replacement: Value;
+  applyBody: (argument: Value) => Value;
 }
 
 export type Value =
@@ -1113,9 +1129,10 @@ export const normalizeShallowly = (value: Value): void => {
 export const isEqualLikeTlc = (left: Value, right: Value) =>
   computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right);
 
+// TLC's ValueVec#sort compares each element with the ones before it, which orders what lazy elements evaluate.
 const isStrictlySorted = (elements: Value[]) => {
   for (let index = 1; index < elements.length; index++) {
-    if (compareValues(elements[index - 1], elements[index]) >= 0) return false;
+    if (compareValues(elements[index], elements[index - 1]) <= 0) return false;
   }
   return true;
 };
@@ -2333,6 +2350,25 @@ export const isUpdatedElementOf = (element: Value, member: Value, set: Value): b
   );
 };
 
+const isCountedLazyFunction = (value: LazyFunctionValue): value is CountedLazyFunctionValue =>
+  "costModel" in value;
+
+const isLazyFunctionCopy = (value: LazyFunctionValue): value is LazyFunctionCopy =>
+  "original" in value;
+
+// FcnLambdaValue#toFcnRcd evaluates the body at every key of an EXCEPT copy, then applies its EXCEPTs.
+const getCopiedValue = (copy: LazyFunctionCopy, key: Value) => {
+  const value = copy.applyBody(key);
+  for (
+    let current: LazyFunctionValue = copy;
+    isLazyFunctionCopy(current);
+    current = current.original
+  ) {
+    if (isEqualLikeTlc(current.replacedKey, key)) return current.replacement;
+  }
+  return value;
+};
+
 export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "Function") return value;
   if (typeof value === "object" && value.kind === "LazyFunction") {
@@ -2344,8 +2380,13 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
     const domain = getFunctionDomain(value.domain);
     value.enumerated = createSortedFunction(
       domain,
-      domain.map((key) => value.apply(key)),
+      isLazyFunctionCopy(value)
+        ? domain.map((key) => getCopiedValue(value, key))
+        : domain.map((key) => value.apply(key)),
     );
+    if (isCountedLazyFunction(value)) {
+      value.costModel.secondary[value.costModel.node] += domain.length;
+    }
     return value.enumerated;
   }
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);
@@ -2585,7 +2626,8 @@ export const updateFunction = (
   functionValue: Value,
   argument: Value,
   update: (previous: Value) => Value,
-  isKeptLazy = false,
+  isKeptLazy: boolean,
+  applyUnrecorded: ((argument: Value) => Value) | undefined,
 ): Value => {
   const isLazy =
     typeof functionValue === "object" &&
@@ -2600,13 +2642,18 @@ export const updateFunction = (
     }
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
-    return setFunctionClass<LazyFunctionValue>(
+    const apply = applyUnrecorded ?? functionValue.apply;
+    return setFunctionClass<LazyFunctionCopy>(
       {
         kind: "LazyFunction",
         domain: functionValue.domain,
-        apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
+        apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
         source: functionValue.source,
         boundTupleLengths: functionValue.boundTupleLengths,
+        original: functionValue,
+        replacedKey: argument,
+        replacement: updated,
+        applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : apply,
       },
       getFunctionClass(functionValue),
     );
