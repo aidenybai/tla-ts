@@ -23,7 +23,9 @@ import type {
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { getNumeralValue, readAtAsIdentifier, tokenize, type Token } from "./lexer";
+import { getDefEntryErrors, type DefEntryError } from "./sany/generator-def-entries";
 import { getSanyParseError } from "./sany/parse-error";
+import { createSourceFile } from "./sany/source";
 
 interface Precedence {
   low: number;
@@ -479,6 +481,24 @@ const getOperatorApplication = (
 };
 
 export const parenthesizedRanges = new WeakMap<Expression, SourceRange>();
+
+export const defEntryErrors = new WeakMap<Expression, DefEntryError[]>();
+
+export const getDefEntryBinder = (expression: Expression): Expression | undefined => {
+  if (parenthesizedRanges.has(expression)) return undefined;
+  const binder =
+    expression.kind === "UnboundedQuantifier"
+      ? { name: expression.names[0], range: expression.nameRanges?.[0] }
+      : expression.kind === "Choose" && expression.pattern.kind === "Name"
+        ? { name: expression.pattern.name, range: expression.pattern.ranges?.[0] }
+        : expression.kind === "SetFilter" && expression.bound.pattern.kind === "Name"
+          ? { name: expression.bound.pattern.name, range: expression.bound.pattern.ranges?.[0] }
+          : undefined;
+  const range = binder?.range;
+  return binder && range
+    ? { kind: "Identifier", name: binder.name, location: { ...range.start, range } }
+    : undefined;
+};
 
 export const extractModule = (source: string, name: string) => {
   const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
@@ -1032,22 +1052,45 @@ const parse = (
       }
       if (accept("EXCEPT")) {
         const updates = parseSeparated(() => {
+          const heirStarts = [cursor];
           expect("!");
-          const path: ExceptPathStep[] = [];
+          const components: (string | Expression[])[] = [];
           while (isAt(".") || isAt("[")) {
+            heirStarts.push(cursor);
             if (accept(".")) {
               if (!isFieldName(peek()))
                 throw createUnexpected(`Expected a field name but found ${describeToken(peek())}`);
               if (!isTlapm && isAt("@")) throw createUnexpected("@ used in !.@");
-              path.push({ kind: "Field", name: advance().text });
+              components.push(advance().text);
               continue;
             }
             expect("[");
-            path.push({ kind: "Index", args: parseSeparated(() => parseExpression()) });
+            components.push(parseSeparated(() => parseExpression()));
             expect("]");
           }
+          heirStarts.push(cursor, cursor + 1);
           expect("=");
-          return { path, value: parseExpression() };
+          const value = parseExpression();
+          heirStarts.push(cursor);
+          const getHeirRange = (index: number) =>
+            getRange(heirStarts[index], heirStarts[index + 1] - 1);
+          return {
+            path: components.map((component, index): ExceptPathStep =>
+              typeof component === "string"
+                ? { kind: "Field", name: component }
+                : {
+                    kind: "Index",
+                    args: component,
+                    // SANY's Generator locates the $Tuple of component i at heir 2i + 1 of its ExceptSpec, not i + 1.
+                    // Deviation from SANY: past the last heir, that throws ArrayIndexOutOfBoundsException; tla-ts locates it at the component.
+                    tupleRange: getHeirRange(
+                      2 * index + 1 < heirStarts.length - 1 ? 2 * index + 1 : index + 1,
+                    ),
+                  },
+            ),
+            value,
+            range: getRange(heirStarts[0]),
+          };
         });
         expect("]");
         return { kind: "Except", function: expression, updates, location };
@@ -1380,6 +1423,7 @@ const parse = (
           if (isTlapm && isAt("RECURSIVE")) throw createUnexpected("Unexpected keyword RECURSIVE");
           if (accept("RECURSIVE")) {
             recursive.push(...declareRecursive());
+            openModules[openModules.length - 1].hasRecursiveLet = true;
             continue;
           }
           const unit = parseDefinition(!isTlapm && accept("LOCAL"));
@@ -2134,7 +2178,23 @@ const parse = (
     );
   };
 
-  const parseDefs = () => parseSeparated(isTlapm ? parseDefinable : parseFact);
+  const parseDefs = () =>
+    parseSeparated(() => {
+      if (isTlapm) return parseDefinable();
+      const fact = parseFact();
+      const isName =
+        (fact.kind === "Identifier" ||
+          fact.kind === "Subexpression" ||
+          fact.kind === "OperatorReference") &&
+        !parenthesizedRanges.has(fact);
+      if (fact.kind !== "ModuleFact" && !isName) {
+        defEntryErrors.set(
+          fact,
+          getDefEntryErrors(createSourceFile(openModules[0].name, source), fact),
+        );
+      }
+      return fact;
+    });
 
   // tlapm's usebody reads facts while an expression starts after the comma.
   const parseTlapmFacts = (): Fact[] => {
@@ -2626,6 +2686,7 @@ const parse = (
       theorems: [],
       uses: [],
       units: [],
+      hasRecursiveLet: false,
     };
     openModules.push(module);
     recursiveScopes.push(new Set());

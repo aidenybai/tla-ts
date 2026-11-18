@@ -9,12 +9,17 @@ import {
   type SourceFile,
   type TokenSpan,
 } from "./source";
-import type { ModuleGeneration } from "./generation";
+import type { SanyLocation } from "./nodes";
 
 interface DefEntryParts {
   hasChildlessFirstChild: boolean | undefined;
-  last: TokenSpan;
+  last: SanyLocation;
   lastKind: string | undefined;
+}
+
+export interface DefEntryError {
+  location: SanyLocation;
+  message: string;
 }
 
 const SYNTAX_KINDS = new Map<Expression["kind"], string>([
@@ -26,6 +31,7 @@ const SYNTAX_KINDS = new Map<Expression["kind"], string>([
   ["SetFilter", "N_SubsetOf"],
   ["SetMap", "N_SetOfAll"],
   ["Tuple", "N_Tuple"],
+  ["Product", "N_Times"],
   ["FunctionApplication", "N_FcnAppl"],
   ["FunctionConstruction", "N_FcnConst"],
   ["FunctionSet", "N_SetOfFcns"],
@@ -82,6 +88,10 @@ const getSyntaxKind = (file: SourceFile, expression: Expression, span: TokenSpan
   if (isParenthesized(file, span)) return "N_ParenExpr";
   if (expression.kind === "String") return getTokenSource(file, span.start);
   if (expression.kind === "Apply") return getApplicationKind(file, expression, span);
+  if (expression.kind === "And" || expression.kind === "Or") {
+    if (!expression.isBulleted) return "N_InfixExpr";
+    return expression.kind === "And" ? "N_ConjList" : "N_DisjList";
+  }
   return SYNTAX_KINDS.get(expression.kind);
 };
 
@@ -97,10 +107,24 @@ const getDefEntryParts = (
   expression: Expression,
   span: TokenSpan,
 ): DefEntryParts | undefined => {
+  const getLocation = (start: number, end = start) => getSpanLocation(file, { start, end });
   const getPart = (operand: Expression, partSpan = getOperandSpan(file, operand)) => ({
-    last: partSpan,
+    last: getSpanLocation(file, partSpan),
     lastKind: getSyntaxKind(file, operand, partSpan),
   });
+  const getSecondHeir = (end: number, lastKind: string) => ({
+    hasChildlessFirstChild: false,
+    last: getLocation(span.start + 1, end),
+    lastKind,
+  });
+  const getOperator = (left: Expression, lastKind: string) => {
+    const leftSpan = getOperandSpan(file, left);
+    return {
+      hasChildlessFirstChild: hasChildlessFirstChild(file, left, leftSpan),
+      last: getLocation(leftSpan.end + 1),
+      lastKind,
+    };
+  };
   if (isParenthesized(file, span)) {
     const inner = { start: span.start + 1, end: span.end - 1 };
     return { hasChildlessFirstChild: false, ...getPart(expression, inner) };
@@ -119,10 +143,70 @@ const getDefEntryParts = (
       return first === undefined
         ? {
             hasChildlessFirstChild: false,
-            last: { start: span.end, end: span.end },
+            last: getLocation(span.end),
             lastKind: file.tokens[span.end].text,
           }
         : { hasChildlessFirstChild: false, ...getPart(first) };
+    }
+    case "Except":
+      return { hasChildlessFirstChild: false, ...getPart(expression.function) };
+    case "FunctionSet":
+      return { hasChildlessFirstChild: false, ...getPart(expression.domain) };
+    case "SetMap":
+      return { hasChildlessFirstChild: false, ...getPart(expression.expression) };
+    case "WeakFairness":
+    case "StrongFairness":
+      return { hasChildlessFirstChild: false, ...getPart(expression.subscript) };
+    case "Case":
+      return getSecondHeir(getOperandSpan(file, expression.arms[0].body).end, "N_CaseArm");
+    case "Record":
+    case "RecordSet":
+      return getSecondHeir(
+        getOperandSpan(file, expression.fields[0].value).end,
+        expression.kind === "Record" ? "N_FieldVal" : "N_FieldSet",
+      );
+    case "FunctionConstruction":
+    case "Forall":
+    case "Exists":
+      return getSecondHeir(getOperandSpan(file, expression.bounds[0].set).end, "N_QuantBound");
+    case "Choose":
+    case "SetFilter":
+      return (expression.kind === "Choose" ? expression.pattern : expression.bound.pattern).kind ===
+        "Tuple"
+        ? getSecondHeir(getMatchingIndex(file, span.start + 1), "N_IdentifierTuple")
+        : undefined;
+    case "Decimal": {
+      const token = file.tokens[span.start];
+      const point = token.column + token.text.indexOf(".");
+      return {
+        hasChildlessFirstChild: false,
+        last: { ...getLocation(span.start), beginColumn: point, endColumn: point },
+        lastKind: ".",
+      };
+    }
+    case "Let":
+      return getSecondHeir(getOperandSpan(file, expression.body).start - 2, "N_LetDefinitions");
+    case "Product":
+      return getOperator(expression.factors[0], "N_GenInfixOp");
+    case "And":
+    case "Or": {
+      if (expression.operands.length === 1) return undefined;
+      if (!expression.isBulleted && expression.operands.length > 2) {
+        return {
+          hasChildlessFirstChild: undefined,
+          last: getLocation(
+            getOperandSpan(file, expression.operands[expression.operands.length - 1]).start - 1,
+          ),
+          lastKind: "N_GenInfixOp",
+        };
+      }
+      if (!expression.isBulleted) return getOperator(expression.operands[0], "N_GenInfixOp");
+      const item = getOperandSpan(file, expression.operands[1]);
+      return {
+        hasChildlessFirstChild: true,
+        last: getLocation(item.start - 1, item.end),
+        lastKind: expression.kind === "And" ? "N_ConjItem" : "N_DisjItem",
+      };
     }
     case "Always":
     case "Eventually":
@@ -139,7 +223,7 @@ const getDefEntryParts = (
           expression.expression,
           getOperandSpan(file, expression.expression),
         ),
-        last: { start: span.end, end: span.end },
+        last: getLocation(span.end),
         lastKind: "N_GenPostfixOp",
       };
     case "FunctionApplication":
@@ -150,7 +234,7 @@ const getDefEntryParts = (
       const next = operandSpan.end + 1;
       return {
         hasChildlessFirstChild: hasChildlessFirstChild(file, operand, operandSpan),
-        last: { start: next, end: next },
+        last: getLocation(next),
         lastKind: file.tokens[next].text,
       };
     }
@@ -161,7 +245,7 @@ const getDefEntryParts = (
           ? undefined
           : {
               hasChildlessFirstChild: true,
-              last: { start: span.start + 1, end: span.end },
+              last: getLocation(span.start + 1, span.end),
               lastKind: "N_OpArgs",
             };
       }
@@ -171,40 +255,43 @@ const getDefEntryParts = (
           ...getPart(expression.args[0], { start: span.start + 1, end: span.end }),
         };
       }
-      const left = getOperandSpan(file, expression.args[0]);
-      const operator = left.end + 1;
-      return {
-        hasChildlessFirstChild: hasChildlessFirstChild(file, expression.args[0], left),
-        last: { start: operator, end: operator },
-        lastKind: kind === "N_InfixExpr" ? "N_GenInfixOp" : "N_GenPostfixOp",
-      };
+      return getOperator(
+        expression.args[0],
+        kind === "N_InfixExpr" ? "N_GenInfixOp" : "N_GenPostfixOp",
+      );
     }
   }
   return undefined;
 };
 
-export const reportDefEntry = (generation: ModuleGeneration, expression: Expression) => {
-  const span = getOperandSpan(generation.file, expression);
-  const isName =
-    expression.kind === "Identifier" ||
-    expression.kind === "Subexpression" ||
-    expression.kind === "OperatorReference";
-  if (isName && !isParenthesized(generation.file, span)) return false;
-  const parts = getDefEntryParts(generation.file, expression, span);
-  if (parts?.hasChildlessFirstChild === undefined || parts.lastKind === undefined) return false;
-  const lastLocation = getSpanLocation(generation.file, parts.last);
-  if (parts.hasChildlessFirstChild) {
-    generation.addError(getSpanLocation(generation.file, span), "Was expecting a GeneralId.");
+export const getDefEntryErrors = (file: SourceFile, expression: Expression): DefEntryError[] => {
+  const span = getOperandSpan(file, expression);
+  const location = getSpanLocation(file, span);
+  const parts = getDefEntryParts(file, expression, span);
+  const isOneHeir =
+    expression.kind === "Number" ||
+    expression.kind === "String" ||
+    ((expression.kind === "And" || expression.kind === "Or") && expression.operands.length === 1);
+  if (parts === undefined && isOneHeir) {
+    // Deviation from SANY: Generator#genIdToSelector throws ArrayIndexOutOfBoundsException on a node with one heir, such as a number, a string, or a one-item junction list; tla-ts rejects it as an entry that describes no definition.
+    return [{ location, message: "DEF clause entry should describe a defined operator." }];
   }
-  if (parts.lastKind === "N_OpArgs") {
-    generation.addError(lastLocation, "Selector `!(...)' should not have argument(s).");
-  } else {
-    generation.addError(lastLocation, "Unexpected token found.");
-    generation.addError(lastLocation, `Need name or step number here, not \`${parts.lastKind}'.`);
+  if (parts !== undefined && parts.hasChildlessFirstChild === undefined) {
+    // Deviation from SANY: Generator#genIdToSelector selects the empty N_IdPrefix of a nested first child, as in A + B + A, and reports it at line 2147483647, col 2147483647; tla-ts rejects it as an entry that describes no definition.
+    return [{ location, message: "DEF clause entry should describe a defined operator." }];
   }
-  generation.addError(
-    getSpanLocation(generation.file, span),
-    "DEF clause entry should describe a defined operator.",
-  );
-  return true;
+  if (parts?.hasChildlessFirstChild === undefined || parts.lastKind === undefined) return [];
+  return [
+    ...(parts.hasChildlessFirstChild ? [{ location, message: "Was expecting a GeneralId." }] : []),
+    ...(parts.lastKind === "N_OpArgs"
+      ? [{ location: parts.last, message: "Selector `!(...)' should not have argument(s)." }]
+      : [
+          { location: parts.last, message: "Unexpected token found." },
+          {
+            location: parts.last,
+            message: `Need name or step number here, not \`${parts.lastKind}'.`,
+          },
+        ]),
+    { location, message: "DEF clause entry should describe a defined operator." },
+  ];
 };

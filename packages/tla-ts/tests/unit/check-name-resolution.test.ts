@@ -789,6 +789,21 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "THEOREM T == TRUE\n<1>1. HIDE T\n<1>2. <1>1!G = <1>1!G(1)\n  OBVIOUS\n<1> QED",
+      [
+        ["line 4, col 7 to line 4, col 10", "Cannot take subexpression of `<1>1'."],
+        ["line 4, col 16 to line 4, col 19", "Cannot take subexpression of `<1>1'."],
+      ],
+    ],
+    [
+      "Op == {LET L(a) == a IN L(1)}\nB == Op!1!M!N\nC == Op!1!M!1\nD == Op!1!M(1)",
+      [
+        ["line 3, col 11 to line 3, col 13", "Unknown operator: `M!N'."],
+        ["line 4, col 11 to line 4, col 11", "Unknown operator: `M'."],
+        ["line 5, col 11 to line 5, col 11", "Unknown operator: `M'."],
+      ],
+    ],
+    [
       "CONSTANT c, f\nOp == [f EXCEPT ![1] = 2, ![2] = 3]\nOp2 == [f EXCEPT ![1] = 2]\nA == Op!1 /\\ Op!2 /\\ Op!3 /\\ Op!4 /\\ Op!>> /\\ Op2!>> /\\ Op!<< /\\ Op!@\nTHEOREM T == [f EXCEPT ![1] = 2] = f\nB == T!1!1 /\\ T!1!2 /\\ T!1!3 /\\ T!1!>> /\\ T!1!@\nTHEOREM U == ASSUME c PROVE [f EXCEPT ![1] = 2, ![2] = 3] = f\nC == U!2!1!1 /\\ U!2!1!2 /\\ U!2!1!4 /\\ U!2!1!>> /\\ U!2!1!@\nUSE U!2!1!2",
       [
         ["line 5, col 17 to line 5, col 17", exceptSelection],
@@ -1410,6 +1425,67 @@ describe("name resolution matches SANY", () => {
     expect(result.status).toBe("success");
   });
 
+  it("checks the arguments of a function from EXTENDS or an instance without substitutions like SANY", async () => {
+    const modules = new Map([
+      ["Base", "---- MODULE Base ----\nf[n \\in {1}] == n\n===="],
+      ["Param", "---- MODULE Param ----\nEXTENDS Base\nCONSTANT c\ng[n \\in {c}] == n\n===="],
+    ]);
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Base\nI == INSTANCE Base\nJ(p) == INSTANCE Base\nK == INSTANCE Param WITH c <- 1\nA == f[1, 2] /\\ I!f[1, 2] /\\ J(0)!f[1, 2]\nB == K!f[1, 2] /\\ K!g[1, 2]\nC == LET L == INSTANCE Base IN L!f[1, 2]\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) => modules.get(name),
+      }),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          ["line 6, col 6 to line 6, col 12", "f"],
+          ["line 6, col 17 to line 6, col 25", "I!f"],
+          ["line 6, col 30 to line 6, col 41", "J!f"],
+          ["line 8, col 32 to line 8, col 40", "L!f"],
+        ].map((error) => ({
+          location: `${error[0]} of module M`,
+          message: `Function '${error[1]}' is defined with 1 parameters, but is applied to 2 arguments.`,
+        })),
+        warnings: [],
+      },
+    });
+  });
+
+  it("imports the name of an instance a module defines like SANY", async () => {
+    const modules = new Map([
+      ["Empty", "---- MODULE Empty ----\n===="],
+      ["Inner", "---- MODULE Inner ----\nL == INSTANCE Empty\nP(a) == INSTANCE Empty\n===="],
+    ]);
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Inner\nJ == INSTANCE Inner\nK(b) == INSTANCE Empty\nA == L\nB == J!L /\\ J!P /\\ J!P(1)\nC == J!L!1 /\\ K /\\ K(1, 2)\nD == LET N == INSTANCE Inner IN N!L\nP == 1\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) => modules.get(name),
+      }),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          ["line 5, col 6 to line 5, col 6", "Operator name L is incomplete."],
+          ["line 6, col 8 to line 6, col 8", "Operator name J!L is incomplete."],
+          ["line 6, col 13 to line 6, col 15", "The operator J!P requires 1 arguments."],
+          ["line 6, col 22 to line 6, col 22", "Operator name J!P is incomplete."],
+          ["line 7, col 6 to line 7, col 8", "Unknown operator: `J!L'."],
+          ["line 7, col 15 to line 7, col 15", "The operator K requires 1 arguments."],
+          ["line 7, col 21 to line 7, col 26", "The operator K requires 1 arguments."],
+          ["line 8, col 35 to line 8, col 35", "Operator name N!L is incomplete."],
+          ["line 9, col 1 to line 9, col 6", "Operator P already defined or declared."],
+          [
+            "line 9, col 1 to line 9, col 6",
+            "Multiply-defined symbol 'P': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 22 of module Inner.",
+          ],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      },
+    });
+  });
+
   it.each([
     [
       "a definition defined twice",
@@ -1440,6 +1516,31 @@ describe("name resolution matches SANY", () => {
           location: "line 3, col 1 to line 3, col 6 of module M",
           message:
             "Multiply-defined symbol 'B': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition of a declared constant or an imported operator, and refers to the first",
+      "EXTENDS Naturals\nCONSTANT c\nc(a) == 1\nNat(a) == 2\nA == c\nB == Nat\nC == LET D == c IN D",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message: "Operator c already defined or declared.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'c': this definition or declaration conflicts \nwith the one at line 3, col 10 to line 3, col 10 of module M.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 11 of module M",
+          message: "Operator Nat already defined or declared.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Nat': this definition or declaration conflicts \nwith the one at line 14, col 1 to line 14, col 16 of module Naturals.",
         },
       ],
       [],
@@ -2160,6 +2261,70 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "selections substituted for a CONSTANT operator",
+      "---- MODULE Inner ----\nCONSTANT F(_)\n====\nCONSTANT c\nW == {c, 2}\nU(a, b) == {a, b}\nL == lab :: {1}\nI == INSTANCE Inner WITH F <- W!1\nJ == INSTANCE Inner WITH F <- U!1\nK == INSTANCE Inner WITH F <- W!3\nN == INSTANCE Inner WITH F <- L!lab",
+      [
+        ["line 9, col 31 to line 9, col 33", "Expected arity 1 but found operator of arity 0."],
+        [
+          "In module --TLA+ BUILTINS--",
+          "An operator must be substituted for symbol 'F', and it must have arity 1.",
+        ],
+        ["line 10, col 31 to line 10, col 33", "Expected arity 1 but found operator of arity 2."],
+        [
+          "line 11, col 33 to line 11, col 33",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        ["line 12, col 31 to line 12, col 35", "Expected arity 1 but found operator of arity 0."],
+      ].map((error) => ({
+        location: error[0].startsWith("In") ? error[0] : `${error[0]} of module M`,
+        message: error[1],
+      })),
+      [],
+    ],
+    [
+      "labels inside the arguments of a rejected application",
+      "H(a) == a\nOp(P(_)) == P(1, lab:: 2)\nG == H(1, lab:: 2) /\\ Undef(other:: 3) /\\ H(kept:: 1)!Nope\nA == G!lab\nB == G!other\nC == Op(Op(Op))!lab\nD == G!kept\nTHEOREM TRUE\n<1>1. H(1, lab:: 2) /\\ H(kept:: 1)!Nope /\\ H(lost:: 1, 2)!1\n  <2> QED BY <1>1!lab, <1>1!kept, <1>1!lost\n<1> QED",
+      [
+        ["line 3, col 14 to line 3, col 25", "The operator P requires 1 arguments."],
+        ["line 4, col 7 to line 4, col 18", "The operator H requires 1 arguments."],
+        ["line 4, col 23 to line 4, col 27", "Unknown operator: `Undef'."],
+        ["line 4, col 55 to line 4, col 58", "Cannot find label `Nope'."],
+        ["line 5, col 8 to line 5, col 10", "Cannot find label `lab'."],
+        ["line 6, col 8 to line 6, col 12", "Cannot find label `other'."],
+        [
+          "line 7, col 9 to line 7, col 14",
+          "An expression appears as argument number 1 (counting from 1) to operator 'Op', in a position an operator is required.",
+        ],
+        ["line 7, col 17 to line 7, col 19", "Cannot find label `lab'."],
+        ["line 10, col 8 to line 10, col 19", "The operator H requires 1 arguments."],
+        ["line 10, col 36 to line 10, col 39", "Cannot find label `Nope'."],
+        ["line 10, col 45 to line 10, col 57", "The operator H requires 1 arguments."],
+        ["line 11, col 19 to line 11, col 21", "Cannot find label `lab'."],
+        ["line 11, col 40 to line 11, col 43", "Cannot find label `lost'."],
+      ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      [],
+    ],
+    [
+      "a function applied to the wrong number of arguments",
+      "f[n \\in {1}] == n\ng[a, b \\in {1}, <<c, d>> \\in {<<1, 2>>}] == a\nh[n \\in {1}] == IF n = 0 THEN 0 ELSE h[1, 2]\nA == f[1, 2] /\\ (f)[1, Undef]\nB == g[1, 2] /\\ g[<<1, 2, 3>>] /\\ g[1, 2, 3]\nC == LET k[n \\in {1}] == n IN k[1, 2]\nD == (lab:: f)[1, 2] /\\ f[1, lab2:: 2]\nE == D!lab /\\ D!lab2",
+      [
+        ["line 5, col 6 to line 5, col 12", "f", 1],
+        ["line 5, col 17 to line 5, col 29", "f", 1],
+        ["line 6, col 6 to line 6, col 12", "g", 3],
+        ["line 7, col 31 to line 7, col 37", "k", 1],
+        ["line 8, col 25 to line 8, col 38", "f", 1],
+      ]
+        .map((error) => ({
+          location: `${error[0]} of module M`,
+          message: `Function '${error[1]}' is defined with ${error[2]} parameters, but is applied to 2 arguments.`,
+        }))
+        .concat({
+          location: "line 9, col 17 to line 9, col 20 of module M",
+          message: "Cannot find label `lab2'.",
+        }),
+      [],
+    ],
+    [
       "declarations, assumptions, theorems, and USE between a RECURSIVE declaration and its definition",
       "RECURSIVE f(_)\nVARIABLES y,\n  z\nCONSTANT C\nASSUME TRUE\nTHEOREM T == TRUE\nUSE T\nf(n) == n\nVARIABLE w",
       [
@@ -2372,6 +2537,301 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("reports DEF clause entries that aren't names like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nA == 1\nB == 2\nTHEOREM TRUE BY DEF A + 1, {}, -A, A(1)\nTHEOREM TRUE BY DEF (A), A', <<A>>, A[1]\nUSE DEF A.b, B\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 5, col 21 to line 5, col 25", "Was expecting a GeneralId."],
+          ["line 5, col 23 to line 5, col 23", "Unexpected token found."],
+          [
+            "line 5, col 23 to line 5, col 23",
+            "Need name or step number here, not `N_GenInfixOp'.",
+          ],
+          [
+            "line 5, col 21 to line 5, col 25",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 29 to line 5, col 29", "Unexpected token found."],
+          ["line 5, col 29 to line 5, col 29", "Need name or step number here, not `}'."],
+          [
+            "line 5, col 28 to line 5, col 29",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 32 to line 5, col 33", "Was expecting a GeneralId."],
+          ["line 5, col 33 to line 5, col 33", "Unexpected token found."],
+          ["line 5, col 33 to line 5, col 33", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 5, col 32 to line 5, col 33",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 36 to line 5, col 39", "Was expecting a GeneralId."],
+          ["line 5, col 37 to line 5, col 39", "Selector `!(...)' should not have argument(s)."],
+          [
+            "line 5, col 36 to line 5, col 39",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 14 to line 5, col 39", "Empty BY"],
+          ["line 6, col 22 to line 6, col 22", "Unexpected token found."],
+          ["line 6, col 22 to line 6, col 22", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 6, col 21 to line 6, col 23",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 26 to line 6, col 27", "Was expecting a GeneralId."],
+          ["line 6, col 27 to line 6, col 27", "Unexpected token found."],
+          [
+            "line 6, col 27 to line 6, col 27",
+            "Need name or step number here, not `N_GenPostfixOp'.",
+          ],
+          [
+            "line 6, col 26 to line 6, col 27",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 32 to line 6, col 32", "Unexpected token found."],
+          ["line 6, col 32 to line 6, col 32", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 6, col 30 to line 6, col 34",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 37 to line 6, col 40", "Was expecting a GeneralId."],
+          ["line 6, col 38 to line 6, col 38", "Unexpected token found."],
+          ["line 6, col 38 to line 6, col 38", "Need name or step number here, not `['."],
+          [
+            "line 6, col 37 to line 6, col 40",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 14 to line 6, col 40", "Empty BY"],
+          ["line 7, col 9 to line 7, col 11", "Was expecting a GeneralId."],
+          ["line 7, col 10 to line 7, col 10", "Unexpected token found."],
+          ["line 7, col 10 to line 7, col 10", "Need name or step number here, not `.'."],
+          [
+            "line 7, col 9 to line 7, col 11",
+            "DEF clause entry should describe a defined operator.",
+          ],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
+  it("reports DEF clause entries of bracketed, quantified and infix shapes like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nA == 1\nB == 2\nTHEOREM TRUE BY DEF CASE A -> 1 [] OTHER -> 2, [a |-> 1], [a : {}], A\nTHEOREM TRUE BY DEF [v \\in {} |-> 1], \\A v, w \\in {} : TRUE, A\nTHEOREM TRUE BY DEF LET Q == 1 IN Q, A \\X B, A /\\ B, {A \\/ B}, A\nTHEOREM TRUE BY DEF [A EXCEPT ![1] = 2], [A -> B], {A : v \\in {}}, WF_A(B), A\nTHEOREM TRUE BY DEF /\\ A\n                    /\\ B\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 4, col 26 to line 4, col 31", "Unexpected token found."],
+          ["line 4, col 26 to line 4, col 31", "Need name or step number here, not `N_CaseArm'."],
+          [
+            "line 4, col 21 to line 4, col 45",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 4, col 49 to line 4, col 55", "Unexpected token found."],
+          ["line 4, col 49 to line 4, col 55", "Need name or step number here, not `N_FieldVal'."],
+          [
+            "line 4, col 48 to line 4, col 56",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 4, col 60 to line 4, col 65", "Unexpected token found."],
+          ["line 4, col 60 to line 4, col 65", "Need name or step number here, not `N_FieldSet'."],
+          [
+            "line 4, col 59 to line 4, col 66",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 22 to line 5, col 29", "Unexpected token found."],
+          [
+            "line 5, col 22 to line 5, col 29",
+            "Need name or step number here, not `N_QuantBound'.",
+          ],
+          [
+            "line 5, col 21 to line 5, col 36",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 42 to line 5, col 52", "Unexpected token found."],
+          [
+            "line 5, col 42 to line 5, col 52",
+            "Need name or step number here, not `N_QuantBound'.",
+          ],
+          [
+            "line 5, col 39 to line 5, col 59",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 25 to line 6, col 30", "Unexpected token found."],
+          [
+            "line 6, col 25 to line 6, col 30",
+            "Need name or step number here, not `N_LetDefinitions'.",
+          ],
+          [
+            "line 6, col 21 to line 6, col 35",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 38 to line 6, col 43", "Was expecting a GeneralId."],
+          ["line 6, col 40 to line 6, col 41", "Unexpected token found."],
+          [
+            "line 6, col 40 to line 6, col 41",
+            "Need name or step number here, not `N_GenInfixOp'.",
+          ],
+          [
+            "line 6, col 38 to line 6, col 43",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 46 to line 6, col 51", "Was expecting a GeneralId."],
+          ["line 6, col 48 to line 6, col 49", "Unexpected token found."],
+          [
+            "line 6, col 48 to line 6, col 49",
+            "Need name or step number here, not `N_GenInfixOp'.",
+          ],
+          [
+            "line 6, col 46 to line 6, col 51",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 55 to line 6, col 60", "Unexpected token found."],
+          ["line 6, col 55 to line 6, col 60", "Need name or step number here, not `N_InfixExpr'."],
+          [
+            "line 6, col 54 to line 6, col 61",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 7, col 22 to line 7, col 22", "Unexpected token found."],
+          ["line 7, col 22 to line 7, col 22", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 7, col 21 to line 7, col 39",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 7, col 43 to line 7, col 43", "Unexpected token found."],
+          ["line 7, col 43 to line 7, col 43", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 7, col 42 to line 7, col 49",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 7, col 53 to line 7, col 53", "Unexpected token found."],
+          ["line 7, col 53 to line 7, col 53", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 7, col 52 to line 7, col 65",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 7, col 71 to line 7, col 71", "Unexpected token found."],
+          ["line 7, col 71 to line 7, col 71", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 7, col 68 to line 7, col 74",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 8, col 21 to line 9, col 24", "Was expecting a GeneralId."],
+          ["line 9, col 21 to line 9, col 24", "Unexpected token found."],
+          ["line 9, col 21 to line 9, col 24", "Need name or step number here, not `N_ConjItem'."],
+          [
+            "line 8, col 21 to line 9, col 24",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 8, col 14 to line 9, col 24", "Empty BY"],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
+  it("looks up the name a binder declares in a DEF clause entry, and rejects decimals, like SANY", async () => {
+    const DEF_ERROR = "DEF clause entry should describe a defined operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nCONSTANT K\nA == 1\nB == 2\nTHEOREM TRUE BY DEF CHOOSE v : TRUE, \\E v, w : TRUE, {v \\in {} : TRUE}, A\nTHEOREM TRUE BY DEF CHOOSE <<a, b>> \\in {} : TRUE, {<<a, b>> \\in {} : TRUE}, 12.50, A\nTHEOREM TRUE BY DEF CHOOSE A : TRUE, CHOOSE K : TRUE, \\AA v : TRUE\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 5, col 28 to line 5, col 28", "Unknown operator: `v'."],
+          ["line 5, col 21 to line 5, col 35", DEF_ERROR],
+          ["line 5, col 41 to line 5, col 41", "Unknown operator: `v'."],
+          ["line 5, col 38 to line 5, col 51", DEF_ERROR],
+          ["line 5, col 55 to line 5, col 55", "Unknown operator: `v'."],
+          ["line 5, col 54 to line 5, col 70", DEF_ERROR],
+          ["line 6, col 28 to line 6, col 35", "Unexpected token found."],
+          [
+            "line 6, col 28 to line 6, col 35",
+            "Need name or step number here, not `N_IdentifierTuple'.",
+          ],
+          ["line 6, col 21 to line 6, col 49", DEF_ERROR],
+          ["line 6, col 53 to line 6, col 60", "Unexpected token found."],
+          [
+            "line 6, col 53 to line 6, col 60",
+            "Need name or step number here, not `N_IdentifierTuple'.",
+          ],
+          ["line 6, col 52 to line 6, col 75", DEF_ERROR],
+          ["line 6, col 80 to line 6, col 80", "Unexpected token found."],
+          ["line 6, col 80 to line 6, col 80", "Need name or step number here, not `.'."],
+          ["line 6, col 78 to line 6, col 82", DEF_ERROR],
+          ["line 7, col 38 to line 7, col 52", DEF_ERROR],
+          ["line 7, col 59 to line 7, col 59", "Unknown operator: `v'."],
+          ["line 7, col 55 to line 7, col 66", DEF_ERROR],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("rejects a number or a string as a DEF clause entry, where SANY crashes", async () => {
+    await expect(
+      check({
+        source: '---- MODULE M ----\nA == 1\nTHEOREM TRUE BY DEF 1, "s", A\n====',
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        ["line 3, col 21 to line 3, col 21", "line 3, col 24 to line 3, col 26"].map(
+          (location) => ({
+            location: `${location} of module M`,
+            message: "DEF clause entry should describe a defined operator.",
+          }),
+        ),
+      ),
+    );
+  });
+
+  it("rejects a DEF clause entry whose first child nests, where SANY reports line 2147483647", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nA == 1\nB == 2\nf == [x \\in {1} |-> x]\nF(x) == x\nTHEOREM TRUE BY DEF A + B + A, A /\\ B /\\ A, f[1] + B, A'', F(A)[1], A\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          "line 6, col 21 to line 6, col 29",
+          "line 6, col 32 to line 6, col 42",
+          "line 6, col 45 to line 6, col 52",
+          "line 6, col 55 to line 6, col 57",
+          "line 6, col 60 to line 6, col 66",
+        ].map((location) => ({
+          location: `${location} of module M`,
+          message: "DEF clause entry should describe a defined operator.",
+        })),
+      ),
+    );
+  });
+
+  it("rejects a one-item junction list as a DEF clause entry, where SANY crashes", async () => {
+    await expect(
+      check({ source: "---- MODULE M ----\nA == 1\nTHEOREM TRUE BY DEF /\\ A\n====", config: "" }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 21 to line 3, col 24 of module M",
+          message: "DEF clause entry should describe a defined operator.",
+        },
+        { location: "line 3, col 14 to line 3, col 24 of module M", message: "Empty BY" },
+      ]),
+    );
+  });
+
   it("reports an @ fact as an unknown operator like SANY", async () => {
     await expect(checkNames("USE @\nTHEOREM TRUE\nBY @\nHIDE @")).rejects.toThrow(
       createSanyError([
@@ -2491,6 +2951,34 @@ describe("name resolution matches SANY", () => {
             "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
         },
       ]),
+    );
+  });
+
+  it("accepts a selection as a DEF entry only when it ends on a LET definition, like SANY", async () => {
+    const message = "DEF clause entry should describe a defined operator.";
+    await expect(
+      checkNames(
+        "CONSTANT c\nOp == lab:: {LET L == 1 IN L, 2}\nTHEOREM TRUE\n<1>1. USE TRUE\n<1> USE DEF c!G, Op!G, Op!lab!3, Op!lab, Unk!1, <1>1!G, Op!lab!1!L\n<1> QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 6, col 13 to line 6, col 13", "Cannot take subexpression of `c'."],
+          ["line 6, col 13 to line 6, col 15", message],
+          ["line 6, col 21 to line 6, col 21", "Cannot find label `G'."],
+          ["line 6, col 18 to line 6, col 21", message],
+          [
+            "line 6, col 31 to line 6, col 31",
+            "Nonexistent operand specified by `argument selector 3'.",
+          ],
+          ["line 6, col 24 to line 6, col 31", message],
+          ["line 6, col 34 to line 6, col 39", message],
+          ["line 6, col 42 to line 6, col 44", "Unknown operator: `Unk'."],
+          ["line 6, col 42 to line 6, col 46", message],
+          ["line 6, col 49 to line 6, col 52", "Cannot take subexpression of `<1>1'."],
+          ["line 6, col 49 to line 6, col 54", message],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
     );
   });
 
@@ -3101,6 +3589,36 @@ describe("name resolution matches SANY", () => {
       "line 3, col 9 to line 3, col 9",
       "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
     ],
+    [
+      "THEOREM T == ASSUME NEW q PROVE TRUE\nB == T!:",
+      "line 3, col 6 to line 3, col 8",
+      "Selected ASSUME/PROVE instead of expression.",
+    ],
+    [
+      "THEOREM TRUE\n<1>1. ASSUME NEW q PROVE TRUE\n<1>2. <1>1!: = 1\n<1>3. QED",
+      "line 4, col 7 to line 4, col 12",
+      "Selected ASSUME/PROVE instead of expression.",
+    ],
+    [
+      "THEOREM TRUE\n<1>1. SUFFICES ASSUME NEW q PROVE TRUE\n<1>2. <1>1!1!: = 1\n<1>3. QED",
+      "line 4, col 12 to line 4, col 12",
+      "!: should not follow an operand selector.",
+    ],
+    [
+      "THEOREM TRUE\n<1>1. ASSUME TRUE PROVE lab:: TRUE\n<1>2. <1>1!lab!: = 1\n<1>3. QED",
+      "line 4, col 16 to line 4, col 16",
+      "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+    ],
+    [
+      "THEOREM TRUE\n<1>1. ASSUME TRUE PROVE TRUE\n<1>2. <1>1!:!: = 1\n<1>3. QED",
+      "line 4, col 12 to line 4, col 12",
+      "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+    ],
+    [
+      "THEOREM TRUE\n<1>1. ASSUME TRUE PROVE TRUE\n<1>2. <1>1!:!X = 1\n<1>3. QED",
+      "line 4, col 12 to line 4, col 12",
+      "A name selector here must be from a LET clause.",
+    ],
   ])(
     "reports the selector before or after `!:' in %j like SANY",
     async (source, location, message) => {
@@ -3333,6 +3851,27 @@ describe("name resolution matches SANY", () => {
       );
     },
   );
+
+  it("rejects an ASSUME/PROVE theorem or step used as an expression or operator like SANY", async () => {
+    await expect(
+      checkNames(
+        "THEOREM T == ASSUME NEW q PROVE TRUE\nA == T = 1\nB == T(1) = 1\nOp(G(_)) == 1\nC == Op(T)\nTHEOREM TRUE\n<1>1. ASSUME NEW r PROVE TRUE\n<1>2. <1>1 = 1\n<1>3. QED BY <1>1",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 3, col 6 to line 3, col 6", "ASSUME/PROVE used where an expression is required."],
+          ["line 4, col 7 to line 4, col 9", "The operator T requires 0 arguments."],
+          ["line 6, col 9 to line 6, col 9", "Expected arity 1 but found operator of arity 0."],
+          [
+            "line 6, col 6 to line 6, col 10",
+            "Argument number 1 to operator 'Op' \nshould be a 1-parameter operator.",
+          ],
+          ["line 9, col 7 to line 9, col 10", "ASSUME/PROVE used where an expression is required."],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
 
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(

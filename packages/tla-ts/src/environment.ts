@@ -50,7 +50,9 @@ import {
 import { overrideDefinitions, type JavaOverride } from "./java-overrides";
 import { extractModule } from "./parser";
 import {
+  collectSemanticErrors,
   getArity,
+  getFunctionArity,
   getParamArities,
   isBefore,
   isTheoremDefinition,
@@ -151,7 +153,7 @@ interface ModuleScope {
   nested: Module[];
   errors: SanyError[];
   warnings: SanyError[];
-  levelChecks: (() => void)[];
+  levelChecks: ReturnType<typeof checkModuleLevels>[];
 }
 
 const getDeclarations = (linked: LinkedModule): Declaration[] => [
@@ -404,7 +406,7 @@ export const createEnvironment = (
     const closure = new Set<string>();
     const nested: Module[] = [];
     const errors: SanyError[] = [];
-    const levelChecks: (() => void)[] = [];
+    const levelChecks: ReturnType<typeof checkModuleLevels>[] = [];
     linking.push(parsed.name);
     loading.push(closure);
     const linked = linkModule(parsed, {
@@ -424,7 +426,20 @@ export const createEnvironment = (
     const redefinition = loaded && getModuleRedefinition(duplicate, loaded.module);
     if (redefinition) throw createSanyError([redefinition], false, undefined, warnings);
     if (duplicate) throw createModuleRedefinedError(duplicate);
-    levelChecks.forEach((check) => check());
+    // SANY's Errors#addMessage drops a message it already has, such as an instantiated body's.
+    const levelErrors = [
+      ...collectSemanticErrors(
+        levelChecks.flatMap((check) => check.sections),
+        warnings,
+      ),
+      ...levelChecks.flatMap((check) => check.check(check !== levelChecks.at(-1))),
+    ].filter(
+      (error, index, all) =>
+        all.findIndex(
+          (other) => other.location === error.location && other.message === error.message,
+        ) === index,
+    );
+    if (levelErrors.length > 0) throw createSanyError(levelErrors, false, undefined, warnings);
     return { linked, closure };
   };
 
@@ -583,7 +598,11 @@ export const createEnvironment = (
     const declared = new Set(declarations.map((declaration) => declaration.name));
     return new Map(
       [...exported]
-        .filter((entry) => !declared.has(entry[0]))
+        .filter(
+          (entry) =>
+            !declared.has(entry[0]) &&
+            (instance.name !== undefined || entry[1].kind !== "Instance"),
+        )
         .map((entry): [string, ModuleSymbol] => {
           if (instance.name === undefined) {
             return [
@@ -597,6 +616,8 @@ export const createEnvironment = (
                   parameterized.get(entry[1].key) === true
                     ? instance.location.range
                     : entry[1].range,
+                functionArity:
+                  parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,
               },
             ];
           }
@@ -604,13 +625,14 @@ export const createEnvironment = (
           return [
             qualified,
             {
-              key: getKey(entry[1].key, qualified),
+              key: entry[1].kind === "Instance" ? qualified : getKey(entry[1].key, qualified),
               arity: entry[1].arity + instance.params.length,
               params: entry[1].params && [
                 ...instance.params.map((param) => param.arity),
                 ...entry[1].params,
               ],
               kind: entry[1].kind,
+              functionArity: declarations.length > 0 ? undefined : entry[1].functionArity,
             },
           ];
         }),
@@ -743,7 +765,7 @@ export const createEnvironment = (
     });
     const declared = new Set(declarations.map((declaration) => declaration.name));
     const aliases = [...linked.exported]
-      .filter((entry) => !declared.has(entry[0]))
+      .filter((entry) => !declared.has(entry[0]) && entry[1].kind !== "Instance")
       .map((entry) => {
         const key = instantiation.getKey(entry[1].key);
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
@@ -872,6 +894,7 @@ export const createEnvironment = (
       params: getParamArities(definition),
       kind: isTheoremDefinition(parsed, definition) ? "Theorem" : "Definition",
       range: definition.location.range,
+      functionArity: getFunctionArity(definition),
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const getKey = (definition: Definition) =>
@@ -979,6 +1002,14 @@ export const createEnvironment = (
             visible.set(name, symbol);
             if (!instance.isLocal) exported.set(name, symbol);
           });
+          if (instance.name !== undefined && !instance.isLocal) {
+            exported.set(instance.name, {
+              key: `${instance.name}${KEY_SEPARATOR}${scope.id}`,
+              arity: instance.params.length,
+              kind: "Instance",
+              range: instance.location.range,
+            });
+          }
         },
       })),
       ...parsed.modules.map((nested) => ({
@@ -1036,7 +1067,7 @@ export const createEnvironment = (
     const checks = instanceChecks
       .splice(firstCheck)
       .map((check) => ({ location: check.location, check: () => checkInstance(check) }));
-    scope.levelChecks.push(() =>
+    scope.levelChecks.push(
       checkModuleLevels(
         module,
         {

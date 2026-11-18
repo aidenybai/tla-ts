@@ -321,6 +321,7 @@ export const generateSanySpecification = (
     file: SourceFile,
     parent: ModuleNode | undefined,
     contexts: Context[],
+    recursiveSections = { count: 0 },
   ): ModuleNode => {
     const currentModule: ModuleNode = {
       kind: "Module",
@@ -354,7 +355,7 @@ export const generateSanySpecification = (
       curLevel: 0,
       unresolvedCount: [0],
       unresolvedSum: 0,
-      recursiveSectionCount: 0,
+      recursiveSections,
       functions: [],
       exceptStack: [],
       exceptSpecStack: [],
@@ -503,10 +504,14 @@ export const generateSanySpecification = (
           break;
         case "Module": {
           checkRecursiveSection(generation, unit.module.location, "A MODULE ");
-          const inner = generateModule(unit.module, file, currentModule, [
-            ...contexts,
-            createContext(),
-          ]);
+          const inner = generateModule(
+            unit.module,
+            file,
+            currentModule,
+            [...contexts, createContext()],
+            generation.recursiveSections,
+          );
+          currentModule.opDefsInRecursiveSection.push(...inner.opDefsInRecursiveSection);
           const binding = resolveModule(generation, inner.name);
           if (binding === undefined) addToContext(getTopContext(contexts), inner);
           else if (binding !== inner) {

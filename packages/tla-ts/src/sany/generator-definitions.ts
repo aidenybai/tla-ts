@@ -274,7 +274,7 @@ export const processFunction = (
 };
 
 export const processRecursive = (generation: ModuleGeneration, declarations: Declaration[]) => {
-  if (generation.unresolvedSum === 0) generation.recursiveSectionCount++;
+  if (generation.unresolvedSum === 0) generation.recursiveSections.count++;
   generation.unresolvedCount[generation.curLevel] += declarations.length;
   generation.unresolvedSum += declarations.length;
   declarations.forEach((declaration) => {
@@ -291,7 +291,7 @@ export const processRecursive = (generation: ModuleGeneration, declarations: Dec
       isDefined: false,
       inRecursive: true,
       inRecursiveSection: true,
-      recursiveSection: generation.recursiveSectionCount,
+      recursiveSection: generation.recursiveSections.count,
       letInLevel: generation.curLevel,
     });
     addSymbol(generation, node);

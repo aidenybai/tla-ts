@@ -37,6 +37,7 @@ import {
   selections,
   SELECTION_NAME,
   factReferences,
+  generatedArgumentCounts,
   type NullSelection,
   type SelectionArguments,
 } from "./resolve";
@@ -46,6 +47,7 @@ type Lookup = (name: string) => Definition | undefined;
 interface FoundLabel {
   label: Expression & { kind: "Label" };
   lets: Definition[][];
+  applications: Expression[];
 }
 
 interface Selection {
@@ -62,7 +64,6 @@ interface SelectingName {
 }
 
 const declaredArities = new WeakMap<Definition, number>();
-const generatedArgumentCounts = new WeakMap<Expression, number>();
 
 const resolveDefinition = (
   definition: Definition,
@@ -112,15 +113,23 @@ const findLabel = (
   expression: Expression,
   name: string,
   lets: Definition[][],
+  applications: Expression[],
 ): FoundLabel | undefined => {
   if (expression.kind === "Label") {
-    return expression.name === name ? { label: expression, lets } : undefined;
+    return expression.name === name ? { label: expression, lets, applications } : undefined;
   }
   if (expression.kind === "Let")
-    return findLabel(expression.body, name, [...lets, expression.definitions]);
+    return findLabel(expression.body, name, [...lets, expression.definitions], applications);
   if (expression.kind === "Lambda" || expression.kind === "Selection") return undefined;
-  for (const child of getChildren(expression).slice(0, generatedArgumentCounts.get(expression))) {
-    const found = findLabel(child, name, lets);
+  const generated = generatedArgumentCounts.get(expression);
+  const enclosing =
+    (expression.kind === "Apply" && generated === undefined) ||
+    expression.kind === "FunctionApplication"
+      ? [...applications, expression]
+      : applications;
+  for (const child of getChildren(expression).slice(0, generated)) {
+    const isFunction = expression.kind === "FunctionApplication" && child === expression.function;
+    const found = findLabel(child, name, lets, isFunction ? applications : enclosing);
     if (found) return found;
   }
   return undefined;
@@ -240,7 +249,12 @@ const selectSubexpression = (
   const checkNull = (node: Expression | undefined, message: string, isEmpty = false) => {
     const range = reference.selectorRanges?.[selectorIndex];
     if (node && range) {
-      nulls.push({ node, error: { location: formatRange(range), message }, isEmpty });
+      nulls.push({
+        node,
+        error: { location: formatRange(range), message },
+        isEmpty,
+        applications: [...applications],
+      });
     }
   };
 
@@ -257,23 +271,30 @@ const selectSubexpression = (
   };
 
   const findDefinition = (local: Definition[] | undefined) => {
+    const start = reference.selectorRanges?.[selectorIndex];
     const names: string[] = [];
     const args: Expression[] = [];
     while (selectorIndex < selectors.length) {
       const selector = selectors[selectorIndex];
       if (selector.kind !== "Name" && !local) return undefined;
-      if (selector.kind !== "Name") throw createError("Expected an operator name", location);
-      names.push(selector.name);
-      args.push(...selector.args);
-      const name = names.join("!");
-      const definition = local
-        ? local.find((candidate) => getSourceName(candidate) === name)
-        : lookup(name);
-      if (definition)
-        return { definition, name, args, earlier: args.length - selector.args.length };
+      if (selector.kind === "Name") {
+        names.push(selector.name);
+        args.push(...selector.args);
+        const name = names.join("!");
+        const definition = local
+          ? local.find((candidate) => getSourceName(candidate) === name)
+          : lookup(name);
+        if (definition)
+          return { definition, name, args, earlier: args.length - selector.args.length };
+      }
       selectorIndex++;
     }
-    throw createError(`Unknown operator ${names.join("!")}`, location);
+    const end =
+      reference.selectorRanges?.[selectors.findLastIndex((selector) => selector.kind === "Name")];
+    return report(
+      start && end && { ...start, end: end.end },
+      `Unknown operator: \`${names.join("!")}'.`,
+    );
   };
 
   const enterDefinition = (local: Definition[] | undefined) => {
@@ -341,8 +362,10 @@ const selectSubexpression = (
       const selector = selectors[selectorIndex];
       if (selector.kind !== "Name") return;
       const range = reference.selectorRanges?.[selectorIndex];
-      const found = current && findLabel(current, selector.name, []);
-      if (!found) return report(range, `Cannot find label \`${selector.name}'.`);
+      const found = current && findLabel(current, selector.name, [], []);
+      const missing = `Cannot find label \`${selector.name}'.`;
+      if (!found) return report(range, missing);
+      found.applications.forEach((application) => checkNull(application, missing, true));
       const params = found.label.params;
       if (selector.args.length !== params.length) {
         const message = `Label \`${selector.name}' used with wrong number of arguments.`;
@@ -798,6 +821,10 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       factReferences.set(resolved, facts);
       return resolved;
     };
+    const resolveDefs = (defs: Fact[]) =>
+      defs.map((def) =>
+        def.kind === "ModuleFact" ? def : resolveSubexpressions(def, lookup, isProofGoal, true),
+      );
     const resolveBounds = (bounds: Bound[]) =>
       bounds.map((bound) => ({ ...bound, set: resolveInProof(bound.set) }));
     const resolveStatement = (statement: Expression | AssumeProve): Expression | AssumeProve =>
@@ -816,7 +843,7 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       switch (body.kind) {
         case "Use":
         case "Hide":
-          return { ...body, facts: resolveFacts(body.facts) };
+          return { ...body, facts: resolveFacts(body.facts), defs: resolveDefs(body.defs) };
         case "Instance":
           return resolveInstance(body, lookup, isProofGoal);
         case "Define":
@@ -844,7 +871,9 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       }
     };
     const resolveProof = (proof: Proof | undefined): Proof | undefined => {
-      if (proof?.kind === "By") return { ...proof, facts: resolveFacts(proof.facts) };
+      if (proof?.kind === "By") {
+        return { ...proof, facts: resolveFacts(proof.facts), defs: resolveDefs(proof.defs) };
+      }
       if (proof?.kind !== "Steps") return proof;
       let resolver = { lookup, resolveStep, resolveProof };
       return {
@@ -868,7 +897,7 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
         }),
       };
     };
-    return { lookup, resolveFacts, resolveStatement, resolveStep, resolveProof };
+    return { lookup, resolveFacts, resolveDefs, resolveStatement, resolveStep, resolveProof };
   };
   const hasReferences =
     module.definitions.some((definition) => containsReference(definition.body)) ||
@@ -900,12 +929,14 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
           ),
       };
     }),
-    uses: module.uses.map((use) => ({
-      ...use,
-      facts: createProofResolver(getVisibleLookup(proofLookup, use.location)).resolveFacts(
-        use.facts,
-      ),
-    })),
+    uses: module.uses.map((use) => {
+      const resolver = createProofResolver(getVisibleLookup(proofLookup, use.location));
+      return {
+        ...use,
+        facts: resolver.resolveFacts(use.facts),
+        defs: resolver.resolveDefs(use.defs),
+      };
+    }),
   };
   if (!hasReferences) return resolved;
   return {

@@ -29,6 +29,7 @@ import {
   getMatchingIndex,
   getParenthesizedSpan,
   getPreComments,
+  getRangeSpan,
   getSpanLocation,
   getTokenIndex,
   getTokenLocation,
@@ -123,6 +124,7 @@ export const generateSelector = (
   expectedArity: number,
   isFact: boolean,
   isDef: boolean,
+  location = getLocation(generation.file, expression),
 ) => {
   const items = getSelectorItems(expression);
   if (items === undefined) throw new TlaSyntaxError(`Expected a name, found ${expression.kind}`);
@@ -131,7 +133,7 @@ export const generateSelector = (
     expectedArity,
     isFact,
     isDef,
-    getLocation(generation.file, expression),
+    location,
   );
 };
 
@@ -435,14 +437,13 @@ const generateExcept = (
         return createString(generation, step.name, getTokenLocation(generation.file, nameIndex));
       }
       const open = findToken(generation.file, pathCursor, span.end, "[");
-      const close = getMatchingIndex(generation.file, open);
-      pathCursor = close + 1;
+      pathCursor = getMatchingIndex(generation.file, open) + 1;
       if (step.args.length === 1) return generateExpression(generation, step.args[0]);
       return applyBuiltin(
         generation,
         "$Tuple",
         step.args.map((innerArgument) => generateExpression(generation, innerArgument)),
-        getSpanLocation(generation.file, { start: open, end: close }),
+        getSpanLocation(generation.file, getRangeSpan(generation.file, step.tupleRange)),
       );
     });
     const sequence = applyBuiltin(generation, "$Seq", components, specLocation);
@@ -1022,6 +1023,20 @@ const generateBoundsWithRanges = (
   };
 };
 
+const createNullLabel = (generation: ModuleGeneration): LabelNode => {
+  const body = createNullNode(generation);
+  return {
+    ...createLevelFields(body.id),
+    kind: "Label",
+    name: "nullLabelNode",
+    params: [],
+    body,
+    labels: new Map(),
+    isAssumeProve: false,
+    location: body.location,
+  };
+};
+
 const generateLabel = (
   generation: ModuleGeneration,
   expression: Expression & { kind: "Label" },
@@ -1030,7 +1045,7 @@ const generateLabel = (
   const scope = generation.labelScopes.at(-1);
   if (scope === undefined) {
     generation.addError(location, "Label not in definition or proof step.");
-    return createNullNode(generation);
+    return createNullLabel(generation);
   }
   if (
     generation.assumeProveState.isDeclared
@@ -1041,11 +1056,11 @@ const generateLabel = (
       location,
       "Label not allowed within scope of declaration in nested ASSUME/PROVE.",
     );
-    return createNullNode(generation);
+    return createNullLabel(generation);
   }
   if (generation.exceptStack.length > 0 && generation.exceptSpecStack.length > 0) {
     generation.addError(location, "Labels inside EXCEPT clauses are not yet implemented.");
-    return createNullNode(generation);
+    return createNullLabel(generation);
   }
   pushLabelScope(generation);
   const body = generateExpression(generation, expression.body);

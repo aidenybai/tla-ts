@@ -71,6 +71,308 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("reports an EXCEPT path's level error at its update, before its value's, like SANY", async () => {
+    const seqError =
+      "Level error in applying operator $Seq:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    const setError =
+      "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nA == [f EXCEPT ![[]x] = {<>x}]\nB == [f EXCEPT !.a = 1, ![<>x][1] = {[]x}]\nE == [f EXCEPT ![1] = [f EXCEPT ![[]x] = 2]]\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 4, col 16 to line 4, col 29", seqError],
+          ["line 4, col 25 to line 4, col 29", setError],
+          ["line 5, col 25 to line 5, col 41", seqError],
+          ["line 5, col 37 to line 5, col 41", setError],
+          ["line 6, col 33 to line 6, col 42", seqError],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("locates the tuple of an EXCEPT path at the part of its update SANY picks", async () => {
+    const tupleError =
+      "Level error in applying operator $Tuple:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          '---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nA == [f EXCEPT ![[]x, 1] = 1]\nB == [f EXCEPT ![1][[]x, 2] = 1]\nC == [f EXCEPT ![1][2][[]x, 3] = ((1))]\nD == [f EXCEPT !.a[[]x, 2] = 1]\nE == [f EXCEPT ![1][[]x, 2][3] = 1]\nG == [f EXCEPT ![[]x, 1][2] = 1, !["a"][<>x, 2] = 1 = 2]\nH == [f EXCEPT ![1][2][[]x, 3] = [f EXCEPT ![1][<>x, 2] = 3]]\nInit == x = 0\nNext == x\' = x\n====',
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          "line 4, col 17 to line 4, col 24",
+          "line 5, col 29 to line 5, col 29",
+          "line 6, col 34 to line 6, col 38",
+          "line 7, col 28 to line 7, col 28",
+          "line 8, col 28 to line 8, col 30",
+          "line 9, col 17 to line 9, col 24",
+          "line 9, col 49 to line 9, col 49",
+          "line 10, col 34 to line 10, col 60",
+          "line 10, col 57 to line 10, col 57",
+        ].map((location) => ({ location: `${location} of module M`, message: tupleError })),
+      ),
+    );
+  });
+
+  it("locates the tuple of a late EXCEPT path component at the component, where SANY's Generator throws", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nA == [f EXCEPT ![1][2][3][[]x, 4] = 1]\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 26 to line 4, col 33 of module M",
+          message:
+            "Level error in applying operator $Tuple:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        },
+      ]),
+    );
+  });
+
+  it("reports every level error in a definition, assumption, or theorem but none for an argument with its own, like SANY", async () => {
+    const setError =
+      "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nA == {[]x} \\cup {<>x}\nB == {A}\nL == LET P == {[]x} IN {<>x} \\cup P\nE == \\E v \\in {[]x} : {<>x} = v\nASSUME {[]x} = {<>x}\nTHEOREM ASSUME NEW e \\in {[]x}, NEW f \\in {<>x} PROVE TRUE\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 3, col 6 to line 3, col 10", setError],
+          ["line 3, col 17 to line 3, col 21", setError],
+          ["line 4, col 6 to line 4, col 8", setError],
+          ["line 5, col 15 to line 5, col 19", setError],
+          ["line 5, col 24 to line 5, col 28", setError],
+          [
+            "line 5, col 24 to line 5, col 35",
+            "Level error in applying operator \\union:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+          ],
+          ["line 6, col 23 to line 6, col 27", setError],
+          ["line 6, col 15 to line 6, col 19", setError],
+          ["line 7, col 8 to line 7, col 12", setError],
+          ["line 7, col 16 to line 7, col 20", setError],
+          [
+            "line 7, col 1 to line 7, col 20",
+            "Level error: assumptions must be level 0 (Constant), \nbut this one has level 3.",
+          ],
+          ["line 8, col 26 to line 8, col 30", setError],
+          ["line 8, col 16 to line 8, col 30", "Level error:\nTemporal formula used as set."],
+          ["line 8, col 43 to line 8, col 47", setError],
+          ["line 8, col 33 to line 8, col 47", "Level error:\nTemporal formula used as set."],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("checks the levels of every module in a file, inner ones first, like SANY", async () => {
+    const setError =
+      "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE v\n---- MODULE Inner ----\nVARIABLE w\nA == {[]w}\n---- MODULE Deep ----\nVARIABLE u\nD == {[]u}\n====\nE == {<>w}\n====\n---- MODULE Other ----\nVARIABLE w\nO == {[]w}\n====\nI == INSTANCE Inner WITH w <- v\nC == {I!A}\nG == {[]v}\nInit == v = 0\nNext == v' = v\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          "line 8, col 6 to line 8, col 10",
+          "line 5, col 6 to line 5, col 10",
+          "line 10, col 6 to line 10, col 10",
+          "line 14, col 6 to line 14, col 10",
+          "line 17, col 6 to line 17, col 10",
+          "line 18, col 6 to line 18, col 10",
+        ].map((location) => ({ location: `${location} of module M`, message: setError })),
+      ),
+    );
+  });
+
+  it.each([
+    [
+      "---- MODULE M ----\nVARIABLE v\n---- MODULE Inner ----\nVARIABLE w\nA == {[]w}\n====\nRECURSIVE R(_)\nR(p) == {[]v} \\cup R(p)\nC == {<>v}\n====",
+      [
+        ["line 8, col 9 to line 8, col 13", "set"],
+        ["line 8, col 9 to line 8, col 23", "union"],
+        ["line 5, col 6 to line 5, col 10", "set"],
+        ["line 9, col 6 to line 9, col 10", "set"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_)\nR(p) == IF p' = 1 THEN TRUE ELSE R(p)\n====",
+      [["line 4, col 1 to line 4, col 37", "Argument 1 of recursive operator R is primed"]],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_), S(_)\nS(p) == {[]x}\nR(p) == p' = 1 \\/ R(p)\n====",
+      [
+        ["line 5, col 1 to line 5, col 22", "Argument 1 of recursive operator R is primed"],
+        ["line 4, col 9 to line 4, col 13", "set"],
+        [
+          "line 5, col 9 to line 5, col 22",
+          "\\lor has both temporal formula and action as arguments.",
+        ],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_), S(_)\nS(n) == R(n) \\/ x' = 1\nR(n) == S(n)\nASSUME R(1)\n====",
+      [["line 6, col 1 to line 6, col 11", "assume 2"]],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_)\nX(p) == R(p)\nR(p) == {[]x} \\cup X(p)\nASSUME X(1)\n====",
+      [
+        ["line 5, col 9 to line 5, col 13", "set"],
+        ["line 5, col 9 to line 5, col 23", "union"],
+        ["line 6, col 1 to line 6, col 11", "assume 3"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nB == {[]x}\nA == LET RECURSIVE F(_)\n         F(n) == {<>x} \\cup F(n)\n     IN F(1)\n====",
+      [
+        ["line 5, col 18 to line 5, col 22", "set"],
+        ["line 5, col 18 to line 5, col 32", "union"],
+        ["line 3, col 6 to line 3, col 10", "set"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_)\nR(p) == LET RECURSIVE F(_)\n            F(n) == {[]x} \\cup F(n) \\cup R(n)\n        IN F(p)\nC == {<>x}\n====",
+      [
+        ["line 5, col 21 to line 5, col 25", "set"],
+        ["line 5, col 21 to line 5, col 35", "union"],
+        ["line 5, col 21 to line 5, col 45", "union"],
+        ["line 7, col 6 to line 7, col 10", "set"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nVARIABLE w\nRECURSIVE R(_), S(_)\nR(p) == S(p)\nS(p) == p' = 1 \\/ S(p)\n====\nC == {[]x}\n====",
+      [
+        ["line 7, col 1 to line 7, col 22", "Argument 1 of recursive operator S is primed"],
+        ["line 6, col 1 to line 6, col 12", "Argument 1 of recursive operator R is primed"],
+        ["line 9, col 6 to line 9, col 10", "set"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nCONSTANT k\nRECURSIVE R(_), S(_)\nR(p) == k \\cup (LET L == {x'} IN L)\nS(p) == []x\n====",
+      [["line 5, col 9 to line 5, col 35", "union"]],
+    ],
+  ])("checks recursive sections first and twice like SANY: %j", async (source, errors) => {
+    const messages: Record<string, string> = {
+      set: "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+      union:
+        "Level error in applying operator \\union:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+      "assume 2":
+        "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.",
+      "assume 3":
+        "Level error: assumptions must be level 0 (Constant), \nbut this one has level 3.",
+    };
+    await expect(check({ source, config: "" })).rejects.toThrow(
+      createSanyError(
+        errors.map((error) => ({
+          location: `${error[0]} of module M`,
+          message: messages[error[1]] ?? error[1],
+        })),
+      ),
+    );
+  });
+
+  it("checks the levels of proof steps, their facts, and the definitions they make like SANY", async () => {
+    const setError =
+      "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nTHEOREM TRUE\n<1>1. {[]x} = 1\n  <2>1. CASE {<>x} = 1\n  <2> QED BY {[]x} = 1\n<1> DEFINE D == {<>x}\n<1>2. {D} = 1\n<1> USE {[]x} = 1\n<1> QED\nUSE {<>x} = 1\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 4, col 7 to line 4, col 11", setError],
+          ["line 5, col 14 to line 5, col 18", setError],
+          ["line 6, col 14 to line 6, col 18", setError],
+          ["line 5, col 9 to line 5, col 22", "Non-constant CASE for temporal goal."],
+          ["line 7, col 17 to line 7, col 21", setError],
+          ["line 8, col 7 to line 8, col 9", setError],
+          ["line 9, col 9 to line 9, col 13", setError],
+          ["line 11, col 5 to line 11, col 9", setError],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("checks definitions, then named facts, then the rest of a module like SANY", async () => {
+    const setError =
+      "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    const assumeError =
+      "Level error: assumptions must be level 0 (Constant), \nbut this one has level 3.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nASSUME {<>x} = 1\nTHEOREM T == {<>x} = 1\n  BY {[]x} = 1\nASSUME N == {[]x} = 1\nTHEOREM {[]x} = 1\nA == {[]x}\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 8, col 6 to line 8, col 10", setError],
+          ["line 4, col 14 to line 4, col 18", setError],
+          ["line 6, col 13 to line 6, col 17", setError],
+          ["line 3, col 8 to line 3, col 12", setError],
+          ["line 3, col 1 to line 3, col 16", assumeError],
+          ["line 5, col 6 to line 5, col 10", setError],
+          ["line 6, col 1 to line 6, col 21", assumeError],
+          ["line 7, col 9 to line 7, col 13", setError],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("checks each prefix of a chain of infix /\\ or \\/ like SANY", async () => {
+    const setError =
+      "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nA == (x' = x) /\\ [](x = 1) /\\ TRUE\nB == ((x' = x)) \\/ [](x = 1) \\/ (x' = x)\nC == ({[]x} = 1) /\\ (x' = x) /\\ []({<>x} = 1)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          [
+            "line 3, col 6 to line 3, col 26",
+            "\\land has both temporal formula and action as arguments.",
+          ],
+          [
+            "line 4, col 6 to line 4, col 28",
+            "\\lor has both temporal formula and action as arguments.",
+          ],
+          [
+            "line 4, col 6 to line 4, col 40",
+            "\\lor has both temporal formula and action as arguments.",
+          ],
+          ["line 5, col 7 to line 5, col 11", setError],
+          [
+            "line 5, col 6 to line 5, col 28",
+            "\\land has both temporal formula and action as arguments.",
+          ],
+          ["line 5, col 36 to line 5, col 40", setError],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("rejects an ASSUME above constant level like SANY", async () => {
     await expect(
       check({

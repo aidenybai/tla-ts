@@ -4,27 +4,27 @@ import {
   type Bound,
   type Definition,
   type Expression,
+  type Fact,
+  type LetExpression,
   type Module,
+  type ModuleUnit,
   type NewSymbol,
   type OperatorParam,
   type Proof,
   type ProofStep,
   type SourceLocation,
+  type SourceRange,
 } from "./ast";
-import {
-  createSanyError,
-  createSemanticError,
-  formatRange,
-  TlaSyntaxError,
-  type SanyError,
-} from "./errors";
+import { formatRange, type SanyError } from "./errors";
 import { forEachChild } from "./instances";
-import { collectSemanticErrors, getBoundNames, getPatternNames } from "./resolve";
+import { parenthesizedRanges } from "./parser";
+import { collectSemanticErrors, getBoundNames, getPatternNames, isBefore } from "./resolve";
 import { resolveSynonym } from "./tlc/jar-data";
 import { STANDARD_LEVELS } from "./standard-definitions";
 
 interface LevelData {
   level: number;
+  isCorrect: boolean;
   params: Set<string>;
   constraints: Map<string, number>;
   argConstraints: Map<string, number>;
@@ -57,6 +57,19 @@ export type Scope = Map<string, ScopeEntry>;
 type Resolved =
   | { kind: "Declared"; name: string; level: number; arity: number }
   | { kind: "Defined"; levels: OperatorLevels };
+
+interface SectionMember {
+  definition: Definition;
+  scope: Scope;
+  isRechecked: boolean;
+}
+
+interface RecursiveSection {
+  location: SourceLocation;
+  members: SectionMember[];
+}
+
+type ScopeFrame = Definition | LetExpression | string[];
 
 type Operand =
   | { kind: "Value"; data: LevelData }
@@ -94,6 +107,7 @@ const getConditionKey = (operator: number, operand: number, argument: number) =>
 
 const createData = (level = 0): LevelData => ({
   level,
+  isCorrect: true,
   params: new Set(),
   constraints: new Map(),
   argConstraints: new Map(),
@@ -223,14 +237,184 @@ const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
 
 const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }));
 
-const createLevelError = (message: string, expression: Expression) =>
-  expression.location.range
-    ? createSemanticError(`${message}.`, expression.location.range)
-    : new TlaSyntaxError(
-        `${message} at line ${expression.location.line}, column ${expression.location.column}`,
-      );
+const getFormals = (definition: Definition) =>
+  definition.kind === "Operator" ? definition.params : [];
+
+const getDefinitionBody = (definition: Definition): Expression =>
+  definition.kind === "Function"
+    ? {
+        kind: "FunctionConstruction",
+        bounds: definition.bounds,
+        body: definition.body,
+        location: definition.location,
+      }
+    : definition.body;
+
+const createLetScope = (expression: LetExpression, scope: Scope) => {
+  const inner: Scope = new Map(scope);
+  expression.definitions.forEach((definition) =>
+    inner.set(definition.name, { kind: "Let", definition, scope: inner }),
+  );
+  return inner;
+};
+
+const createPlaceholder = (definition: Definition, maxLevel: number, weight: number) => {
+  const formals = getFormals(definition);
+  return {
+    ...createData(),
+    name: definition.name,
+    formals,
+    maxLevels: formals.map(() => maxLevel),
+    weights: formals.map(() => weight),
+    minMaxLevels: formals.map(() => []),
+    conditions: new Set<string>(),
+    nonLeibniz: new Set<number>(),
+  };
+};
+
+const getRecursiveSections = (
+  base: Scope,
+  root: ModuleUnit[] | LetExpression,
+  hasRecursiveLet = true,
+) => {
+  const sections: RecursiveSection[] = [];
+  const pending: Set<string>[] = [];
+  const frames: ScopeFrame[] = [];
+  const scopes: (Scope | undefined)[] = [];
+  let pendingCount = 0;
+  let depth = 0;
+
+  const getScope = () => {
+    let start = frames.length;
+    while (start > 0 && scopes[start - 1] === undefined) start--;
+    let scope = scopes[start - 1] ?? base;
+    for (let index = start; index < frames.length; index++) {
+      const frame = frames[index];
+      scope = Array.isArray(frame)
+        ? bindFormals(scope, toFormals(frame))
+        : frame.kind === "Let"
+          ? createLetScope(frame, scope)
+          : frame.kind === "Function"
+            ? bindFormals(scope, toFormals(getBoundNames(frame.bounds)))
+            : bindFormals(scope, frame.params);
+      scopes[index] = scope;
+    }
+    return scope;
+  };
+
+  const walkInFrame = (frame: ScopeFrame, expression: Expression) => {
+    frames.push(frame);
+    scopes.push(undefined);
+    walkExpression(expression);
+    frames.pop();
+    scopes.pop();
+  };
+
+  const visitChild = (child: Expression, bound: string[]) =>
+    bound.length === 0 ? walkExpression(child) : walkInFrame(bound, child);
+
+  const walkExpression = (expression: Expression): void => {
+    if (expression.kind !== "Let") return forEachChild(expression, visitChild);
+    frames.push(expression);
+    scopes.push(undefined);
+    depth++;
+    if (expression.recursive) walkUnits(getLetUnits(expression));
+    else {
+      for (let index = 0; index < expression.definitions.length; index++) {
+        walkDefinition(expression.definitions[index]);
+      }
+    }
+    depth--;
+    walkExpression(expression.body);
+    frames.pop();
+    scopes.pop();
+  };
+
+  const walkDefinition = (definition: Definition) => {
+    if (definition.kind === "Function") {
+      for (let index = 0; index < definition.bounds.length; index++) {
+        walkExpression(definition.bounds[index].set);
+      }
+    }
+    walkInFrame(definition, definition.body);
+    if (pendingCount === 0) return;
+    const names = (pending[depth] ??= new Set());
+    if (definition.isRecursive && names.delete(definition.name)) {
+      pendingCount--;
+      return;
+    }
+    sections.at(-1)?.members.push({ definition, scope: getScope(), isRechecked: names.size > 0 });
+  };
+
+  const declareRecursive = (definitions: Definition[], location: SourceLocation) => {
+    if (pendingCount === 0) sections.push({ location, members: [] });
+    const names = (pending[depth] ??= new Set());
+    definitions.forEach((definition) => {
+      if (names.has(definition.name)) return;
+      names.add(definition.name);
+      pendingCount++;
+    });
+    definitions.forEach((definition) =>
+      sections.at(-1)?.members.push({ definition, scope: getScope(), isRechecked: true }),
+    );
+  };
+
+  const walkUnits = (units: ModuleUnit[]) => {
+    const recursiveDefinitions = new Map<string, Definition[]>();
+    units.forEach((unit) => {
+      if (unit.kind !== "Definition" || !unit.definition.isRecursive) return;
+      const named = recursiveDefinitions.get(unit.definition.name);
+      if (named) named.push(unit.definition);
+      else recursiveDefinitions.set(unit.definition.name, [unit.definition]);
+    });
+    units.forEach((unit) => {
+      if (unit.kind === "Recursive") {
+        declareRecursive(
+          unit.declarations.flatMap(
+            (declaration) => recursiveDefinitions.get(declaration.name) ?? [],
+          ),
+          unit.location,
+        );
+        return;
+      }
+      if (pendingCount === 0 && !hasRecursiveLet) return;
+      if (unit.kind === "Assumption") walkExpression(unit.assumption.expression);
+      else if (unit.kind === "Theorem" && unit.theorem.statement.kind !== "AssumeProve") {
+        walkExpression(unit.theorem.statement);
+      } else if (unit.kind === "Definition") walkDefinition(unit.definition);
+    });
+  };
+
+  if (Array.isArray(root)) walkUnits(root);
+  else walkExpression(root);
+  return sections;
+};
+
+const getLetUnits = (expression: LetExpression) =>
+  [
+    ...(expression.recursive ?? []).map((declaration) => ({
+      location: declaration.location,
+      unit: {
+        kind: "Recursive",
+        declarations: [declaration],
+        location: declaration.location,
+      } satisfies ModuleUnit,
+    })),
+    ...expression.definitions.map((definition) => ({
+      location: definition.location,
+      unit: { kind: "Definition", definition } satisfies ModuleUnit,
+    })),
+  ]
+    .toSorted((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
+    .map((entry) => entry.unit);
 
 const LOGICAL_OPERATORS = new Set(["/\\", "\\/", "=>", "<=>"]);
+
+const isMixed = (levels: number[]) =>
+  levels.includes(ACTION_LEVEL) && levels.includes(TEMPORAL_LEVEL);
+
+const getWrittenRange = (expression: Expression) =>
+  parenthesizedRanges.get(expression) ?? expression.location.range;
 
 const isOperatorApplication = (expression: Expression) =>
   expression.kind !== "Let" && expression.kind !== "Label";
@@ -238,6 +422,8 @@ const isOperatorApplication = (expression: Expression) =>
 export const createLevelAnalyzer = (context: LevelContext) => {
   const definitionLevels = new Map<Definition, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
+  const errors: SanyError[] = [];
+  const messages: string[] = [];
 
   const resolve = (name: string, scope: Scope): Resolved => {
     const entry = scope.get(name);
@@ -265,6 +451,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const applyDeclared = (name: string, level: number, operands: Operand[]) => {
     const data = createData(Math.max(level, ...operands.map((operand) => operand.data.level)));
+    data.isCorrect = operands.every((operand) => operand.data.isCorrect);
     data.params.add(name);
     operands.forEach((operand, index) => {
       operand.data.params.forEach((param) => {
@@ -284,14 +471,18 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     bound: string[] = [],
   ) => {
     const isBound = (name: string) => bound.includes(name);
-    operands.forEach((operand, index) => {
-      if (operand.kind !== "Value") return;
-      if (operand.data.level > getMaxLevel(operator, index)) {
-        throw new TlaSyntaxError(
-          `Level error in applying operator ${resolveSynonym(operator.name)}:\nThe level of argument ${index + 1} exceeds the maximum level allowed by the operator`,
-        );
-      }
-    });
+    const exceeding = operands.flatMap((operand, index) =>
+      operand.kind === "Value" && operand.data.level > getMaxLevel(operator, index)
+        ? [{ operand, index }]
+        : [],
+    );
+    exceeding
+      .filter((entry) => operator.isCorrect && entry.operand.data.isCorrect)
+      .forEach((entry) =>
+        messages.push(
+          `Level error in applying operator ${resolveSynonym(operator.name)}:\nThe level of argument ${entry.index + 1} exceeds the maximum level allowed by the operator`,
+        ),
+      );
     const getOperand = (formal: string) => {
       const index = operator.formals.findIndex((param) => param.name === formal);
       return index === -1 ? undefined : operands[index];
@@ -307,6 +498,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         ...ranges.map((range) => range.level),
       ),
     );
+    data.isCorrect =
+      exceeding.length === 0 &&
+      operands.every((operand) => operand.data.isCorrect) &&
+      ranges.every((range) => range.isCorrect);
     operator.params.forEach((param) => data.params.add(param));
     operands.forEach((operand, index) => {
       if (getWeight(operator, index) === 1) {
@@ -484,13 +679,16 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const operands = toOperands(expressions, bindFormals(scope, toFormals(bound)));
     const ranges = bounds.map((range) => analyze(range.set, scope));
     const data = applyDefined(operator, operands, ranges, bound);
-    const pattern = bounds[ranges.findIndex((range) => range.level > ACTION_LEVEL)]?.pattern;
-    if (pattern) {
-      const range = pattern.ranges?.[0];
-      throw new TlaSyntaxError(
-        `Level error in applying operator ${operator.name}:\nThe level of the range for the bounded variable ${range ? formatRange(range) : getPatternNames(pattern)[0]} \nexceeds the maximum level allowed by the operator`,
+    ranges.forEach((range, index) => {
+      if (range.level <= ACTION_LEVEL) return;
+      data.isCorrect = false;
+      if (!range.isCorrect) return;
+      const pattern = bounds[index].pattern;
+      const symbol = pattern.ranges?.[0];
+      messages.push(
+        `Level error in applying operator ${operator.name}:\nThe level of the range for the bounded variable ${symbol ? formatRange(symbol) : getPatternNames(pattern)[0]} \nexceeds the maximum level allowed by the operator`,
       );
-    }
+    });
     return data;
   };
 
@@ -499,26 +697,20 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ? applyDeclared(resolved.name, resolved.level, operands)
       : applyDefined(resolved.levels, operands);
 
-  const checkJunction = (operands: Operand[], expression: Expression, name: string) => {
-    const levels = operands.map((operand) => operand.data.level);
-    if (levels.includes(ACTION_LEVEL) && levels.includes(TEMPORAL_LEVEL)) {
-      throw createLevelError(
-        `${name} has both temporal formula and action as arguments`,
-        expression,
-      );
-    }
+  const checkJunction = (levels: number[], name: string) => {
+    if (isMixed(levels)) messages.push(`${name} has both temporal formula and action as arguments`);
   };
 
   const checkApply = (expression: Expression & { kind: "Apply" }, operands: Operand[]) => {
     const isLeadsTo = expression.operator === "~>" || expression.operator === "-+->";
     if (isLeadsTo && operands.some((operand) => operand.data.level === ACTION_LEVEL)) {
-      throw createLevelError(
-        "Action used where only temporal formula or state predicate allowed",
-        expression,
-      );
+      messages.push("Action used where only temporal formula or state predicate allowed");
     }
     if (LOGICAL_OPERATORS.has(expression.operator)) {
-      checkJunction(operands, expression, resolveSynonym(expression.operator));
+      checkJunction(
+        operands.map((operand) => operand.data.level),
+        resolveSynonym(expression.operator),
+      );
     }
   };
 
@@ -529,40 +721,56 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const operand = expression.expression;
     const form = expression.kind === "Always" ? "BoxAction" : "AngleAction";
     if (level !== ACTION_LEVEL || !isOperatorApplication(operand) || operand.kind === form) return;
-    throw createLevelError(
+    messages.push(
       expression.kind === "Always"
         ? "[] followed by action not of form [A]_v"
         : "<> followed by action not of form <<A>>_v",
-      expression,
     );
   };
 
-  const analyzeLet = (expression: Expression & { kind: "Let" }, scope: Scope) => {
-    const inner = new Map(scope);
-    expression.definitions.forEach((definition) =>
-      inner.set(definition.name, { kind: "Let", definition, scope: inner }),
+  const analyzeLet = (expression: LetExpression, scope: Scope) => {
+    const inner = createLetScope(expression, scope);
+    if (expression.recursive) {
+      getRecursiveSections(scope, expression).forEach((section) =>
+        checkRecursiveSection(section.members),
+      );
+    }
+    const definitions = expression.definitions.map((definition) =>
+      analyzeDefinition(definition, inner),
     );
     const body = analyze(expression.body, inner);
     const data = {
       level: body.level,
+      isCorrect: body.isCorrect && definitions.every((levels) => levels.isCorrect),
       params: new Set(body.params),
       constraints: new Map(body.constraints),
       argConstraints: new Map(body.argConstraints),
       argParams: new Set(body.argParams),
     };
-    expression.definitions.forEach((definition) =>
-      mergeConstraints(data, analyzeDefinition(definition, inner)),
-    );
+    definitions.forEach((levels) => mergeConstraints(data, levels));
     return data;
   };
 
-  const analyze = (expression: Expression, scope: Scope): LevelData => {
-    try {
-      return analyzeNode(expression, scope);
-    } catch (error) {
-      if (!(error instanceof TlaSyntaxError) || error.sany) throw error;
-      throw createLevelError(error.message, expression);
+  const reportSince = (start: number, range: SourceRange | undefined, data: LevelData) => {
+    if (messages.length === start) return data;
+    if (range) {
+      messages
+        .splice(start)
+        .forEach((message) =>
+          errors.push({ location: formatRange(range), message: `${message}.` }),
+        );
     }
+    return { ...data, isCorrect: false };
+  };
+
+  const reportAt = (range: SourceRange | undefined, getData: () => LevelData) => {
+    const start = messages.length;
+    return reportSince(start, range, getData());
+  };
+
+  const analyze = (expression: Expression, scope: Scope) => {
+    const start = messages.length;
+    return reportSince(start, expression.location.range, analyzeNode(expression, scope));
   };
 
   const analyzeNode = (expression: Expression, scope: Scope): LevelData => {
@@ -584,18 +792,41 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         return toOperand(expression, scope).data;
       case "And":
       case "Or": {
-        const operands = toOperands(expression.operands, scope);
         const isAnd = expression.kind === "And";
-        checkJunction(
-          operands,
-          expression,
-          expression.isBulleted
-            ? `${isAnd ? "Conjunction" : "Disjunction"} list`
-            : isAnd
-              ? "\\land"
-              : "\\lor",
-        );
-        return applyDefined(isAnd ? AND_LEVELS : OR_LEVELS, operands);
+        if (expression.isBulleted) {
+          const operands = toOperands(expression.operands, scope);
+          checkJunction(
+            operands.map((operand) => operand.data.level),
+            `${isAnd ? "Conjunction" : "Disjunction"} list`,
+          );
+          return applyDefined(isAnd ? AND_LEVELS : OR_LEVELS, operands);
+        }
+        // SANY nests a chain of infix /\ or \/ to the left, so it checks each prefix of the chain.
+        const name = isAnd ? "\\land" : "\\lor";
+        const start = getWrittenRange(expression.operands[0]);
+        const operands: Operand[] = [];
+        let prefixLevel = CONSTANT_LEVEL;
+        let isPrefixMixed = false;
+        expression.operands.forEach((operand, index) => {
+          const analyzed = toOperand(operand, scope);
+          operands.push(analyzed);
+          const levels = [prefixLevel, analyzed.data.level];
+          prefixLevel = Math.max(prefixLevel, analyzed.data.level);
+          if (index === 0) return;
+          const end = getWrittenRange(operand);
+          if (index === expression.operands.length - 1 || !start || !end) {
+            checkJunction(levels, name);
+            return;
+          }
+          if (!isMixed(levels)) return;
+          errors.push({
+            location: formatRange({ ...start, end: end.end }),
+            message: `${name} has both temporal formula and action as arguments.`,
+          });
+          isPrefixMixed = true;
+        });
+        const data = applyDefined(isAnd ? AND_LEVELS : OR_LEVELS, operands);
+        return isPrefixMixed ? { ...data, isCorrect: false } : data;
       }
       case "Prime":
         return applyBuiltin(PRIME_LEVELS, [expression.expression], scope);
@@ -640,13 +871,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           data.level === TEMPORAL_LEVEL
             ? expression.bounds.find((bound) => analyze(bound.set, scope).level === ACTION_LEVEL)
             : undefined;
-        if (actionBound) {
-          throw createLevelError(
-            "Action-level bound of quantified temporal formula",
-            actionBound.set,
-          );
+        const range = actionBound?.set.location.range;
+        if (range) {
+          errors.push({
+            location: formatRange(range),
+            message: "Action-level bound of quantified temporal formula.",
+          });
         }
-        return data;
+        return actionBound ? { ...data, isCorrect: false } : data;
       }
       case "UnboundedQuantifier":
         return applyBuiltin(
@@ -704,14 +936,21 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             data: applyDefined(PAIR_LEVELS, [
               {
                 kind: "Value",
-                data: applyDefined(
-                  SEQ_LEVELS,
-                  update.path.map((step): Operand =>
-                    step.kind === "Field"
-                      ? { kind: "Value", data: createData() }
-                      : step.args.length === 1
-                        ? toOperand(step.args[0], scope)
-                        : { kind: "Value", data: applyBuiltin(TUPLE_LEVELS, step.args, scope) },
+                data: reportAt(update.range, () =>
+                  applyDefined(
+                    SEQ_LEVELS,
+                    update.path.map((step): Operand =>
+                      step.kind === "Field"
+                        ? { kind: "Value", data: createData() }
+                        : step.args.length === 1
+                          ? toOperand(step.args[0], scope)
+                          : {
+                              kind: "Value",
+                              data: reportAt(step.tupleRange, () =>
+                                applyBuiltin(TUPLE_LEVELS, step.args, scope),
+                              ),
+                            },
+                    ),
                   ),
                 ),
               },
@@ -833,6 +1072,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     );
     const levels: OperatorLevels = {
       ...createData(data.level),
+      isCorrect: data.isCorrect,
       name,
       formals,
       nonLeibniz: new Set(
@@ -876,42 +1116,93 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return levels;
   };
 
+  const staleDefinitions = new Set<Definition>();
+
   const analyzeDefinition = (definition: Definition, scope: Scope): OperatorLevels => {
     const cached = definitionLevels.get(definition);
-    if (cached) return cached;
-    const formals = definition.kind === "Operator" ? definition.params : [];
-    definitionLevels.set(definition, {
-      ...createData(),
-      name: definition.name,
-      formals,
-      maxLevels: formals.map(() => TEMPORAL_LEVEL),
-      weights: formals.map(() => 0),
-      minMaxLevels: formals.map(() => []),
-      conditions: new Set(),
-      nonLeibniz: new Set(),
-    });
-    const body: Expression =
-      definition.kind === "Function"
-        ? {
-            kind: "FunctionConstruction",
-            bounds: definition.bounds,
-            body: definition.body,
-            location: definition.location,
-          }
-        : definition.body;
-    const levels = analyzeOperator(definition.name, formals, body, scope);
-    definitionLevels.set(definition, levels);
-    return levels;
+    if (cached && !staleDefinitions.delete(definition)) return cached;
+    const prior = cached ?? createPlaceholder(definition, TEMPORAL_LEVEL, 0);
+    definitionLevels.set(definition, prior);
+    const levels = analyzeOperator(
+      definition.name,
+      getFormals(definition),
+      getDefinitionBody(definition),
+      scope,
+    );
+    const merged = {
+      ...levels,
+      level: Math.max(prior.level, levels.level),
+      params: new Set([...prior.params, ...levels.params]),
+      argParams: new Set([...prior.argParams, ...levels.argParams]),
+      maxLevels: levels.maxLevels.map((level, index) => Math.min(level, prior.maxLevels[index])),
+      weights: levels.weights.map((weight, index) => Math.max(weight, prior.weights[index])),
+      nonLeibniz: new Set([...prior.nonLeibniz, ...levels.nonLeibniz]),
+    };
+    definitionLevels.set(definition, merged);
+    return merged;
   };
 
-  return { analyze, analyzeDefinition, toOperand };
+  const checkPrimedArguments = (members: SectionMember[]) =>
+    members.forEach((member) => {
+      const range = member.definition.location.range;
+      if (!member.definition.isRecursive || !range) return;
+      analyzeDefinition(member.definition, member.scope).maxLevels.forEach((level, index) => {
+        if (level >= ACTION_LEVEL) return;
+        errors.push({
+          location: formatRange(range),
+          message: `Argument ${index + 1} of recursive operator ${resolveSynonym(member.definition.name)} is primed`,
+        });
+      });
+    });
+
+  const checkRecursiveSection = (members: SectionMember[]) => {
+    if (members.length === 0 || definitionLevels.has(members[0].definition)) return;
+    const recursive = members.filter((member) => member.definition.isRecursive);
+    recursive.forEach((member) =>
+      definitionLevels.set(
+        member.definition,
+        createPlaceholder(member.definition, ACTION_LEVEL, 1),
+      ),
+    );
+    const recheck = (member: SectionMember) => {
+      if (member.definition.isRecursive) staleDefinitions.add(member.definition);
+      return analyzeDefinition(member.definition, member.scope);
+    };
+    members.forEach((member) => {
+      recheck(member);
+      checkPrimedArguments([member]);
+    });
+    const firstPass = recursive.map((member) => analyzeDefinition(member.definition, member.scope));
+    const level = Math.max(CONSTANT_LEVEL, ...firstPass.map((levels) => levels.level));
+    const params = firstPass.flatMap((levels) => [...levels.params]);
+    members.forEach((member) => {
+      const levels = analyzeDefinition(member.definition, member.scope);
+      definitionLevels.set(member.definition, {
+        ...levels,
+        level: Math.max(levels.level, level),
+        params: new Set([...levels.params, ...params]),
+      });
+      if (member.isRechecked && !member.definition.isRecursive) {
+        staleDefinitions.add(member.definition);
+      }
+    });
+    members.forEach(recheck);
+  };
+
+  return {
+    analyze,
+    analyzeDefinition,
+    checkPrimedArguments,
+    checkRecursiveSection,
+    toOperand,
+    errors,
+  };
 };
 
 export const analyzeAssumeProve = (
   assumeProve: AssumeProve,
   scope: Scope,
   analyzer: ReturnType<typeof createLevelAnalyzer>,
-  errors: SanyError[] = [],
 ): LevelData => {
   const inner = new Map(scope);
   const parts = assumeProve.assumptions.flatMap((assumption) => {
@@ -919,7 +1210,7 @@ export const analyzeAssumeProve = (
       const set = assumption.set && analyzer.analyze(assumption.set, inner);
       const range = assumption.location.range;
       if (set?.level === TEMPORAL_LEVEL && range) {
-        errors.push({
+        analyzer.errors.push({
           location: formatRange(range),
           message: "Level error:\nTemporal formula used as set.",
         });
@@ -933,7 +1224,7 @@ export const analyzeAssumeProve = (
     }
     return [
       assumption.kind === "AssumeProve"
-        ? analyzeAssumeProve(assumption, inner, analyzer, errors)
+        ? analyzeAssumeProve(assumption, inner, analyzer)
         : analyzer.analyze(assumption, inner),
     ];
   });
@@ -953,27 +1244,35 @@ export const checkModuleLevels = (
   warnings: SanyError[],
 ) => {
   const analyzer = createLevelAnalyzer(context);
-  const getLevel = (expressions: Expression[]) =>
-    Math.max(0, ...expressions.map((expression) => analyzer.analyze(expression, new Map()).level));
-  const getStepLevel = (step: ProofStep) => {
+  const getLevel = (expressions: Expression[], scope: Scope) =>
+    Math.max(0, ...expressions.map((expression) => analyzer.analyze(expression, scope).level));
+  const getStepLevel = (step: ProofStep, scope: Scope) => {
     const body = step.body;
-    if (body.kind === "Have" || body.kind === "Case") return getLevel([body.expression]);
-    if (body.kind === "Witness") return getLevel(body.expressions);
-    if (body.kind === "Take") return getLevel(body.bounds.map((bound) => bound.set));
+    if (body.kind === "Have" || body.kind === "Case") return getLevel([body.expression], scope);
+    if (body.kind === "Witness") return getLevel(body.expressions, scope);
+    if (body.kind === "Take")
+      return getLevel(
+        body.bounds.map((bound) => bound.set),
+        scope,
+      );
     if (body.kind === "Pick") {
-      return getLevel([body.body, ...body.bounds.map((bound) => bound.set)]);
+      return getLevel([body.body, ...body.bounds.map((bound) => bound.set)], scope);
     }
     if (body.kind !== "Assert") return 0;
     return body.statement.kind === "AssumeProve"
-      ? analyzeAssumeProve(body.statement, new Map(), analyzer).level
-      : getLevel([body.statement]);
+      ? analyzeAssumeProve(body.statement, scope, analyzer).level
+      : getLevel([body.statement], scope);
   };
+  const checkFacts = (facts: Fact[], scope: Scope) =>
+    facts.forEach((fact) => {
+      if (fact.kind !== "ModuleFact") analyzer.analyze(fact, scope);
+    });
   const checkTemporalGoal = (proof: Proof | undefined): SanyError[] =>
     proof?.kind !== "Steps"
       ? []
       : proof.steps.flatMap((step) => {
           const location = formatRange(step.statement);
-          const isConstant = () => getStepLevel(step) === 0;
+          const isConstant = () => getStepLevel(step, new Map()) === 0;
           if (
             step.body.kind === "Have" ||
             step.body.kind === "Take" ||
@@ -993,78 +1292,129 @@ export const checkModuleLevels = (
           }
           return step.body.kind === "Qed" ? checkTemporalGoal(step.proof) : [];
         });
-  const checkProof = (proof: Proof | undefined): SanyError[] =>
-    proof?.kind !== "Steps"
-      ? []
-      : proof.steps.flatMap((step) => {
-          const body = step.body;
-          const newSymbolErrors: SanyError[] = [];
-          if (body.kind === "Assert" && body.statement.kind === "AssumeProve") {
-            analyzeAssumeProve(body.statement, new Map(), analyzer, newSymbolErrors);
-          }
-          const isTemporal = () => getStepLevel(step) === TEMPORAL_LEVEL;
-          const pickErrors =
-            body.kind === "Pick" && body.bounds.length > 0 && isTemporal()
-              ? body.bounds
-                  .filter((bound) => getLevel([bound.set]) !== 0)
-                  .flatMap((bound) =>
-                    bound.set.location.range
-                      ? [
-                          {
-                            location: formatRange(bound.set.location.range),
-                            message: "Non-constant bound of temporal PICK.",
-                          },
-                        ]
-                      : [],
-                  )
-              : [];
-          return [
-            ...newSymbolErrors,
-            ...checkProof(step.proof),
-            ...pickErrors,
-            ...(step.proof?.kind === "Steps" && isTemporal() ? checkTemporalGoal(step.proof) : []),
-          ];
+  const checkProof = (proof: Proof | undefined, scope: Scope): SanyError[] => {
+    if (proof?.kind === "By") {
+      checkFacts(proof.facts, scope);
+      return analyzer.errors.splice(0);
+    }
+    if (proof?.kind !== "Steps") return [];
+    const inner = new Map(scope);
+    return proof.steps.flatMap((step) => {
+      const body = step.body;
+      if (body.kind === "Use" || body.kind === "Hide") checkFacts(body.facts, inner);
+      if (body.kind === "Define") {
+        body.definitions.forEach((definition) => {
+          if (definition.kind === "Instance") return;
+          inner.set(definition.name, { kind: "Let", definition, scope: inner });
+          analyzer.analyzeDefinition(definition, inner);
         });
-  const errors = collectSemanticErrors(
-    [
-      ...module.definitions
-        .filter((definition) => !definition.name.includes("!"))
-        .map((definition) => ({
-          location: definition.location,
-          check: () => analyzer.analyzeDefinition(definition, new Map()),
-        })),
-      ...module.assumptions.map((assumption) => ({
-        location: assumption.location,
-        check: () => {
-          const level = analyzer.analyze(assumption.expression, new Map()).level;
-          const range = assumption.location.range;
-          if (level !== CONSTANT_LEVEL && range) {
-            throw createSemanticError(
-              `Level error: assumptions must be level 0 (Constant), \nbut this one has level ${level}.`,
-              range,
-            );
-          }
-        },
-      })),
-      ...module.theorems.map((theorem) => ({
-        location: theorem.location,
-        check: () => {
-          const newSymbolErrors: SanyError[] = [];
-          const data =
-            theorem.statement.kind === "AssumeProve"
-              ? analyzeAssumeProve(theorem.statement, new Map(), analyzer, newSymbolErrors)
-              : analyzer.analyze(theorem.statement, new Map());
-          const errors = [
-            ...newSymbolErrors,
-            ...checkProof(theorem.proof),
-            ...(data.level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
-          ];
-          if (errors.length > 0) throw createSanyError(errors);
-        },
-      })),
-      ...instances,
-    ],
-    warnings,
-  );
-  if (errors.length > 0) throw createSanyError(errors, false, undefined, warnings);
+      }
+      const isTemporal = getStepLevel(step, inner) === TEMPORAL_LEVEL;
+      const pickErrors =
+        body.kind === "Pick" && body.bounds.length > 0 && isTemporal
+          ? body.bounds
+              .filter((bound) => getLevel([bound.set], inner) !== 0)
+              .flatMap((bound) =>
+                bound.set.location.range
+                  ? [
+                      {
+                        location: formatRange(bound.set.location.range),
+                        message: "Non-constant bound of temporal PICK.",
+                      },
+                    ]
+                  : [],
+              )
+          : [];
+      return [
+        ...analyzer.errors.splice(0),
+        ...checkProof(step.proof, inner),
+        ...pickErrors,
+        ...(step.proof?.kind === "Steps" && isTemporal ? checkTemporalGoal(step.proof) : []),
+      ];
+    });
+  };
+  const statementLevels = new Map<Expression | AssumeProve, number>();
+  const getStatementLevel = (statement: Expression | AssumeProve) => {
+    const cached = statementLevels.get(statement);
+    if (cached !== undefined) return cached;
+    const level =
+      statement.kind === "AssumeProve"
+        ? analyzeAssumeProve(statement, new Map(), analyzer).level
+        : analyzer.analyze(statement, new Map()).level;
+    statementLevels.set(statement, level);
+    return level;
+  };
+  const statements = [
+    ...module.theorems,
+    ...module.assumptions.map((assumption) => ({
+      ...assumption,
+      statement: assumption.expression,
+    })),
+  ];
+  const statementBodies = new Set(statements.map((statement) => statement.statement));
+  const sections = getRecursiveSections(new Map(), module.units, module.hasRecursiveLet);
+  const createCheck = (location: SourceLocation, run: () => void) => ({
+    location,
+    check: (reported: SanyError[]) => {
+      run();
+      reported.push(...analyzer.errors.splice(0));
+    },
+  });
+  return {
+    sections: sections.map((section) =>
+      createCheck(section.location, () => analyzer.checkRecursiveSection(section.members)),
+    ),
+    check: (isInner: boolean) =>
+      [
+        (isInner ? sections : []).map((section) =>
+          createCheck(section.location, () => analyzer.checkPrimedArguments(section.members)),
+        ),
+        module.definitions
+          .filter(
+            (definition) => !definition.name.includes("!") && !statementBodies.has(definition.body),
+          )
+          .map((definition) =>
+            createCheck(definition.location, () =>
+              analyzer.analyzeDefinition(definition, new Map()),
+            ),
+          ),
+        statements
+          .filter((statement) => statement.name !== undefined)
+          .map((statement) =>
+            createCheck(statement.location, () => getStatementLevel(statement.statement)),
+          ),
+        [
+          ...module.assumptions.map((assumption) => ({
+            location: assumption.location,
+            check: (reported: SanyError[]) => {
+              const level = getStatementLevel(assumption.expression);
+              reported.push(...analyzer.errors.splice(0));
+              const range = assumption.location.range;
+              if (level !== CONSTANT_LEVEL && range) {
+                reported.push({
+                  location: formatRange(range),
+                  message: `Level error: assumptions must be level 0 (Constant), \nbut this one has level ${level}.`,
+                });
+              }
+            },
+          })),
+          ...module.theorems.map((theorem) => ({
+            location: theorem.location,
+            check: (reported: SanyError[]) => {
+              const level = getStatementLevel(theorem.statement);
+              reported.push(
+                ...analyzer.errors.splice(0),
+                ...checkProof(theorem.proof, new Map()),
+                ...(level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
+                ...analyzer.errors.splice(0),
+              );
+            },
+          })),
+          ...module.uses.map((use) =>
+            createCheck(use.location, () => checkFacts(use.facts, new Map())),
+          ),
+          ...instances,
+        ],
+      ].flatMap((units) => collectSemanticErrors(units, warnings)),
+  };
 };
