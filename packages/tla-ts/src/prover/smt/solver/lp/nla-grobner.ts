@@ -111,7 +111,8 @@ export class Grobner {
 
   constructor(private core: NlaCore) {
     this.manager = new PddManager(core.lra.getColumnCount());
-    this.solver = new PddSolver(this.manager, () => core.isCanceled());
+    // Z3 gives the pdd solver the reslimit itself, whose is_canceled counts no step.
+    this.solver = new PddSolver(this.manager, () => core.limit.isExhausted());
   }
 
   updateParams() {

@@ -712,6 +712,18 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "(:rlimit 1038)"]);
   });
 
+  // nla's grobner solver reads the cancel flag of the reslimit, which counts no step.
+  it("counts no step when nla's grobner solver checks the limit", () => {
+    expect(
+      run([
+        "(declare-const q Real)",
+        "(assert (= (* q q) 2.0))",
+        "(check-sat-using smt)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1173)"]);
+  });
+
   it("counts the steps of an unknown answer", () => {
     expect(
       run([
