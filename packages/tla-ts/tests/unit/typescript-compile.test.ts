@@ -56990,3 +56990,66 @@ describe("reads a built-in through globalThis as the built-in", () => {
     expect(result.failure?.message).toContain("tla-ts can't");
   });
 });
+
+describe("constructs the class that a function returns where a call runs it once in place", () => {
+  const getSource = (expected: string) => `
+    const box = { seen: "" };
+    const Made = (function () {
+      class Made {
+        tag = "made";
+        describe() {
+          return this.tag;
+        }
+      }
+      return Made;
+    })();
+    const YieldableError = (function () {
+      class YieldableError extends globalThis.Error {}
+      const proto = { op: "YieldableError" };
+      Object.assign(YieldableError.prototype, proto);
+      return YieldableError as any;
+    })() as new (message?: string) => Error;
+    const made = new Made();
+    const error = new YieldableError("boom");
+    box.seen = [
+      made.describe(),
+      made instanceof Made,
+      error.message,
+      error instanceof Error,
+      error instanceof YieldableError,
+      Object.hasOwn(YieldableError.prototype, "op"),
+    ].join();
+    if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+  `;
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource("made,true,boom,true,true,true"))).failure).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (await checkModel(getSource("made,true,boom,true,false,true"))).failure?.message,
+    ).toContain("seen made,true,boom,true,true,true");
+  });
+
+  it("stops where the function runs more than once", () => {
+    expect(() =>
+      compile(`
+        const box = { seen: "" };
+        const make = () =>
+          (function () {
+            class Made {
+              describe() {
+                return "made";
+              }
+            }
+            return Made;
+          })();
+        const First = make();
+        const Second = make();
+        box.seen = [new First().describe(), First === Second].join();
+        if (box.seen !== "made,false") throw new Error("seen " + box.seen);
+      `),
+    ).toThrow("tla-ts can't make a class in code that may run more than once");
+  });
+});

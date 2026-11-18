@@ -5136,6 +5136,39 @@ export const findObjectTargets = (files: readonly ts.SourceFile[], context: Cont
     ]),
   );
 
+// The class that a function returns by its name, where a call runs the function where it's written
+// and the code runs once, so that one class is the value. The function ends with a return, so it
+// can't give undefined instead.
+const getReturnedClass = (call: ts.CallExpression, context: Context) => {
+  const callee = skipCasts(call.expression);
+  const last =
+    (ts.isFunctionExpression(callee) || ts.isArrowFunction(callee)) && ts.isBlock(callee.body)
+      ? callee.body.statements.at(-1)
+      : undefined;
+  if (last === undefined || !ts.isReturnStatement(last) || !isOnce(call, context)) {
+    return undefined;
+  }
+  const body = last.parent;
+  const returned = findNodes(body, ts.isReturnStatement).filter(
+    (statement) => ts.findAncestor(statement.parent, ts.isFunctionLike) === callee,
+  );
+  const classes = returned.map((statement) => {
+    const value = statement.expression && skipCasts(statement.expression);
+    const declaration =
+      value !== undefined && ts.isIdentifier(value)
+        ? getValueDeclaration(getSymbol(value, context.checker), context)
+        : undefined;
+    return declaration !== undefined &&
+      ts.isClassDeclaration(declaration) &&
+      declaration.parent === body &&
+      isHeapClass(declaration, context)
+      ? declaration
+      : undefined;
+  });
+  const first = classes.at(0);
+  return first !== undefined && classes.every((found) => found === first) ? first : undefined;
+};
+
 // The heap class that a name names.
 export const getHeapClass = (node: ts.Expression, context: Context): HeapClass | undefined => {
   const inPlace = skipCasts(node);
@@ -5146,9 +5179,20 @@ export const getHeapClass = (node: ts.Expression, context: Context): HeapClass |
       : undefined;
   }
   const declaration = getValueDeclaration(getSymbol(inPlace, context.checker), context);
-  const found =
+  const initializer =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
       ? declaration.initializer && skipCasts(declaration.initializer)
+      : undefined;
+  // A function that a call runs where it's written, once, and that returns its own class gives
+  // that class, as (function () { class C {} return C; })() does.
+  const returned =
+    initializer !== undefined && ts.isCallExpression(initializer)
+      ? getReturnedClass(initializer, context)
+      : undefined;
+  if (returned !== undefined) return returned;
+  const found =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? initializer
       : declaration !== undefined &&
           ts.isPropertyDeclaration(declaration) &&
           declaration.initializer !== undefined &&
