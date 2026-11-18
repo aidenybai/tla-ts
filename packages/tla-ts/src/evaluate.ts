@@ -45,7 +45,7 @@ import {
   isTlcEvalReached,
   type DefinitionFacts,
 } from "./dependencies";
-import { contextualApplications, substitutionFrames } from "./instances";
+import { contextualApplications, getFunctionConstruction, substitutionFrames } from "./instances";
 import { prettyPrint } from "./pretty-print";
 import { isEnabled } from "./successors";
 import {
@@ -761,13 +761,6 @@ const getBoundTupleLengths = (bounds: Bound[]) =>
         bound.pattern.kind === "Tuple" ? bound.pattern.names.length : undefined,
       );
 
-const getDefinitionSource = (definition: FunctionDefinition): Expression => ({
-  kind: "FunctionConstruction",
-  bounds: definition.bounds,
-  body: definition.body,
-  location: definition.location,
-});
-
 const createRecursiveFunction = (
   definition: FunctionDefinition,
   context: Context,
@@ -836,7 +829,7 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
   if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
   if (definition.isSelfReferential)
     return (context) => createRecursiveFunction(definition, context);
-  return getEntryEvaluator(getDefinitionSource(definition), environment);
+  return getEntryEvaluator(getFunctionConstruction(definition), environment);
 };
 
 const CALLER_SCOPE: Scope = {
