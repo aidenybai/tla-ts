@@ -14254,6 +14254,11 @@ const isAnyMember = (node: ts.Expression, context: Context) => {
 // The functions that a call through a value may run, which may be none that the script writes.
 // Whether a call may run any of the functions and closures whose type its callee's type allows,
 // where tla-ts can't tell which it runs.
+// An element of an arguments object, which holds whatever a call passes.
+const isArgumentsElement = (node: ts.Expression, context: Context) =>
+  ts.isElementAccessExpression(node) &&
+  context.checker.getTypeAtLocation(skipCasts(node.expression)).getSymbol()?.name === "IArguments";
+
 const isDispatchedCall = (
   node: ts.CallExpression,
   functions: ReadonlyMap<ts.Symbol, FunctionNode>,
@@ -14272,8 +14277,10 @@ const isDispatchedCall = (
       !ts.isCallExpression(callee) &&
       !isSuperAccess(callee) &&
       !(ts.isElementAccessExpression(callee) && ts.isStringLiteral(callee.argumentExpression)) &&
+      !isArgumentsElement(callee, context) &&
       !isAnyMember(callee, context)) ||
-    declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
+    (declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) &&
+      !isArgumentsElement(callee, context)) ||
     (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
     getCalledMethod(callee, context) !== undefined ||
     getBoundBuiltIn(callee, context) !== undefined ||

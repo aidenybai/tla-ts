@@ -54918,4 +54918,57 @@ describe("BigInts", () => {
       expect((await check(compileScript(source))).failure?.message).toContain(message);
     });
   });
+
+  describe("runs a function that an arguments object's element holds, among those of the program", () => {
+    const getSource = (expected: string) => `
+      "use strict";
+      const pipeArguments = <A,>(self: A, args: IArguments): unknown => {
+        switch (args.length) {
+          case 0:
+            return self;
+          case 1:
+            return args[0](self);
+          case 2:
+            return args[1](args[0](self));
+          default: {
+            let ret = self;
+            for (let i = 0, len = args.length; i < len; i++) {
+              ret = args[i](ret);
+            }
+            return ret;
+          }
+        }
+      };
+      interface Pipeable {
+        value: number;
+        pipe(...fns: Array<(value: any) => any>): unknown;
+      }
+      const Prototype = {
+        pipe(this: Pipeable) {
+          return pipeArguments(this, arguments);
+        },
+      };
+      const make = (value: number): Pipeable => {
+        const made = Object.create(Prototype);
+        made.value = value;
+        return made;
+      };
+      const double = (box: Pipeable) => make(box.value * 2);
+      const read = (box: Pipeable) => box.value;
+      const first = make(3);
+      const one = first.pipe(read);
+      const two = first.pipe(double, read);
+      const three = make(1).pipe(double, double, read);
+      const seen = [one, two, three].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("3,6,4"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("3,6,5"))).failure?.message).toContain("seen 3,6,4");
+    });
+  });
 });
