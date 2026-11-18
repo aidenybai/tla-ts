@@ -126,10 +126,16 @@ export interface LazyFunctionSource {
   body: string;
 }
 
+export interface CostModel {
+  secondary: number[];
+  node: number;
+}
+
 export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
   apply: (argument: Value) => Value;
+  costModel?: CostModel;
   boundTupleLengths?: (number | undefined)[];
   source?: LazyFunctionSource;
   functionClass?: FunctionClass;
@@ -2346,6 +2352,7 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
       domain,
       domain.map((key) => value.apply(key)),
     );
+    if (value.costModel) value.costModel.secondary[value.costModel.node] += domain.length;
     return value.enumerated;
   }
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);

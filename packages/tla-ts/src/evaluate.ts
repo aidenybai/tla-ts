@@ -102,6 +102,7 @@ import {
   toFiniteSet,
   updateFunction,
   valuesEqual,
+  type CostModel,
   type FilteredSetValue,
   type LazyFunctionSource,
   type LazyFunctionValue,
@@ -780,12 +781,14 @@ const createLazyFunction = (
   compute: (argument: Value, self: LazyFunctionValue) => Value,
   source: LazyFunctionSource | undefined,
   boundTupleLengths: (number | undefined)[] | undefined,
+  costModel: CostModel | undefined,
 ) => {
   const self: LazyFunctionValue = {
     kind: "LazyFunction",
     domain,
     source,
     boundTupleLengths,
+    costModel,
     apply: (argument) => compute(argument, self),
   };
   return self;
@@ -797,6 +800,10 @@ const getBoundTupleLengths = (bounds: Bound[]) =>
     : bounds.map((bound) =>
         bound.pattern.kind === "Tuple" ? bound.pattern.names.length : undefined,
       );
+
+// TLC keeps a $RecursiveFcnSpec's FcnLambdaValue lazy, so FcnLambdaValue#toFcnRcd charges its cost model when it fingerprints a state holding it.
+const getRecursiveCostModel = (coverage: Coverage | undefined, node: number) =>
+  coverage && node >= 0 ? { secondary: coverage.secondary, node } : undefined;
 
 const createRecursiveFunction = (
   definition: FunctionDefinition,
@@ -817,7 +824,7 @@ const createRecursiveFunction = (
     domain,
     coverage
       ? (argument, self) =>
-          coverage.current === -1
+          coverage.current === node
             ? compute(argument, self)
             : runAtCoverageNode(coverage, node, () => compute(argument, self))
       : compute,
@@ -827,6 +834,7 @@ const createRecursiveFunction = (
       domain,
     ),
     getBoundTupleLengths(definition.bounds),
+    getRecursiveCostModel(coverage, node),
   );
   keepLambda({
     value: functionValue,
@@ -2094,12 +2102,13 @@ export const getFunctionBuilder = (
       domain,
       coverage
         ? (argument) =>
-            coverage.current === -1
+            coverage.current === -1 && name === undefined
               ? compute(argument)
               : runAtCoverageNode(coverage, node, () => compute(argument))
         : compute,
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,
+      name === undefined ? undefined : getRecursiveCostModel(coverage, node),
     );
     if (name !== undefined) scope = bindSelf(outer, name, value);
     const functionValue = keepLambda({ value, bounds, body: expression.body, scope, compute });

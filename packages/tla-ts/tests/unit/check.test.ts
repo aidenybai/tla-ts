@@ -2287,6 +2287,54 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "a module",
+      "g[n \\in 0..2] == IF n = 0 THEN x ELSE g[n - 1] + 1\nInit == x = 0 /\\ y = <<>>\nNext == x < 2 /\\ x' = x + 1 /\\ y' = <<g>>",
+      [
+        "line 6, col 9 to line 6, col 13 of module M: 2",
+        "|line 6, col 9 to line 6, col 9 of module M: 3",
+        "line 6, col 18 to line 6, col 27 of module M: 2",
+        "line 6, col 32 to line 6, col 41 of module M: 2",
+        "|line 6, col 37 to line 6, col 41 of module M: 2",
+        "||line 6, col 39 to line 6, col 39 of module M: 2",
+        "|||line 4, col 1 to line 4, col 50 of module M: 2:6",
+        "||||line 4, col 18 to line 4, col 50 of module M: 12",
+        "|||||line 4, col 21 to line 4, col 25 of module M: 12",
+        "|||||line 4, col 32 to line 4, col 32 of module M: 6",
+        "|||||line 4, col 39 to line 4, col 50 of module M: 6",
+        "||||line 4, col 9 to line 4, col 12 of module M: 2",
+      ],
+    ],
+    [
+      "a LET",
+      "Init == x = 0 /\\ y = <<>>\nNext == x < 2 /\\ x' = x + 1 /\\ LET g[n \\in 0..2] == IF n = 0 THEN x ELSE g[n - 1] + 1 IN y' = <<g>>",
+      [
+        "line 5, col 9 to line 5, col 13 of module M: 2",
+        "|line 5, col 9 to line 5, col 9 of module M: 3",
+        "line 5, col 18 to line 5, col 27 of module M: 2",
+        "line 5, col 90 to line 5, col 99 of module M: 2",
+        "|line 5, col 95 to line 5, col 99 of module M: 2",
+        "||line 5, col 97 to line 5, col 97 of module M: 2",
+        "|||line 5, col 36 to line 5, col 85 of module M: 2:6",
+        "||||line 5, col 53 to line 5, col 85 of module M: 12",
+        "|||||line 5, col 56 to line 5, col 60 of module M: 12",
+        "|||||line 5, col 67 to line 5, col 67 of module M: 6",
+        "|||||line 5, col 74 to line 5, col 85 of module M: 6",
+        "||||line 5, col 44 to line 5, col 47 of module M: 2",
+      ],
+    ],
+  ])(
+    "counts the body of a recursive function %s defines when TLC fingerprints a state holding it, as FcnLambdaValue#toFcnRcd evaluates it under the cost model",
+    async (_title, definitions, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\n${definitions}\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.[1]).toEqual(expected);
+    },
+  );
+
   it("counts no node for the reference that applies a recursive function a parameterized instance copies", async () => {
     const result = await check({
       source:
