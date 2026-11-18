@@ -260,6 +260,26 @@ describe("sat solver", () => {
     expect(run(getScript("((_ pbeq 1 1 1 1 1) a b c d)"))).toBe("sat\nsat\nsat");
   });
 
+  it("drops a pseudo-Boolean equality of nine literals with its user scope, where Z3 keeps it", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic sat)",
+        ...["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(
+          (name) => `(declare-const ${name} Bool)`,
+        ),
+        "(assert ((_ at-most 8) a b c d e f g h i))",
+        "(check-sat)",
+        "(push 1)",
+        "(assert ((_ pbeq 1 1 1 1 1 1 1 1 1 1) a b c d e f g h i))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert a)",
+        "(assert b)",
+        "(check-sat)",
+      ]),
+    ).toBe("sat\nsat\nsat");
+  });
+
   it("declares each function it gives up on in the reason", () => {
     expect(
       run([
