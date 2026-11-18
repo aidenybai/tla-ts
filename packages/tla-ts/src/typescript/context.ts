@@ -5808,8 +5808,19 @@ export const getFactoryCall = (
 
 // The function that a callee or callback names: one written in place, one declared elsewhere, one
 // that a factory returns, or a method of a known class.
-const resolve = (node: ts.Expression, context: Context) => {
+const resolve = (node: ts.Expression, context: Context, depth = 0): FunctionNode | undefined => {
   const declaration = getValueDeclaration(getNamedSymbol(skipCasts(node), context), context);
+  // A const that another name's function initializes, as const isEffect = core.isEffect does.
+  const alias =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
+    declaration.initializer !== undefined &&
+    (ts.isIdentifier(skipCasts(declaration.initializer)) ||
+      ts.isPropertyAccessExpression(skipCasts(declaration.initializer))) &&
+    depth < 8
+      ? skipCasts(declaration.initializer)
+      : undefined;
   return (
     getAnyFunction(skipCasts(node)) ??
     getAnyFunction(declaration) ??
@@ -5817,7 +5828,8 @@ const resolve = (node: ts.Expression, context: Context) => {
       ? getFactoryCall(declaration.initializer, context)?.closure
       : undefined) ??
     getMethod(node, context) ??
-    getObjectFunction(node, context)
+    getObjectFunction(node, context) ??
+    (alias === undefined ? undefined : resolve(alias, context, depth + 1))
   );
 };
 

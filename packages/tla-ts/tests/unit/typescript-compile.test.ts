@@ -55994,4 +55994,18 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("39,93"))).failure?.message).toContain("result 39,23");
     });
   });
+
+  describe("calls the function that a const another module's function initializes", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/calling-alias.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const wrong = source.replace('"true,false"', '"true,true"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("results true,false");
+    });
+  });
 });

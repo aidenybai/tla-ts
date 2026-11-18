@@ -1049,7 +1049,23 @@ const translateBuiltInCall = (
   const anyString = translateAnyStringCall(node, scope, context);
   if (anyString !== undefined) return anyString;
   const symbol = getNamedSymbol(node.expression, context);
-  const helper = getTopLevelDeclaration(symbol, context);
+  // A const that another top-level name initializes, as const alias = make does, holds what that
+  // name holds.
+  const getAliased = (
+    declaration: ReturnType<typeof getTopLevelDeclaration>,
+    depth: number,
+  ): ReturnType<typeof getTopLevelDeclaration> => {
+    const initializer =
+      declaration !== undefined && ts.isVariableDeclaration(declaration) && declaration.initializer
+        ? skipCasts(declaration.initializer)
+        : undefined;
+    return initializer !== undefined &&
+      (ts.isIdentifier(initializer) || ts.isPropertyAccessExpression(initializer)) &&
+      depth < 8
+      ? getAliased(getTopLevelDeclaration(getNamedSymbol(initializer, context), context), depth + 1)
+      : declaration;
+  };
+  const helper = getAliased(getTopLevelDeclaration(symbol, context), 0);
   if (helper?.getSourceFile().isDeclarationFile) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
