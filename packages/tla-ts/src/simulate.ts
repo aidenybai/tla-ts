@@ -701,8 +701,6 @@ export const simulate = (options: SimulationOptions): number => {
     };
   };
 
-  // Simulator#printBehavior skips a step under -difftrace whose fingerprint, which the VIEW and the symmetry define, repeats the last one's.
-  // Deviation from TLC: StatePrinter fingerprints each state it prints, so a VIEW that fails on one crashes TLC without -difftrace too.
   const getDiffTracePositions = (trace: TraceNode[]) => {
     const positions = [0];
     for (let position = 1; position < trace.length; position++) {
@@ -771,6 +769,7 @@ export const simulate = (options: SimulationOptions): number => {
     reportMessage(error.code, error.message, error.toolMessage);
     const trace = getTrace(error.node, search.getTlcOrder());
     const isLastStateOnly = traceDepth === INFINITE_DEPTH;
+    // Deviation from TLC: StatePrinter fingerprints each state it prints, so a VIEW that fails on one crashes TLC without -difftrace too.
     const shown =
       options.isDiffTrace && !isLastStateOnly
         ? getDiffTracePositions(trace)
