@@ -2146,6 +2146,35 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts a definition a LET of the next-state relation makes at each reference, as TLC's getNextStates conses no LazyValue", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == LET v == {n * x : n \\in 0..1}\n        IN /\\ x < 2\n           /\\ x' = x + 1\n           /\\ x = 0 => v # {}\n           /\\ v = v\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 6, col 15 to line 6, col 19 of module M: 6",
+      "|line 6, col 15 to line 6, col 15 of module M: 7",
+      "line 7, col 15 to line 7, col 24 of module M: 6",
+      "line 8, col 15 to line 8, col 29 of module M: 6",
+      "|line 8, col 15 to line 8, col 19 of module M: 6",
+      "|line 8, col 24 to line 8, col 29 of module M: 3",
+      "||line 8, col 24 to line 8, col 24 of module M: 3",
+      "|||line 5, col 18 to line 5, col 37 of module M: 3",
+      "||||line 5, col 19 to line 5, col 23 of module M: 6",
+      "||||line 5, col 33 to line 5, col 36 of module M: 3",
+      "||line 8, col 28 to line 8, col 29 of module M: 3",
+      "line 9, col 15 to line 9, col 19 of module M: 6",
+      "|line 9, col 15 to line 9, col 15 of module M: 6",
+      "||line 5, col 18 to line 5, col 37 of module M: 6",
+      "|||line 5, col 19 to line 5, col 23 of module M: 12",
+      "|||line 5, col 33 to line 5, col 36 of module M: 6",
+      "|line 9, col 19 to line 9, col 19 of module M: 6",
+      "||line 5, col 18 to line 5, col 37 of module M: 6",
+      "|||line 5, col 19 to line 5, col 23 of module M: 12",
+      "|||line 5, col 33 to line 5, col 36 of module M: 6",
+    ]);
+  });
+
   it("counts no node for the reference that applies a recursive function a parameterized instance copies", async () => {
     const result = await check({
       source:

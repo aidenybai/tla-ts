@@ -1284,7 +1284,12 @@ export const getReevaluatedDefinitions = (
   environment: Environment,
 ): ReevaluatedDefinitions => ({
   impure: new Set(
-    definitions.filter((definition) => isImpureDefinition(definition, environment, "varying")),
+    definitions.filter(
+      // TLC evaluates a LET definition at each reference; caching a pure one shows only in coverage.
+      (definition) =>
+        environment.coverage !== undefined ||
+        isImpureDefinition(definition, environment, "varying"),
+    ),
   ),
   streamed: new Set(
     definitions.filter((definition) => isImpureDefinition(definition, environment, "streamed")),
