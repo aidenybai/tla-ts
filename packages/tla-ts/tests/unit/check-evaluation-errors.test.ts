@@ -1661,6 +1661,23 @@ describe("evaluation errors match TLC", () => {
     expect([...new Set(ranges)]).toEqual(["6:7-43", "6:7-33", "6:7-12", "6:18-32", "6:18-24"]);
   });
 
+  it.each([
+    [
+      'Assert(FALSE, "bound")',
+      'The first argument of Assert evaluated to FALSE; the second argument was:\n"bound"',
+    ],
+    ["<<x>>[3] = 0", "Attempted to access index 3 of tuple\n<<1>>\nwhich is out of bounds."],
+  ])(
+    "exits with TLC's general error code when its rerun of the initial states stops at a violation before %s fails again",
+    async (failure, message) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nInit == x \\in 0..1 /\\ y \\in {0, 1} /\\ (x = 0 \\/ ${failure})\nNext == UNCHANGED <<x, y>>\nInv == y = 0\nView == x\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+      });
+      expect([result.failure?.message, result.failure?.exitCode]).toEqual([message, 255]);
+    },
+  );
+
   it("reports a value where the initial or next-state relation expects a formula like TLC", async () => {
     const getFailure = async (init: string, next: string) => {
       const result = await check({
