@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, parseModule, TlaSyntaxError } from "../../src";
+import { check, formatValue, parseModule, TlaSyntaxError } from "../../src";
 import { createSanyError } from "../../src/errors";
 import { checkFixture, getModuleLoader } from "./check-harness";
 
@@ -164,6 +164,21 @@ describe("INSTANCE matches TLC", () => {
       "invariant-violation",
       4,
       4,
+    ]);
+  });
+
+  it("applies recursive definitions of an instance inside LET without substitutions", async () => {
+    const inner =
+      "---- MODULE Inner ----\nEXTENDS Naturals\nr[n \\in 0..5] == IF n = 0 THEN 0 ELSE r[n - 1] + 2\nRECURSIVE R(_)\nR(n) == IF n = 0 THEN 0 ELSE R(n - 1) + 3\n====";
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = <<>>\nNext == x' = <<LET L == INSTANCE Inner IN L!r[3], LET L == INSTANCE Inner IN L!R(3), LET L == INSTANCE Inner IN L!r>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => (name === "Inner" ? inner : undefined),
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<6, 9, (0 :> 0 @@ 1 :> 2 @@ 2 :> 4 @@ 3 :> 6 @@ 4 :> 8 @@ 5 :> 10)>>",
     ]);
   });
 

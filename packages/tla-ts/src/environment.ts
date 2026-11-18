@@ -775,7 +775,9 @@ export const createEnvironment = (
         const original = definitions.get(key);
         const definition = copy ?? (original && withInstanceParams(original, instance.params));
         if (definition) {
-          return { ...definition, name, body: withSubstitutionFrames(definition.body, frames) };
+          const operator =
+            definition.kind === "Operator" ? definition : createLocalFunction(definition, name);
+          return { ...operator, name, body: withSubstitutionFrames(operator.body, frames) };
         }
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
         return createLocalAlias(name, key, [...instance.params, ...ownParams], ownParams, location);
