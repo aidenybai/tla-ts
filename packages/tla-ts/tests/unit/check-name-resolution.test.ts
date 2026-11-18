@@ -1433,6 +1433,56 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "a constant",
+      "I0 == INSTANCE Inner WITH F <- LAMBDA c : 1",
+      "line 3, col 39 to line 3, col 39",
+      "c",
+      "line 2, col 10 to line 2, col 10",
+    ],
+    [
+      "a parameter of the instance",
+      "I0(p) == INSTANCE Inner WITH F <- LAMBDA p : 1",
+      "line 3, col 42 to line 3, col 42",
+      "p",
+      "line 3, col 4 to line 3, col 4",
+    ],
+    [
+      "an earlier definition",
+      "G == 1\nI0 == INSTANCE Inner WITH F <- LAMBDA G : 1",
+      "line 4, col 39 to line 4, col 39",
+      "G",
+      "line 3, col 1 to line 3, col 6",
+    ],
+    [
+      "an earlier instance",
+      "J == INSTANCE Inner WITH F <- LAMBDA q : 1\nI0 == INSTANCE Inner WITH F <- LAMBDA J : 1",
+      "line 4, col 39 to line 4, col 39",
+      "J",
+      "line 3, col 1 to line 3, col 42",
+    ],
+  ])(
+    "rejects a LAMBDA parameter of a substitution named after %s",
+    async (_, body, location, name, existing) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nCONSTANT c\n${body}\n====\n`,
+          config: "",
+          loadModule: (module) =>
+            module === "Inner" ? "---- MODULE Inner ----\nCONSTANT F(_)\n====\n" : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${location} of module M`,
+            message: `Multiply-defined symbol '${name}': this definition or declaration conflicts \nwith the one at ${existing} of module M.`,
+          },
+        ]),
+      );
+    },
+  );
+
   it("passes an operator argument through an operator a LET instantiates", async () => {
     const result = await check({
       source:

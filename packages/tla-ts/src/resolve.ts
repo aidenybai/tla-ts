@@ -2333,10 +2333,20 @@ export const isTheoremDefinition = (module: Module, definition: Definition) =>
 const createSymbols = (module: Module, imported: Symbols) => {
   const symbols = new Map([...CORE_SYMBOLS, ...imported]);
   module.constants.forEach((constant) =>
-    symbols.set(constant.name, { key: constant.name, arity: constant.arity, kind: "Constant" }),
+    symbols.set(constant.name, {
+      key: constant.name,
+      arity: constant.arity,
+      kind: "Constant",
+      range: constant.location.range,
+    }),
   );
   module.variables.forEach((variable) =>
-    symbols.set(variable.name, { key: variable.name, arity: 0, kind: "Variable" }),
+    symbols.set(variable.name, {
+      key: variable.name,
+      arity: 0,
+      kind: "Variable",
+      range: variable.location.range,
+    }),
   );
   return symbols;
 };
@@ -2349,7 +2359,13 @@ const checkSubstitutions = (
   unit: Unit,
 ) => {
   const scope = instance.params.reduce<LocalName | undefined>(
-    (parent, param) => ({ name: param.name, arity: param.arity, kind: "Parameter", parent }),
+    (parent, param) => ({
+      name: param.name,
+      arity: param.arity,
+      kind: "Parameter",
+      range: param.location?.range,
+      parent,
+    }),
     outer,
   );
   const reportArity = (declaration: Declaration, location: string) =>
@@ -2522,12 +2538,36 @@ export const resolveSubstitutions = (
     self: undefined,
     facts: new Set(),
     goals: new Map(),
-    bindings: new Map(
-      [...imported].map((entry) => [
+    bindings: new Map([
+      ...[...imported].map((entry): [string, ModuleBinding] => [
         entry[0],
         { ...entry[1], position: positions.get(entry[0]) ?? MODULE_START },
       ]),
-    ),
+      ...[...unit.definitions].map((entry): [string, ModuleBinding] => [
+        entry[0],
+        {
+          kind: "Definition",
+          arity: getArity(entry[1]),
+          range: entry[1].location.range,
+          position: entry[1].location,
+        },
+      ]),
+      ...module.instances.flatMap((other): [string, ModuleBinding][] =>
+        other.name === undefined
+          ? []
+          : [
+              [
+                other.name,
+                {
+                  kind: "Instance",
+                  arity: other.params.length,
+                  range: other.location.range,
+                  position: other.location,
+                },
+              ],
+            ],
+      ),
+    ]),
     errors: report.errors,
     warnings: report.warnings,
     hasLabelScope: false,
