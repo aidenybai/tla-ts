@@ -64,7 +64,7 @@ EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Undefined, Null, Ref, Big, Limbs, Wide, Double, BuiltIns, ConstantFunctions, Symbols, Fractions,
           Doubles, SourceTexts,
-          Characters, Searches, Cases, Normals, TimeZones, NaN, Infinity, NegativeInfinity, NegativeZero
+          Characters, Searches, Cases, Normals, TimeZones, DateFormats, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
@@ -6450,6 +6450,13 @@ LOCAL ElementError(type, value) ==
     [] TypeOf(value) = "string" -> IF StringToBigInt(value) = Undefined THEN "SyntaxError" ELSE ""
     [] OTHER -> "TypeError"
 
+\\* The error that a write to a typed array's index throws as it converts the value, or "" where it
+\\* throws none.
+TypedWriteError(heap, ref, key, value) ==
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN ElementError(heap.objects[ref[Ref]].elementType, value)
+  ELSE ""
+
 \\* The error that converting values in order for a typed array throws first, or "" where none
 \\* does, or an object before the first that does converts through its methods.
 LOCAL ElementsError(type, values) ==
@@ -7718,13 +7725,23 @@ CopyWithinFirstGetter(heap, ref, target, start, end) ==
      THEN GetterOf(heap, ref, ToString(first))
      ELSE Undefined
 
+\\* Whether copyWithin of an array that a name holds, whose arguments' conversion changed the
+\\* array, copies through the elements the array holds after, with the length it read before.
+IsCopiedWithin(heap, afterHeap, before, after) ==
+  /\\ before = after
+  /\\ IsHeap(before)
+  /\\ ~IsProxy(afterHeap, before)
+  /\\ ~IsTypedArray(afterHeap, before)
+  /\\ ~afterHeap.objects[before[Ref]].isOpaque
+  /\\ ~HasLongLength(heap, before)
+
 \\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
 \\* backward where the indices it copies to overlap the end of those it copies from, where only the
 \\* indices that the object or its prototypes hold, and those that copy over them, change. The
 \\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
-LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
-  LET length == LengthOf(heap, ref)
-      to == ClampedIndex(target, length)
+\\* It copies with the length that it read.
+CopyWithinOf(heap, ref, length, target, start, end) ==
+  LET to == ClampedIndex(target, length)
       from == ClampedIndex(start, length)
       final == IF end = Undefined THEN length ELSE ClampedIndex(end, length)
       count == IF final - from < length - to THEN final - from ELSE length - to
@@ -7736,6 +7753,9 @@ LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
   IN IF count <= 0
      THEN [heap |-> heap, value |-> ref, isThrown |-> FALSE]
      ELSE [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
+
+LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
+  CopyWithinOf(heap, ref, LengthOf(heap, ref), target, start, end)
 
 ArrayLikeCopyWithin(heap, ref, target, start, end) ==
   IF HasLongLength(heap, ref)

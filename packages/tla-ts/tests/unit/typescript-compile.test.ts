@@ -52753,14 +52753,6 @@ describe("BigInts", () => {
           .failure?.message,
       ).toContain(`seen ${expected}`);
     });
-
-    it("stops past the end of a table that isn't final", async () => {
-      const source =
-        'const zoned = Temporal.ZonedDateTime.from("2040-01-01T00:00[America/Los_Angeles]");';
-      expect((await checkModel(source)).failure?.message).toContain(
-        "tla-ts can't tell the offsets of the time zone America/Los_Angeles after 2037",
-      );
-    });
   });
 
   describe("makes hold the types of JavaScript's for-in keys and of a property's array", () => {
@@ -54204,6 +54196,42 @@ describe("BigInts", () => {
     });
   });
 
+  describe("runs Temporal in a named time zone past its table through its tzdata rule", () => {
+    const getSource = (expected: string) => `
+      const zoned = Temporal.ZonedDateTime.from("2100-01-15T12:00[Antarctica/South_Pole]");
+      const seen = zoned.offset + " " + String(zoned.getTimeZoneTransition("next"));
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "+13:00 2100-04-04T02:00:00+12:00[Antarctica/South_Pole]";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the northern hemisphere's daylight time", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("+13:00 ", "+12:00 ")))).failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("spreads a value that is a string or an array by what it holds as it runs", () => {
+    const getSource = (expected: string) => `
+      const mixed = ["ab", ["c", "d"]];
+      const seen: string[] = [];
+      for (const item of mixed) seen.push([...item].join("+"));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a+b,c+d"))).failure).toBeUndefined();
+    });
+
+    it("rejects a string spread as one element", async () => {
+      expect((await checkModel(getSource("ab,c+d"))).failure?.message).toContain("seen a+b,c+d");
+    });
+  });
+
   describe("makes a zoned date-time whose date is past the limits where its instant isn't", () => {
     const getSource = (expected: string) => `
       let seen: string;
@@ -55057,6 +55085,411 @@ describe("BigInts", () => {
     it("rejects another outcome", async () => {
       const wrong = source.replace('"5,7"', '"5,8"');
       expect((await check(compile(wrong, path))).failure?.message).toContain("seen 5,7");
+    });
+  });
+
+  describe("runs a call through a number literal key as a statement", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var count = 0;
+      var holder = { 1: function () { count += 1; return 2; } };
+      var result = [holder[1](), count].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("2,1"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await check(compile(getSource("2,0"), path))).failure?.message).toContain(
+        "result 2,1",
+      );
+    });
+  });
+
+  describe("converts the object computed keys of a class's methods as it makes the class", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var calls = "";
+      var symbol = Symbol("s");
+      var second = { toString: function () { calls += "e|"; return symbol; } };
+      var third = { toString: undefined, valueOf: function () { calls += "f|"; return 1; } };
+      var other = { toString: function () { calls += "g|"; return "g"; } };
+      class C {
+        [second] = 43;
+        [third]() { return 44; }
+        static [other]() { return 45; }
+      }
+      var c = new C();
+      var result = [c[symbol], c[1](), C["g"](), Object.getOwnPropertyNames(C.prototype).join("|"), calls].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("43,44,45,1|constructor,e|f|g|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("43,44,45,1|constructor,f|e|g|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 43,44,45,1|constructor,e|f|g|",
+      );
+    });
+  });
+
+  describe("passes the hint to a Symbol.toPrimitive method, which may write a variable", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var calls = "";
+      var value = { [Symbol.toPrimitive]: function (hint) { calls += hint + "|"; return hint === "number" ? 2 : "s"; } };
+      var sum = value + 1;
+      var product = value * 3;
+      var text = \`\${value}\`;
+      var loose = value == "s";
+      var lesser = value < 5;
+      var result = [sum, product, text, loose, lesser, calls].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("s1,6,s,true,true,default|number|string|default|number|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("s1,6,s,true,true,default|default|default|default|default|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result s1,6,s,true,true,default|number|string|default|number|",
+      );
+    });
+  });
+
+  describe("copies within an array that a conversion shortened with the length read before", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      function makeArray() {
+        var a = [0];
+        for (var i = 0; i < 12; i++) {
+          a[i] = i;
+        }
+        return a;
+      }
+      function shorten() {
+        arr.length = 4;
+        return 1;
+      }
+      var arr = makeArray();
+      var copied = arr.copyWithin(8, { valueOf: shorten });
+      var result = [copied === arr, arr.length, 7 in arr, arr[8], arr[10], 11 in arr, Object.keys(arr).join("|")].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("true,11,false,1,3,false,0|1|2|3|8|9|10");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("true,12,false,1,3,false,0|1|2|3|8|9|10");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result true,11,false,1,3,false,0|1|2|3|8|9|10",
+      );
+    });
+  });
+
+  describe("gives a Symbol.toPrimitive method the arguments object of its one hint", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var left = {};
+      var log = "";
+      var leftArgs;
+      left[Symbol.toPrimitive] = function () {
+        log += "left";
+        leftArgs = arguments;
+        return 1;
+      };
+      var sum = left + 1;
+      var result = [sum, log, leftArgs.length, leftArgs[0]].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("2,left,1,default"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await check(compile(getSource("2,left,0,default"), path))).failure?.message,
+      ).toContain("result 2,left,1,default");
+    });
+
+    it("stops where a regexp's protocol converts through a method that reads its hint", async () => {
+      const source = `
+        var index = {};
+        var toPrimitiveHint;
+        index[Symbol.toPrimitive] = function (hint) {
+          toPrimitiveHint = hint;
+        };
+        var r = /./;
+        r.exec = function () {
+          return { length: 1, 0: "a", index: index };
+        };
+        var replaced = r[Symbol.replace]("ab", "$\`");
+      `;
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't call this Symbol.toPrimitive method",
+      );
+    });
+  });
+
+  describe("throws the error of converting a value that a typed array's index takes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var big = new BigInt64Array(2);
+      var small = new Int8Array(2);
+      var outcomes = "";
+      try {
+        big[0] = /** @type {any} */ (null);
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        big[1] = /** @type {any} */ ("x");
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        big[5] = /** @type {any} */ (1);
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        big[0] = /** @type {any} */ ("7");
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        small[0] = /** @type {any} */ (1n);
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        small[1] = /** @type {any} */ (Symbol());
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      var result = [outcomes, big[0], small[0]].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("TypeError|SyntaxError|TypeError|ok|TypeError|TypeError|,7,0");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("TypeError|TypeError|TypeError|ok|TypeError|TypeError|,7,0");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result TypeError|SyntaxError|TypeError|ok|TypeError|TypeError|,7,0",
+      );
+    });
+  });
+
+  describe("converts a value that is a string or an array to a string where it holds a string", () => {
+    const getSource = (expected: string) => `
+      const tests = [[["c"], "ab"]];
+      const seen: string[] = [];
+      for (const [args, label] of tests) seen.push(\`\${label}!\`);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab!"))).failure).toBeUndefined();
+    });
+
+    it("rejects another text", async () => {
+      expect((await checkModel(getSource("c!"))).failure?.message).toContain("seen ab!");
+    });
+
+    it("stops where it holds an array", async () => {
+      const source = `
+        const tests = [[["c"], "ab"]];
+        const seen: string[] = [];
+        for (const [args, label] of tests) seen.push(\`\${args}\`);
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't convert an array to a string here",
+      );
+    });
+  });
+
+  describe("formats a Temporal object in English through the patterns that Node's output follows", () => {
+    const getSource = (expected: string) => `
+      const date = new Temporal.PlainDate(2024, 12, 26);
+      const seen = [date.toLocaleString(), date.toLocaleString("en", { weekday: "long" })].join(" ");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("12/26/2024 Thursday"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order of the fields", async () => {
+      expect((await checkModel(getSource("26/12/2024 Thursday"))).failure?.message).toContain(
+        "seen 12/26/2024 Thursday",
+      );
+    });
+
+    it("stops in another locale", async () => {
+      const source = 'const text = new Temporal.PlainDate(2024, 12, 26).toLocaleString("de");';
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't format a date in a locale other than English",
+      );
+    });
+  });
+
+  describe("reads an array that a variable without a type or a value holds among objects", () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      function run() {
+        var o;
+        o = { a: 3, b: 2 };
+        const first = Object.keys(o).join();
+        o = [0, 1, 2];
+        return first + ";" + Object.keys(o).join();
+      }
+      const seen = run();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a,b;0,1,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another array's keys", async () => {
+      expect((await checkModel(getSource("a,b;0,1"))).failure?.message).toContain("seen a,b;0,1,2");
+    });
+  });
+
+  describe("stops at a read of a local that a closure's method changes in place through its copy", () => {
+    const getSource = (call: string, expected: number) => `
+      let seen = -1;
+      function runAsync(testFunc: () => Promise<void>) {
+        testFunc();
+      }
+      runAsync(async function () {
+        const values: number[] = [];
+        async function inner() {
+          ${call}
+        }
+        await inner();
+        seen = values.length;
+        if (seen !== ${expected}) throw new Error("seen " + seen);
+      });
+    `;
+    const arrow = "const push = () => { values.push(42); }; push();";
+    const method = "const box = { m() { values.push(42); } }; box.m();";
+
+    it("agrees with Node where an arrow function changes it", async () => {
+      expect((await checkModel(getSource(arrow, 1))).failure).toBeUndefined();
+    });
+
+    it("rejects the length before the change", async () => {
+      expect((await checkModel(getSource(arrow, 0))).failure).toBeDefined();
+    });
+
+    it("stops where a method changes its copy", async () => {
+      expect((await checkModel(getSource(method, 1))).failure?.message).toContain(
+        "tla-ts can't read values after a closure changes its copy in place",
+      );
+    });
+  });
+
+  describe("converts an object key that an element access reads or a plain assignment writes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var symbol = Symbol("s");
+      var key = { [Symbol.toPrimitive]: function (hint) { log += "key:" + hint + "|"; return hint === "string" ? "a" : "b"; } };
+      var other = { toString: function () { log += "other|"; return symbol; } };
+      var bad = { toString: function () { throw new RangeError("x"); } };
+      var obj = { a: 1 };
+      var read = obj[key];
+      obj[key] = (log += "rhs|", 2);
+      obj[other] = 3;
+      var thrown = "none";
+      try {
+        obj[bad] = (log += "bad|", 4);
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [read, obj.a, obj[symbol], Object.keys(obj).join("|"), thrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("1,2,3,a,RangeError,key:string|rhs|key:string|other|bad|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("1,2,3,a,RangeError,key:string|key:string|rhs|other|bad|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 1,2,3,a,RangeError,key:string|rhs|key:string|other|bad|",
+      );
+    });
+
+    it("stops at super's key, which converts once super reads the home object's prototype", async () => {
+      const source = `
+        var proto = { p: "ok" };
+        var obj = {
+          __proto__: proto,
+          m() {
+            return super[key];
+          },
+        };
+        var key = { toString() { return "p"; } };
+        var got = obj.m();
+      `;
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't convert objects to strings",
+      );
+    });
+  });
+
+  describe("converts the object computed keys of an object literal before their values", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var value = "bad";
+      var log = "";
+      var symbol = Symbol("s");
+      var key = { toString() { value = "ok"; return "p"; } };
+      var first = { [key]: value };
+      var key1 = { valueOf: function () { log += "one|"; return 1; }, toString: null };
+      var key2 = { toString: function () { log += "two|"; return symbol; } };
+      var obj = { a: "A", [key1]: "B", c: "C", [key2]: "D" };
+      var result = [first.p, obj[1], obj[symbol], Object.getOwnPropertyNames(obj).join("|"), log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("ok,B,D,1|a|c,one|two|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("ok,B,D,1|a|c,two|one|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result ok,B,D,1|a|c,one|two|",
+      );
     });
   });
 });

@@ -98,6 +98,7 @@ import { classifySharedHelpers } from "./shared-calls";
 import { TlaTypeScriptError } from "../errors";
 import { getUnlistedParameter, translateStep } from "./steps";
 import { TIME_ZONES } from "./time-zones";
+import { DATE_FORMATS } from "./date-formats";
 import {
   apply,
   boolean,
@@ -1407,6 +1408,27 @@ export const compile = (
         ),
       ),
       define("UsedSearches", [], translateSearches(context)),
+      // The patterns of toLocaleString, which a script that formats a Temporal object reads.
+      define(
+        "UsedDateFormats",
+        [],
+        tuple(
+          /\btoLocaleString\b/.test(sourceFile.text) && /\bTemporal\b/.test(sourceFile.text)
+            ? Object.entries(DATE_FORMATS).map(([key, format]) =>
+                record("Record", [
+                  { name: "key", value: string(key) },
+                  ...(format.error === undefined
+                    ? [
+                        { name: "fields", value: tuple((format.fields ?? []).map(string)) },
+                        { name: "styles", value: tuple((format.styles ?? []).map(string)) },
+                        { name: "isZoned", value: boolean(format.isZoned === true) },
+                      ]
+                    : [{ name: "error", value: string(format.error) }]),
+                ]),
+              )
+            : [],
+        ),
+      ),
       define(
         "UsedTimeZones",
         [],
@@ -1427,6 +1449,7 @@ export const compile = (
                 ),
               },
               { name: "isFinal", value: boolean(table.isFinal) },
+              { name: "rule", value: tuple(table.rule.map(number)) },
             ]);
           }),
         ),

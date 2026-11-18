@@ -182,6 +182,8 @@ import {
   getConversionFunctions,
   getKeyedConversionFunctions,
   isConvertedClassKey,
+  isConvertedElementKey,
+  isConvertedLiteralKey,
   isConvertedPropertyKey,
   isConvertedStringArgument,
   isAnyOperand,
@@ -7598,6 +7600,22 @@ export const enterClosure = (
       : [...environment.captures, environment.held];
   const written = environment.captures.filter((symbol) => isAssigned(symbol, closure, context));
   const heapSymbol = context.heap;
+  const entered = enterScope(
+    closure,
+    value,
+    getHeap(path.scope, closure, context),
+    path.scope,
+    context,
+  );
+  // A local that the closure copies and changes in place, as push changes an array that's a
+  // sequence, changes the copy alone, which a read after the call can't see, so the read stops.
+  const getKept = (symbol: ts.Symbol, after: Path) =>
+    !written.includes(symbol) && after.scope.bindings.get(symbol) !== entered.bindings.get(symbol)
+      ? apply("Assert", [
+          boolean(false),
+          string(`tla-ts can't read ${symbol.name} after a closure changes its copy in place`),
+        ])
+      : path.scope.bindings.get(symbol);
   const leave = (after: Path): Path => ({
     ...after,
     mutable: new Set(
@@ -7621,7 +7639,7 @@ export const enterClosure = (
       bindings: new Map([
         ...[...after.scope.bindings].filter((entry) => !captures.includes(entry[0])),
         ...captures.flatMap((symbol): [ts.Symbol, Expression][] => {
-          const kept = path.scope.bindings.get(symbol);
+          const kept = path.scope.bindings.has(symbol) ? getKept(symbol, after) : undefined;
           return kept === undefined ? [] : [[symbol, kept]];
         }),
         ...(heapSymbol === undefined || written.length === 0
@@ -7653,7 +7671,7 @@ export const enterClosure = (
     {
       ...path,
       mutable: new Set([...path.mutable, ...written]),
-      scope: enterScope(closure, value, getHeap(path.scope, closure, context), path.scope, context),
+      scope: entered,
     },
     {
       ...frame,
@@ -13946,47 +13964,78 @@ const translateWriteStatement = (
     ts.isBinaryExpression(expression) &&
     findNodes(expression.right, (node): node is ts.Expression => isAssignment(node)).length > 0;
   const canPut = useJavaScript("CanPut", [write.heap, write.ref, write.key], context);
+  // A typed array converts the value it writes at an index first, which throws for a value that
+  // isn't a number or a BigInt of its kind.
+  const typedError =
+    ts.isBinaryExpression(expression) &&
+    expression.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isElementAccessExpression(expression.left)
+      ? useJavaScript(
+          "TypedWriteError",
+          [
+            write.heap,
+            write.ref,
+            write.key,
+            translateExpression(skipCasts(expression.right), path.scope, context),
+          ],
+          context,
+        )
+      : undefined;
+  const throwTyped = (rest: Formula) =>
+    typedError === undefined
+      ? rest
+      : ifThenElse(
+          apply("=", [typedError, string("")]),
+          rest,
+          ifThenElse(
+            apply("=", [typedError, string("TypeError")]),
+            throwTypeError(path, expression, context, frame),
+            throwError("SyntaxError", path, expression, context, frame),
+          ),
+        );
   const translateWrite = (next: (path: Path) => Formula) =>
     throwOnNullish(
-      isStrictCode(expression) || isWritingRight
-        ? ifThenElse(
-            canPut,
-            shareHeap(path, assigned, context, next),
-            isStrictCode(expression)
-              ? throwTypeError(path, expression, context, frame)
-              : leaf(
-                  apply("Assert", [
-                    boolean(false),
-                    string("tla-ts can't ignore a failed write outside strict mode"),
-                  ]),
-                ),
-          )
-        : ifThenElse(
-            useJavaScript("IsThrowingSet", [write.heap, write.ref, write.key], context),
-            throwTypeError(path, expression, context, frame),
-            shareHeap(
-              path,
-              {
-                ...assigned,
-                scope: {
-                  ...assigned.scope,
-                  bindings: new Map([
-                    ...assigned.scope.bindings,
-                    [
-                      write.symbol,
-                      ifExpression(
-                        canPut,
-                        getHeap(assigned.scope, expression, context),
-                        write.heap,
-                      ),
-                    ],
-                  ]),
+      throwTyped(
+        isStrictCode(expression) || isWritingRight
+          ? ifThenElse(
+              canPut,
+              shareHeap(path, assigned, context, next),
+              isStrictCode(expression)
+                ? throwTypeError(path, expression, context, frame)
+                : leaf(
+                    apply("Assert", [
+                      boolean(false),
+                      string("tla-ts can't ignore a failed write outside strict mode"),
+                    ]),
+                  ),
+            )
+          : ifThenElse(
+              useJavaScript("IsThrowingSet", [write.heap, write.ref, write.key], context),
+              throwTypeError(path, expression, context, frame),
+              shareHeap(
+                path,
+                {
+                  ...assigned,
+                  scope: {
+                    ...assigned.scope,
+                    bindings: new Map([
+                      ...assigned.scope.bindings,
+                      [
+                        write.symbol,
+                        ifExpression(
+                          canPut,
+                          getHeap(assigned.scope, expression, context),
+                          write.heap,
+                        ),
+                      ],
+                    ]),
+                  },
                 },
-              },
-              context,
-              next,
+                context,
+                next,
+              ),
             ),
-          ),
+      ),
     );
   // A write of __proto__ runs Object.prototype's setter where the object inherits it.
   const heapSymbol = context.heap;
@@ -14283,7 +14332,11 @@ const isDispatchedCall = (
     (declarations.length === 0 &&
       !ts.isCallExpression(callee) &&
       !isSuperAccess(callee) &&
-      !(ts.isElementAccessExpression(callee) && ts.isStringLiteral(callee.argumentExpression)) &&
+      !(
+        ts.isElementAccessExpression(callee) &&
+        (ts.isStringLiteral(callee.argumentExpression) ||
+          ts.isNumericLiteral(callee.argumentExpression))
+      ) &&
       !isArgumentsElement(callee, context) &&
       !isAnyMember(callee, context)) ||
     (declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) &&
@@ -14891,7 +14944,7 @@ const getConvertedArrayValues = (node: ts.Node, context: Context) => {
   const values = node.arguments.slice(0, count);
   return count !== undefined &&
     values.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
-    ? { receiver: skipCasts(node.expression.expression), values }
+    ? { receiver: skipCasts(node.expression.expression), method: node.expression.name.text, values }
     : undefined;
 };
 
@@ -19698,9 +19751,9 @@ const isPlainCallee = (
       ts.isGetAccessorDeclaration,
     ) &&
     isPlainCallee(getCast(node.expression), context, results)) ||
-  // A key that a string literal writes reads as a name does.
+  // A key that a string or a number literal writes reads as a name does.
   (ts.isElementAccessExpression(node) &&
-    ts.isStringLiteral(node.argumentExpression) &&
+    (ts.isStringLiteral(node.argumentExpression) || ts.isNumericLiteral(node.argumentExpression)) &&
     getObjectGetter(node, context) === undefined &&
     !(getSymbol(node.argumentExpression, context.checker)?.declarations ?? []).some(
       ts.isGetAccessorDeclaration,
@@ -20493,7 +20546,12 @@ const findLeadingCall = (
   if ((ts.isExpression(node) || ts.isSpreadElement(node)) && path.scope.results.has(node)) {
     return none;
   }
-  if (isConvertedPropertyKey(node, context) || isConvertedStringArgument(node, context)) {
+  if (
+    isConvertedPropertyKey(node, context) ||
+    isConvertedStringArgument(node, context) ||
+    isConvertedElementKey(node, context) ||
+    isConvertedLiteralKey(node, context)
+  ) {
     return { ...blocked, conversion: node };
   }
   // An object that spreads a proxy runs its traps.
@@ -20679,6 +20737,28 @@ const findLeadingCall = (
       kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
     // A compound assignment reads its variable before it evaluates its right operand, so it
     // converts first only where that operand runs nothing.
+    // An assignment to a key that converts an object evaluates the object, the key, and the value,
+    // and then converts the key.
+    const written = skipCasts(node.left);
+    const writtenKey =
+      kind === ts.SyntaxKind.EqualsToken && ts.isElementAccessExpression(written)
+        ? skipCasts(written.argumentExpression)
+        : undefined;
+    if (
+      written !== undefined &&
+      ts.isElementAccessExpression(written) &&
+      writtenKey !== undefined &&
+      !path.scope.results.has(writtenKey) &&
+      isConvertedElementKey(writtenKey, context)
+    ) {
+      const found = inOrder([written.expression]);
+      if (found.call !== undefined || found.isBlocked) return found;
+      before.push(writtenKey);
+      const right = findLeadingCall(node.right, before, path, context);
+      return right.call !== undefined || right.isBlocked
+        ? right
+        : { ...blocked, conversion: writtenKey };
+    }
     // An assignment to a property evaluates the object and the key, and then the value.
     if (
       kind === ts.SyntaxKind.EqualsToken &&
@@ -22564,47 +22644,83 @@ export const translateStatements = (
       context,
       statementFrame,
       (after, primitives) => {
-        const run = translateStatements(
-          statements,
-          {
-            ...after,
-            scope: {
-              ...after.scope,
-              results: new Map([
-                ...after.scope.results,
-                ...values.flatMap((value, position) => {
-                  const primitive = index(primitives, [number(position + 1)]);
-                  return [[value, primitive] as const, [skipCasts(value), primitive] as const];
-                }),
-              ]),
-            },
+        const converted = {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([
+              ...after.scope.results,
+              ...values.flatMap((value, position) => {
+                const primitive = index(primitives, [number(position + 1)]);
+                return [[value, primitive] as const, [skipCasts(value), primitive] as const];
+              }),
+            ]),
           },
-          context,
-          frame,
+        };
+        const stop = leaf(
+          apply("Assert", [
+            boolean(false),
+            string(
+              "tla-ts can't follow an array method whose argument's conversion changed the array",
+            ),
+          ]),
         );
-        return ts.isIdentifier(receiver)
-          ? ifThenElse(
-              useJavaScript(
-                "ObjectKept",
-                [
-                  getHeap(path.scope, indexed.node, context),
-                  getHeap(after.scope, indexed.node, context),
-                  translateExpression(receiver, path.scope, context),
-                  translateExpression(receiver, after.scope, context),
-                ],
-                context,
-              ),
-              run,
-              leaf(
-                apply("Assert", [
-                  boolean(false),
-                  string(
-                    "tla-ts can't follow an array method whose argument's conversion changed the array",
+        if (!ts.isIdentifier(receiver))
+          return translateStatements(statements, converted, context, frame);
+        const heap = getHeap(path.scope, indexed.node, context);
+        const afterHeap = getHeap(after.scope, indexed.node, context);
+        const before = translateExpression(receiver, path.scope, context);
+        const current = translateExpression(receiver, after.scope, context);
+        // copyWithin copies with the length it read before it converted, through the elements that
+        // the array holds after.
+        const changeName = context.names.getFresh("change");
+        const change = identifier(changeName);
+        const copied =
+          indexed.method === "copyWithin"
+            ? ifThenElse(
+                useJavaScript("IsCopiedWithin", [heap, afterHeap, before, current], context),
+                bindOnce(
+                  converted,
+                  changeName,
+                  useJavaScript(
+                    "CopyWithinOf",
+                    [
+                      afterHeap,
+                      before,
+                      useJavaScript("LengthOf", [heap, before], context),
+                      ...translateCopyWithinArguments(values, converted.scope, context),
+                    ],
+                    context,
                   ),
-                ]),
-              ),
-            )
-          : run;
+                  ifThenElse(
+                    field(change, "isThrown"),
+                    throwTypeError(converted, indexed.node, context, statementFrame),
+                    translateStatements(
+                      statements,
+                      withHeap(
+                        {
+                          ...converted,
+                          scope: {
+                            ...converted.scope,
+                            results: new Map([...converted.scope.results, [indexed.node, before]]),
+                          },
+                        },
+                        field(change, "heap"),
+                        context,
+                      ),
+                      context,
+                      frame,
+                    ),
+                  ),
+                ),
+                stop,
+              )
+            : stop;
+        return ifThenElse(
+          useJavaScript("ObjectKept", [heap, afterHeap, before, current], context),
+          translateStatements(statements, converted, context, frame),
+          copied,
+        );
       },
     );
   }
