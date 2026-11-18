@@ -57966,4 +57966,100 @@ describe("runs the script's methods in a conversion inside at most one other", (
       ).toContain(expected);
     });
   });
+
+  describe("delegates a state machine's yield* to an object's iterator", () => {
+    const getSource = (expected: string) => `
+      const counts = { next: 0, closed: 0, thrown: 0, log: "" };
+      type Source = { [Symbol.iterator]: () => Iterator<number> };
+      const holder: { source: Source } = {
+        source: { [Symbol.iterator]: () => ({ next: () => ({ done: true, value: 0 }) }) },
+      };
+      function* delegate(): Generator<number, void, unknown> {
+        yield* holder.source;
+      }
+      holder.source = {
+        [Symbol.iterator]: function () {
+          return {
+            next() {
+              counts.next++;
+              return { done: false, value: 1 };
+            },
+            return() {
+              counts.closed++;
+              return { done: false, value: 5 };
+            },
+          };
+        },
+      };
+      const kept = delegate();
+      kept.next();
+      const returned = kept.return(undefined);
+      counts.log += returned.value + "" + returned.done;
+      holder.source = {
+        [Symbol.iterator]: function () {
+          return {
+            next() {
+              return { done: false, value: 2 };
+            },
+            throw(error: unknown) {
+              counts.thrown++;
+              throw error;
+            },
+          };
+        },
+      };
+      const thrown = delegate();
+      thrown.next();
+      try {
+        thrown.throw("boom");
+      } catch (error) {
+        counts.log += String(error);
+      }
+      const result = [counts.next, counts.closed, counts.thrown, counts.log].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1|1|1|5falseboom"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("1|1|1|5trueboom"))).failure?.message).toContain(
+        "1|1|1|5falseboom",
+      );
+    });
+
+    const getLive = (expected: string) => `
+      const box = { got: 0 };
+      let finished = false;
+      let received: unknown = undefined;
+      const quick = {
+        [Symbol.iterator]() {
+          return {
+            next(sent: unknown) {
+              received = sent;
+              return { done: finished, value: 3333 };
+            },
+          };
+        },
+      };
+      function* outer(): Generator<number, void, unknown> {
+        box.got = yield* quick;
+      }
+      const running = outer();
+      running.next(2222);
+      finished = true;
+      running.next(5555);
+      const result = [received, box.got].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on an iterator that reads what the code changed since", async () => {
+      expect((await checkModel(getLive("5555,3333"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the iterator", async () => {
+      expect((await checkModel(getLive("5555,0"))).failure?.message).toContain("5555,3333");
+    });
+  });
 });

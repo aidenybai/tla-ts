@@ -533,6 +533,7 @@ import {
 import {
   type Machine,
   type MachineDelegate,
+  type MachineIteratorDelegate,
   type MachineLoop,
   dispatchMachines,
   getMachine,
@@ -773,8 +774,10 @@ export interface Frame {
   inlining: Set<ts.Node>;
   // What runs a loop of a generator's body that yields, where a state machine runs the body.
   loopTo?: MachineLoop;
-  // What runs a yield* of a generator that a state machine runs, where one runs the body too.
+  // What runs a yield* of a generator that a state machine runs, or of an object's iterator, where
+  // one runs the body too.
   delegateTo?: MachineDelegate;
+  delegateIteratorTo?: MachineIteratorDelegate;
 }
 
 const COMPOUND_OPERATORS = new Map([
@@ -9484,23 +9487,36 @@ export const stepGenerator = (
       frame,
       (current, kind, value) => {
         const name = context.names.getFresh("heap");
+        const heap = getHeap(current.scope, node, context);
         const result = useJavaScript(
           "IteratorResult",
           [value, apply("=", [kind, string("return")])],
           context,
         );
-        return bindOnce(
-          current,
-          name,
-          useJavaScript("Allocate", [getHeap(current.scope, node, context), result], context),
-          continueWith(
-            withHeap(current, identifier(name), context),
-            useJavaScript("Allocated", [identifier(name)], context),
-          ),
-        );
+        const allocated = useJavaScript("Allocated", [identifier(name)], context);
+        // A yield* gives its iterator's result object as it is.
+        const isResult = apply("=", [kind, string("result")]);
+        return machine.machine?.hasResults === true
+          ? bindOnce(
+              current,
+              name,
+              ifExpression(isResult, heap, useJavaScript("Allocate", [heap, result], context)),
+              continueWith(
+                withHeap(current, identifier(name), context),
+                ifExpression(isResult, value, allocated),
+              ),
+            )
+          : bindOnce(
+              current,
+              name,
+              useJavaScript("Allocate", [heap, result], context),
+              continueWith(withHeap(current, identifier(name), context), allocated),
+            );
       },
+      machine.ref,
+      true,
     );
-  return dispatchMachines(receiver, path, stepWith, () =>
+  return dispatchMachines(receiver, path, context, stepWith, () =>
     resumeGenerator(
       node,
       receiver,
@@ -12963,6 +12979,10 @@ const delegateToIterator = (
   const throwWith = (current: Path, value: Expression) =>
     throwTo === undefined ? leaf(uncaught) : throwTo(current, { value, uncaught });
   const failWith = (failed: Path) => throwTypeError(failed, node, context, frame);
+  const delegateIteratorTo = frame.delegateIteratorTo;
+  if (delegateIteratorTo !== undefined) {
+    return delegateIteratorTo(node, iterated, path, frame, continueWith);
+  }
   // Calls the iterator's next, or the return or throw that resumed the generator, and yields the
   // result until it's done.
   const delegate = (iterator: Expression, next: Expression) => {
@@ -17480,11 +17500,19 @@ export const translateJoined = (
   context: Context,
   continueWith: (path: Path, value?: Expression) => Formula,
   translateWith: (next: (inner: Path, value?: Expression) => Formula) => Formula,
-  changed = getChanged(node, path, context),
+  written = getChanged(node, path, context),
 ): Formula => {
   if (context.heap === undefined || (path.isMachine === true && hasYield(node))) {
     return translateWith(continueWith);
   }
+  // A step of a state machine changes what its body changes outside it, which the node's own code
+  // doesn't show.
+  const changed = [
+    ...new Set([
+      ...written,
+      ...getSteppedOuter(node, path, context).filter((symbol) => path.scope.bindings.has(symbol)),
+    ]),
+  ];
   const isVar = (declaration: ts.VariableDeclaration) =>
     ts.isVariableDeclarationList(declaration.parent) &&
     (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0;
@@ -18201,6 +18229,7 @@ const translateForOfGenerator = (
     return dispatchMachines(
       receiver,
       start,
+      context,
       (machine) =>
         translateIterations(loop, start, context, frame, continueWith, receiver, machine),
       () =>
