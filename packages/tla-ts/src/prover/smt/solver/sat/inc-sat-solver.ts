@@ -318,14 +318,13 @@ export class IncSatSolver {
     const consequences: number[] = [];
     const internalized = this.internalizeFormulas();
     if (internalized !== L_TRUE) return { result: internalized, consequences };
+    const boolVars = vars.flatMap((expr) =>
+      this.internalizeVar(expr).filter((boolVar) => boolVar !== undefined),
+    );
     if (!assumptions.every((assumption) => isLiteral(this.manager, assumption)))
       throw new SmtUnsupportedError("get-consequences assumptions that are not literals");
     this.internalizeAssumptions(assumptions);
-    const found = getConsequences(
-      this.solver,
-      this.asms,
-      vars.flatMap((expr) => this.internalizeVar(expr).filter((boolVar) => boolVar !== undefined)),
-    );
+    const found = getConsequences(this.solver, this.asms, boolVars);
     if (found.result === L_FALSE && this.asms.length > 0) this.extractCore(new Map());
     if (found.result === L_FALSE) return { result: found.result, consequences };
     const boolVar2conseq = new Map<number, number[]>();

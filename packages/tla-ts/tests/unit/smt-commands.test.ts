@@ -1202,6 +1202,20 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("leaves out the variables that only the assumptions of get-consequences bring in", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or p q))",
+        "(get-consequences (r) (r p))",
+        "(get-consequences (r (not p)) (r p q))",
+      ]),
+    ).toEqual(["sat", "", "sat", "", "(=> r r)", "(=> (not p) (not p))", "(=> (not p) q)"]);
+  });
+
   it("orders the model of the SAT solver by its variables, as inc_sat_solver registers them", () => {
     expect(
       run([
