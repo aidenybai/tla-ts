@@ -10,6 +10,7 @@ import {
   type FunctionDefinition,
   type Instance,
   type Module,
+  type OperatorDefinition,
   type OperatorParam,
   type SourceLocation,
   type Theorem,
@@ -848,20 +849,23 @@ export const getFunctionBody = (definition: FunctionDefinition): Expression =>
       }
     : getFunctionConstruction(definition, true);
 
+export const getOperatorDefinition = (definition: Definition): OperatorDefinition =>
+  definition.kind === "Operator"
+    ? definition
+    : {
+        kind: "Operator",
+        name: definition.name,
+        params: [],
+        body: getFunctionBody(definition),
+        isLocal: definition.isLocal,
+        isRecursive: false,
+        location: definition.location,
+      };
+
 export const withInstanceParams = (definition: Definition, params: OperatorParam[]): Definition => {
   if (params.length === 0) return definition;
-  if (definition.kind === "Operator") {
-    return { ...definition, params: [...params, ...definition.params] };
-  }
-  return {
-    kind: "Operator",
-    name: definition.name,
-    params,
-    body: getFunctionBody(definition),
-    isLocal: definition.isLocal,
-    isRecursive: false,
-    location: definition.location,
-  };
+  const operator = getOperatorDefinition(definition);
+  return { ...operator, params: [...params, ...operator.params] };
 };
 
 const copyDefinition = (rewrite: Rewrite, key: string): string => {
@@ -935,11 +939,11 @@ export const createInstantiation = (instantiation: Instantiation) => {
   const getEntry = (key: string, copy: string) => {
     const frame = instantiation.frame;
     const definition = instantiation.getDefinition(copy);
-    if (!frame || definition?.kind !== "Operator") return copy;
-    return instantiation.addDefinition(key, definition.name, () => ({
-      ...definition,
-      body: withSubstitutionFrames(definition.body, [frame]),
-    }));
+    if (!frame || !definition) return copy;
+    return instantiation.addDefinition(key, definition.name, () => {
+      const operator = getOperatorDefinition(definition);
+      return { ...operator, body: withSubstitutionFrames(operator.body, [frame]) };
+    });
   };
   return {
     getKey: (key: string) => {

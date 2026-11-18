@@ -1785,6 +1785,19 @@ describe("evaluation errors match TLC", () => {
       "L!G(1)!1",
       ["M 6:9-6:21", "M 6:14-6:21", "M 4:1-4:34", "Inner 5:9-5:12", "Inner 4:9-4:13"],
     ],
+    [
+      "L == INSTANCE Inner WITH c <- TRUE",
+      "L!k[1]",
+      [
+        "M 6:9-6:19",
+        "M 6:14-6:19",
+        "M 6:14-6:16",
+        "M 4:1-4:34",
+        "Inner 9:1-9:24",
+        "Inner 9:9-9:18",
+        "Inner 9:13-9:17",
+      ],
+    ],
   ])(
     "records the substitutions of %s where its name reaches %s, not in the calls and functions it reaches, like TLC",
     async (instance, reference, expected) => {
@@ -1793,7 +1806,7 @@ describe("evaluation errors match TLC", () => {
         config: "INIT Init\nNEXT Next",
         loadModule: (name) =>
           name === "Inner"
-            ? "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nF(a) == a + c\nG(a) == F(a) + 1\nh[z \\in {1, 2}] == z + c\nH == h[1] + 1\nK == {c + 1, 2}\n===="
+            ? "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nF(a) == a + c\nG(a) == F(a) + 1\nh[z \\in {1, 2}] == z + c\nH == h[1] + 1\nK == {c + 1, 2}\nk[z \\in {1, c + 1}] == z\n===="
             : undefined,
       });
       const ranges = result.failure?.callStack?.flatMap((expression) => {

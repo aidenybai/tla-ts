@@ -45,8 +45,8 @@ import {
   createLocalArguments,
   createLocalIdentifier,
   getEnabledVariableName,
-  getFunctionBody,
   getLetInstanceExpansion,
+  getOperatorDefinition,
   renameLocals,
   withInstanceParams,
   withSubstitutionFrames,
@@ -210,13 +210,9 @@ const getNodeClass = (kind: SymbolKind) =>
   kind === "Theorem" ? "ThmOrAssumpDefNode" : getNodeWord(kind);
 
 const createLocalFunction = (definition: FunctionDefinition, key: string): Definition => ({
-  kind: "Operator",
+  ...getOperatorDefinition(definition),
   name: key,
-  params: [],
-  body: getFunctionBody(definition),
   isLocal: true,
-  isRecursive: false,
-  location: definition.location,
 });
 
 const getSubstitutionFrame = (instance: Instance): Expression => {
