@@ -5,9 +5,9 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getPreludeGraph, prepareJavaScriptModule } from "../src/typescript/javascript";
 
-// The string in each quoting a bundler may write it with.
-const PLACEHOLDER =
-  /'"tla-ts:prelude-graph"'|"\\"tla-ts:prelude-graph\\""|`"tla-ts:prelude-graph"`/;
+// The strings in each quoting a bundler may write them with: the tables' JSON, and the stream.
+const TABLES = /'"tla-ts:prelude-tables"'|"\\"tla-ts:prelude-tables\\""|`"tla-ts:prelude-tables"`/;
+const STREAM = /(["'`])tla-ts:prelude-stream\1/;
 
 const isOptional = process.argv.includes("--if-present");
 const directories = process.argv.slice(2).filter((argument) => argument !== "--if-present");
@@ -18,16 +18,20 @@ const bundles = directories
       .map((name) => join(directory, name)),
   )
   .map((path) => ({ path, text: readFileSync(path, "utf8") }))
-  .filter((bundle) => PLACEHOLDER.test(bundle.text));
+  .filter((bundle) => TABLES.test(bundle.text));
 if (bundles.length === 0 && !isOptional) {
   throw new Error(`No bundle in ${directories.join(", ")} holds the prelude graph`);
 }
 if (bundles.length > 0) {
-  const literal = JSON.stringify(JSON.stringify(getPreludeGraph(prepareJavaScriptModule())));
+  const graph = getPreludeGraph(prepareJavaScriptModule());
+  const tables = JSON.stringify(JSON.stringify(graph.tables));
+  const stream = JSON.stringify(graph.stream);
   bundles.forEach((bundle) =>
     writeFileSync(
       bundle.path,
-      bundle.text.replaceAll(new RegExp(PLACEHOLDER, "g"), () => literal),
+      bundle.text
+        .replaceAll(new RegExp(TABLES, "g"), () => tables)
+        .replaceAll(new RegExp(STREAM, "g"), () => stream),
     ),
   );
 }

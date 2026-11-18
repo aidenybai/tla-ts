@@ -31,12 +31,13 @@ describe("the prepared JavaScript module", () => {
   const graph = getPreludeGraph(prepareJavaScriptModule());
 
   it("is in the built bundle as a fresh preparation writes it", () => {
-    const literal = JSON.stringify(JSON.stringify(graph));
+    const tables = JSON.stringify(JSON.stringify(graph.tables));
+    const stream = JSON.stringify(graph.stream);
     const dist = join(import.meta.dirname, "../../dist");
     const bundles = readdirSync(dist)
       .filter((name) => name.endsWith(".js"))
       .map((name) => readFileSync(join(dist, name), "utf8"));
-    expect(bundles.some((text) => text.includes(literal))).toBe(true);
+    expect(bundles.some((text) => text.includes(tables) && text.includes(stream))).toBe(true);
   });
 
   it("reads back as the graph it was written from", () => {

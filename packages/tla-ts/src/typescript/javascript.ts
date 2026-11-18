@@ -8921,20 +8921,25 @@ export const prepareJavaScriptModule = (): PreparedModule => {
 export const getPreludeGraph = (prepared: PreparedModule) =>
   encodeGraph({ tokens: prepared.tokens, module: prepared.module, levels: prepared.levels });
 
-// The build writes the prepared module's graph as JSON in place of this string, so that a process
-// reads the module rather than prepares it again. Unbuilt, it is JSON for a string.
-const PRELUDE_GRAPH = '"tla-ts:prelude-graph"';
-const encodedPrelude: unknown = JSON.parse(PRELUDE_GRAPH);
-const PRELUDE: PreparedModule = Array.isArray(encodedPrelude)
-  ? {
-      name: "JavaScript",
-      text: JAVASCRIPT_MODULE,
-      ...(decodeGraph(encodedPrelude as EncodedGraph) as Pick<
-        PreparedModule,
-        "tokens" | "module" | "levels"
-      >),
-    }
-  : prepareJavaScriptModule();
+// The build writes the prepared module's graph in place of these strings, its tables as JSON and
+// its stream as it is, so that a process reads the module rather than prepares it again. Unbuilt,
+// the tables are JSON for a string.
+const PRELUDE_TABLES = '"tla-ts:prelude-tables"';
+const PRELUDE_STREAM = "tla-ts:prelude-stream";
+const readPrelude = (): PreparedModule => {
+  const tables: unknown = JSON.parse(PRELUDE_TABLES);
+  return Array.isArray(tables)
+    ? {
+        name: "JavaScript",
+        text: JAVASCRIPT_MODULE,
+        ...(decodeGraph({
+          tables: tables as EncodedGraph["tables"],
+          stream: PRELUDE_STREAM,
+        }) as Pick<PreparedModule, "tokens" | "module" | "levels">),
+      }
+    : prepareJavaScriptModule();
+};
+const PRELUDE = readPrelude();
 
 const getReadNames = (text: string) => [...(text.match(/\b[A-Z]\w*\b/g) ?? [])];
 
