@@ -3428,7 +3428,12 @@ export const getViewCall = (node: ts.Node, context: Context) => {
     declaration.getSourceFile().isDeclarationFile
       ? { owner: declaration.parent.name.text, method: declaration.name.getText() }
       : undefined;
-  const type = context.checker.getTypeAtLocation(target);
+  // An optional chain's link reads its receiver only where that isn't null or undefined.
+  const read = context.checker.getTypeAtLocation(target);
+  const type =
+    node.expression.questionDotToken === undefined
+      ? read
+      : context.checker.getNonNullableType(read);
   const typeNames =
     declared === undefined
       ? (type.isUnion() ? type.types : [type]).map((member) => member.getSymbol()?.name ?? "")

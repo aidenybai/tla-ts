@@ -54971,4 +54971,45 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("3,6,5"))).failure?.message).toContain("seen 3,6,4");
     });
   });
+
+  describe("ends a call at its method's own ?. where the receiver is undefined", () => {
+    const getSource = (expected: string) => `
+      const target = { id: 1 };
+      const refs = new Map<number, WeakRef<{ id: number }>>();
+      refs.set(1, new WeakRef(target));
+      const find = (id: number) => {
+        const found = refs.get(id)?.deref();
+        if (!found) {
+          refs.delete(id);
+          return null;
+        }
+        return found.id;
+      };
+      const seen = [find(1), find(2), refs.size].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another size", async () => {
+      expect((await checkModel(getSource("1,,2"))).failure?.message).toContain("seen 1,,1");
+    });
+
+    it("stops where an argument that calls would run before the check", () => {
+      expect(() =>
+        compile(`
+          const box = { log: "" };
+          const runner = { run: (value: string) => value.length };
+          const pick = (has: boolean) => (has ? runner : undefined);
+          const note = (value: string) => {
+            box.log += value;
+            return value;
+          };
+          const second = pick(false)?.run(note("b"));
+        `),
+      ).toThrow("Optional chaining isn't supported");
+    });
+  });
 });

@@ -2749,14 +2749,19 @@ const translateCallStatementBody = (
       ),
     );
   }
-  // A ?. before the method that the call reads, as in frames.at(-1)?.heirs.push(node), ends the
-  // whole call where its base is undefined or null, before any argument runs.
+  // A ?. before the method that the call reads, as in frames.at(-1)?.heirs.push(node), or at it,
+  // as in refs.get(id)?.deref(), ends the whole call where its base is undefined or null.
   const getLinks = (link: ts.Expression): ts.Expression[] =>
     ts.isOptionalChain(link) ? [link, ...getLinks(link.expression)] : [];
   const method = expression.expression;
+  // The method's own ?. ends the call before its arguments, which run first where they call.
   const optional = (
     ts.isPropertyAccessExpression(method) || ts.isElementAccessExpression(method)
-      ? getLinks(method.expression)
+      ? getLinks(
+          expression.arguments.some((argument) => hasCall(argument, context))
+            ? method.expression
+            : method,
+        )
       : []
   )
     .filter(
