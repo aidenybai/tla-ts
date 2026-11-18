@@ -1197,7 +1197,7 @@ export const runSmtlibScript = (
         const name = list.items[2];
         getDatalog().addRule(
           state.reader.parseFormula(rule, rule),
-          isSymbol(name) ? name.text : "",
+          isSymbol(name) ? name.text : undefined,
         );
       },
     ],

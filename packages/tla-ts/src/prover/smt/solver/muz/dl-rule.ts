@@ -47,7 +47,7 @@ export class Rule {
     readonly isNegated: boolean[],
     readonly uninterpretedSize: number,
     readonly positiveSize: number,
-    readonly name: string,
+    readonly name: string | undefined,
   ) {}
 
   getDecl(manager: AstManager) {
@@ -64,9 +64,9 @@ export class Rule {
     return false;
   }
 
-  // symbol::str of the name, where the empty name is the null symbol.
+  // symbol::str of the name, where undefined is the null symbol.
   getNameText() {
-    return this.name === "" ? "<null>" : this.name;
+    return this.name ?? "<null>";
   }
 
   display(context: DatalogContext) {
@@ -225,20 +225,20 @@ export class RuleManager {
     return expr;
   }
 
-  mkRule(fml: number, rules: RuleSet, name = "") {
+  mkRule(fml: number, rules: RuleSet, name?: string) {
     const bound = this.context.bindVars(fml, true);
     if (this.manager.hasLabelFlags[bound]) throw new SmtUnsupportedError("labels in Horn rules");
     this.mkRuleCore(bound, rules, name);
   }
 
-  private mkRuleCore(fml: number, rules: RuleSet, name: string) {
+  private mkRuleCore(fml: number, rules: RuleSet, name: string | undefined) {
     this.hnf.setName(name);
     const fmls = this.hnf.apply(fml);
     for (const predicate of this.hnf.freshPredicates) this.context.registerPredicate(predicate);
     for (const horn of fmls) this.mkHornRule(horn, rules, name);
   }
 
-  private mkHornRule(fml: number, rules: RuleSet, name: string) {
+  private mkHornRule(fml: number, rules: RuleSet, name: string | undefined) {
     const manager = this.manager;
     const body: number[] = [];
     const extracted = this.extractHorn(fml, body);
@@ -307,7 +307,7 @@ export class RuleManager {
     head: number,
     tail: readonly number[],
     isNegated: readonly boolean[],
-    name = "",
+    name?: string,
     isNormalizing = true,
   ) {
     const manager = this.manager;

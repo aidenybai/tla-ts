@@ -259,6 +259,18 @@ describe("rule errors", () => {
     );
   });
 
+  it("names a rule || with the empty symbol rather than the null one", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-rel p (Int))",
+        "(declare-var x Int)",
+        "(rule (=> (= x (f 1)) (p x)) ||)",
+        "(query p)",
+      ]),
+    ).toEqual(getFailedQuery("Uninterpreted 'f' in :\np(#0) :- \n (= (:var 0) (f 1)).\n"));
+  });
+
   it("visits the patterns of a quantifier", () => {
     expect(
       run([

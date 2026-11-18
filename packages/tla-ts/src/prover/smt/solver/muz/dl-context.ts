@@ -112,7 +112,7 @@ export class DatalogContext {
   private isBindingVariables = true;
   ruleSet: RuleSet;
   private ruleFmls: number[] = [];
-  private ruleNames: string[] = [];
+  private ruleNames: (string | undefined)[] = [];
   private ruleFmlsHead = 0;
   readonly background: number[] = [];
   private isClosed = false;
@@ -181,7 +181,7 @@ export class DatalogContext {
     return result;
   }
 
-  addRule(fml: number, name = "") {
+  addRule(fml: number, name?: string) {
     this.manager.incRef(fml);
     this.ruleFmls.push(fml);
     this.ruleNames.push(name);
