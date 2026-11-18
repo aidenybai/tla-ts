@@ -1,14 +1,23 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import { translateAction } from "./actions";
+import { allocateArguments, translateAction } from "./actions";
 import { type Context, getSymbol, isMethodCall } from "./context";
 import type { Sections } from "./emit";
 import { translateExpression } from "./expressions";
-import { render } from "./formula";
+import { letIn, render } from "./formula";
 import type { Exported } from "./model";
 import { link } from "./regions";
 import { bindNames, createStateScope, declareParameters, type Parameter } from "./scope";
-import { apply, bound, call, fairness as getFairness, identifier, junction, quantify } from "./tla";
+import {
+  apply,
+  bound,
+  call,
+  fairness as getFairness,
+  identifier,
+  junction,
+  quantify,
+  tuple,
+} from "./tla";
 import {
   collectUnknowns,
   defineWithUnknowns,
@@ -155,8 +164,17 @@ export const translateStep = (definition: Exported, sections: Sections, context:
     new Map(),
     context,
   );
+  // TLC passes the action its parameters, which its arguments object holds.
+  const scope = bindNames(createStateScope(context), parameters);
+  const made = allocateArguments(
+    definition.node,
+    tuple(parameters.map((parameter) => identifier(parameter.name))),
+    definition.node,
+    { definitions: [], scope },
+    context,
+  );
   const action = collectUnknowns(definition.node, context, () =>
-    translateAction(guards.remaining, bindNames(createStateScope(context), parameters), context),
+    letIn(made.definitions, translateAction(guards.remaining, made.scope, context)),
   );
   const head = call(
     name,

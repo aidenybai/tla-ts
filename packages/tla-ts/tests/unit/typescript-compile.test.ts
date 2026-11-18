@@ -54217,4 +54217,31 @@ describe("BigInts", () => {
       expect((await check(compile(wrong, path))).failure?.message).toContain("result 2,1,function");
     });
   });
+
+  describe("gives an exported action the arguments object of the call that TLC makes", () => {
+    const getSource = (invariant: string) => `
+      const width = Uint8Array.BYTES_PER_ELEMENT;
+      export let count = 0;
+      export let last = 0;
+      export function record(key: 1 | 2): void {
+        if (count >= 3) return;
+        last = (arguments[0] as number) * 10 + arguments.length * width;
+        count += 1;
+      }
+      export const isRecorded = () => ${invariant};
+      record(2);
+      if (last !== 21) throw new Error("last " + last);
+    `;
+
+    it("agrees with Node, and disables the action where it changes nothing else", async () => {
+      const result = await checkModel(getSource("count === 0 || last === 11 || last === 21"));
+      expect([result.status, result.failure]).toEqual(["deadlock", undefined]);
+    });
+
+    it("rejects another value of the arguments object", async () => {
+      expect((await checkModel(getSource("count === 0 || last === 21"))).status).toBe(
+        "invariant-violation",
+      );
+    });
+  });
 });

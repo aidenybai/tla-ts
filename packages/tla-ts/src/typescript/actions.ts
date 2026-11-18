@@ -22876,11 +22876,14 @@ export const translateAction = (
 ): Formula => {
   const heapSymbol = context.heap;
   const heap = heapSymbol === undefined ? undefined : context.variables.get(heapSymbol);
+  // The heap that the action starts from, which holds the arguments object that TLC's call makes,
+  // and which no action changes where nothing else changes it.
+  const start = heapSymbol === undefined ? undefined : scope.bindings.get(heapSymbol);
   const finish = (path: Path): Formula => {
-    const assignments = [...context.variables].map((entry) => ({
-      name: entry[1],
-      value: path.scope.bindings.get(entry[0]) ?? entry[1],
-    }));
+    const assignments = [...context.variables].map((entry) => {
+      const value = path.scope.bindings.get(entry[0]) ?? entry[1];
+      return { name: entry[1], value: entry[1] === heap && value === start ? entry[1] : value };
+    });
     const changedHeap = assignments.find(
       (assignment) => assignment.name === heap && assignment.value !== heap,
     )?.value;
