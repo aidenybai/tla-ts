@@ -286,3 +286,28 @@ it("finds a violation past a revisited state, which TLC's LiveCheck1 misses", ()
     ],
   ]);
 });
+
+it("reports each property it fails to evaluate on the lasso before the properties the lasso violates, as TLC's Liveness does", () => {
+  const reported: string[] = [];
+  simulate({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x\' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x\nProp0 == <>(x = 5)\nProp1 == <>(x = "a")\n====',
+    config: "SPECIFICATION Spec\nPROPERTY Prop0\nPROPERTY Prop1",
+    seed: 4n,
+    traceDepth: 5,
+    traceCount: 2n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "message" && output.isError) reported.push(output.message);
+    },
+    onProgress: (progress) => {
+      if (progress.kind === "violation") reported.push(...(progress.violation.properties ?? []));
+    },
+  });
+  expect(reported).toEqual([
+    'TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check equality of integer 0 with non-integer:\n"a"',
+    "Prop0",
+  ]);
+});

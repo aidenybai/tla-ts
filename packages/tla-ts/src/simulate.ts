@@ -35,6 +35,7 @@ import {
   isHeadedError,
   MESSAGE_CODE,
   withUnexpectedException,
+  type FailureMessage,
 } from "./tlc/messages";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
 import { replayInitialStates } from "./tlc/replay";
@@ -97,6 +98,7 @@ interface WorkerError {
   isException: boolean;
   isSummarized: boolean;
   violation?: Violation;
+  failures?: FailureMessage[];
   counterExample?: Value;
 }
 
@@ -619,6 +621,7 @@ export const simulate = (options: SimulationOptions): number => {
         loopStart,
         loopLabel: back && getActionLabel(back.action, options.version, back.level === 1),
       },
+      failures: found.failures.map((failure) => toException(failure, last)),
       counterExample: getCounterExample(lasso, steps, { start: loopStart, action: loopAction }),
     };
   };
@@ -713,6 +716,9 @@ export const simulate = (options: SimulationOptions): number => {
   const reported = printed === -1 ? errors : errors.slice(0, printed + 1);
   reported.forEach((error) => {
     if (error.violation) {
+      error.failures?.forEach((failure) =>
+        reportMessage(failure.code, failure.message, failure.toolMessage),
+      );
       options.onProgress?.({
         kind: "violation",
         status: "liveness-violation",

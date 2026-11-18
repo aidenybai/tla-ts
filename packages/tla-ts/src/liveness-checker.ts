@@ -54,6 +54,7 @@ export interface LivenessChecker {
 
 export interface TraceViolation extends TraceLasso {
   properties: string[];
+  failures: TlaEvaluationError[];
 }
 
 export interface LivenessChecks {
@@ -349,13 +350,19 @@ const getViolatedProperties = (
   path: Value[][],
   cycleStart: number,
   environment: Environment,
+  failures?: TlaEvaluationError[],
 ) => [
   ...new Set(
     properties
-      .filter(
-        (_property, position) =>
-          !evaluateOnLasso(checks[position], path, cycleStart, 0, environment),
-      )
+      .filter((_property, position) => {
+        try {
+          return !evaluateOnLasso(checks[position], path, cycleStart, 0, environment);
+        } catch (error) {
+          if (!failures || !(error instanceof TlaEvaluationError)) throw error;
+          failures.push(error);
+          return false;
+        }
+      })
       .map((property) => property.name),
   ),
 ];
@@ -374,18 +381,18 @@ export const createLivenessChecks = (
     solutions,
     findTraceViolation: (trace, fingerprints) => {
       const lasso = findTraceLasso(trace, fingerprints, solutions, atoms, isShared);
-      return (
-        lasso && {
-          ...lasso,
-          properties: getViolatedProperties(
-            properties,
-            live.checks,
-            lasso.positions.map((position) => trace[position]),
-            lasso.cyclePosition - 1,
-            environment,
-          ),
-        }
+      if (!lasso) return undefined;
+      // Liveness#findViolatedProperties reports a property it fails to evaluate on the lasso and goes on.
+      const failures: TlaEvaluationError[] = [];
+      const violated = getViolatedProperties(
+        properties,
+        live.checks,
+        lasso.positions.map((position) => trace[position]),
+        lasso.cyclePosition - 1,
+        environment,
+        failures,
       );
+      return { ...lasso, properties: violated, failures };
     },
   };
 };
