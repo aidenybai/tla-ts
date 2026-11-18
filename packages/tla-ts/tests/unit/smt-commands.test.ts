@@ -1724,6 +1724,45 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("gets the objectives of the last check-sat that optimized, and none before the first", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const x Int)",
+        "(get-objectives)",
+        "(assert-soft p)",
+        "(get-objectives  )",
+        "(check-sat)",
+        "(get-objectives)",
+        "(push)",
+        "(minimize x)",
+        "(get-objectives)",
+        "(reset-assertions)",
+        "(get-objectives)",
+        "(assert-soft p)",
+        "(get-objectives)",
+        "(check-sat)",
+        "(get-objectives)",
+      ]),
+    ).toEqual([
+      "(objectives",
+      ")",
+      '(error "line 5 column 17: check-sat has not been called with latest objectives")',
+      "sat",
+      "(objectives",
+      " ( 0)",
+      ")",
+      '(error "line 10 column 15: check-sat has not been called with latest objectives")',
+      "(objectives",
+      ")",
+      '(error "line 14 column 15: check-sat has not been called with latest objectives")',
+      "sat",
+      "(objectives",
+      " ( 0)",
+      ")",
+    ]);
+  });
+
   it("leaves the definitions of a popped scope out of the model", () => {
     expect(
       run([

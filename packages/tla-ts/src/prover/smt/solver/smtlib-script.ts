@@ -401,6 +401,8 @@ interface ScriptState {
   // The objective of each soft constraint, in the order they were asserted.
   softTrail: number[];
   optimizer: OptContext | undefined;
+  // The number of objectives at the last check-sat that optimized, as opt::context keeps them.
+  checkedObjectives: number;
   scopes: Scope[];
   check: CheckResult | undefined;
   isProofsEnabled: boolean | undefined;
@@ -477,6 +479,7 @@ export const runSmtlibScript = (
       objectives: [],
       softTrail: [],
       optimizer: undefined,
+      checkedObjectives: 0,
       scopes: [],
       check: undefined,
       isProofsEnabled: undefined,
@@ -536,6 +539,7 @@ export const runSmtlibScript = (
       manager.incRef(form);
       return form;
     });
+    state.checkedObjectives = objectives.length;
     state.optimizer ??= new OptContext(
       manager,
       {
@@ -1546,6 +1550,7 @@ export const runSmtlibScript = (
         restoreAssertions(0);
         resetOptimizer();
         releaseObjectives(0, 0);
+        state.checkedObjectives = 0;
         state.scopes = state.scopes.map((scope) => ({
           ...scope,
           assertions: 0,
@@ -1881,10 +1886,15 @@ export const runSmtlibScript = (
     ],
     [
       "get-objectives",
-      () => {
+      (list) => {
+        if (state.objectives.length !== state.checkedObjectives)
+          throw new SmtParseError("check-sat has not been called with latest objectives", list.end);
+        if (state.objectives.length === 0) {
+          print("(objectives\n)");
+          return;
+        }
         const optimizer = state.optimizer;
-        if (optimizer === undefined || state.check === undefined)
-          throw new SmtUnsupportedError("the command get-objectives");
+        if (optimizer === undefined) throw new SmtUnsupportedError("the command get-objectives");
         print(optimizer.getObjectives(format));
       },
     ],
