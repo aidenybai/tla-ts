@@ -1,8 +1,9 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import type { PreparedModule } from "../../tlc/order";
-import { foldNames } from "./library";
+import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
+import { LOCALE_METHODS } from "./runtime";
 import { specialize } from "./specialize";
 
 export interface EscoreSpec {
@@ -12,13 +13,6 @@ export interface EscoreSpec {
   loadModule: (name: string) => string | undefined;
   preparedModules: PreparedModule[];
 }
-
-// The operators of the runtime that a program's code takes the place of, by the names that the
-// config substitutes for them.
-const HOOKS = new Map([
-  ["CallCode", "ProgramCallCode"],
-  ["LoopIteration", "ProgramLoopIteration"],
-]);
 
 // Compiles a TypeScript script to a spec whose Init runs it as ESCore runs a script: the realm,
 // then the script, then the jobs it queued. An uncaught exception fails Init's assertion. The
@@ -63,6 +57,18 @@ export const compileToEscore = (
     );
   }
   const isQueuing = program.words.has("Promise") || program.words.has("then");
+  const isIncluded = (gate: EscoreRuntime["gates"][number]) =>
+    [...gate.triggers].some((word) => program.words.has(word));
+  const included = runtime.gates.filter(isIncluded);
+  const kept = new Set(included.flatMap((gate) => gate.reached));
+  // The operators of the groups that the program names none of the triggers of.
+  const leaves = runtime.gates
+    .filter((gate) => !isIncluded(gate))
+    .flatMap((gate) => gate.stubs)
+    .filter((stub) => !kept.has(stub.name));
+  const leftOut = new Set(
+    runtime.gates.filter((gate) => !isIncluded(gate)).map((gate) => gate.group),
+  );
   const definitions = [
     ...program.definitions,
     {
@@ -72,14 +78,33 @@ export const compileToEscore = (
         ? "RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE RunJobs(p.s)"
         : "RunProgram(s) == Program(s)",
     },
+    {
+      name: "CallBuiltin",
+      arity: 6,
+      text: getCallBuiltin(
+        "CallBuiltin",
+        runtime.families.filter((family) => !leftOut.has(family.group)),
+        LOCALE_METHODS,
+      ),
+    },
   ].map((definition) => ({
-    name: HOOKS.get(definition.name) ?? definition.name,
+    name: HOOKS.has(definition.name) ? `Program${definition.name}` : definition.name,
     arity: definition.arity,
     text: foldNames(
-      definition.text.replace(/\b(?:CallCode|LoopIteration)\b/g, (name) => HOOKS.get(name) ?? name),
+      definition.text.replace(
+        /\b(?:CallCode|LoopIteration|CallBuiltin)\b/g,
+        (name) => `Program${name}`,
+      ),
     ),
   }));
-  const code = [
+  const code = definitions.map((definition) => definition.text).join("\n");
+  const view = runtime.getView(
+    `${code}\n${ROOT}\n${CONFIG}`,
+    leaves.map((leaf) => leaf.name),
+  );
+  const viewed = new Set(view.module.definitions.map((definition) => definition.name));
+  const stubs = leaves.filter((leaf) => viewed.has(leaf.name));
+  const module = [
     "---- MODULE ProgramCode ----",
     "EXTENDS ESRuntime",
     ...definitions
@@ -88,15 +113,21 @@ export const compileToEscore = (
         (definition) =>
           `RECURSIVE ${definition.name}(${Array.from({ length: definition.arity }, () => "_").join(", ")})`,
       ),
-    ...definitions.map((definition) => definition.text),
+    code,
+    ...stubs.map(
+      (stub) =>
+        `Stub${stub.name}(${Array.from({ length: stub.arity }, (_, index) => `p${index + 1}`).join(", ")}) == Assert(FALSE, "tla-ts can't run ${stub.name}, which this program's spec leaves out of ESCore")`,
+    ),
     "====",
     "",
   ].join("\n");
   return {
     name: "Program",
     source: ROOT,
-    config: CONFIG,
-    loadModule: (name) => (name === "ProgramCode" ? code : undefined),
-    preparedModules: runtime.modules,
+    config: [CONFIG, ...stubs.map((stub) => `CONSTANT ${stub.name} <- Stub${stub.name}`), ""].join(
+      "\n",
+    ),
+    loadModule: (name) => (name === "ProgramCode" ? module : undefined),
+    preparedModules: [...runtime.modules, view],
   };
 };

@@ -9,19 +9,40 @@ import { parseModuleTokens } from "../../parser";
 import { createCheckEnvironment } from "../../search";
 import { getParsedTexts, type PreparedModule } from "../../tlc/order";
 import type { Value } from "../../values";
-import { assembleRuntime, createLibrary } from "./library";
+import { createModuleView } from "../../module-view";
+import { assembleRuntime, createLibrary, type Family, getDependencies, HOOKS } from "./library";
 import {
   getHostDefinitions,
   getHostOnlyGlobals,
   getHostOnlyKeys,
   getRealmDefinitions,
   INTERPRETER,
-  LOCALE_METHODS,
   RUNTIME_DEFINITIONS,
 } from "./runtime";
 
+interface Stub {
+  name: string;
+  arity: number;
+}
+
+// A group of ESCore's parts that a program's spec leaves out when its program names none of the
+// group's triggers: the group's operators that the spec stops at in their place, and the operators
+// of other groups' stubs that the group's own operators name, which a spec with the group keeps.
+export interface Gate {
+  group: string;
+  triggers: ReadonlySet<string>;
+  stubs: Stub[];
+  reached: string[];
+}
+
 export interface EscoreRuntime {
+  // The modules that the runtime extends, which every program's spec links whole.
   modules: PreparedModule[];
+  // The runtime with the definitions that a text reads, and the leaves given without what they
+  // read.
+  getView: (text: string, leaves: readonly string[]) => PreparedModule;
+  families: Family[];
+  gates: Gate[];
   // The host's globals and built-in keys that ESCore's realm lacks, at whose names a compile stops.
   hostOnlyGlobals: string[];
   hostOnlyKeys: string[];
@@ -44,17 +65,23 @@ Next == UNCHANGED programDone
 // The program's code is ProgramCode's, which the config puts in place of the runtime's hooks.
 export const CONFIG = `INIT Init
 NEXT Next
-CONSTANTS None = None Empty = Empty Absent = Absent CallCode <- ProgramCallCode LoopIteration <- ProgramLoopIteration
+CONSTANTS None = None Empty = Empty Absent = Absent
+${[...HOOKS.keys()].map((hook) => `CONSTANT ${hook} <- Program${hook}`).join("\n")}
 `;
 
 // A program with no code, with which the runtime is checked and started.
-const EMPTY_PROGRAM = `---- MODULE ProgramCode ----
-EXTENDS ESRuntime
-ProgramCallCode(s, f, ctx, args, id) == Unsupported(s, <<>>)
-ProgramLoopIteration(s, ctx, loop, v) == Unsupported(s, <<>>)
-RunProgram(s) == Ok(s, Undefined)
-====
-`;
+const EMPTY_PROGRAM = [
+  "---- MODULE ProgramCode ----",
+  "EXTENDS ESRuntime",
+  ...[...HOOKS].map((hook) => `Program${hook[0]}(${hook[1]}) == Unsupported(s, <<>>)`),
+  "RunProgram(s) == Ok(s, Undefined)",
+  "====",
+  "",
+].join("\n");
+
+// The realm's tables and what building them runs, which a program's spec keeps whole, so that a
+// program sees every property the realm has, even of the built-ins it can't run.
+const REALM_ROOTS = "InitialState Intrinsics RealmProperties IntrinsicIndex";
 
 const prepare = (name: string, text: string): PreparedModule => {
   const tokens = tokenize(text);
@@ -108,7 +135,6 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
       },
     ],
     INTERPRETER,
-    LOCALE_METHODS,
   );
   const modules = [
     ...[...library.modules].map((entry) => prepare(entry[0], entry[1])),
@@ -143,15 +169,51 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
     () => {},
   ).specification;
   evaluateStartupDefinitions(started.startupDefinitions, started.environment);
+  const [numbers, bigNats, runtime] = accepted.map((prepared) => ({
+    ...prepared,
+    values: new Map(
+      prepared.module.definitions.flatMap((definition): [Definition, Value][] => {
+        const value = getStartupValue(definition, started.environment);
+        return value === undefined ? [] : [[definition, value]];
+      }),
+    ),
+  }));
+  const getView = createModuleView(runtime);
+  const realm = new Set(
+    getView(REALM_ROOTS).module.definitions.map((definition) => definition.name),
+  );
+  // An operator of a gated group on its objects, which the realm's tables don't run, other than a
+  // test of an object's class.
+  const stubs = [...library.definitions.values()].filter(
+    (definition) =>
+      library.triggers.has(definition.group) &&
+      definition.isStateful &&
+      !/^(?:Is|Has)[A-Z]/.test(definition.name) &&
+      !realm.has(definition.name),
+  );
+  const stubGroups = new Map(stubs.map((stub) => [stub.name, stub.group]));
   return {
-    modules: accepted.map((prepared) => ({
-      ...prepared,
-      values: new Map(
-        prepared.module.definitions.flatMap((definition): [Definition, Value][] => {
-          const value = getStartupValue(definition, started.environment);
-          return value === undefined ? [] : [[definition, value]];
-        }),
-      ),
+    modules: [numbers, bigNats],
+    getView,
+    families: library.families,
+    gates: [...library.triggers].map((entry) => ({
+      group: entry[0],
+      triggers: entry[1],
+      stubs: stubs
+        .filter((stub) => stub.group === entry[0])
+        .map((stub) => ({ name: stub.name, arity: stub.arity })),
+      reached: [
+        ...new Set(
+          [...library.definitions.values()]
+            .filter((definition) => definition.group === entry[0])
+            .flatMap((definition) =>
+              getDependencies(definition.text).filter((name) => {
+                const group = stubGroups.get(name);
+                return group !== undefined && group !== entry[0];
+              }),
+            ),
+        ),
+      ],
     })),
     hostOnlyGlobals: getHostOnlyGlobals(library),
     hostOnlyKeys: getHostOnlyKeys(library),
