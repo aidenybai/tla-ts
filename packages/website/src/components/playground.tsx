@@ -22,7 +22,7 @@ import { RunIcon } from "./run-icon";
 import { Result } from "./parts";
 import { getStateNames } from "../search";
 import { useSearchPath } from "./search-cell";
-import { StateGraph } from "./state-graph";
+import { StateGraph, StateGraphSkeleton } from "./state-graph";
 import { useTheme } from "./theme-switcher";
 import { Verdict } from "./verdict";
 import { Button } from "./ui/button";
@@ -372,7 +372,9 @@ export const PlaygroundPanes = () => {
         />
         <Result.Body>
           {state.isRunning ? (
-            <Result.Skeleton />
+            <Result.Skeleton>
+              <StateGraphSkeleton />
+            </Result.Skeleton>
           ) : (
             state.result && (
               <>
