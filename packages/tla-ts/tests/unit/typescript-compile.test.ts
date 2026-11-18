@@ -1290,15 +1290,17 @@ describe("top-level statements", () => {
     ).toThrow("Unsupported operator: =");
   });
 
-  it("reject a function's prototype that a value of type any reaches in a script with objects", () => {
-    expect(() =>
-      compile(`
-        const box = {};
-        function Shape() {}
-        Shape.prototype.inner = { sides: 4 };
-        Shape.prototype.inner.sides = 3;
-      `),
-    ).toThrow("Unsupported property: Shape.prototype");
+  it("write through a function's prototype that a value of type any reaches in a script with objects", async () => {
+    const getSource = (expected: number) => `
+      "use strict";
+      const box = {};
+      function Shape() {}
+      Shape.prototype.inner = { sides: 4 };
+      Shape.prototype.inner.sides = 3;
+      if (Shape.prototype.inner.sides !== ${expected}) throw new Error("sides " + Shape.prototype.inner.sides);
+    `;
+    expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    expect((await checkModel(getSource(4))).failure?.message).toContain("sides 3");
   });
 
   it("destructure an object that a value of type any holds in a script with objects", async () => {
@@ -16612,17 +16614,20 @@ describe("errors", () => {
     expect((await checkModel(getSource("70", "15"))).failure).toBeUndefined();
     expect((await checkModel(getSource("50", "15"))).failure?.message).toContain('"count"');
     expect((await checkModel(getSource("70", "8"))).failure?.message).toContain('"count"');
-    expect(() =>
-      compile(`
-        const createCount = (start: number) => {
-          let count = start;
-          return () => ++count;
-        };
-        const first = createCount(0);
-        const second = createCount(10);
-        if (first() !== 1 || second() !== 11) throw new Error("count");
-      `),
-    ).toThrow("Unsupported expression");
+  });
+
+  it("runs the closures that a factory returns, each with its own variables", async () => {
+    const getCounts = (expected: number) => `
+      const createCount = (start: number) => {
+        let count = start;
+        return () => ++count;
+      };
+      const first = createCount(0);
+      const second = createCount(10);
+      if (first() !== 1 || second() !== ${expected}) throw new Error("count");
+    `;
+    expect((await checkModel(getCounts(11))).failure).toBeUndefined();
+    expect((await checkModel(getCounts(12))).failure?.message).toContain('"count"');
   });
 
   it("runs a call in an operand that runs only sometimes inside another", async () => {
@@ -54335,6 +54340,301 @@ describe("BigInts", () => {
       expect(
         (await checkModel(getEntries(made.replace('"k2":7', '"k2":2')))).failure?.message,
       ).toContain(":7,");
+    });
+  });
+
+  describe("gives a function that a call makes each time its own length, name, and prototype", () => {
+    const getSource = (expected: string) => `
+      const make = (k: number) => {
+        const doubled = k * 2;
+        const read = () => doubled;
+        return read;
+      };
+      const build = (k: number) => {
+        const base = k + 1;
+        return function (a: number, b: number) {
+          return base + a + b;
+        };
+      };
+      const made = make(1);
+      const built = build(2);
+      const prototype = built.prototype;
+      const got = made();
+      const sum = built(3, 4);
+      const seen = [
+        made.name,
+        made.length,
+        Object.getOwnPropertyNames(made).join("/"),
+        built.name === "",
+        built.length,
+        Object.getOwnPropertyNames(built).join("/"),
+        prototype.constructor === built,
+        Object.getOwnPropertyNames(prototype).join("/"),
+        got + sum,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("read,0,length/name,true,2,length/name/prototype,true,constructor,12"),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another length", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("read,1,length/name,true,2,length/name/prototype,true,constructor,12"),
+          )
+        ).failure?.message,
+      ).toContain("seen read,0,length/name,true,2,length/name/prototype,true,constructor,12");
+    });
+  });
+
+  describe("assigns and defines the properties of a function that a call makes, which it holds", () => {
+    const getSource = (expected: string) => `
+      const make = (k: number) => {
+        const doubled = k * 2;
+        const read = () => doubled;
+        return read;
+      };
+      const made = make(1);
+      const tagged = Object.assign(made, { tag: 5 });
+      Object.defineProperty(made, "hidden", { value: 1 });
+      const got = tagged();
+      const seen = [
+        tagged === made,
+        tagged.tag,
+        Object.keys(tagged).join("/"),
+        Object.getOwnPropertyNames(made).join("/"),
+        got,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,5,tag,length/name/tag/hidden,2"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an enumerable definition", async () => {
+      expect(
+        (await checkModel(getSource("true,5,tag/hidden,length/name/tag/hidden,2"))).failure
+          ?.message,
+      ).toContain("seen true,5,tag,length/name/tag/hidden,2");
+    });
+  });
+
+  describe("makes a function that a call passes to a parameter it reads as a value an object", () => {
+    const getSource = (expected: string) => `
+      const subs = new Set<object>();
+      const createUnsubscribe = (unsubscribe: () => void) =>
+        Object.assign(unsubscribe, { [Symbol.dispose]: unsubscribe });
+      const on = () => {
+        const sub = { a: 1 };
+        subs.add(sub);
+        return createUnsubscribe(() => {
+          subs.delete(sub);
+        });
+      };
+      const first = on();
+      const second = on();
+      const sizes = [subs.size];
+      first();
+      sizes.push(subs.size);
+      second();
+      sizes.push(subs.size);
+      const seen = [...sizes, Object.getOwnPropertySymbols(second).length, first === second].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,1,0,1,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects one function for both calls", async () => {
+      expect((await checkModel(getSource("2,1,0,1,true"))).failure?.message).toContain(
+        "seen 2,1,0,1,false",
+      );
+    });
+  });
+
+  describe("spreads and applies an arguments object as the array that its iterator gives", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: "" };
+      function add(a: number, b: number) {
+        return a + b;
+      }
+      function forward(this: unknown, ..._rest: number[]) {
+        return add.apply(this, arguments as any);
+      }
+      function listed(..._rest: number[]) {
+        return [...arguments].join("/");
+      }
+      const sum = forward(2, 3);
+      const list = listed(4, 5, 6);
+      box.seen = [sum, list].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5,4/5/6"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("5,6/5/4"))).failure?.message).toContain("seen 5,4/5/6");
+    });
+  });
+
+  describe("dispatches a call of a function that a type parameter types among those its constraint fits", () => {
+    const getSource = (expected: string) => `
+      const box = { total: 0 };
+      const twice = <F extends (value: number) => number>(f: F) => {
+        if (typeof f !== "function") throw new TypeError("f");
+        const run = (value: number) => f(f(value));
+        return run;
+      };
+      const inc = twice((value: number) => value + 1);
+      const double = twice((value: number) => value * 2);
+      const first = inc(1);
+      const second = double(3);
+      box.total = first * 100 + second;
+      if (box.total !== ${expected}) throw new Error("total " + box.total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("312"))).failure).toBeUndefined();
+    });
+
+    it("rejects the other function", async () => {
+      expect((await checkModel(getSource("412"))).failure?.message).toContain("total 312");
+    });
+  });
+
+  describe("holds on the heap the closures that a module's function makes and returns", () => {
+    const getSource = (expected: string) => `
+      const flip = function (body: (a: number, b: number) => number) {
+        const held = body;
+        return (a: number, b: number) => held(b, a);
+      };
+      export const minus = flip((self: number, that: number) => self - that);
+      const seen = [minus(2, 10), minus(1, 4)].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("8,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the arguments unflipped", async () => {
+      expect((await checkModel(getSource("-8,-3"))).failure?.message).toContain("seen 8,3");
+    });
+  });
+
+  describe("keeps in the state a const that a call that makes a closure initializes", () => {
+    const getSource = (expected: string) => `
+      const flip = function (body: (a: number, b: number) => number) {
+        const held = body;
+        return (a: number, b: number) => held(b, a);
+      };
+      export const minus = flip((self: number, that: number) => self - that);
+      export const run = (value: 1 | 2) => {
+        const result = minus(value, 10);
+        if (result !== ${expected}) throw new Error("result " + result);
+        return result;
+      };
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10 - value"))).failure).toBeUndefined();
+    });
+
+    it("rejects the arguments unflipped", async () => {
+      expect((await checkModel(getSource("value - 10"))).failure?.message).toContain("result 9");
+    });
+  });
+
+  describe("makes a closure that a const holds an object where a property's assignment takes it", () => {
+    const getSource = (expected: string) => `
+      const hooks = { onCommit: (value: number) => value };
+      const wire = (offset: number) => {
+        const doubled = offset * 2;
+        const dispatch = (value: number): number => value + doubled;
+        hooks.onCommit = dispatch;
+      };
+      wire(1);
+      const first = hooks.onCommit(10);
+      wire(100);
+      const second = hooks.onCommit(10);
+      const seen = [first, second].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("12,210"))).failure).toBeUndefined();
+    });
+
+    it("rejects the first closure kept", async () => {
+      expect((await checkModel(getSource("12,12"))).failure?.message).toContain("seen 12,210");
+    });
+  });
+
+  describe("reads the const that holds a closure, inside the closure, as the closure that runs", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: "" };
+      const make = (offset: number) => {
+        const doubled = offset * 2;
+        const self = (): unknown => (doubled > 0 ? self : undefined);
+        return self;
+      };
+      const first = make(1);
+      const second = make(2);
+      const firstSelf = first();
+      const secondSelf = second();
+      box.seen = [firstSelf === first, secondSelf === second, firstSelf === second].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects one closure for both", async () => {
+      expect((await checkModel(getSource("true,true,true"))).failure?.message).toContain(
+        "seen true,true,false",
+      );
+    });
+  });
+
+  describe("leaves a var that a declare global block declares to the host", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/ambient-global.ts");
+    const source = readFileSync(path, "utf8");
+    const written = source
+      .replace("try {", "globalThis.hookX = undefined;\ntry {")
+      .replace('caught !== "reference"', 'caught !== "undefined"');
+
+    it("stops at the ReferenceError of reading it before anything writes it", async () => {
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't throw the ReferenceError of reading hookX",
+      );
+    });
+
+    it("agrees with Node once the global object holds it", async () => {
+      expect((await check(compile(written, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another value", async () => {
+      const wrong = written.replace('caught !== "undefined"', 'caught !== "reference"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("caught undefined");
     });
   });
 });

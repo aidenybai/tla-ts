@@ -15,6 +15,7 @@ import {
   isScript,
   getValueDeclaration,
   getRunMembers,
+  isAmbientDeclaration,
 } from "./context";
 import type { Expression } from "../ast";
 import { getWritten, getWrittenRoots } from "./actions";
@@ -187,11 +188,9 @@ const getDeclarations = (statement: ts.Statement): Declared[] => {
     if (statement.name === undefined) throw new TlaTypeScriptError("Name this function", statement);
     return [{ name: statement.name.text, declaration: statement, identifier: statement.name }];
   }
-  // A declare's variable is the host's, which no code here gives.
-  if (
-    !ts.isVariableStatement(statement) ||
-    statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)
-  ) {
+  // A declare's variable, or one that a declare global block declares, is the host's, which no
+  // code here gives.
+  if (!ts.isVariableStatement(statement) || isAmbientDeclaration(statement)) {
     return [];
   }
   return getListDeclarations(statement.declarationList);

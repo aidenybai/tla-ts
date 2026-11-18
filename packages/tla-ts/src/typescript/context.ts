@@ -793,7 +793,12 @@ export const createContext = (
                   (ts.isArrowFunction(name.parent) && name.parent.body === name) ||
                   (ts.isPropertyAssignment(name.parent) &&
                     name.parent.initializer === name &&
-                    ts.isObjectLiteralExpression(name.parent.parent))
+                    ts.isObjectLiteralExpression(name.parent.parent)) ||
+                  (ts.isBinaryExpression(name.parent) &&
+                    name.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+                    name.parent.right === name &&
+                    (ts.isPropertyAccessExpression(name.parent.left) ||
+                      ts.isElementAccessExpression(name.parent.left)))
                 ? (getSymbol(name, checker) ?? [])
                 : [],
           ),
@@ -3900,13 +3905,73 @@ const getHeldName = (node: ts.Node) =>
 // method or an accessor of an object literal, or one that it returns, itself or by the name of the
 // const that holds it, that reads a local of the function. An arrow reads the this of the function around it, which the environment doesn't hold,
 // and an async closure that awaits would resume after its call returns.
-export const isClosure = (node: ts.Node, context: Context): node is Closure => {
+// Whether a function reads a parameter as a value, as Object.assign(f, {}) or return f do, rather
+// than only calling it or passing it on to a parameter that it doesn't read as a value either.
+const isValueParameter = (
+  parameter: ts.ParameterDeclaration,
+  context: Context,
+  visited: Set<ts.Node>,
+): boolean => {
+  const symbol = ts.isIdentifier(parameter.name)
+    ? getSymbol(parameter.name, context.checker)
+    : undefined;
+  if (symbol === undefined || visited.has(parameter)) return false;
+  visited.add(parameter);
+  return findNodes(parameter.parent, ts.isIdentifier).some((name) => {
+    if (name === parameter.name || getSymbol(name, context.checker) !== symbol) return false;
+    const call = name.parent;
+    if (!ts.isCallExpression(call)) return true;
+    if (call.expression === name) return false;
+    const position = call.arguments.indexOf(name);
+    return position < 0 || isValueTarget(call, position, context, visited);
+  });
+};
+
+// Whether a call's argument at a position reaches a parameter that its function reads as a value.
+const isValueTarget = (
+  call: ts.CallExpression,
+  position: number,
+  context: Context,
+  visited: Set<ts.Node>,
+) => {
+  const callee = getCallee(call.expression, context);
+  const parameter = callee === undefined ? undefined : getParameters(callee).at(position);
+  return (
+    parameter !== undefined &&
+    callee?.body !== undefined &&
+    parameter.dotDotDotToken === undefined &&
+    !call.arguments.slice(0, position).some(ts.isSpreadElement) &&
+    isValueParameter(parameter, context, visited)
+  );
+};
+
+// A function that a call passes to a parameter that the function it calls reads as a value, so
+// the function is an object that outlives the call, as createUnsubscribe(() => {}) passes one to
+// Object.assign(unsubscribe, {}).
+const isValueArgument = (node: ts.Node, context: Context) => {
+  const call = node.parent;
+  return (
+    ts.isCallExpression(call) &&
+    call.expression !== node &&
+    isValueTarget(
+      call,
+      call.arguments.findIndex((argument) => argument === node),
+      context,
+      new Set(),
+    )
+  );
+};
+
+export const isClosure = (node: ts.Node, context: Context): node is Closure =>
+  context.heap !== undefined && isOutliving(node, context);
+
+// Whether a function is a closure, before tla-ts knows whether the heap holds objects.
+export const isOutliving = (node: ts.Node, context: Context): node is Closure => {
   const isMember =
     ((ts.isMethodDeclaration(node) && node.body !== undefined) || isPlainAccessor(node)) &&
     ts.isObjectLiteralExpression(node.parent) &&
     !isOnce(node.parent, context);
   if (
-    context.heap === undefined ||
     !(ts.isFunctionExpression(node) || ts.isArrowFunction(node) || isMember) ||
     (ts.isFunctionExpression(node) && node.name !== undefined) ||
     ((ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) &&
@@ -3952,6 +4017,7 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
       isReadingLocals()
     );
   }
+  if (isValueArgument(node, context)) return !isOnce(node.parent, context) || isReadingLocals();
   const assignment = node.parent;
   const isAssignment =
     ts.isBinaryExpression(assignment) &&
@@ -6120,6 +6186,14 @@ export const findSharedFunctionCandidates = (
     ]),
   );
 
+// The type of the functions that a callee may hold, which is a type parameter's constraint.
+const getCalleeType = (callee: ts.Expression, checker: ts.TypeChecker) => {
+  const type = checker.getTypeAtLocation(callee);
+  return (type.flags & ts.TypeFlags.TypeParameter) !== 0
+    ? (checker.getBaseConstraintOfType(type) ?? type)
+    : type;
+};
+
 // The functions that a value whose type has calls may hold, where tla-ts can't tell which, whose
 // type TypeScript lets the value hold: those of the callee's module, and of the modules it imports
 // but for one that reads the locals of a function that runs once around it, which only that
@@ -6128,7 +6202,7 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
   if (isHeldBuiltInObject(callee, context)) return [];
   const found = getFileCandidates(callee.getSourceFile(), context);
   const checker = context.checker;
-  const type = checker.getTypeAtLocation(callee);
+  const type = getCalleeType(callee, checker);
   const call = callee.parent;
   // What super reads in an object literal is any, which a call may pass anything and whose result
   // it may use as anything, so a method it runs takes the arguments' types and gives the type that
@@ -6367,9 +6441,7 @@ export const createDispatch = (
   const dispatched = callees.filter(
     (callee) => !isHeldBuiltInObject(callee, context) && !isSuperAccess(callee),
   );
-  const calleeTypes = getDistinctTypes(
-    dispatched.map((callee) => checker.getTypeAtLocation(callee)),
-  );
+  const calleeTypes = getDistinctTypes(dispatched.map((callee) => getCalleeType(callee, checker)));
   const calleeIds = Int32Array.from(calleeTypes, (type) => type.id);
   const words = (candidateTypes.length + 31) >>> 5;
   const rows = new Uint32Array(calleeTypes.length * words);
@@ -6389,7 +6461,7 @@ export const createDispatch = (
   const tested = new Uint32Array(calleeTypes.length * words);
   calleeTypes.forEach((_, row) => tested.set(sharedBits, row * words));
   dispatched.forEach((callee) => {
-    const row = getLowerBound(calleeIds, 0, calleeIds.length, checker.getTypeAtLocation(callee).id);
+    const row = getLowerBound(calleeIds, 0, calleeIds.length, getCalleeType(callee, checker).id);
     context.functionCandidates.get(callee.getSourceFile())?.forEach((candidate) => {
       const bit = getBit(candidate);
       tested[row * words + (bit >>> 5)] |= 1 << (bit & 31);
@@ -6778,8 +6850,15 @@ export const isReached = (node: ts.Node, context: Context) => {
 // The closures that a value whose type has calls may hold, whose type TypeScript lets it hold.
 export const getClosures = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
-  const type = context.checker.getTypeAtLocation(callee);
+  const type = getCalleeType(callee, context.checker);
+  // A function with properties of its own, as Object.assign(f, {}) types it, holds a closure whose
+  // type fits its calls.
+  const called = type.isIntersection()
+    ? type.types.filter((member) => member.getCallSignatures().length > 0)
+    : [type];
   return (context.closures.get(callee.getSourceFile()) ?? []).filter((closure) =>
-    context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), type),
+    called.every((member) =>
+      context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), member),
+    ),
   );
 };

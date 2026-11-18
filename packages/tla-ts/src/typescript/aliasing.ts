@@ -8,6 +8,7 @@ import {
   findReferences,
   getCallee,
   getSymbol,
+  isClosure,
   isDeclarationOnly,
   isHeldError,
   isMethodCall,
@@ -662,11 +663,12 @@ export const isMakingObjects = (node: ts.Node, context: Context) => {
   return found.isMaking || (found.isElsewhere && getReached([node], context).some(isMaking));
 };
 
-// Whether a node itself makes an object: an object or a regexp literal, or a built-in that makes
-// one, which only a call or a new does.
+// Whether a node itself makes an object: an object or a regexp literal, a closure, or a built-in
+// that makes one, which only a call or a new does.
 export const isMakingNode = (node: ts.Node, context: Context) =>
   ts.isObjectLiteralExpression(node) ||
   ts.isRegularExpressionLiteral(node) ||
+  isClosure(node, context) ||
   ((ts.isCallExpression(node) || ts.isNewExpression(node)) && isAllocation(node, context));
 
 // The return statements of a function's own body.

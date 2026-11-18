@@ -35,6 +35,7 @@ import {
   getTopLevelDeclaration,
   hasObjectMembers,
   isClosure,
+  isOutliving,
   isInertValue,
   isImportCall,
   isScript,
@@ -960,7 +961,14 @@ export const compile = (
       (isIterated && isSetOrMapType(node, context)) || (ts.forEachChild(node, usesOrder) ?? false)
     );
   };
+  // A function that outlives the call that made it and reads that call's locals is an object that
+  // the heap holds with the environment that holds them.
+  const isMakingClosure = (node: ts.Node): boolean =>
+    ((ts.isFunctionExpression(node) || ts.isArrowFunction(node)) && isOutliving(node, context)) ||
+    (ts.forEachChild(node, isMakingClosure) ?? false);
+  const isClosing = reached.some(isMakingClosure);
   const isUsingHeap =
+    isClosing ||
     reached.some(usesObjects) ||
     context.namespaces.size > 0 ||
     context.commonJsModules.length > 0 ||
@@ -991,6 +999,7 @@ export const compile = (
   const isHeapFile =
     isScript(sourceFile) ||
     isSharing ||
+    isClosing ||
     context.namespaces.size > 0 ||
     (heap !== undefined && (reached.some(isDescribing) || reached.some(isMakingBuffer)));
   context.hasOrderedCollections = isHeapFile && reached.some(usesOrder);

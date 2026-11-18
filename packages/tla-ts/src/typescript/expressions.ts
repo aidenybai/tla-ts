@@ -220,7 +220,7 @@ import {
   getPropertyKey,
   isBooleanLike,
   isFieldName,
-  isHeapArray,
+  isHeapArrayLike,
   hasHeapType,
   isHeapSetOrMap,
   getOrderedIteration,
@@ -453,7 +453,7 @@ export const translateIterated = (
   scope: Scope,
   context: Context,
 ): Expression | Expression[] => {
-  if (isHeapArray(iterated, context)) return translateHeapElements(iterated, scope, context);
+  if (isHeapArrayLike(iterated, context)) return translateHeapElements(iterated, scope, context);
   // A string gives its code points.
   if (ts.isStringLiteralLike(iterated)) {
     return [...iterated.text].map((character) => translateString(character, context));
@@ -3468,7 +3468,7 @@ const translatePropertyAccess = (
     context.checker.getTypeAtLocation(receiver).getCallSignatures().length > 0 &&
     (name === "length" ||
       name === "name" ||
-      (held === undefined ? getFunctionCandidates(receiver, context).some(isHeld) : isHeld(held)))
+      (held === undefined ? context.heap !== undefined : isHeld(held)))
   ) {
     const getProperty = (candidate: FunctionNode) => {
       const candidateValue = getCandidateValue(candidate, context);
