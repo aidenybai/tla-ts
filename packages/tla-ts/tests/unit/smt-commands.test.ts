@@ -1148,6 +1148,32 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     expect(run(getSoftLines(259))).toEqual(["sat", '(:reason-unknown "no reason given")']);
   });
 
+  it("makes the auxiliary constants of the SAT solver's clauses once across its conversions", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (and (<= 0 a 1) (<= 0 b 1) (<= (+ a b) 1)))",
+        "(maximize (+ (* 2 a) (* 3 b)))",
+        "(check-sat)",
+        "(reset-assertions)",
+        "(declare-const p Bool)",
+        "(declare-const x Int)",
+        "(assert (> (ite p x 2) 1))",
+        "(apply elim-term-ite)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (> k!7 1)",
+      "  (or (not p) (= k!7 x))",
+      "  (or p (= k!7 2))",
+      "  :precision precise :depth 1)",
+      ")",
+    ]);
+  });
+
   it("prints the reason and the core of get-consequences on the finite-domain solver", () => {
     expect(
       run([
