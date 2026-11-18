@@ -1563,6 +1563,18 @@ describe("name resolution matches SANY", () => {
     });
   });
 
+  it("locates the identifier of an unbounded CHOOSE at the CHOOSE", async () => {
+    await expect(checkNames("F == CHOOSE v : CHOOSE v : TRUE")).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 2, col 17 to line 2, col 22 of module M",
+          message:
+            "Multiply-defined symbol 'v': this definition or declaration conflicts \nwith the one at line 2, col 6 to line 2, col 11 of module M.",
+        },
+      ]),
+    );
+  });
+
   it("reads EXTENDS as the first field of a record, not as a module's EXTENDS", async () => {
     const result = await check({
       source:

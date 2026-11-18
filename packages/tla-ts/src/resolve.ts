@@ -1624,14 +1624,21 @@ const resolveExpression = (
         bindLabelParams(expression.names),
       );
       return;
-    case "Choose":
+    case "Choose": {
       if (expression.set) resolveExpression(expression.set, scope, unit);
+      const range = expression.location.range;
+      // SANY locates the identifier of an unbounded CHOOSE x at the CHOOSE.
+      const ranges =
+        !expression.set && expression.pattern.kind === "Name" && range
+          ? [{ ...range, end: { ...range.start, column: range.start.column + 5 } }]
+          : expression.pattern.ranges;
       resolveExpression(
         expression.body,
-        bindNames(scope, getPatternNames(expression.pattern), expression.pattern.ranges, unit),
+        bindNames(scope, getPatternNames(expression.pattern), ranges, unit),
         bindLabelParams(getPatternNames(expression.pattern)),
       );
       return;
+    }
     case "SetEnumeration":
     case "Tuple":
       resolveAll(expression.elements);
