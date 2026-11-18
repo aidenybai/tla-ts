@@ -7039,6 +7039,11 @@ TypedArraySubarray(heap, ref, arguments, length, bufferPrototype, constructors) 
             > Len(buffer.bytes) -> Thrown(heap, "RangeError")
        [] OTHER -> Returned(viewing, Allocated(viewing))
 
+\\* Whether a name still holds the value it held, and the heap the object it names as it was.
+ObjectKept(heap, afterHeap, before, after) ==
+  /\\ before = after
+  /\\ IsHeap(before) => heap.objects[before[Ref]] = afterHeap.objects[before[Ref]]
+
 \\* Whether a buffer's method throws the TypeError of its checks before it converts its arguments:
 \\* of a receiver that isn't a buffer of its kind, of a resize or a grow of a buffer that can't
 \\* resize, or of an ArrayBuffer's slice of a detached buffer.

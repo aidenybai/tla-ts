@@ -52919,4 +52919,45 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the object indices of an array's slice, splice, and copyWithin", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var x = [0, 1, 2, 3, 4];
+      var arr = x.slice({ valueOf: function () { return 1; } }, 3);
+      var y = [0, 1, 2, 3];
+      var removed = y.splice(0, { valueOf: function () { return 3; } });
+      var copied = [0, 1, 2, 3].copyWithin({}, 1);
+      var thrown = "none";
+      try {
+        [].copyWithin(0, 0, { valueOf: function () { throw new RangeError("x"); } });
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [arr.join("|"), removed.join("|"), y.join("|"), copied.join("|"), thrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("1|2,0|1|2,3,1|2|3|3,RangeError");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("1|2,0|1|2,3,1|2|3|3,none");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 1|2,0|1|2,3,1|2|3|3,RangeError",
+      );
+    });
+
+    it("stops where a conversion changes the array", async () => {
+      const source = `
+        var z = [1, 2, 3];
+        var sliced = z.slice({ valueOf: function () { z.pop(); return 0; } });
+      `;
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't follow an array method whose argument's conversion changed the array",
+      );
+    });
+  });
 });
