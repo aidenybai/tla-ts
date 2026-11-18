@@ -1649,6 +1649,40 @@ describe("name resolution matches SANY", () => {
     });
   });
 
+  it("names an operator of an extended module as it is spelled", async () => {
+    const modules = new Map([
+      ["Inner", "---- MODULE Inner ----\nCONSTANT Op(_)\n===="],
+      [
+        "Mid",
+        "---- MODULE Mid ----\na ++ b == a\nG(a, b) == a\nH(x) == x\nK == INSTANCE Inner WITH Op <- G\nL == H(++)\n====",
+      ],
+    ]);
+    await expect(
+      check({
+        source: "---- MODULE M ----\nEXTENDS Mid\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) => modules.get(name),
+      }),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          {
+            location: "line 5, col 32 to line 5, col 32 of module Mid",
+            message: "Expected arity 1 but found operator of arity 2.",
+          },
+          {
+            location: "In module --TLA+ BUILTINS--",
+            message: "An operator must be substituted for symbol 'Op', and it must have arity 1.",
+          },
+          {
+            location: "line 6, col 8 to line 6, col 9 of module Mid",
+            message: "The operator ++ requires 2 arguments.",
+          },
+        ],
+      },
+    });
+  });
+
   it.each([
     [
       "a definition defined twice",

@@ -1269,9 +1269,10 @@ const resolveExpressionArgument = (arg: Expression, scope: LocalName | undefined
     unresolvedExpressions.add(arg);
     report("LAMBDA expression used where an expression is required.");
   } else if (arg.kind === "OperatorReference") {
-    const argArity = getSymbolArity(arg, arg.operator, scope, unit);
+    const operator = arg.operator;
+    const argArity = getSymbolArity(arg, operator, scope, unit);
     if (argArity !== undefined) {
-      report(`The operator ${resolveSynonym(arg.operator)} requires ${argArity} arguments.`);
+      report(`The operator ${resolveSynonym(operator)} requires ${argArity} arguments.`);
     }
   } else resolveExpression(arg, scope, unit);
 };
@@ -2451,10 +2452,11 @@ const checkSubstitutions = (
       reportArity(declaration, BUILTIN_LOCATION);
       return;
     }
-    const arity = getSymbolArity(expression, expression.name, scope, unit);
+    const name = expression.name;
+    const arity = getSymbolArity(expression, name, scope, unit);
     if (arity !== undefined && arity !== declaration.arity) {
       unit.errors.push({
-        location: formatRange(getSpelledNameRange(expression, expression.name)),
+        location: formatRange(getSpelledNameRange(expression, name)),
         message: `Expected arity ${declaration.arity} but found operator of arity ${arity}.`,
       });
     }
