@@ -2146,6 +2146,29 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts no node for the reference that applies a recursive function a parameterized instance copies", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nJ(p) == INSTANCE Inner\nVARIABLE x\nInit == x = J(1)!r[2]\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      coverage: 1,
+      loadModule: (name) =>
+        name === "Inner"
+          ? "---- MODULE Inner ----\nEXTENDS Naturals\nr[n \\in 0..2] == IF n = 0 THEN 0 ELSE r[n - 1] + 1\n===="
+          : undefined,
+    });
+    expect(formatCoverage(result)?.[0]).toEqual([
+      "line 5, col 9 to line 5, col 21 of module M: 1",
+      "|line 5, col 13 to line 5, col 21 of module M: 1",
+      "||line 5, col 13 to line 5, col 18 of module M: 1",
+      "|||line 3, col 1 to line 3, col 50 of module Inner: 1",
+      "||||line 3, col 18 to line 3, col 50 of module Inner: 3",
+      "|||||line 3, col 21 to line 3, col 25 of module Inner: 3",
+      "|||||line 3, col 39 to line 3, col 50 of module Inner: 2",
+      "||||line 3, col 9 to line 3, col 12 of module Inner: 1",
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",

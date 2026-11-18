@@ -10,10 +10,10 @@ import {
 import { formatRange } from "./errors";
 import {
   frameSubstitutions,
-  instanceArguments,
   isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
+  syntheticIdentifiers,
   type Substitution,
 } from "./instances";
 import { SELECTION_NAME } from "./resolve";
@@ -512,6 +512,7 @@ export const buildCoverage = (
         return;
       }
       case "Identifier": {
+        if (syntheticIdentifiers.has(expression)) return;
         const resolved = resolve(expression, expression.name, locals);
         enter(
           expression,
@@ -534,7 +535,7 @@ export const buildCoverage = (
           () => {
             if (resolved) walkDefinition(resolved);
             expression.args.forEach((argument, index) => {
-              if (!instanceArguments.has(argument)) {
+              if (!syntheticIdentifiers.has(argument)) {
                 walkArgument(argument, index, resolved?.definition, locals);
               }
             });
