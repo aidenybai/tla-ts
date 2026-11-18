@@ -67,6 +67,19 @@ const DEFINITIONS = [
   IF lo > hi THEN h
   ELSE IF lo = hi THEN HeapAppend(h, seq[lo])
   ELSE LET mid == (lo + hi) \\div 2 IN HeapAppendIn(HeapAppendIn(h, seq, lo, mid), seq, mid + 1, hi)`,
+  // HoistFunctions for a script, whose lexical and var environments are the global one, with
+  // each function a record [name, site] rather than its node.
+  `HoistGlobalFunctions(s, env, fns, declared) ==
+  IF fns = <<>> THEN Ok(s, Empty) ELSE
+  LET name == Head(fns).name IN
+  IF HasLexicalDeclaration(s, env, name) THEN HoistGlobalFunctions(s, env, Tail(fns), declared) ELSE
+  LET definable == CanDeclareGlobalVar(s, env, name) IN
+  IF IsAbrupt(definable) THEN definable
+  ELSE IF Val(definable) = False THEN HoistGlobalFunctions(definable.s, env, Tail(fns), declared) ELSE
+  LET created == IF name \\in declared THEN Ok(definable.s, Empty) ELSE CreateGlobalVarBinding(definable.s, env, name, FALSE) IN
+  IF IsAbrupt(created) THEN created
+  ELSE HoistGlobalFunctions(HoldEnvs([created.s EXCEPT !.hoisted = @ \\cup {<<env, Head(fns).site>>}]),
+                            env, Tail(fns), declared \\cup {name})`,
   `Unsupported(s, what) == Assert(FALSE, "tla-ts can't run a part of ECMAScript that ESCore leaves out")`,
 ];
 

@@ -266,12 +266,6 @@ describe("compiles scripts by specializing ESCore", () => {
     it("rejects another result", async () => {
       expect((await checkScript(getSource("function,function"))).message).toContain(THREW);
     });
-
-    it("stops where Annex B would hoist it outside strict mode", () => {
-      expect(() =>
-        compileToEscore("(function () { if (true) function hoisted() {} })();", "spec.ts", library),
-      ).toThrow("tla-ts can't compile a function declaration in a block outside strict mode");
-    });
   });
 
   describe("stops where the host's locale or time zone data would decide", () => {
@@ -342,6 +336,41 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("rejects another result", async () => {
       expect((await checkScript(getSource("4,2,true,true,true"))).message).toContain(THREW);
+    });
+  });
+
+  describe("hoists a block's function to its var scope outside strict mode, as Annex B does", () => {
+    const getSource = (expected: string) => `
+      const before = typeof hoisted;
+      {
+        function hoisted() {
+          return 1;
+        }
+      }
+      const inFunction = (function () {
+        const initial = typeof inner;
+        switch (1) {
+          case 1:
+            function inner() {
+              return 2;
+            }
+        }
+        return initial + inner();
+      })();
+      const result = [before, typeof hoisted, inFunction].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("undefined,function,undefined2"), false)).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("undefined,undefined,undefined2"), false)).message,
+      ).toContain(THREW);
     });
   });
 });

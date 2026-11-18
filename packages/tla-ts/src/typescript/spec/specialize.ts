@@ -161,15 +161,6 @@ const LOGICAL_TESTS = new Map([
   [ts.SyntaxKind.QuestionQuestionEqualsToken, (value: string) => `~IsNullish(${value})`],
 ]);
 
-const isFunctionNode = (node: ts.Node): node is ts.FunctionLikeDeclaration =>
-  ts.isFunctionDeclaration(node) ||
-  ts.isFunctionExpression(node) ||
-  ts.isArrowFunction(node) ||
-  ts.isMethodDeclaration(node) ||
-  ts.isGetAccessorDeclaration(node) ||
-  ts.isSetAccessorDeclaration(node) ||
-  ts.isConstructorDeclaration(node);
-
 const hasUseStrict = (statements: readonly ts.Statement[]) => {
   for (const statement of statements) {
     if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression))
@@ -298,6 +289,80 @@ const getLexicalDeclarations = (statements: readonly ts.Statement[], isBlock: bo
     return [];
   });
 
+// The function declarations in blocks that Annex B hoists to the var scope of a function body or
+// script outside strict mode (HoistableFunctions in ESCore, §B.3.2.1), each one whose name nothing
+// around it declares lexically, as replacing it with a var wouldn't be an early error.
+const getHoistableFunctions = (statements: readonly ts.Statement[]) => {
+  const inList = (
+    items: readonly ts.Statement[],
+    blocked: ReadonlySet<string>,
+  ): ts.FunctionDeclaration[] => {
+    const names = getLexicalDeclarations(items, true).flatMap((declaration) => declaration.names);
+    const around = new Set([...blocked, ...names]);
+    return items.flatMap((item) => {
+      if (!ts.isFunctionDeclaration(item)) return inStatement(item, around);
+      const name = item.name?.text ?? "*default*";
+      return !blocked.has(name) && names.filter((other) => other === name).length === 1
+        ? [item]
+        : [];
+    });
+  };
+  const inClause = (clause: ts.Statement, blocked: ReadonlySet<string>) =>
+    ts.isFunctionDeclaration(clause) ? inList([clause], blocked) : inStatement(clause, blocked);
+  const inStatement = (
+    node: ts.Statement,
+    blocked: ReadonlySet<string>,
+  ): ts.FunctionDeclaration[] => {
+    if (ts.isBlock(node)) return inList(node.statements, blocked);
+    if (ts.isIfStatement(node)) {
+      return [
+        ...inClause(node.thenStatement, blocked),
+        ...(node.elseStatement === undefined ? [] : inClause(node.elseStatement, blocked)),
+      ];
+    }
+    if (ts.isWhileStatement(node) || ts.isDoStatement(node) || ts.isWithStatement(node)) {
+      return inStatement(node.statement, blocked);
+    }
+    if (ts.isLabeledStatement(node)) return inStatement(node.statement, blocked);
+    if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
+      const initializer = node.initializer;
+      const names =
+        initializer !== undefined &&
+        ts.isVariableDeclarationList(initializer) &&
+        isLexical(initializer)
+          ? getDeclaredNames(initializer)
+          : [];
+      return inStatement(node.statement, new Set([...blocked, ...names]));
+    }
+    if (ts.isSwitchStatement(node)) {
+      return inList(
+        node.caseBlock.clauses.flatMap((clause) => [...clause.statements]),
+        blocked,
+      );
+    }
+    if (ts.isTryStatement(node)) {
+      const parameter = node.catchClause?.variableDeclaration;
+      // §B.3.4: a var may repeat a catch parameter that is a lone identifier.
+      const caught =
+        parameter === undefined || ts.isIdentifier(parameter.name)
+          ? []
+          : getBoundNames(parameter.name);
+      return [
+        ...inList(node.tryBlock.statements, blocked),
+        ...(node.catchClause === undefined
+          ? []
+          : inList(node.catchClause.block.statements, new Set([...blocked, ...caught]))),
+        ...(node.finallyBlock === undefined ? [] : inList(node.finallyBlock.statements, blocked)),
+      ];
+    }
+    return [];
+  };
+  const blocked = new Set(
+    getLexicalDeclarations(statements, false).flatMap((declaration) => declaration.names),
+  );
+  return statements.flatMap((statement) => inStatement(statement, blocked));
+};
+
 // The function declarations to initialize (§10.2.11 step 15): the last of each name, in the order
 // of the last ones.
 const getFunctionsToInitialize = (functions: ts.FunctionDeclaration[]) => {
@@ -356,6 +421,10 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
   const loops: { id: number; body: string }[] = [];
   let count = 0;
   let templateSites = 0;
+
+  // A function declaration's site, which the state's hoisted pairs with a var environment: where
+  // the declaration starts in the program.
+  const getSite = (node: ts.Node) => node.getStart();
 
   // A node's source text, as a slice of the program's, which SourceText holds once.
   const getSourceText = (node: ts.Node) =>
@@ -1332,12 +1401,6 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     const lexicalNames = lexical.flatMap((declaration) => declaration.names);
     const functions = getFunctionsToInitialize(varScoped.functions);
     const functionNames = functions.map((declaration) => declaration.name?.text ?? "*default*");
-    if (!isStrict && statements.some((statement) => hasBlockFunction(statement))) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't compile a function declaration in a block outside strict mode to ESCore yet",
-        node,
-      );
-    }
     const argumentsNeeded =
       fn.kind !== "arrow" &&
       fn.kind !== "staticBlock" &&
@@ -1409,11 +1472,30 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
           .join(", ")}}) IN`,
       );
     }
+    // Step 32.a (§B.3.2.1): outside strict mode, var bindings for the block functions that no
+    // parameter names, and the sites whose evaluation then sets them.
+    const hoisted = isStrict
+      ? []
+      : getHoistableFunctions(statements).filter(
+          (declaration) => !parameterBindings.includes(declaration.name?.text ?? "*default*"),
+        );
+    if (hoisted.length > 0) {
+      const hoistedNames = dedupe(
+        hoisted.map((declaration) => declaration.name?.text ?? "*default*"),
+      ).filter(
+        (name) =>
+          !varNames.includes(name) && !parameterBindings.includes(name) && name !== "arguments",
+      );
+      steps.push(
+        `LET s4h == CreateVarBindings(s4, varEnv, ${getSequence(hoistedNames.map(getUnits))}, varEnv, FALSE, {}) IN`,
+        `LET s4a == HoldEnvs([s4h EXCEPT !.hoisted = @ \\cup {${hoisted.map((declaration) => `<<varEnv, ${getSite(declaration)}>>`).join(", ")}}]) IN`,
+      );
+    } else steps.push("LET s4a == s4 IN");
     // Steps 30-34: the lexical environment and its bindings.
     steps.push(
       isStrict
-        ? "LET lexEnv == varEnv s5 == s4 IN"
-        : "LET le == NewDeclarativeEnvironment(s4, varEnv) lexEnv == le.e s5 == le.s IN",
+        ? "LET lexEnv == varEnv s5 == s4a IN"
+        : "LET le == NewDeclarativeEnvironment(s4a, varEnv) lexEnv == le.e s5 == le.s IN",
       `LET bodyCtx == [ctx EXCEPT !.lex = lexEnv, !.var = varEnv] IN`,
       `LET s6 == ${lexical.reduce((current, declaration) => `CreateLexicalNames(${current}, lexEnv, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)})`, "s5")} IN`,
     );
@@ -1445,21 +1527,6 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       length === -1 ? parameters.length : length,
       fn.kind === "staticBlock" ? "<<>>" : getSourceText(node),
     );
-  };
-
-  // Whether a statement of a function body or script holds a function declaration anywhere but
-  // as the statement itself, such as in a block or an if statement's clause, which Annex B
-  // (§B.3.2, §B.3.3) hoists outside strict mode.
-  const hasBlockFunction = (statement: ts.Statement): boolean => {
-    const inner = ts.isLabeledStatement(statement) ? statement.statement : statement;
-    if (ts.isFunctionDeclaration(inner)) return false;
-    if (ts.isLabeledStatement(inner)) return hasBlockFunction(inner);
-    const visit = (node: ts.Node): boolean =>
-      ts.isFunctionDeclaration(node) ||
-      (!isFunctionNode(node) &&
-        !ts.isClassLike(node) &&
-        (ts.forEachChild(node, (child) => (visit(child) ? true : undefined)) ?? false));
-    return visit(inner);
   };
 
   // ClassDefinitionEvaluation (§15.7.14) of a class whose elements are methods, accessors,
@@ -1578,7 +1645,13 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
   const statement = (node: ts.Statement, scope: Scope, labels: string[]): Code => {
     if (ts.isExpressionStatement(node)) return value(node.expression, scope);
     if (ts.isVariableStatement(node)) return declarationList(node.declarationList, scope);
-    if (ts.isFunctionDeclaration(node)) return (state) => `Ok(${state}, Empty)`;
+    if (ts.isFunctionDeclaration(node)) {
+      // §B.3.2.1: a block's function that the var scope's instantiation hoisted sets the var
+      // binding as its declaration runs.
+      if (scope.isStrict) return (state) => `Ok(${state}, Empty)`;
+      return (state, context) =>
+        `IF <<${context}.var, ${getSite(node)}>> \\in ${state}.hoisted THEN HoistedFunctionEvaluation(${state}, ${context}, ${getUnits(node.name?.text ?? "*default*")}) ELSE Ok(${state}, Empty)`;
+    }
     if (ts.isClassDeclaration(node)) {
       // BindingClassDeclarationEvaluation (§15.7.15) binds the class in the running context too.
       const name = node.name?.text ?? "default";
@@ -1593,9 +1666,12 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     if (ts.isBlock(node)) return block(node.statements, scope);
     if (ts.isIfStatement(node)) {
       const test = value(node.expression, scope);
-      const whenTrue = statement(node.thenStatement, scope, []);
+      // §B.3.4: a function declaration as a clause runs as a block that holds it.
+      const getClause = (clause: ts.Statement) =>
+        ts.isFunctionDeclaration(clause) ? block([clause], scope) : statement(clause, scope, []);
+      const whenTrue = getClause(node.thenStatement);
       const whenFalse =
-        node.elseStatement === undefined ? undefined : statement(node.elseStatement, scope, []);
+        node.elseStatement === undefined ? undefined : getClause(node.elseStatement);
       return defineCode(
         "If",
         `LET r == ${test("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE IF ToBooleanValue(Val(r)) THEN UpdateEmptyThen(Undefined, ${whenTrue("r.s", "ctx")}) ELSE ${whenFalse === undefined ? "Ok(r.s, Undefined)" : `UpdateEmptyThen(Undefined, ${whenFalse("r.s", "ctx")})`}`,
@@ -1722,27 +1798,36 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     const declarations = getLexicalDeclarations(statements, true);
     const list = statementList(statements, scope);
     if (declarations.length === 0) return list;
-    const steps = [
-      "LET env == NewDeclarativeEnvironment(s, ctx.lex) bctx == WithLex(ctx, env.e) IN",
-    ];
-    let state = "env.s";
+    const declared = blockDeclarations(declarations, scope);
+    return defineCode(
+      "Block",
+      `LET env == NewDeclarativeEnvironment(s, ctx.lex) bctx == WithLex(ctx, env.e) IN ${list(declared("env.s", "bctx"), "bctx")}`,
+    );
+  };
+
+  // BlockDeclarationInstantiation (§14.2.3, §B.3.2.6): the state once the declarations have their
+  // bindings in the environment that the context's lexical environment is, and each function its
+  // object.
+  const blockDeclarations = (declarations: LexicalDeclaration[], scope: Scope): Code => {
+    const steps: string[] = [];
+    let state = "s";
     declarations.forEach((declaration, index) => {
       steps.push(
-        `LET b${index + 1} == BlockBindNames(${state}, env.e, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)}) IN`,
+        `LET b${index + 1} == BlockBindNames(${state}, ctx.lex, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)}) IN`,
       );
       state = `b${index + 1}`;
       if (declaration.fn !== undefined) {
         const instantiate = instantiateFunction(declaration.fn, scope);
         const units = getUnits(declaration.names[0]);
         steps.push(
-          `LET fo${index + 1} == ${instantiate(state, "bctx")} IN`,
-          `LET fb${index + 1} == IF E(fo${index + 1}.s, env.e).b[${units}].init THEN SetMutableBinding(fo${index + 1}.s, env.e, ${units}, Val(fo${index + 1}), FALSE).s ELSE InitializeBinding(fo${index + 1}.s, env.e, ${units}, Val(fo${index + 1})).s IN`,
+          `LET fo${index + 1} == ${instantiate(state, "ctx")} IN`,
+          `LET fb${index + 1} == IF E(fo${index + 1}.s, ctx.lex).b[${units}].init THEN SetMutableBinding(fo${index + 1}.s, ctx.lex, ${units}, Val(fo${index + 1}), FALSE).s ELSE InitializeBinding(fo${index + 1}.s, ctx.lex, ${units}, Val(fo${index + 1})).s IN`,
         );
         state = `fb${index + 1}`;
       }
     });
-    steps.push(list(state, "bctx"));
-    return defineCode("Block", steps.join("\n  "));
+    const operator = define("Declarations", ["s", "ctx"], `${steps.join("\n  ")}\n  ${state}`);
+    return (current, context) => `${operator}(${current}, ${context})`;
   };
 
   // The while, do-while, and for statements (§14.7), whose iterations ESCore's LoopFrom runs: a
@@ -1901,20 +1986,10 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       clauses.flatMap((clause) => [...clause.statements]),
       true,
     );
-    if (declarations.some((declaration) => declaration.fn !== undefined)) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't compile a function declaration in a switch to ESCore yet",
-        node,
-      );
-    }
-    const bound = declarations.reduce(
-      (current, declaration) =>
-        `BlockBindNames(${current}, env.e, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)})`,
-      "env.s",
-    );
+    const declared = blockDeclarations(declarations, scope);
     return defineCode(
       "Switch",
-      `LET r == ${discriminant("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE LET env == NewDeclarativeEnvironment(r.s, ctx.lex) IN BreakTargetThen(${first}(${bound}, WithLex(ctx, env.e), Val(r)))`,
+      `LET r == ${discriminant("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE LET env == NewDeclarativeEnvironment(r.s, ctx.lex) IN BreakTargetThen(${first}(${declared("env.s", "WithLex(ctx, env.e)")}, WithLex(ctx, env.e), Val(r)))`,
     );
   };
 
@@ -1945,12 +2020,6 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     const statements = sourceFile.statements;
     const isStrict = hasUseStrict(statements);
     const scope: Scope = { isStrict, isClassBody: false };
-    if (!isStrict && statements.some((current) => hasBlockFunction(current))) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't compile a function declaration in a block outside strict mode to ESCore yet",
-        sourceFile,
-      );
-    }
     for (const current of statements) {
       if (
         ts.isImportDeclaration(current) ||
@@ -1977,7 +2046,15 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       `LET fnCheck == CheckGlobalNames(restricted.s, env, ${getSequence([...functionNames].reverse().map(getUnits))}, TRUE) IN IF IsAbrupt(fnCheck) THEN fnCheck ELSE`,
       `LET varCheck == CheckGlobalNames(fnCheck.s, env, ${getSequence(declaredVarNames.map(getUnits))}, FALSE) IN IF IsAbrupt(varCheck) THEN varCheck ELSE`,
     ];
-    let state = "varCheck.s";
+    // Step 12 (§B.3.2.2): outside strict mode, var bindings for the block functions that the
+    // global object can take.
+    const hoisted = isStrict ? [] : getHoistableFunctions(statements);
+    if (hoisted.length > 0) {
+      steps.push(
+        `LET hoist == HoistGlobalFunctions(varCheck.s, env, ${getSequence(hoisted.map((declaration) => `[name |-> ${getUnits(declaration.name?.text ?? "*default*")}, site |-> ${getSite(declaration)}]`))}, {${[...functionNames, ...declaredVarNames].map(getUnits).join(", ")}}) IN IF IsAbrupt(hoist) THEN hoist ELSE`,
+      );
+    }
+    let state = hoisted.length > 0 ? "hoist.s" : "varCheck.s";
     lexical.forEach((declaration, index) => {
       steps.push(
         `LET x${index + 1} == CreateGlobalLexicalNames(${state}, env, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)}) IN IF IsAbrupt(x${index + 1}) THEN x${index + 1} ELSE`,
