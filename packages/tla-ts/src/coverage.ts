@@ -406,7 +406,8 @@ export const buildCoverage = (
         walk(expression.body, bindNames(expression.params, locals));
         return;
       case "Selection":
-        walk(expression.expression, locals);
+        if (range === undefined) walk(expression.expression, locals);
+        else enter(expression, range, () => walk(expression.expression, locals));
         return;
       case "Let": {
         const inner = expression.definitions.reduce<Local | undefined>(

@@ -2052,6 +2052,20 @@ ASSUME TLCFP(a) = -887695703
       expect(printed).toEqual(expected);
     },
   );
+
+  it("counts a selection in the initial predicate as a node of its own, as SANY's $Nop is in TLC's cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE S ----\nEXTENDS Integers\nVARIABLE x, y\nSets == {1, 2, 3} \\cup {4}\nInit == x \\in Sets!<< /\\ y \\in Sets!1\nNext == UNCHANGED <<x, y>>\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[0]).toEqual([
+      "line 5, col 15 to line 5, col 21 of module S: 1",
+      "|line 4, col 9 to line 4, col 17 of module S: 1:4",
+      "line 5, col 26 to line 5, col 37 of module S: 9",
+      "|line 5, col 32 to line 5, col 37 of module S: 3",
+      "||line 4, col 9 to line 4, col 17 of module S: 3:12",
+    ]);
+  });
 });
 
 describe("formatValue matches TLC", () => {
