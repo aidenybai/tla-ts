@@ -2380,6 +2380,23 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("names an action by the standard operator it applies, as TLC's Tool#getActionsAppl does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE E ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == (x < 3 /\\ x' = x + 1) \\/ x >= 9 \\/ x + 9 =< 0 \\/ x + 9 < 0 \\/ (x = 3 /\\ x' = 0)\n====",
+      config: "INIT Init\nNEXT Next",
+      coverage: 1,
+    });
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 4, col 1 to line 4, col 4 of module E",
+      "Next line 5, col 1 to line 5, col 4 of module E (5 10 5 28)",
+      "\\geq line 23, col 1 to line 23, col 8 of module Naturals (5 34 5 39)",
+      "\\leq line 22, col 1 to line 22, col 8 of module Naturals (5 44 5 53)",
+      "< line 20, col 1 to line 20, col 3 of module Naturals (5 58 5 66)",
+      "Next line 5, col 1 to line 5, col 4 of module E (5 72 5 86)",
+    ]);
+  });
+
   it("orders the substitutions of an instance as SANY infers them from the instanced module's symbol table", async () => {
     const result = await check({
       source:

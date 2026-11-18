@@ -227,21 +227,32 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
   left.end.line === right.end.line &&
   left.end.column === right.end.column;
 
+// TLC's Action#pred for an instance's action is the SubstInNode, which SANY locates at the instance's definition.
+const getPredicateRange = (expression: Expression) =>
+  (substitutionFrames.get(expression) ?? []).find((frame) => frameSubstitutions.has(frame))
+    ?.location.range ?? expression.location.range;
+
+// ActionWrapper#printLocation adds the location of the predicate when it is not the body of the action's definition.
 export const getCoverageLabel = (
   name: string | undefined,
   expression: Expression,
   environment: Environment,
   actionHead?: SourceRange,
+  actionBody?: SourceRange,
 ) => {
-  if (name !== undefined && actionHead) return `${name} ${formatRange(actionHead)}`;
-  const definition = name === undefined ? undefined : environment.definitions.get(name);
-  const head = definition?.kind === "Operator" ? definition.head : undefined;
+  const definition =
+    name === undefined || actionHead ? undefined : environment.definitions.get(name);
+  const head = actionHead ?? (definition?.kind === "Operator" ? definition.head : undefined);
   const range = getRelationRange(expression);
-  if (!definition || !head) return `Action ${range ? formatRange(range) : "Unknown location"}`;
-  if (isSameRange(getRelationRange(definition.body), range) || !range) {
-    return `${definition.name} ${formatRange(head)}`;
+  const label = actionHead ? name : definition?.name;
+  if (label === undefined || !head) {
+    return `Action ${range ? formatRange(range) : "Unknown location"}`;
   }
-  return `${definition.name} ${formatRange(head)} (${range.start.line} ${range.start.column} ${range.end.line} ${range.end.column})`;
+  const isBody = actionHead
+    ? isSameRange(actionBody, getPredicateRange(expression))
+    : definition && isSameRange(getRelationRange(definition.body), range);
+  if (isBody || !range) return `${label} ${formatRange(head)}`;
+  return `${label} ${formatRange(head)} (${range.start.line} ${range.start.column} ${range.end.line} ${range.end.column})`;
 };
 
 const getRangeKey = (range: SourceRange) =>
@@ -1113,11 +1124,6 @@ const compareRanges = (left: SourceRange | undefined, right: SourceRange | undef
     left.end.column - right.end.column
   );
 };
-
-// TLC's Action#pred for an instance's action is the SubstInNode, which SANY locates at the instance's definition.
-const getPredicateRange = (expression: Expression) =>
-  (substitutionFrames.get(expression) ?? []).find((frame) => frameSubstitutions.has(frame))
-    ?.location.range ?? expression.location.range;
 
 // Deviation from TLC: CostModelCreator#report keeps one action per location, so it drops all but one action of an instance.
 const compareActions = (left: CoverageRelation, right: CoverageRelation) =>

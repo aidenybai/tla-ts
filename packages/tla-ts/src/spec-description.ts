@@ -29,12 +29,17 @@ import { bindLetDefinitions, getLevel } from "./liveness";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
 import { SELECTION_NAME } from "./resolve";
 import { LITERAL_KINDS } from "./tlc/replay";
+import { resolveSynonym } from "./tlc/jar-data";
+import { getSanyStandardModules } from "./sany/modules";
+import { parseModule } from "./parser";
+import { getStandardModule } from "./standard-definitions";
 import type { TlcVersion } from "./tlc/version";
 
 export interface SpecAction {
   name: string;
   location: SourceLocation;
   head?: SourceRange;
+  body?: SourceRange;
   parameters: [string, Value][];
   expression: Expression;
   scope: Scope | undefined;
@@ -114,6 +119,20 @@ const getOperatorName = (expression: Expression) =>
     : expression.kind === "Apply"
       ? expression.operator
       : undefined;
+
+// Tool#getActionsAppl names an action by the operator it applies, even one TLC implements, and declares it where the standard module defines the operator.
+const getStandardHead = (name: string, environment: Environment) => {
+  const module = getStandardModule(name);
+  const source =
+    module === undefined
+      ? undefined
+      : getSanyStandardModules(environment.runtime.version).get(module);
+  const definition =
+    source === undefined
+      ? undefined
+      : parseModule(source).definitions.find((item) => item.name === name);
+  return definition?.kind === "Operator" ? definition.head : undefined;
+};
 
 const getArguments = (expression: Expression) =>
   expression.kind === "Apply" ? expression.args : [];
@@ -318,7 +337,18 @@ const getActions = (
   const called = resolveClosure(expression, scope, environment);
   if (instanceAction)
     return getInstanceActions(instanceAction, expression, scope, called, environment);
-  if (!called) return [createSplitAction()];
+  if (!called) {
+    const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
+    const head =
+      name !== undefined && environment.builtins.has(name)
+        ? getStandardHead(name, environment)
+        : undefined;
+    return [
+      name !== undefined && head
+        ? { ...createSplitAction(), name: resolveSynonym(name), head }
+        : createSplitAction(),
+    ];
+  }
   const args = getArguments(expression);
   const calledName = isLocallyResolved(expression)
     ? called.name === SELECTION_NAME

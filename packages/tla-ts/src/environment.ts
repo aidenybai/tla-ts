@@ -139,6 +139,7 @@ export interface InstanceAction {
   name: string;
   location: SourceLocation;
   head: SourceRange | undefined;
+  body: SourceRange | undefined;
 }
 
 // TLC names an instance's action by the left side of its definition, or by the whole INSTANCE without one.
@@ -616,7 +617,12 @@ export const createEnvironment = (
           ? instantiation.getKey(key)
           : instantiation.getQualifiedKey(key);
       if (declarations.length > 0) {
-        instanceActions.set(copy, { name, location: instance.location, head });
+        instanceActions.set(copy, {
+          name,
+          location: instance.location,
+          head,
+          body: frame?.location.range,
+        });
       }
       if (instance.name !== undefined) qualifiedNames.set(copy, name);
       return copy;
