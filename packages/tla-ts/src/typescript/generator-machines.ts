@@ -185,7 +185,7 @@ const isMachineBody = (callee: FunctionNode, context: Context) =>
 
 // Whether code yields or awaits outside the functions that it makes, which a loop's operator can't,
 // as an await using does where it disposes.
-const isSuspending = (node: ts.Node): boolean =>
+export const isSuspending = (node: ts.Node): boolean =>
   ts.isYieldExpression(node) ||
   ts.isAwaitExpression(node) ||
   (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||

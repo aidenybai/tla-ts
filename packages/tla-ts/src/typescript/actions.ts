@@ -539,6 +539,7 @@ import {
   getMachines,
   getSteppedOuter,
   isMachineGenerator,
+  isSuspending,
   isMachineHelper,
   makeHelperMachine,
   makeMachine,
@@ -20069,10 +20070,44 @@ const translateIterations = (
       [heap, receiver, useJavaScript("WellKnownSymbol", [string("iterator")], context)],
       context,
     );
+    // An array whose Symbol.iterator a script replaced on Array.prototype with a generator method
+    // iterates through the generator, which a state machine runs as the loop steps it.
+    const isReplaceable =
+      ts.isForOfStatement(loop) &&
+      !isSuspending(loop.statement) &&
+      getWrittenFunctions(loop, "@@iterator", context).some(isAnyGenerator);
+    const iterateArray = isReplaceable
+      ? ifThenElse(
+          holdsArrayIteration(heap, iterated.expression, context, receiver),
+          translateFrom(path),
+          openLoopedIterator(
+            iterated.expression,
+            translateExpression(iterated.expression, path.scope, context),
+            path,
+            context,
+            frame,
+            (after) => throwTypeError(after, iterated.expression, context, frame),
+            (opened, iterator) => {
+              const machine = getMachine(iterator, opened);
+              return machine === undefined
+                ? leaf(apply("Assert", [boolean(false), string(ARRAY_ITERATOR_REPLACED)]))
+                : translateIterations(
+                    loop,
+                    opened,
+                    context,
+                    frame,
+                    continueWith,
+                    iterator,
+                    machine,
+                  );
+            },
+          ),
+        )
+      : translateFrom(path);
     return ifThenElse(
       apply("#", [useJavaScript("TypeOfIn", [heap, method], context), string("function")]),
       throwTypeError(path, iterated.expression, context, frame),
-      translateFrom(path),
+      iterateArray,
     );
   }
   if (!isIterator || iterated === undefined) return translateFrom(path);

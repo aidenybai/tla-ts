@@ -57880,4 +57880,37 @@ describe("runs the script's methods in a conversion inside at most one other", (
       expect((await checkModel(getSource("0 1,2415"))).failure?.message).toContain("0 1,2414");
     });
   });
+
+  describe("destructures through a generator method's state machine", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      const numbers = {
+        *[Symbol.iterator]() {
+          for (let index = 0; index < 66; index++) yield index * 2;
+        },
+      };
+      const [first, second, ...rest] = numbers;
+      Array.prototype[Symbol.iterator] = function* (this: number[]) {
+        for (let index = this.length - 1; index >= 0; index--) yield this[index];
+      } as never;
+      for (const [left, right] of [
+        [1, 2],
+        [3, 4],
+      ]) {
+        box.log += left + "" + right;
+      }
+      const result = [first, second, rest.length, box.log].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0|2|64|4321"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("0|2|64|1234"))).failure?.message).toContain(
+        "0|2|64|4321",
+      );
+    });
+  });
 });
