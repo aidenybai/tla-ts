@@ -54,7 +54,7 @@ export interface InstanceCopy extends InstanceSubstitutes {
 
 export interface InstancedDefinition {
   source: OperatorLevels;
-  constants: Set<string>;
+  constants: Map<string, number>;
   variables: Set<string>;
   isConstant: boolean;
 }
@@ -73,7 +73,8 @@ export interface InstanceLevels {
 }
 
 interface LevelContext {
-  constants: Set<string>;
+  // The arity of each declared constant, by key.
+  constants: Map<string, number>;
   variables: Set<string>;
   getDefinition: (name: string) => Definition | undefined;
   getQualifiedName?: (name: string) => string | undefined;
@@ -538,7 +539,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     if (entry?.kind === "Let") {
       return { kind: "Defined", levels: analyzeDefinition(entry.definition, entry.scope) };
     }
-    if (context.constants.has(name)) return { kind: "Declared", name, level: 0, arity: 0 };
+    const arity = context.constants.get(name);
+    if (arity !== undefined) return { kind: "Declared", name, level: 0, arity };
     if (context.variables.has(name)) return { kind: "Declared", name, level: 1, arity: 0 };
     const definition = context.getDefinition(name);
     if (definition) {

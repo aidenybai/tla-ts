@@ -43,7 +43,7 @@ interface ModuleLevels {
 }
 
 interface ModuleAnalyzer {
-  constants: Set<string>;
+  constants: Map<string, number>;
   variables: Set<string>;
   analyzer: ReturnType<typeof createLevelAnalyzer>;
 }
@@ -71,7 +71,7 @@ export const createInstanceChecker = (
     const cached = analyzers.get(name);
     if (cached) return cached;
     const module = getModule(name);
-    const constants = new Set(module.constants.map((constant) => constant.key));
+    const constants = new Map(module.constants.map((constant) => [constant.key, constant.arity]));
     const variables = new Set(module.variables);
     const analyzer: ModuleAnalyzer = {
       constants,

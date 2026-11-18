@@ -1254,7 +1254,7 @@ export const createEnvironment = (
       checkModuleLevels(
         module,
         {
-          constants: new Set(constants.map((constant) => constant.key)),
+          constants: new Map(constants.map((constant) => [constant.key, constant.arity])),
           variables: new Set(variables),
           getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
@@ -1387,7 +1387,7 @@ export const createEnvironment = (
     instances: instanceLevels.instances,
   };
   const analyzer = createLevelAnalyzer({
-    constants: new Set(constants.keys()),
+    constants: new Map([...constants.keys()].map((key) => [key, 0])),
     variables: new Set([
       ...variables,
       ...["TLCGet", "Trace", "CounterExample"].filter((name) => builtins.has(name)),

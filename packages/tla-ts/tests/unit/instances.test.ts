@@ -396,6 +396,8 @@ const INNER_MODULES: Record<string, string> = {
   Assumed: "CONSTANT C, D\nASSUME C = {}\nTHEOREM ASSUME D PROVE TRUE",
   Nested: "EXTENDS Naturals\nCONSTANT c, Op(_)\nVARIABLE v\nUse == Op(v') /\\ c = 1",
   Twice: "CONSTANT c, Op(_, _)\nUse == Op(c, c)\nOther(d) == Op(d, c)",
+  Passed: "CONSTANT c, Op(_)\nAp(F(_), a) == F(a)\nUse == Ap(Op, c)",
+  Handed: "CONSTANT Op(_)\nVARIABLE v\nH(F(_)) == F(v')\nUse == H(Op)",
   Outer:
     "EXTENDS Naturals\nCONSTANT c\nN == INSTANCE Twice WITH c <- c, Op <- LAMBDA a, b : a + b\nUse == N!Use",
   Functions:
@@ -485,6 +487,21 @@ describe("substitution levels match SANY", () => {
       ],
     ],
     [
+      "F(a) == LET G == a' IN G\nI == INSTANCE Passed WITH c <- x', Op <- F",
+      [getArgumentError("Passed", 0, 1)],
+    ],
+    [
+      "I == INSTANCE Passed WITH c <- [](x = 1), Op <- LAMBDA a : a + 1",
+      [getArgumentError("Passed", 0, 2)],
+    ],
+    [
+      "F(a) == LET G == a' IN G\nI == INSTANCE Handed WITH Op <- F, v <- x",
+      [
+        getLevelError("Handed", "Op", 0),
+        "Level error in instantiating module 'Handed':\nThe level of the argument 1 of the operator F \nmust be at least 2.",
+      ],
+    ],
+    [
       "Foo == LET I == INSTANCE Stateful WITH c <- x, Op <- LAMBDA a : a, v <- x IN I!Use",
       [getLevelError("Stateful", "c", 0)],
     ],
@@ -561,6 +578,8 @@ describe("substitution levels match SANY", () => {
     "F(a) == LET G(b) == b' IN G(a)\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "H(K(_)) == K(1)\nF(a) == H(LAMBDA b : a') + 1\nI == INSTANCE Pure WITH c <- 1, Op <- F",
     "P(G(_)) == INSTANCE Pure WITH c <- 1, Op <- G\nF(a) == a'\nUse == P(F)!Use",
+    "I == INSTANCE Passed WITH c <- x', Op <- LAMBDA a : a + 1",
+    "I == INSTANCE Handed WITH Op <- LAMBDA a : a = 1, v <- x",
   ])("accepts %s", async (body) => {
     expect((await checkSubstitution(body)).status).toBe("success");
   });
