@@ -82,7 +82,7 @@ const subscribeToNothing = () => () => undefined;
 // These run as the page is parsed, before React loads. The page is built with one file and the
 // Mac shortcut, so a link to another file hides the built one, and other systems get their key.
 const SHARED_SCRIPT = `if (/[#&](file|code)=/.test(location.hash)) document.documentElement.dataset.shared = "";`;
-const SHORTCUT_SCRIPT = `if (!/Mac|iPhone|iPad/.test(navigator.platform)) document.currentScript.previousElementSibling.textContent = "Ctrl ↵";`;
+const SHORTCUT_SCRIPT = `if (!/Mac|iPhone|iPad/.test(navigator.platform)) document.currentScript.previousElementSibling.querySelector("kbd").textContent = "Ctrl ↵";`;
 
 const playgroundContext = createPartsContext<PlaygroundState>("Playground.Root");
 
@@ -91,6 +91,7 @@ interface PartProps {
 }
 
 export const PlaygroundRoot = (props: PartProps) => {
+  const isHydrated = useIsHydrated();
   const [file, setFile] = useState(PLAYGROUND_EXAMPLES[0]);
   const compiler = useCompile(file.source, file.fileName);
   const runner = useRun(true);
@@ -208,7 +209,7 @@ export const PlaygroundRoot = (props: PartProps) => {
       }}
     >
       <div className="flex h-dvh flex-col text-prose">
-        <script dangerouslySetInnerHTML={{ __html: SHARED_SCRIPT }} />
+        {!isHydrated && <script dangerouslySetInnerHTML={{ __html: SHARED_SCRIPT }} />}
         {props.children}
       </div>
     </playgroundContext.PartsContext>
@@ -218,6 +219,7 @@ export const PlaygroundRoot = (props: PartProps) => {
 export const PlaygroundHeader = () => {
   const state = playgroundContext.useParts();
   const theme = useTheme();
+  const isHydrated = useIsHydrated();
   const shortcut = useSyncExternalStore(
     subscribeToNothing,
     () => (/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘↵" : "Ctrl ↵"),
@@ -291,8 +293,8 @@ export const PlaygroundHeader = () => {
           >
             {shortcut}
           </kbd>
-          <script dangerouslySetInnerHTML={{ __html: SHORTCUT_SCRIPT }} />
         </Button>
+        {!isHydrated && <script dangerouslySetInnerHTML={{ __html: SHORTCUT_SCRIPT }} />}
       </div>
     </header>
   );

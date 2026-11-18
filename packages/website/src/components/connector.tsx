@@ -116,7 +116,7 @@ export const Connector = (props: ConnectorProps) => {
           key={link.name}
           stroke={props.colors[link.name]}
           className={cn(
-            "transition-opacity duration-150 ease-out",
+            "transition-opacity duration-150 ease-out starting:opacity-0",
             props.hoveredName !== undefined && props.hoveredName !== link.name && "opacity-15",
           )}
         >

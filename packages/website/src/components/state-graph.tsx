@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "cn";
 import type { Search, SearchState } from "../search";
 
@@ -12,6 +12,7 @@ const INDENT_PX = 20;
 const MIN_INDENT_PX = 8;
 const MIN_BOX_WIDTH_PX = 120;
 const LOOP_WIDTH_PX = 16;
+const FADE_PX = 24;
 const ARROW_HEAD_CLASS_NAME =
   "size-0 border-x-[3.5px] border-t-[5px] border-x-transparent border-t-input";
 
@@ -183,6 +184,26 @@ export const StateGraph = (props: StateGraphProps) => {
     getItemKey: (index) => graph.rows[index].state.id,
     overscan: 8,
   });
+  const [fadeAbove, setFadeAbove] = useState(0);
+  const [fadeBelow, setFadeBelow] = useState(0);
+  // The list fades toward an edge that hides more states, growing in over the first pixels
+  // scrolled, so the top stays crisp until the list moves.
+  const updateFade = () => {
+    const scroller = scrollRef.current;
+    if (scroller === null) return;
+    setFadeAbove(Math.min(FADE_PX, scroller.scrollTop));
+    setFadeBelow(
+      Math.min(FADE_PX, scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop),
+    );
+  };
+  useEffect(() => {
+    const scroller = scrollRef.current;
+    if (scroller === null) return;
+    const observer = new ResizeObserver(updateFade);
+    observer.observe(scroller);
+    for (const child of scroller.children) observer.observe(child);
+    return () => observer.disconnect();
+  }, []);
   const items = virtualizer.getVirtualItems();
   const gutter = graph.isLoop ? LOOP_WIDTH_PX : 0;
   const maxDepth = Math.max(0, ...items.map((item) => graph.rows[item.index].depth));
@@ -206,6 +227,10 @@ export const StateGraph = (props: StateGraphProps) => {
   return (
     <div
       ref={scrollRef}
+      onScroll={updateFade}
+      style={{
+        maskImage: `linear-gradient(to bottom, transparent, black ${fadeAbove}px, black calc(100% - ${Math.max(0, fadeBelow)}px), transparent)`,
+      }}
       className={cn("overflow-auto overscroll-none text-xs text-faint", props.className)}
     >
       {/* One listener each on the list keeps the rows free of handlers, and so memoized. The

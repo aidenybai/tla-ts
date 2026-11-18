@@ -271,7 +271,12 @@ const pages = (): Plugin => ({
     order: "post",
     async handler(html, context) {
       if (context.server) return html;
-      const server = await createServer({ server: { middlewareMode: true }, appType: "custom" });
+      // Its own cache, so a build does not overwrite the modules a running dev server serves.
+      const server = await createServer({
+        server: { middlewareMode: true },
+        appType: "custom",
+        cacheDir: "node_modules/.vite-prerender",
+      });
       const prerender = await server.ssrLoadModule("/src/prerender.tsx");
       await server.close();
       const content = context.filename.endsWith("/playground.html")

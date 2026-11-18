@@ -111,6 +111,13 @@
     }
   }
 
+  @keyframes tint-in {
+    from {
+      background-color: transparent;
+      box-shadow: 0 0 0 transparent;
+    }
+  }
+
   @keyframes line-fade {
     from {
       opacity: 1;
@@ -145,6 +152,7 @@
   [data-tint] {
     --tint-fill: color-mix(in srgb, var(--tint) 16%, transparent);
     background-color: var(--tint-fill);
+    animation: tint-in 200ms ease-out;
   }
   [data-hovering-name] [data-tint] {
     --tint-fill: color-mix(in srgb, var(--tint) 8%, transparent);
