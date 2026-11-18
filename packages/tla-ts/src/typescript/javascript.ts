@@ -9159,6 +9159,13 @@ export const getTypeNames = (type: ts.Type, checker: ts.TypeChecker): string[] |
     const names = type.types.map((member) => getTypeNames(member, checker));
     return names.every((name) => name !== undefined) ? [...new Set(names.flat())] : undefined;
   }
+  // A function with properties of its own, as Object.assign(f, {}) types it.
+  if (
+    type.isIntersection() &&
+    type.types.some((member) => getTypeNames(member, checker)?.[0] === "function")
+  ) {
+    return ["function"];
+  }
   const flags = type.flags;
   if (flags & ts.TypeFlags.Never) return [];
   if (flags & ts.TypeFlags.NumberLike) return ["number"];

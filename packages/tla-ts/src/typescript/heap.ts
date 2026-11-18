@@ -6982,7 +6982,8 @@ export const translateObjectChange = (node: ts.CallExpression, scope: Scope, con
     return (
       argument !== undefined &&
       (getKind(argument, context) === "object" ||
-        (position === 0 && isBuiltInObject(argument, context)))
+        (position === 0 &&
+          (isBuiltInObject(argument, context) || isFunctionValue(argument, context))))
     );
   };
   // Arrays, sets, and maps that tla-ts keeps outside the heap are objects it can't read.
@@ -7012,7 +7013,9 @@ export const translateObjectChange = (node: ts.CallExpression, scope: Scope, con
   const values = used.map((argument, position) =>
     (method === "defineProperty" || method === "deleteProperty") && position === 1
       ? translatePropertyKey(argument, scope, context)
-      : translateObjectValue(argument, scope, context),
+      : position === 0
+        ? translateFunctionObject(argument, scope, context)
+        : translateObjectValue(argument, scope, context),
   );
   return {
     change: useJavaScript(

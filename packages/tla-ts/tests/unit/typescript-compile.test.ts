@@ -53858,4 +53858,40 @@ describe("BigInts", () => {
       ).toContain("seen read,0,length/name,true,2,length/name/prototype,true,constructor,12");
     });
   });
+
+  describe("assigns and defines the properties of a function that a call makes, which it holds", () => {
+    const getSource = (expected: string) => `
+      const make = (k: number) => {
+        const doubled = k * 2;
+        const read = () => doubled;
+        return read;
+      };
+      const made = make(1);
+      const tagged = Object.assign(made, { tag: 5 });
+      Object.defineProperty(made, "hidden", { value: 1 });
+      const got = tagged();
+      const seen = [
+        tagged === made,
+        tagged.tag,
+        Object.keys(tagged).join("/"),
+        Object.getOwnPropertyNames(made).join("/"),
+        got,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,5,tag,length/name/tag/hidden,2"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects an enumerable definition", async () => {
+      expect(
+        (await checkModel(getSource("true,5,tag/hidden,length/name/tag/hidden,2"))).failure
+          ?.message,
+      ).toContain("seen true,5,tag,length/name/tag/hidden,2");
+    });
+  });
 });

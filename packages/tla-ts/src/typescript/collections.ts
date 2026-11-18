@@ -46,6 +46,7 @@ import {
   TIME_METHODS,
   DATE_TEXT_METHODS,
   isDescriptionOfAll,
+  isFunctionValue,
 } from "./heap";
 import {
   COLLECTIONS,
@@ -506,6 +507,7 @@ const translateUnordered = (
     if (
       isBuiltInObject(argument, context) ||
       isDescriptionOfAll(argument, context) ||
+      isFunctionValue(argument, context) ||
       (context.heap !== undefined &&
         (kind === "object" || kind === "sequence" || kind === "string"))
     ) {

@@ -6471,7 +6471,14 @@ export const isReached = (node: ts.Node, context: Context) => {
 export const getClosures = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
   const type = context.checker.getTypeAtLocation(callee);
+  // A function with properties of its own, as Object.assign(f, {}) types it, holds a closure whose
+  // type fits its calls.
+  const called = type.isIntersection()
+    ? type.types.filter((member) => member.getCallSignatures().length > 0)
+    : [type];
   return (context.closures.get(callee.getSourceFile()) ?? []).filter((closure) =>
-    context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), type),
+    called.every((member) =>
+      context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), member),
+    ),
   );
 };
