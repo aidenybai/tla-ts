@@ -17246,7 +17246,7 @@ describe("errors", () => {
         add(box.items);
         const text = JSON.stringify(box);
       `),
-    ).toThrow("Only state variables and local lets can change: items");
+    ).toThrow("tla-ts can't change in place the collection that a parameter holds");
   });
 
   it("rejects a function parameter that a helper uses as a value", () => {
@@ -17816,7 +17816,7 @@ describe("errors", () => {
         const cut = (list: number[]) => list.splice(0, 1);
         const removed = cut(box.list);
       `),
-    ).toThrow("Unsupported array method: splice");
+    ).toThrow("tla-ts can't change in place the collection that a parameter holds");
   });
 
   it("splices an array with holes, which move with its elements", async () => {
@@ -57781,6 +57781,54 @@ describe("runs the script's methods in a conversion inside at most one other", (
     it("rejects another outcome", async () => {
       const wrong = "warn,id,id,:a,7:id+b";
       expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("changes a parameter's map in place only where the call passes one", () => {
+    const getSource = (calls: string, expected: string) => `
+      const parse = (line: string, cache?: Map<string, number>): number => {
+        let found = cache?.get(line);
+        if (found === undefined) {
+          found = line.length;
+          cache?.set(line, found);
+        }
+        return found;
+      };
+      const lengths = new Map<string, number>();
+      const seen = [${calls}].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource('parse("ab"), parse("abc")', "2,3"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      await expect(checkModel(getSource('parse("ab"), parse("abc")', "2,2"))).rejects.toThrow(
+        "seen 2,3",
+      );
+    });
+
+    it("changes the map that a script's call passes, which the heap holds", async () => {
+      const result = await checkModel(getSource('parse("ab", lengths), lengths.size', "2,1"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("stops where a model's call passes a map", () => {
+      expect(() =>
+        compile(`
+          const add = (line: string, cache?: Map<string, number>) => {
+            cache?.set(line, line.length);
+          };
+          const lengths = new Map<string, number>();
+          export const remember = (line: "ab" | "abc"): void => {
+            add(line, lengths);
+          };
+          export const isEmpty = (): boolean => lengths.size === 0;
+        `),
+      ).toThrow("tla-ts can't change in place the collection that a parameter holds");
     });
   });
 });

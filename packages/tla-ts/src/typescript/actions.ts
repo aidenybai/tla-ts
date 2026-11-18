@@ -1142,12 +1142,7 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     if (!isReceiver && getImmutable(node, context) !== undefined) {
       throw new TlaTypeScriptError(`tla-ts can't follow this write to ${node.text}`, node);
     }
-    const declaration = getValueDeclaration(symbol, context);
-    const isChangedInPlace =
-      declaration !== undefined &&
-      ts.isParameter(declaration) &&
-      declaration.dotDotDotToken === undefined &&
-      isReceiver;
+    const isChangedInPlace = isReceiver && getParameterRead(node, context) !== undefined;
     if (
       symbol === undefined ||
       current === undefined ||
@@ -2072,6 +2067,49 @@ const isRemoving = (node: ts.Expression, context: Context): boolean => {
       !node.arguments.some(ts.isSpreadElement) &&
       REMOVING_METHODS.has(method))
   );
+};
+
+// The parameter that an expression reads, whose object may be the caller's too, though a rest
+// parameter's array is the call's own.
+const getParameterRead = (node: ts.Expression, context: Context) => {
+  const held = getCast(ts.isNonNullExpression(node) ? node.expression : node);
+  const declaration = ts.isIdentifier(held)
+    ? getValueDeclaration(getSymbol(held, context.checker), context)
+    : undefined;
+  return declaration !== undefined &&
+    ts.isParameter(declaration) &&
+    declaration.dotDotDotToken === undefined
+    ? declaration
+    : undefined;
+};
+
+// A call that passes a collection that the callee changes in place through a parameter, which a
+// TLA+ value would copy, so that the caller's would miss the change.
+export const rejectChangedArguments = (
+  callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
+  context: Context,
+) => {
+  const body = callee.body;
+  const passed = callee.parameters.filter((_, position) => {
+    const argument = argumentNodes.at(position);
+    return argument !== undefined && !isUndefinedLiteral(argument, context);
+  });
+  if (body === undefined || passed.length === 0) return;
+  const changed = findNodesOf(
+    body,
+    ts.SyntaxKind.CallExpression,
+    (inner): inner is ts.CallExpression & { expression: ts.PropertyAccessExpression } =>
+      isMethodCall(inner) && isRemoving(inner, context),
+    context,
+  ).flatMap((call) => getParameterRead(call.expression.expression, context) ?? []);
+  const parameter = passed.find((inner) => changed.includes(inner));
+  if (parameter !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't change in place the collection that a parameter holds",
+      argumentNodes[callee.parameters.indexOf(parameter)],
+    );
+  }
 };
 
 // The value that a call like queue.shift() returns, before it changes the queue.
@@ -3135,6 +3173,32 @@ const translateCallStatementBody = (
       changed,
     );
   };
+  // A parameter's collection may be the caller's too, which a change in place would miss, so the
+  // change stops where it runs. A call that passes one stops before, so it runs only where no call
+  // passes one.
+  const changedParameter =
+    isMethodCall(expression) && isRemoving(expression, context)
+      ? getParameterRead(expression.expression.expression, context)
+      : undefined;
+  const changedOwner = changedParameter?.parent;
+  if (
+    isMethodCall(expression) &&
+    changedOwner !== undefined &&
+    (ts.isFunctionDeclaration(changedOwner) ||
+      ts.isFunctionExpression(changedOwner) ||
+      ts.isArrowFunction(changedOwner)) &&
+    isOnlyCalled(changedOwner, context)
+  ) {
+    return guardReceiver(
+      expression.expression.expression,
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't change in place the collection that a parameter holds"),
+        ]),
+      ),
+    );
+  }
   // A call like stack.pop() that an expression evaluates, which gives its value from before.
   const removed = getRemovedValue(expression, path, context);
   if (removed !== undefined && isMethodCall(expression)) {
@@ -6613,6 +6677,7 @@ export const bindCall = (
   if (frame.inlining.has(callee)) {
     throw new TlaTypeScriptError("Functions that change state can't call themselves", node);
   }
+  rejectChangedArguments(callee, argumentNodes, context);
   const parameters = getParameters(callee);
   // A parameter's array pattern takes its values from a generator before the body runs.
   const destructured = parameters.flatMap((parameter, position) => {
