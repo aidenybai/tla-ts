@@ -177,6 +177,57 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  const RECURSIVE_MODULES = new Map([
+    [
+      "Inner",
+      "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nr[n \\in {0, 1}] == IF n = 0 THEN c ELSE r[n - 1] + 1\n====",
+    ],
+    [
+      "Plain",
+      "---- MODULE Plain ----\nEXTENDS Naturals\nr[n \\in {0, 1}] == IF n = 0 THEN 0 ELSE r[n - 1] + 1\n====",
+    ],
+  ]);
+
+  const checkRecursive = (expression: string) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nr[n \\in {0, 1}] == IF n = 0 THEN 0 ELSE r[n - 1] + 1\nlr[n \\in {0, 1}] == lab(n) :: IF n = 0 THEN 0 ELSE lr[n - 1] + 1\nAp(Op(_)) == Op(1)\nP(p) == INSTANCE Inner WITH c <- p\nInit == x = 0\nNext == x' = ${expression}\nInv == x = 0\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => RECURSIVE_MODULES.get(name),
+    });
+
+  it.each([
+    ["r!(1)", "r", "line 4, col 41 to line 4, col 41 of module M"],
+    ["lr!lab(1)", "lr", "line 5, col 52 to line 5, col 53 of module M"],
+    ["Ap(r!@)", "r", "line 4, col 41 to line 4, col 41 of module M"],
+    [
+      "LET s[n \\in {0, 1}] == IF n = 0 THEN 0 ELSE s[n - 1] + 1 IN s!(1)",
+      "s",
+      "line 9, col 58 to line 9, col 58 of module M",
+    ],
+    ["LET L == INSTANCE Plain IN L!r!(1)", "r", "line 3, col 41 to line 3, col 41 of module Plain"],
+    [
+      "LET L == INSTANCE Inner WITH c <- 5 IN L!r!(1)",
+      "r",
+      "line 4, col 41 to line 4, col 41 of module Inner",
+    ],
+    ["P(2)!r!(1)", "r", "line 4, col 41 to line 4, col 41 of module Inner"],
+  ])(
+    "fails on the recursive call that %s selects, as TLC leaves the function's name unbound",
+    async (expression, name, location) => {
+      const result = await checkRecursive(expression);
+      expect(result.failure?.message).toContain(
+        `: In evaluation, the identifier ${name} is either undefined or not an operator.\n${location}`,
+      );
+    },
+  );
+
+  it("evaluates a selected recursive function whole, and its body where it makes no recursive call", async () => {
+    const result = await checkRecursive(
+      "<<r!(0), r!:[1], LET L == INSTANCE Plain IN L!r!:[1], LET L == INSTANCE Inner WITH c <- 5 IN <<L!r!(0), L!r[1]>>, P(2)!r!:[1]>>",
+    );
+    expect(result.failure?.message).toContain("<<0, 1, 1, <<5, 6>>, 3>>");
+  });
+
   it("selects a label through an instance whose operators the instancing module does not extend", async () => {
     const result = await check({
       source:

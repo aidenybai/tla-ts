@@ -60,6 +60,7 @@ interface Goal {
 
 interface LocalName extends Binding {
   name: string;
+  isSelf?: boolean;
   parent: LocalName | undefined;
   goal?: Goal;
   isPending?: boolean;
@@ -114,6 +115,8 @@ interface SelectionState {
 type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" };
 
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
+
+const SELF_RESOLUTION = { kind: "Local", isSelf: true } as const;
 
 export const SELECTION_NAME = "$subexpression";
 
@@ -895,7 +898,9 @@ const getSymbolArity = (
     });
     return undefined;
   }
-  if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
+  if (local && expression.kind !== "OperatorReference") {
+    expression.resolution = local.isSelf ? SELF_RESOLUTION : LOCAL_RESOLUTION;
+  }
   if (local) return local.arity;
   if (getGoal(name, unit)?.statement.kind === "AssumeProve") return 0;
   const symbol = findSymbol(name, unit);
@@ -1037,9 +1042,10 @@ const resolveDefinition = (
     current.params = getParamArities(definition);
   }
   if (definition.kind === "Function") {
+    // SANY names a function declared RECURSIVE by its definition in the body, and any other by a parameter of its own.
     resolveExpression(
       definition.body,
-      { name, kind: "Parameter", arity: 0, range, parent: inner },
+      { name, kind: "Parameter", arity: 0, range, parent: inner, isSelf: !isDeclared },
       unit,
     );
     markRecursiveConstructions(definition.body, name);

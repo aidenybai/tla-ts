@@ -146,7 +146,7 @@ export interface Thunk {
 }
 
 type Binding =
-  | { kind: "Value"; value: Value; argument?: Expression }
+  | { kind: "Value"; value: Value; argument?: Expression; isSelf?: boolean }
   | Thunk
   | { kind: "Operator"; operator: Operator };
 
@@ -360,6 +360,11 @@ export const createBigNumberError = (expression: NumberExpression) =>
     EXIT_STATUS.error,
   );
 
+const createUndefinedError = (name: string, expression: Expression) =>
+  new TlaEvaluationError(
+    `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+  );
+
 export const createUnassignedError = (name: string, expression: Expression) =>
   new TlaUnassignedError(
     `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
@@ -383,6 +388,12 @@ export const lookupScope = (scope: Scope | undefined, name: string): Binding | u
 export const bindValue = (scope: Scope | undefined, name: string, value: Value): Scope => ({
   name,
   binding: { kind: "Value", value },
+  parent: scope,
+});
+
+const bindSelf = (scope: Scope | undefined, name: string, value: Value): Scope => ({
+  name,
+  binding: { kind: "Value", value, isSelf: true },
   parent: scope,
 });
 
@@ -772,7 +783,7 @@ const createRecursiveFunction = (
       definition.body,
       withScope(
         context,
-        bindArgument(definition.bounds, bindValue(undefined, definition.name, self), argument),
+        bindArgument(definition.bounds, bindSelf(undefined, definition.name, self), argument),
       ),
     );
   const coverage = context.environment.coverage;
@@ -796,7 +807,7 @@ const createRecursiveFunction = (
     value: functionValue,
     bounds: definition.bounds,
     body: definition.body,
-    scope: bindValue(undefined, definition.name, functionValue),
+    scope: bindSelf(undefined, definition.name, functionValue),
   });
   const rebindable: RebindableLazyFunction = Object.assign(functionValue, {
     rebind: (tracing: Environment) => {
@@ -1086,7 +1097,7 @@ const compileArgumentBinder = (argument: Expression, environment: Environment): 
       return thunk;
     };
   }
-  if (argument.kind === "Identifier") {
+  if (argument.kind === "Identifier" && !argument.resolution?.isSelf) {
     const global = isLocallyResolved(argument)
       ? undefined
       : findGlobalName(argument.name, environment);
@@ -1265,9 +1276,7 @@ const evaluateLocalIdentifier = (name: string, expression: Expression, context: 
     context.environment.substitutions.get(name) ?? name,
   );
   if (builtin?.arity === 0) return builtin.evaluate([], context);
-  throw new TlaEvaluationError(
-    `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
-  );
+  throw createUndefinedError(name, expression);
 };
 
 export const getReevaluatedDefinitions = (
@@ -1554,6 +1563,13 @@ const compileIdentifier = (
     const definition = global.definition;
     let compiled: Evaluator | undefined;
     return (context) => (compiled ??= getDefinitionEvaluator(definition, environment))(context);
+  }
+  if (expression.resolution?.isSelf) {
+    return (context) => {
+      const binding = lookupScope(context.scope, name);
+      if (binding?.kind === "Value" && binding.isSelf) return binding.value;
+      throw createUndefinedError(name, expression);
+    };
   }
   return (context) => evaluateLocalIdentifier(name, expression, context);
 };
@@ -1954,27 +1970,31 @@ export const getFunctionBuilder = (
   const boundTupleLengths = getBoundTupleLengths(bounds);
   const bodyNames = getScopeNames(expression.body);
   const coverage = environment.coverage;
+  const name = expression.name;
   const createLazy = (domain: Value, context: Context) => {
     const scope = trimScope(context.scope, bodyNames);
     const lambdaContext = withScope(context, scope);
-    const compute = (argument: Value) =>
-      body(withScope(lambdaContext, bindArgument(bounds, scope, argument)));
+    const getScope = (self: LazyFunctionValue) =>
+      name === undefined ? scope : bindSelf(scope, name, self);
+    const compute = (argument: Value, self: LazyFunctionValue) =>
+      body(withScope(lambdaContext, bindArgument(bounds, getScope(self), argument)));
     const node = coverage && !environment.callStack ? coverage.current : -1;
+    const value = createLazyFunction(
+      domain,
+      coverage
+        ? (argument, self) =>
+            coverage.current === -1
+              ? compute(argument, self)
+              : runAtCoverageNode(coverage, node, () => compute(argument, self))
+        : compute,
+      getLazyFunctionSource(template, bounds, domain),
+      boundTupleLengths,
+    );
     const functionValue = keepLambda({
-      value: createLazyFunction(
-        domain,
-        coverage
-          ? (argument) =>
-              coverage.current === -1
-                ? compute(argument)
-                : runAtCoverageNode(coverage, node, () => compute(argument))
-          : compute,
-        getLazyFunctionSource(template, bounds, domain),
-        boundTupleLengths,
-      ),
+      value,
       bounds,
       body: expression.body,
-      scope,
+      scope: getScope(value),
     });
     return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
   };
