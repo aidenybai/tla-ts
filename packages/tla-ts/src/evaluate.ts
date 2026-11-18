@@ -854,7 +854,7 @@ const getDefinitionEvaluator = (definition: Definition, environment: Environment
   const isInCallerContext =
     definition.kind === "Operator" &&
     definition.params.length === 0 &&
-    isTlcEvalReached(definition, environment);
+    isTlcEvalReached(definition.body, environment);
   const evaluator: Evaluator = isInCallerContext
     ? (context) =>
         (definitionId === undefined ? undefined : startupValues[definitionId]) ??

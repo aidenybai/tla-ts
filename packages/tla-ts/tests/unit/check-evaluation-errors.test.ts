@@ -1434,6 +1434,25 @@ describe("evaluation errors match TLC", () => {
     expect(prints).toEqual(Array.from({ length: 13 }, () => '"d"  TRUE'));
   });
 
+  it("evaluates a constant TLCEval argument again in a selection or CASE under a bound name, whose context TLC passes on", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nE == TLCEval(Print("e", TRUE)) /\\ TRUE\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == /\\ \\A i \\in 1..2 : E!1 /\\ x >= 0\n       /\\ \\A i \\in 1..2 : CASE x >= 0 -> TLCEval(Print("c", TRUE))\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual([
+      '"e"  TRUE',
+      ...Array.from({ length: 3 }, () => [
+        '"e"  TRUE',
+        '"e"  TRUE',
+        '"c"  TRUE',
+        '"c"  TRUE',
+      ]).flat(),
+    ]);
+  });
+
   it("caches a constant TLCEval argument in the first LET definition without parameters only, whose context TLC leaves empty", async () => {
     const prints: string[] = [];
     await check({

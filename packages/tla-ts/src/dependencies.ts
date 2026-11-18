@@ -372,8 +372,8 @@ export const isImpureDefinition = (
   effect: keyof typeof EFFECT_FLAGS = "any",
 ) => (getRow(definition, environment)[0] & EFFECT_FLAGS[effect]) !== 0;
 
-export const isTlcEvalReached = (definition: Definition, environment: Environment) =>
-  (getRow(definition, environment)[0] & TLC_EVAL) !== 0;
+export const isTlcEvalReached = (expression: Expression, environment: Environment) =>
+  (getExpressionsRow([expression], environment)[0] & TLC_EVAL) !== 0;
 
 export const getDefinitionLevel = (definition: Definition, environment: Environment) => {
   const flags = getRow(definition, environment)[0] & TEMPORAL_LEVEL_FLAGS;
