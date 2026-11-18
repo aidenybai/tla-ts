@@ -1,13 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import {
-  allocate,
-  type Frame,
-  isMaybeNullish,
-  type Path,
-  throwTypeError,
-  translateJoined,
-} from "./actions";
+import { allocate, type Frame, type Path, throwTypeError, translateJoined } from "./actions";
 import {
   type Context,
   findNodes,
@@ -288,7 +281,7 @@ const isInertObject = (node: ts.Expression) =>
     ));
 
 // An object that an element access reads, or that a plain assignment writes, as its key, inside any
-// casts, which ToPropertyKey converts once the access has its object, which can't be undefined or
+// casts, which ToPropertyKey converts once the access has its object, where it isn't undefined or
 // null, and, for a write, the value it writes.
 export const isConvertedElementKey = (node: ts.Node, context: Context): node is ts.Expression => {
   if (!ts.isExpression(node) || skipCasts(node) !== node) return false;
@@ -305,8 +298,6 @@ export const isConvertedElementKey = (node: ts.Node, context: Context): node is 
     access.questionDotToken !== undefined ||
     // super reads the home object's prototype before the key converts.
     access.expression.kind === ts.SyntaxKind.SuperKeyword ||
-    // A base that may be undefined or null throws its TypeError before the key converts.
-    isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression))) ||
     !isObjectOperand(node, context) ||
     !isInertObject(node)
   ) {

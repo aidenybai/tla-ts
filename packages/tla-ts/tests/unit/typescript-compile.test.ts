@@ -52569,8 +52569,8 @@ describe("BigInts", () => {
     );
   });
 
-  it("stops at a JavaScript key of a value that is only null", async () => {
-    const source = `
+  describe("throws the TypeError of a JavaScript key's null base before it converts the key", () => {
+    const getSource = (expected: string) => `
       var box = { seen: "" };
       function attempt() {
         var base = null;
@@ -52586,10 +52586,22 @@ describe("BigInts", () => {
       } catch (error) {
         box.seen = error instanceof TypeError ? "type" : "other";
       }
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
     `;
-    expect(
-      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
-    ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
+
+    it("agrees with Node", async () => {
+      const source = getSource("type");
+      expect(
+        (await check(compile(source, join(import.meta.dirname, "model.js")))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the key's error", async () => {
+      const source = getSource("other");
+      expect(
+        (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+      ).toContain("seen type");
+    });
   });
 
   it("stops at the pattern parameter of a JavaScript function whose calls TypeScript doesn't check", () => {
@@ -55606,6 +55618,47 @@ describe("BigInts", () => {
       const source = getSource("dummy,TypeError,4,prop|key|call|key|key|");
       expect((await check(compile(source, path))).failure?.message).toContain(
         "result dummy,TypeError,4,prop|call|key|key|",
+      );
+    });
+  });
+
+  describe("reads and calls through an object key of a base that may be undefined or null", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var key = { toString: function () { log += "key|"; return "p"; } };
+      var note = function () {
+        log += "arg|";
+        return 1;
+      };
+      var nothing = null;
+      var outcomes = "";
+      try {
+        var read = nothing[key];
+      } catch (error) {
+        outcomes += "read:" + error.constructor.name + "|";
+      }
+      try {
+        nothing[key](note());
+      } catch (error) {
+        outcomes += "call:" + error.constructor.name + "|";
+      }
+      var holder = { p: function (step) { return step + 1; } };
+      var maybe = /** @type {any} */ (holder);
+      var called = maybe[key](note());
+      var result = [outcomes, called, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("read:TypeError|call:TypeError|,2,key|arg|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("read:TypeError|call:TypeError|,2,arg|key|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result read:TypeError|call:TypeError|,2,key|arg|",
       );
     });
   });

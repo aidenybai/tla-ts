@@ -22935,7 +22935,12 @@ export const translateStatements = (
   const converted = getHoistedConversion(statement, path, context);
   if (converted !== undefined) {
     const node = converted.node;
-    return runConversion(
+    // An element access's base that is undefined or null throws the TypeError of ToObject before
+    // its key converts.
+    const access = isConvertedElementKey(node, context)
+      ? ts.findAncestor(node.parent, ts.isElementAccessExpression)
+      : undefined;
+    const run = runConversion(
       node,
       converted.conversion,
       path,
@@ -22963,6 +22968,17 @@ export const translateStatements = (
         );
       },
     );
+    return access !== undefined &&
+      isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression)))
+      ? ifThenElse(
+          apply("\\in", [
+            translateExpression(access.expression, path.scope, context),
+            set([getUndefined(context), identifier("Null")]),
+          ]),
+          throwTypeError(path, access, context, statementFrame),
+          run,
+        )
+      : run;
   }
 
   // An enum that code reads as an object binds its name to the object that the heap holds.
