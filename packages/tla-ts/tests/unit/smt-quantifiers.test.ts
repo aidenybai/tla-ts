@@ -150,6 +150,29 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
       ")",
     ]);
   });
+
+  // The analyzer counts a step for each quantifier, and model_finder::checkpoint counts one for
+  // each formula it visits and each qinfo it compares.
+  it("counts the steps of the quantifier analyzer", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(assert (forall ((x Int)) (and (p x) (or (p (f x)) (= (f x) x)))))",
+        "(push)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 174)"]);
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(assert (forall ((x Int) (y Int)) (or (= (f x) (g y)) (= (f y) (g x)) (= (f x) (f y)))))",
+        "(push)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 185)"]);
+  });
 });
 
 describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {

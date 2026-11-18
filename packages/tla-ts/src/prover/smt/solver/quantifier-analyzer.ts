@@ -1,3 +1,4 @@
+import { SmtTacticError } from "../../../errors";
 import {
   KIND_APP,
   KIND_VAR,
@@ -62,8 +63,18 @@ export class QuantifierInfo {
     this.manager.decRef(this.flatQ);
   }
 
+  // model_finder::checkpoint reads the context's cancel flag, which counts a step.
+  checkpoint() {
+    if (this.context.checkCanceled())
+      throw new SmtTacticError(this.manager.limit.getCancelMessage());
+  }
+
   insertQInfo(info: QInfo) {
-    if (!this.qinfos.some((other) => isSameQInfo(other, info))) this.qinfos.push(info);
+    for (const other of this.qinfos) {
+      this.checkpoint();
+      if (isSameQInfo(other, info)) return;
+    }
+    this.qinfos.push(info);
   }
 
   processAuf(solver: AufSolver) {
@@ -166,6 +177,7 @@ export class QuantifierInfo {
       }
     }
     for (const info of this.qinfos) {
+      this.checkpoint();
       if (info.kind !== "f_var_plus_offset") continue;
       const aFI = solver.getAFI(info.decl, info.argIndex).getRoot();
       const sJ = solver.getUvar(flatQ, info.varIndex).getRoot();
@@ -457,6 +469,7 @@ export class QuantifierAnalyzer {
   private processFormulasOnStack() {
     const manager = this.manager;
     for (let entry = this.ftodo.pop(); entry !== undefined; entry = this.ftodo.pop()) {
+      this.info.checkpoint();
       const current = entry[0];
       const polarity = entry[1];
       const negated: Polarity = polarity === "pos" ? "neg" : "pos";
@@ -524,6 +537,7 @@ export class QuantifierAnalyzer {
 
   analyze() {
     const manager = this.manager;
+    if (!manager.limit.inc()) return;
     const body = manager.getQuantifier(this.info.flatQ).body;
     const literals = manager.getOp(body) === OP_OR ? manager.getArgs(body) : [body];
     if (literals.every((literal) => this.isLiteral(literal))) {
