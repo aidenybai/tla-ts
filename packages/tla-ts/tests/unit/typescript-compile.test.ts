@@ -55193,4 +55193,38 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("a,b;0,1"))).failure?.message).toContain("seen a,b;0,1,2");
     });
   });
+
+  describe("stops at a read of a local that a closure's method changes in place through its copy", () => {
+    const getSource = (call: string, expected: number) => `
+      let seen = -1;
+      function runAsync(testFunc: () => Promise<void>) {
+        testFunc();
+      }
+      runAsync(async function () {
+        const values: number[] = [];
+        async function inner() {
+          ${call}
+        }
+        await inner();
+        seen = values.length;
+        if (seen !== ${expected}) throw new Error("seen " + seen);
+      });
+    `;
+    const arrow = "const push = () => { values.push(42); }; push();";
+    const method = "const box = { m() { values.push(42); } }; box.m();";
+
+    it("agrees with Node where an arrow function changes it", async () => {
+      expect((await checkModel(getSource(arrow, 1))).failure).toBeUndefined();
+    });
+
+    it("rejects the length before the change", async () => {
+      expect((await checkModel(getSource(arrow, 0))).failure).toBeDefined();
+    });
+
+    it("stops where a method changes its copy", async () => {
+      expect((await checkModel(getSource(method, 1))).failure?.message).toContain(
+        "tla-ts can't read values after a closure changes its copy in place",
+      );
+    });
+  });
 });
