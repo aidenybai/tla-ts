@@ -52996,4 +52996,28 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the message of a native error that isn't a string to a string", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var a = new Error(42);
+      var b = new SuppressedError(undefined, undefined, false);
+      var c = new TypeError(null);
+      var d = new RangeError(undefined);
+      var result = [typeof a.message, a.message, b.message, c.message, d.message].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("string,42,false,null,");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("number,42,false,null,");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result string,42,false,null,",
+      );
+    });
+  });
 });
