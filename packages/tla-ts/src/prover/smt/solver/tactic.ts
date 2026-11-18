@@ -79,7 +79,7 @@ import { simplifyGoal } from "./quant-tactics";
 import { SolveEqs } from "./solve-eqs";
 import { RefVector } from "./ref-vector";
 import { type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
-import { lia2card } from "./lia2card";
+import { createLia2Card } from "./lia2card";
 import { LOGIC_TACTICS, QFAUFBV, QFUFBV_ACKR_PREAMBLE } from "./logic-tactics";
 import {
   createCommandReader,
@@ -123,7 +123,15 @@ export interface TacticEnvironment {
   write: (text: string, isDiagnostic: boolean) => void;
   parameters: ReadonlyMap<string, string>;
   hasDefinitions: () => boolean;
+  // Free what the tactics built here keep across their runs, as Z3 does once it frees them.
+  destructors: (() => void)[];
 }
+
+// Z3's and-then frees its last tactic first.
+export const destroyTactics = (destructors: (() => void)[]) => {
+  for (let index = destructors.length - 1; index >= 0; index--) destructors[index]();
+  destructors.length = 0;
+};
 
 // A tactic that tracks dependencies keeps the dependency of every formula it changes, so the goal
 // gets the assertion names only for those.
@@ -443,7 +451,10 @@ const runParallelSmt = (environment: TacticEnvironment) => (goal: Goal) => {
   return [goal];
 };
 
-const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrSolver => {
+const createTacticSolver = (environment: TacticEnvironment, strategy: string): AckrSolver => {
+  const manager = environment.manager;
+  const destructors: (() => void)[] = [];
+  const tactic = compileInternalTactic({ ...environment, destructors }, strategy);
   const assertions = new RefVector(manager);
   let model: ProtoModel | undefined;
   let converters: Goal["converters"] = [];
@@ -454,7 +465,7 @@ const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrS
       model = undefined;
       const goal = new Goal(manager);
       for (const assertion of assertions.items) goal.assert(assertion);
-      const checked = checkSatUsing(getTactic(), goal);
+      const checked = checkSatUsing(tactic, goal);
       // tactic2solver keeps the goal's model converter until its next check.
       decConverterRefs(manager, converters);
       converters = goal.converters;
@@ -467,6 +478,7 @@ const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrS
     getModel: () => model as ProtoModel,
     release: () => {
       decConverterRefs(manager, converters);
+      destroyTactics(destructors);
       model?.decRef();
       assertions.reset();
     },
@@ -910,6 +922,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       ]),
       build: (environment) => {
         const bodies = new RefVector(environment.manager);
+        environment.destructors.push(() => bodies.reset());
         return inPlace((goal) => elimUncnstr(environment.manager, goal, bodies));
       },
     },
@@ -919,16 +932,16 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       isTrackingDependencies: true,
       descrs: getDescrs("", [["compile_equality", PARAM_BOOL, true, true]]),
-      build: (environment, params) =>
-        inPlace((goal) =>
-          lia2card(
-            environment.manager,
-            goal,
-            getUint(params, "lia2card.max_range", 100),
-            getUint(params, "lia2card.max_ite_nesting", 4),
-            getBool(params, "compile_equality", true),
-          ),
-        ),
+      build: (environment, params) => {
+        const tactic = createLia2Card(
+          environment.manager,
+          getUint(params, "lia2card.max_range", 100),
+          getUint(params, "lia2card.max_ite_nesting", 4),
+          getBool(params, "compile_equality", true),
+        );
+        environment.destructors.push(tactic.release);
+        return inPlace(tactic.run);
+      },
     },
   ],
   [
@@ -1380,7 +1393,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           runCond(
             isQfufbv,
             createQfufbvAckrTactic(manager, getRewriterOptions(manager, new Map()), true, () =>
-              createTacticSolver(manager, () => compileInternalTactic(environment, QFAUFBV)),
+              createTacticSolver(environment, QFAUFBV),
             ),
             runSmt(environment, params),
           ),

@@ -1006,6 +1006,7 @@ describe("the optimizer releases what Z3 releases", () => {
         write: () => {},
         parameters: new Map(),
         hasDefinitions: () => false,
+        destructors: [],
       },
       { getBaseModel: () => null, setModel: () => {} },
       {
@@ -2674,5 +2675,38 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["sat", "(:rlimit 298)", "sat", "(:rlimit 485)"]);
+  });
+});
+
+describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
+  it("keeps the cache of lia2card's rewriter across the checks", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then lia2card smt)")',
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (> (+ a b) 5))",
+        "(assert (< (- a b) 3))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 191)", "sat", "(:rlimit 357)"]);
+  });
+
+  it("reads tactic.default_tactic as it makes the solver", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        '(set-option :tactic.default_tactic "(then fail smt)")',
+        "(assert (> a 5))",
+        "(check-sat)",
+        "(reset-assertions)",
+        "(assert (> a 5))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual(["sat", "unknown", '(:reason-unknown "fail tactic")']);
   });
 });
