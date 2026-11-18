@@ -13,8 +13,10 @@ import {
   OP_OR,
   OP_TRUE,
   OP_XOR,
+  SORT_BOOL,
 } from "../ast";
 import { EufSolver, type EufInternalizer, type ThSolverFactory } from "../euf/euf-solver";
+import { getDependencyValues, type Goal } from "../goal";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
 import { NULL_LITERAL } from "./clause";
 import { PbSolver, type SatInternalizer } from "./pb-solver";
@@ -512,13 +514,26 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     this.cacheTrail.push(expr);
   }
 
-  // insert_dep on an assumption, an uninterpreted constant or its negation.
-  getAssumptionLit(assumption: number) {
+  // A dependency that is not a constant or its negation gets a fresh constant equal to it.
+  private insertDep(dep: number, dep2asm: Map<number, number>) {
     const manager = this.manager;
-    const isNot = manager.isNot(assumption);
-    this.convertAtom(isNot ? manager.getArg(assumption, 0) : assumption, false, false);
+    const isSign = manager.isNot(dep);
+    const atom = isSign ? manager.getArg(dep, 0) : dep;
+    const newDep = manager.isUninterpretedConst(atom)
+      ? atom
+      : manager.mkFreshConst("dep", SORT_BOOL);
+    if (newDep !== atom) this.process(manager.mkEq(newDep, atom), true);
+    this.convertAtom(newDep, false, false);
     const lit = this.results.pop() as number;
-    return isNot ? lit ^ 1 : lit;
+    dep2asm.set(dep, isSign ? lit ^ 1 : lit);
+  }
+
+  assumptions(assumptions: readonly number[], dep2asm: Map<number, number>) {
+    try {
+      for (const assumption of assumptions) this.insertDep(assumption, dep2asm);
+    } finally {
+      this.reset();
+    }
   }
 
   run(forms: readonly number[]) {
@@ -526,10 +541,34 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     try {
       for (const form of forms) this.process(form, true);
     } finally {
-      this.frames = [];
-      this.results = [];
-      this.app2lit = new Map();
-      this.lit2app = new Map();
+      this.reset();
     }
+  }
+
+  // A formula holds when its dependencies do, and one that is its own dependency only gets its literal.
+  runGoal(goal: Goal, dep2asm: Map<number, number>) {
+    const manager = this.manager;
+    if (this.mkThSolver !== null) this.ensureEuf();
+    try {
+      forms: for (let index = 0; index < goal.forms.size; index++) {
+        const form = goal.forms.items[index];
+        const clause = [form];
+        for (const dep of getDependencyValues(goal.getDependency(index))) {
+          this.insertDep(dep, dep2asm);
+          if (dep === form) continue forms;
+          clause.push(manager.isNot(dep) ? manager.getArg(dep, 0) : manager.mkNot(dep));
+        }
+        this.process(manager.mkOr(clause), true);
+      }
+    } finally {
+      this.reset();
+    }
+  }
+
+  private reset() {
+    this.frames = [];
+    this.results = [];
+    this.app2lit = new Map();
+    this.lit2app = new Map();
   }
 }

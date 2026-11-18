@@ -583,7 +583,7 @@ export const runBitBlast =
       rewritten = next;
       if (form === rewritten) continue;
       isChanged = true;
-      goal.update(index, rewritten);
+      goal.update(index, rewritten, goal.getDependency(index));
     }
     if (isChanged && rewriter.keys.length > keyPos) {
       const const2bits = new ObjMap<number>((decl) => manager.getDeclHash(decl));

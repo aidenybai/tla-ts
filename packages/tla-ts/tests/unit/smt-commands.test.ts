@@ -1216,6 +1216,35 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "", "sat", "", "(=> r r)", "(=> (not p) (not p))", "(=> (not p) q)"]);
   });
 
+  // The SAT solver gives up on the dependency, which goal2sat takes before the bit-blasting.
+  it("tracks the assumptions of get-consequences that are not literals through the preprocessing", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(assert (=> a b))",
+        "(assert (=> (and b c) (not a)))",
+        "(get-consequences ((and a c)) (a b c))",
+        "(get-consequences ((or a c)) (a b c))",
+        "(declare-const x (_ BitVec 4))",
+        "(assert (bvult x #x5))",
+        "(get-consequences ((= x #x3)) (x))",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toEqual([
+      "unsat",
+      "",
+      "sat",
+      "",
+      "unknown",
+      "",
+      '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun = ((_ BitVec 4) (_ BitVec 4)) Bool)',
+      ')")',
+    ]);
+  });
+
   it("orders the model of the SAT solver by its variables, as inc_sat_solver registers them", () => {
     expect(
       run([

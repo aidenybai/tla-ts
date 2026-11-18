@@ -1,8 +1,8 @@
-import { SmtCanceledError, SmtTacticError, SmtUnsupportedError } from "../../../../errors";
+import { SmtCanceledError, SmtTacticError } from "../../../../errors";
 import { type AstManager, OP_AND, OP_EQ, OP_IMPLIES, OP_NOT, OP_OR, SORT_BOOL } from "../ast";
 import { mkNot } from "../ast-util";
 import { BitBlasterRewriter } from "../bit-blast-tactic";
-import { Goal } from "../goal";
+import { Goal, mkDependencyLeaf } from "../goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ProtoModel } from "../proto-model";
 import { RefVector } from "../ref-vector";
@@ -216,7 +216,7 @@ export class IncSatSolver {
     if (subgoals?.length !== 1) return L_UNDEF;
     const subgoal = subgoals[0];
     this.converters.converters = [...this.converters.converters, ...subgoal.converters];
-    this.goal2sat.run(subgoal.forms.items);
+    this.goal2sat.runGoal(subgoal, this.dep2asm);
     return this.checkUninterpreted();
   }
 
@@ -234,16 +234,29 @@ export class IncSatSolver {
     return result;
   }
 
+  // Assumptions that are not literals go through the preprocessing as a goal that tracks them.
   private internalizeAssumptions(assumptions: readonly number[]) {
+    const manager = this.manager;
+    const all = [...assumptions, ...this.names.items];
     this.asms = [];
+    if (all.length === 0) return L_TRUE;
+    this.isCnf &&= all.every((assumption) => isLiteral(manager, assumption));
+    if (this.isCnf) this.goal2sat.assumptions(all, this.dep2asm);
+    else {
+      const goal = new Goal(manager);
+      goal.isCoresEnabled = true;
+      for (const assumption of all) goal.assert(assumption, mkDependencyLeaf(assumption));
+      const result = this.internalizeGoal(goal);
+      if (result !== L_TRUE) return result;
+    }
     const seen = new Set<number>();
-    for (const assumption of assumptions) {
-      const lit = this.goal2sat.getAssumptionLit(assumption);
-      this.dep2asm.set(assumption, lit);
-      if (seen.has(lit)) continue;
+    for (const assumption of all) {
+      const lit = this.dep2asm.get(assumption);
+      if (lit === undefined || seen.has(lit)) continue;
       seen.add(lit);
       this.asms.push(lit);
     }
+    return L_TRUE;
   }
 
   check(assumptions: readonly number[] = []) {
@@ -267,7 +280,8 @@ export class IncSatSolver {
     this.dep2asm = new Map();
     const internalized = this.internalizeFormulas();
     if (internalized !== L_TRUE) return internalized;
-    this.internalizeAssumptions([...literals, ...this.names.items]);
+    const internalizedAssumptions = this.internalizeAssumptions(literals);
+    if (internalizedAssumptions !== L_TRUE) return internalizedAssumptions;
     this.reasonUnknown = "no reason given";
     this.isInternalizedConverted = false;
     const result = (() => {
@@ -321,9 +335,9 @@ export class IncSatSolver {
     const boolVars = vars.flatMap((expr) =>
       this.internalizeVar(expr).filter((boolVar) => boolVar !== undefined),
     );
-    if (!assumptions.every((assumption) => isLiteral(this.manager, assumption)))
-      throw new SmtUnsupportedError("get-consequences assumptions that are not literals");
-    this.internalizeAssumptions(assumptions);
+    const internalizedAssumptions = this.internalizeAssumptions(assumptions);
+    if (internalizedAssumptions !== L_TRUE)
+      return { result: internalizedAssumptions, consequences };
     const found = getConsequences(this.solver, this.asms, boolVars);
     if (found.result === L_FALSE && this.asms.length > 0) this.extractCore(new Map());
     if (found.result === L_FALSE) return { result: found.result, consequences };
