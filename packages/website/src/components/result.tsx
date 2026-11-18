@@ -67,3 +67,32 @@ export const ResultSection = (props: ResultSectionProps) => (
     {props.children}
   </section>
 );
+
+interface ResultSkeletonProps {
+  children: ReactNode;
+}
+
+// The outline of a result: a title and a verdict, then a title, a count, and the states. It
+// shows only if a check takes long enough to notice.
+export const ResultSkeleton = (props: ResultSkeletonProps) => (
+  <div
+    role="status"
+    className="flex animate-pulse flex-col gap-6 transition-opacity delay-150 duration-150 ease-out motion-reduce:animate-none starting:opacity-0"
+  >
+    <span className="sr-only">Checking…</span>
+    <div className="grid gap-2">
+      <span className="my-1 h-3 w-11 rounded-sm bg-border" />
+      <span className="flex h-5 items-center gap-1.5 max-sm:h-[18px]">
+        <span className="size-3.5 rounded-full bg-border" />
+        <span className="h-3 w-24 rounded-sm bg-border" />
+      </span>
+    </div>
+    <div className="grid gap-2">
+      <span className="flex h-5 items-center justify-between">
+        <span className="h-3 w-10 rounded-sm bg-border" />
+        <span className="h-3 w-4 rounded-sm bg-border" />
+      </span>
+      {props.children}
+    </div>
+  </div>
+);

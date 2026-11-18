@@ -254,3 +254,32 @@ export const StateGraph = (props: StateGraphProps) => {
     </div>
   );
 };
+
+const SKELETON_ROWS = [
+  { box: "w-16", call: "w-0" },
+  { box: "w-20", call: "w-14" },
+  { box: "w-16", call: "w-20" },
+  { box: "w-24", call: "w-14" },
+];
+
+// A chain of states with bars for its text, drawn with the sizes of the real rows.
+export const StateGraphSkeleton = () => (
+  <ol aria-hidden className="flex flex-col items-start">
+    {SKELETON_ROWS.map((row, index) => (
+      <li key={index} className="flex flex-col items-start">
+        {index > 0 && (
+          <span style={{ height: LINK_HEIGHT_PX }} className="flex items-stretch gap-2.5">
+            <span style={{ marginLeft: ARROW_PX }} className="flex flex-col items-center">
+              <span className="w-px flex-1 bg-input" />
+              <span className={ARROW_HEAD_CLASS_NAME} />
+            </span>
+            <span className={cn("h-2 self-center rounded-sm bg-border", row.call)} />
+          </span>
+        )}
+        <span className="flex h-[22px] items-center rounded-md border bg-card px-2">
+          <span className={cn("h-2 rounded-sm bg-border", row.box)} />
+        </span>
+      </li>
+    ))}
+  </ol>
+);

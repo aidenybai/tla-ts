@@ -148,6 +148,9 @@
   [data-hovering-name] [data-tint] {
     --tint-fill: color-mix(in srgb, var(--tint) 8%, transparent);
   }
+  [data-skeleton] [data-token] {
+    background: linear-gradient(var(--border), var(--border)) center / 100% 0.85em no-repeat;
+  }
   code {
     @apply font-mono;
   }
