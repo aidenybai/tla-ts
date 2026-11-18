@@ -149,7 +149,7 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
     }
   };
   for (const form of goal.forms.items) collectFd(form);
-  for (const variable of [...max.keys()]) if (nonFd.has(variable)) max.delete(variable);
+  for (const variable of [...max.keys()].filter((key) => nonFd.has(key))) max.delete(variable);
   for (const [variable, maximum] of max) {
     const upper = bounds.uppers.get(variable);
     const lower = bounds.lowers.get(variable);
