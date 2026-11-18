@@ -207,6 +207,7 @@ const compilations = (): Plugin => ({
     return `export default ${JSON.stringify({
       fileName: getFileName(path),
       source,
+      typescript: highlight(source, "typescript").lines,
       compilation,
       tla: highlight(compilation.tla, "tlaplus"),
     } satisfies Precompiled)};`;

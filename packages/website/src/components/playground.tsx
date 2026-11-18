@@ -14,7 +14,7 @@ import { createPartsContext } from "@/lib/utils";
 import type { Compilation } from "../compilation";
 import { getHighlightColors } from "../highlight-colors";
 import { getLineHoveredName, getLineMarks } from "../line-marks";
-import { createHighlighter } from "../highlighter";
+import type { createHighlighter } from "../highlighter";
 import { PLAYGROUND_EXAMPLES } from "../playground-examples";
 import type { RunResult } from "../run-worker";
 import type { Mark, Source, Token } from "../site-data";
@@ -51,6 +51,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "./ui/resiz
 interface PlaygroundState {
   fileName: string;
   source: string;
+  sourceTokens: Token[][];
   setSource: (source: string) => void;
   selectExample: (fileName: string) => void;
   compilation: Compilation | undefined;
@@ -94,9 +95,20 @@ export const PlaygroundRoot = (props: PartProps) => {
   const compiler = useCompile(file.source, file.fileName);
   const runner = useRun(true);
   const [highlight, setHighlight] = useState<Awaited<ReturnType<typeof createHighlighter>>>();
+  // The examples arrive highlighted, so the highlighter loads with the compiler, for edits.
   useEffect(() => {
-    void createHighlighter().then((nextHighlight) => setHighlight(() => nextHighlight));
-  }, []);
+    if (!compiler.isStarted) return;
+    void import("../highlighter")
+      .then((loaded) => loaded.createHighlighter())
+      .then((nextHighlight) => setHighlight(() => nextHighlight));
+  }, [compiler.isStarted]);
+  const sourceTokens = useMemo(
+    () =>
+      compiler.typescript ??
+      highlight?.(file.source, "typescript").lines ??
+      file.source.split("\n").map((content) => [{ content, style: {} }]),
+    [compiler.typescript, highlight, file.source],
+  );
   const tlaText = compiler.compilation?.tla;
   const outlineText = outlines[file.fileName] ?? file.source;
   const outline = useMemo(
@@ -167,6 +179,7 @@ export const PlaygroundRoot = (props: PartProps) => {
       value={{
         fileName: file.fileName,
         source: file.source,
+        sourceTokens,
         setSource: (source) => edit({ fileName: file.fileName, source }),
         selectExample: (fileName) => {
           history.replaceState(null, "", `#${new URLSearchParams({ file: fileName })}`);
@@ -322,6 +335,7 @@ export const PlaygroundPanes = () => {
       <CodeEditor
         label="TypeScript source"
         value={state.source}
+        tokens={state.sourceTokens}
         onChange={state.setSource}
         marks={state.sourceMarks}
         hoveredName={state.hoveredName}

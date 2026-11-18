@@ -1,7 +1,7 @@
 import { compile } from "../../tla-ts/src/typescript/compile";
 import type { Library } from "../../tla-ts/src/typescript/program";
 import { printRegions } from "../../tla-ts/src/typescript/regions";
-import type { Mark, Source } from "./site-data";
+import type { Mark, Source, Token } from "./site-data";
 
 export interface Compilation {
   name: string;
@@ -17,6 +17,7 @@ export interface Compilation {
 export interface Precompiled {
   fileName: string;
   source: string;
+  typescript: Token[][];
   compilation: Compilation;
   tla: Source;
 }

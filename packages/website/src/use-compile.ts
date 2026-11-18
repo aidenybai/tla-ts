@@ -55,10 +55,12 @@ export const useCompile = (source: string, fileName: string) => {
 
   if (built?.source === source) {
     return {
+      typescript: built.typescript,
       compilation: built.compilation,
       tla: built.tla,
       error: undefined,
       isCompiling: false,
+      isStarted,
       start: () => setIsStarted(true),
     };
   }
@@ -67,10 +69,12 @@ export const useCompile = (source: string, fileName: string) => {
   const compilation =
     state.compiled?.fileName === fileName ? state.compiled.compilation : built?.compilation;
   return {
+    typescript: undefined,
     compilation,
     tla: compilation === built?.compilation ? built?.tla : undefined,
     error: isCurrent ? state.response?.error : undefined,
     isCompiling: !isCurrent,
+    isStarted,
     start: () => setIsStarted(true),
   };
 };
