@@ -269,11 +269,18 @@ const getWrittenKeys = (functionValue: FunctionValue) =>
     ? undefined
     : functionValue.writtenKeys) ?? functionValue.domain;
 
-export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] =>
-  getWrittenKeys(functionValue).map((key) => [
-    key,
-    functionValue.range[functionValue.domain.indexOf(key)],
-  ]);
+export const getWrittenPairs = (functionValue: FunctionValue): [Value, Value][] => {
+  const keys = getWrittenKeys(functionValue);
+  const domain = functionValue.domain;
+  const range = functionValue.range;
+  if (keys === domain) return domain.map((key, index) => [key, range[index]]);
+  // The position of each key in the domain, its first where it holds a key twice.
+  const positions = new Map<Value, number>();
+  domain.forEach((key, index) => {
+    if (!positions.has(key)) positions.set(key, index);
+  });
+  return keys.map((key) => [key, range[positions.get(key) ?? -1]]);
+};
 
 export const getPrintedPairs = (functionValue: FunctionValue): [Value, Value][] =>
   functionValue.domain.every((key) => typeof key === "number")
