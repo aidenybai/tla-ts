@@ -446,8 +446,8 @@ const createContexts = (getParsed: ModuleSet) => {
       });
     }
     let depth = 0;
-    tokens.slice(unit.start, unit.end).forEach((token, offset) => {
-      const index = unit.start + offset;
+    for (let index = unit.start; index < unit.end; index++) {
+      const token = tokens[index];
       if (token.kind === "Separator" && tokens[index + 1]?.text === "MODULE") {
         depth++;
         if (depth === 2) {
@@ -457,10 +457,10 @@ const createContexts = (getParsed: ModuleSet) => {
             apply: (table) => table.put(createEntry(name, "module", false)),
           });
         }
-        return;
+        continue;
       }
       if (token.kind === "ModuleEnd") depth--;
-      if (depth !== 1 || token.kind !== "Keyword") return;
+      if (depth !== 1 || token.kind !== "Keyword") continue;
       const isDeclaration = declarationKeywords.has(`${token.line}:${token.column}`);
       if (isDeclaration && (token.text === "CONSTANT" || token.text === "CONSTANTS")) {
         declare(index, "constant");
@@ -477,13 +477,14 @@ const createContexts = (getParsed: ModuleSet) => {
         tokens[index + 1]?.kind === "Identifier" &&
         tokens[index + 2]?.text === "==";
       if (isNamedTheorem) {
+        const name = tokens[index + 1].text;
         statementLocations.push(getLocation(token));
         units.push({
           location: getLocation(token),
-          apply: (table) => table.put(createEntry(tokens[index + 1].text, "theorem", false)),
+          apply: (table) => table.put(createEntry(name, "theorem", false)),
         });
       }
-    });
+    }
     module.assumptions.forEach((assumption) => {
       statementLocations.push(assumption.location);
       const name = assumption.name;
