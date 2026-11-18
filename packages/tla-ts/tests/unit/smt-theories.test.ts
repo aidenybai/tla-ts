@@ -187,6 +187,19 @@ describe("the setup of the smt kernel", () => {
       ].join("\n"),
     );
   });
+
+  it("counts a step for each bound that the LP solver implies", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (and (<= (+ (* 2 x) y) 3) (>= x 1) (or (>= y 2) (>= z 5)) (or (<= y 0) (<= z 1))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 430)"]);
+  });
 });
 
 describe("regular expressions", () => {
