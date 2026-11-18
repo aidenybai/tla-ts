@@ -55,7 +55,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "NODE_ENV=production vp pack",
+    "build": "NODE_ENV=production vp pack && bun scripts/prelude-graph.ts dist",
     "dev": "NODE_ENV=development vp pack --watch",
     "prepack": "cp ../../README.md ../../LICENSE .",
     "prepublishOnly": "nr build",

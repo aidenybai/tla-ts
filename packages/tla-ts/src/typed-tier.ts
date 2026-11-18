@@ -2851,6 +2851,10 @@ const compileBuiltin = (
     ? findGlobalName(operator, program.environment)
     : undefined;
   if (global?.kind === "Value") return compileConstant(program, global.value);
+  // TLC's TLCEval enumerates its argument, which the tier's values already are.
+  if (args.length === 1 && isBuiltin(program, frame, operator, "TLCEval")) {
+    return compileValue(program, args[0], frame);
+  }
   if (args.length === 2 && (operator === "\\in" || operator === "\\notin")) {
     const test = compileMembership(program, compileValue(program, args[0], frame), args[1], frame);
     return operator === "\\in" ? test : { type: createBool(), emit: () => `!(${test.emit()})` };
@@ -3681,6 +3685,20 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
     }
     case "Label":
       return compileValue(program, expression.body, frame);
+    // A set of functions or records is every element its enumeration gives, in TLC's order of sets.
+    case "FunctionSet":
+    case "RecordSet": {
+      const loop = compileBound(program, expression, frame);
+      const type: Type = { kind: "Set", element: loop.element };
+      const [result, element] = ["r", "e"].map((prefix) => getName(program, prefix));
+      return {
+        type,
+        emit: () =>
+          isMask(type, program.plains)
+            ? `(() => { let ${result} = 0; ${loop.header(element)} { ${result} |= H.bit(${element}); } return ${result}; })()`
+            : `(() => { const ${result} = []; ${loop.header(element)} { ${result}.push(${element}); } return H.normalize(${getComparerCode(program, loop.element)}, ${result}); })()`,
+      };
+    }
     default:
       return unsupported();
   }
@@ -4207,6 +4225,39 @@ const compileStep = (
     }
     case "Label":
       return continueWith(first.scope, [expression.body]);
+    // TLC takes the steps of [A]_e as those of A \/ UNCHANGED e, and the steps of <<A>>_e as those
+    // of A after which e has changed, which it checks once A is done.
+    case "BoxAction":
+      return continueWith(first.scope, [
+        {
+          kind: "Or",
+          operands: [
+            expression.action,
+            {
+              kind: "Unchanged",
+              expression: expression.subscript,
+              location: expression.subscript.location,
+            },
+          ],
+          location: expression.location,
+        },
+      ]);
+    case "AngleAction":
+      return continueWith(first.scope, [
+        expression.action,
+        {
+          kind: "Apply",
+          operator: "~",
+          args: [
+            {
+              kind: "Unchanged",
+              expression: expression.subscript,
+              location: expression.subscript.location,
+            },
+          ],
+          location: expression.subscript.location,
+        },
+      ]);
     case "Identifier": {
       const binding = first.scope.get(expression.name);
       if (binding?.kind === "Operator" && binding.definition.params.length === 0) {

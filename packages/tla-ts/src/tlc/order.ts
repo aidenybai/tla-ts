@@ -550,9 +550,12 @@ const getStringOrder = (
     internConfigValue(constant.value);
   });
   TLC_STARTUP_STRINGS.forEach(intern);
+  // A file that is one module, as a prepared module is, is its own unit.
   const getUnitTokens = (name: string | undefined) => {
     const unit = getParsed(name);
-    return unit.tokens.slice(unit.start, unit.end);
+    return unit.start === 0 && unit.end === unit.tokens.length
+      ? unit.tokens
+      : unit.tokens.slice(unit.start, unit.end);
   };
   const innerModules = new Map<string, ModuleReferences>();
   const unitReferences = new Map<string | undefined, ModuleReferences>();
