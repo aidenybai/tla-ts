@@ -6401,12 +6401,13 @@ export const createDispatch = (
       : [];
   };
   // A callee type may be an alias's or an instantiation's, and its signatures may take a this,
-  // which TypeScript compares only to a candidate's own this, and come from a generic one, which
-  // changes only how it compares callbacks. A union that holds null or undefined besides one other
-  // type relates a function type as that type does, and another union as any of its types does,
-  // as the function type has no properties that it may discriminate the union by. The callee
-  // types' targets by runs from unitStarts[row] to unitStarts[row + 1], and their signatures by
-  // runs from targetStarts[unit] to targetStarts[unit + 1].
+  // which TypeScript compares only to a candidate's own this, come from a generic one, which
+  // changes only how it compares callbacks, and take type parameters, which TypeScript compares as
+  // they are to a source of none where each type has one signature. A union that holds null or
+  // undefined besides one other type relates a function type as that type does, and another union
+  // as any of its types does, as the function type has no properties that it may discriminate the
+  // union by. The callee types' targets by runs from unitStarts[row] to unitStarts[row + 1], and
+  // their signatures by runs from targetStarts[unit] to targetStarts[unit + 1].
   const getTargetSignatures = (type: ts.Type) => {
     if (
       type.flags !== ts.TypeFlags.Object ||
@@ -6420,7 +6421,6 @@ export const createDispatch = (
         (signature) =>
           (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0 &&
           signature.declaration !== undefined &&
-          signature.typeParameters === undefined &&
           !isJavaScriptFile(signature.declaration.getSourceFile().fileName) &&
           checker.getTypePredicateOfSignature(signature) === undefined,
       ) &&
@@ -6559,6 +6559,7 @@ export const createDispatch = (
     const targetCount = targetSignatures[target].parameters.length;
     const isGeneric = sourceSignatures[source].typeParameters !== undefined;
     if (sourceLeastArguments[source] > targetCount && !(isErased && isGeneric)) return 1;
+    if (targetSignatures[target].typeParameters !== undefined && (isErased || isGeneric)) return 0;
     const count = Math.min(sourceSignatures[source].parameters.length, targetCount);
     return getEveryAnswer(count + 1, (position) =>
       position < count
