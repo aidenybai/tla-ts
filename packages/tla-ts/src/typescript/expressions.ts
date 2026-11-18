@@ -13,6 +13,7 @@ import {
   translateMethod,
   translateArrayConstruction,
   translateNew,
+  isSpreadMatchAll,
   translateRegExpCall,
   translateSet,
   translateSetArgument,
@@ -468,6 +469,7 @@ export const translateIterated = (
       context,
     );
   }
+  if (isSpreadMatchAll(iterated)) return translateExpression(iterated, scope, context);
   const ordered = getOrderedIteration(iterated, context);
   if (ordered !== undefined) {
     return translateOrderedValues(

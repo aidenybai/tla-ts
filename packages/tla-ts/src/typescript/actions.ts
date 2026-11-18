@@ -3603,9 +3603,9 @@ const translateCallStatementBody = (
                   heap,
                   identifier(regexp),
                   text,
-                  // exec and match make arrays, and split's limit is undefined where the call
+                  // exec, match, and matchAll make arrays, and split's limit is undefined where the call
                   // passes none.
-                  ...(method === "exec" || method === "match"
+                  ...(method === "exec" || method === "match" || method === "matchAll"
                     ? [translateBuiltInValue("Array.prototype", expression, context)]
                     : method === "split" && regExpCall.values.length === 0
                       ? [getUndefined(context)]

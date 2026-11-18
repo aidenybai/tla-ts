@@ -57831,4 +57831,49 @@ describe("runs the script's methods in a conversion inside at most one other", (
       ).toThrow("tla-ts can't change in place the collection that a parameter holds");
     });
   });
+
+  describe("spreads the matches that a string's matchAll gives", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const PAIR = /(?<key>\\w+)=(\\d+)?/g;
+      const closest = (text: string, limit: number) => {
+        const all = [...text.matchAll(PAIR)];
+        const found = all.filter((match) => match.index <= limit).at(-1);
+        return found
+          ? [found[1], found[2], found.index, found.groups?.key, all.length].join("/")
+          : "none";
+      };
+      box.seen.push(closest("a=1 b= c=3", 5), closest("x", 0));
+      box.seen.push([..."a\\u{1F600}b".matchAll(/(?:)/gu)].map((match) => match.index).join("+"));
+      PAIR.lastIndex = 4;
+      box.seen.push([..."a=1 b=2".matchAll(PAIR)].map((match) => match[0]).join("+"));
+      box.seen.push(String(PAIR.lastIndex));
+      try {
+        box.seen.push(String([..."a".matchAll(/a/)].length));
+      } catch (error) {
+        box.seen.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      const seen = box.seen.join(",");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "b//4/b/3,none,0+1+3+4,b=2,4,TypeError";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace("b=2,4", "b=2,0");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+
+    it("spreads them where a script holds no objects", async () => {
+      const getPlain = (found: string) => `
+        const found = [..."a=1 b=2".matchAll(/(\\w)=(\\d)/g)].map((match) => match[2] + match.index);
+        if (found.join() !== "${found}") throw new Error("found " + found.join());
+      `;
+      expect((await checkModel(getPlain("10,24"))).failure).toBeUndefined();
+      await expect(checkModel(getPlain("10,25"))).rejects.toThrow("found 10,24");
+    });
+  });
 });
