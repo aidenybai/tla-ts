@@ -73,8 +73,7 @@ const withErrorExitCode = <Result>(run: () => Result) => {
 const withCheckerExitCode = (checker: LivenessChecker): LivenessChecker => ({
   branches: checker.branches,
   solutions: checker.solutions,
-  addInitialState: (index, state, tracing) =>
-    withErrorExitCode(() => checker.addInitialState(index, state, tracing)),
+  addInitialState: checker.addInitialState,
   addState: (index, state, successors, tracing) =>
     withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
   storeState: checker.storeState,

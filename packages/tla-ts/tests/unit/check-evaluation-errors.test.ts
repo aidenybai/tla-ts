@@ -1678,6 +1678,18 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it("exits with the code of the error the liveness check of an initial state fails with, as TLC's rerun finds that state seen", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nA == x' = CHOOSE t \\in {0, 1} : t /= x /\\ UNCHANGED y\nSpec == Init /\\ [][A]_<<x, y>>\nProp == <>(ENABLED A)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop",
+    });
+    expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+      "In evaluation, the identifier y is either undefined or not an operator.\nline 4, col 53 to line 4, col 53 of module M",
+      151,
+    ]);
+  });
+
   it("reports a value where the initial or next-state relation expects a formula like TLC", async () => {
     const getFailure = async (init: string, next: string) => {
       const result = await check({
