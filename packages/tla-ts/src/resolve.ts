@@ -144,10 +144,11 @@ const emptyExpressions = new WeakSet<Expression>();
 const isEmptyExpression = (expression: Expression): boolean =>
   emptyExpressions.has(expression) || findNullError(nullSelections.get(expression)) !== undefined;
 
+// SANY decides whether a selection fails once, when it generates it, so an earlier selection's result is already known.
 const findNullSelection = (nulls: NullSelection[] | undefined) =>
   nulls?.find((selection) =>
     selection.isEmpty
-      ? isEmptyExpression(selection.node)
+      ? emptyExpressions.has(selection.node)
       : unresolvedExpressions.has(selection.node),
   );
 
@@ -1461,6 +1462,7 @@ const resolveExpression = (
   if (selections.has(expression) && !unit.isGenerated) {
     const failed = findNullSelection(nullSelections.get(expression));
     if (failed) {
+      emptyExpressions.add(expression);
       matchApplications(failed.applications, scope, unit);
       unit.errors.push(failed.error);
       return;

@@ -144,6 +144,17 @@ describe("subexpression references match TLC", () => {
     });
     expect(result.status).toBe("success");
   });
+
+  it("resolves a chain of selections through operators with arguments in linear time", async () => {
+    const result = await check({
+      source: `---- MODULE M ----\nE1(p) == {p}\n${Array.from(
+        { length: 29 },
+        (_value, index) => `E${index + 2}(p) == E${index + 1}(p)!1`,
+      ).join("\n")}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("success");
+  });
 });
 
 describe("subexpression references into theorems match SANY", () => {
