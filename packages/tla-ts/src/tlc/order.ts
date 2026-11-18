@@ -170,7 +170,8 @@ const getModuleReferences = (
         continue;
       }
       if (tokens[index - 1]?.text === ".") continue;
-      if (token.text === "EXTENDS") {
+      // EXTENDS is a module's first unit only right after its header; elsewhere it is a field.
+      if (token.text === "EXTENDS" && tokens[index - 3]?.text === "MODULE") {
         const names = getDeclarations(tokens, index + 1);
         references.extends.push(...names);
         names.forEach((name) => allExtends.add(name));

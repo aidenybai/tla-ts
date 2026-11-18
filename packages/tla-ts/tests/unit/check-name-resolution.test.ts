@@ -1467,6 +1467,15 @@ describe("name resolution matches SANY", () => {
     });
   });
 
+  it("reads EXTENDS as the first field of a record, not as a module's EXTENDS", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nASSUME [EXTENDS |-> 3, a |-> 1].a = 1\nVARIABLE v\nInit == v = 0\nNext == UNCHANGED v\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.status).toBe("success");
+  });
+
   it("imports the name of an instance a module defines like SANY", async () => {
     const modules = new Map([
       ["Empty", "---- MODULE Empty ----\n===="],
