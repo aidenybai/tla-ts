@@ -778,7 +778,12 @@ export const createContext = (
                   (ts.isArrowFunction(name.parent) && name.parent.body === name) ||
                   (ts.isPropertyAssignment(name.parent) &&
                     name.parent.initializer === name &&
-                    ts.isObjectLiteralExpression(name.parent.parent))
+                    ts.isObjectLiteralExpression(name.parent.parent)) ||
+                  (ts.isBinaryExpression(name.parent) &&
+                    name.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+                    name.parent.right === name &&
+                    (ts.isPropertyAccessExpression(name.parent.left) ||
+                      ts.isElementAccessExpression(name.parent.left)))
                 ? (getSymbol(name, checker) ?? [])
                 : [],
           ),

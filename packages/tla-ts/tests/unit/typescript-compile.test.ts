@@ -54024,4 +54024,29 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("value - 10"))).failure?.message).toContain("result 9");
     });
   });
+
+  describe("makes a closure that a const holds an object where a property's assignment takes it", () => {
+    const getSource = (expected: string) => `
+      const hooks = { onCommit: (value: number) => value };
+      const wire = (offset: number) => {
+        const doubled = offset * 2;
+        const dispatch = (value: number): number => value + doubled;
+        hooks.onCommit = dispatch;
+      };
+      wire(1);
+      const first = hooks.onCommit(10);
+      wire(100);
+      const second = hooks.onCommit(10);
+      const seen = [first, second].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("12,210"))).failure).toBeUndefined();
+    });
+
+    it("rejects the first closure kept", async () => {
+      expect((await checkModel(getSource("12,12"))).failure?.message).toContain("seen 12,210");
+    });
+  });
 });
