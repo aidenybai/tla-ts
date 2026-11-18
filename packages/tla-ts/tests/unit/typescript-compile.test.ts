@@ -54874,4 +54874,219 @@ describe("BigInts", () => {
       expect((await check(compileScript(source))).failure?.message).toContain(message);
     });
   });
+
+  describe("runs a call through a number literal key as a statement", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var count = 0;
+      var holder = { 1: function () { count += 1; return 2; } };
+      var result = [holder[1](), count].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("2,1"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await check(compile(getSource("2,0"), path))).failure?.message).toContain(
+        "result 2,1",
+      );
+    });
+  });
+
+  describe("converts the object computed keys of a class's methods as it makes the class", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var calls = "";
+      var symbol = Symbol("s");
+      var second = { toString: function () { calls += "e|"; return symbol; } };
+      var third = { toString: undefined, valueOf: function () { calls += "f|"; return 1; } };
+      var other = { toString: function () { calls += "g|"; return "g"; } };
+      class C {
+        [second] = 43;
+        [third]() { return 44; }
+        static [other]() { return 45; }
+      }
+      var c = new C();
+      var result = [c[symbol], c[1](), C["g"](), Object.getOwnPropertyNames(C.prototype).join("|"), calls].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("43,44,45,1|constructor,e|f|g|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("43,44,45,1|constructor,f|e|g|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 43,44,45,1|constructor,e|f|g|",
+      );
+    });
+  });
+
+  describe("passes the hint to a Symbol.toPrimitive method, which may write a variable", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var calls = "";
+      var value = { [Symbol.toPrimitive]: function (hint) { calls += hint + "|"; return hint === "number" ? 2 : "s"; } };
+      var sum = value + 1;
+      var product = value * 3;
+      var text = \`\${value}\`;
+      var loose = value == "s";
+      var lesser = value < 5;
+      var result = [sum, product, text, loose, lesser, calls].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("s1,6,s,true,true,default|number|string|default|number|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("s1,6,s,true,true,default|default|default|default|default|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result s1,6,s,true,true,default|number|string|default|number|",
+      );
+    });
+  });
+
+  describe("copies within an array that a conversion shortened with the length read before", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      function makeArray() {
+        var a = [0];
+        for (var i = 0; i < 12; i++) {
+          a[i] = i;
+        }
+        return a;
+      }
+      function shorten() {
+        arr.length = 4;
+        return 1;
+      }
+      var arr = makeArray();
+      var copied = arr.copyWithin(8, { valueOf: shorten });
+      var result = [copied === arr, arr.length, 7 in arr, arr[8], arr[10], 11 in arr, Object.keys(arr).join("|")].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("true,11,false,1,3,false,0|1|2|3|8|9|10");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("true,12,false,1,3,false,0|1|2|3|8|9|10");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result true,11,false,1,3,false,0|1|2|3|8|9|10",
+      );
+    });
+  });
+
+  describe("gives a Symbol.toPrimitive method the arguments object of its one hint", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var left = {};
+      var log = "";
+      var leftArgs;
+      left[Symbol.toPrimitive] = function () {
+        log += "left";
+        leftArgs = arguments;
+        return 1;
+      };
+      var sum = left + 1;
+      var result = [sum, log, leftArgs.length, leftArgs[0]].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("2,left,1,default"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await check(compile(getSource("2,left,0,default"), path))).failure?.message,
+      ).toContain("result 2,left,1,default");
+    });
+
+    it("stops where a regexp's protocol converts through a method that reads its hint", async () => {
+      const source = `
+        var index = {};
+        var toPrimitiveHint;
+        index[Symbol.toPrimitive] = function (hint) {
+          toPrimitiveHint = hint;
+        };
+        var r = /./;
+        r.exec = function () {
+          return { length: 1, 0: "a", index: index };
+        };
+        var replaced = r[Symbol.replace]("ab", "$\`");
+      `;
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't call this Symbol.toPrimitive method",
+      );
+    });
+  });
+
+  describe("throws the error of converting a value that a typed array's index takes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var big = new BigInt64Array(2);
+      var small = new Int8Array(2);
+      var outcomes = "";
+      try {
+        big[0] = /** @type {any} */ (null);
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        big[1] = /** @type {any} */ ("x");
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        big[5] = /** @type {any} */ (1);
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        big[0] = /** @type {any} */ ("7");
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        small[0] = /** @type {any} */ (1n);
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      try {
+        small[1] = /** @type {any} */ (Symbol());
+        outcomes += "ok|";
+      } catch (error) {
+        outcomes += error.constructor.name + "|";
+      }
+      var result = [outcomes, big[0], small[0]].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("TypeError|SyntaxError|TypeError|ok|TypeError|TypeError|,7,0");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("TypeError|TypeError|TypeError|ok|TypeError|TypeError|,7,0");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result TypeError|SyntaxError|TypeError|ok|TypeError|TypeError|,7,0",
+      );
+    });
+  });
 });

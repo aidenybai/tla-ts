@@ -276,14 +276,14 @@ export const isConvertedStringArgument = (
   );
 };
 
-// An object that a name holds which a class field's computed key converts to a property key as the
-// class is made.
+// An object that a name holds which a class element's computed key converts to a property key as
+// the class is made.
 export const isConvertedClassKey = (node: ts.Node, context: Context): node is ts.Expression =>
   context.heap !== undefined &&
   ts.isExpression(node) &&
   ts.isIdentifier(skipCasts(node)) &&
   ts.isComputedPropertyName(node.parent) &&
-  ts.isPropertyDeclaration(node.parent.parent) &&
+  ts.isClassElement(node.parent.parent) &&
   ts.isClassLike(node.parent.parent.parent) &&
   isObjectOperand(node, context);
 
@@ -726,11 +726,14 @@ export const getKeyedConversionFunctions = (node: ts.Node, context: Context) =>
   CONVERSION_KEYS.flatMap((key) => getWrittenFunctions(node, key, context));
 
 // The Symbol.toPrimitive methods that tla-ts calls, which can't see the hint that it doesn't pass.
+// A call, such as a regexp's protocol, may convert many values, so it runs only the methods that
+// read neither their hint nor their arguments, as each one's body would copy into each.
 const getExoticMethods = (node: ts.Node, context: Context) =>
   getMethods(node, "@@toPrimitive", context).filter(
     (method) =>
-      getParameters(method).length === 0 &&
-      findNodes(method, ts.isIdentifier).every((name) => name.text !== "arguments"),
+      !ts.isCallExpression(node) ||
+      (getParameters(method).length === 0 &&
+        findNodes(method, ts.isIdentifier).every((name) => name.text !== "arguments")),
   );
 
 // ToPrimitive of an object, which calls its Symbol.toPrimitive method where it has one, and
@@ -829,7 +832,7 @@ const toPrimitive = (
             getExoticMethods(site, context),
             exotic,
             value,
-            [],
+            [string(hint)],
             found,
             context,
             frame,
