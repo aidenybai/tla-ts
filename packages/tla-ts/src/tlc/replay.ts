@@ -462,7 +462,10 @@ const visitAssignment = (
     return proceedWithValue(replay, items, partial, index, value, node);
   }
   const set: Value = expression.operator === "\\subseteq" ? { kind: "Subset", base: value } : value;
-  if (typeof set === "object" && set !== value) replay.callStack?.sources.set(set, source);
+  if (typeof set === "object" && set !== value) {
+    replay.callStack?.sources.set(set, source);
+    replay.coverage?.values.set(set, node);
+  }
   if (assigned !== undefined) {
     return (
       evaluateAt(replay, node, expression, context) === true &&

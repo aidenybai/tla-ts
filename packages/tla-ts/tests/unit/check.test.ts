@@ -1974,6 +1974,20 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges x' \\subseteq S for each element drawn from a subset it assigns, as TLC's Tool#getNextStates gives the SUBSET its cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = {}\nNext == x' \\subseteq {1, 2} /\\ \\A e \\in x' : e > 1\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 5, col 9 to line 5, col 27 of module E: 4:14",
+      "|line 5, col 22 to line 5, col 27 of module E: 2",
+      "line 5, col 32 to line 5, col 50 of module E: 8",
+      "|line 5, col 46 to line 5, col 50 of module E: 6",
+      "|line 5, col 41 to line 5, col 42 of module E: 8",
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",
