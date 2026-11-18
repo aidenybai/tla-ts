@@ -1420,7 +1420,7 @@ const parse = (
         const instances: Instance[] = [];
         const recursive: Declaration[] = [];
         recursiveScopes.push(new Set());
-        while (!accept("IN")) {
+        do {
           if (isTlapm && isAt("RECURSIVE")) throw createUnexpected("Unexpected keyword RECURSIVE");
           if (accept("RECURSIVE")) {
             recursive.push(...declareRecursive());
@@ -1430,7 +1430,7 @@ const parse = (
           const unit = parseDefinition(!isTlapm && accept("LOCAL"));
           if (unit.kind === "Instance") instances.push(unit);
           else definitions.push(unit);
-        }
+        } while (!accept("IN"));
         recursiveScopes.pop();
         return {
           kind: "Let",

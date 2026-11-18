@@ -1216,6 +1216,14 @@ Spec == Init /\\ [][Next]_x
     expect(report.text).toContain(`\n\n${error}\n`);
   });
 
+  it("rejects a LET without definitions", () => {
+    const report = getReport({ M: "---- MODULE M ----\nD0 ==\n  LET\n  IN 1\n====\n" });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(
+      '***Parse Error***\nEncountered "IN" at line 4, column 3 and token "LET" \n\nResidual stack trace follows:\nLet Definitions starting at line 4, column 3.\n',
+    );
+  });
+
   it.each([
     [
       "RECURSIVE _ ^# _",
