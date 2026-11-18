@@ -1231,7 +1231,9 @@ export const getReevaluatedDefinitions = (
   definitions: Definition[],
   environment: Environment,
 ): ReevaluatedDefinitions => ({
-  impure: new Set(definitions.filter((definition) => isImpureDefinition(definition, environment))),
+  impure: new Set(
+    definitions.filter((definition) => isImpureDefinition(definition, environment, "varying")),
+  ),
   streamed: new Set(
     definitions.filter((definition) => isImpureDefinition(definition, environment, "streamed")),
   ),

@@ -2189,6 +2189,25 @@ describe("initial predicate and next-state relation match TLC", () => {
     },
   );
 
+  it("draws a LET definition's random subset again at each reference in an action, as TLC's Tool#getNextStates does", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC, Randomization\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ LET s == RandomSubset(1, 1..100) IN PrintT(<<"n", s, s>>) /\\ x\' = x + 1\nInv == LET s == RandomSubset(1, 1..100) IN PrintT(<<"i", s, s>>)\nInv2 == ENABLED (LET s == RandomSubset(1, 1..100) IN PrintT(<<"e", s, s>>) /\\ x\' = x)\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nINVARIANT Inv2\nCHECK_DEADLOCK FALSE",
+      seed: 4n,
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual([
+      '<<"i", {10}, {10}>>',
+      '<<"e", {78}, {78}>>',
+      '<<"n", {7}, {100}>>',
+      '<<"e", {7}, {7}>>',
+      '<<"n", {1}, {49}>>',
+      '<<"e", {65}, {65}>>',
+    ]);
+  });
+
   it("reports initial states without a next-state action", async () => {
     await expect(checkBody("VARIABLE x\nInit == x \\in {1, 2}", "INIT Init")).rejects.toThrow(
       /No next state actions defined to generate successor states from/,
