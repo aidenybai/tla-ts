@@ -1647,6 +1647,31 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it("charges a set per element a quantifier or CHOOSE draws from it, as TLC's enumerators do", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE K ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv1 == \\E e \\in {0, 1, 2, 3} : e = x\nInv2 == (CHOOSE e \\in {0, 1, 2, 3} : e >= x) >= 0\nInv3 == \\A e, f \\in {0, 1, 2} : e + f # x + 5\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv1\nINVARIANT Inv2\nINVARIANT Inv3",
+    );
+    expect(lines?.slice(2)).toEqual([
+      [
+        "line 6, col 9 to line 6, col 37 of module K: 3",
+        "|line 6, col 33 to line 6, col 37 of module K: 6",
+        "|line 6, col 18 to line 6, col 29 of module K: 3:9",
+      ],
+      [
+        "line 7, col 9 to line 7, col 49 of module K: 3",
+        "|line 7, col 10 to line 7, col 43 of module K: 3",
+        "||line 7, col 38 to line 7, col 43 of module K: 6",
+        "||line 7, col 23 to line 7, col 34 of module K: 3:6",
+      ],
+      [
+        "line 8, col 9 to line 8, col 45 of module K: 3",
+        "|line 8, col 33 to line 8, col 45 of module K: 27",
+        "|line 8, col 21 to line 8, col 29 of module K: 3:51",
+      ],
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",

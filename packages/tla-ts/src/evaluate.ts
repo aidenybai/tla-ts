@@ -22,7 +22,14 @@ import {
 } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
-import { countCoverage, getCoverageNode, runAtCoverageNode, type Coverage } from "./coverage";
+import {
+  chargeContexts,
+  costCoverage,
+  countCoverage,
+  getCoverageNode,
+  runAtCoverageNode,
+  type Coverage,
+} from "./coverage";
 import { MESSAGE_CODE } from "./tlc/messages";
 import type { CheckerRuntime } from "./runtime";
 import {
@@ -1651,6 +1658,26 @@ const compileQuantifier = (
   const isForall = expression.kind === "Forall";
   const body = getEvaluator(expression.body, environment);
   const bound = expression.bounds[0];
+  const coverage = environment.coverage;
+  if (coverage) {
+    return (context) => {
+      const bounded = mapBoundSets(expression.bounds, (set) => {
+        const value = getEvaluator(set, environment)(context);
+        return { value, elements: getQuantifierElements(value, set, environment.runtime.version) };
+      });
+      const sets = bounded.map((item) => item.elements);
+      const charge = chargeContexts(
+        coverage,
+        bounded.map((item) => item.value),
+        sets,
+      );
+      const isFound = forEachBoundElement(expression.bounds, sets, context.scope, (scope) => {
+        charge();
+        return expectBooleanBody(body(withScope(context, scope)), expression) !== isForall;
+      });
+      return isFound ? !isForall : isForall;
+    };
+  }
   if (expression.bounds.length === 1 && bound.pattern.kind === "Name") {
     const name = bound.pattern.name;
     const set = getEvaluator(bound.set, environment);
@@ -2078,16 +2105,14 @@ const compileSetComprehension = (
   }
   const body = getEvaluator(expression.body, environment);
   const evaluateSet = getEvaluator(set, environment);
+  const coverage = environment.coverage;
   return (context) => {
-    const elements = getChoiceElements(
-      evaluateSet(context),
-      expression,
-      set,
-      context.environment.runtime.version,
-    );
+    const base = evaluateSet(context);
+    const elements = getChoiceElements(base, expression, set, context.environment.runtime.version);
     let chosen: Value | undefined;
     const pattern = expression.pattern;
     someElement(elements, (element) => {
+      if (coverage) costCoverage(coverage, base, 1);
       if (
         pattern.kind === "Tuple" &&
         getSequenceElements(element)?.length !== pattern.names.length
@@ -2101,8 +2126,9 @@ const compileSetComprehension = (
       chosen = getBoundValue(pattern, scope);
       return true;
     });
-    if (chosen === undefined) throw createNoChoiceError(expression);
-    return chosen;
+    if (chosen !== undefined) return chosen;
+    if (coverage) costCoverage(coverage, base, 1);
+    throw createNoChoiceError(expression);
   };
 };
 
