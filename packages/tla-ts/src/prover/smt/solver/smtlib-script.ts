@@ -109,7 +109,6 @@ const UNPORTED_COMMANDS = new Set([
   "get-interpolant",
   "get-proof",
   "get-proof-graph",
-  "get-unsat-assumptions",
   "get-user-tactics",
   "help",
   "help-simplifier",
@@ -414,6 +413,7 @@ export const runSmtlibScript = (
     isPrintingSuccess: false,
     isProducingModels: true,
     isProducingUnsatCores: false,
+    isProducingUnsatAssumptions: false,
     isProducingProofs: false,
     isExitingOnError: false,
     isInteractive: false,
@@ -1019,6 +1019,22 @@ export const runSmtlibScript = (
       throw new SmtUnsupportedError("a function declaration reference with trailing terms");
     return found;
   };
+  // get-unsat-core and get-unsat-assumptions both print the core of the last check.
+  const printCore = () => {
+    const check = state.check;
+    if (check?.core === undefined)
+      throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
+    const kernel = state.kernel;
+    if (kernel === undefined || check.context !== kernel.context) {
+      print(`(${check.core.map(format).join(" ")})`);
+      return;
+    }
+    state.manager.limit.restart(Date.now() + options.timeLimitMs);
+    const core = new RefVector(state.manager);
+    kernel.getUnsatCore(core);
+    print(`(${core.items.map(format).join(" ")})`);
+    core.reset();
+  };
   const runCommand = new Map<string, (list: SmtList) => void>([
     [
       "assert",
@@ -1558,21 +1574,23 @@ export const runSmtlibScript = (
             "unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)",
             list.end,
           );
-        const check = state.check;
-        if (check === undefined || check.status !== L_FALSE)
+        if (state.check?.status !== L_FALSE)
           throw new SmtParseError("unsat core is not available", list.end);
-        if (check.core === undefined)
-          throw new SmtUnsupportedError("the unsat core of a tactic that drops dependencies");
-        const kernel = state.kernel;
-        if (kernel === undefined || check.context !== kernel.context) {
-          print(`(${check.core.map(format).join(" ")})`);
-          return;
-        }
-        state.manager.limit.restart(Date.now() + options.timeLimitMs);
-        const core = new RefVector(state.manager);
-        kernel.getUnsatCore(core);
-        print(`(${core.items.map(format).join(" ")})`);
-        core.reset();
+        printCore();
+      },
+    ],
+    [
+      "get-unsat-assumptions",
+      (list) => {
+        checkArgumentCount(list, 0);
+        if (!settings.isProducingUnsatAssumptions)
+          throw new SmtParseError(
+            "unsat assumptions construction is not enabled, use command (set-option :produce-unsat-assumptions true)",
+            list.end,
+          );
+        if (state.check?.status !== L_FALSE)
+          throw new SmtParseError("unsat assumptions is not available", list.end);
+        printCore();
       },
     ],
     [
@@ -1790,6 +1808,7 @@ export const runSmtlibScript = (
           );
         if (keyword === ":produce-models") settings.isProducingModels = isTrue;
         if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
+        if (keyword === ":produce-unsat-assumptions") settings.isProducingUnsatAssumptions = isTrue;
         if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
         if (keyword === ":interactive-mode" || keyword === ":produce-assertions") {
           if (state.isProofsEnabled !== undefined)
@@ -1866,6 +1885,7 @@ export const runSmtlibScript = (
           [":print-success", settings.isPrintingSuccess],
           [":produce-models", settings.isProducingModels],
           [":produce-unsat-cores", settings.isProducingUnsatCores],
+          [":produce-unsat-assumptions", settings.isProducingUnsatAssumptions],
           [":interactive-mode", settings.isInteractive],
           [":produce-assertions", settings.isInteractive],
           [":int-real-coercions", true],

@@ -1516,4 +1516,54 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "true",
     ]);
   });
+
+  it("prints the assumptions of the core with get-unsat-assumptions", () => {
+    expect(
+      run([
+        "(get-option :produce-unsat-assumptions)",
+        "(set-option :produce-unsat-assumptions true)",
+        "(get-option :produce-unsat-assumptions)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(get-unsat-assumptions)",
+        "(assert (! (not a) :named n))",
+        "(assert (or b c))",
+        "(check-sat-assuming (c b))",
+        "(get-unsat-assumptions)",
+        "(check-sat-assuming (a b (not c)))",
+        "(get-unsat-assumptions)",
+        "(get-unsat-core)",
+        "(check-sat-assuming ((not b) (not c)))",
+        "(get-unsat-assumptions)",
+      ]),
+    ).toEqual([
+      "false",
+      "true",
+      '(error "line 7 column 22: unsat assumptions is not available")',
+      "sat",
+      '(error "line 11 column 22: unsat assumptions is not available")',
+      "unsat",
+      "(a)",
+      '(error "line 14 column 15: unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)")',
+      "unsat",
+      "((not b) (not c))",
+    ]);
+  });
+
+  it("prints the core of the last check once get-unsat-assumptions is enabled", () => {
+    expect(
+      run([
+        "(declare-const a Bool)",
+        "(check-sat-assuming (a (not a)))",
+        "(get-unsat-assumptions)",
+        "(set-option :produce-unsat-assumptions true)",
+        "(get-unsat-assumptions)",
+      ]),
+    ).toEqual([
+      "unsat",
+      '(error "line 3 column 22: unsat assumptions construction is not enabled, use command (set-option :produce-unsat-assumptions true)")',
+      "(a (not a))",
+    ]);
+  });
 });
