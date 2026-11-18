@@ -55123,6 +55123,23 @@ describe("BigInts", () => {
         "result 1,2,3,a,RangeError,key:string|rhs|key:string|other|bad|",
       );
     });
+
+    it("stops at super's key, which converts once super reads the home object's prototype", async () => {
+      const source = `
+        var proto = { p: "ok" };
+        var obj = {
+          __proto__: proto,
+          m() {
+            return super[key];
+          },
+        };
+        var key = { toString() { return "p"; } };
+        var got = obj.m();
+      `;
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't convert objects to strings",
+      );
+    });
   });
 
   describe("converts the object computed keys of an object literal before their values", () => {

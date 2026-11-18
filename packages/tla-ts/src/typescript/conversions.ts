@@ -303,6 +303,8 @@ export const isConvertedElementKey = (node: ts.Node, context: Context): node is 
     !ts.isElementAccessExpression(access) ||
     access.argumentExpression !== key ||
     access.questionDotToken !== undefined ||
+    // super reads the home object's prototype before the key converts.
+    access.expression.kind === ts.SyntaxKind.SuperKeyword ||
     // A base that may be undefined or null throws its TypeError before the key converts.
     isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression))) ||
     !isObjectOperand(node, context) ||
