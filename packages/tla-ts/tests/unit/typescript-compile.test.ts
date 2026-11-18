@@ -54177,4 +54177,32 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts a value that is a string or an array to a string where it holds a string", () => {
+    const getSource = (expected: string) => `
+      const tests = [[["c"], "ab"]];
+      const seen: string[] = [];
+      for (const [args, label] of tests) seen.push(\`\${label}!\`);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab!"))).failure).toBeUndefined();
+    });
+
+    it("rejects another text", async () => {
+      expect((await checkModel(getSource("c!"))).failure?.message).toContain("seen ab!");
+    });
+
+    it("stops where it holds an array", async () => {
+      const source = `
+        const tests = [[["c"], "ab"]];
+        const seen: string[] = [];
+        for (const [args, label] of tests) seen.push(\`\${args}\`);
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't convert an array to a string here",
+      );
+    });
+  });
 });

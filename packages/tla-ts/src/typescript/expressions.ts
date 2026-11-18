@@ -2138,6 +2138,33 @@ export const translateToString = (node: ts.Expression, scope: Scope, context: Co
   if (names.every((name) => name === "function")) {
     return apply("Assert", [boolean(false), string("tla-ts can't convert a function to a string")]);
   }
+  // A value that is a string or an array, as an untyped array's element may be, converts as it is
+  // where it holds a string, or undefined that a missing element gives.
+  if (
+    type.isUnion() &&
+    type.types.some((member) => isEvery(member, ts.TypeFlags.StringLike)) &&
+    type.types.every(
+      (member) =>
+        isEvery(member, ts.TypeFlags.StringLike) ||
+        context.checker.isArrayType(member) ||
+        context.checker.isTupleType(member),
+    )
+  ) {
+    return share(value, "text", context, (text) =>
+      ifExpression(
+        apply("=", [useJavaScript("TypeOf", [text], context), string("string")]),
+        text,
+        ifExpression(
+          apply("=", [text, getUndefined(context)]),
+          string("undefined"),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't convert an array to a string here"),
+          ]),
+        ),
+      ),
+    );
+  }
   throw new TlaTypeScriptError(`Convert this to a string explicitly: ${node.getText()}`, node);
 };
 
