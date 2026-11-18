@@ -10,6 +10,7 @@ import type {
   UseOrHide,
 } from "../ast";
 import { TlaSyntaxError } from "../errors";
+import { defEntryErrors } from "../parser";
 import { createLevelFields } from "./builtins";
 import {
   addToContext,
@@ -69,7 +70,7 @@ import {
   withContext,
 } from "./generation";
 import { resolveSynonym } from "../tlc/jar-data";
-import { getOperandSpan, reportDefEntry } from "./generator-def-entries";
+import { getOperandSpan } from "./generator-def-entries";
 import {
   generateInstance,
   getOperatorSpan,
@@ -120,7 +121,9 @@ const generateFacts = (generation: ModuleGeneration, facts: Fact[]) =>
 const generateDefs = (generation: ModuleGeneration, defs: Fact[]) =>
   defs.flatMap((fact): UseOrHideNode["defs"] => {
     if (fact.kind === "ModuleFact") return getFactModules(generation, fact);
-    if (reportDefEntry(generation, fact)) return [];
+    const entryErrors = defEntryErrors.get(fact) ?? [];
+    entryErrors.forEach((error) => generation.addError(error.location, error.message));
+    if (entryErrors.length > 0) return [];
     const symbol = generateSelector(
       generation,
       fact.kind === "OperatorReference"

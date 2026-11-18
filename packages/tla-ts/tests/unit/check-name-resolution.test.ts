@@ -2512,6 +2512,88 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("reports DEF clause entries that aren't names like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nA == 1\nB == 2\nTHEOREM TRUE BY DEF A + 1, {}, -A, A(1)\nTHEOREM TRUE BY DEF (A), A', <<A>>, A[1]\nUSE DEF A.b, B\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 5, col 21 to line 5, col 25", "Was expecting a GeneralId."],
+          ["line 5, col 23 to line 5, col 23", "Unexpected token found."],
+          [
+            "line 5, col 23 to line 5, col 23",
+            "Need name or step number here, not `N_GenInfixOp'.",
+          ],
+          [
+            "line 5, col 21 to line 5, col 25",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 29 to line 5, col 29", "Unexpected token found."],
+          ["line 5, col 29 to line 5, col 29", "Need name or step number here, not `}'."],
+          [
+            "line 5, col 28 to line 5, col 29",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 32 to line 5, col 33", "Was expecting a GeneralId."],
+          ["line 5, col 33 to line 5, col 33", "Unexpected token found."],
+          ["line 5, col 33 to line 5, col 33", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 5, col 32 to line 5, col 33",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 36 to line 5, col 39", "Was expecting a GeneralId."],
+          ["line 5, col 37 to line 5, col 39", "Selector `!(...)' should not have argument(s)."],
+          [
+            "line 5, col 36 to line 5, col 39",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 5, col 14 to line 5, col 39", "Empty BY"],
+          ["line 6, col 22 to line 6, col 22", "Unexpected token found."],
+          ["line 6, col 22 to line 6, col 22", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 6, col 21 to line 6, col 23",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 26 to line 6, col 27", "Was expecting a GeneralId."],
+          ["line 6, col 27 to line 6, col 27", "Unexpected token found."],
+          [
+            "line 6, col 27 to line 6, col 27",
+            "Need name or step number here, not `N_GenPostfixOp'.",
+          ],
+          [
+            "line 6, col 26 to line 6, col 27",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 32 to line 6, col 32", "Unexpected token found."],
+          ["line 6, col 32 to line 6, col 32", "Need name or step number here, not `N_GeneralId'."],
+          [
+            "line 6, col 30 to line 6, col 34",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 37 to line 6, col 40", "Was expecting a GeneralId."],
+          ["line 6, col 38 to line 6, col 38", "Unexpected token found."],
+          ["line 6, col 38 to line 6, col 38", "Need name or step number here, not `['."],
+          [
+            "line 6, col 37 to line 6, col 40",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ["line 6, col 14 to line 6, col 40", "Empty BY"],
+          ["line 7, col 9 to line 7, col 11", "Was expecting a GeneralId."],
+          ["line 7, col 10 to line 7, col 10", "Unexpected token found."],
+          ["line 7, col 10 to line 7, col 10", "Need name or step number here, not `.'."],
+          [
+            "line 7, col 9 to line 7, col 11",
+            "DEF clause entry should describe a defined operator.",
+          ],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
   it("reports an @ fact as an unknown operator like SANY", async () => {
     await expect(checkNames("USE @\nTHEOREM TRUE\nBY @\nHIDE @")).rejects.toThrow(
       createSanyError([

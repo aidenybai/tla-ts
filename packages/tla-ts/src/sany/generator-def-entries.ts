@@ -9,12 +9,17 @@ import {
   type SourceFile,
   type TokenSpan,
 } from "./source";
-import type { ModuleGeneration } from "./generation";
+import type { SanyLocation } from "./nodes";
 
 interface DefEntryParts {
   hasChildlessFirstChild: boolean | undefined;
   last: TokenSpan;
   lastKind: string | undefined;
+}
+
+export interface DefEntryError {
+  location: SanyLocation;
+  message: string;
 }
 
 const SYNTAX_KINDS = new Map<Expression["kind"], string>([
@@ -183,28 +188,23 @@ const getDefEntryParts = (
   return undefined;
 };
 
-export const reportDefEntry = (generation: ModuleGeneration, expression: Expression) => {
-  const span = getOperandSpan(generation.file, expression);
-  const isName =
-    expression.kind === "Identifier" ||
-    expression.kind === "Subexpression" ||
-    expression.kind === "OperatorReference";
-  if (isName && !isParenthesized(generation.file, span)) return false;
-  const parts = getDefEntryParts(generation.file, expression, span);
-  if (parts?.hasChildlessFirstChild === undefined || parts.lastKind === undefined) return false;
-  const lastLocation = getSpanLocation(generation.file, parts.last);
-  if (parts.hasChildlessFirstChild) {
-    generation.addError(getSpanLocation(generation.file, span), "Was expecting a GeneralId.");
-  }
-  if (parts.lastKind === "N_OpArgs") {
-    generation.addError(lastLocation, "Selector `!(...)' should not have argument(s).");
-  } else {
-    generation.addError(lastLocation, "Unexpected token found.");
-    generation.addError(lastLocation, `Need name or step number here, not \`${parts.lastKind}'.`);
-  }
-  generation.addError(
-    getSpanLocation(generation.file, span),
-    "DEF clause entry should describe a defined operator.",
-  );
-  return true;
+export const getDefEntryErrors = (file: SourceFile, expression: Expression): DefEntryError[] => {
+  const span = getOperandSpan(file, expression);
+  const location = getSpanLocation(file, span);
+  const parts = getDefEntryParts(file, expression, span);
+  if (parts?.hasChildlessFirstChild === undefined || parts.lastKind === undefined) return [];
+  const lastLocation = getSpanLocation(file, parts.last);
+  return [
+    ...(parts.hasChildlessFirstChild ? [{ location, message: "Was expecting a GeneralId." }] : []),
+    ...(parts.lastKind === "N_OpArgs"
+      ? [{ location: lastLocation, message: "Selector `!(...)' should not have argument(s)." }]
+      : [
+          { location: lastLocation, message: "Unexpected token found." },
+          {
+            location: lastLocation,
+            message: `Need name or step number here, not \`${parts.lastKind}'.`,
+          },
+        ]),
+    { location, message: "DEF clause entry should describe a defined operator." },
+  ];
 };

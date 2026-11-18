@@ -23,7 +23,9 @@ import type {
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
 import { getNumeralValue, readAtAsIdentifier, tokenize, type Token } from "./lexer";
+import { getDefEntryErrors, type DefEntryError } from "./sany/generator-def-entries";
 import { getSanyParseError } from "./sany/parse-error";
+import { createSourceFile } from "./sany/source";
 
 interface Precedence {
   low: number;
@@ -479,6 +481,9 @@ const getOperatorApplication = (
 };
 
 export const parenthesizedRanges = new WeakMap<Expression, SourceRange>();
+
+// Generator#genIdToSelector rejects a DEF entry that isn't a name by the shape of its syntax tree.
+export const defEntryErrors = new WeakMap<Expression, DefEntryError[]>();
 
 export const extractModule = (source: string, name: string) => {
   const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
@@ -2157,7 +2162,23 @@ const parse = (
     );
   };
 
-  const parseDefs = () => parseSeparated(isTlapm ? parseDefinable : parseFact);
+  const parseDefs = () =>
+    parseSeparated(() => {
+      if (isTlapm) return parseDefinable();
+      const fact = parseFact();
+      const isName =
+        (fact.kind === "Identifier" ||
+          fact.kind === "Subexpression" ||
+          fact.kind === "OperatorReference") &&
+        !parenthesizedRanges.has(fact);
+      if (fact.kind !== "ModuleFact" && !isName) {
+        defEntryErrors.set(
+          fact,
+          getDefEntryErrors(createSourceFile(openModules[0].name, source), fact),
+        );
+      }
+      return fact;
+    });
 
   // tlapm's usebody reads facts while an expression starts after the comma.
   const parseTlapmFacts = (): Fact[] => {

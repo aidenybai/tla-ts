@@ -23,7 +23,8 @@ import {
   type UseOrHide,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
-import { parenthesizedRanges } from "./parser";
+import { defEntryErrors, parenthesizedRanges } from "./parser";
+import { formatSanyLocation } from "./sany/nodes";
 import { resolveSynonym } from "./tlc/jar-data";
 
 export type SymbolKind =
@@ -1835,6 +1836,14 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
     reportUnknownModule(def, unit);
     return unit.isModuleKnown(def.name, def.location);
   }
+  const entryErrors = defEntryErrors.get(def) ?? [];
+  unit.errors.push(
+    ...entryErrors.map((error) => ({
+      location: formatSanyLocation(error.location),
+      message: error.message,
+    })),
+  );
+  if (entryErrors.length > 0) return false;
   const reference = selections.get(def) ?? def;
   const range = reference.location.range;
   if (!range) return true;
