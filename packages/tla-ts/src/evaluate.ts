@@ -2114,10 +2114,10 @@ export const getFunctionBuilder = (
       domain,
       coverage
         ? (argument) => {
-            const at = coverage.current === -1 && name === undefined ? -1 : node;
-            return at === coverage.current && !frames
+            const target = coverage.current === -1 && name === undefined ? -1 : node;
+            return target === coverage.current && !frames
               ? compute(argument)
-              : runInCoverageFrames(coverage, at, frames, () => compute(argument));
+              : runInCoverageFrames(coverage, target, frames, () => compute(argument));
           }
         : compute,
       getLazyFunctionSource(template, bounds, domain),
