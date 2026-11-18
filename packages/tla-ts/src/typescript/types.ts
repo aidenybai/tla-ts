@@ -663,6 +663,12 @@ const isCollectionProxy = (node: ts.Expression, context: Context): boolean => {
   );
 };
 
+// An array that the heap holds, or an arguments object, which spread and apply read as one.
+export const isHeapArrayLike = (node: ts.Expression, context: Context) =>
+  isHeapArray(node, context) ||
+  (context.heap !== undefined &&
+    context.checker.getTypeAtLocation(skipCasts(node)).getSymbol()?.name === "IArguments");
+
 export const isHeapArray = (node: ts.Expression, context: Context) => {
   if (context.heap === undefined) return false;
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));

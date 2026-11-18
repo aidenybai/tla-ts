@@ -483,6 +483,7 @@ import {
   getKind,
   getArrayLiteral,
   isHeapArray,
+  isHeapArrayLike,
   isHeapSetOrMap,
   isOrderedCollection,
   getOrderedIteration,
@@ -5987,7 +5988,7 @@ const getAppliedArguments = (node: MethodCall, context: Context) => {
       : ts.isArrayLiteralExpression(list)
         ? list.elements
         : listed !== undefined &&
-            (isHeapArray(list, context) ||
+            (isHeapArrayLike(list, context) ||
               getKind(list, context) === "sequence" ||
               (getKind(list, context) !== "object" && isRestParameter(list, context)))
           ? [listed]

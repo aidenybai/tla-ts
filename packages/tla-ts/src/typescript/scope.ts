@@ -52,7 +52,7 @@ import {
   getField,
   getPathStep,
   getPropertyKey,
-  isHeapArray,
+  isHeapArrayLike,
   isHeapPattern,
   isSequenceType,
 } from "./types";
@@ -775,7 +775,7 @@ export const translateArgumentValues = (
   const spread = applied === undefined ? argumentNodes.findIndex(ts.isSpreadElement) : 0;
   const list =
     applied !== undefined
-      ? isHeapArray(applied, context)
+      ? isHeapArrayLike(applied, context)
         ? useJavaScript(
             "ArrayLikeValues",
             [getHeap(scope, applied, context), translateExpression(applied, scope, context)],

@@ -219,7 +219,7 @@ import {
   getPropertyKey,
   isBooleanLike,
   isFieldName,
-  isHeapArray,
+  isHeapArrayLike,
   hasHeapType,
   isHeapSetOrMap,
   getOrderedIteration,
@@ -452,7 +452,7 @@ export const translateIterated = (
   scope: Scope,
   context: Context,
 ): Expression | Expression[] => {
-  if (isHeapArray(iterated, context)) return translateHeapElements(iterated, scope, context);
+  if (isHeapArrayLike(iterated, context)) return translateHeapElements(iterated, scope, context);
   // A string gives its code points.
   if (ts.isStringLiteralLike(iterated)) {
     return [...iterated.text].map((character) => translateString(character, context));

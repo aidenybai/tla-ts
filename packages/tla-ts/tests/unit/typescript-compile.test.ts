@@ -53929,4 +53929,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("spreads and applies an arguments object as the array that its iterator gives", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: "" };
+      function add(a: number, b: number) {
+        return a + b;
+      }
+      function forward(this: unknown, ..._rest: number[]) {
+        return add.apply(this, arguments as any);
+      }
+      function listed(..._rest: number[]) {
+        return [...arguments].join("/");
+      }
+      const sum = forward(2, 3);
+      const list = listed(4, 5, 6);
+      box.seen = [sum, list].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5,4/5/6"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("5,6/5/4"))).failure?.message).toContain("seen 5,4/5/6");
+    });
+  });
 });
