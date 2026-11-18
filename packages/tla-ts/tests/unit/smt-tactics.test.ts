@@ -1280,6 +1280,33 @@ describe("the arithmetic probes, as Z3 5.3.2 measures a goal", () => {
       '(error "tactic failed: fail-if tactic")',
     ]);
   });
+
+  it("finds no QF_AUFLIA goal once an array is selected from", () => {
+    const probe =
+      '(apply (and-then (if is-qfauflia (echo "qfauflia") (echo "other")) (fail-if (> 1 0))))';
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-const j Int)",
+        "(declare-const a (Array Int Int))",
+        "(declare-fun f (Int) (Array Int Int))",
+        "(assert (> j 0))",
+        "(assert (= a (f j)))",
+        probe,
+        "(assert (> (select a j) 0))",
+        probe,
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "qfauflia",
+      '(error "tactic failed: fail-if tactic")',
+      "other",
+      '(error "tactic failed: fail-if tactic")',
+      "sat",
+      "(:rlimit 318)",
+    ]);
+  });
 });
 
 describe("qfufbv, as Z3 5.3.2 answers QF_UFBV", () => {
