@@ -205,6 +205,25 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("declares the operator symbols of a LET's RECURSIVE statements, as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nR ==\n  LET\n    RECURSIVE _**_\n    x ** y == x ** y\n    RECURSIVE _^#\n    x^# == x^#\n  IN 1 ** 2\nS == LET RECURSIVE _++_ IN 1\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 9, col 20 to line 9, col 23 of module M",
+        "",
+        "Symbol ++ declared in RECURSIVE statement but not defined.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("locates the tuple of an EXCEPT path at the part of its update SANY picks", () => {
     const report = getReport({
       M: "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nB == [f EXCEPT ![1][[]x, 2] = 1]\nC == [f EXCEPT ![1][2][[]x, 3] = ((1))]\n====\n",

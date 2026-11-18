@@ -498,35 +498,6 @@ const generateRecordFields = (
   return record;
 };
 
-const getTokenPosition = (file: SourceFile, index: number) => ({
-  line: file.tokens[index].line,
-  column: file.tokens[index].column,
-});
-
-const getRecursiveDeclarations = (file: SourceFile, start: number) => {
-  const declarations: Declaration[] = [];
-  let index = start;
-  while (file.tokens[index]?.kind === "Identifier") {
-    const end = isToken(file, index + 1, "(") ? getMatchingIndex(file, index + 1) : index;
-    const arity = file.tokens.slice(index + 1, end).filter((token) => token.text === "_").length;
-    declarations.push({
-      name: file.tokens[index].text,
-      arity,
-      location: {
-        ...getTokenPosition(file, index),
-        range: {
-          module: file.name,
-          start: getTokenPosition(file, index),
-          end: getTokenPosition(file, end),
-        },
-      },
-    });
-    if (!isToken(file, end + 1, ",")) break;
-    index = end + 2;
-  }
-  return declarations;
-};
-
 const getLetUnits = (file: SourceFile, expression: Expression & { kind: "Let" }) => {
   const units = [
     ...expression.definitions.map((definition) => ({
@@ -540,16 +511,23 @@ const getLetUnits = (file: SourceFile, expression: Expression & { kind: "Let" })
   ];
   const letStart = getExpressionSpan(file, expression).start;
   const bodyStart = getOperandSpan(file, expression.body).start;
-  const recursives: { unit: LetUnit; span: TokenSpan }[] = [];
+  const recursiveIndexes: number[] = [];
   for (let index = letStart + 1; index < bodyStart; index++) {
     const isInUnit = units.some((entry) => entry.span.start <= index && index <= entry.span.end);
-    if (isToken(file, index, "RECURSIVE") && !isInUnit) {
-      recursives.push({
-        unit: { kind: "Recursive", declarations: getRecursiveDeclarations(file, index + 1) },
-        span: { start: index, end: index },
-      });
-    }
+    if (isToken(file, index, "RECURSIVE") && !isInUnit) recursiveIndexes.push(index);
   }
+  // A RECURSIVE statement declares the names up to the next one.
+  const recursives = recursiveIndexes.map((start, position) => {
+    const end = recursiveIndexes[position + 1] ?? bodyStart;
+    const declarations = (expression.recursive ?? []).filter((declaration) => {
+      const index = getTokenIndex(file, declaration.location);
+      return start < index && index < end;
+    });
+    return {
+      unit: { kind: "Recursive", declarations } satisfies LetUnit,
+      span: { start, end: start },
+    };
+  });
   return [...units, ...recursives]
     .toSorted((first, second) => first.span.start - second.span.start)
     .map((entry) => entry.unit);
