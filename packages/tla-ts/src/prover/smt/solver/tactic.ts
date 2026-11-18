@@ -1730,10 +1730,18 @@ const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
   if (goals.length === 1) return goals[0].isDecided() ? goals : second(goals[0]);
   const results: Goal[] = [];
   const unsatGoals: Goal[] = [];
-  for (const subgoal of goals) {
-    const subresults = second(subgoal);
-    if (isDecidedSat(subresults)) return subresults;
-    (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
+  try {
+    for (const subgoal of goals) {
+      const subresults = second(subgoal);
+      if (isDecidedSat(subresults)) return subresults;
+      (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
+    }
+  } catch (error) {
+    // and_then's buffer frees the subgoals no result keeps, first to last, and then its caller's
+    // buffer frees the results.
+    for (const subgoal of goals) if (!results.includes(subgoal)) subgoal.release();
+    for (const result of results) result.release();
+    throw error;
   }
   return results.length > 0 ? results : assertUnsat(goal, unsatGoals);
 };

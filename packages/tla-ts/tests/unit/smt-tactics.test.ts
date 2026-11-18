@@ -2754,6 +2754,25 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ).toEqual(["unknown", "(:rlimit 567)", "unknown", "(:rlimit 1053)"]);
   });
 
+  // The failed branch's #b10 is freed, so in the second check dt2bv makes x!1 before #b10 again,
+  // and theory_bv finds the atom (= x!1 #b10).
+  it("frees and-then's subgoals when a branch fails", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then split-clause dt2bv smt)")',
+        "(declare-datatypes ((C 0)) (((r) (g) (b))))",
+        "(declare-const x C)",
+        "(declare-const q Real)",
+        "(assert (= (^ 2.0 q) 3.0))",
+        "(assert (or (= x b) true))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 344)", "unknown", "(:rlimit 686)"]);
+  });
+
   it("reads tactic.default_tactic as it makes the solver", () => {
     expect(
       run([
