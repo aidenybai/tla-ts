@@ -124,7 +124,8 @@ export interface TacticEnvironment {
 }
 
 // A tactic that tracks dependencies keeps the dependency of every formula it changes, so the goal
-// gets the assertion names only for those.
+// gets the assertion names only for those. The goal has dependencies only with unsat cores, so a
+// tactic that fails on those tracks them too.
 interface TacticBuilder {
   descrs: ParamDescrs;
   isRejectingUnknown: boolean;
@@ -985,6 +986,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "diff-neq",
     {
       descrs: getDescrs("", [["diff_neq_max_k", PARAM_UINT, 1024, true]]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           diffNeq(environment.manager, goal, getUint(params, "diff_neq_max_k", 1024)),
@@ -1074,6 +1076,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["nla2bv_root", PARAM_UINT, 2, true],
         ["nla2bv_divisor", PARAM_UINT, 2, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           nla2bv(environment.manager, goal, {
@@ -1157,6 +1160,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["produce_models", PARAM_BOOL, false, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => rewriteUfbv(environment.manager, goal)),
     },
   ],
@@ -1164,6 +1168,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "reduce-args",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => reduceArgs(environment.manager, goal)),
     },
   ],
@@ -1224,6 +1229,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_steps", PARAM_UINT, UINT_MAX, true],
         ["max_bits", PARAM_UINT, 4, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runElimSmallBv(
           environment.manager,
@@ -1281,6 +1287,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "bv_bound_chk",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runBvBoundChk(environment.manager, getUint(params, "bv_ineq_consistency_test_max", 0)),
     },
@@ -1295,7 +1302,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   [
     "reduce-bv-size",
-    { descrs: new Map(), build: (environment) => runReduceBvSize(environment.manager) },
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => runReduceBvSize(environment.manager),
+    },
   ],
   [
     "bv1-blast",
@@ -1312,6 +1323,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "ackermannize_bv",
     {
       descrs: getDescrs("rewriter", [["div0_ackermann_limit", PARAM_UINT, 1000, true]]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runAckermannizeBv(
           environment.manager,

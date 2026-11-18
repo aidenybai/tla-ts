@@ -871,6 +871,34 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       "(:rlimit 341)",
     ]);
   });
+
+  it("a tactic that fails on unsat cores tracks the dependencies, so qfbv keeps them", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(declare-const b Bool)",
+        "(assert (! (bvult x #x05) :named a1))",
+        "(assert (! (= y (bvadd x #x01)) :named a2))",
+        "(assert (! (bvugt y #x07) :named a3))",
+        "(assert (! (or b (= x #x02)) :named a4))",
+        "(apply reduce-bv-size :print_dependencies true)",
+        "(check-sat-using (then reduce-bv-size smt))",
+        "(get-unsat-core)",
+        "(check-sat-using qfbv)",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error "tactic failed: bv-size-reduction does not support unsat core production")',
+      "unknown",
+      '(error "line 11 column 15: unsat core is not available")',
+      "unsat",
+      "(a1 a3 a2)",
+      "(:rlimit 704)",
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {
