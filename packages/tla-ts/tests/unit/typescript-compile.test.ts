@@ -54486,5 +54486,33 @@ describe("BigInts", () => {
       const typed = "new Uint8Array(source as never)";
       expect((await checkModel(getTaken(typed, "66|195"))).failure).toBeUndefined();
     });
+
+    const getOutside = (expected: string) => `
+      const counts = { inner: 0 };
+      function* values() {
+        yield 1;
+        yield 2;
+      }
+      const data = values();
+      const control = (function* () {
+        for (const value of data) {
+          counts.inner += value;
+          yield;
+        }
+      })();
+      control.next();
+      control.next();
+      const last = control.next();
+      const result = [counts.inner, last.done].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a body that iterates a generator from outside it", async () => {
+      expect((await checkModel(getOutside("3,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the generator from outside", async () => {
+      expect((await checkModel(getOutside("2,true"))).failure?.message).toContain("3,true");
+    });
   });
 });

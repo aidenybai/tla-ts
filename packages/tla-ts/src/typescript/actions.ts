@@ -9445,6 +9445,11 @@ export const resumeGenerator = (
   const generators = [...path.generators];
   const held = generators.find((entry) => isSameExpression(entry[1].ref, receiver));
   if (held !== undefined) return run(held[0], held[1]);
+  // A state machine's body holds only the generators that state machines run, so a generator from
+  // outside it runs as the code that steps the machine inlines its body instead.
+  if (path.isMachine === true) {
+    throw new TlaTypeScriptError("tla-ts can't resume this generator from a state machine", node);
+  }
   return generators.reduceRight(
     (rest, entry) =>
       ifThenElse(apply("=", [receiver, entry[1].ref]), run(entry[0], entry[1]), rest),
