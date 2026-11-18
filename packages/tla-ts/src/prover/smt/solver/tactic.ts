@@ -318,6 +318,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
       Number(getParameter(environment, "smt.random_seed", "0")),
     ),
     intHammerPeriod: getHammerPeriod(environment.parameters),
+    isArithPropagatingEqs: getParameter(environment, "smt.arith.propagate_eqs", "true") !== "false",
   };
 };
 

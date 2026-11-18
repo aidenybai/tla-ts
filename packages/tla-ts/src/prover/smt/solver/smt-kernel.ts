@@ -24,6 +24,7 @@ export class SmtKernel {
       relevancyLevel: params.relevancyLevel ?? 2,
       randomSeed: params.randomSeed,
       intHammerPeriod: params.intHammerPeriod,
+      isArithPropagatingEqs: params.isArithPropagatingEqs,
     });
     this.setup = params.setup;
     this.isCoreMinimizing = params.isCoreMinimizing ?? false;

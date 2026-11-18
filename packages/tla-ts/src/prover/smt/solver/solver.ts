@@ -23,6 +23,7 @@ export interface KernelParams {
   isCoreMinimizing?: boolean;
   randomSeed?: number;
   intHammerPeriod?: number;
+  isArithPropagatingEqs?: boolean;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
 }
@@ -53,6 +54,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     relevancyLevel: 2,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
+    isArithPropagatingEqs: params.isArithPropagatingEqs,
   });
   if (!assertForms(context, asserted, forms)) {
     manager.limit.release();
@@ -96,6 +98,7 @@ export const solveAssuming = (
     relevancyLevel: 2,
     randomSeed: params.randomSeed,
     intHammerPeriod: params.intHammerPeriod,
+    isArithPropagatingEqs: params.isArithPropagatingEqs,
   });
   if (!assertForms(context, asserted, assertions)) {
     manager.limit.release();

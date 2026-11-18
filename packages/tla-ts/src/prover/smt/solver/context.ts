@@ -170,6 +170,7 @@ export interface SmtParams {
   relevancyLevel: 0 | 2;
   randomSeed?: number;
   intHammerPeriod?: number;
+  isArithPropagatingEqs?: boolean;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
 }
@@ -225,6 +226,10 @@ export class Context extends Internalizer {
   ) {
     super(manager, params.relevancyLevel > 0);
     this.qmanager = new DefaultQuantifierManager(this);
+    this.config = {
+      ...DEFAULT_CONFIG,
+      isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
+    };
   }
 
   release(asserted: AssertedFormulas) {
@@ -254,9 +259,11 @@ export class Context extends Internalizer {
     this.params.mbqiMaxIterations = params.mbqiMaxIterations;
     this.params.randomSeed = params.randomSeed;
     this.params.intHammerPeriod = params.intHammerPeriod;
+    this.params.isArithPropagatingEqs = params.isArithPropagatingEqs;
     this.arith?.updateParams();
     this.config = {
       ...DEFAULT_CONFIG,
+      isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
       theories: this.config.theories,
       isFindingMacros: params.isFindingMacros,
       isNnfCnf: this.config.isNnfCnf,

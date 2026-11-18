@@ -695,6 +695,7 @@ export const runSmtlibScript = (
     isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),
     intHammerPeriod: getHammerPeriod(settings.parameters),
+    isArithPropagatingEqs: settings.parameters.get("smt.arith.propagate_eqs") !== "false",
   });
   const checkFdSolver = (fdSolver: FdSolver, extra: number[]) => {
     const result = fdSolver.check(extra);

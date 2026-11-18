@@ -1699,6 +1699,26 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ).toEqual(["unsat", "(:rlimit 4414)", "unsat", "(:rlimit 7199)"]);
   });
 
+  it("reads smt.arith.propagate_eqs in the kernel and in the smt tactic", () => {
+    const lines = [
+      "(set-option :smt.arith.propagate_eqs false)",
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(declare-fun f (Int) Int)",
+      "(assert (<= x y))",
+      "(assert (<= y x))",
+      "(assert (not (= (f x) (f y))))",
+    ];
+    expect(run([...lines, "(check-sat)", "(get-info :rlimit)"])).toEqual([
+      "unsat",
+      "(:rlimit 196)",
+    ]);
+    expect(run([...lines, "(check-sat-using smt)", "(get-info :rlimit)"])).toEqual([
+      "unsat",
+      "(:rlimit 142)",
+    ]);
+  });
+
   it("rejects the other options of lp", () => {
     const lines = ["(declare-const x Int)", "(assert (>= (* 3 x) 101))", "(check-sat)"];
     expect(() => run(["(set-option :lp.random_hammers false)", ...lines])).toThrow(
