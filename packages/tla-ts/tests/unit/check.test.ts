@@ -2242,6 +2242,72 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "an index",
+      "LET f[n \\in 0..2] == 10 \\div (n + 1) IN x = DOMAIN [f EXCEPT ![2] = @ + 1]",
+      [
+        "line 4, col 49 to line 4, col 82 of module M: 1",
+        "|line 4, col 53 to line 4, col 82 of module M: 1",
+        "||line 4, col 60 to line 4, col 82 of module M: 1",
+        "|||line 4, col 61 to line 4, col 61 of module M: 1",
+        "||||line 4, col 13 to line 4, col 44 of module M: 1:3",
+        "|||||line 4, col 30 to line 4, col 44 of module M: 3",
+        "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+        "|||line 4, col 70 to line 4, col 81 of module M: 1",
+      ],
+    ],
+    [
+      "an index expression",
+      "LET f[n \\in 0..2] == 10 \\div (n + 1) IN x = DOMAIN [f EXCEPT ![1 + 1] = @ + 1]",
+      [
+        "line 4, col 49 to line 4, col 86 of module M: 1",
+        "|line 4, col 53 to line 4, col 86 of module M: 1",
+        "||line 4, col 60 to line 4, col 86 of module M: 1",
+        "|||line 4, col 61 to line 4, col 61 of module M: 1",
+        "||||line 4, col 13 to line 4, col 44 of module M: 1:3",
+        "|||||line 4, col 30 to line 4, col 44 of module M: 3",
+        "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+        "|||line 4, col 70 to line 4, col 85 of module M: 1",
+      ],
+    ],
+    [
+      "two indices",
+      "LET f[p, q \\in 0..2] == 10 \\div (p + 1) IN x = DOMAIN [f EXCEPT ![1, 2] = @ + 1]",
+      [
+        "line 4, col 52 to line 4, col 88 of module M: 1",
+        "|line 4, col 56 to line 4, col 88 of module M: 1",
+        "||line 4, col 63 to line 4, col 88 of module M: 1",
+        "|||line 4, col 64 to line 4, col 64 of module M: 1",
+        "||||line 4, col 13 to line 4, col 47 of module M: 1:9",
+        "|||||line 4, col 33 to line 4, col 47 of module M: 9",
+        "|||||line 4, col 24 to line 4, col 27 of module M: 1",
+        "|||line 4, col 73 to line 4, col 87 of module M: 1",
+      ],
+    ],
+    [
+      "an index outside the domain",
+      "x = [[n \\in 0..2 |-> n] EXCEPT ![5 - 1] = @ + 1]",
+      [
+        "line 4, col 9 to line 4, col 56 of module M: 1",
+        "|line 4, col 13 to line 4, col 56 of module M: 1",
+        "||line 4, col 14 to line 4, col 31 of module M: 1:3",
+        "|||line 4, col 30 to line 4, col 30 of module M: 3",
+        "|||line 4, col 21 to line 4, col 24 of module M: 1",
+        "||line 4, col 40 to line 4, col 55 of module M: 1",
+      ],
+    ],
+  ])(
+    "counts an EXCEPT update with %s at the range of ![k] = e, as SANY locates $Pair and $Seq at the ExceptSpec",
+    async (_title, init, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == ${init}\nNext == UNCHANGED x\n====`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(lines?.[0]).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       "a module",
       "f[n \\in 0..2] == IF n = 0 THEN x ELSE f[n - 1] + 1\nInit == x = 0\nNext == x < 3 /\\ x' = [f EXCEPT ![2] = 7][1]",
       1,

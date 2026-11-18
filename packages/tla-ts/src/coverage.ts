@@ -630,12 +630,28 @@ export const buildCoverage = (
       case "Except":
         enter(expression, range, () => {
           walk(expression.function, locals);
-          expression.updates.forEach((update) => {
-            update.path.forEach((step) => {
-              if (step.kind === "Index") walkAll(step.args);
-            });
-            walk(update.value, locals);
-          });
+          // SANY locates an update's $Pair and the $Seq of its selectors both at its ExceptSpec.
+          expression.updates.forEach((update) =>
+            enter(
+              undefined,
+              update.range,
+              () => {
+                enter(
+                  undefined,
+                  update.range,
+                  () =>
+                    update.path.forEach((step) => {
+                      if (step.kind !== "Index") return;
+                      if (step.args.length === 1) walkAll(step.args);
+                      else enter(undefined, step.tupleRange, () => walkAll(step.args), true);
+                    }),
+                  true,
+                );
+                walk(update.value, locals);
+              },
+              true,
+            ),
+          );
         });
         return;
       case "Prime":
