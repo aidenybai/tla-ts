@@ -294,6 +294,29 @@ describe("a distinct of more than two arguments", () => {
     ]);
   });
 
+  it("is blasted by propagate-values under its parameter blast_distinct", () => {
+    expect(
+      run([
+        ...declareConsts("Int", ["a", "b", "c"]),
+        "(declare-const p Bool)",
+        "(assert p)",
+        "(assert (or (distinct a b c) (not p)))",
+        "(apply (using-params propagate-values :blast_distinct true))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  p",
+        "  (not (= a b))",
+        "  (not (= a c))",
+        "  (not (= b c))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("is defined in the kernel by its disequalities, as internalize_distinct does", () => {
     const check = (lines: string[]) => run([...lines, "(check-sat)", "(get-info :rlimit)"]);
     const names = Array.from({ length: 32 }, (_value, index) => `a${index}`);

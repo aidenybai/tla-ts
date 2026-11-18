@@ -19,14 +19,19 @@ const getSharedOccs = (manager: AstManager, forms: number[]) => {
   return shared;
 };
 
-export const propagateValues = (manager: AstManager, goal: Goal, maxRounds = 4) => {
+export const propagateValues = (
+  manager: AstManager,
+  goal: Goal,
+  maxRounds = 4,
+  options = TACTIC_REWRITER_OPTIONS,
+) => {
   goal.depth++;
   if (goal.isInconsistent) return;
   if (goal.isProofsEnabled) {
     goal.elimRedundancies();
     return;
   }
-  const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
+  const rewriter = new Rewriter(manager, options);
   const substitution = new Map<number, number>();
   const dependencies = new Map<number, Dependency | undefined>();
   rewriter.setSubstitution(substitution, dependencies);

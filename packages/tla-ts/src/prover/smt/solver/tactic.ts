@@ -717,7 +717,12 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
-          propagateValues(environment.manager, goal, getUint(params, "max_rounds", 4)),
+          propagateValues(
+            environment.manager,
+            goal,
+            getUint(params, "max_rounds", 4),
+            getRewriterOptions(environment.manager, params),
+          ),
         ),
     },
   ],
