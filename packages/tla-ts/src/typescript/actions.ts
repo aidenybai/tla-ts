@@ -365,6 +365,7 @@ import {
   translateThrow,
 } from "./functions";
 import {
+  mayBeTypedArray,
   bind,
   callMethod,
   getDescriptorGetters,
@@ -16309,7 +16310,8 @@ const getEffects = (
     getConvertedBufferValues(node, context) !== undefined ||
     getConvertedArrayValues(node, context) !== undefined ||
     (ts.isExpression(node) && getKeyUpdate(node, context) !== undefined) ||
-    getTypedObjectWrite(node, context) !== undefined
+    getTypedObjectWrite(node, context) !== undefined ||
+    isTypedDefine(node, context)
       ? getConversionFunctions(node, context)
       : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
         ? getKeyedConversionFunctions(node, context)
@@ -21260,6 +21262,15 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
   return { node, conversion };
 };
 
+// Object.defineProperty or Reflect.defineProperty of a target that may be a typed array, which
+// converts an object value that the descriptor gives where it defines an index.
+const isTypedDefine = (node: ts.Node, context: Context) =>
+  isMethodCall(node) &&
+  node.expression.name.text === "defineProperty" &&
+  ["Object", "Reflect"].includes(getBuiltIn(node.expression.expression, context) ?? "") &&
+  node.arguments[0] !== undefined &&
+  mayBeTypedArray(context.checker.getTypeAtLocation(skipCasts(node.arguments[0])));
+
 // A plain assignment of an object that a name holds to a primitive key of an object that a name
 // holds, which may be a typed array, which converts the object where it is one.
 const getTypedObjectWrite = (node: ts.Node, context: Context) => {
@@ -21284,15 +21295,10 @@ const getTypedObjectWrite = (node: ts.Node, context: Context) => {
   }
   const key = skipCasts(access.argumentExpression);
   const keyNames = getTypeNames(context.checker.getTypeAtLocation(key), context.checker);
-  const objectType = context.checker.getTypeAtLocation(skipCasts(access.expression));
-  const isTypedType = (type: ts.Type): boolean =>
-    (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
-    TYPED_ARRAYS.has(type.getSymbol()?.getName() ?? "") ||
-    (type.isUnion() && type.types.some(isTypedType));
   return (ts.isNumericLiteral(key) ||
     ts.isStringLiteral(key) ||
     (keyNames?.every((name) => name === "number" || name === "string") ?? false)) &&
-    isTypedType(objectType)
+    mayBeTypedArray(context.checker.getTypeAtLocation(skipCasts(access.expression)))
     ? { node, access }
     : undefined;
 };

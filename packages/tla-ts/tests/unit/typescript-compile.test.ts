@@ -55706,4 +55706,43 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts an object value that a definition of a typed array's index takes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var value = { valueOf() { log += "value|"; return 7; } };
+      var sample = new Int8Array(2);
+      Object.defineProperty(sample, "0", { value: value });
+      var defined = Reflect.defineProperty(sample, 1, { value: value, writable: true });
+      var past = Reflect.defineProperty(sample, 5, { value: value });
+      var frozen = Reflect.defineProperty(sample, 0, { value: value, writable: false });
+      var bad = { valueOf() { throw new RangeError("x"); } };
+      var thrown = "none";
+      try {
+        Object.defineProperty(sample, "1", { value: bad });
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var plain = {};
+      Object.defineProperty(plain, "0", { value: value });
+      var ta = new Int8Array([17]);
+      var desc = { value: { valueOf() { log += "detach|"; ta.buffer.transfer(); return 42; } } };
+      var detached = Reflect.defineProperty(ta, 0, desc);
+      var result = [sample[0], sample[1], defined, past, frozen, thrown, plain[0] === value, detached, ta[0], log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("7,7,true,false,false,RangeError,true,true,,value|value|detach|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("7,7,true,false,false,RangeError,true,false,,value|value|detach|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 7,7,true,false,false,RangeError,true,true,,value|value|detach|",
+      );
+    });
+  });
 });
