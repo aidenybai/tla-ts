@@ -14,6 +14,50 @@ export interface EscoreSpec {
   preparedModules: PreparedModule[];
 }
 
+interface CodeDefinition {
+  name: string;
+  arity: number;
+  text: string;
+}
+
+// A program's definitions with each one whose text is another's but for its name and the names of
+// definitions merged before it merged into the first, and with each literal sequence of numbers,
+// such as a name's code units, a definition of its own, so that a check reads each one once.
+const compact = (definitions: readonly CodeDefinition[]) => {
+  const merged = new Map<string, string>();
+  const firsts = new Map<string, string>();
+  const rename = (text: string) =>
+    text.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (name) => merged.get(name) ?? name);
+  for (const definition of definitions) {
+    const key = `${definition.arity} ${rename(definition.text).slice(definition.name.length)}`;
+    const first = firsts.get(key);
+    if (first === undefined) firsts.set(key, definition.name);
+    else merged.set(definition.name, first);
+  }
+  const sequences = new Map<string, string>();
+  const kept = definitions
+    .filter((definition) => !merged.has(definition.name))
+    .map((definition) => ({
+      ...definition,
+      text:
+        definition.name === "SourceText"
+          ? definition.text
+          : rename(definition.text).replace(/<<\d+(?:, \d+){2,}>>/g, (sequence) => {
+              const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;
+              sequences.set(sequence, name);
+              return name;
+            }),
+    }));
+  return [
+    ...[...sequences].map((entry) => ({
+      name: entry[1],
+      arity: 0,
+      text: `${entry[1]} == ${entry[0]}`,
+    })),
+    ...kept,
+  ];
+};
+
 // Compiles a TypeScript script to a spec whose Init runs it as ESCore runs a script: the realm,
 // then the script, then the jobs it queued. An uncaught exception fails Init's assertion. The
 // spec's module ProgramCode holds the script's code, and the runtime's prepared modules the rest.
@@ -69,34 +113,36 @@ export const compileToEscore = (
   const leftOut = new Set(
     runtime.gates.filter((gate) => !isIncluded(gate)).map((gate) => gate.group),
   );
-  const definitions = [
-    ...program.definitions,
-    {
-      name: "RunProgram",
-      arity: 1,
-      text: isQueuing
-        ? "RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE RunJobs(p.s)"
-        : "RunProgram(s) == Program(s)",
-    },
-    {
-      name: "CallBuiltin",
-      arity: 6,
-      text: getCallBuiltin(
-        "CallBuiltin",
-        runtime.families.filter((family) => !leftOut.has(family.group)),
-        LOCALE_METHODS,
+  const definitions = compact(
+    [
+      ...program.definitions,
+      {
+        name: "RunProgram",
+        arity: 1,
+        text: isQueuing
+          ? "RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE RunJobs(p.s)"
+          : "RunProgram(s) == Program(s)",
+      },
+      {
+        name: "CallBuiltin",
+        arity: 6,
+        text: getCallBuiltin(
+          "CallBuiltin",
+          runtime.families.filter((family) => !leftOut.has(family.group)),
+          LOCALE_METHODS,
+        ),
+      },
+    ].map((definition) => ({
+      name: HOOKS.has(definition.name) ? `Program${definition.name}` : definition.name,
+      arity: definition.arity,
+      text: foldNames(
+        definition.text.replace(
+          /\b(?:CallCode|LoopIteration|CallBuiltin)\b/g,
+          (name) => `Program${name}`,
+        ),
       ),
-    },
-  ].map((definition) => ({
-    name: HOOKS.has(definition.name) ? `Program${definition.name}` : definition.name,
-    arity: definition.arity,
-    text: foldNames(
-      definition.text.replace(
-        /\b(?:CallCode|LoopIteration|CallBuiltin)\b/g,
-        (name) => `Program${name}`,
-      ),
-    ),
-  }));
+    })),
+  );
   const code = definitions.map((definition) => definition.text).join("\n");
   const view = runtime.getView(
     `${code}\n${ROOT}\n${CONFIG}`,
