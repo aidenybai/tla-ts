@@ -358,13 +358,16 @@ const visitFramed = (
       case "Let": {
         const context = getContext(replay, scope, partial);
         const definitions = expression.definitions;
+        // Tool's LazyValue for a LET definition keeps the cost model of the node that reaches the LET.
         const bound = replay.coverage
-          ? bindDefinitions(definitions, context, {
-              impure: new Set(
-                replay.isEnabled ? definitions.filter(isSubstitutionDefinition) : definitions,
-              ),
-              streamed: new Set(),
-            })
+          ? runAtCoverageNode(replay.coverage, node, () =>
+              bindDefinitions(definitions, context, {
+                impure: new Set(
+                  replay.isEnabled ? definitions.filter(isSubstitutionDefinition) : definitions,
+                ),
+                streamed: new Set(),
+              }),
+            )
           : bindDefinitions(definitions, context);
         return visit(replay, expression.body, items, bound, partial, node);
       }

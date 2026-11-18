@@ -1506,6 +1506,20 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts a LET definition under ENABLED at the definition that reaches the LET, as TLC's LazyValue keeps its cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nA == LET t == x + 1 IN t < 4 /\\ x' = t % 4 /\\ UNCHANGED y\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ y' = y\nInv == ENABLED A \\/ TRUE\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 7, col 8 to line 7, col 24 of module M: 3",
+      "|line 7, col 8 to line 7, col 16 of module M: 3",
+      "||line 4, col 15 to line 4, col 19 of module M: 3",
+      "||line 4, col 24 to line 4, col 42 of module M: 3",
+      "||line 4, col 47 to line 4, col 57 of module M: 3",
+    ]);
+  });
+
   it.each([
     [
       "a next-state failure",
