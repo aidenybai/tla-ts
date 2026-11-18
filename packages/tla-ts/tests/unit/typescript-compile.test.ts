@@ -55970,4 +55970,28 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(3))).status).toBe("invariant-violation");
     });
   });
+
+  describe("runs an argument's call that only statements run after names that nothing assigns", () => {
+    const getSource = (expected: string) => `
+      const sum = (head: Uint8Array, bytes: Uint8Array, count: number) =>
+        head[0] * 10 + bytes[count - 1] + bytes.length;
+      const head = new Uint8Array(1).fill(3);
+      const total = sum(head, new Uint8Array(4).fill(5), 4);
+      let current = new Uint8Array(1).fill(2);
+      const swap = () => {
+        current = new Uint8Array(1).fill(9);
+        return new Uint8Array(2).fill(1);
+      };
+      const swapped = sum(current, swap(), 2);
+      if ([total, swapped].join() !== "${expected}") throw new Error("result " + [total, swapped].join());
+    `;
+
+    it("agrees with Node, reading an assigned name before the call that assigns it", async () => {
+      expect((await checkModel(getSource("39,23"))).failure).toBeUndefined();
+    });
+
+    it("rejects the value that the call assigns", async () => {
+      expect((await checkModel(getSource("39,93"))).failure?.message).toContain("result 39,23");
+    });
+  });
 });

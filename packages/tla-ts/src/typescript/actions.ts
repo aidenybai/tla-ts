@@ -2315,18 +2315,65 @@ const runArgumentCall = (
     (allocated) => translateCallStatement(call, allocated, context, frame, continueWith),
   );
 
-// The root call of the first argument that a call evaluates next, after the literals and the
-// arguments that it already ran, which run the same before or after it.
-const getNextArgument = (
-  node: ts.CallExpression,
-  results: ReadonlyMap<ts.Expression, Expression>,
-) =>
-  getRootCall(
-    node.arguments.find((argument) => {
-      const root = getRootCall(argument);
-      return !isLiteralValue(argument) && (root === undefined || !results.has(root));
-    }),
-  );
+// The node that a call's arguments evaluate next, after the literals, the functions, the reads of
+// names that nothing assigns, and what already ran, which evaluate the same before or after it: the
+// root call of an argument, or of a property's value or an element in an object or an array
+// literal that an argument makes, as those evaluate in order before the literal.
+const getNextArgument = (node: ts.CallExpression, path: Path, context: Context) => {
+  const results = path.scope.results;
+  const isSettled = (inner: ts.Expression) => {
+    const symbol = ts.isIdentifier(inner) ? getSymbol(inner, context.checker) : undefined;
+    const declaration = getValueDeclaration(symbol, context);
+    return (
+      isLiteralValue(inner) ||
+      ts.isFunctionExpression(inner) ||
+      ts.isArrowFunction(inner) ||
+      results.has(inner) ||
+      (symbol !== undefined &&
+        declaration !== undefined &&
+        !declaration.getSourceFile().isDeclarationFile &&
+        !isAssigned(symbol, declaration.getSourceFile(), context))
+    );
+  };
+  // The first node that a value evaluates which isn't settled, or undefined where it all is.
+  const visit = (value: ts.Expression): ts.Expression | undefined => {
+    const inner = skipCasts(value);
+    if (isSettled(inner)) return undefined;
+    const root = getRootCall(inner);
+    if (root !== undefined && root !== inner && results.has(root)) return undefined;
+    if (ts.isObjectLiteralExpression(inner)) {
+      for (const property of inner.properties) {
+        if (
+          ts.isSpreadAssignment(property) ||
+          (property.name !== undefined && ts.isComputedPropertyName(property.name))
+        ) {
+          return property.name ?? inner;
+        }
+        const next = ts.isPropertyAssignment(property)
+          ? visit(property.initializer)
+          : ts.isShorthandPropertyAssignment(property)
+            ? visit(property.name)
+            : undefined;
+        if (next !== undefined) return next;
+      }
+      return undefined;
+    }
+    if (ts.isArrayLiteralExpression(inner)) {
+      for (const element of inner.elements) {
+        if (ts.isSpreadElement(element)) return element;
+        const next = visit(element);
+        if (next !== undefined) return next;
+      }
+      return undefined;
+    }
+    return root;
+  };
+  for (const argument of node.arguments) {
+    const next = visit(argument);
+    if (next !== undefined) return next;
+  }
+  return undefined;
+};
 
 // The typed array constructors by their element types, through which a typed array's method makes a
 // typed array.
@@ -2835,7 +2882,7 @@ const translateCallStatementBody = (
       ),
     );
   }
-  const first = getNextArgument(expression, path.scope.results);
+  const first = getNextArgument(expression, path, context);
   if (
     first !== undefined &&
     ts.isCallExpression(first) &&
@@ -16111,7 +16158,7 @@ const translateCheckedDeclarations = (
   const outer = initializer && getReadCall(initializer);
   const first =
     outer !== undefined && ts.isCallExpression(outer)
-      ? getNextArgument(outer, path.scope.results)
+      ? getNextArgument(outer, path, context)
       : undefined;
   if (
     outer !== undefined &&
