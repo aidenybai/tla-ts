@@ -1040,6 +1040,33 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "canceled")']);
   });
 
+  it("reports a cancel that escapes optimization as an error of check-sat", () => {
+    const getLines = (rlimit: number) => [
+      "(declare-const p Bool)",
+      "(declare-const q Bool)",
+      "(declare-const r Bool)",
+      "(assert (not (and (or p q) (=> q r) (= p r))))",
+      "(assert-soft p)",
+      "(assert-soft q :weight 2)",
+      "(assert-soft r)",
+      `(set-option :rlimit ${rlimit})`,
+      "(check-sat)",
+      "(get-info :reason-unknown)",
+    ];
+    expect(run(getLines(1))).toEqual([
+      '(error "line 9 column 10: max. resource limit exceeded")',
+      '(:reason-unknown "unknown")',
+    ]);
+    expect(run(getLines(161))).toEqual([
+      '(error "line 9 column 10: max. resource limit exceeded")',
+      '(:reason-unknown "no reason given")',
+    ]);
+    expect(run(getLines(61))).toEqual([
+      "unknown",
+      '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+
   it("prints the reason and the core of get-consequences on the finite-domain solver", () => {
     expect(
       run([

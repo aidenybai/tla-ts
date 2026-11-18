@@ -557,6 +557,8 @@ export const runSmtlibScript = (
       const reasonUnknown = optimizer.getReasonUnknown();
       optimizer.release();
       setCheck(L_UNDEF, { isOptimizing: true, reasonUnknown });
+      if (error instanceof SmtCanceledError)
+        throw new SmtParseError(manager.limit.getCancelMessage(), end);
       print("unknown");
       return true;
     } finally {
