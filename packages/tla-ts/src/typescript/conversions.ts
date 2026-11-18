@@ -262,17 +262,62 @@ export const isConvertedStringArgument = (
         construction?.arguments?.length === position + 1 &&
         construction.arguments[position] === argument)) &&
     isObjectOperand(node, context) &&
-    (ts.isIdentifier(node) ||
-      (ts.isObjectLiteralExpression(node) &&
-        node.properties.every(
-          (property) =>
-            (ts.isMethodDeclaration(property) && !ts.isComputedPropertyName(property.name)) ||
-            (ts.isPropertyAssignment(property) &&
-              !ts.isComputedPropertyName(property.name) &&
-              (ts.isFunctionExpression(property.initializer) ||
-                ts.isArrowFunction(property.initializer) ||
-                ts.isLiteralExpression(property.initializer))),
-        )))
+    isInertObject(node)
+  );
+};
+
+// A name, or a literal of methods and literals, which evaluates without running anything.
+const isInertObject = (node: ts.Expression) =>
+  ts.isIdentifier(node) ||
+  (ts.isObjectLiteralExpression(node) &&
+    node.properties.every(
+      (property) =>
+        (ts.isMethodDeclaration(property) && !ts.isComputedPropertyName(property.name)) ||
+        (ts.isPropertyAssignment(property) &&
+          !ts.isComputedPropertyName(property.name) &&
+          (ts.isFunctionExpression(property.initializer) ||
+            ts.isArrowFunction(property.initializer) ||
+            ts.isLiteralExpression(property.initializer))),
+    ));
+
+// An object that an element access reads, or that a plain assignment writes, as its key, inside any
+// casts, which ToPropertyKey converts once the access has its object and, for a write, the value
+// it writes.
+export const isConvertedElementKey = (node: ts.Node, context: Context): node is ts.Expression => {
+  if (!ts.isExpression(node) || skipCasts(node) !== node) return false;
+  const key = ts.findAncestor(
+    node,
+    (ancestor) => !(ts.isExpression(ancestor.parent) && skipCasts(ancestor.parent) === node),
+  );
+  const access = key?.parent;
+  if (
+    context.heap === undefined ||
+    access === undefined ||
+    !ts.isElementAccessExpression(access) ||
+    access.argumentExpression !== key ||
+    access.questionDotToken !== undefined ||
+    !isObjectOperand(node, context) ||
+    !isInertObject(node)
+  ) {
+    return false;
+  }
+  const outer = ts.findAncestor(
+    access.parent,
+    (ancestor) => !ts.isParenthesizedExpression(ancestor),
+  );
+  const isTarget =
+    outer !== undefined &&
+    ((ts.isBinaryExpression(outer) &&
+      outer.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      outer.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      skipCasts(outer.left) === access) ||
+      ((ts.isPrefixUnaryExpression(outer) || ts.isPostfixUnaryExpression(outer)) &&
+        skipCasts(outer.operand) === access) ||
+      ts.isDeleteExpression(outer) ||
+      (ts.isCallExpression(outer) && skipCasts(outer.expression) === access));
+  return (
+    !isTarget ||
+    (ts.isBinaryExpression(outer) && outer.operatorToken.kind === ts.SyntaxKind.EqualsToken)
   );
 };
 
@@ -331,7 +376,7 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
   if (context.heap === undefined) return undefined;
   // A property key converts to a primitive, which the call converts as ToPropertyKey does.
   // ToPropertyKey keeps a symbol that the object converts to.
-  if (isConvertedClassKey(node, context)) {
+  if (isConvertedClassKey(node, context) || isConvertedElementKey(node, context)) {
     return {
       operands: [node],
       hints: ["string"],

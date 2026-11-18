@@ -182,6 +182,7 @@ import {
   getConversionFunctions,
   getKeyedConversionFunctions,
   isConvertedClassKey,
+  isConvertedElementKey,
   isConvertedPropertyKey,
   isConvertedStringArgument,
   isAnyOperand,
@@ -20474,7 +20475,11 @@ const findLeadingCall = (
   if ((ts.isExpression(node) || ts.isSpreadElement(node)) && path.scope.results.has(node)) {
     return none;
   }
-  if (isConvertedPropertyKey(node, context) || isConvertedStringArgument(node, context)) {
+  if (
+    isConvertedPropertyKey(node, context) ||
+    isConvertedStringArgument(node, context) ||
+    isConvertedElementKey(node, context)
+  ) {
     return { ...blocked, conversion: node };
   }
   // An object that spreads a proxy runs its traps.
@@ -20660,6 +20665,28 @@ const findLeadingCall = (
       kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment;
     // A compound assignment reads its variable before it evaluates its right operand, so it
     // converts first only where that operand runs nothing.
+    // An assignment to a key that converts an object evaluates the object, the key, and the value,
+    // and then converts the key.
+    const written = skipCasts(node.left);
+    const writtenKey =
+      kind === ts.SyntaxKind.EqualsToken && ts.isElementAccessExpression(written)
+        ? skipCasts(written.argumentExpression)
+        : undefined;
+    if (
+      written !== undefined &&
+      ts.isElementAccessExpression(written) &&
+      writtenKey !== undefined &&
+      !path.scope.results.has(writtenKey) &&
+      isConvertedElementKey(writtenKey, context)
+    ) {
+      const found = inOrder([written.expression]);
+      if (found.call !== undefined || found.isBlocked) return found;
+      before.push(writtenKey);
+      const right = findLeadingCall(node.right, before, path, context);
+      return right.call !== undefined || right.isBlocked
+        ? right
+        : { ...blocked, conversion: writtenKey };
+    }
     // An assignment to a property evaluates the object and the key, and then the value.
     if (
       kind === ts.SyntaxKind.EqualsToken &&

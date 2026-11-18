@@ -55089,4 +55089,39 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts an object key that an element access reads or a plain assignment writes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var symbol = Symbol("s");
+      var key = { [Symbol.toPrimitive]: function (hint) { log += "key:" + hint + "|"; return hint === "string" ? "a" : "b"; } };
+      var other = { toString: function () { log += "other|"; return symbol; } };
+      var bad = { toString: function () { throw new RangeError("x"); } };
+      var obj = { a: 1 };
+      var read = obj[key];
+      obj[key] = (log += "rhs|", 2);
+      obj[other] = 3;
+      var thrown = "none";
+      try {
+        obj[bad] = (log += "bad|", 4);
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [read, obj.a, obj[symbol], Object.keys(obj).join("|"), thrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("1,2,3,a,RangeError,key:string|rhs|key:string|other|bad|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("1,2,3,a,RangeError,key:string|key:string|rhs|other|bad|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 1,2,3,a,RangeError,key:string|rhs|key:string|other|bad|",
+      );
+    });
+  });
 });
