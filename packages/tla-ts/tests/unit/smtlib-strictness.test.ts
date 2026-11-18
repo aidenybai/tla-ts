@@ -784,6 +784,35 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       ['(error "line 1 column 9: unexpected end of file")'],
     ]);
   });
+
+  it("checks the value of a parameter against its kind, as gparams does, and goes on", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(set-option :sat.restart.max foo)",
+        "(set-option :smt.mbqi maybe)",
+        "(set-option :sat.restart.factor x1)",
+        "(set-option :sat.restart.max 99999999999)",
+        "(set-option :smt.relevancy 1.5)",
+        "(set-option :model.completion #b1)",
+        "(set-option :timeout none)",
+        '(set-option :smt.random_seed "12")',
+        "(set-option :smt.mbqi |false|)",
+        "(set-option :sat.restart.factor 1.5)",
+        "(assert (> x 0))",
+        "(check-sat)",
+      ]),
+    ).toEqual([
+      `(error "line 2 column 29: Expected values for parameter restart.max is an unsigned integer. It was given argument 'foo'")`,
+      `(error "line 3 column 22: Expected values for parameter mbqi are 'true' or 'false'. It was given argument 'maybe'")`,
+      `(error "line 4 column 32: Expected values for parameter restart.factor is a double. It was given argument 'x1'")`,
+      `(error "line 5 column 29: invalid value '99999999999' for unsigned int parameter 'restart.max'")`,
+      `(error "line 6 column 27: Expected values for parameter relevancy is an unsigned integer. It was given argument '3/2'")`,
+      `(error "line 7 column 30: Expected values for parameter completion are 'true' or 'false'. It was given argument '1'")`,
+      `(error "line 8 column 21: Expected values for parameter timeout is an unsigned integer. It was given argument 'none'")`,
+      "sat",
+    ]);
+  });
 });
 
 describe("the terms the reader makes and frees, in Z3's order", () => {

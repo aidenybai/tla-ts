@@ -60,12 +60,12 @@ import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { FdSolver } from "./fd-solver";
+import { checkParameterValue } from "./gparams";
 import { SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
 import { mkThSolver } from "./euf/th-solvers";
 import { getHammerPeriod } from "./lp/lp-settings";
-import { UINT_MAX } from "./sat/clause";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
@@ -2036,7 +2036,19 @@ export const runSmtlibScript = (
           !BUILTIN_OPTIONS.has(keyword) &&
           value !== undefined &&
           value.kind !== "list";
-        if (isParameter) settings.parameters.set(getParameterName(keyword), value.text);
+        if (isParameter) {
+          // set_option_cmd passes gparams a numeral as the string of its rational.
+          checkParameterValue(
+            getParameterName(keyword),
+            value.kind === "decimal"
+              ? Rational.fromDecimal(value.text).toString()
+              : value.kind === "numeral" || value.kind === "bitvector"
+                ? BigInt(value.text.replace("#", "0")).toString()
+                : value.text,
+            value,
+          );
+          settings.parameters.set(getParameterName(keyword), value.text);
+        }
         if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
         if (
           !BUILTIN_OPTIONS.has(keyword) &&
@@ -2073,9 +2085,7 @@ export const runSmtlibScript = (
             numericOption === undefined &&
             booleanOption === undefined) ||
           (optionName.startsWith(":lp.") &&
-            (optionName !== ":lp.int_hammer_period" ||
-              value?.kind !== "numeral" ||
-              Number(value.text) > UINT_MAX))
+            (optionName !== ":lp.int_hammer_period" || value?.kind !== "numeral"))
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
       },
