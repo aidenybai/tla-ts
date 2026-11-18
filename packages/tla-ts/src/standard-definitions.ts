@@ -79,7 +79,6 @@ const SIGNATURES: Signature[] = [
   ["ndJsonDeserialize", 0, [0], [3], [0]],
   ["RandomSubset", 0, [0, 0], [2, 2], [1, 1]],
   ["RandomSetOfSubsets", 0, [0, 0, 0], [2, 3, 2], [1, 0, 1]],
-  ["TestRandomSetOfSubsets", 0, [0, 0, 0], [2, 3, 2], [1, 0, 1]],
   ["_Track", 0, [0, 0], [3, 2], [0, 0]],
   ["_Counts", 0, [], [], []],
   ["_CheckName", 0, [0], [2], [1]],
@@ -189,7 +188,6 @@ const RANGES: Record<string, Record<string, [number, number, number, number]>> =
   Randomization: {
     RandomSubset: [30, 1, 30, 64],
     RandomSetOfSubsets: [48, 1, 49, 67],
-    TestRandomSetOfSubsets: [61, 1, 62, 71],
   },
   Json: {
     ToJson: [46, 1, 55, 37],

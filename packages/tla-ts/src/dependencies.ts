@@ -68,12 +68,7 @@ const IMPURE_BUILTINS = new Set([
 
 const STREAMED_BUILTINS = new Set(["UNION", "\\cup"]);
 
-const RANDOM_BUILTINS = new Set([
-  "RandomSubset",
-  "RandomSetOfSubsets",
-  "TestRandomSetOfSubsets",
-  "RandomSubsetSet",
-]);
+const RANDOM_BUILTINS = new Set(["RandomSubset", "RandomSetOfSubsets", "RandomSubsetSet"]);
 
 const isImpureBuiltin = (name: string, environment: DefinitionNames) =>
   IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
@@ -167,11 +162,12 @@ const collectLocalFacts = (
         if (isImpureBuiltin(target, environment)) {
           row[0] |= IMPURE | (target === "Assert" ? 0 : REPEATED_EFFECT);
         }
+        const builtin = environment.builtins.get(target);
         if (STREAMED_BUILTINS.has(target)) row[0] |= STREAMED;
-        if (RANDOM_BUILTINS.has(target)) row[0] |= RANDOM;
+        // A module linked from its source, such as Randomization, keys its builtins by scope.
+        if (builtin && RANDOM_BUILTINS.has(builtin.name)) row[0] |= RANDOM;
         if (target === "TLCEval") row[0] |= TLC_EVAL;
         if (!isOverridden && isImpureBuiltin(target, environment)) row[0] |= READS_IMPURE;
-        const builtin = environment.builtins.get(target);
         if (
           isInnerLevelCounted &&
           !isOverridden &&

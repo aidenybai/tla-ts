@@ -1822,6 +1822,37 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("records the frames in Randomization of an error in TestRandomSetOfSubsets, which TLC evaluates from its definition", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, Randomization\nVARIABLE x\nInit == x = 0\nNext == x' = x\nInv == <<TestRandomSetOfSubsets(x - 1, 2, {1})>> /= <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    const ranges = result.failure?.callStack?.flatMap((expression) => {
+      const range = expression.location.range;
+      return range
+        ? [
+            `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+          ]
+        : [];
+    });
+    expect([
+      result.failure?.fingerprint?.reason,
+      ranges?.filter((range, index) => range !== ranges[index - 1]),
+    ]).toEqual([
+      "The first argument of RandomSetOfSubsets should be a nonnegative integer, but instead it is:\n-1",
+      [
+        "M 4:9-4:13",
+        "M 6:8-6:56",
+        "M 6:8-6:48",
+        "M 6:10-6:46",
+        "Randomization 62:15-62:71",
+        "Randomization 62:31-62:70",
+        "Randomization 62:43-62:69",
+      ],
+    ]);
+  });
+
   it("records the frames in Bags of an error in SubBag, which TLC evaluates from its definition", async () => {
     const result = await check({
       source:

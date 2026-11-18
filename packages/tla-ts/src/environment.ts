@@ -149,7 +149,7 @@ export interface InstanceAction {
 const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
 
 // TLC evaluates the definitions of these modules that it doesn't override, such as Bags' SubBag.
-const SOURCE_STANDARD_MODULES = new Set(["Bags", "TLCExt"]);
+const SOURCE_STANDARD_MODULES = new Set(["Bags", "Randomization", "TLCExt"]);
 
 export interface LinkedModule {
   module: Module;
