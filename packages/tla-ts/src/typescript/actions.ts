@@ -1898,7 +1898,11 @@ const translateReflectSet = (
       : getKind(receiver, context) === "object"
         ? translateObjectValue(receiver, path.scope, context)
         : translateExpression(receiver, path.scope, context);
-  const set = (current: Path, next: (path: Path, value?: Expression) => Formula) => {
+  const set = (
+    current: Path,
+    next: (path: Path, value?: Expression) => Formula,
+    written = value,
+  ) => {
     const name = context.names.getFresh("change");
     const after = withHeap(current, field(identifier(name), "heap"), context);
     return bindOnce(
@@ -1906,7 +1910,7 @@ const translateReflectSet = (
       name,
       useJavaScript(
         "ReflectSet",
-        [getHeap(current.scope, expression, context), object, property, value, receiverValue],
+        [getHeap(current.scope, expression, context), object, property, written, receiverValue],
         context,
       ),
       ifThenElse(
@@ -1921,34 +1925,68 @@ const translateReflectSet = (
     );
   };
   const setters = getSetters(expression, context).filter((setter) => !frame.inlining.has(setter));
-  if (setters.length === 0) return set(path, continueWith);
   // A setter gives Reflect.set true whatever it returns.
-  return bind(
-    path,
-    "setter",
-    useJavaScript(
-      "ReflectSetter",
-      [getHeap(path.scope, expression, context), object, property],
-      context,
-    ),
-    context,
-    (bound, setter) =>
-      ifThenElse(
-        apply("=", [setter, getUndefined(context)]),
-        set(bound, continueWith),
-        callValue(
-          expression,
-          setters,
-          setter,
-          receiverValue,
-          [value],
-          bound,
+  const setThrough = (start: Path): Formula =>
+    setters.length === 0
+      ? set(start, continueWith)
+      : bind(
+          start,
+          "setter",
+          useJavaScript(
+            "ReflectSetter",
+            [getHeap(start.scope, expression, context), object, property],
+            context,
+          ),
           context,
-          frame,
-          (next) => set(bound, next),
-          (after) => continueWith(after, boolean(true)),
-        ),
+          (bound, setter) =>
+            ifThenElse(
+              apply("=", [setter, getUndefined(context)]),
+              set(bound, continueWith),
+              callValue(
+                expression,
+                setters,
+                setter,
+                receiverValue,
+                [value],
+                bound,
+                context,
+                frame,
+                (next) => set(bound, next),
+                (after) => continueWith(after, boolean(true)),
+              ),
+            ),
+        );
+  // A typed array's index converts an object that it takes to a number or a BigInt, before it
+  // checks the index.
+  if (isTypedReflectSet(expression, context)) {
+    return ifThenElse(
+      useJavaScript(
+        "IsTypedElementWrite",
+        [getHeap(path.scope, expression, context), object, property],
+        context,
       ),
+      runToPrimitive(expression, value, "number", path, context, frame, (converted, primitive) =>
+        set(converted, continueWith, primitive),
+      ),
+      setThrough(path),
+    );
+  }
+  return setThrough(path);
+};
+
+// Reflect.set of an object or a value of type any, without a receiver, on a target that may be a
+// typed array, whose index converts the value.
+const isTypedReflectSet = (node: ts.Node, context: Context) => {
+  if (!isMethodCall(node) || node.expression.name.text !== "set") return false;
+  const [target, , assigned] = node.arguments;
+  return (
+    getBuiltIn(node.expression.expression, context) === "Reflect" &&
+    node.arguments.length === 3 &&
+    target !== undefined &&
+    assigned !== undefined &&
+    !ts.isSpreadElement(assigned) &&
+    (isObjectOperand(assigned, context) || isAnyOperand(assigned, context)) &&
+    mayBeTypedArray(context.checker.getTypeAtLocation(skipCasts(target)))
   );
 };
 
@@ -16311,7 +16349,8 @@ const getEffects = (
     getConvertedArrayValues(node, context) !== undefined ||
     (ts.isExpression(node) && getKeyUpdate(node, context) !== undefined) ||
     getTypedObjectWrite(node, context) !== undefined ||
-    isTypedDefine(node, context)
+    isTypedDefine(node, context) ||
+    isTypedReflectSet(node, context)
       ? getConversionFunctions(node, context)
       : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
         ? getKeyedConversionFunctions(node, context)
