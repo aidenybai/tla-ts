@@ -56329,4 +56329,23 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("7,4"))).failure?.message).toContain("result 7,3");
     });
   });
+
+  describe("checks an exported const that another module's function initializes as that function", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/reexporting-alias.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node, checking the function for each argument", async () => {
+      const result = await check(compile(source, path));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        3,
+      ]);
+    });
+
+    it("rejects a function that throws for an argument", async () => {
+      const wrong = source.replace("= signs.isPositive", "= signs.isSmall");
+      expect((await check(compile(wrong, path))).status).toBe("assumption-violation");
+    });
+  });
 });

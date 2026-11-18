@@ -16102,11 +16102,13 @@ export const translateDeclarations = (
   // a strict function's caller does, or a getter of a buffer or a view on another kind of object.
   const checked = translateCheckedDeclarations(declarations, path, context, frame, continueWith);
   const read = initializer === undefined ? undefined : skipCasts(initializer);
+  // A module's namespace object, which a namespace import names, holds each export's binding.
   return initializer !== undefined &&
     read !== undefined &&
     !path.scope.results.has(initializer) &&
     ts.isPropertyAccessExpression(read) &&
-    ts.isIdentifier(skipCasts(read.expression))
+    ts.isIdentifier(skipCasts(read.expression)) &&
+    !(isInlined(initializer, context) && isBindingRead(read, context.checker))
     ? throwReadError(initializer, path, context, frame, checked)
     : checked;
 };

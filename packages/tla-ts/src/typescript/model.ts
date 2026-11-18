@@ -3,6 +3,7 @@ import {
   type Context,
   findNodes,
   type FunctionNode,
+  getCallee,
   getFunction,
   getOwnSymbol,
   getRunStatements,
@@ -339,9 +340,19 @@ export const readModel = (
   });
   const helpers = declarations.filter((declared) => !isLet(declared, changed, context));
   const exportedLocals = getExportedLocals(sourceFile, context.checker);
+  // An exported const that another name's function initializes exports that function.
+  const getAliased = (declaration: HelperDeclaration) => {
+    const written = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+    const initializer = written === undefined ? undefined : skipCasts(written);
+    return initializer !== undefined &&
+      (ts.isIdentifier(initializer) || ts.isPropertyAccessExpression(initializer)) &&
+      isInlined(written, context)
+      ? getCallee(initializer, context)
+      : undefined;
+  };
   const exported = helpers.flatMap((declared) => {
     const declaration = declared.declaration;
-    const node = getFunction(declaration);
+    const node = getFunction(declaration) ?? getAliased(declaration);
     const symbol = getSymbol(declared.identifier, context.checker);
     const isListed = symbol !== undefined && exportedLocals.has(symbol);
     if (!(isExported(declaration) || isListed) || node?.body === undefined) return [];
