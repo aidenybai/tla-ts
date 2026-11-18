@@ -13,7 +13,7 @@ import {
   type SourceLocation,
   type SourceRange,
 } from "./ast";
-import { createSanyError, formatRange, type SanyError } from "./errors";
+import { formatRange, type SanyError } from "./errors";
 import { forEachChild } from "./instances";
 import { parenthesizedRanges } from "./parser";
 import { collectSemanticErrors, getBoundNames, getPatternNames } from "./resolve";
@@ -1107,7 +1107,7 @@ export const checkModuleLevels = (
   ];
   const statementBodies = new Set(statements.map((statement) => statement.statement));
   // ModuleNode#levelCheck checks every definition, then named theorems and assumptions, then the rest in order.
-  const errors = [
+  return [
     module.definitions
       .filter(
         (definition) => !definition.name.includes("!") && !statementBodies.has(definition.body),
@@ -1165,5 +1165,4 @@ export const checkModuleLevels = (
       ...instances,
     ],
   ].flatMap((units) => collectSemanticErrors(units, warnings));
-  if (errors.length > 0) throw createSanyError(errors, false, undefined, warnings);
 };

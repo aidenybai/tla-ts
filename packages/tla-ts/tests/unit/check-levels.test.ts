@@ -177,6 +177,29 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks the levels of every module in a file, inner ones first, like SANY", async () => {
+    const setError =
+      "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE v\n---- MODULE Inner ----\nVARIABLE w\nA == {[]w}\n---- MODULE Deep ----\nVARIABLE u\nD == {[]u}\n====\nE == {<>w}\n====\n---- MODULE Other ----\nVARIABLE w\nO == {[]w}\n====\nI == INSTANCE Inner WITH w <- v\nC == {I!A}\nG == {[]v}\nInit == v = 0\nNext == v' = v\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          "line 8, col 6 to line 8, col 10",
+          "line 5, col 6 to line 5, col 10",
+          "line 10, col 6 to line 10, col 10",
+          "line 14, col 6 to line 14, col 10",
+          "line 17, col 6 to line 17, col 10",
+          "line 18, col 6 to line 18, col 10",
+        ].map((location) => ({ location: `${location} of module M`, message: setError })),
+      ),
+    );
+  });
+
   it("checks the levels of proof steps, their facts, and the definitions they make like SANY", async () => {
     const setError =
       "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";

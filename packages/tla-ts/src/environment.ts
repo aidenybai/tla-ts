@@ -152,7 +152,7 @@ interface ModuleScope {
   nested: Module[];
   errors: SanyError[];
   warnings: SanyError[];
-  levelChecks: (() => void)[];
+  levelChecks: (() => SanyError[])[];
 }
 
 const getDeclarations = (linked: LinkedModule): Declaration[] => [
@@ -405,7 +405,7 @@ export const createEnvironment = (
     const closure = new Set<string>();
     const nested: Module[] = [];
     const errors: SanyError[] = [];
-    const levelChecks: (() => void)[] = [];
+    const levelChecks: (() => SanyError[])[] = [];
     linking.push(parsed.name);
     loading.push(closure);
     const linked = linkModule(parsed, {
@@ -425,7 +425,16 @@ export const createEnvironment = (
     const redefinition = loaded && getModuleRedefinition(duplicate, loaded.module);
     if (redefinition) throw createSanyError([redefinition], false, undefined, warnings);
     if (duplicate) throw createModuleRedefinedError(duplicate);
-    levelChecks.forEach((check) => check());
+    // SANY's Errors#addMessage drops a message it already has, such as an instantiated body's.
+    const levelErrors = levelChecks
+      .flatMap((check) => check())
+      .filter(
+        (error, index, all) =>
+          all.findIndex(
+            (other) => other.location === error.location && other.message === error.message,
+          ) === index,
+      );
+    if (levelErrors.length > 0) throw createSanyError(levelErrors, false, undefined, warnings);
     return { linked, closure };
   };
 
