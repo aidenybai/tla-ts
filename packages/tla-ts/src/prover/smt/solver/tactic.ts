@@ -1304,6 +1304,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["max_steps", PARAM_UINT, UINT_MAX],
       ]),
+      isTrackingDependencies: true,
       build: (environment) => runBv1Blast(environment.manager),
     },
   ],

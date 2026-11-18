@@ -830,6 +830,47 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       "(:rlimit 398)",
     ]);
   });
+
+  it("bv1-blast keeps the dependency of each formula it splits", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(assert (! (= ((_ extract 1 0) x) #b10) :named a1))",
+        "(assert (! (= x (concat #b00 ((_ extract 1 0) y))) :named a2))",
+        "(assert (! (= ((_ extract 0 0) y) #b1) :named a3))",
+        "(apply bv1-blast :print_dependencies true)",
+        "(check-sat-using (then bv1-blast smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  (= k!3 #b0)",
+        "  |- a2",
+        "  (= k!3 k!7)",
+        "  |- a3",
+        "  (= k!7 #b1)",
+        "  |- a1",
+        "  (= k!2 #b1)",
+        "  |- a2",
+        "  (= k!2 k!6)",
+        "  |- a2",
+        "  (= k!1 #b0)",
+        "  |- a2",
+        "  (= k!0 #b0)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a3 a1 a2)",
+      "(:rlimit 341)",
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {
