@@ -67,6 +67,10 @@ export class SmtKernel {
     this.scopeCount++;
   }
 
+  release() {
+    this.context.release(this.asserted);
+  }
+
   getAssertions() {
     return this.asserted.getFormulas();
   }

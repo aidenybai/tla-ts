@@ -384,6 +384,21 @@ interface CheckResult {
   core: number[] | undefined;
   // check_sat_result::reason_unknown, where the port tracks it.
   reasonUnknown?: string;
+  // cmd_context's m_check_sat_result keeps the solver that answered alive: the current solver
+  // while isHoldingSolver, then the solver that reset-assertions or set-logic replaced.
+  isHoldingSolver: boolean;
+  heldSolver: SolverParts | undefined;
+}
+
+// The parts of the solver that cmd_context makes, which it frees together.
+interface SolverParts {
+  kernel: SmtKernel | undefined;
+  satSolver: IncSatSolver | undefined;
+  fdSolver: FdSolver | undefined;
+  tacticDestructors: (() => void)[];
+  tacticConverters: Goal["converters"];
+  tacticModel: ProtoModel | undefined;
+  lastAssertions: RefVector;
 }
 
 interface SolverAnswer {
@@ -763,6 +778,7 @@ export const runSmtlibScript = (
         satSolver: isKernelChecking && !isFromTactic ? state.satSolver : undefined,
         core: solved.core ?? solved.context?.unsatCore ?? [],
         reasonUnknown: getReasonUnknown(solved, deadline),
+        isHoldingSolver: true,
       });
       print(getVerdict(solved.result));
     } catch (error) {
@@ -785,6 +801,7 @@ export const runSmtlibScript = (
           error instanceof SmtDefaultError
             ? ((isKernelChecking ? undefined : reasonUnknown) ?? error.message)
             : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown }, deadline),
+        isHoldingSolver: true,
       });
       print("unknown");
     } finally {
@@ -824,9 +841,9 @@ export const runSmtlibScript = (
     return model;
   };
   const clearCheck = () => {
-    state.check?.model?.decRef();
-    const satSolver = state.check?.satSolver;
-    if (satSolver !== undefined && satSolver !== state.satSolver) satSolver.release();
+    const check = state.check;
+    check?.model?.decRef();
+    if (check?.heldSolver !== undefined) releaseSolver(check.heldSolver);
     state.check = undefined;
   };
   const releaseTacticModel = () => {
@@ -851,6 +868,8 @@ export const runSmtlibScript = (
       fdSolver: undefined,
       satSolver: undefined,
       core: undefined,
+      isHoldingSolver: false,
+      heldSolver: undefined,
       ...result,
     };
   };
@@ -889,16 +908,11 @@ export const runSmtlibScript = (
       parameters.get("tactic.default_tactic") === "sat" ||
       parameters.get("sat.smt") === "true" ||
       isEuf;
-    if (state.satSolver !== state.check?.satSolver) state.satSolver?.release();
-    decConverterRefs(state.manager, state.tacticConverters);
-    state.tacticConverters = [];
-    destroyTactics(state.tacticDestructors);
+    const old = detachSolver();
     state.tacticDestructors = destructors;
     state.tacticCleanups = cleanups;
     state.tactic = tactic;
     state.strategy = getLogicStrategy(logic, isProofsEnabled);
-    releaseTacticModel();
-    state.lastAssertions.reset();
     state.isSolverProducingModels = settings.isProducingModels;
     state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
     state.manager.dropStartupExprs();
@@ -919,7 +933,6 @@ export const runSmtlibScript = (
             isEuf ? mkThSolver(parameters) : null,
           )
         : undefined;
-    state.fdSolver?.release();
     state.fdSolver =
       (logic === "QF_FD" || logic === "SAT") &&
       !isProofsEnabled &&
@@ -927,11 +940,54 @@ export const runSmtlibScript = (
       tactic === undefined
         ? new FdSolver(state.manager, getSatParams(parameters))
         : undefined;
+    dropSolver(old);
+  };
+  const pushSolver = () => {
     for (let index = 0; index < state.scopes.length; index++) {
       state.kernel?.push();
       useSatSolver((solver) => solver.push());
       state.fdSolver?.push();
     }
+  };
+  // cmd_context keeps no solver until it makes the next one.
+  const detachSolver = (): SolverParts => {
+    const parts = {
+      kernel: state.kernel,
+      satSolver: state.satSolver,
+      fdSolver: state.fdSolver,
+      tacticDestructors: state.tacticDestructors,
+      tacticConverters: state.tacticConverters,
+      tacticModel: state.tacticModel,
+      lastAssertions: state.lastAssertions,
+    };
+    state.strategy = undefined;
+    state.tactic = undefined;
+    state.kernel = undefined;
+    state.satSolver = undefined;
+    state.fdSolver = undefined;
+    state.tacticDestructors = [];
+    state.tacticCleanups = [];
+    state.tacticConverters = [];
+    state.tacticModel = undefined;
+    state.lastAssertions = new RefVector(state.manager);
+    return parts;
+  };
+  const dropSolver = (parts: SolverParts) => {
+    const check = state.check;
+    if (check?.isHoldingSolver !== true) return releaseSolver(parts);
+    check.isHoldingSolver = false;
+    check.heldSolver = parts;
+  };
+  // ~combined_solver frees its smt or sat solver, then tactic2solver its model converter, tactic,
+  // result and last assertions.
+  const releaseSolver = (parts: SolverParts) => {
+    parts.kernel?.release();
+    parts.satSolver?.release();
+    parts.fdSolver?.release();
+    decConverterRefs(state.manager, parts.tacticConverters);
+    destroyTactics(parts.tacticDestructors);
+    parts.tacticModel?.decRef();
+    parts.lastAssertions.reset();
   };
   const initManager = () => {
     if (state.isProofsEnabled !== undefined) return;
@@ -1492,6 +1548,7 @@ export const runSmtlibScript = (
               fdSolver,
               core: [...fdSolver.getUnsatCore()],
               reasonUnknown: fdSolver.reasonUnknown,
+              isHoldingSolver: true,
             });
             print(getVerdict(found.result));
             print("");
@@ -1507,6 +1564,7 @@ export const runSmtlibScript = (
             context: kernel.context,
             core: kernel.context.unsatCore,
             reasonUnknown: kernel.context.getLastFailureMessage(),
+            isHoldingSolver: true,
           });
           print(getVerdict(found.result));
           print("");
@@ -1516,7 +1574,7 @@ export const runSmtlibScript = (
           if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
           const reasonUnknown = getCancelMessage(deadline);
           if (state.kernel !== undefined) state.kernel.context.reasonUnknown = reasonUnknown;
-          setCheck(L_UNDEF, { reasonUnknown });
+          setCheck(L_UNDEF, { reasonUnknown, isHoldingSolver: true });
           print("unknown");
           print("");
         } finally {
@@ -1630,9 +1688,15 @@ export const runSmtlibScript = (
       "reset-assertions",
       (list) => {
         checkArgumentCount(list, 0);
-        restoreAssertions(0);
         resetOptimizer();
         releaseObjectives(0, 0);
+        // cmd_context::reset_assertions drops the solver before it makes the next one, and pushes
+        // the scopes once it has dropped the assertions.
+        if (state.isProofsEnabled !== undefined) {
+          dropSolver(detachSolver());
+          resetKernel();
+        }
+        restoreAssertions(0);
         state.checkedObjectives = 0;
         state.scopes = state.scopes.map((scope) => ({
           ...scope,
@@ -1640,10 +1704,7 @@ export const runSmtlibScript = (
           objectives: 0,
           softTrail: 0,
         }));
-        if (state.isProofsEnabled !== undefined) {
-          state.strategy = undefined;
-          resetKernel();
-        }
+        pushSolver();
         state.isIncremental = state.scopes.length > 0;
         state.hasChecked = false;
       },
@@ -2265,6 +2326,7 @@ export const runSmtlibScript = (
           state.reader.restrictSorts(logic.text);
           // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop and keeps what they asserted.
           resetKernel();
+          pushSolver();
         }
         if (settings.isPrintingSuccess) print("success");
         checkArgumentCount(list, 1);

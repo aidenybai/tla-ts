@@ -2197,3 +2197,68 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 });
+
+// The ids reset-assertions frees and takes again decide the order of tseitin-cnf's clauses.
+describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
+  const ARITH = [
+    "(declare-const x Int)",
+    "(declare-const y Int)",
+    "(assert (> (+ x y) 3))",
+    "(assert (< (* 2 x) y))",
+  ];
+  const CLAUSES = [
+    "(declare-const p Bool)",
+    "(declare-const q Bool)",
+    "(declare-const r Bool)",
+    "(assert (or (and p q) (and (not p) r) (and q (not r))))",
+    "(apply tseitin-cnf)",
+  ];
+  const GOAL = [
+    "(goals",
+    "(goal",
+    "  (or p r q)",
+    "  (or q (not p))",
+    "  (or r q)",
+    "  (or (not r) q (not p))",
+    "  :precision precise :depth 2)",
+    ")",
+  ];
+
+  // The smt kernel frees qi_queue's cost variables, its formulas, bit2int's 1-bit zero and the
+  // last result of its rewriter, and the next kernel makes the zero and the variables again.
+  it("frees the kernel before it makes the next one, and the assertions after", () => {
+    expect(run([...ARITH, "(reset-assertions)", ...CLAUSES])).toEqual(GOAL);
+    expect(run([...ARITH, "(reset-assertions)", "(reset-assertions)", ...CLAUSES])).toEqual(GOAL);
+    expect(run([...ARITH, "(check-sat-using smt)", "(reset-assertions)", ...CLAUSES])).toEqual([
+      "sat",
+      ...GOAL,
+    ]);
+  });
+
+  // cmd_context's m_check_sat_result keeps the finite-domain solver that answered past
+  // reset-assertions, and the next assert frees it.
+  it("keeps the solver of the last check-sat until the next assert", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult a b))",
+        "(assert (= (bvadd a b) #x9))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or p q r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+});
