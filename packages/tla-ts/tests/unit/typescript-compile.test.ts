@@ -54125,4 +54125,29 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("floors and truncates a number that isn't a division where every number is an integer", () => {
+    const getSource = (expected: string) => `
+      const normalize = (count: number): number => (count > 0 ? Math.floor(count) : 0);
+      const result = [normalize(3), normalize(-2), Math.trunc(-4)].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+      export let total = 0;
+      export const step = (by: 1 | 2) => {
+        if (total < 4) total += normalize(by) - Math.trunc(by - 1);
+      };
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("3,0,-4"));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        5,
+      ]);
+    });
+
+    it("rejects another floor", async () => {
+      expect((await checkModel(getSource("3,-2,-4"))).failure?.message).toContain("result 3,0,-4");
+    });
+  });
 });
