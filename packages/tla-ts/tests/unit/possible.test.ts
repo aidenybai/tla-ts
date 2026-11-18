@@ -82,6 +82,20 @@ describe("_POSSIBLE matches TLC", () => {
     ]);
   });
 
+  it("locates a parenthesized _POSSIBLE or POSTCONDITION at the expression inside the parentheses, as SANY does", async () => {
+    const source =
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = (x + 1) % 3\nPost == ((TLCGet("level") < 0))\nPoss == (x = 5)\n====';
+    const results = await Promise.all(
+      ["POSTCONDITION Post", "_POSSIBLE Poss"].map((line) =>
+        check({ source, config: `INIT Init\nNEXT Next\n${line}` }),
+      ),
+    );
+    expect(results.map((result) => result.violation?.message)).toEqual([
+      "Postcondition Post at line 6, col 11 to line 6, col 29 of module M is false.",
+      `The _POSSIBLE predicate Poss at line 7, col 10 to line 7, col 14 of module M ${NEVER_WITNESSED}`,
+    ]);
+  });
+
   it("checks a POSTCONDITION after a violation without changing its status", async () => {
     const result = await check({
       source:

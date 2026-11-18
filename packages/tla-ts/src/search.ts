@@ -72,6 +72,7 @@ import {
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint } from "./pretty-print";
+import { parenthesizedRanges } from "./parser";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -628,9 +629,13 @@ const getNamedExpressions = (
     getConfigPredicate(kind, name, environment) ? [createNamedIdentifier(name, environment)] : [],
   );
 
+// SANY locates a parenthesized body at the expression inside the parentheses.
 const getBodyRange = (name: string, environment: Environment) => {
   const definition = getDefinition(name, environment);
-  return definition?.kind === "Operator" ? definition.bodyRange : undefined;
+  if (definition?.kind !== "Operator") return undefined;
+  return parenthesizedRanges.has(definition.body)
+    ? (definition.body.location.range ?? definition.bodyRange)
+    : definition.bodyRange;
 };
 
 const getPossiblePredicates = (names: string[], environment: Environment) =>
