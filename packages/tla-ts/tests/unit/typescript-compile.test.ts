@@ -52748,14 +52748,6 @@ describe("BigInts", () => {
           .failure?.message,
       ).toContain(`seen ${expected}`);
     });
-
-    it("stops past the end of a table that isn't final", async () => {
-      const source =
-        'const zoned = Temporal.ZonedDateTime.from("2040-01-01T00:00[America/Los_Angeles]");';
-      expect((await checkModel(source)).failure?.message).toContain(
-        "tla-ts can't tell the offsets of the time zone America/Los_Angeles after 2037",
-      );
-    });
   });
 
   describe("makes hold the types of JavaScript's for-in keys and of a property's array", () => {
@@ -54123,6 +54115,25 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("1,0,true"))).failure?.message).toContain(
         "result 1,3,true",
       );
+    });
+  });
+
+  describe("runs Temporal in a named time zone past its table through its tzdata rule", () => {
+    const getSource = (expected: string) => `
+      const zoned = Temporal.ZonedDateTime.from("2100-01-15T12:00[Antarctica/South_Pole]");
+      const seen = zoned.offset + " " + String(zoned.getTimeZoneTransition("next"));
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "+13:00 2100-04-04T02:00:00+12:00[Antarctica/South_Pole]";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the northern hemisphere's daylight time", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("+13:00 ", "+12:00 ")))).failure?.message,
+      ).toContain(`seen ${expected}`);
     });
   });
 });

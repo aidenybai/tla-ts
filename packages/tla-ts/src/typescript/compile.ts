@@ -1411,6 +1411,7 @@ export const compile = (
                 ),
               },
               { name: "isFinal", value: boolean(table.isFinal) },
+              { name: "rule", value: tuple(table.rule.map(number)) },
             ]);
           }),
         ),

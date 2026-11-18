@@ -824,38 +824,85 @@ LOCAL TSecondsNs(seconds) == BigIntMultiply(TBig(seconds), TNsPerSecond)
 LOCAL TTransitionNs(table, index) ==
   BigIntAdd(BigIntMultiply(TBig(table.days[index]), TNsPerDay), TSecondsNs(table.seconds[index]))
 
-\* The table of a named time zone, which stops at a second whose offset it doesn't tell.
-LOCAL TZoneTable(zone, second) ==
-  IF ~TimeZones[zone.index].isFinal /\ second[1] >= TZoneEndDay
+\* The day of a rule's transition in a year: the week's weekday of the month, where week 5 is the
+\* last, as epoch days, with 1970-01-01 a Thursday.
+LOCAL TRuleDay(year, month, week, weekday) ==
+  LET first == TEpochDays(<<year, month, 1>>)
+      day == first + ((weekday - ((first + 4) % 7) + 7) % 7) + 7 * (week - 1)
+  IN IF day - first >= TDaysInMonth(year, month) THEN day - 7 ELSE day
+
+\* The epoch nanoseconds of the start and of the end of daylight time in a year under a zone's rule,
+\* whose times are local, in standard time and in daylight time.
+LOCAL TRuleStartEnd(rule, year) ==
+  LET at(day, time, offset) == BigIntAdd(BigIntMultiply(TBig(day), TNsPerDay), TSecondsNs(time - offset))
+  IN <<at(TRuleDay(year, rule[3], rule[4], rule[5]), rule[6], rule[1]),
+       at(TRuleDay(year, rule[7], rule[8], rule[9]), rule[10], rule[2])>>
+
+LOCAL TRuleTransitions(rule, year) == LET pair == TRuleStartEnd(rule, year) IN {pair[1], pair[2]}
+
+\* The rule of a zone past the end of its table, which stops where Node doesn't follow one.
+LOCAL TZoneRule(zone) ==
+  IF TimeZones[zone.index].rule = <<>>
   THEN Assert(FALSE, "tla-ts can't tell the offsets of the time zone " \o zone.id \o " after 2037")
-  ELSE TimeZones[zone.index]
+  ELSE TimeZones[zone.index].rule
+
+\* A zone's offset under its rule, in daylight time from the start of daylight time in the epoch
+\* nanoseconds' year to its end, or, south of the equator, outside the end to the start. No rule's
+\* transitions are in January or December, so they're in their own year in UTC too.
+LOCAL TRuleOffset(rule, ns, year) ==
+  LET pair == TRuleStartEnd(rule, year)
+      isDaylight ==
+        IF rule[3] < rule[7]
+        THEN ~TLess(ns, pair[1]) /\ TLess(ns, pair[2])
+        ELSE TLess(ns, pair[2]) \/ ~TLess(ns, pair[1])
+  IN TSecondsNs(IF isDaylight THEN rule[2] ELSE rule[1])
 
 \* GetOffsetNanosecondsFor.
 LOCAL TZoneOffset(zone, ns) ==
   IF zone.index = 0
   THEN zone.offset
   ELSE LET second == TSecondOf(ns)
-           table == TZoneTable(zone, second)
-       IN TSecondsNs(table.offsets[TTransitionsUpTo(table, second, 0, Len(table.days)) + 1])
+           table == TimeZones[zone.index]
+       IN IF ~table.isFinal /\ second[1] >= TZoneEndDay
+          THEN TRuleOffset(TZoneRule(zone), ns, TDateOfDays(second[1])[1])
+          ELSE TSecondsNs(table.offsets[TTransitionsUpTo(table, second, 0, Len(table.days)) + 1])
+
+\* The earliest transition of a set after epoch nanoseconds, or the latest before them, or Null.
+LOCAL TEarliestAfter(transitions, ns) ==
+  LET later == {transition \in transitions : TLess(ns, transition)}
+  IN IF later = {} THEN Null ELSE CHOOSE first \in later : \A other \in later : ~TLess(other, first)
+
+LOCAL TLatestBefore(transitions, ns) ==
+  LET earlier == {transition \in transitions : TLess(transition, ns)}
+  IN IF earlier = {} THEN Null ELSE CHOOSE last \in earlier : \A other \in earlier : ~TLess(last, other)
 
 \* GetNamedTimeZoneNextTransition and GetNamedTimeZonePreviousTransition, or Null for a time zone
-\* whose offset is fixed.
+\* whose offset is fixed, and where the transition is past the limits.
 LOCAL TNextTransition(zone, ns) ==
   IF zone.index = 0
   THEN Null
   ELSE LET table == TimeZones[zone.index]
-           count == TTransitionsUpTo(table, TSecondOf(ns), 0, Len(table.days))
+           second == TSecondOf(ns)
+           count == TTransitionsUpTo(table, second, 0, Len(table.days))
+           year == TDateOfDays(second[1])[1]
+           ruled == TEarliestAfter(TRuleTransitions(TZoneRule(zone), year) \cup TRuleTransitions(TZoneRule(zone), year + 1), ns)
        IN CASE count < Len(table.days) -> TTransitionNs(table, count + 1)
             [] table.isFinal -> Null
-            [] OTHER -> Assert(FALSE, "tla-ts can't tell the offsets of the time zone " \o zone.id \o " after 2037")
+            [] ruled # Null /\ TIsValidEpochNs(ruled) -> ruled
+            [] OTHER -> Null
 
 LOCAL TPreviousTransition(zone, ns) ==
   IF zone.index = 0
   THEN Null
   ELSE LET second == TSecondOf(BigIntSubtract(ns, Big :> 1))
-           table == TZoneTable(zone, second)
+           table == TimeZones[zone.index]
            count == TTransitionsUpTo(table, second, 0, Len(table.days))
-       IN IF count = 0 THEN Null ELSE TTransitionNs(table, count)
+           year == TDateOfDays(second[1])[1]
+           ruled == TLatestBefore(TRuleTransitions(TZoneRule(zone), year - 1) \cup TRuleTransitions(TZoneRule(zone), year), ns)
+       IN CASE ~table.isFinal /\ second[1] >= TZoneEndDay ->
+                 IF ruled # Null /\ TIsValidEpochNs(ruled) THEN ruled ELSE Null
+            [] count = 0 -> Null
+            [] OTHER -> TTransitionNs(table, count)
 
 \* GetPossibleEpochNanoseconds, earliest first, which throws a RangeError where one is past the
 \* limits. A named time zone's offsets a day before and a day after the date and the time give the
