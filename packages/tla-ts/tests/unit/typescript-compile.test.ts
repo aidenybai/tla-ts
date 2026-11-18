@@ -55885,4 +55885,37 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs the function that a read-only object literal holds under a property or a const key", () => {
+    const getSource = (expected: string, write = "") => `
+      const width = Uint8Array.BYTES_PER_ELEMENT;
+      const pick = () => {
+        const Key = "~probe";
+        const standard = {
+          [Key]: (body: () => number) => body() + width,
+          plain: (body: () => number) => body() * 2,
+        };
+        ${write}
+        const first = standard[Key](() => 1);
+        const second = standard.plain(() => 3);
+        return first * 10 + second;
+      };
+      const result = [pick(), pick()].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("26,26"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("16,26"))).failure?.message).toContain("result 26,26");
+    });
+
+    it("runs no function of the literal where the script writes its property", () => {
+      expect(() =>
+        compile(getSource("29,29", "standard.plain = (body: () => number) => body() * 3;")),
+      ).toThrow("Unsupported expression: (body: () => number) => body() * 3");
+    });
+  });
 });

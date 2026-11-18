@@ -174,6 +174,7 @@ import {
   getClassStop,
   getValueDeclaration,
   getRunMembers,
+  getObjectFunction,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
@@ -14434,7 +14435,8 @@ const isHeapCall = (
       visited.add(callee);
       return isMaking(callee.body, visited);
     });
-  // A function that a namespace object holds is no method, so its call runs as a function's.
+  // A function that a namespace object holds is no method, so its call runs as a function's, as
+  // does one that a read-only object literal holds.
   const method = isMethodCall(node) ? getCalledMethod(node.expression, context)?.method : undefined;
   if (method !== undefined) {
     return method.body !== undefined && isMaking(method.body, new Set([method]));
@@ -14445,7 +14447,8 @@ const isHeapCall = (
       ts.isIdentifier(node.expression.expression) &&
       getNamespaceModule(node.expression.expression, context.checker) !== undefined &&
       isBindingRead(node.expression, context.checker)
-    )
+    ) &&
+    getObjectFunction(node.expression, context) === undefined
   ) {
     return false;
   }
