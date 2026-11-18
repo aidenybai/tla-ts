@@ -2,6 +2,7 @@
 // search that succeeds, and gives anything else back to the interpreter, which reruns it.
 import {
   getChildren,
+  isRecursiveConstruction,
   type ApplyExpression,
   type Bound,
   type Definition,
@@ -2661,7 +2662,7 @@ const getFunctionExpansion = (
     const isExpanded =
       definition.params.length === 0 &&
       construction.kind === "FunctionConstruction" &&
-      !construction.isRecursive &&
+      !isRecursiveConstruction(construction) &&
       construction.bounds.length === 1 &&
       construction.bounds[0].pattern.kind === "Name";
     return isExpanded
@@ -3576,7 +3577,7 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
       if (expression.bounds.length !== 1) return unsupported();
       const bound = expression.bounds[0];
       const pattern = bound.pattern;
-      if (expression.isRecursive) {
+      if (isRecursiveConstruction(expression)) {
         return pattern.kind === "Name"
           ? compileLambda(program, createLambda(), pattern.name, bound.set, expression.body, frame)
           : unsupported();

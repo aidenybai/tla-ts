@@ -210,6 +210,9 @@ const RANGES: Record<string, Record<string, [number, number, number, number]>> =
   },
 };
 
+export const getStandardModule = (name: string) =>
+  Object.keys(RANGES).find((module) => RANGES[module][name] !== undefined);
+
 export const getStandardRange = (module: string, name: string): SourceRange | undefined => {
   const range = RANGES[module]?.[name];
   return (

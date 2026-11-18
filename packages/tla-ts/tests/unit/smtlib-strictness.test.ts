@@ -642,6 +642,84 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("rejects a second constructor or accessor of a datatype that Z3 makes as the same declaration", () => {
+    expect(
+      run([
+        "(declare-datatypes ((C 0) (D 0)) (((red) (red)) ((green))))",
+        "(declare-datatypes ((E 0)) (((a (f Int) (f Int)) (b))))",
+        "(declare-datatype F ((blue) (blue)))",
+        "(declare-const d D)",
+        "(declare-const e E)",
+        "(declare-const c F)",
+        "(assert (= d green))",
+        "(assert (= e b))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 59: invalid declaration, constant 'red' (with the given signature) already declared\")",
+      "(error \"line 2 column 54: invalid declaration, function 'f' (with the given signature) already declared\")",
+      "(error \"line 3 column 35: invalid declaration, constant 'blue' (with the given signature) already declared\")",
+      "sat",
+      [
+        "(",
+        "  (define-fun e () E",
+        "    b)",
+        "  (define-fun d () D",
+        "    green)",
+        "  (define-fun c () F",
+        "    blue)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("frees the declaration that declare-fun rejects, so the next one takes its id", () => {
+    const getModel = (declarations: string[]) =>
+      run([
+        "(set-logic QF_DT)",
+        ...declarations,
+        "(declare-datatypes ((C 0)) (((k0) (k1) (k2) (k3) (k4) (k5) (k6))))",
+        "(declare-const e0 C)",
+        "(check-sat)",
+        "(get-model)",
+      ]);
+    expect(getModel(["(declare-sort V 0)", "(declare-fun f (V) Bool)"])).toEqual([
+      '(error "line 3 column 23: logic does not support uninterpreted functions")',
+      "sat",
+      ["(", "  (define-fun e0 () C", "    k4)", ")"].join("\n"),
+    ]);
+    expect(getModel(["(declare-const p Bool)", "(declare-const p Bool)"])).toEqual([
+      "(error \"line 3 column 21: invalid declaration, constant 'p' (with the given signature) already declared\")",
+      "sat",
+      ["(", "  (define-fun p () Bool", "    false)", "  (define-fun e0 () C", "    k4)", ")"].join(
+        "\n",
+      ),
+    ]);
+  });
+
+  it("rejects a repeated accessor before declare-datatype makes its datatype", () => {
+    expect(
+      run([
+        "(declare-datatype H ((h1 (s1 Int) (s1 Int)) (h2)))",
+        "(declare-datatype F2 ((c1 (acc Int)) (c2 (acc Bool))))",
+        "(declare-const u H)",
+        "(declare-const v F2)",
+        "(assert (= v (c2 true)))",
+        "(assert ((_ is h1) u))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 19: invalid datatype declaration, repeated accessor identifier 's1'\")",
+      "(error \"line 2 column 18: invalid datatype declaration, repeated accessor identifier 'acc'\")",
+      '(error "line 5 column 21: unknown constant c2 (Bool) ")',
+      '(error "line 6 column 20: datatype constructors have not been created")',
+      "sat",
+      '(error "line 8 column 10: datatype constructors have not been created")',
+    ]);
+  });
+
   it("names the declaration that lacks a symbol, and takes _ and as only for define-const", () => {
     expect(
       run([

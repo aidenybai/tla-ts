@@ -222,6 +222,15 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
   }
   trail.reset();
   goal.depth++;
-  goal.addModelConversion((model) => convertModel(manager, converter, model));
+  goal.addModelConversion(
+    (model) => convertModel(manager, converter, model),
+    () => {
+      for (const decl of converter.vars) manager.decDeclRef(decl);
+      for (const entry of converter.bvToInt) {
+        manager.decDeclRef(entry[0]);
+        manager.decDeclRef(entry[1]);
+      }
+    },
+  );
   return [goal];
 };

@@ -7,16 +7,10 @@ import {
 } from "./ast";
 import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
-import {
-  TlaEvaluationError,
-  TlaIllegalStateError,
-  TlaIncompleteSuccessorError,
-  TlaUncodedError,
-} from "./errors";
+import { TlaEvaluationError, TlaIllegalStateError, TlaIncompleteSuccessorError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
-  describeNode,
   describeRange,
   bindLazyArguments,
   bindDefinitions,
@@ -45,17 +39,21 @@ import {
   type State,
 } from "./evaluate";
 import { forEachChild } from "./instances";
-import { CORE_OPERATORS } from "./standard-modules";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
+  createRunError,
+  getCaseGuardMessage,
+  getCaseOtherMessage,
+  getComputation,
   getEnabledFailure,
+  getIfConditionMessage,
+  getImpliesConditionMessage,
+  holdsValue,
   isAssignedShortcut,
-  LITERAL_KINDS,
   replayEnabled,
   warnChangedUnchanged,
 } from "./tlc/replay";
 import {
-  formatValue,
   getStreamedElements,
   isEqualLikeTlc,
   isFunctionValue,
@@ -116,55 +114,8 @@ const assign = (partial: State, index: number, value: Value) => {
   return copy;
 };
 
-const getComputation = (run: Run) =>
-  run.isInit ? "initial states" : run.isEnabled ? "ENABLED" : "next states";
-
-const createRunError = (run: Run, message: string) => {
-  const error = new TlaEvaluationError(message);
-  return run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
-};
-
-const getNonBooleanMessage = (
-  run: Run,
-  value: Value,
-  expression: Expression,
-  isWalked: boolean,
-) => {
-  const node = describeNode(expression);
-  if (isWalked && LITERAL_KINDS.has(expression.kind)) {
-    return run.isEnabled
-      ? `Attempted to compute ENABLED on a non-boolean expression.\n${node}`
-      : `The ${run.isInit ? "init" : "next"} state relation is not a boolean expression.\n${node}`;
-  }
-  return `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${node}`;
-};
-
-const getIfConditionMessage = (run: Run, value: Value, expression: Expression) => {
-  const kind = getKindString(value);
-  const range = describeRange(expression);
-  if (run.isEnabled) {
-    return `In computing ENABLED, a non-boolean expression(${kind}) was used as the guard condition of an IF.\n${range}`;
-  }
-  return `In computing ${getComputation(run)}, a non-boolean expression (${kind}) was used as the condition of an IF.${run.isInit ? "\n" : ""}${range}`;
-};
-
 const holds = (run: Run, expression: Expression, context: Context) =>
   holdsValue(run, expression, evaluate(expression, context));
-
-const CORE_OPERATOR_NAMES = new Set(CORE_OPERATORS.map((operator) => operator.name));
-
-const isBuiltInOperation = (expression: Expression) =>
-  expression.kind === "Apply"
-    ? CORE_OPERATOR_NAMES.has(expression.operator)
-    : expression.kind !== "Identifier" && !LITERAL_KINDS.has(expression.kind);
-
-const holdsValue = (run: Run, expression: Expression, value: Value, isWalked = true) => {
-  if (typeof value === "boolean") return value;
-  const message = getNonBooleanMessage(run, value, expression, isWalked);
-  throw run.isInit && isWalked && isBuiltInOperation(expression)
-    ? new TlaUncodedError(message)
-    : createRunError(run, message);
-};
 
 const evaluateCached = (
   evaluators: (Evaluator | undefined)[],
@@ -1081,17 +1032,11 @@ const compileAction = (
         const arm = arms.find((candidate) => {
           const value = evaluate(candidate.condition, context);
           if (typeof value === "boolean") return value;
-          throw createRunError(
-            run,
-            `In computing ${getComputation(run)}, a non-boolean expression${run.isEnabled ? "" : " "}(${getKindString(value)}) was used as a guard condition of a CASE.\n${describeNode(candidate.source)}`,
-          );
+          throw createRunError(run, getCaseGuardMessage(run, value, candidate.source));
         });
         const body = arm?.body ?? other;
         if (!body) {
-          throw createRunError(
-            run,
-            `In computing ${getComputation(run)}, TLC encountered a CASE with no conditions true.\n${describeRange(expression)}`,
-          );
+          throw createRunError(run, getCaseOtherMessage(run, expression));
         }
         body(run, scope, partial, action, isFixed, onComplete);
       };
@@ -1176,16 +1121,7 @@ const compileAction = (
         return (run, scope, partial, action, isFixed, onComplete) => {
           const condition = evaluate(args[0], getContext(run, scope, partial));
           if (typeof condition !== "boolean") {
-            const kind = getKindString(condition);
-            const range = describeRange(expression);
-            throw createRunError(
-              run,
-              run.isInit
-                ? `In computing initial states of a predicate of form P => Q, P was ${kind}\n.${range}`
-                : run.isEnabled
-                  ? `While computing ENABLED of an expression of the form P => Q, P was ${kind}.\n${range}`
-                  : `In computing next states of a predicate of the form P => Q, P was\n${kind}.\n${range}`,
-            );
+            throw createRunError(run, getImpliesConditionMessage(run, condition, expression));
           }
           if (!condition) {
             onComplete(partial, action);

@@ -22,6 +22,7 @@ export interface KernelParams {
   relevancyLevel?: 0 | 2;
   isCoreMinimizing?: boolean;
   randomSeed?: number;
+  intHammerPeriod?: number;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
 }
@@ -51,6 +52,7 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     mbqiMaxIterations: params.mbqiMaxIterations,
     relevancyLevel: 2,
     randomSeed: params.randomSeed,
+    intHammerPeriod: params.intHammerPeriod,
   });
   if (!assertForms(context, asserted, forms)) {
     manager.limit.release();
@@ -93,6 +95,7 @@ export const solveAssuming = (
     mbqiMaxIterations: params.mbqiMaxIterations,
     relevancyLevel: 2,
     randomSeed: params.randomSeed,
+    intHammerPeriod: params.intHammerPeriod,
   });
   if (!assertForms(context, asserted, assertions)) {
     manager.limit.release();

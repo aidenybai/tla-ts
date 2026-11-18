@@ -559,6 +559,7 @@ const getStringOrder = (
 export interface TlcOrder {
   getStringOrder: (config: ModelConfig, runtimeModules: string[]) => string[];
   getDeclarationOrder: (kind: "variable" | "constant") => string[];
+  getInstanceDeclarations: (module: string) => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
   parseModule: (source: string) => Module;
 }
@@ -577,6 +578,12 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
         .filter((entry) => entry.kind === kind)
         .map((entry) => entry.name)
         .reverse(),
+    getInstanceDeclarations: (module) =>
+      getContexts()
+        .getContext(module)
+        .enumerate()
+        .filter((entry) => entry.kind === "constant" || entry.kind === "variable")
+        .map((entry) => entry.name),
     parseModule: modules.parseText,
     createDefinitionOrder: () => {
       const moduleContexts = getContexts();

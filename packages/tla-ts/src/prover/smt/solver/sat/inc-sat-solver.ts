@@ -2,7 +2,7 @@ import { SmtCanceledError, SmtTacticError } from "../../../../errors";
 import { type AstManager, OP_AND, OP_EQ, OP_IMPLIES, OP_NOT, OP_OR, SORT_BOOL } from "../ast";
 import { mkNot } from "../ast-util";
 import { BitBlasterRewriter } from "../bit-blast-tactic";
-import { Goal, mkDependencyLeaf } from "../goal";
+import { decConverterRefs, Goal, incConverterRefs, mkDependencyLeaf } from "../goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ProtoModel } from "../proto-model";
 import { RefVector } from "../ref-vector";
@@ -134,6 +134,7 @@ export class IncSatSolver {
       this.goal2sat.push();
       this.solver.userPush();
       this.bitBlaster?.push();
+      incConverterRefs(this.converters.converters);
       this.scopes.push({
         converters: this.converters.converters,
         fmlsSize: this.fmls.size,
@@ -151,6 +152,7 @@ export class IncSatSolver {
     this.solver.userPop(count);
     for (let index = 0; index < count; index++) {
       const scope = this.scopes.pop() as Scope;
+      this.converters.releaseConverters();
       this.converters.converters = scope.converters;
       this.fmlsHead = scope.fmlsHead;
       this.fmls.shrink(scope.fmlsSize);
@@ -216,9 +218,12 @@ export class IncSatSolver {
       }
     })();
     this.subgoals = subgoals ?? [];
-    if (!this.subgoals.includes(goal)) goal.reset();
+    if (!this.subgoals.includes(goal)) {
+      goal.release();
+    }
     if (subgoals?.length !== 1) return L_UNDEF;
     const subgoal = subgoals[0];
+    incConverterRefs(subgoal.converters);
     this.converters.converters = [...this.converters.converters, ...subgoal.converters];
     this.goal2sat.runGoal(subgoal, this.dep2asm);
     return this.checkUninterpreted();
@@ -449,19 +454,26 @@ export class IncSatSolver {
   // asserted formulas are internalized.
   getConverters(): Goal["converters"] {
     this.getAssertions();
-    return this.isInternalizedConverted
-      ? [...this.converters.converters, { definitions: this.satConverter.copyEntries() }]
-      : [];
+    if (!this.isInternalizedConverted) return [];
+    incConverterRefs(this.converters.converters);
+    return [
+      ...this.converters.converters,
+      { definitions: this.satConverter.copyEntries(), refs: 1 },
+    ];
   }
 
   private resetSubgoals() {
-    for (const subgoal of this.subgoals) subgoal.reset();
+    for (const subgoal of this.subgoals) {
+      subgoal.release();
+    }
     this.subgoals = [];
   }
 
   release() {
     for (const model of this.models) model.decRef();
     this.models = [];
+    for (const scope of this.scopes) decConverterRefs(this.manager, scope.converters);
+    this.converters.releaseConverters();
     this.resetSubgoals();
     this.fmls.reset();
     this.names.reset();

@@ -273,6 +273,17 @@ describe("subexpression references match TLC", () => {
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 1 }]);
   });
 
+  it("keeps a recursive function lazy where a selection names its constructor, as TLC keeps $RecursiveFcnSpec", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\ng[n \\in 0..2] == IF n = 0 THEN x ELSE IF PrintT(<<"g", n>>) THEN g[n - 1] + 1 ELSE 0\nInit == LET r[n \\in 0..2] == IF n = 0 THEN 0 ELSE IF PrintT(<<"r", n>>) THEN r[n - 1] + 1 ELSE 0\n        IN x = DOMAIN r!: /\\ r!:[1] = 1 /\\ DOMAIN g!: = 0..2\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ['<<"r", 1>>']]);
+  });
+
   it("selects a label through an instance whose operators the instancing module does not extend", async () => {
     const result = await check({
       source:

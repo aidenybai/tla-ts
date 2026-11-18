@@ -8,6 +8,14 @@ import {
   type SourceRange,
 } from "./ast";
 import { formatRange } from "./errors";
+import {
+  frameSubstitutions,
+  instanceArguments,
+  isSubstitutionDefinition,
+  substitutedExpressions,
+  substitutionFrames,
+  type Substitution,
+} from "./instances";
 import { SELECTION_NAME } from "./resolve";
 import type { Environment, Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
@@ -50,7 +58,17 @@ export interface Coverage {
   values: WeakMap<object, number>;
   registers: Uint8Array;
   relations: CoverageRelation[];
+  substitutionNodes: Map<number, Map<Substitution, number>>;
+  frames: Expression[];
+  frameRoots: number[];
+  frameEntries: number[];
+  entryCount: number;
+  counted: Map<Substitution, number>;
+  countedWithoutNext: Map<Substitution, number>;
+  nextState: NextStateMode;
 }
+
+export type NextStateMode = "given" | "empty" | "primed";
 
 export interface CoverageReport {
   variables: CoverageVariable[];
@@ -131,6 +149,14 @@ export const createCoverage = (variableCount: number): Coverage => ({
   values: new WeakMap(),
   registers: new Uint8Array(variableCount * REGISTERS),
   relations: [],
+  substitutionNodes: new Map(),
+  frames: [],
+  frameRoots: [],
+  frameEntries: [],
+  entryCount: 0,
+  counted: new Map(),
+  countedWithoutNext: new Map(),
+  nextState: "given",
 });
 
 export const createCoverageEnvironment = (
@@ -207,19 +233,31 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
   left.end.line === right.end.line &&
   left.end.column === right.end.column;
 
+// TLC's Action#pred for an instance's action is the SubstInNode, which SANY locates at the instance's definition.
+const getPredicateRange = (expression: Expression) =>
+  (substitutionFrames.get(expression) ?? []).find((frame) => frameSubstitutions.has(frame))
+    ?.location.range ?? expression.location.range;
+
 export const getCoverageLabel = (
   name: string | undefined,
   expression: Expression,
   environment: Environment,
+  actionHead?: SourceRange,
+  actionBody?: SourceRange,
 ) => {
-  const definition = name === undefined ? undefined : environment.definitions.get(name);
-  const head = definition?.kind === "Operator" ? definition.head : undefined;
+  const definition =
+    name === undefined || actionHead ? undefined : environment.definitions.get(name);
+  const head = actionHead ?? (definition?.kind === "Operator" ? definition.head : undefined);
   const range = getRelationRange(expression);
-  if (!definition || !head) return `Action ${range ? formatRange(range) : "Unknown location"}`;
-  if (isSameRange(getRelationRange(definition.body), range) || !range) {
-    return `${definition.name} ${formatRange(head)}`;
+  const label = actionHead ? name : definition?.name;
+  if (label === undefined || !head) {
+    return `Action ${range ? formatRange(range) : "Unknown location"}`;
   }
-  return `${definition.name} ${formatRange(head)} (${range.start.line} ${range.start.column} ${range.end.line} ${range.end.column})`;
+  const isBody = actionHead
+    ? isSameRange(actionBody, getPredicateRange(expression))
+    : definition && isSameRange(getRelationRange(definition.body), range);
+  if (isBody || !range) return `${label} ${formatRange(head)}`;
+  return `${label} ${formatRange(head)} (${range.start.line} ${range.start.column} ${range.end.line} ${range.end.column})`;
 };
 
 const getRangeKey = (range: SourceRange) =>
@@ -277,6 +315,11 @@ const getBoundNames = (bounds: Bound[]) =>
     bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
   );
 
+export const getEnteredFrames = (expression: Expression, frames: Expression[]) =>
+  (substitutionFrames.get(expression) ?? []).filter(
+    (frame) => frameSubstitutions.has(frame) && !frames.includes(frame),
+  );
+
 export const buildCoverage = (
   coverage: Coverage,
   environment: Environment,
@@ -284,6 +327,7 @@ export const buildCoverage = (
 ) => {
   const primed = new Set(primedRanges.map(getRangeKey));
   const stack: number[] = [];
+  const frames: Expression[] = [];
   const definitions: (Definition | undefined)[] = [];
   const walking: Definition[] = [];
   const letBodies = new Map<Expression, Expression>();
@@ -342,8 +386,7 @@ export const buildCoverage = (
         ? getBoundNames(definition.bounds)
         : definition.params.map((param) => param.name);
     if (definition.kind === "Function") {
-      const isLet = resolved.scope !== undefined;
-      enter(getFunctionConstruction(definition, isLet), definition.location.range, () => {
+      enter(getFunctionConstruction(definition), definition.location.range, () => {
         walk(definition.body, bindNames(names, resolved.scope));
         getBoundSets(definition.bounds).forEach((set) => walk(set, resolved.scope));
       });
@@ -405,10 +448,40 @@ export const buildCoverage = (
       count < expression.operands.length,
     );
 
+  const walkSubstitutions = (expression: Expression, locals: Local | undefined) => {
+    const entered = getEnteredFrames(expression, frames);
+    const parent = stack.at(-1) ?? -1;
+    entered.forEach((frame) => {
+      frameSubstitutions
+        .get(frame)?.()
+        .forEach((substitution) => {
+          walk(substitution.replacement, locals);
+          const node = parent === -1 ? -1 : coverage.lastChild[parent];
+          if (node === -1 || coverage.expressions[node] !== substitution.replacement) return;
+          const root = coverage.roots[node];
+          const nodes = coverage.substitutionNodes.get(root) ?? new Map<Substitution, number>();
+          coverage.substitutionNodes.set(root, nodes.set(substitution, node));
+        });
+      frames.push(frame);
+    });
+    return entered.length;
+  };
+
   const walk = (expression: Expression, locals: Local | undefined): void => {
+    const entered = walkSubstitutions(expression, locals);
+    walkExpression(expression, locals);
+    frames.length -= entered;
+  };
+
+  const walkExpression = (expression: Expression, locals: Local | undefined): void => {
     const range = expression.location.range;
     const walkAll = (expressions: Expression[]) =>
       expressions.forEach((item) => walk(item, locals));
+    const substitution = substitutedExpressions.get(expression);
+    if (substitution && substitution.replacement !== expression) {
+      enter(expression, substitutionFrames.get(expression)?.[0]?.location.range, () => undefined);
+      return;
+    }
     switch (expression.kind) {
       case "Number":
       case "Decimal":
@@ -432,7 +505,8 @@ export const buildCoverage = (
           if (definition.kind === "Operator") letBodies.set(definition.body, expression.body);
         });
         getHashtableOrder(expression.definitions).forEach((definition) => {
-          if (definition.name !== SELECTION_NAME) walkDefinition({ definition, scope: inner });
+          if (definition.name === SELECTION_NAME || isSubstitutionDefinition(definition)) return;
+          walkDefinition({ definition, scope: inner });
         });
         walk(expression.body, inner);
         return;
@@ -443,7 +517,9 @@ export const buildCoverage = (
           expression,
           range,
           () => {
-            if (resolved) walkDefinition(resolved);
+            if (resolved && !isSubstitutionDefinition(resolved.definition)) {
+              walkDefinition(resolved);
+            }
           },
           false,
           resolved?.definition,
@@ -457,9 +533,11 @@ export const buildCoverage = (
           range,
           () => {
             if (resolved) walkDefinition(resolved);
-            expression.args.forEach((argument, index) =>
-              walkArgument(argument, index, resolved?.definition, locals),
-            );
+            expression.args.forEach((argument, index) => {
+              if (!instanceArguments.has(argument)) {
+                walkArgument(argument, index, resolved?.definition, locals);
+              }
+            });
           },
           false,
           resolved?.definition,
@@ -625,6 +703,7 @@ export const getCoverageNode = (coverage: Coverage, node: number, expression: Ex
   const recursive = coverage.recursive[node];
   const inner = recursive === -1 ? -1 : findChild(coverage, recursive, expression);
   if (inner !== -1) return inner;
+  // Deviation from TLC: OpApplNodeWrapper#get also warns (2776) on this fallback, a lookup bug it asks users to report.
   return coverage.lets[node]?.find((item) => coverage.expressions[item] === expression) ?? node;
 };
 
@@ -644,6 +723,60 @@ export const runAtCoverageNode = <Result>(
   } finally {
     coverage.current = outer;
   }
+};
+
+export const enterFrames = (
+  coverage: Coverage,
+  frames: Expression[],
+  node: number,
+  isCached: boolean,
+) => {
+  const root = node === -1 ? -1 : coverage.roots[node];
+  let entered = 0;
+  for (let index = 0; index < frames.length; index++) {
+    const frame = frames[index];
+    if (!frameSubstitutions.has(frame) || findFrame(coverage, frame, root) !== -1) continue;
+    coverage.frames.push(frame);
+    coverage.frameRoots.push(root);
+    coverage.frameEntries.push(isCached ? coverage.entryCount++ : -1);
+    entered++;
+  }
+  return entered;
+};
+
+const findFrame = (coverage: Coverage, frame: Expression, root: number) => {
+  for (let index = coverage.frames.length - 1; index >= 0; index--) {
+    if (coverage.frames[index] === frame && coverage.frameRoots[index] === root) return index;
+  }
+  return -1;
+};
+
+export const exitFrames = (coverage: Coverage, entered: number) => {
+  coverage.frames.length -= entered;
+  coverage.frameRoots.length -= entered;
+  coverage.frameEntries.length -= entered;
+};
+
+export const getSubstitutionNode = (
+  coverage: Coverage,
+  substitution: Substitution,
+  node: number,
+) => {
+  const index = findFrame(coverage, substitution.frame, coverage.roots[node]);
+  if (index === -1) return -1;
+  const entry = coverage.frameEntries[index];
+  const substitutionNode =
+    coverage.substitutionNodes.get(coverage.frameRoots[index])?.get(substitution) ?? -1;
+  if (entry === -1 || coverage.nextState === "primed") return substitutionNode;
+  // LazyValue#getValue reuses a value cached without a next state for any next state, but not the reverse.
+  if (coverage.countedWithoutNext.get(substitution) === entry) return -1;
+  if (coverage.nextState === "empty") {
+    coverage.countedWithoutNext.set(substitution, entry);
+    return substitutionNode;
+  }
+  if (coverage.counted.get(substitution) === entry) return -1;
+  coverage.counted.set(substitution, entry);
+  return substitutionNode;
 };
 
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
@@ -1002,21 +1135,20 @@ const compareRanges = (left: SourceRange | undefined, right: SourceRange | undef
   );
 };
 
+// Deviation from TLC: CostModelCreator#report keeps one action per location, so it drops all but one action of an instance.
+const compareActions = (left: CoverageRelation, right: CoverageRelation) =>
+  compareRanges(getPredicateRange(left.expression), getPredicateRange(right.expression)) ||
+  compareRanges(left.expression.location.range, right.expression.location.range);
+
 const getReportedRelations = (coverage: Coverage) =>
   KIND_ORDER.flatMap((kind) => {
     const relations = coverage.relations.filter((relation) => relation.kind === kind);
     if (kind !== "next") return relations;
     return relations
-      .toSorted((left, right) =>
-        compareRanges(left.expression.location.range, right.expression.location.range),
-      )
+      .toSorted(compareActions)
       .filter(
         (relation, index, sorted) =>
-          index === 0 ||
-          compareRanges(
-            sorted[index - 1].expression.location.range,
-            relation.expression.location.range,
-          ) !== 0,
+          index === 0 || compareActions(sorted[index - 1], relation) !== 0,
       );
   });
 

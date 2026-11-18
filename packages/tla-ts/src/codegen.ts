@@ -1,4 +1,10 @@
-import { getChildren, getReferencedName, isLocallyResolved, type Expression } from "./ast";
+import {
+  getChildren,
+  getReferencedName,
+  isLocallyResolved,
+  isRecursiveConstruction,
+  type Expression,
+} from "./ast";
 import { isTlcEvalReached } from "./dependencies";
 import {
   bindValue,
@@ -503,7 +509,7 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
       if (
         expression.bounds.length === 1 &&
         bound.pattern.kind === "Name" &&
-        !expression.isRecursive &&
+        !isRecursiveConstruction(expression) &&
         !isKeptLazy(expression)
       ) {
         return generateFunctionConstruction(generator, expression, bound.pattern.name, frame);

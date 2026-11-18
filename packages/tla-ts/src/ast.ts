@@ -194,7 +194,7 @@ export interface FunctionConstructionExpression {
   body: Expression;
   location: SourceLocation;
   isRecursive?: boolean;
-  name?: string;
+  definition?: FunctionDefinition;
 }
 
 interface FunctionSetExpression {
@@ -414,6 +414,7 @@ export interface Instance {
   location: SourceLocation;
   instanceRange: SourceRange;
   definitionRange?: SourceRange;
+  head?: SourceRange;
 }
 
 export interface NewSymbol {
@@ -531,25 +532,22 @@ export interface Module {
 
 const functionConstructions = new WeakMap<FunctionDefinition, Expression>();
 
-const isNameReferenced = (expression: Expression, name: string): boolean =>
-  getReferencedName(expression) === name ||
-  getChildren(expression).some((child) => isNameReferenced(child, name));
-
-export const getFunctionConstruction = (definition: FunctionDefinition, isLet: boolean) => {
+export const getFunctionConstruction = (definition: FunctionDefinition) => {
   const known = functionConstructions.get(definition);
   if (known) return known;
-  const isRecursive = isNameReferenced(definition.body, definition.name);
   const construction: Expression = {
     kind: "FunctionConstruction",
     bounds: definition.bounds,
     body: definition.body,
     location: definition.location,
-    isRecursive: isLet || isRecursive,
-    ...(isRecursive && { name: definition.name }),
+    definition,
   };
   functionConstructions.set(definition, construction);
   return construction;
 };
+
+export const isRecursiveConstruction = (expression: FunctionConstructionExpression) =>
+  expression.isRecursive || expression.definition?.isSelfReferential === true;
 
 export const getDefinitionExpressions = (definition: Definition) =>
   definition.kind === "Function"

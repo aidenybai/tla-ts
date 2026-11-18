@@ -618,7 +618,10 @@ export class FdSolver {
 
   getConverters(): Goal["converters"] {
     const definitions = retainDefinitions(this.manager, this.converter);
-    return [...(definitions.length > 0 ? [{ definitions }] : []), ...this.solver.getConverters()];
+    return [
+      ...(definitions.length > 0 ? [{ definitions, refs: 1 }] : []),
+      ...this.solver.getConverters(),
+    ];
   }
 
   private flush(assumptions: readonly number[]) {

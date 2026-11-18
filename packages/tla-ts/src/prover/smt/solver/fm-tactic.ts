@@ -882,5 +882,11 @@ export const fm = (manager: AstManager, goal: Goal, options: FmOptions) => {
   eliminator.release();
   if (!isConsistent || !goal.isModelsEnabled) return;
   const converter = new FmModelConverter(manager, eliminator.converter);
-  goal.addModelConversion((model) => converter.convert(model));
+  goal.addModelConversion(
+    (model) => converter.convert(model),
+    () => {
+      for (const entry of eliminator.converter) manager.decDeclRef(entry.decl);
+      for (const entry of eliminator.converter) entry.clauses.reset();
+    },
+  );
 };
