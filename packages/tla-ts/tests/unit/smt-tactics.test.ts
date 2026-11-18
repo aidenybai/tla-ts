@@ -1751,6 +1751,25 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
 });
 
 describe("eq2bv, as Z3 5.3.2 encodes the bounded integers", () => {
+  // Deviation from Z3: Z3 5.3.2 reads the dependencies of the bounds after it frees them, and crashes.
+  it("asserts the bounds of each bit-vector with the dependencies of the integer bounds", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(assert (! (>= x 0) :named a1))",
+        "(assert (! (<= x 3) :named a2))",
+        "(assert (! (or (= x 1) (= x 2) (= x 5)) :named a3))",
+        "(assert (! (=> p (= x 3)) :named a4))",
+        "(assert (! (not (= x 1)) :named a5))",
+        "(assert (! (not (= x 2)) :named a6))",
+        "(check-sat-using (then eq2bv simplify bit-blast sat))",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["unsat", "(a6 a3 a2 a5)"]);
+  });
+
   it("names the bit-vector of each integer in the order of its hash table", () => {
     expect(
       run([

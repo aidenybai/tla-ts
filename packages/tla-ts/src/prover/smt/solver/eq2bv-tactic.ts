@@ -93,7 +93,8 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
   const nonFd = new Set<number>();
   const hasEq = new Set<number>();
   const converter: BvModelConverter = { bvToInt: new Map(), vars: [], values: [] };
-  for (const form of goal.forms.items) bounds.add(form);
+  for (const [index, form] of goal.forms.items.entries())
+    bounds.add(form, goal.getDependency(index));
   if (bounds.isInconsistent() || goal.isProofsEnabled) {
     goal.depth++;
     return [goal];
@@ -193,19 +194,27 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
       continue;
     }
     const rewritten = rewriter.rewrite(form);
-    if (rewritten !== form) goal.update(index, rewritten);
+    if (rewritten !== form) goal.update(index, rewritten, goal.getDependency(index));
     manager.decRef(rewritten);
   }
   rewriter.release();
+  // Deviation from Z3: bound_manager keeps the dependencies of the bounds without a reference, so
+  // Z3 5.3.2 reads them after the updates above free them and crashes with unsat cores.
   for (const variable of max.keys()) {
     const bv = fd.get(variable) as number;
     const width = manager.getBvSize(manager.sorts[bv]);
     const lower = bounds.lowers.get(variable);
     const upper = bounds.uppers.get(variable);
     if (lower !== undefined && !lower.value.isNegative())
-      goal.assert(mkBvApp(manager, OP_ULEQ, [manager.mkBvNumeral(lower.value.num, width), bv]));
+      goal.assert(
+        mkBvApp(manager, OP_ULEQ, [manager.mkBvNumeral(lower.value.num, width), bv]),
+        bounds.lowerDependencies.get(variable),
+      );
     if (upper !== undefined && !upper.value.isNegative())
-      goal.assert(mkBvApp(manager, OP_ULEQ, [bv, manager.mkBvNumeral(upper.value.num, width)]));
+      goal.assert(
+        mkBvApp(manager, OP_ULEQ, [bv, manager.mkBvNumeral(upper.value.num, width)]),
+        bounds.upperDependencies.get(variable),
+      );
   }
   for (const decl of converter.vars) manager.incDeclRef(decl);
   for (const entry of converter.bvToInt) {

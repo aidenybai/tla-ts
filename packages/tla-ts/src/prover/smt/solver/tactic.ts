@@ -1226,7 +1226,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       build: (environment) => createDt2BvTactic(environment.manager),
     },
   ],
-  ["eq2bv", { descrs: new Map(), build: (environment) => createEq2BvTactic(environment.manager) }],
+  [
+    "eq2bv",
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => createEq2BvTactic(environment.manager),
+    },
+  ],
   [
     "bit-blast",
     {
