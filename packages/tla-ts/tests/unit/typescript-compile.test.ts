@@ -54125,4 +54125,28 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("makes a zoned date-time whose date is past the limits where its instant isn't", () => {
+    const getSource = (expected: string) => `
+      let seen: string;
+      try {
+        seen = Temporal.PlainDateTime.from("-271821-04-19T15:47:32").toZonedDateTime("America/Vancouver").toString();
+      } catch (error) {
+        seen = error instanceof RangeError ? "RangeError" : "other";
+      }
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("-271821-04-19T15:47:32-08:12[America/Vancouver]"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the RangeError of the date's limits", async () => {
+      expect((await checkModel(getSource("RangeError"))).failure?.message).toContain(
+        "seen -271821-04-19T15:47:32-08:12[America/Vancouver]",
+      );
+    });
+  });
 });

@@ -858,8 +858,8 @@ LOCAL TPreviousTransition(zone, ns) ==
        IN IF count = 0 THEN Null ELSE TTransitionNs(table, count)
 
 \* GetPossibleEpochNanoseconds, earliest first, which throws a RangeError where one is past the
-\* limits. A named time zone's offsets a day before and a day after the date and the time give the
-\* candidates, as its transitions are days apart.
+\* limits, as Node does, though not where only the date is. A named time zone's offsets a day before
+\* and a day after the date and the time give the candidates, as its transitions are days apart.
 LOCAL TPossibleNs(zone, date, time) ==
   LET utc == TEpochNs(date, time)
       before == TZoneOffset(zone, BigIntSubtract(utc, TNsPerDay))
@@ -870,8 +870,7 @@ LOCAL TPossibleNs(zone, date, time) ==
                    [] TLess(after, before) -> SelectSeq(<<before, after>>, LAMBDA offset : isAt(offset))
                    [] OTHER -> SelectSeq(<<after, before>>, LAMBDA offset : isAt(offset))
       possible == [position \in DOMAIN offsets |-> BigIntSubtract(utc, offsets[position])]
-  IN CASE zone.index # 0 /\ (TEpochDays(date) < -100000000 \/ TEpochDays(date) > 100000000) -> TFail("RangeError")
-       [] \E position \in DOMAIN possible : ~TIsValidEpochNs(possible[position]) -> TFail("RangeError")
+  IN CASE \E position \in DOMAIN possible : ~TIsValidEpochNs(possible[position]) -> TFail("RangeError")
        [] OTHER -> TOk(possible)
 
 \* DisambiguatePossibleEpochNanoseconds. Where a gap skips the date and the time, the change of offset
