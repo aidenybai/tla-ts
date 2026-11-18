@@ -60,6 +60,17 @@ describe("the call stack of a replayed failure matches TLC", () => {
     });
   });
 
+  it("builds a function that a LET defines where TLC needs its values, as TLC builds $NonRecursiveFcnSpec", async () => {
+    expect(
+      await getFailure(
+        "Init == LET f[n \\in 0..2] == 10 \\div n IN x = DOMAIN f\nNext == UNCHANGED x",
+      ),
+    ).toEqual({
+      callStack: ["8.9-8.54", "8.43-8.54", "8.47-8.54", "8.54-8.54", "8.13-8.38", "8.30-8.38"],
+      exitCode: 75,
+    });
+  });
+
   it("keeps the conjuncts of a bulleted list that held", async () => {
     expect(
       await getFailure('Init == x = 0\nNext == /\\ Name[x + 1] # "z"\n        /\\ x\' = x + 1'),

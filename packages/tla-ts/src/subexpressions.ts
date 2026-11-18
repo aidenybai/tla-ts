@@ -71,7 +71,6 @@ interface SelectingName {
 }
 
 const declaredArities = new WeakMap<Definition, number>();
-const letDefinitions = new WeakSet<Definition>();
 
 const resolveDefinition = (
   definition: Definition,
@@ -237,14 +236,14 @@ const getOperatorArgument = (operand: Expression, arity: number): Expression => 
   };
 };
 
-const getDefinitionBody = (definition: Definition, isLet: boolean) => {
-  if (definition.kind === "Function") return getFunctionConstruction(definition, isLet);
+const getDefinitionBody = (definition: Definition) => {
+  if (definition.kind === "Function") return getFunctionConstruction(definition);
   const body = definition.body;
   if (body.kind !== "Let" || body.location.range || body.body.kind !== "Identifier") return body;
   const name = body.body.name;
   const recursive = body.definitions.find((local) => local.name === name);
   return recursive?.kind === "Function"
-    ? { ...body, body: getFunctionConstruction(recursive, true) }
+    ? { ...body, body: getFunctionConstruction(recursive) }
     : body;
 };
 
@@ -410,7 +409,7 @@ const selectSubexpression = (
     }
     selection.params.push(...(definition.kind === "Operator" ? definition.params : []));
     selection.args.push(...found.args);
-    current = getDefinitionBody(definition, local !== undefined || letDefinitions.has(definition));
+    current = getDefinitionBody(definition);
     enteredBody ??= definition.body;
     operatorIndex = selectorIndex;
     selectorIndex++;
@@ -715,7 +714,6 @@ const resolveSubexpressions = (
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
     if (expression.recursive) setDeclaredArities(expression.recursive, expression.definitions);
-    expression.definitions.forEach((definition) => letDefinitions.add(definition));
     const resolved: Definition[] = [];
     const local: Lookup = (name) =>
       resolved.find((definition) => definition.name === name) ??
@@ -723,13 +721,11 @@ const resolveSubexpressions = (
       lookup(name);
     const isLocalGoal = (name: string) =>
       !expression.definitions.some((definition) => definition.name === name) && isGoal(name);
-    expression.definitions.forEach((definition) => {
-      const resolvedDefinition = resolveDefinition(definition, (child) =>
-        resolveSubexpressions(child, local, isLocalGoal),
-      );
-      letDefinitions.add(resolvedDefinition);
-      resolved.push(resolvedDefinition);
-    });
+    expression.definitions.forEach((definition) =>
+      resolved.push(
+        resolveDefinition(definition, (child) => resolveSubexpressions(child, local, isLocalGoal)),
+      ),
+    );
     const mapped = {
       ...expression,
       definitions: resolved,

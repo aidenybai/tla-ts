@@ -389,8 +389,7 @@ export const buildCoverage = (
         ? getBoundNames(definition.bounds)
         : definition.params.map((param) => param.name);
     if (definition.kind === "Function") {
-      const isLet = resolved.scope !== undefined;
-      enter(getFunctionConstruction(definition, isLet), definition.location.range, () => {
+      enter(getFunctionConstruction(definition), definition.location.range, () => {
         walk(definition.body, bindNames(names, resolved.scope));
         getBoundSets(definition.bounds).forEach((set) => walk(set, resolved.scope));
       });

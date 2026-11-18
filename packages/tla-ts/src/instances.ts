@@ -852,7 +852,7 @@ export const getFunctionBody = (definition: FunctionDefinition): Expression =>
         body: createLocalIdentifier(definition.name, definition.location),
         location: { line: definition.location.line, column: definition.location.column },
       }
-    : getFunctionConstruction(definition, true);
+    : getFunctionConstruction(definition);
 
 export const withInstanceParams = (definition: Definition, params: OperatorParam[]): Definition => {
   if (params.length === 0) return definition;

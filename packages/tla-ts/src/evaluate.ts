@@ -3,6 +3,7 @@ import {
   getFunctionConstruction,
   getReferencedName,
   isLocallyResolved,
+  isRecursiveConstruction,
   type Bound,
   type BoundPattern,
   type DecimalExpression,
@@ -847,7 +848,7 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
     };
   }
   if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
-  const construction = getFunctionConstruction(definition, false);
+  const construction = getFunctionConstruction(definition);
   if (!definition.isSelfReferential) return getEntryEvaluator(construction, environment);
   const evaluator: Evaluator = (context) => createRecursiveFunction(definition, context);
   const coverage = environment.coverage;
@@ -1215,7 +1216,7 @@ export const bindDefinitions = (
       definition.kind === "Function"
         ? {
             kind: "Thunk",
-            expression: getFunctionConstruction(definition, true),
+            expression: getFunctionConstruction(definition),
             scope,
             state: context.state,
             next: context.next,
@@ -1986,7 +1987,7 @@ export const getFunctionBuilder = (
   expression: Expression & { kind: "FunctionConstruction" },
   environment: Environment,
 ) => {
-  const isKeptLazyExpression = isKeptLazy(expression);
+  const isLazy = isKeptLazy(expression) || isRecursiveConstruction(expression);
   const body = getEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
@@ -2058,12 +2059,7 @@ export const getFunctionBuilder = (
   };
   const callStack = environment.callStack;
   const build = (domain: Value, context: Context) => {
-    if (
-      expression.isRecursive ||
-      isKeptLazyExpression ||
-      context.isKeepLazy ||
-      !isEnumerable(domain)
-    ) {
+    if (isLazy || context.isKeepLazy || !isEnumerable(domain)) {
       return createLazy(domain, context);
     }
     const isReducibleDomain =

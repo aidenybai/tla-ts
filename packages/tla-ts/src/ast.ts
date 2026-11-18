@@ -193,6 +193,7 @@ export interface FunctionConstructionExpression {
   body: Expression;
   location: SourceLocation;
   isRecursive?: boolean;
+  definition?: FunctionDefinition;
 }
 
 interface FunctionSetExpression {
@@ -529,7 +530,7 @@ export interface Module {
 
 const functionConstructions = new WeakMap<FunctionDefinition, Expression>();
 
-export const getFunctionConstruction = (definition: FunctionDefinition, isLet: boolean) => {
+export const getFunctionConstruction = (definition: FunctionDefinition) => {
   const known = functionConstructions.get(definition);
   if (known) return known;
   const construction: Expression = {
@@ -537,11 +538,17 @@ export const getFunctionConstruction = (definition: FunctionDefinition, isLet: b
     bounds: definition.bounds,
     body: definition.body,
     location: definition.location,
-    isRecursive: isLet,
+    definition,
   };
   functionConstructions.set(definition, construction);
   return construction;
 };
+
+// SANY makes a function definition that names itself a $RecursiveFcnSpec, which TLC never builds
+// before it applies it. A selection makes the constructor before the resolver finds the self
+// reference, so this reads the definition when the constructor compiles.
+export const isRecursiveConstruction = (expression: FunctionConstructionExpression) =>
+  expression.isRecursive || expression.definition?.isSelfReferential === true;
 
 export const getDefinitionExpressions = (definition: Definition) =>
   definition.kind === "Function"
