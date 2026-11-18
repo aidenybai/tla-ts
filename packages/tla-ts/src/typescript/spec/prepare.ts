@@ -9,6 +9,7 @@ import { parseModuleTokens } from "../../parser";
 import { createCheckEnvironment } from "../../search";
 import { getParsedTexts, type PreparedModule } from "../../tlc/order";
 import { getRankedStrings, type Value } from "../../values";
+import { getPreparedFacts } from "../../dependencies";
 import { createModuleView } from "../../module-view";
 import { assembleRuntime, createLibrary, type Family, getDependencies, HOOKS } from "./library";
 import {
@@ -186,7 +187,23 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
       }),
     ),
   }));
-  const getView = createModuleView(runtime);
+  // The facts of each definition, of the runtime as its views stand in its values, collected in
+  // the check that started it, whose variables, constants, and builtins every program's has.
+  const getFacts = (definitions: readonly Definition[]) =>
+    new Map(
+      definitions.map((definition) => [
+        definition.name,
+        getPreparedFacts(definition, started.environment, started.environment.facts.words),
+      ]),
+    );
+  const getView = createModuleView({
+    ...runtime,
+    facts: getFacts(
+      createModuleView(runtime)(
+        runtime.module.definitions.map((definition) => definition.name).join(" "),
+      ).module.definitions,
+    ),
+  });
   const realm = new Set(
     getView(REALM_ROOTS).module.definitions.map((definition) => definition.name),
   );
@@ -201,7 +218,10 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
   );
   const stubGroups = new Map(stubs.map((stub) => [stub.name, stub.group]));
   return {
-    modules: [numbers, bigNats],
+    modules: [numbers, bigNats].map((prepared) => ({
+      ...prepared,
+      facts: getFacts(prepared.module.definitions),
+    })),
     getView,
     families: library.families,
     internalKeys: library.internalKeys,

@@ -30,6 +30,7 @@ import {
   isImpureDefinition,
   isNonconstant,
   type DefinitionFacts,
+  type PreparedFacts,
 } from "./dependencies";
 import { contextualApplications, substitutionFrames } from "./instances";
 import { prettyPrint } from "./pretty-print";
@@ -169,6 +170,8 @@ export interface Environment {
   variables: string[];
   variableIndex: Map<string, number>;
   facts: DefinitionFacts;
+  // The facts of the definitions of prepared modules, which they carry.
+  preparedFacts: ReadonlyMap<Definition, PreparedFacts>;
   startupValues: (Value | undefined)[];
   substitutedDefinitions: Set<Definition>;
   instanceParams: Set<OperatorParam>;

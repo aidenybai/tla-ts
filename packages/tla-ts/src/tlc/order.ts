@@ -22,6 +22,7 @@ import {
   TLC_STARTUP_STRINGS,
 } from "./jar-data";
 import type { Value } from "../values";
+import type { PreparedFacts } from "../dependencies";
 
 type SymbolKind = "builtin" | "constant" | "variable" | "definition" | "theorem" | "module";
 
@@ -77,6 +78,8 @@ export interface PreparedModule {
   texts?: ModuleTexts;
   /** @internal */
   values?: ReadonlyMap<Definition, Value>;
+  /** @internal */
+  facts?: ReadonlyMap<string, PreparedFacts>;
 }
 
 interface ModuleUnit {

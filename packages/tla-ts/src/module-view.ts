@@ -202,6 +202,7 @@ const readModule = (prepared: PreparedModule) => {
     unitTokens,
     module,
     values: viewValues,
+    facts: prepared.facts,
     allTexts,
     hasValues,
     name,
@@ -215,7 +216,7 @@ const readModule = (prepared: PreparedModule) => {
 // whose value the prepared module carries reads nothing in a view, which keeps its line and stands
 // it in for one without its body or tokens. Every other line of a view is blank, so each definition
 // keeps its line. Its tokens, syntax tree, levels, and values are those of the prepared module on
-// the lines kept.
+// the lines kept, and so are its facts.
 export const createModuleView = (prepared: PreparedModule) => {
   const tables = readModule(prepared);
   return (text: string, leaves: readonly string[] = []): PreparedModule => {
@@ -263,6 +264,7 @@ export const createModuleView = (prepared: PreparedModule) => {
         isKept(tables.module.definitions[position].location),
       ),
       values: tables.values,
+      facts: tables.facts,
     };
   };
 };

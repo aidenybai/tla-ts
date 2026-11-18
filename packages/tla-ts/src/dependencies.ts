@@ -80,6 +80,8 @@ const isImpureBuiltin = (name: string, environment: DefinitionNames) =>
   IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
 
 interface Edge {
+  // The name that the reference reads, which a substitution may give another definition.
+  name: string;
   callee: Definition;
   isOverridden: boolean;
   isLevelCounted: boolean;
@@ -155,6 +157,7 @@ const collectLocalFacts = (
       }
       if (definition) {
         edges.push({
+          name,
           callee: definition,
           isOverridden,
           isLevelCounted: isInnerLevelCounted,
@@ -202,6 +205,87 @@ const collectLocalFacts = (
   };
   expressions.forEach((expression) => visit(expression, true));
   return { row, edges };
+};
+
+const WIDE_CHARACTER = /[\u0100-\uffff]/;
+
+const DESERIALIZERS = new Set(["JsonDeserialize", "ndJsonDeserialize"]);
+
+export const isWideString = (text: string) => WIDE_CHARACTER.test(text);
+
+const isWideExpression = (expression: Expression): boolean =>
+  (expression.kind === "String" && isWideString(expression.value)) ||
+  (expression.kind === "Apply" && DESERIALIZERS.has(expression.operator)) ||
+  getChildren(expression).some(isWideExpression);
+
+// Whether a definition holds a string with a character above U+00FF or reads a deserializer, for
+// which TLC fingerprints strings by the low byte of each character.
+export const isWideDefinition = (definition: Definition) =>
+  isWideExpression(definition.body) ||
+  (definition.kind === "Function" &&
+    definition.bounds.some((bound) => isWideExpression(bound.set)));
+
+// What a definition of a prepared module shows of itself: its own row of facts, the names it reads
+// in place of the definitions they resolve to, and its LET definitions, numbered from 0, so that a
+// check that links the definition reads them rather than walk the definition again. They hold for
+// a check whose variables, constants, and builtins are those of the check they were collected in.
+export interface PreparedFacts {
+  row: Uint32Array;
+  names: string[];
+  isLevelCounted: Uint8Array;
+  owners: Int32Array;
+  lets: Definition[];
+  letParents: Int32Array;
+  letEffects: Uint32Array;
+  isWide: boolean;
+}
+
+export const getPreparedFacts = (
+  definition: Definition,
+  environment: DefinitionNames,
+  words: number,
+): PreparedFacts => {
+  const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
+  const local = collectLocalFacts(getDefinitionExpressions(definition), environment, words, lets);
+  return {
+    row: local.row,
+    names: local.edges.map((edge) => edge.name),
+    isLevelCounted: Uint8Array.from(local.edges, (edge) => (edge.isLevelCounted ? 1 : 0)),
+    owners: Int32Array.from(local.edges, (edge) => edge.owner),
+    lets: [...lets.numbers.keys()],
+    letParents: Int32Array.from(lets.parents),
+    letEffects: Uint32Array.from(lets.effects),
+    isWide: isWideDefinition(definition),
+  };
+};
+
+// The local facts of a prepared definition in a check, with the definitions that its names
+// resolve to there and its LET definitions numbered after those already in lets.
+const readPreparedFacts = (
+  prepared: PreparedFacts,
+  environment: DefinitionNames,
+  lets: LetColumns,
+) => {
+  const base = lets.parents.length;
+  prepared.lets.forEach((definition, index) => {
+    lets.numbers.set(definition, base + index);
+    lets.parents.push(prepared.letParents[index] === -1 ? -1 : base + prepared.letParents[index]);
+    lets.effects.push(prepared.letEffects[index]);
+  });
+  const edges: Edge[] = [];
+  prepared.names.forEach((name, index) => {
+    const callee = environment.definitions.get(environment.substitutions.get(name) ?? name);
+    if (callee === undefined) return;
+    const owner = prepared.owners[index];
+    edges.push({
+      name,
+      callee,
+      isOverridden: environment.constants.has(name),
+      isLevelCounted: prepared.isLevelCounted[index] === 1,
+      owner: owner === -1 ? -1 : base + owner,
+    });
+  });
+  return { row: prepared.row, edges };
 };
 
 const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask: number) => {
@@ -277,7 +361,10 @@ const READ_MASK = NONCONSTANT | READS_IMPURE;
 const isEvaluatedOnce = (definition: Definition, flags: number) =>
   definition.kind === "Operator" && definition.params.length === 0 && (flags & NONCONSTANT) === 0;
 
-export const createDefinitionFacts = (environment: DefinitionNames): DefinitionFacts => {
+export const createDefinitionFacts = (
+  environment: DefinitionNames,
+  prepared: ReadonlyMap<Definition, PreparedFacts> = new Map(),
+): DefinitionFacts => {
   const definitions = [...new Set(environment.definitions.values())];
   const ids = new Map(definitions.map((definition, id) => [definition, id]));
   const words = 1 + ((environment.variables.length + 31) >>> 5);
@@ -285,7 +372,11 @@ export const createDefinitionFacts = (environment: DefinitionNames): DefinitionF
   const localImpurity = new Uint32Array(definitions.length * words);
   const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
   const edges = definitions.map((definition, id) => {
-    const facts = collectLocalFacts(getDefinitionExpressions(definition), environment, words, lets);
+    const preparedFacts = prepared.get(definition);
+    const facts =
+      preparedFacts !== undefined && preparedFacts.row.length === words
+        ? readPreparedFacts(preparedFacts, environment, lets)
+        : collectLocalFacts(getDefinitionExpressions(definition), environment, words, lets);
     local.set(facts.row, id * words);
     localImpurity[id * words] = facts.row[0] & PURITY_MASK;
     return facts.edges;

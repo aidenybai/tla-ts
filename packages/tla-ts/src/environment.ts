@@ -81,7 +81,7 @@ import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./su
 import { checkModuleLevels, createLevelAnalyzer, type OperatorLevels } from "./levels";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
-import { createDefinitionFacts } from "./dependencies";
+import { createDefinitionFacts, type PreparedFacts } from "./dependencies";
 import { createTlcOrder, type PreparedModule, type TlcOrder } from "./tlc/order";
 import { isTlcInteger, type Value } from "./values";
 import type { TlcVersion } from "./tlc/version";
@@ -262,6 +262,7 @@ export const createEnvironment = (
   // doesn't say.
   const preparedTexts: (readonly string[] | undefined)[] = [];
   const preparedValues: ReadonlyMap<Definition, Value>[] = [];
+  const preparedFacts = new Map<Definition, PreparedFacts>();
   const parameterized = new Map<string, boolean>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
@@ -985,6 +986,13 @@ export const createEnvironment = (
     const acceptedLevels = accepted?.levels;
     if (accepted) preparedTexts.push(accepted.texts?.parsed);
     if (accepted?.values) preparedValues.push(accepted.values);
+    const acceptedFacts = accepted?.facts;
+    if (acceptedFacts) {
+      module.definitions.forEach((definition) => {
+        const facts = acceptedFacts.get(definition.name);
+        if (facts) preparedFacts.set(definition, facts);
+      });
+    }
     module.definitions.forEach((definition, position) => {
       const key = getKey(definition);
       definitions.set(key, definition);
@@ -1123,14 +1131,17 @@ export const createEnvironment = (
     variables,
     linkOrder.flatMap((linked) => linked.module.variables.map((variable) => variable.name)),
   );
-  const facts = createDefinitionFacts({
-    definitions,
-    substitutions,
-    constants,
-    variableIndex,
-    builtins,
-    variables,
-  });
+  const facts = createDefinitionFacts(
+    {
+      definitions,
+      substitutions,
+      constants,
+      variableIndex,
+      builtins,
+      variables,
+    },
+    preparedFacts,
+  );
   const environment: Environment = {
     runtime,
     definitions,
@@ -1141,6 +1152,7 @@ export const createEnvironment = (
     variables,
     variableIndex,
     facts,
+    preparedFacts,
     startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
     substitutedDefinitions,
     instanceParams,
