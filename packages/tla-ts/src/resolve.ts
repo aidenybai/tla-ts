@@ -2717,7 +2717,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         ),
       ),
     );
-  return collectSemanticErrors(
+  const semanticErrors = collectSemanticErrors(
     [
       ...module.units.flatMap((item): SemanticUnit[] => {
         const section =
@@ -2853,4 +2853,11 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     ],
     unit.warnings,
   );
+  return {
+    errors: semanticErrors,
+    // SANY's symbol table keeps the first binding of a name, so a definition that lost it is not part of the module.
+    definitions: module.definitions.filter((definition) =>
+      isSameRange(bindings.get(definition.name)?.range, definition.location.range),
+    ),
+  };
 };

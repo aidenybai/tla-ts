@@ -4177,4 +4177,69 @@ describe("name resolution matches SANY", () => {
       ]),
     );
   });
+
+  it.each([
+    [
+      "an operator defined twice",
+      "Foo == 1\nFoo(a) == 2",
+      "I == INSTANCE Inner WITH c <- 1\nU == I!Foo(1)",
+      [
+        ["line 5, col 1 to line 5, col 11", "Operator Foo already defined or declared."],
+        [
+          "line 5, col 1 to line 5, col 11",
+          "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 4, col 1 to line 4, col 8 of module M.",
+        ],
+        ["line 8, col 11 to line 8, col 13", "The operator I!Foo requires 0 arguments."],
+      ],
+    ],
+    [
+      "an operator named like a theorem",
+      "THEOREM Foo == TRUE\nFoo(a) == 2",
+      "I == INSTANCE Inner WITH c <- 1\nU == I!Foo(1)",
+      [
+        ["line 5, col 1 to line 5, col 11", "Operator Foo already defined or declared."],
+        [
+          "line 5, col 1 to line 5, col 11",
+          "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 4, col 1 to line 4, col 19 of module M.",
+        ],
+        ["line 8, col 11 to line 8, col 13", "The operator I!Foo requires 0 arguments."],
+      ],
+    ],
+    [
+      "a built-in operator",
+      "a -+-> b == 1",
+      "I == INSTANCE Inner WITH c <- 1\nU == I!-+->",
+      [
+        ["line 4, col 1 to line 4, col 13", "Operator -+-> already defined or declared."],
+        [
+          "line 4, col 1 to line 4, col 13",
+          "Symbol -+-> is a built-in operator, and cannot be redefined.",
+        ],
+        ["line 7, col 6 to line 7, col 11", "Unknown operator: `I!-+->'."],
+      ],
+    ],
+    [
+      "a built-in operator through an unnamed instance",
+      "a -+-> b == 1",
+      "INSTANCE Inner WITH c <- 1",
+      [
+        ["line 4, col 1 to line 4, col 13", "Operator -+-> already defined or declared."],
+        [
+          "line 4, col 1 to line 4, col 13",
+          "Symbol -+-> is a built-in operator, and cannot be redefined.",
+        ],
+      ],
+    ],
+  ])(
+    "leaves out of an instance %s that SANY doesn't bind",
+    async (_description, definitions, instance, errors) => {
+      await expect(
+        checkNames(`---- MODULE Inner ----\nCONSTANT c\n${definitions}\n====\n${instance}`),
+      ).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
 });

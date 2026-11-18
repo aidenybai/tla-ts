@@ -864,7 +864,6 @@ export const createEnvironment = (
       ]),
       ...scope.symbols,
     ]);
-    const importedAt = new Map<string, SourceLocation>();
     const extendsReport: ModuleReport = { location: MODULE_START, errors: [], warnings: [] };
     const reports = [extendsReport];
     const mergeExtended = (symbols: Symbols) =>
@@ -1074,7 +1073,6 @@ export const createEnvironment = (
           instanced.set(instance, symbols);
           symbols.forEach((symbol, name) => {
             if (visible.has(name)) return;
-            importedAt.set(name, instance.location);
             visible.set(name, symbol);
             if (!instance.isLocal) exported.set(name, symbol);
           });
@@ -1103,20 +1101,15 @@ export const createEnvironment = (
         (instance) =>
           getStandardSymbols(instance.module) ?? getLinkedModule(instance.module, parsed.name),
       );
-    scope.errors.push(...resolveModule(module, getUnit(module)));
+    const resolved = resolveModule(module, getUnit(module));
+    scope.errors.push(...resolved.errors);
     module.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);
       parameterized.set(key, !isParameterFree);
+    });
+    resolved.definitions.forEach((definition) => {
       const symbol = getDefinitionSymbol(definition);
-      const importedLocation = importedAt.get(definition.name);
-      if (
-        symbol.kind === "Theorem" &&
-        visible.get(definition.name)?.kind === "Theorem" &&
-        (importedLocation === undefined || isBefore(importedLocation, definition.location))
-      ) {
-        return;
-      }
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
