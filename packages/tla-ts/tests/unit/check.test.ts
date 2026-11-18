@@ -2240,6 +2240,53 @@ ASSUME TLCFP(a) = -887695703
     expect(lines?.[0]).toEqual(["line 4, col 49 to line 4, col 74 of module M: 1"]);
   });
 
+  it.each([
+    [
+      "a module",
+      "f[n \\in 0..2] == IF n = 0 THEN x ELSE f[n - 1] + 1\nInit == x = 0\nNext == x < 3 /\\ x' = [f EXCEPT ![2] = 7][1]",
+      1,
+      [
+        "line 6, col 9 to line 6, col 13 of module M: 9",
+        "|line 6, col 9 to line 6, col 9 of module M: 10",
+        "line 6, col 18 to line 6, col 44 of module M: 9",
+        "|line 6, col 23 to line 6, col 44 of module M: 9",
+        "||line 6, col 23 to line 6, col 41 of module M: 9",
+        "|||line 6, col 24 to line 6, col 24 of module M: 9",
+        "||||line 4, col 1 to line 4, col 50 of module M: 9",
+        "|||||line 4, col 18 to line 4, col 50 of module M: 36",
+        "||||||line 4, col 21 to line 4, col 25 of module M: 36",
+        "||||||line 4, col 32 to line 4, col 32 of module M: 18",
+        "||||||line 4, col 39 to line 4, col 50 of module M: 18",
+        "|||||line 4, col 9 to line 4, col 12 of module M: 9",
+      ],
+    ],
+    [
+      "a LET",
+      "Init == LET f[n \\in 0..2] == IF n = 0 THEN 0 ELSE f[n - 1] + 1 IN x = [f EXCEPT ![2] = 7][1]\nNext == UNCHANGED x",
+      0,
+      [
+        "line 4, col 67 to line 4, col 92 of module M: 1",
+        "|line 4, col 71 to line 4, col 92 of module M: 1",
+        "||line 4, col 71 to line 4, col 89 of module M: 1",
+        "|||line 4, col 72 to line 4, col 72 of module M: 1",
+        "||||line 4, col 13 to line 4, col 62 of module M: 1",
+        "|||||line 4, col 30 to line 4, col 62 of module M: 4",
+        "||||||line 4, col 33 to line 4, col 37 of module M: 4",
+        "||||||line 4, col 51 to line 4, col 62 of module M: 2",
+        "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+      ],
+    ],
+  ])(
+    "counts the applications the copy EXCEPT makes of a recursive function of %s makes of the function, which keeps its cost model",
+    async (_name, definitions, relation, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(lines?.[relation]).toEqual(expected);
+    },
+  );
+
   it("counts no node for the reference that applies a recursive function a parameterized instance copies", async () => {
     const result = await check({
       source:

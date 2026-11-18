@@ -32,6 +32,7 @@ import {
   countCoverage,
   createChargedEnumerator,
   createProductSetEnumerator,
+  DO_NOT_RECORD,
   enterFrames,
   exitFrames,
   getCoverageNode,
@@ -632,6 +633,7 @@ interface LazyFunction {
   bounds: Bound[];
   body: Expression;
   scope: Scope | undefined;
+  compute: (argument: Value, self: LazyFunctionValue) => Value;
 }
 
 // Kept on the value itself, since a WeakMap entry per short-lived function slows every GC.
@@ -646,6 +648,16 @@ const keepLambda = (lambda: LazyFunction) => Object.assign(lambda.value, { lambd
 
 export const getLazyFunction = (value: Value) =>
   isKeptLazyFunction(value) ? value.lambda : undefined;
+
+// FcnLambdaValue#takeExcept copies the function without its cost model.
+const getUnrecordedApply = (functionValue: Value, coverage: Coverage) => {
+  const lambda = getLazyFunction(functionValue);
+  if (!lambda) return undefined;
+  return (argument: Value) =>
+    coverage.current === -1
+      ? lambda.compute(argument, lambda.value)
+      : runAtCoverageNode(coverage, DO_NOT_RECORD, () => lambda.compute(argument, lambda.value));
+};
 
 export const bindLazyArguments = (
   lambda: LazyFunction,
@@ -810,6 +822,7 @@ const createRecursiveFunction = (
     bounds: definition.bounds,
     body: definition.body,
     scope: bindValue(undefined, definition.name, functionValue),
+    compute,
   });
   const rebindable: RebindableLazyFunction = Object.assign(functionValue, {
     rebind: (tracing: Environment) => {
@@ -1526,7 +1539,7 @@ const countEvaluator =
   (expression: Expression, evaluator: Evaluator, coverage: Coverage): Evaluator =>
   (context) => {
     const outer = coverage.current;
-    if (outer === -1 || !coverage.covered.has(expression)) return evaluator(context);
+    if (outer < 0 || !coverage.covered.has(expression)) return evaluator(context);
     const node = getCoverageNode(coverage, outer, expression);
     countCoverage(coverage, node);
     coverage.current = node;
@@ -1557,7 +1570,7 @@ const countSubstitution =
   (substitution: Substitution, evaluator: Evaluator, coverage: Coverage): Evaluator =>
   (context) => {
     const outer = coverage.current;
-    coverage.current = outer === -1 ? -1 : getSubstitutionNode(coverage, substitution, outer);
+    coverage.current = outer < 0 ? outer : getSubstitutionNode(coverage, substitution, outer);
     try {
       return evaluator(context);
     } finally {
@@ -2072,12 +2085,8 @@ export const getFunctionBuilder = (
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,
     );
-    if (coverage) {
-      value.applyUnrecorded = (argument) =>
-        runAtCoverageNode(coverage, -1, () => compute(argument));
-    }
     if (selfName !== undefined) scope = bindValue(outer, selfName, value);
-    const functionValue = keepLambda({ value, bounds, body: expression.body, scope });
+    const functionValue = keepLambda({ value, bounds, body: expression.body, scope, compute });
     return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
   };
   const callStack = environment.callStack;
@@ -2128,7 +2137,7 @@ const compileFunctionConstruction = (
           : domain.factors;
       const isConverted =
         (typeof value !== "object" || value.kind !== "LazyFunction") && sets.every(isReducibleSet);
-      if (isConverted && coverage.current !== -1 && coverage.covered.has(expression)) {
+      if (isConverted && coverage.current >= 0 && coverage.covered.has(expression)) {
         chargeFunctionConstruction(coverage, coverage.current, sets);
       }
       return value;
@@ -2148,6 +2157,7 @@ const compileExcept = (
   const isKeptLazyExpression = keptLazyExpressions.has(expression);
   if (isKeptLazyExpression) keepLazy(expression.function);
   const evaluateFunction = getEvaluator(expression.function, environment);
+  const coverage = environment.coverage;
   const updates = expression.updates.map((update) => ({
     path: update.path.map((step): CompiledStep =>
       step.kind === "Field"
@@ -2180,6 +2190,7 @@ const compileExcept = (
       getKey(path[depth], context),
       (previous) => update(previous, path, depth + 1, context, value),
       isKeptLazyExpression && depth === 0,
+      coverage && getUnrecordedApply(current, coverage),
     );
   };
   return (context) => {
@@ -2243,7 +2254,7 @@ export const getLazyFilter = (
         getEvaluator(expression.predicate, tracing),
         -1,
       );
-    if (!coverage || node === -1) return { kind: "FilteredSet", base, test, source, rebind };
+    if (!coverage || node < 0) return { kind: "FilteredSet", base, test, source, rebind };
     return {
       kind: "FilteredSet",
       base,

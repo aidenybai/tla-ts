@@ -1006,7 +1006,9 @@ const createReplay = (
   environment,
   callStack: environment.callStack,
   coverage:
-    kind === "enabled" && environment.coverage?.current === -1 ? undefined : environment.coverage,
+    kind === "enabled" && environment.coverage !== undefined && environment.coverage.current < 0
+      ? undefined
+      : environment.coverage,
   isInit: kind === "init",
   isEnabled: kind === "enabled",
   current,
