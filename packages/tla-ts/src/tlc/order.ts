@@ -1,4 +1,10 @@
-import { type Expression, getChildren, type Module, type SourceLocation } from "../ast";
+import {
+  type Definition,
+  type Expression,
+  getChildren,
+  type Module,
+  type SourceLocation,
+} from "../ast";
 import type { ConfigValue, ModelConfig } from "../config";
 import { createMissingModuleError } from "../errors";
 import { getJavaHashCode } from "../java-hash";
@@ -15,6 +21,7 @@ import {
   TLC_RUNTIME_STRINGS,
   TLC_STARTUP_STRINGS,
 } from "./jar-data";
+import type { Value } from "../values";
 
 type SymbolKind = "builtin" | "constant" | "variable" | "definition" | "theorem" | "module";
 
@@ -59,7 +66,8 @@ type ModuleLoader = ((name: string) => string | undefined) | undefined;
 
 // A module that a compiler hands a check already read into its tokens and syntax tree. When SANY's
 // checks accepted its names and levels, levels holds the levels they found for each of its
-// definitions, so that a check links it as it is.
+// definitions, so that a check links it as it is. values holds what its definitions without
+// parameters evaluate to as a check starts, where every check that links it starts them alike.
 export interface PreparedModule {
   name: string;
   text: string;
@@ -67,6 +75,7 @@ export interface PreparedModule {
   module: Module;
   levels: readonly (OperatorLevels | undefined)[] | undefined;
   texts?: ModuleTexts;
+  values?: ReadonlyMap<Definition, Value>;
 }
 
 interface ModuleUnit {

@@ -1,11 +1,14 @@
-import type { Module } from "../../ast";
+import type { Definition, Module } from "../../ast";
 import { parseConfig } from "../../config";
 import { createEnvironment } from "../../environment";
 import { TlaError } from "../../errors";
+import { evaluateStartupDefinitions, getStartupValue } from "../../evaluate";
 import type { OperatorLevels } from "../../levels";
 import { tokenize } from "../../lexer";
 import { parseModuleTokens } from "../../parser";
+import { createCheckEnvironment } from "../../search";
 import { getParsedTexts, type PreparedModule } from "../../tlc/order";
+import type { Value } from "../../values";
 import { assembleRuntime, createLibrary } from "./library";
 import {
   getHostDefinitions,
@@ -25,7 +28,8 @@ export interface EscoreRuntime {
 }
 
 // Every compiled spec's root module. It extends each module of the runtime before the program's,
-// so that the strings of the runtime come first in TLC's order of strings for every program.
+// so that the strings of the runtime come first in TLC's order of strings for every program, and
+// what the runtime's definitions evaluate to as a check starts is the same for every program.
 export const ROOT = `---- MODULE Program ----
 EXTENDS Naturals, Integers, Sequences, FiniteSets, TLC, ESBigNat, ESNumber, ESRuntime, ProgramCode
 VARIABLE programDone
@@ -37,7 +41,7 @@ Next == UNCHANGED programDone
 ====
 `;
 
-// The program's code is ProgramCode's, which the config substitutes for the runtime's constants.
+// The program's code is ProgramCode's, which the config puts in place of the runtime's hooks.
 export const CONFIG = `INIT Init
 NEXT Next
 CONSTANTS None = None Empty = Empty Absent = Absent CallCode <- ProgramCallCode LoopIteration <- ProgramLoopIteration
@@ -71,8 +75,9 @@ const prepare = (name: string, text: string): PreparedModule => {
 
 const files = { readFile: undefined, writeFile: undefined, makeDirectory: undefined };
 
-// ESCore's runtime, read and checked by SANY's checks once for every program a process compiles:
-// its modules and the levels of their definitions.
+// ESCore's runtime, read, checked by SANY's checks, and started once for every program a process
+// compiles: its modules, the levels of their definitions, and what their definitions without
+// parameters evaluate to, among them the realm.
 export const prepareRuntime = (directory: string): EscoreRuntime => {
   const library = createLibrary(directory);
   const runtimeText = assembleRuntime(
@@ -124,8 +129,30 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
   });
   if (warning !== undefined)
     throw new TlaError(`SANY's checks warn of ESCore's runtime: ${warning}`);
+  const accepted = modules.map((prepared) => ({
+    ...prepared,
+    levels: levels.get(prepared.module),
+  }));
+  const started = createCheckEnvironment(
+    config,
+    {
+      source: ROOT,
+      loadModule: (name) => (name === "ProgramCode" ? EMPTY_PROGRAM : undefined),
+      preparedModules: accepted,
+    },
+    () => {},
+  ).specification;
+  evaluateStartupDefinitions(started.startupDefinitions, started.environment);
   return {
-    modules: modules.map((prepared) => ({ ...prepared, levels: levels.get(prepared.module) })),
+    modules: accepted.map((prepared) => ({
+      ...prepared,
+      values: new Map(
+        prepared.module.definitions.flatMap((definition): [Definition, Value][] => {
+          const value = getStartupValue(definition, started.environment);
+          return value === undefined ? [] : [[definition, value]];
+        }),
+      ),
+    })),
     hostOnlyGlobals: getHostOnlyGlobals(library),
     hostOnlyKeys: getHostOnlyKeys(library),
   };

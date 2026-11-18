@@ -261,6 +261,7 @@ export const createEnvironment = (
   // The texts that the prepared modules whose levels a check links parse, or undefined for one that
   // doesn't say.
   const preparedTexts: (readonly string[] | undefined)[] = [];
+  const preparedValues: ReadonlyMap<Definition, Value>[] = [];
   const parameterized = new Map<string, boolean>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
@@ -983,6 +984,7 @@ export const createEnvironment = (
     const accepted = isAccepted ? order.getPreparedModule(parsed.name) : undefined;
     const acceptedLevels = accepted?.levels;
     if (accepted) preparedTexts.push(accepted.texts?.parsed);
+    if (accepted?.values) preparedValues.push(accepted.values);
     module.definitions.forEach((definition, position) => {
       const key = getKey(definition);
       definitions.set(key, definition);
@@ -1148,6 +1150,12 @@ export const createEnvironment = (
     initRunners: new WeakMap(),
     nextRunners: new WeakMap(),
   };
+  preparedValues.forEach((values) =>
+    values.forEach((value, definition) => {
+      const id = facts.ids.get(definition);
+      if (id !== undefined) environment.startupValues[id] = value;
+    }),
+  );
   const runtimeVariables = ["TLCGet", "Trace", "CounterExample"].filter((name) =>
     builtins.has(name),
   );
