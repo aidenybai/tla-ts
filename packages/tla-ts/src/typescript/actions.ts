@@ -15926,13 +15926,16 @@ const getEffects = (
       ? getBoundNames(node.name).flatMap((name) => getSymbol(name, context.checker) ?? [])
       : [];
   const isObjectMade = isMade(node, context);
+  const isChange = isObjectChange(node, context);
+  const entriesFrom = getIterableFrom(node, context, "fromEntries");
+  const isThroughCall = ts.isCallExpression(node) && isFunctionThroughCall(node, context);
   const isErrorMade = isObjectMade && isNewError(node, context);
   const temporalCall = getTemporalCall(node, context);
   // An operation that converts an object runs its valueOf and toString methods, as does a definition
   // of an array's length.
   const conversions =
     (ts.isExpression(node) && getConversion(node, context) !== undefined) ||
-    (isObjectChange(node, context) && mayDefineObjectLength(node, context)) ||
+    (isChange && mayDefineObjectLength(node, context)) ||
     isIndexConvertingNew(node, context) ||
     isObjectDateCall(node, context) ||
     getConvertedViewValues(node, context) !== undefined ||
@@ -15982,7 +15985,7 @@ const getEffects = (
       getKind(node.expression, context) !== "sequence" &&
       isIterableValue(node.expression, context)) ||
     getIterableFrom(node, context) !== undefined ||
-    getIterableFrom(node, context, "fromEntries") !== undefined ||
+    entriesFrom !== undefined ||
     (ts.isExpression(node) && isIteratedTypedArray(node, context));
   // A method call on a generator object, a call it's passed to, or a pattern, a for-of, a spread,
   // or a yield* that iterates one resumes the body of a generator that may have made it.
@@ -16014,14 +16017,14 @@ const getEffects = (
         (node.dotDotDotToken !== undefined && ts.isObjectBindingPattern(node.parent)))) ||
     (ts.isObjectLiteralExpression(node) && !isArrayFromLength(node, context)) ||
     ts.isDeleteExpression(node) ||
-    isObjectChange(node, context) ||
+    isChange ||
     isRevoke(node, context) ||
     isProxyOperation(node, context) ||
     getDateCall(node, context) !== undefined ||
     getHeapRegExpCall(node, context) !== undefined ||
     getRegExpProtocolCall(node, context) !== undefined ||
     getViewCall(node, context) !== undefined ||
-    getTemporalCall(node, context) !== undefined ||
+    temporalCall !== undefined ||
     getHeapArrayChange(node, context) !== undefined ||
     isStoredChange(node, context) ||
     getArrayIteratorCall(node, context) !== undefined ||
@@ -16040,12 +16043,13 @@ const getEffects = (
     ? [
         node.expression,
         // A call through call or apply runs the function that it reads them from.
-        ...(isFunctionThroughCall(node, context) ? [node.expression.expression] : []),
+        ...(isThroughCall ? [node.expression.expression] : []),
         ...node.arguments,
       ]
     : ts.isTaggedTemplateExpression(node)
       ? [node.tag, ...getSubstitutions(node)]
       : [];
+  const calleeFunctions = callees.map(getFunctionNode);
   return {
     changed: [
       ...assigned,
@@ -16058,7 +16062,7 @@ const getEffects = (
       ...getters,
       ...(isIterated ? getIteratorFunctions(node, context) : []),
       // Object.fromEntries reads each entry's key and value, and converts the key.
-      ...(getIterableFrom(node, context, "fromEntries") === undefined
+      ...(entriesFrom === undefined
         ? []
         : [
             ...getWrittenFunctions(node, "0", context),
@@ -16070,25 +16074,29 @@ const getEffects = (
         ? getWrittenFunctions(node, "throw", context)
         : []),
       ...(isResumed
-        ? findNodes(
+        ? findNodesOf(
             node.getSourceFile(),
+            [
+              ts.SyntaxKind.FunctionDeclaration,
+              ts.SyntaxKind.FunctionExpression,
+              ts.SyntaxKind.MethodDeclaration,
+            ],
             (inner): inner is FunctionNode =>
               (ts.isFunctionDeclaration(inner) ||
                 ts.isFunctionExpression(inner) ||
                 ts.isMethodDeclaration(inner)) &&
               inner.asteriskToken !== undefined,
+            context,
           )
         : []),
       ...(isStackCall || isUsing ? getStackFunctions(node, context) : []),
-      ...(isObjectChange(node, context) && isReflectSet(node, context)
-        ? getSetters(node, context)
-        : []),
+      ...(isChange && isReflectSet(node, context) ? getSetters(node, context) : []),
       ...(isIteratorDispose ? getWrittenFunctions(node, "return", context) : []),
       ...(isIteratorDispose ? getMethods(node, "return", context, true) : []),
-      ...callees.flatMap((callee) => getFunctionNode(callee) ?? []),
-      ...(ts.isCallExpression(node) && getFunctionNode(node.expression) === undefined
+      ...calleeFunctions.flatMap((calleeFunction) => calleeFunction ?? []),
+      ...(ts.isCallExpression(node) && calleeFunctions[0] === undefined
         ? (getDispatched(node, functions, context) ??
-          (isFunctionThroughCall(node, context)
+          (isThroughCall
             ? getDispatched(node, functions, context, getCast(node.expression.expression))
             : undefined) ??
           [])
