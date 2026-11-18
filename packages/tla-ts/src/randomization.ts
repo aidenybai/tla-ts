@@ -5,7 +5,6 @@ import type { CheckerRuntime } from "./runtime";
 import { getEnumeratedFactors, getRandomSubset, type JavaRandom } from "./tlc/random";
 import {
   createSet,
-  createTuple,
   getCardinality,
   isTlcEnumerable,
   isEnumerable,
@@ -146,12 +145,4 @@ export const createRandomizationOperators = (runtime: CheckerRuntime): Builtin[]
     RANDOM_SUBSET_SIGNATURE,
   ),
   defineOperator("RandomSetOfSubsets", 3, (args) => getRandomSetOfSubsets(args, runtime)),
-  defineOperator("TestRandomSetOfSubsets", 3, (args) =>
-    createTuple(
-      Array.from(
-        { length: 5 },
-        () => toFiniteSet(getRandomSetOfSubsets(args, runtime)).elements.length,
-      ),
-    ),
-  ),
 ];

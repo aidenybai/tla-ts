@@ -407,6 +407,7 @@ const checkSpec = async (
       coverage: args.coverage,
       isSanyReported: true,
       isWarningEnabled: args.isWarningEnabled,
+      errorCodes: args.errorCodes,
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
       onPrint: userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),

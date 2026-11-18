@@ -46,6 +46,30 @@ describe("POSTCONDITION after a violation matches TLC", () => {
   it("keeps the status of the violation when the postcondition is false", async () => {
     expect((await checkCounterExample("CounterExampleFails"))[0]).toBe("invariant-violation");
   });
+
+  it("prints a warning the postcondition raises after the behavior, as TLC evaluates it there", async () => {
+    const warnings: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ x\' = x + 1\nPost == PrintT("post") /\\ [[a |-> 1] EXCEPT !.b = TLCGet("level")].a = 1\n====',
+      config: "INIT Init\nNEXT Next\nPOSTCONDITION Post",
+      onPrint: () => {},
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress.text);
+      },
+    });
+    expect([warnings, result.violation?.postconditionOutput]).toEqual([
+      [],
+      [
+        '"post"',
+        {
+          kind: "warning",
+          code: 2144,
+          text: "The EXCEPT was applied to non-existing fields of the value at\nline 6, col 28 to line 6, col 36 of module M",
+        },
+      ],
+    ]);
+  });
 });
 
 const checkAliased = async (body: string, config: string) => {

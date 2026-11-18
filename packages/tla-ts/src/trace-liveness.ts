@@ -304,6 +304,7 @@ const findLasso = (
       }
     }
     const last = cycle[cycle.length - 1];
+    // Deviation from TLC: LiveCheck1#printErrorTrace names the behavior's step after the lasso's last state as the step back, wherever it goes, and throws when there is none.
     return {
       positions,
       cyclePosition,

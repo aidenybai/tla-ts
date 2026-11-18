@@ -39,7 +39,6 @@ const SIGNATURES: Signature[] = [
   ["\\ominus", 0, [0, 0], [2, 2], [1, 1]],
   ["BagUnion", 0, [0], [2], [1]],
   ["\\sqsubseteq", 0, [0, 0], [2, 2], [1, 1]],
-  ["SubBag", 0, [0], [2], [1]],
   ["BagOfAll", 0, [1, 0], [2, 2], [1, 1]],
   ["BagCardinality", 0, [0], [2], [1]],
   ["CopiesIn", 0, [0, 0], [2, 2], [1, 1]],
@@ -80,7 +79,6 @@ const SIGNATURES: Signature[] = [
   ["ndJsonDeserialize", 0, [0], [3], [0]],
   ["RandomSubset", 0, [0, 0], [2, 2], [1, 1]],
   ["RandomSetOfSubsets", 0, [0, 0, 0], [2, 3, 2], [1, 0, 1]],
-  ["TestRandomSetOfSubsets", 0, [0, 0, 0], [2, 3, 2], [1, 0, 1]],
   ["_Track", 0, [0, 0], [3, 2], [0, 0]],
   ["_Counts", 0, [], [], []],
   ["_CheckName", 0, [0], [2], [1]],
@@ -151,7 +149,6 @@ const RANGES: Record<string, Record<string, [number, number, number, number]>> =
     "\\ominus": [51, 1, 60, 50],
     BagUnion: [74, 1, 79, 58],
     "\\sqsubseteq": [81, 1, 87, 42],
-    SubBag: [89, 1, 110, 11],
     BagOfAll: [122, 1, 130, 66],
     BagCardinality: [132, 1, 138, 8],
     CopiesIn: [140, 1, 145, 33],
@@ -191,7 +188,6 @@ const RANGES: Record<string, Record<string, [number, number, number, number]>> =
   Randomization: {
     RandomSubset: [30, 1, 30, 64],
     RandomSetOfSubsets: [48, 1, 49, 67],
-    TestRandomSetOfSubsets: [61, 1, 62, 71],
   },
   Json: {
     ToJson: [46, 1, 55, 37],

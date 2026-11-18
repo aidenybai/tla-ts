@@ -157,6 +157,25 @@ describe("ALIAS matches TLC", () => {
     },
   );
 
+  it("prints the error state of a simulation without a depth bound without the alias, as TLC's Simulator does", () => {
+    const states: TraceStep["state"][] = [];
+    simulate({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 2\nAlias == [y |-> x]\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+      seed: 4n,
+      traceDepth: -1,
+      traceCount: 1n,
+      aril: 0n,
+      isGenerating: false,
+      scheduler: "random",
+      onSimulation: (output) => {
+        if (output.kind === "behavior") states.push(output.trace[output.trace.length - 1].state);
+      },
+    });
+    expect(states).toEqual([{ x: 2 }]);
+  });
+
   it("rejects a second ALIAS", async () => {
     expect(() => parseConfig("ALIAS A\nALIAS B")).toThrow(TlaConfigError);
   });
