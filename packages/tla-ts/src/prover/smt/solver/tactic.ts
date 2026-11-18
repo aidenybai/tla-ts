@@ -233,9 +233,7 @@ const getUint = (params: TacticParams, name: string, defaultValue: number) => {
 
 const getNumeral = (params: TacticParams, name: string, defaultValue: string) => {
   const value = params.get(name);
-  const parts = (typeof value === "string" ? value : defaultValue).split(".");
-  const fraction = parts[1] ?? "";
-  return Rational.of(BigInt(parts[0] + fraction), 10n ** BigInt(fraction.length));
+  return Rational.fromDecimal(typeof value === "string" ? value : defaultValue);
 };
 
 export const getRewriterOptions = (manager: AstManager, params: TacticParams): RewriterOptions => ({

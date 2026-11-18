@@ -1755,8 +1755,7 @@ export const createSmtlibReader = (
   const parseUpolynomial = (sexpr: SExpr): bigint[] => {
     if (sexpr.kind === "numeral") return upolynomials.set([BigInt(sexpr.text)]);
     if (sexpr.kind === "decimal") {
-      const parts = sexpr.text.split(".");
-      const value = Rational.of(BigInt(parts[0] + parts[1]), 10n ** BigInt(parts[1].length));
+      const value = Rational.fromDecimal(sexpr.text);
       if (!value.isInt())
         throw new SmtParseError(
           "invalid univariate polynomial, integer coefficient expected",
@@ -2323,12 +2322,7 @@ export const createSmtlibReader = (
       return restricted.isNumeralAsReal
         ? manager.mkRealNumeral(Rational.of(BigInt(sexpr.text), 1n))
         : manager.mkNumeral(BigInt(sexpr.text));
-    if (sexpr.kind === "decimal") {
-      const parts = sexpr.text.split(".");
-      return manager.mkRealNumeral(
-        Rational.of(BigInt(parts[0] + parts[1]), 10n ** BigInt(parts[1].length)),
-      );
-    }
+    if (sexpr.kind === "decimal") return manager.mkRealNumeral(Rational.fromDecimal(sexpr.text));
     if (sexpr.kind === "bitvector") {
       const isBinary = sexpr.text[1] === "b";
       const digits = sexpr.text.slice(2);

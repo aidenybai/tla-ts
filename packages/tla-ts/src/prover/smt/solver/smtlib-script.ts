@@ -244,8 +244,7 @@ const getSoftParameters = (items: SExpr[]) => {
     const name = getParameterName(keyword.text);
     const value = items[index + 1];
     if (name === "weight" && (value?.kind === "numeral" || value?.kind === "decimal")) {
-      const [whole, fraction = ""] = value.text.split(".");
-      parameters.weight = Rational.of(BigInt(whole + fraction), 10n ** BigInt(fraction.length));
+      parameters.weight = Rational.fromDecimal(value.text);
       continue;
     }
     if (name !== "id" || !isSymbol(value))
