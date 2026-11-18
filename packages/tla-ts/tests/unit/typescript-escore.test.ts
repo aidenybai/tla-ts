@@ -178,4 +178,21 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource("true,4,01/2024"))).message).toContain(THREW);
     });
   });
+
+  describe("keeps the built-in methods that a script names and stops at the others", () => {
+    const getSource = (expected: string) => `
+      const view = new DataView(new ArrayBuffer(4));
+      view.setUint8(1, 200);
+      const result = [view.getUint8(1), view.getUint8(0), Math.max(1, 5)].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("200,0,5"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("200,0,1"))).message).toContain(THREW);
+    });
+  });
 });

@@ -1,5 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Expression, SourceLocation } from "../../ast";
+import { parseModule } from "../../parser";
 
 // ESCore, split into its definitions, which a compiled spec takes the ones it reaches of. The
 // directory holds ESCore.tla, the modules it extends, and parts, whose files tell which part
@@ -16,6 +18,13 @@ interface Definition {
   // and a pure helper doesn't.
   isStateful: boolean;
   group: string;
+  arms: MethodArm[];
+}
+
+interface MethodArm {
+  names: string[];
+  start: number;
+  end: number;
 }
 
 export interface GeneratedDefinition {
@@ -120,6 +129,7 @@ export const createLibrary = (directory: string): Library => {
       arity: match[2] === undefined ? 0 : match[2].split(",").length,
       isEager: match[2] === undefined || match[2].includes("("),
       isStateful: match[2]?.split(",")[0].trim() === "s",
+      arms: getMethodArms(text),
       group: groupOf.get(match[1]) ?? "",
     });
     order.push(match[1]);
@@ -194,52 +204,68 @@ const getParameters = (arity: number) =>
 const getStub = (definition: Definition) =>
   `${definition.name}(${getParameters(definition.arity)}) ==\n  Assert(FALSE, "tla-ts can't run ${definition.name}, which this spec leaves out of ESCore")`;
 
-const ARM = /^(\s*)(CASE|\[\])\s+m\s*(?:=\s*"([A-Za-z0-9_]+)"|\\in\s*\{([^}]*)\})\s*->/;
-
-// The closing brackets at the end of text that close what opened before it, which an arm that
-// ends a nested CASE carries.
-const getUnmatchedClose = (text: string) => {
-  let depth = 0;
-  for (let index = 0; index < text.length; index++) {
-    const char = text[index];
-    if (char === '"') {
-      index = text.indexOf('"', index + 1);
-      while (text[index - 1] === "\\") index = text.indexOf('"', index + 1);
-    } else if ("([{".includes(char)) depth++;
-    else if (")]}".includes(char) && --depth < 0) return text.slice(index).trim();
-  }
-  return "";
+// The CASE arms of a built-in's definition that dispatch on its method name m: each arm's names
+// and where its body starts and ends in the definition's text, as the parser reads it.
+const getMethodArms = (text: string): MethodArm[] => {
+  if (!/\bm\b/.test(getHeader(text))) return [];
+  const prefix = "---- MODULE Arms ----\n";
+  const lineStarts = [0, 0];
+  for (let index = 0; index < text.length; index++)
+    if (text[index] === "\n") lineStarts.push(index + 1);
+  const getOffset = (location: SourceLocation) =>
+    lineStarts[location.line - 1] + location.column - 1;
+  const arms: MethodArm[] = [];
+  const getNames = (condition: Expression) => {
+    if (condition.kind !== "Apply" || condition.args.length !== 2) return undefined;
+    const subject = condition.args[0];
+    const names = condition.args[1];
+    if (subject.kind !== "Identifier" || subject.name !== "m") return undefined;
+    if (condition.operator === "=" && names.kind === "String") return [names.value];
+    if (condition.operator !== "\\in" || names.kind !== "SetEnumeration") return undefined;
+    const values = names.elements.flatMap((element) =>
+      element.kind === "String" ? [element.value] : [],
+    );
+    return values.length === names.elements.length ? values : undefined;
+  };
+  const visit = (node: unknown): void => {
+    if (typeof node !== "object" || node === null) return;
+    if (Array.isArray(node)) return node.forEach(visit);
+    const expression = node as Expression;
+    if (expression.kind === "Case") {
+      for (const arm of expression.arms) {
+        const names = getNames(arm.condition);
+        const range = arm.body.location.range;
+        if (names !== undefined && range !== undefined) {
+          arms.push({ names, start: getOffset(range.start), end: getOffset(range.end) + 1 });
+        }
+      }
+    }
+    Object.values(node).forEach(visit);
+  };
+  visit(parseModule(`${prefix}${text}\n====`).definitions);
+  return arms;
 };
 
 // A built-in's definition with the body of each CASE arm for methods that no word reaches in
 // place of a stop, which keeps the arm's guard, so that no other arm runs in its place.
-const pruneMethods = (text: string, isReached: (name: string) => boolean) => {
-  if (!/\bm\b/.test(getHeader(text))) return text;
-  const lines = text.split("\n");
-  const kept: string[] = [];
-  for (let index = 0; index < lines.length; index++) {
-    const arm = ARM.exec(lines[index]);
-    const names =
-      arm === null
-        ? []
-        : arm[3] !== undefined
-          ? [arm[3]]
-          : [...(arm[4] ?? "").matchAll(/"([^"]+)"/g)].map((match) => match[1]);
-    if (arm === null || names.some(isReached)) {
-      kept.push(lines[index]);
-      continue;
-    }
-    const column = arm[1].length + (arm[2] === "CASE" ? 2 : 0);
-    const body = [lines[index].slice(arm[0].length)];
-    while (index + 1 < lines.length && (/^\s*/.exec(lines[index + 1])?.[0].length ?? 0) > column) {
-      index++;
-      body.push(lines[index]);
-    }
-    kept.push(
-      `${arm[0]} Assert(FALSE, "tla-ts can't run the built-in ${names[0]}, which this spec leaves out of ESCore")${getUnmatchedClose(body.join("\n"))}`,
+const pruneMethods = (
+  text: string,
+  arms: readonly MethodArm[],
+  isReached: (name: string) => boolean,
+) => {
+  const pruned = arms.filter((arm) => !arm.names.some(isReached));
+  // Only the outermost of the arms pruned, from the last back, so that each one's offsets hold.
+  return pruned
+    .filter(
+      (arm) =>
+        !pruned.some((other) => other !== arm && other.start <= arm.start && arm.end <= other.end),
+    )
+    .sort((left, right) => right.start - left.start)
+    .reduce(
+      (current, arm) =>
+        `${current.slice(0, arm.start)}Assert(FALSE, "tla-ts can't run the built-in ${arm.names[0]}, which this spec leaves out of ESCore")${current.slice(arm.end)}`,
+      text,
     );
-  }
-  return kept.join("\n");
 };
 
 // The module of a compiled program: the ESCore definitions that its generated ones reach, with
@@ -301,7 +327,7 @@ export const assembleModule = (
                   definition.isStateful &&
                   !/^(?:Is|Has)[A-Z]/.test(current)))
             ? undefined
-            : foldNames(pruneMethods(definition.text, isReached)));
+            : foldNames(pruneMethods(definition.text, definition.arms, isReached)));
       if (text === undefined) {
         if (definition !== undefined) stubbed.add(current);
         continue;
