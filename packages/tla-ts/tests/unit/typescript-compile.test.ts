@@ -56306,4 +56306,36 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("2,0"))).failure?.message).toContain("seen 2,");
     });
   });
+
+  describe("describes a property of a value whose type doesn't tell, where the heap holds it", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      "use strict";
+      var box = { seen: "" };
+      var hasOwnProperty = Object.prototype.hasOwnProperty;
+      function readKey(config) {
+        if (hasOwnProperty.call(config, "key")) {
+          var getter = Object.getOwnPropertyDescriptor(config, "key").get;
+          if (getter && getter.isReactWarning) return "warning";
+        }
+        return void 0 !== config.key ? "key" : "none";
+      }
+      var warned = {};
+      var warning = function () {};
+      warning.isReactWarning = true;
+      Object.defineProperty(warned, "key", { get: warning, configurable: true });
+      box.seen = [readKey({ key: 1 }), readKey({}), readKey(warned)].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("key,none,warning"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects the getter unread", async () => {
+      expect((await check(compile(getSource("key,none,key"), path))).failure?.message).toContain(
+        "seen key,none,warning",
+      );
+    });
+  });
 });
