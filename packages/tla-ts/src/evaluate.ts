@@ -1594,6 +1594,24 @@ const compileClosureCall = (
   };
 };
 
+// TLC's LET conses only its arity-0 definitions onto the context that TLCEval#tlcEval caches under when it is empty.
+const isTlcContextEmpty = (scope: Scope | undefined) => {
+  for (let node = scope; node !== undefined; node = node.parent) {
+    const binding = node.binding;
+    if (
+      binding.kind !== "Operator" ||
+      binding.operator.kind !== "Closure" ||
+      binding.operator.params.length === 0
+    ) {
+      return false;
+    }
+    let letScope = binding.operator.scope;
+    while (letScope !== undefined && letScope !== node) letScope = letScope.parent;
+    if (letScope !== node) return false;
+  }
+  return true;
+};
+
 const SET_OPERATORS = new Set(["\\cup", "\\cap", "\\"]);
 
 const compileApply = (
@@ -1640,7 +1658,7 @@ const compileApply = (
       !contextualApplications.has(expression) && !isNonconstant(args[0], environment);
     const tlcEvalValues = environment.tlcEvalValues;
     return (context) => {
-      if (!isCached || context.scope !== undefined) {
+      if (!isCached || !isTlcContextEmpty(context.scope)) {
         return global.evaluate(getLazyArguments(args, context), context);
       }
       const cached = tlcEvalValues.get(expression);
