@@ -178,11 +178,14 @@ class ModelTrail {
   constructor(private readonly manager: AstManager) {}
 
   hide(decl: number) {
-    this.entries.push(...retainDefinitions(this.manager, [{ decl, def: -1 }]));
+    this.manager.incDeclRef(decl);
+    this.entries.push({ decl, def: -1 });
   }
 
   define(decl: number, def: number) {
-    this.entries.push(...retainDefinitions(this.manager, [{ decl, def }]));
+    this.manager.incDeclRef(decl);
+    this.manager.incRef(def);
+    this.entries.push({ decl, def });
   }
 
   shrink(size: number) {
