@@ -1,6 +1,6 @@
 import type { Expression } from "./ast";
 import type { CheckOptions } from "./check";
-import type { CoverageReport } from "./coverage";
+import type { CoverageOutput } from "./coverage";
 import {
   getErrorExitCode,
   getUnexpectedException,
@@ -44,7 +44,7 @@ export type DepthFirstOutput =
   | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
   | { kind: "behavior"; states: Record<string, Value>[]; isInvariant: boolean }
   | { kind: "nested-expressions"; callStack: Expression[] }
-  | { kind: "coverage"; coverage: CoverageReport }
+  | CoverageOutput
   | { kind: "success"; optimistic: number; actual: number };
 
 interface StateEntry {

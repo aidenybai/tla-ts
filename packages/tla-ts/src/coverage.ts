@@ -55,6 +55,11 @@ export interface CoverageReport {
   relations: CoverageRelationReport[];
 }
 
+export interface CoverageOutput {
+  kind: "coverage";
+  coverage: CoverageReport;
+}
+
 interface CoverageVariable {
   label: string;
   distinct: number;

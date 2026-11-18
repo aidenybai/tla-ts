@@ -1,5 +1,5 @@
 import type { CheckOptions, TraceStep, Violation } from "./check";
-import type { CoverageReport } from "./coverage";
+import type { CoverageOutput } from "./coverage";
 import {
   isStackOverflow,
   TlaEvaluationError,
@@ -77,7 +77,7 @@ export interface SimulationStatistics {
 export type SimulationOutput =
   | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
   | { kind: "behavior"; trace: TraceStep[]; isLastStateOnly: boolean }
-  | { kind: "coverage"; coverage: CoverageReport }
+  | CoverageOutput
   | { kind: "progress"; statistics: SimulationStatistics }
   | { kind: "summary"; statistics: SimulationStatistics };
 
