@@ -182,8 +182,13 @@ const isAssignment = (node: ts.Node): node is ts.BinaryExpression =>
 
 // Whether tla-ts runs the generator that a call makes as a state machine: a sync generator whose
 // body makes no functions, so that its locals are values, and whose object only meets code that
-// steps it as one.
-export const isMachineGenerator = (node: ts.Node, callee: FunctionNode, context: Context) =>
+// steps it as one, such as a loop of the iterator protocol that made it.
+export const isMachineGenerator = (
+  node: ts.Node,
+  callee: FunctionNode,
+  isLooped: boolean,
+  context: Context,
+) =>
   context.heap !== undefined &&
   !isAsyncGenerator(callee) &&
   callee.body !== undefined &&
@@ -195,7 +200,7 @@ export const isMachineGenerator = (node: ts.Node, callee: FunctionNode, context:
   findNodes(callee, ts.isIdentifier).every(
     (identifier) => getArgumentsOwner(identifier, context.checker) !== callee,
   ) &&
-  isMachineUse(node, context);
+  (isLooped || isMachineUse(node, context));
 
 // Whether a loop's own statements are the only code around it in the body that runs more than once
 // for a path, so that each time the translation reaches it, what follows it is the same.

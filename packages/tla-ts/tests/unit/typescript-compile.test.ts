@@ -54459,5 +54459,32 @@ describe("BigInts", () => {
         (await checkModel(getHelpers("0,1560,3 3 3 -2 2,012,6,true,true"))).failure?.message,
       ).toContain("0,1560,3 3 3 2 -2,012,6,true,true");
     });
+
+    const getTaken = (taken: string, expected: string) => `
+      const numbers = {
+        *[Symbol.iterator]() {
+          for (let index = 0; index < 66; index++) yield index * 3;
+        },
+      };
+      const source: unknown = numbers;
+      const taken = ${taken};
+      const result = [taken.length, taken[65]].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a spread of more than 64 values of a generator method", async () => {
+      expect((await checkModel(getTaken("[...numbers]", "66|195"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the spread", async () => {
+      expect((await checkModel(getTaken("[...numbers]", "66|192"))).failure?.message).toContain(
+        "66|195",
+      );
+    });
+
+    it("agrees with Node on a typed array of more than 64 values of a generator method", async () => {
+      const typed = "new Uint8Array(source as never)";
+      expect((await checkModel(getTaken(typed, "66|195"))).failure).toBeUndefined();
+    });
   });
 });

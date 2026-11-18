@@ -228,6 +228,7 @@ import {
   takeFromIterable,
   takeFromIterator,
   openFromIterator,
+  openLoopedIterator,
   takeEntries,
   takeEvery,
   takeSpreads,
@@ -7783,6 +7784,8 @@ export const makeGenerator = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value?: Expression) => Formula,
+  // Whether the caller steps the object in a loop that runs a state machine.
+  isLooped = false,
 ): Formula =>
   bindCall(node, callee, argumentNodes, receiver, path, context, frame, (bound, inner) => {
     const name = context.names.getFresh("generator");
@@ -8018,7 +8021,7 @@ export const makeGenerator = (
         bindings: new Map([...inner.scope.bindings, [heapSymbol, identifier(name)]]),
       },
     };
-    const built = isMachineGenerator(node, callee, context)
+    const built = isMachineGenerator(node, callee, isLooped, context)
       ? tryMachine(() => makeMachine(node, callee, ref, allocated, start.scope, context, frame))
       : undefined;
     const allocateObject = (value: Expression, rest: Formula) =>
@@ -15422,7 +15425,7 @@ const translateNewBufferStatement = (
                 ),
                 readsPrototypeAfter(
                   allocated,
-                  openIterator(
+                  openLoopedIterator(
                     node,
                     values[0],
                     allocated,

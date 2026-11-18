@@ -347,6 +347,9 @@ export const callMethod = (
   frame: Frame,
   throwWith: (path: Path) => Formula,
   continueWith: (path: Path, result: Expression) => Formula,
+  // Whether the caller steps the generator that a generator method makes in a loop, which a state
+  // machine can then run.
+  isLooped = false,
 ) =>
   callValue(
     site,
@@ -392,6 +395,7 @@ export const callMethod = (
               context,
               frame,
               (after, result) => continueWith(after, result ?? getUndefined(context)),
+              isLooped,
             ),
             rest,
           ),
