@@ -3,7 +3,6 @@ import type { Expression } from "../ast";
 import { allocate, type Frame, type Path, throwTypeError, translateJoined } from "./actions";
 import {
   type Context,
-  findNodes,
   getAccessorFunctions,
   getSymbol,
   getUndefined,
@@ -706,9 +705,7 @@ export const getKeyedConversionFunctions = (node: ts.Node, context: Context) =>
 
 // The Symbol.toPrimitive methods that tla-ts calls, which can't see the hint that it doesn't pass.
 const getExoticMethods = (node: ts.Node, context: Context) =>
-  getMethods(node, "@@toPrimitive", context).filter((method) =>
-    findNodes(method, ts.isIdentifier).every((name) => name.text !== "arguments"),
-  );
+  getMethods(node, "@@toPrimitive", context);
 
 // ToPrimitive of an object, which calls its Symbol.toPrimitive method where it has one, and
 // otherwise its valueOf and toString methods in the order its hint gives. It throws a TypeError

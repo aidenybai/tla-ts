@@ -53634,4 +53634,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("gives a Symbol.toPrimitive method the arguments object of its one hint", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var left = {};
+      var log = "";
+      var leftArgs;
+      left[Symbol.toPrimitive] = function () {
+        log += "left";
+        leftArgs = arguments;
+        return 1;
+      };
+      var sum = left + 1;
+      var result = [sum, log, leftArgs.length, leftArgs[0]].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("2,left,1,default"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await check(compile(getSource("2,left,0,default"), path))).failure?.message,
+      ).toContain("result 2,left,1,default");
+    });
+  });
 });
