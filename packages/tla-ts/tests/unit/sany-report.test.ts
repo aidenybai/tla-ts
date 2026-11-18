@@ -519,6 +519,62 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("level-checks the recursive sections of a file's modules before the modules, apart, as SANY does", () => {
+    expect(
+      getReport({
+        M: "---- MODULE M ----\n---- MODULE Inner ----\nVARIABLE w\nRECURSIVE S(_)\nS(p) == IF p THEN []w ELSE S(p)\n====\nRECURSIVE R(_)\nR(p) == IF p THEN 1 ELSE R(p)\nASSUME R(TRUE)\n====\n",
+      }),
+    ).toEqual({ text: "", isFailed: false });
+    expect(
+      getReport({
+        M: "---- MODULE M ----\nVARIABLE v\n---- MODULE Inner ----\nVARIABLE w\nRECURSIVE S(_)\nS(p) == {<>w} \\cup S(p)\nA == {[]w}\n====\nRECURSIVE R(_)\nR(p) == {[]v} \\cup R(p)\nC == {<>v}\n====\n",
+      }).text,
+    ).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 6",
+        "",
+        "line 6, col 9 to line 6, col 13 of module M",
+        "",
+        "Level error in applying operator $SetEnumerate:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 6, col 9 to line 6, col 23 of module M",
+        "",
+        "Level error in applying operator \\union:",
+        "The level of argument 2 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 10, col 9 to line 10, col 13 of module M",
+        "",
+        "Level error in applying operator $SetEnumerate:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 10, col 9 to line 10, col 23 of module M",
+        "",
+        "Level error in applying operator \\union:",
+        "The level of argument 2 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 7, col 6 to line 7, col 10 of module M",
+        "",
+        "Level error in applying operator $SetEnumerate:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 11, col 6 to line 11, col 10 of module M",
+        "",
+        "Level error in applying operator $SetEnumerate:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {

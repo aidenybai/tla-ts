@@ -115,7 +115,8 @@ export interface ModuleGeneration {
   curLevel: number;
   unresolvedCount: number[];
   unresolvedSum: number;
-  recursiveSectionCount: number;
+  // Generator#recursiveSectionCount counts the recursive sections of a file's modules together.
+  recursiveSections: { count: number };
   functions: { name: string; node: OpApplNode }[];
   exceptStack: OpApplNode[];
   exceptSpecStack: OpApplNode[];
@@ -259,7 +260,7 @@ export const createOpDef = (
 export const setRecursionFields = (generation: ModuleGeneration, definition: OpDefNode) => {
   definition.letInLevel = generation.curLevel;
   if (generation.unresolvedSum > 0) {
-    definition.recursiveSection = generation.recursiveSectionCount;
+    definition.recursiveSection = generation.recursiveSections.count;
     definition.inRecursiveSection = generation.unresolvedCount[generation.curLevel] > 0;
     generation.currentModule.opDefsInRecursiveSection.push(definition);
   }
