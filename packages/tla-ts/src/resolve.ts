@@ -2809,7 +2809,10 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.assumptions.map((assumption) =>
         createCheck(assumption.location, undefined, assumption.name !== undefined, (inner) => {
-          resolveExpression(assumption.expression, undefined, inner);
+          // Resolution renames in place, so the definition that shares a named assumption's expression resolves it alone.
+          if (!module.definitions.some((definition) => definition.body === assumption.expression)) {
+            resolveExpression(assumption.expression, undefined, inner);
+          }
           if (assumption.name !== undefined) {
             bindModuleName(
               bindings,

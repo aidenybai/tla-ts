@@ -1094,14 +1094,24 @@ export const createModuleSubexpressions = (
         definitions: module.definitions.map(
           (definition) => resolvedDefinitions.get(definition) ?? definition,
         ),
-        assumptions: module.assumptions.map((assumption) =>
-          isMapped(assumption.expression)
+        assumptions: module.assumptions.map((assumption) => {
+          const definition = module.definitions.find(
+            (candidate) => candidate.body === assumption.expression,
+          );
+          // A named assumption keeps sharing its expression with its definition.
+          if (definition) {
+            return {
+              ...assumption,
+              expression: (resolvedDefinitions.get(definition) ?? definition).body,
+            };
+          }
+          return isMapped(assumption.expression)
             ? {
                 ...assumption,
                 expression: resolve(getExpanded(assumption.expression), assumption.location),
               }
-            : assumption,
-        ),
+            : assumption;
+        }),
         theorems: module.theorems.map((theorem) => {
           const resolver = createProofResolver(getVisibleLookup(proofLookup, theorem.location));
           const statement = theorem.statement;
