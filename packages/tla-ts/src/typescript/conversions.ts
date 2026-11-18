@@ -3,7 +3,9 @@ import type { Expression } from "../ast";
 import { allocate, type Frame, type Path, throwTypeError, translateJoined } from "./actions";
 import {
   type Context,
+  findNodes,
   getAccessorFunctions,
+  getParameters,
   getSymbol,
   getUndefined,
   isInertValue,
@@ -704,8 +706,15 @@ export const getKeyedConversionFunctions = (node: ts.Node, context: Context) =>
   CONVERSION_KEYS.flatMap((key) => getWrittenFunctions(node, key, context));
 
 // The Symbol.toPrimitive methods that tla-ts calls, which can't see the hint that it doesn't pass.
+// A call, such as a regexp's protocol, may convert many values, so it runs only the methods that
+// read neither their hint nor their arguments, as each one's body would copy into each.
 const getExoticMethods = (node: ts.Node, context: Context) =>
-  getMethods(node, "@@toPrimitive", context);
+  getMethods(node, "@@toPrimitive", context).filter(
+    (method) =>
+      !ts.isCallExpression(node) ||
+      (getParameters(method).length === 0 &&
+        findNodes(method, ts.isIdentifier).every((name) => name.text !== "arguments")),
+  );
 
 // ToPrimitive of an object, which calls its Symbol.toPrimitive method where it has one, and
 // otherwise its valueOf and toString methods in the order its hint gives. It throws a TypeError

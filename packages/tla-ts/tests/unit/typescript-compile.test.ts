@@ -53660,6 +53660,24 @@ describe("BigInts", () => {
         (await check(compile(getSource("2,left,0,default"), path))).failure?.message,
       ).toContain("result 2,left,1,default");
     });
+
+    it("stops where a regexp's protocol converts through a method that reads its hint", async () => {
+      const source = `
+        var index = {};
+        var toPrimitiveHint;
+        index[Symbol.toPrimitive] = function (hint) {
+          toPrimitiveHint = hint;
+        };
+        var r = /./;
+        r.exec = function () {
+          return { length: 1, 0: "a", index: index };
+        };
+        var replaced = r[Symbol.replace]("ab", "$\`");
+      `;
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't call this Symbol.toPrimitive method",
+      );
+    });
   });
 
   describe("throws the error of converting a value that a typed array's index takes", () => {
