@@ -482,6 +482,39 @@ describe("level checking matches SANY", () => {
       "---- MODULE M ----\nVARIABLE x\nAp(F(_), a) == F(a)\nRECURSIVE R(_), S(_)\nR(n) == IF n THEN TRUE ELSE S(n)\nS(n) == Ap(LAMBDA v : R(v), n')\n====",
       [["line 6, col 1 to line 6, col 31", "Argument 1 of recursive operator S is primed"]],
     ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nA == []x\nRECURSIVE R(_)\nR(n) == IF n THEN {A!:} ELSE R(n)'\n====",
+      [
+        ["line 5, col 19 to line 5, col 23", "set"],
+        ["line 5, col 1 to line 5, col 34", "Argument 1 of recursive operator R is primed"],
+        ["line 5, col 30 to line 5, col 34", "prime"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nB == TRUE\n====\nI == INSTANCE Inner\nRECURSIVE R(_)\nR(n) == IF n THEN {[]x} ELSE I!B /\\ R(n)'\n====",
+      [
+        ["line 8, col 19 to line 8, col 23", "set"],
+        ["line 8, col 1 to line 8, col 41", "Argument 1 of recursive operator R is primed"],
+        ["line 8, col 37 to line 8, col 41", "prime"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nA == []x\nASSUME LET RECURSIVE F(_)\n           F(n) == IF n THEN {A!:} ELSE F(n)'\n       IN F(TRUE)\n====",
+      [
+        ["line 5, col 30 to line 5, col 34", "set"],
+        ["line 5, col 12 to line 5, col 45", "Argument 1 of recursive operator F is primed"],
+        ["line 5, col 41 to line 5, col 45", "prime"],
+        ["line 4, col 1 to line 6, col 17", "assume 3"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nA == []x\nTHEOREM LET RECURSIVE F(_)\n            F(n) == IF n THEN {A!:} ELSE F(n)'\n        IN F(TRUE)\n====",
+      [
+        ["line 5, col 31 to line 5, col 35", "set"],
+        ["line 5, col 13 to line 5, col 46", "Argument 1 of recursive operator F is primed"],
+        ["line 5, col 42 to line 5, col 46", "prime"],
+      ],
+    ],
   ])("checks recursive sections first and twice like SANY: %j", async (source, errors) => {
     const messages: Record<string, string> = {
       set: "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
@@ -493,6 +526,8 @@ describe("level checking matches SANY", () => {
         "Level error: assumptions must be level 0 (Constant), \nbut this one has level 3.",
       "argument 2":
         "Level error in applying operator Ap:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+      prime:
+        "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
     };
     await expect(check({ source, config: "" })).rejects.toThrow(
       createSanyError(
