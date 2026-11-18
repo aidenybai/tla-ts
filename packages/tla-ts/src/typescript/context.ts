@@ -6949,20 +6949,28 @@ const isInGeneric = (node: ts.Node | undefined) =>
 
 // Whether a function fits a callee where one's type names the type parameters of a generic
 // function around it, which TypeScript relates to no other type: where the callee's calls pass the
-// arguments that the function needs. The call still runs it only where the value holds it.
+// arguments that the function needs. The call still runs it only where the value holds it. A
+// callee's own function binds what it holds, so only one that a closure reads may hold another.
 const isGenericFit = (
   candidate: FunctionNode,
   callee: ts.Expression,
   types: readonly ts.Type[],
   context: Context,
-) =>
-  (isInGeneric(candidate) ||
-    isInGeneric(getValueDeclaration(getSymbol(skipCasts(callee), context.checker), context))) &&
-  types.every((type) =>
-    type
-      .getCallSignatures()
-      .some((signature) => signature.parameters.length >= getNeededCount(candidate)),
+) => {
+  const declaration = getValueDeclaration(getSymbol(skipCasts(callee), context.checker), context);
+  const isCaptured =
+    declaration !== undefined &&
+    ts.findAncestor(callee.parent, ts.isFunctionLike) !==
+      ts.findAncestor(declaration.parent, ts.isFunctionLike);
+  return (
+    (isInGeneric(candidate) || (isCaptured && isInGeneric(declaration))) &&
+    types.every((type) =>
+      type
+        .getCallSignatures()
+        .some((signature) => signature.parameters.length >= getNeededCount(candidate)),
+    )
   );
+};
 
 export const getClosures = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
@@ -6972,13 +6980,10 @@ export const getClosures = (callee: ts.Expression, context: Context) => {
   const called = type.isIntersection()
     ? type.types.filter((member) => member.getCallSignatures().length > 0)
     : [type];
-  // A closure carries its environment, so a call in any file may run it.
-  return [...context.closures.values()]
-    .flat()
-    .filter(
-      (closure) =>
-        called.every((member) =>
-          context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), member),
-        ) || isGenericFit(closure, callee, called, context),
-    );
+  return (context.closures.get(callee.getSourceFile()) ?? []).filter(
+    (closure) =>
+      called.every((member) =>
+        context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), member),
+      ) || isGenericFit(closure, callee, called, context),
+  );
 };
