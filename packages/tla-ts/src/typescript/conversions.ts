@@ -264,6 +264,15 @@ export const isConvertedClassKey = (node: ts.Node, context: Context): node is ts
   ts.isClassLike(node.parent.parent.parent) &&
   isObjectOperand(node, context);
 
+// The methods that convert a key that they take, of Object and of an object.
+const KEY_CONVERTING_METHODS = new Set([
+  "defineProperty",
+  "getOwnPropertyDescriptor",
+  "hasOwn",
+  "hasOwnProperty",
+  "propertyIsEnumerable",
+]);
+
 // An object that a call converts to a property key, which runs its toString and valueOf: a name's,
 // or a wrapper's that new makes, as the key
 // of Object.defineProperty, Object.getOwnPropertyDescriptor, or Object.hasOwn of an object, which
@@ -277,6 +286,7 @@ export const isConvertedPropertyKey = (node: ts.Node, context: Context): node is
     call === undefined ||
     !ts.isCallExpression(call) ||
     !ts.isPropertyAccessExpression(call.expression) ||
+    !KEY_CONVERTING_METHODS.has(call.expression.name.text) ||
     call.arguments.some(ts.isSpreadElement) ||
     !(isObjectOperand(node, context) || isAnyOperand(node, context))
   ) {
