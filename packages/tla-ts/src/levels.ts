@@ -428,48 +428,6 @@ const getExceedingError = (operator: OperatorLevels, index: number) =>
     `The level of argument ${index + 1} exceeds the maximum level allowed by the operator`,
   );
 
-// SANY also checks an operator argument against the levels the operator applies it to.
-const getArgumentFailures = (
-  operator: OperatorLevels,
-  operands: Operand[],
-  index: number,
-  argument: OperatorLevels,
-) => {
-  const positions = Array.from(
-    { length: operator.formals[index]?.arity ?? 0 },
-    (_value, position) => position,
-  );
-  return [
-    ...positions.flatMap((position) => {
-      const minimum = operator.minMaxLevels[index]?.[position] ?? 0;
-      return getMaxLevel(argument, position) < minimum
-        ? [
-            {
-              isReported: operator.isCorrect && argument.isCorrect,
-              message: getApplicationError(
-                operator,
-                `The permitted level of argument ${position + 1} of the operator argument ${index + 1} \nmust be at least ${minimum}`,
-              ),
-            },
-          ]
-        : [];
-    }),
-    ...operands.flatMap((other, otherIndex) =>
-      positions.flatMap((position) =>
-        operator.conditions.has(getConditionKey(index, otherIndex, position)) &&
-        other.data.level > getMaxLevel(argument, position)
-          ? [
-              {
-                isReported: argument.isCorrect && other.data.isCorrect,
-                message: getExceedingError(operator, otherIndex),
-              },
-            ]
-          : [],
-      ),
-    ),
-  ];
-};
-
 export const createLevelAnalyzer = (context: LevelContext) => {
   const definitionLevels = new Map<Definition, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
@@ -528,23 +486,47 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     };
     const hasCondition = (operandIndex: number, otherIndex: number, argumentIndex: number) =>
       operator.conditions.has(getConditionKey(operandIndex, otherIndex, argumentIndex));
-    const failures = operands.flatMap((operand, index) => {
-      const exceeding =
-        operand.data.level > getMaxLevel(operator, index)
-          ? [
-              {
-                isReported: operator.isCorrect && operand.data.isCorrect,
-                message: getExceedingError(operator, index),
-              },
-            ]
-          : [];
-      return operand.kind === "Operator"
-        ? [...exceeding, ...getArgumentFailures(operator, operands, index, operand.data)]
-        : exceeding;
-    });
-    failures
-      .filter((failure) => failure.isReported)
-      .forEach((failure) => messages.push(failure.message));
+    let isLevelCorrect = true;
+    for (let index = 0; index < operands.length; index++) {
+      const operand = operands[index];
+      if (operand.data.level > getMaxLevel(operator, index)) {
+        if (operator.isCorrect && operand.data.isCorrect) {
+          messages.push(getExceedingError(operator, index));
+        }
+        isLevelCorrect = false;
+      }
+      if (operand.kind !== "Operator") continue;
+      const argument = operand.data;
+      const arity = operator.formals[index]?.arity ?? 0;
+      for (let position = 0; position < arity; position++) {
+        const minimum = operator.minMaxLevels[index]?.[position] ?? 0;
+        if (getMaxLevel(argument, position) >= minimum) continue;
+        if (operator.isCorrect && argument.isCorrect) {
+          messages.push(
+            getApplicationError(
+              operator,
+              `The permitted level of argument ${position + 1} of the operator argument ${index + 1} \nmust be at least ${minimum}`,
+            ),
+          );
+        }
+        isLevelCorrect = false;
+      }
+      for (let otherIndex = 0; otherIndex < operands.length; otherIndex++) {
+        const other = operands[otherIndex];
+        for (let position = 0; position < arity; position++) {
+          if (
+            !hasCondition(index, otherIndex, position) ||
+            other.data.level <= getMaxLevel(argument, position)
+          ) {
+            continue;
+          }
+          if (argument.isCorrect && other.data.isCorrect) {
+            messages.push(getExceedingError(operator, otherIndex));
+          }
+          isLevelCorrect = false;
+        }
+      }
+    }
     const data = createData(
       Math.max(
         operator.level,
@@ -555,7 +537,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ),
     );
     data.isCorrect =
-      failures.length === 0 &&
+      isLevelCorrect &&
       operands.every((operand) => operand.data.isCorrect) &&
       ranges.every((range) => range.isCorrect);
     operator.params.forEach((param) => data.params.add(param));
