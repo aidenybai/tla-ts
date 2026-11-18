@@ -2002,6 +2002,18 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts a LET definition that an action taken out of the LET refers to, as TLC's cost model follows the reference", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == \\/ x < 2 /\\ x' = x + 1 /\\ y' = y\n        \\/ LET D == \\E e \\in {0, 1} : x' = e IN D /\\ y' = y\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[2]).toEqual([
+      "line 6, col 39 to line 6, col 44 of module E: 6",
+      "line 6, col 30 to line 6, col 35 of module E: 3:9",
+      "line 6, col 54 to line 6, col 59 of module E: 6",
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",

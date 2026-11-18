@@ -92,6 +92,9 @@ interface Resolved {
   scope: Local | undefined;
 }
 
+// Tool#getActions takes an action out of a LET, and TLC's cost model still follows a reference to its definitions.
+export const letDefinitions = new WeakMap<Scope, Definition>();
+
 const STANDARD_MODULES = new Set([
   "FiniteSets",
   "Sequences",
@@ -576,9 +579,23 @@ export const buildCoverage = (
     }
   };
 
+  const getScopeLocals = (scope: Scope | undefined) => {
+    const scoped: Definition[] = [];
+    for (let node = scope; node; node = node.parent) {
+      const definition = letDefinitions.get(node);
+      if (definition) scoped.push(definition);
+    }
+    const locals = scoped.reduceRight<Local | undefined>(
+      (parent, definition) => ({ name: definition.name, definition, scope: undefined, parent }),
+      undefined,
+    );
+    for (let local = locals; local; local = local.parent) local.scope = locals;
+    return locals;
+  };
+
   coverage.relations.forEach((relation) => {
     stack.push(relation.node);
-    walk(relation.expression, undefined);
+    walk(relation.expression, getScopeLocals(relation.scope));
     stack.pop();
   });
 };
