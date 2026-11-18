@@ -227,7 +227,10 @@ export const PlaygroundHeader = () => {
   );
   return (
     <header className="flex shrink-0 items-center gap-2 border-b px-4 py-2.5">
-      <a href="/" className="-m-2 flex shrink-0 items-center gap-2 p-2 font-medium text-foreground">
+      <a
+        href="/"
+        className="group/logo -m-2 flex shrink-0 items-center gap-2 p-2 font-medium text-foreground"
+      >
         <Logo />
         <span className="max-sm:sr-only">TLA-ts</span>
       </a>
