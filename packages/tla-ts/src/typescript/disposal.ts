@@ -130,7 +130,7 @@ export const disposeAll = (
   // A DisposableStack's dispose, or an AsyncDisposableStack's disposeAsync, which a stack that the
   // path made holds.
   const disposeStacks = (next: (path: Path, value?: Expression) => Formula) =>
-    resource.isCallback || (path.tasks?.stacks.size ?? 0) === 0
+    resource.isCallback || (path.tasks?.stacks.size ?? 0) === 0 || !context.isStackMethodHeld
       ? unknown
       : ifThenElse(
           useJavaScript(

@@ -244,6 +244,10 @@ export interface Context {
   // The built-in methods that each file reads as values, as obj.pop = Array.prototype.pop does,
   // which a call of a key whose type doesn't tell which function it holds may run.
   storedBuiltIns: ReadonlyMap<ts.SourceFile, ReadonlySet<string>>;
+  // Whether the script may hold a DisposableStack's dispose or disposeAsync as a value, which a
+  // resource may then dispose with: it reads a key of that name other than to call it, or names
+  // the key in a string.
+  isStackMethodHeld: boolean;
   // The closures of each file, which a call through a value whose type has calls may run.
   closures: ReadonlyMap<ts.SourceFile, readonly Closure[]>;
   // The vars, parameters, and declared functions of the functions of a script that run once, which
@@ -743,6 +747,7 @@ export const createContext = (
     doubles: new Set(),
     heapCollections: new Set(),
     storedBuiltIns: new Map(),
+    isStackMethodHeld: true,
     closures: new Map(),
     onceLocals: new Set(),
     onceFunctions: new Set(),

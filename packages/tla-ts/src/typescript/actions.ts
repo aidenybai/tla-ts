@@ -19956,11 +19956,134 @@ const translateTry = (
         )
       : runCatch(catchClause, caught, thrown.value);
   };
-  return translateStatements(
+  const tryPath = { ...path, scope: { ...path.scope, isCatching: true } };
+  // A catch whose parameter is a name, or that has none, runs once, as an operator of what the try
+  // block changed and the value thrown, for each place in the block whose throw leaves the state
+  // that code after the try reads as it was: the same tasks, generators, and functions, and the
+  // bindings from before but those that the block changed. Another place runs the catch itself.
+  // A block that makes a function, which may read the block's own bindings, or that suspends,
+  // runs the catch at each place.
+  const parameter = catchClause?.variableDeclaration?.name;
+  const owner = ts.findAncestor(statement, ts.isFunctionLike);
+  const isJoining =
+    catchClause !== undefined &&
+    context.heap !== undefined &&
+    path.isAction !== true &&
+    (parameter === undefined || ts.isIdentifier(parameter)) &&
+    !hasYield(statement.tryBlock) &&
+    findNodes(statement.tryBlock, ts.isFunctionLike).length === 0 &&
+    !findNodes(statement.tryBlock, ts.isAwaitExpression).some(
+      (node) => ts.findAncestor(node, ts.isFunctionLike) === owner,
+    );
+  if (!isJoining || catchClause === undefined) {
+    return translateStatements(
+      statement.tryBlock.statements,
+      tryPath,
+      context,
+      guardYields({ ...outer, throwTo: handle }),
+    );
+  }
+  const changed = getChanged(statement.tryBlock, path, context);
+  const name = context.names.getFresh("Catch");
+  const parameters = changed.map((symbol) => {
+    const binding = path.scope.bindings.get(symbol);
+    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
+  });
+  const thrownName = context.names.getFresh("thrown");
+  // A binding that the block's var declares outlives the block. Another that the path holds and
+  // that it held before is a local of the block or of a function that it called, which nothing
+  // after the try reads.
+  const isOutliving = (symbol: ts.Symbol) => {
+    const declaration = getValueDeclaration(symbol, context);
+    return (
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      ts.isVariableDeclarationList(declaration.parent) &&
+      (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === statement.tryBlock) !== undefined
+    );
+  };
+  const isSameFunctions = (functions: Path["scope"]["functions"]) =>
+    functions === path.scope.functions ||
+    (functions.size === path.scope.functions.size &&
+      [...functions].every((entry) => path.scope.functions.get(entry[0]) === entry[1]));
+  const isJoinable = (inner: Path) =>
+    inner.tasks === path.tasks &&
+    inner.disposal === path.disposal &&
+    inner.generators === path.generators &&
+    inner.unboundThis === path.unboundThis &&
+    inner.isAssigned === path.isAssigned &&
+    isSameFunctions(inner.scope.functions) &&
+    changed.every((symbol) => inner.scope.bindings.has(symbol)) &&
+    [...inner.scope.bindings].every((entry) =>
+      path.scope.bindings.has(entry[0])
+        ? path.scope.bindings.get(entry[0]) === entry[1] || changed.includes(entry[0])
+        : !isOutliving(entry[0]),
+    );
+  let joins = 0;
+  const body = translateStatements(
     statement.tryBlock.statements,
-    { ...path, scope: { ...path.scope, isCatching: true } },
+    tryPath,
     context,
-    guardYields({ ...outer, throwTo: handle }),
+    guardYields({
+      ...outer,
+      throwTo: (inner, thrown) => {
+        if (thrown.isGenerator === true || !isJoinable(inner)) return handle(inner, thrown);
+        joins += 1;
+        const values = [
+          ...changed.map((symbol) => inner.scope.bindings.get(symbol)),
+          thrown.value,
+        ].map((value) => value ?? getUndefined(context));
+        // Each value binds before the call, as the operator reads it after the state changes.
+        const names = values.map((value) =>
+          inner.isLooping || ["Identifier", "Number", "String"].includes(value.kind)
+            ? undefined
+            : context.names.getFresh("caught"),
+        );
+        return names.reduceRight<Formula>(
+          (rest, bound, position) =>
+            bound === undefined ? rest : bindValue(bound, values[position], rest),
+          leaf(
+            call(
+              name,
+              values.map((value, position) => {
+                const bound = names[position];
+                return bound === undefined ? value : identifier(bound);
+              }),
+            ),
+          ),
+        );
+      },
+    }),
+  );
+  if (joins === 0) return body;
+  const caught = runCatch(
+    catchClause,
+    {
+      ...path,
+      scope: {
+        ...path.scope,
+        isCatching,
+        bindings: new Map([
+          ...path.scope.bindings,
+          ...changed.map((symbol, position): [ts.Symbol, Expression] => [
+            symbol,
+            identifier(parameters[position]),
+          ]),
+        ]),
+      },
+    },
+    identifier(thrownName),
+  );
+  return letIn(
+    [
+      define(
+        name,
+        [...parameters, thrownName].map((parameter) => ({ name: parameter, arity: 0 })),
+        render(caught),
+      ),
+    ],
+    body,
   );
 };
 

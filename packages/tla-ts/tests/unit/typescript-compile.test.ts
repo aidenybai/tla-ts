@@ -55908,4 +55908,62 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a catch once for the places in its try that throw", () => {
+    const getSource = (expected: string) => `
+      const first = new Error("first");
+      const second = new Error("second");
+      function run() {
+        const stack = new DisposableStack();
+        stack.use({ [Symbol.dispose]() { throw first; } });
+        stack.use({ [Symbol.dispose]() { throw second; } });
+        stack.dispose();
+      }
+      function check(): string {
+        try {
+          run();
+        } catch (error) {
+          if (error instanceof SuppressedError) {
+            return [error.error === first, error.suppressed === second].join("/");
+          }
+          return "other";
+        }
+        return "none";
+      }
+      const seen = check();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true/true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the errors in the other order", async () => {
+      expect((await checkModel(getSource("false/false"))).failure?.message).toContain(
+        "seen true/true",
+      );
+    });
+  });
+
+  describe("disposes with a stack's own dispose where a resource holds it as its dispose method", () => {
+    const getSource = (expected: string) => `
+      let seen = "none";
+      const outer = new DisposableStack();
+      outer.use({ [Symbol.dispose]: DisposableStack.prototype.dispose });
+      try {
+        outer.dispose();
+      } catch (error) {
+        seen = error instanceof TypeError ? "type" : "other";
+      }
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("type"))).failure).toBeUndefined();
+    });
+
+    it("rejects a disposal that doesn't throw", async () => {
+      expect((await checkModel(getSource("none"))).failure?.message).toContain("seen type");
+    });
+  });
 });
