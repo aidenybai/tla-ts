@@ -248,6 +248,9 @@ export interface Context {
   // resource may then dispose with: it reads a key of that name other than to call it, or names
   // the key in a string.
   isStackMethodHeld: boolean;
+  // The keys that the script's syntax can make, or undefined where it makes one that isn't a
+  // literal. A callee that reads another key holds no function that the script made.
+  madeKeys: ReadonlySet<string> | undefined;
   // The closures of each file, which a call through a value whose type has calls may run.
   closures: ReadonlyMap<ts.SourceFile, readonly Closure[]>;
   // The vars, parameters, and declared functions of the functions of a script that run once, which
@@ -748,6 +751,7 @@ export const createContext = (
     heapCollections: new Set(),
     storedBuiltIns: new Map(),
     isStackMethodHeld: true,
+    madeKeys: undefined,
     closures: new Map(),
     onceLocals: new Set(),
     onceFunctions: new Set(),

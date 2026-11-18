@@ -14662,16 +14662,25 @@ const getDispatched = (
   // A call dispatches where the callee may hold any function, even one that the program only calls
   // by name, which it then leaves out.
   const run = getFoundRun(functions, context, called);
-  if (run >= 0) {
-    const runs = context.calleeRuns;
-    return runs !== undefined && hasBit(runs.heldBits, run)
-      ? getRunFunctions(run, context)
-      : undefined;
-  }
-  const dispatched = getAllCandidates(node, functions, context, called);
-  return dispatched !== undefined && dispatched.length > 0
-    ? dispatched.filter((candidate) => !isOnlyCalled(candidate, context))
-    : undefined;
+  const candidates = run >= 0 ? undefined : getAllCandidates(node, functions, context, called);
+  const dispatched =
+    run >= 0
+      ? context.calleeRuns !== undefined && hasBit(context.calleeRuns.heldBits, run)
+        ? getRunFunctions(run, context)
+        : undefined
+      : candidates !== undefined && candidates.length > 0
+        ? candidates.filter((candidate) => !isOnlyCalled(candidate, context))
+        : undefined;
+  // A callee that reads a key that the script never makes holds none of its functions, though it
+  // may hold a built-in one.
+  const callee = skipCasts(called);
+  return dispatched === undefined
+    ? undefined
+    : ts.isPropertyAccessExpression(callee) &&
+        context.madeKeys !== undefined &&
+        !context.madeKeys.has(callee.name.text)
+      ? []
+      : dispatched;
 };
 
 // RegExp.prototype.exec and test, where a script stores them as values, which throw a TypeError

@@ -98,6 +98,7 @@ import { classifySharedHelpers } from "./shared-calls";
 import { TlaTypeScriptError } from "../errors";
 import { getUnlistedParameter, translateStep } from "./steps";
 import { TIME_ZONES } from "./time-zones";
+import { findMadeKeys } from "./made-keys";
 import { DATE_FORMATS } from "./date-formats";
 import {
   apply,
@@ -1041,6 +1042,7 @@ export const compile = (
         node.expression.getText() !== "Symbol") ||
       (ts.isElementAccessExpression(node) &&
         ["Symbol.dispose", "Symbol.asyncDispose"].includes(node.argumentExpression.getText()));
+    context.madeKeys = findMadeKeys(program.files, program.checker);
     context.isStackMethodHeld = program.files.some(
       (file) =>
         findNodes(

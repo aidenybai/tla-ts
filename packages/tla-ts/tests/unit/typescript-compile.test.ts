@@ -56151,4 +56151,64 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none"))).failure?.message).toContain("seen type");
     });
   });
+
+  describe("runs a call through a cast of a key that nothing makes as the built-in it reads", () => {
+    const getSource = (expected: string) => `
+      const store: { [key: string]: unknown } = {};
+      function expectThrow(run: () => unknown): string {
+        try {
+          run();
+        } catch (error) {
+          return error instanceof TypeError ? "type" : "other";
+        }
+        return "none";
+      }
+      function first() { return 1; }
+      (store.__defineGetter__ as (...args: unknown[]) => unknown)("key", first);
+      const seen = [
+        expectThrow(function () { (store.__defineGetter__ as (...args: unknown[]) => unknown)("key", 1); }),
+        expectThrow(function () { (store.__defineSetter__ as (...args: unknown[]) => unknown)("key", 2); }),
+        expectThrow(function () { (store.__defineGetter__ as (...args: unknown[]) => unknown)("other", first); }),
+        expectThrow(function () { (store.__defineSetter__ as (...args: unknown[]) => unknown)("key", first); }),
+        expectThrow(function () { (store.__defineGetter__ as (...args: unknown[]) => unknown)("key", "x"); }),
+        expectThrow(function () { (store.__defineSetter__ as (...args: unknown[]) => unknown)("key", null); }),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("type,type,none,none,type,type"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a definition that doesn't throw", async () => {
+      expect(
+        (await checkModel(getSource("none,type,none,none,type,type"))).failure?.message,
+      ).toContain("seen type,type,none,none,type,type");
+    });
+  });
+
+  describe("runs a function that a key a script makes holds through a cast", () => {
+    const getSource = (expected: string) => `
+      const target: { [key: string]: unknown } = {};
+      function twice(value: number) { return value * 2; }
+      Object.defineProperty(target, "doubled", { value: twice });
+      const named = "tri" + "pled";
+      target[named] = function (value: number) { return value * 3; };
+      const seen = [
+        (target.doubled as (value: number) => number)(4),
+        (target.tripled as (value: number) => number)(4),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("8,12"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("8,8"))).failure?.message).toContain("seen 8,12");
+    });
+  });
 });
