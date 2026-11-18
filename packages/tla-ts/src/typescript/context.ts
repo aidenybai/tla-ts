@@ -4007,6 +4007,24 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure =>
   context.heap !== undefined && isOutliving(node, context);
 
 // Whether a function is a closure, before tla-ts knows whether the heap holds objects.
+// The expression whose value a function gives, through parentheses and casts, the operands of ??,
+// ||, and &&, and the branches of ?:, as in combineAll ?? ((collection) => {}).
+const getValueSite = (node: ts.Node): ts.Node => {
+  const parent = node.parent;
+  return ts.isParenthesizedExpression(parent) ||
+    ts.isAsExpression(parent) ||
+    ts.isSatisfiesExpression(parent) ||
+    (ts.isBinaryExpression(parent) &&
+      [
+        ts.SyntaxKind.QuestionQuestionToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.AmpersandAmpersandToken,
+      ].includes(parent.operatorToken.kind)) ||
+    (ts.isConditionalExpression(parent) && parent.condition !== node)
+    ? getValueSite(parent)
+    : node;
+};
+
 export const isOutliving = (node: ts.Node, context: Context): node is Closure => {
   const isMember =
     ((ts.isMethodDeclaration(node) && node.body !== undefined) || isPlainAccessor(node)) &&
@@ -4059,15 +4077,16 @@ export const isOutliving = (node: ts.Node, context: Context): node is Closure =>
     );
   }
   if (isValueArgument(node, context)) return !isOnce(node.parent, context) || isReadingLocals();
-  const assignment = node.parent;
+  const site = getValueSite(node);
+  const assignment = site.parent;
   const isAssignment =
     ts.isBinaryExpression(assignment) &&
     assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    assignment.right === node &&
+    assignment.right === site &&
     ts.isExpressionStatement(assignment.parent);
   if (
     (ts.isPropertyAssignment(assignment) &&
-      assignment.initializer === node &&
+      assignment.initializer === site &&
       ts.isObjectLiteralExpression(assignment.parent)) ||
     (isAssignment && ts.isPropertyAccessExpression(assignment.left))
   ) {
@@ -4097,7 +4116,7 @@ export const isOutliving = (node: ts.Node, context: Context): node is Closure =>
       ) &&
     isFactoryCalled(maker, context);
   const isReturned =
-    isReturnOf(node) ||
+    isReturnOf(site) ||
     (heldSymbol !== undefined &&
       (context.escapedNames.get(node.getSourceFile())?.has(heldSymbol) ?? false) &&
       !isFactory());
@@ -6358,7 +6377,10 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
   };
   const row = isSuperAccess(callee) ? -1 : getDispatchRow(type, context);
   return found.filter(
-    (candidate) => isDispatchAssignable(candidate, row, type, context) && isTyped(candidate),
+    (candidate) =>
+      (isDispatchAssignable(candidate, row, type, context) ||
+        isGenericFit(candidate, callee, [type], context)) &&
+      isTyped(candidate),
   );
 };
 
@@ -6445,8 +6467,10 @@ export const findCalleeRuns = (callees: readonly ts.Expression[], context: Conte
     const held = hasBit(aloneBits, index)
       ? [...getFunctionCandidates(callee, context), ...getClosures(callee, context)]
       : [
-          ...getFileCandidates(callee.getSourceFile(), context).filter((candidate) =>
-            isDispatchAssignable(candidate, row, type, context),
+          ...getFileCandidates(callee.getSourceFile(), context).filter(
+            (candidate) =>
+              isDispatchAssignable(candidate, row, type, context) ||
+              isGenericFit(candidate, callee, [type], context),
           ),
           ...getClosures(callee, context),
         ];
@@ -6970,6 +6994,48 @@ export const isReached = (node: ts.Node, context: Context) => {
 };
 
 // The closures that a value whose type has calls may hold, whose type TypeScript lets it hold.
+// The count of arguments that a function needs, past those its defaults or rest let a call leave out.
+const getNeededCount = (node: FunctionNode) =>
+  getParameters(node).filter(
+    (parameter) =>
+      parameter.initializer === undefined &&
+      parameter.questionToken === undefined &&
+      parameter.dotDotDotToken === undefined,
+  ).length;
+
+// Whether a declaration sits in a generic function, whose type parameters its type may name.
+const isInGeneric = (node: ts.Node | undefined) =>
+  node !== undefined &&
+  ts.findAncestor(
+    node.parent,
+    (ancestor) => ts.isFunctionLike(ancestor) && (ancestor.typeParameters?.length ?? 0) > 0,
+  ) !== undefined;
+
+// Whether a function fits a callee where one's type names the type parameters of a generic
+// function around it, which TypeScript relates to no other type: where the callee's calls pass the
+// arguments that the function needs. The call still runs it only where the value holds it. A
+// callee's own function binds what it holds, so only one that a closure reads may hold another.
+const isGenericFit = (
+  candidate: FunctionNode,
+  callee: ts.Expression,
+  types: readonly ts.Type[],
+  context: Context,
+) => {
+  const declaration = getValueDeclaration(getSymbol(skipCasts(callee), context.checker), context);
+  const isCaptured =
+    declaration !== undefined &&
+    ts.findAncestor(callee.parent, ts.isFunctionLike) !==
+      ts.findAncestor(declaration.parent, ts.isFunctionLike);
+  return (
+    (isInGeneric(candidate) || (isCaptured && isInGeneric(declaration))) &&
+    types.every((type) =>
+      type
+        .getCallSignatures()
+        .some((signature) => signature.parameters.length >= getNeededCount(candidate)),
+    )
+  );
+};
+
 export const getClosures = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
   const type = getCalleeType(callee, context.checker);
@@ -6978,9 +7044,10 @@ export const getClosures = (callee: ts.Expression, context: Context) => {
   const called = type.isIntersection()
     ? type.types.filter((member) => member.getCallSignatures().length > 0)
     : [type];
-  return (context.closures.get(callee.getSourceFile()) ?? []).filter((closure) =>
-    called.every((member) =>
-      context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), member),
-    ),
+  return (context.closures.get(callee.getSourceFile()) ?? []).filter(
+    (closure) =>
+      called.every((member) =>
+        context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), member),
+      ) || isGenericFit(closure, callee, called, context),
   );
 };

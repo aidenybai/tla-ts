@@ -55027,19 +55027,26 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("1,,2"))).failure?.message).toContain("seen 1,,1");
     });
 
-    it("stops where an argument that calls would run before the check", () => {
-      expect(() =>
-        compile(`
-          const box = { log: "" };
-          const runner = { run: (value: string) => value.length };
-          const pick = (has: boolean) => (has ? runner : undefined);
-          const note = (value: string) => {
-            box.log += value;
-            return value;
-          };
-          const second = pick(false)?.run(note("b"));
-        `),
-      ).toThrow("Optional chaining isn't supported");
+    it("runs an argument that calls only where the receiver isn't undefined or null", async () => {
+      const getCalls = (expected: string) => `
+        const box = { log: "" };
+        const runner = { run: (value: string) => { box.log += value; return value.length; } };
+        const holder = { list: [] as string[] };
+        const pick = (has: boolean) => (has ? runner : undefined);
+        const hold = (has: boolean) => (has ? holder : undefined);
+        const note = (value: string) => {
+          box.log += "!";
+          return value;
+        };
+        const first = pick(true)?.run(note("a"));
+        const second = pick(false)?.run(note("b"));
+        hold(true)?.list.push(note("c"));
+        hold(false)?.list.push(note("d"));
+        const seen = [first, second, holder.list.join("/"), box.log].join();
+        if (seen !== "${expected}") throw new Error("seen " + seen);
+      `;
+      expect((await checkModel(getCalls("1,,c,!a!"))).failure).toBeUndefined();
+      expect((await checkModel(getCalls("1,,c,!a!!"))).failure?.message).toContain("seen 1,,c,!a!");
     });
   });
 
@@ -56297,6 +56304,122 @@ describe("BigInts", () => {
 
     it("rejects a disposal that doesn't throw", async () => {
       expect((await checkModel(getSource("none"))).failure?.message).toContain("seen type");
+    });
+  });
+
+  describe("makes and runs a closure that an operand of ?? gives, which a generic function makes", () => {
+    const getSource = (expected: string) => `
+      interface Reducer<A> {
+        combine: (self: A, that: A) => A;
+        initialValue: A;
+        combineAll: (collection: ReadonlyArray<A>) => A;
+      }
+      function make<A>(
+        combine: (self: A, that: A) => A,
+        initialValue: A,
+        combineAll?: (collection: ReadonlyArray<A>) => A,
+      ): Reducer<A> {
+        return {
+          combine,
+          initialValue,
+          combineAll:
+            combineAll ??
+            ((collection) => {
+              let out = initialValue;
+              for (const value of collection) {
+                out = combine(out, value);
+              }
+              return out;
+            }),
+        };
+      }
+      const Sum = make<number>((self, that) => self + that, 0);
+      const Max = make<number>((self, that) => (self > that ? self : that), 0, () => 99);
+      const total = Sum.combineAll([1, 2, 3]);
+      const most = Max.combineAll([1, 2]);
+      const seen = [total, most].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("6,99"))).failure).toBeUndefined();
+    });
+
+    it("rejects the default kept", async () => {
+      expect((await checkModel(getSource("6,2"))).failure?.message).toContain("seen 6,99");
+    });
+  });
+
+  describe("compares a value whose generic type's constraint is a number as a number", () => {
+    const getSource = (expected: string) => `
+      const box = { n: 0 };
+      const atLeast = <F extends (...args: Array<any>) => any>(
+        arity: Parameters<F>["length"],
+        count: number,
+      ) => count >= arity;
+      const pair = (a: number, b: number) => a + b;
+      const seen = [atLeast<typeof pair>(2, 3), atLeast<typeof pair>(2, 1)].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("true,true"))).failure?.message).toContain(
+        "seen true,false",
+      );
+    });
+  });
+
+  describe("runs Object.prototype's own-key methods through call where a variable holds them", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: "" };
+      const hasOwnProperty = Object.prototype.hasOwnProperty;
+      const isEnumerable = Object.prototype.propertyIsEnumerable;
+      const hasValidKey = (config: { key?: number }) => hasOwnProperty.call(config, "key");
+      const proto = { inherited: 1 };
+      const child = Object.create(proto) as { inherited: number; own?: number };
+      child.own = 2;
+      Object.defineProperty(child, "hidden", { value: 3, enumerable: false });
+      box.seen = [
+        hasValidKey({ key: 1 }),
+        hasValidKey({}),
+        hasOwnProperty.call(child, "inherited"),
+        hasOwnProperty.call(child, "own"),
+        isEnumerable.call(child, "own"),
+        isEnumerable.call(child, "hidden"),
+      ].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+    const getScript = (expected: string) => `
+      "use strict";
+      var box = { seen: "" };
+      var hasOwnProperty = Object.prototype.hasOwnProperty;
+      function hasValidKey(config) {
+        return hasOwnProperty.call(config, "key");
+      }
+      box.seen = [hasValidKey({ key: 1 }), hasValidKey({})].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+    const path = join(import.meta.dirname, "model.js");
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,false,false,true,true,false"))).failure,
+      ).toBeUndefined();
+      expect((await check(compile(getScript("true,false"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects an inherited key as own", async () => {
+      expect(
+        (await checkModel(getSource("true,false,true,true,true,false"))).failure?.message,
+      ).toContain("seen true,false,false,true,true,false");
+      expect((await check(compile(getScript("true,true"), path))).failure?.message).toContain(
+        "seen true,false",
+      );
     });
   });
 });

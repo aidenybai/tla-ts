@@ -3934,7 +3934,10 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
       isNestedFunction(node, context) ||
       isClosure(node, context))
   ) {
-    return !isSometimes;
+    // A closure that a branch makes reads only locals that don't change, so the statement makes
+    // it first, as it makes an object literal that a branch gives, which a branch that doesn't
+    // run leaves unread.
+    return !isSometimes || isClosure(node, context);
   }
   if (ts.isFunctionLike(node)) return false;
   if (ts.isClassLike(node)) return isHeapClass(node, context) && !isSometimes;

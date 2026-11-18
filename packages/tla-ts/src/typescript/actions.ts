@@ -2588,6 +2588,64 @@ const translateIteratorCall = (
   );
 };
 
+// The last ?. before the method that a call reads, as in frames.at(-1)?.heirs.push(node), or at
+// it, as in refs.get(id)?.deref(), that the scope hasn't checked, which ends the whole call where
+// its base is undefined or null, before the call's arguments run.
+const getOptionalLink = (expression: ts.CallExpression, scope: Scope) => {
+  const getLinks = (link: ts.Expression): ts.Expression[] =>
+    ts.isOptionalChain(link) ? [link, ...getLinks(link.expression)] : [];
+  const method = expression.expression;
+  return (
+    ts.isPropertyAccessExpression(method) || ts.isElementAccessExpression(method)
+      ? getLinks(method)
+      : []
+  )
+    .filter(
+      (link): link is ts.PropertyAccessExpression | ts.ElementAccessExpression =>
+        (ts.isPropertyAccessExpression(link) || ts.isElementAccessExpression(link)) &&
+        link.questionDotToken !== undefined &&
+        scope.checked?.has(link) !== true,
+    )
+    .at(-1);
+};
+
+// Runs the calls in a call's arguments in order, each as its own statement, once a ?. let the call
+// run, as JavaScript evaluates them only then.
+const runArgumentCalls = (
+  expression: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path) => Formula,
+): Formula => {
+  const found = expression.arguments
+    .map((argument) => findLeadingCall(argument, [], path, context))
+    .find((leading) => leading.call !== undefined || leading.isBlocked);
+  if (found === undefined) return continueWith(path);
+  const call = found.call;
+  if (call === undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't evaluate this argument once the ?. before the call checked its base",
+      expression,
+    );
+  }
+  return translateCallStatement(call, path, context, frame, (after, value) =>
+    runArgumentCalls(
+      expression,
+      {
+        ...after,
+        scope: {
+          ...after.scope,
+          results: new Map([...after.scope.results, [call, value ?? getUndefined(context)]]),
+        },
+      },
+      context,
+      frame,
+      continueWith,
+    ),
+  );
+};
+
 export const translateCallStatement = (
   expression: ts.CallExpression,
   path: Path,
@@ -2855,28 +2913,7 @@ const translateCallStatementBody = (
       ),
     );
   }
-  // A ?. before the method that the call reads, as in frames.at(-1)?.heirs.push(node), or at it,
-  // as in refs.get(id)?.deref(), ends the whole call where its base is undefined or null.
-  const getLinks = (link: ts.Expression): ts.Expression[] =>
-    ts.isOptionalChain(link) ? [link, ...getLinks(link.expression)] : [];
-  const method = expression.expression;
-  // The method's own ?. ends the call before its arguments, which run first where they call.
-  const optional = (
-    ts.isPropertyAccessExpression(method) || ts.isElementAccessExpression(method)
-      ? getLinks(
-          expression.arguments.some((argument) => hasCall(argument, context))
-            ? method.expression
-            : method,
-        )
-      : []
-  )
-    .filter(
-      (link): link is ts.PropertyAccessExpression | ts.ElementAccessExpression =>
-        (ts.isPropertyAccessExpression(link) || ts.isElementAccessExpression(link)) &&
-        link.questionDotToken !== undefined &&
-        path.scope.checked?.has(link) !== true,
-    )
-    .at(-1);
+  const optional = getOptionalLink(expression, path.scope);
   if (optional !== undefined) {
     const base = optional.expression;
     const name = context.names.getFresh("base");
@@ -2889,7 +2926,7 @@ const translateCallStatementBody = (
         ifThenElse(
           apply("\\in", [identifier(name), set([getUndefined(context), identifier("Null")])]),
           next(path, getUndefined(context)),
-          translateCallStatement(
+          runArgumentCalls(
             expression,
             {
               ...path,
@@ -2901,7 +2938,7 @@ const translateCallStatementBody = (
             },
             context,
             frame,
-            next,
+            (after) => translateCallStatement(expression, after, context, frame, next),
           ),
         ),
       ),
@@ -21376,6 +21413,13 @@ const findLeadingCall = (
       !isPlainCallee(node.expression, context, path.scope.results)
     ) {
       return blocked;
+    }
+    // A call after a ?. runs its arguments' calls only once the ?. lets it run.
+    if (
+      getOptionalLink(node, path.scope) !== undefined &&
+      node.arguments.some((argument) => hasCall(argument, context))
+    ) {
+      return { call: node, isBlocked: false };
     }
     const found = thenConverted(inOrder(node.arguments));
     if (found.call !== undefined || found.isBlocked) return found;
