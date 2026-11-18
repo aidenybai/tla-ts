@@ -1405,7 +1405,8 @@ export class Context extends Internalizer {
       if (!this.isRelevant(atom)) continue;
       const expr = isNegated(literal) ? manager.mkNot(atom) : atom;
       manager.incRef(expr);
-      const value = manager.isGround(expr) ? model.eval(expr, false) : -1;
+      // is_ground holds for no quantifier, so validate_model never evaluates one.
+      const value = manager.isGroundApp(expr) ? model.eval(expr, false) : -1;
       if (value !== -1) manager.decRef(value);
       manager.decRef(expr);
       if (value === manager.falseExpr) return false;
