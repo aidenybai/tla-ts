@@ -44,6 +44,7 @@ interface Binding {
   params?: number[];
   range?: SourceRange;
   functionArity?: number;
+  goal?: Goal;
 }
 
 export interface ModuleSymbol extends Binding {
@@ -63,7 +64,6 @@ interface LocalName extends Binding {
   name: string;
   isSelf?: boolean;
   parent: LocalName | undefined;
-  goal?: Goal;
   isPending?: boolean;
   nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
 }
@@ -86,7 +86,6 @@ interface Unit {
   isModuleKnown: (name: string, location: SourceLocation) => boolean;
   location: SourceLocation;
   self: Definition | undefined;
-  goals: Map<string, Goal>;
   bindings: ModuleBindings;
   errors: SanyError[];
   warnings: SanyError[];
@@ -347,8 +346,7 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
 
 const isFact = (name: string, unit: Unit) => unit.bindings.get(name)?.kind === "Theorem";
 
-const getGoal = (name: string, unit: Unit) =>
-  unit.bindings.get(name)?.kind === "Theorem" ? unit.goals.get(name) : undefined;
+const getGoal = (name: string, unit: Unit) => unit.bindings.get(name)?.goal;
 
 const findBinding = (name: string, scope: LocalName | undefined, unit: Unit): Binding | undefined =>
   lookupLocal(scope, name) ?? findSymbol(name, unit);
@@ -584,9 +582,11 @@ const getOperandName = (operand: number | "<<" | ">>") =>
 
 const SCOPE_MESSAGE = "within the scope of a declaration\n from outside that declaration's scope.";
 
+// `start` indexes the first selector after the theorem's name, which may be qualified, as in I!Foo!1.
 const checkSelection = (
   reference: Reference,
   selectors: Selector[],
+  start: number,
   goal: Goal,
   unit: Unit,
   isFact: boolean,
@@ -607,8 +607,8 @@ const checkSelection = (
   };
   let params = 0;
   let args = 0;
-  for (const [offset, selector] of selectors.slice(1).entries()) {
-    const index = offset + 1;
+  for (const [offset, selector] of selectors.slice(start).entries()) {
+    const index = offset + start;
     const node = state.node;
     if (selector.kind === "Name") {
       if (selectors[index - 1].kind !== "Name") {
@@ -623,7 +623,7 @@ const checkSelection = (
           ? [...statement.assumptions, statement.conclusion]
           : [statement];
       const found =
-        index === 1
+        index === start
           ? clauses
               .map((clause, position) => ({
                 position,
@@ -636,13 +636,13 @@ const checkSelection = (
             };
       if (!found?.label) return report(index, `Cannot find label \`${selector.name}'.`);
       if (
-        index === 1 &&
+        index === start &&
         statement.kind === "AssumeProve" &&
         isInScopeOfDeclaration(statement, found.position) &&
         isOutOfScope
       ) {
         return report(
-          1,
+          start,
           `Accessing subexpression labeled \`${selector.name}' of ASSUME/PROVE clause ${SCOPE_MESSAGE}`,
         );
       }
@@ -659,7 +659,7 @@ const checkSelection = (
         return report(index - 1, "!: should not follow an operand selector.");
       }
       const next = selectors[index + 1];
-      if (next === undefined ? index !== 1 : next.kind !== "Name") {
+      if (next === undefined ? index !== start : next.kind !== "Name") {
         return report(
           index,
           "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
@@ -841,12 +841,17 @@ const checkReference = (
 ) => {
   if (!isReference(expression)) return false;
   const selectors = getSelectors(expression);
-  const first = selectors[0];
-  const goal =
-    selectors.length > 1 && first.kind === "Name"
-      ? (lookupLocal(scope, first.name)?.goal ?? getGoal(first.name, unit))
-      : undefined;
-  return goal && { node: checkSelection(expression, selectors, goal, unit, isFact) };
+  const names: string[] = [];
+  // A theorem an instance imports may have a qualified name, as in I!Foo!1.
+  for (let start = 1; start < selectors.length; start++) {
+    const selector = selectors[start - 1];
+    if (selector.kind !== "Name") return undefined;
+    names.push(selector.name);
+    const name = names.join("!");
+    const goal = (start === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
+    if (goal) return { node: checkSelection(expression, selectors, start, goal, unit, isFact) };
+  }
+  return undefined;
 };
 
 const isInstanceName = (name: string, scope: LocalName | undefined, unit: Unit) => {
@@ -2325,15 +2330,18 @@ const resolveStep = (
 const resolveTheorem = (theorem: Theorem, unit: Unit, bindings: Map<string, ModuleBinding>) => {
   const isDefinition = theorem.name !== undefined && theorem.statement.kind !== "AssumeProve";
   const scope = isDefinition ? undefined : resolveStatement(theorem.statement, undefined, unit);
+  const goal =
+    theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
+      ? { statement: theorem.statement, isSuffices: false, isInProof: false, keyword: undefined }
+      : undefined;
   if (theorem.name !== undefined) {
     bindModuleName(
       bindings,
       theorem.name,
-      { kind: "Theorem", arity: 0, range: theorem.location.range },
+      { kind: "Theorem", arity: 0, range: theorem.location.range, goal },
       unit,
     );
   }
-  const goal = unit.goals.get(theorem.name ?? "");
   if (goal) goal.isInProof = true;
   resolveProof(theorem.proof, scope, unit);
   if (goal) goal.isInProof = false;
@@ -2580,7 +2588,6 @@ export const resolveSubstitutions = (
     isModuleKnown: unit.isModuleKnown,
     location: instance.location,
     self: undefined,
-    goals: new Map(),
     bindings: {
       get: (name): ModuleBinding | undefined => {
         const other = module.instances.findLast((candidate) => candidate.name === name);
@@ -2655,23 +2662,6 @@ export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError
 
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const symbols = createSymbols(module, unit);
-  const goals = new Map(
-    module.theorems.flatMap((theorem): [string, Goal][] =>
-      theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
-        ? [
-            [
-              theorem.name,
-              {
-                statement: theorem.statement,
-                isSuffices: false,
-                isInProof: false,
-                keyword: undefined,
-              },
-            ],
-          ]
-        : [],
-    ),
-  );
   const bindings = new Map<string, ModuleBinding>(
     [...CORE_SYMBOLS, ...unit.bound].map((entry) => [
       entry[0],
@@ -2696,7 +2686,6 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         isModuleKnown: unit.isModuleKnown,
         location,
         self,
-        goals,
         bindings,
         errors,
         warnings,
@@ -2861,12 +2850,13 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       isSameRange(bindings.get(definition.name)?.range, definition.location.range),
     ),
     // An ASSUME/PROVE theorem has no definition, but an INSTANCE imports its name.
-    boundTheorems: module.theorems.flatMap((theorem) =>
-      theorem.name !== undefined &&
-      theorem.statement.kind === "AssumeProve" &&
-      isSameRange(bindings.get(theorem.name)?.range, theorem.location.range)
-        ? [{ name: theorem.name, location: theorem.location }]
-        : [],
-    ),
+    boundTheorems: module.theorems.flatMap((theorem) => {
+      const binding = theorem.name === undefined ? undefined : bindings.get(theorem.name);
+      return theorem.name !== undefined &&
+        binding?.goal &&
+        isSameRange(binding.range, theorem.location.range)
+        ? [{ name: theorem.name, location: theorem.location, goal: binding.goal }]
+        : [];
+    }),
   };
 };

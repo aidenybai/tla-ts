@@ -1696,6 +1696,43 @@ describe("name resolution matches SANY", () => {
     });
   });
 
+  it.each([
+    [
+      "X == Foo!3",
+      "ASSUME TRUE PROVE TRUE",
+      "line 3, col 10 to line 3, col 10",
+      "Nonexistent operand specified by `argument selector 3'.",
+    ],
+    [
+      "X == Foo",
+      "ASSUME TRUE PROVE TRUE",
+      "line 3, col 6 to line 3, col 8",
+      "ASSUME/PROVE used where an expression is required.",
+    ],
+    [
+      "X == Foo!1",
+      "ASSUME NEW y PROVE y = y",
+      "line 3, col 6 to line 3, col 10",
+      "Selected a NEW declaration as an expression or operator.",
+    ],
+  ])(
+    "rejects %j of an extended %j theorem like SANY",
+    async (use, statement, location, message) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Base\n${use}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "Base"
+              ? `---- MODULE Base ----\nTHEOREM Foo == ${statement}\n====`
+              : undefined,
+        }),
+      ).rejects.toMatchObject({
+        sany: { errors: [{ location: `${location} of module M`, message }] },
+      });
+    },
+  );
+
   it("names an operator of an extended module as it is spelled", async () => {
     const modules = new Map([
       ["Inner", "---- MODULE Inner ----\nCONSTANT Op(_)\n===="],
@@ -2732,6 +2769,50 @@ describe("name resolution matches SANY", () => {
         {
           location: "line 10, col 6 to line 10, col 8 of module M",
           message: "Unknown operator: `Foo'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection into an ASSUME/PROVE theorem an INSTANCE imports",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nINSTANCE Base\nX == Foo!3",
+      [
+        {
+          location: "line 6, col 10 to line 6, col 10 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection through a named instance into an ASSUME/PROVE theorem",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nI == INSTANCE Base\nX == I!Foo!3",
+      [
+        {
+          location: "line 6, col 12 to line 6, col 12 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection through a named instance into the NEW clause of a theorem",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME NEW y PROVE y = y\n====\nI == INSTANCE Base\nX == I!Foo!1",
+      [
+        {
+          location: "line 6, col 6 to line 6, col 12 of module M",
+          message: "Selected a NEW declaration as an expression or operator.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an ASSUME/PROVE theorem a named instance imports, used as an expression",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nI == INSTANCE Base\nX == I!Foo",
+      [
+        {
+          location: "line 6, col 6 to line 6, col 10 of module M",
+          message: "ASSUME/PROVE used where an expression is required.",
         },
       ],
       [],

@@ -730,6 +730,7 @@ export const createEnvironment = (
                     : entry[1].range,
                 functionArity:
                   parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,
+                goal: entry[1].goal,
               },
             ];
           }
@@ -745,6 +746,7 @@ export const createEnvironment = (
               ],
               kind: entry[1].kind,
               functionArity: declarations.length > 0 ? undefined : entry[1].functionArity,
+              goal: entry[1].goal,
             },
           ];
         }),
@@ -1222,6 +1224,7 @@ export const createEnvironment = (
         arity: 0,
         kind: "Theorem",
         range: theorem.location.range,
+        goal: theorem.goal,
       };
       visible.set(theorem.name, symbol);
       exported.set(theorem.name, symbol);
