@@ -499,7 +499,7 @@ export const expectBooleanBody = (value: Value, expression: Expression) => {
 export const getDefinition = (name: string, environment: Environment) =>
   environment.definitions.get(environment.substitutions.get(name) ?? name);
 
-// A name in the configuration means what the root module sees under it, as in TLC's SpecProcessor#defns.
+// Deviation from TLC: SpecProcessor#processModuleOverrides puts a standard module's Java override over a root definition of the same name.
 export const getRootKey = (name: string, environment: Environment) =>
   environment.rootKeys.get(name) ?? name;
 

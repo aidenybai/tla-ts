@@ -297,6 +297,22 @@ describe("INSTANCE matches TLC", () => {
     },
   );
 
+  it("checks the root definition a configuration names where an instanced module loads a Java override of the same name", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nI == INSTANCE N\nNat == x \\in {0, 1}\nInit == x = 0\nNext == x' = I!Succ(x)\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Nat",
+      loadModule: (name) =>
+        name === "N" ? "---- MODULE N ----\nEXTENDS Naturals\nSucc(v) == v + 1\n====" : undefined,
+    });
+    expect(result.violation?.name).toBe("Nat");
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "0",
+      "1",
+      "2",
+    ]);
+  });
+
   it("names a property that applies an operator of an instance as TLC does", async () => {
     const result = await check({
       source:
