@@ -93,7 +93,7 @@ export const checkPbFree = (manager: AstManager, form: number) => {
 };
 
 // The port has no encoding to rewrite to, but the walk still counts its steps of the limit.
-class CardPbRewriter extends RewriterTpl {
+export class CardPbRewriter extends RewriterTpl {
   isRewritingPatterns() {
     return false;
   }

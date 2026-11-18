@@ -23,7 +23,7 @@ import {
 } from "./ast";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
-import { checkPbFree } from "./card2bv";
+import { CardPbRewriter, checkPbFree } from "./card2bv";
 import type { Definition, Goal } from "./goal";
 import { ObjMap } from "./hashtable";
 import { getGcd, Rational } from "./rational";
@@ -120,6 +120,7 @@ class Pb2Bv {
   private allClausesLimit: number;
   private cardinalityLimit: number;
   private rewriter: ConstraintRewriter | undefined;
+  private pbRewriter: CardPbRewriter;
   private results: RefVector | undefined;
 
   constructor(
@@ -139,6 +140,7 @@ class Pb2Bv {
     };
     this.allClausesLimit = getUint("pb2bv_all_clauses_limit", 8);
     this.cardinalityLimit = getUint("pb2bv_cardinality_limit", 4294967295);
+    this.pbRewriter = new CardPbRewriter(manager);
   }
 
   private hold(expr: number) {
@@ -470,7 +472,9 @@ class Pb2Bv {
         results.push(this.convert(atom, isPositive, true));
         continue;
       }
-      const rewritten = rewriter.rewrite(form);
+      const simplified = rewriter.rewrite(form);
+      const rewritten = this.pbRewriter.rewrite(simplified);
+      manager.decRef(simplified);
       checkPbFree(manager, rewritten);
       results.pushOwned(rewritten);
     }
@@ -513,6 +517,7 @@ class Pb2Bv {
   release() {
     this.results?.reset();
     this.rewriter?.release();
+    this.pbRewriter.release();
     for (const [decl] of this.const2bit) this.manager.decDeclRef(decl);
     this.terms.reset();
     this.temporaryInts.reset();

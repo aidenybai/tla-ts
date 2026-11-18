@@ -978,6 +978,28 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ).toEqual(["sat", "(:rlimit 558)"]);
   });
 
+  it("walks each formula that is not a constraint with the pb2bv rewriter in pb2bv", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or p q))",
+        "(assert (not p))",
+        "(check-sat-using (then pb2bv sat))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 24)"]);
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (<= (+ x (* 2 y)) 3))",
+        "(check-sat-using qflia)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 92)"]);
+  });
+
   it("completes the models of nlsat and nlqsat with false, as a model rather than a proto_model does", () => {
     const bools = ["(declare-const b0 Bool)", "(declare-const b1 Bool)", "(declare-const b2 Bool)"];
     const bindings =
