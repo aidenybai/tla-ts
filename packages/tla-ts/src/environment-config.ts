@@ -30,6 +30,7 @@ export interface CopySource {
 
 interface LinkedSpecification {
   root: LinkedModule;
+  rootKeys: Map<string, string>;
   moduleSymbols: Map<string, Symbols>;
   definitions: Map<string, Definition>;
   builtins: Map<string, Builtin>;
@@ -119,7 +120,7 @@ const createReusedTargetError = (target: string) =>
   );
 
 export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): AppliedConfig => {
-  const getRootKey = (name: string) => linked.root.visible.get(name)?.key ?? name;
+  const getRootKey = (name: string) => linked.rootKeys.get(name) ?? name;
   const declaredConstants = linked.root.constants.map((constant) => constant.name);
   const variables = linked.root.variables;
   const getScopedSymbol = (item: { name: string; module?: string }) => {
@@ -137,7 +138,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     const definition = linked.definitions.get(key);
     return definition?.kind === "Operator"
       ? definition.params.length
-      : (linked.root.constants.find((constant) => constant.name === key)?.arity ??
+      : (linked.root.constants.find((constant) => constant.key === key)?.arity ??
           linked.builtins.get(key)?.arity ??
           0);
   };
@@ -296,9 +297,14 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     linked.definitions.set(key, alias);
   });
   linked.operatorConstants.forEach((value, name) => constants.set(name, value));
-  const unassigned = declaredConstants.filter(
-    (name) => !constants.has(name) && !substitutions.has(name) && !operatorKeys.has(name),
-  );
+  const unassigned = linked.root.constants
+    .filter(
+      (constant) =>
+        !constants.has(constant.key) &&
+        !substitutions.has(constant.key) &&
+        !operatorKeys.has(constant.key),
+    )
+    .map((constant) => constant.name);
   if (unassigned.length > 0) {
     const name =
       linked.order

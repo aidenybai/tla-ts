@@ -60,6 +60,7 @@ import {
   type Substitution,
 } from "./instances";
 import { prettyPrint } from "./pretty-print";
+import { getKeyName } from "./resolve";
 import { isEnabled } from "./successors";
 import {
   applyFunction,
@@ -375,12 +376,12 @@ export const createBigNumberError = (expression: NumberExpression) =>
 
 const createUndefinedError = (name: string, expression: Expression) =>
   new TlaEvaluationError(
-    `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+    `In evaluation, the identifier ${getKeyName(name)} is either undefined or not an operator.\n${describeRange(expression)}`,
   );
 
 export const createUnassignedError = (name: string, expression: Expression) =>
   new TlaUnassignedError(
-    `In evaluation, the identifier ${name} is either undefined or not an operator.\n${describeRange(expression)}`,
+    `In evaluation, the identifier ${getKeyName(name)} is either undefined or not an operator.\n${describeRange(expression)}`,
     name,
   );
 
@@ -906,8 +907,6 @@ export const getStartupValue = (definition: Definition, environment: Environment
 export const evaluateStartupDefinitions = (definitions: Definition[], environment: Environment) =>
   definitions.forEach((definition) => {
     if (definition.kind === "Operator" && definition.params.length > 0) return;
-    const name = definition.name;
-    if (environment.constants.has(name) || environment.substitutions.has(name)) return;
     if (!isEvaluatedAtStartup(definition, environment)) return;
     const definitionId = environment.facts.ids.get(definition);
     if (definitionId === undefined || environment.startupValues[definitionId] !== undefined) return;

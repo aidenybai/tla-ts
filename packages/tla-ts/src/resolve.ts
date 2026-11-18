@@ -82,7 +82,7 @@ interface Unit {
   imported: Symbols;
   getInstance: (instance: Instance) => InstancedModule;
   definitions: Map<string, Definition>;
-  getKey: (definition: Definition) => string;
+  getKey: (item: { name: string }) => string;
   isModuleKnown: (name: string, location: SourceLocation) => boolean;
   location: SourceLocation;
   self: Definition | undefined;
@@ -2348,7 +2348,7 @@ export interface ModuleUnit {
   getInstance: (instance: Instance) => InstancedModule;
   bound: Symbols;
   definitions: Map<string, Definition>;
-  getKey: (definition: Definition) => string;
+  getKey: (item: { name: string }) => string;
   isModuleKnown: (name: string, location: SourceLocation) => boolean;
   instanced: Map<Instance, Symbols>;
   facts: Set<string>;
@@ -2366,11 +2366,11 @@ export const isTheoremDefinition = (module: Module, definition: Definition) =>
       item.location.column === definition.location.column,
   );
 
-const createSymbols = (module: Module, imported: Symbols) => {
-  const symbols = new Map([...CORE_SYMBOLS, ...imported]);
+const createSymbols = (module: Module, unit: ModuleUnit) => {
+  const symbols = new Map([...CORE_SYMBOLS, ...unit.imported]);
   module.constants.forEach((constant) =>
     symbols.set(constant.name, {
-      key: constant.name,
+      key: unit.getKey(constant),
       arity: constant.arity,
       kind: "Constant",
       range: constant.location.range,
@@ -2556,7 +2556,7 @@ export const resolveSubstitutions = (
   module: Module,
   unit: ModuleUnit,
 ) => {
-  const imported = createSymbols(module, unit.imported);
+  const imported = createSymbols(module, unit);
   const positions = new Map(
     [...module.constants, ...module.variables].map((declaration) => [
       declaration.name,
@@ -2651,7 +2651,7 @@ export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError
 };
 
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
-  const symbols = createSymbols(module, unit.imported);
+  const symbols = createSymbols(module, unit);
   const goals = new Map(
     module.theorems.flatMap((theorem): [string, Goal][] =>
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve"

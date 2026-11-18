@@ -22,6 +22,7 @@ const SHADOWED_MODULES = new Map([
     "---- MODULE N ----\nEXTENDS Naturals, Sequences\nTwo == 2 + 2\nSmall == Nat \\cap {1}\nLength == Len(<<1, 2>>)\n====",
   ],
   ["Plus", "---- MODULE Plus ----\na + b == 99\n===="],
+  ["Universe", "---- MODULE Universe ----\nCONSTANT Nat\n===="],
 ]);
 
 const checkShadowed = (unit: string, assumption: string, config = "") =>
@@ -269,15 +270,29 @@ describe("INSTANCE matches TLC", () => {
   });
 
   it.each([
-    ["a root infix operator", "a + b == 99", "I!Two = 4"],
-    ["a root constant operator", "Nat == {7}", "I!Small = {1}"],
-    ["a root operator", "Len(s) == 42", "I!Length = 2"],
-    ["an operator the root extends", "EXTENDS Plus", "I!Two = 4"],
-    ["a root operator around a LET INSTANCE", "a + b == 99", "LET J == INSTANCE N IN J!Two = 4"],
+    ["a root infix operator", "a + b == 99", "I!Two = 4", ""],
+    ["a root constant operator", "Nat == {7}", "I!Small = {1}", ""],
+    ["a root operator", "Len(s) == 42", "I!Length = 2", ""],
+    ["an operator the root extends", "EXTENDS Plus", "I!Two = 4", ""],
+    [
+      "a root operator around a LET INSTANCE",
+      "a + b == 99",
+      "LET J == INSTANCE N IN J!Two = 4",
+      "",
+    ],
+    ["a root constant", "CONSTANT Nat", "I!Small = {1} /\\ Nat = {7}", "CONSTANT Nat = {7}"],
+    ["a model value", "CONSTANT Nat", "I!Small = {1}", "CONSTANT Nat = Nat"],
+    ["a constant the root extends", "EXTENDS Universe", "I!Small = {1}", "CONSTANT Nat = {7}"],
+    [
+      "a root operator constant",
+      "CONSTANT Len(_)\nMyLen(s) == 42",
+      "I!Length = 2 /\\ Len(<<>>) = 42",
+      "CONSTANT Len <- MyLen",
+    ],
   ])(
     "keeps a standard operator in an instanced module apart from %s of the same name",
-    async (_title, unit, assumption) => {
-      expect((await checkShadowed(unit, assumption)).status).toBe("success");
+    async (_title, unit, assumption, config) => {
+      expect((await checkShadowed(unit, assumption, config)).status).toBe("success");
     },
   );
 

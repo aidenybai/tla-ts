@@ -171,7 +171,9 @@ export const getSymmetryGroup = (
     permutedSets.filter((node) => {
       if (!isPermutations(node)) return false;
       const operand = node.args[0];
-      if (operand.kind !== "Identifier" || substitutedNames.has(operand.name)) return false;
+      if (operand.kind !== "Identifier" || substitutedNames.has(getKeyName(operand.name))) {
+        return false;
+      }
       const set = evaluateConstant(operand);
       return (
         typeof set === "object" &&

@@ -105,7 +105,7 @@ import {
   type FailureMessage,
 } from "./tlc/messages";
 import { createTautologyError } from "./liveness";
-import { KEY_SEPARATOR } from "./resolve";
+import { getKeyName } from "./resolve";
 import { writeTraceSpec } from "./tlc/trace-spec";
 import { replayInitialStates, replaySuccessors, walkSuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
@@ -419,9 +419,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       loopStart,
       modelValues: getModelValues().map((value) => value.name),
       isDefined: (name) =>
-        environment.constants.has(name) ||
-        [...environment.definitions.keys()].some((key) =>
-          key.startsWith(`${name}${KEY_SEPARATOR}`),
+        [...environment.constants.keys(), ...environment.definitions.keys()].some(
+          (key) => getKeyName(key) === name,
         ),
     });
   const getCoverage = () =>
