@@ -34,6 +34,16 @@ const getCoverageCounts = async (definitions: string, config: string) => {
   });
 };
 
+const getCoverageLines = async (source: string, config: string) => {
+  const result = await check({ source, config, coverage: 1 });
+  return result.coverage?.relations.map((relation) =>
+    relation.expressions.map(
+      (expression) =>
+        `${"|".repeat(expression.depth)}${expression.location}: ${expression.count}${expression.cost > 0 ? `:${expression.cost}` : ""}`,
+    ),
+  );
+};
+
 describe("check matches TLC", () => {
   it("evaluates every assumption in the semantics fixture", async () => {
     const result = await checkFixture("semantics", "Semantics");
@@ -1596,6 +1606,44 @@ ASSUME TLCFP(a) = -887695703
     "does not rebuild the trace again for the coverage after %s fails to evaluate",
     async (_name, definitions, config, expected) => {
       expect(await getCoverageCounts(definitions, config)).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
+      "\\in",
+      "B == x' \\in {1, 2, 3} /\\ IF x' = 1 THEN TRUE ELSE y' = x'",
+      [
+        "line 6, col 6 to line 6, col 21 of module C: 3",
+        "|line 6, col 13 to line 6, col 21 of module C: 2:5",
+        "line 6, col 29 to line 6, col 34 of module C: 4",
+        "line 6, col 41 to line 6, col 44 of module C: 1",
+        "line 6, col 51 to line 6, col 57 of module C: 2",
+      ],
+    ],
+    [
+      "\\E",
+      "B == x < 5 /\\ \\E e \\in {1, 2, 3}, f \\in {4, 5} : x' = e /\\ IF e = 1 THEN TRUE ELSE y' = f",
+      [
+        "line 6, col 6 to line 6, col 10 of module C: 1",
+        "|line 6, col 6 to line 6, col 6 of module C: 2",
+        "line 6, col 50 to line 6, col 55 of module C: 6",
+        "|line 6, col 55 to line 6, col 55 of module C: 7",
+        "line 6, col 63 to line 6, col 67 of module C: 7",
+        "line 6, col 74 to line 6, col 77 of module C: 2",
+        "line 6, col 84 to line 6, col 89 of module C: 4",
+        "line 6, col 24 to line 6, col 32 of module C: 2:11",
+        "line 6, col 41 to line 6, col 46 of module C: 2:4",
+      ],
+    ],
+  ])(
+    "charges a set per element the successors draw from it under %s, as TLC's enumerators do",
+    async (_name, action, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE C ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nA == x < 2 /\\ x' = x + 1 /\\ y' = y\n${action}\nNext == A \\/ B\n====`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(lines?.[2]).toEqual(expected);
     },
   );
 

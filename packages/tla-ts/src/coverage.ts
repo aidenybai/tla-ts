@@ -10,7 +10,7 @@ import { formatRange } from "./errors";
 import type { Environment, Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
-import type { Value } from "./values";
+import type { IntervalValue, Value } from "./values";
 
 export type CoverageKind = "init" | "next" | "invariant" | "constraint" | "implied";
 
@@ -611,6 +611,28 @@ export const runAtCoverageNode = <Result>(
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
   const node = typeof value === "object" ? coverage.values.get(value) : undefined;
   if (node !== undefined) coverage.secondary[node] += cost;
+};
+
+// TLC's ContextEnumerator draws each bound's next element, the final null included, before it returns a binding.
+export const chargeContexts = (
+  coverage: Coverage,
+  sets: Value[],
+  lists: (Value[] | IntervalValue)[],
+) => {
+  const sizes = lists.map((list) => (Array.isArray(list) ? list.length : list.high - list.low + 1));
+  const positions = sizes.map(() => 0);
+  for (let index = 0; index < sizes.length; index++) {
+    costCoverage(coverage, sets[index], 1);
+    if (sizes[index] === 0) break;
+  }
+  return () => {
+    for (let index = 0; index < sizes.length; index++) {
+      costCoverage(coverage, sets[index], 1);
+      if (++positions[index] < sizes[index] || index === sizes.length - 1) return;
+      positions[index] = 0;
+      costCoverage(coverage, sets[index], 1);
+    }
+  };
 };
 
 const getLeadingZeros = (value: bigint) => {
