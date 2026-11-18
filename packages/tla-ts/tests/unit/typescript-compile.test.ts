@@ -53301,4 +53301,25 @@ describe("BigInts", () => {
       expect((await check(compile(wrong, path))).failure?.message).toContain("seen 10,20,30");
     });
   });
+
+  it("stops at a read of a built-in object that a cast gives a record's type", () => {
+    expect(() =>
+      compile(`
+        const holder = Error as { prepare?: unknown };
+        const seen = String(holder.prepare);
+        if (seen !== "undefined") throw new Error(seen);
+      `),
+    ).toThrow("tla-ts can't read prepare of Error, which isn't a record here");
+  });
+
+  it("keeps a const that a built-in object initializes out of a model's state", () => {
+    expect(() =>
+      compile(`
+        const holder = Error as { prepare?: unknown };
+        export const setPrepare = (value: 1 | 2): void => {
+          holder.prepare = value;
+        };
+      `),
+    ).toThrow("Only state variables and local lets can change: holder");
+  });
 });

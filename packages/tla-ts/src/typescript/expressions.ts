@@ -3386,6 +3386,23 @@ const translatePrimitiveRead = (
   );
 };
 
+// The built-in object that a node is, through casts and a const that holds it.
+const getHeldBuiltInName = (node: ts.Expression, context: Context) => {
+  const inner = skipCasts(node);
+  const symbol = ts.isIdentifier(inner) ? getSymbol(inner, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  const initializer =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0
+      ? declaration.initializer
+      : undefined;
+  return (
+    getBuiltIn(inner, context) ??
+    (initializer === undefined ? undefined : getBuiltIn(skipCasts(initializer), context))
+  );
+};
+
 const translatePropertyAccess = (
   node: ts.PropertyAccessExpression,
   scope: Scope,
@@ -3638,6 +3655,14 @@ const translatePropertyAccess = (
   }
   if (isAddedToBuiltIn(node, context)) {
     throw new TlaTypeScriptError("tla-ts can't read a key that a built-in object lacks", node);
+  }
+  // A built-in object, such as Error, that a cast or a const gives another type isn't a record.
+  const heldBuiltIn = getHeldBuiltInName(receiver, context);
+  if (heldBuiltIn !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't read ${name} of ${heldBuiltIn}, which isn't a record here`,
+      node,
+    );
   }
   // A string or an array isn't a record, so a value that may be either reads its length as they
   // do.

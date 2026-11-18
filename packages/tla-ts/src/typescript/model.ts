@@ -15,12 +15,14 @@ import {
   isScript,
   getValueDeclaration,
   getRunMembers,
+  skipCasts,
 } from "./context";
 import type { Expression } from "../ast";
 import { getWritten, getWrittenRoots } from "./actions";
 import { isMakingObjects } from "./aliasing";
 import { TlaTypeScriptError } from "../errors";
 import { getAllocated } from "./heap";
+import { getBuiltIn } from "./intrinsics";
 import { VALUE_TAGS } from "./properties";
 import { getBoundNames } from "./scope";
 import { getLocation, identifier, set } from "./tla";
@@ -242,7 +244,23 @@ export const readModel = (
         .flatMap(getListDeclarations)
     : [];
   const declarations = [...statements.flatMap(getDeclarations), ...nestedVars];
-  // A const whose object a write changes in place holds a new value after it, as a let does.
+  // A const whose object a write changes in place holds a new value after it, as a let does, where
+  // a literal or a new collection makes the object, which the state holds as a value. A built-in
+  // object, such as Error, isn't one.
+  const isLiteralObject = (symbol: ts.Symbol) => {
+    const declaration = symbol.valueDeclaration;
+    const initializer =
+      declaration !== undefined && ts.isVariableDeclaration(declaration)
+        ? declaration.initializer && skipCasts(declaration.initializer)
+        : undefined;
+    return (
+      initializer !== undefined &&
+      (ts.isObjectLiteralExpression(initializer) ||
+        ts.isArrayLiteralExpression(initializer) ||
+        (ts.isNewExpression(initializer) &&
+          ["Map", "Set", "Array"].includes(getBuiltIn(initializer.expression, context) ?? "")))
+    );
+  };
   const changed = new Set(
     [sourceFile, ...imported]
       .flatMap((root) => findNodes(root, (node): node is ts.Node => getWritten(node) !== undefined))
@@ -253,7 +271,7 @@ export const readModel = (
       .flatMap((root) => {
         const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
         return symbol !== undefined &&
-          (!isScript(sourceFile) || getKind(root, context) !== "object")
+          (isScript(sourceFile) ? getKind(root, context) !== "object" : isLiteralObject(symbol))
           ? [symbol]
           : [];
       }),
