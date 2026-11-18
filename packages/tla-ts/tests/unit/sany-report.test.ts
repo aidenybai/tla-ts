@@ -251,6 +251,33 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects a DEF clause entry whose first child nests, where SANY reports line 2147483647", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nA == 1\nB == 2\nf == [x \\in {1} |-> x]\nF(x) == x\nTHEOREM TRUE BY DEF A + B + A, A /\\ B /\\ A, f[1] + B, A'', F(A)[1], A\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 5",
+        "",
+        ...[
+          "line 6, col 21 to line 6, col 29",
+          "line 6, col 32 to line 6, col 42",
+          "line 6, col 45 to line 6, col 52",
+          "line 6, col 55 to line 6, col 57",
+          "line 6, col 60 to line 6, col 66",
+        ].flatMap((location) => [
+          `${location} of module M`,
+          "",
+          "DEF clause entry should describe a defined operator.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
   it("looks up the name a binder declares in a DEF clause entry, and rejects decimals, as SANY does", () => {
     const DEF_ERROR = "DEF clause entry should describe a defined operator.";
     const report = getReport({

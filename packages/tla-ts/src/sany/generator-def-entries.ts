@@ -193,11 +193,16 @@ const getDefEntryParts = (
     case "Or": {
       if (expression.operands.length === 1) return undefined;
       // A chain of infix junctions nests its first operand, as N_InfixExpr does.
-      if (!expression.isBulleted) {
-        return expression.operands.length === 2
-          ? getOperator(expression.operands[0], "N_GenInfixOp")
-          : undefined;
+      if (!expression.isBulleted && expression.operands.length > 2) {
+        return {
+          hasChildlessFirstChild: undefined,
+          last: getLocation(
+            getOperandSpan(file, expression.operands[expression.operands.length - 1]).start - 1,
+          ),
+          lastKind: "N_GenInfixOp",
+        };
       }
+      if (!expression.isBulleted) return getOperator(expression.operands[0], "N_GenInfixOp");
       const item = getOperandSpan(file, expression.operands[1]);
       return {
         hasChildlessFirstChild: true,
@@ -271,6 +276,10 @@ export const getDefEntryErrors = (file: SourceFile, expression: Expression): Def
     ((expression.kind === "And" || expression.kind === "Or") && expression.operands.length === 1);
   if (parts === undefined && isOneHeir) {
     // Deviation from SANY: Generator#genIdToSelector throws ArrayIndexOutOfBoundsException on a node with one heir, such as a number, a string, or a one-item junction list; tla-ts rejects it as an entry that describes no definition.
+    return [{ location, message: "DEF clause entry should describe a defined operator." }];
+  }
+  if (parts !== undefined && parts.hasChildlessFirstChild === undefined) {
+    // Deviation from SANY: Generator#genIdToSelector selects the empty N_IdPrefix of a nested first child, as in A + B + A, and reports it at line 2147483647, col 2147483647; tla-ts rejects it as an entry that describes no definition.
     return [{ location, message: "DEF clause entry should describe a defined operator." }];
   }
   if (parts?.hasChildlessFirstChild === undefined || parts.lastKind === undefined) return [];
