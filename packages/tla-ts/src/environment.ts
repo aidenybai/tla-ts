@@ -153,7 +153,7 @@ export interface LinkedModule {
 interface ModuleScope {
   id: string;
   symbols: Symbols;
-  definitions: Definition[];
+  getDefinition: (name: string) => Definition | undefined;
   modules: Map<string, LinkedModule>;
   nested: Module[];
   errors: SanyError[];
@@ -422,7 +422,7 @@ export const createEnvironment = (
     const linked = linkModule(parsed, {
       id: parsed.name,
       symbols: new Map(),
-      definitions: [],
+      getDefinition: () => undefined,
       modules: new Map(),
       nested,
       errors,
@@ -784,12 +784,6 @@ export const createEnvironment = (
     return [...substitutionDefinitions, ...copies, ...exported];
   };
 
-  const getAvailableDefinitions = (visible: Symbols) =>
-    [...visible].flatMap((entry) => {
-      const definition = definitions.get(entry[1].key);
-      return definition ? [{ ...definition, name: entry[0] }] : [];
-    });
-
   const javaOverrides = new Map<string, JavaOverride[]>();
   const linkModule = (unlinked: Module, scope: ModuleScope): LinkedModule => {
     const overridden = overrideDefinitions(
@@ -972,8 +966,12 @@ export const createEnvironment = (
       getLetInstanceExpansion(parsed, (instance, lets) =>
         instantiateLocally(instance, lets, parsed.name, getLetModule(instance)),
       ),
+      (name) => {
+        const symbol = visible.get(name);
+        const definition = symbol && definitions.get(symbol.key);
+        return definition ? { ...definition, name } : scope.getDefinition(name);
+      },
     );
-    const getAvailable = () => [...scope.definitions, ...getAvailableDefinitions(visible)];
     const linkNested = (nested: Module) => {
       const visibleModules = getVisibleModules();
       const existing = visibleModules.get(nested.name);
@@ -982,13 +980,11 @@ export const createEnvironment = (
       scope.nested.push(nested);
       const report: ModuleReport = { location: nested.location, errors: [], warnings: [] };
       reports.push(report);
+      const getDefinitionBefore = subexpressions.getDefinitionsBefore(nested.location);
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         symbols: getSymbolsBefore(nested.location),
-        definitions: [
-          ...scope.definitions,
-          ...subexpressions.getDefinitionsBefore(nested.location, getAvailable()),
-        ],
+        getDefinition: (name) => getDefinitionBefore(name) ?? scope.getDefinition(name),
         modules: visibleModules,
         nested: scope.nested,
         errors: report.errors,
@@ -1033,7 +1029,7 @@ export const createEnvironment = (
     ]
       .sort((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
       .forEach((unit) => unit.link());
-    const module = subexpressions.resolve(getAvailable());
+    const module = subexpressions.resolve();
     parsed.theorems
       .flatMap((theorem) => getProofInstances(theorem.proof))
       .filter((instance) => !getVisibleModules().has(instance.module))

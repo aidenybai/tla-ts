@@ -869,6 +869,7 @@ export const resolveInstanceSubexpressions = (instance: Instance, module: Module
 export const createModuleSubexpressions = (
   module: Module,
   expand: ((expression: Expression) => Expression) | undefined,
+  getAvailable: Lookup,
 ) => {
   const goals = new Set(
     module.theorems.flatMap((theorem) =>
@@ -929,15 +930,16 @@ export const createModuleSubexpressions = (
     };
   const isGoal = (name: string) => goals.has(name);
   const getExpanded = (expression: Expression) => (expand ? expand(expression) : expression);
-  const createResolver = (available: Definition[]) => {
-    const lookup = createLookup([...available, ...module.definitions, ...clauses]);
-    return (expression: Expression, location: SourceLocation) =>
-      resolveSubexpressions(
-        expression,
-        getVisibleLookup(lookup, location),
-        (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
-      );
-  };
+  const getOwnDefinition = createLookup(module.definitions);
+  const getClause = createLookup(clauses);
+  const proofLookup: Lookup = (name) => getOwnDefinition(name) ?? getAvailable(name);
+  const definitionLookup: Lookup = (name) => getClause(name) ?? proofLookup(name);
+  const resolve = (expression: Expression, location: SourceLocation) =>
+    resolveSubexpressions(
+      expression,
+      getVisibleLookup(definitionLookup, location),
+      (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
+    );
   const createProofResolver = (lookup: Lookup) => {
     const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
     const resolveInProof = (expression: Expression) =>
@@ -1048,40 +1050,43 @@ export const createModuleSubexpressions = (
     expand !== undefined ||
     module.definitions.some((definition) => containsReference(definition.body)) ||
     module.assumptions.some((assumption) => containsReference(assumption.expression));
-  const resolveDefinitions = (
-    available: Definition[],
-    isIncluded: (definition: Definition) => boolean,
-  ) => {
+  const ordered = [
+    ...module.definitions.map((definition) => ({ definition, isClause: false })),
+    ...clauses.map((definition) => ({ definition, isClause: true })),
+  ].toSorted((left, right) =>
+    compareLocations(left.definition.location, right.definition.location),
+  );
+  let resolvedCount = 0;
+  const resolveDefinitionsBefore = (location: SourceLocation | undefined) => {
     if (!isMapped) return;
-    const resolve = createResolver(available);
-    [...module.definitions, ...clauses]
-      .filter((definition) => !resolvedDefinitions.has(definition) && isIncluded(definition))
-      .toSorted((left, right) => compareLocations(left.location, right.location))
-      .forEach((definition) =>
-        resolvedDefinitions.set(
-          definition,
-          resolveDefinition(definition, (expression) =>
-            resolve(
-              clauses.includes(definition) ? expression : getExpanded(expression),
-              definition.location,
-            ),
-          ),
+    for (; resolvedCount < ordered.length; resolvedCount++) {
+      const entry = ordered[resolvedCount];
+      const definition = entry.definition;
+      if (location && !isBefore(definition.location, location)) return;
+      resolvedDefinitions.set(
+        definition,
+        resolveDefinition(definition, (expression) =>
+          resolve(entry.isClause ? expression : getExpanded(expression), definition.location),
         ),
       );
+    }
   };
   return {
-    getDefinitionsBefore: (location: SourceLocation, available: Definition[]) => {
-      resolveDefinitions(available, (definition) => isBefore(definition.location, location));
-      return module.definitions.flatMap((definition) =>
-        isBefore(definition.location, location)
-          ? [resolvedDefinitions.get(definition) ?? definition]
-          : [],
-      );
+    getDefinitionsBefore: (location: SourceLocation): Lookup => {
+      resolveDefinitionsBefore(location);
+      return (name) => {
+        const last = getOwnDefinition(name);
+        const definition =
+          last === undefined || isBefore(last.location, location)
+            ? last
+            : module.definitions.findLast(
+                (candidate) => candidate.name === name && isBefore(candidate.location, location),
+              );
+        return definition && (resolvedDefinitions.get(definition) ?? definition);
+      };
     },
-    resolve: (available: Definition[]): Module => {
-      resolveDefinitions(available, () => true);
-      const resolve = createResolver(available);
-      const proofLookup = createLookup([...available, ...module.definitions]);
+    resolve: (): Module => {
+      resolveDefinitionsBefore(undefined);
       return {
         ...module,
         definitions: module.definitions.map(
