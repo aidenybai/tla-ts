@@ -338,11 +338,15 @@ export const assembleModule = (
   const generatedNames = new Set(generated.map((definition) => definition.name));
   const texts = new Map<string, string>();
   const stubbed = new Set<string>();
+  // A gated group's operator stays when an included gated group reaches it, as Temporal reaches
+  // Date's SystemTime, and is a stub when only the core does, as a dispatch on its objects.
   const visit = (start: string[], isData: boolean) => {
-    const stack = [...start];
+    const stack = start.map((name) => ({ name, isFromGate: false }));
     while (stack.length > 0) {
-      const current = stack.pop() ?? "";
-      if (texts.has(current) || stubbed.has(current) || generatedNames.has(current)) continue;
+      const item = stack.pop() ?? { name: "", isFromGate: false };
+      const current = item.name;
+      if (texts.has(current) || generatedNames.has(current)) continue;
+      if (stubbed.has(current) && !item.isFromGate) continue;
       const override = replaced.get(current);
       const definition = library.definitions.get(current);
       const text =
@@ -353,6 +357,7 @@ export const assembleModule = (
               definition.arity > 0 &&
               (cut.has(current) ||
                 (!isIncluded(definition.group) &&
+                  !item.isFromGate &&
                   definition.isStateful &&
                   !/^(?:Is|Has)[A-Z]/.test(current)))
             ? undefined
@@ -361,8 +366,15 @@ export const assembleModule = (
         if (definition !== undefined) stubbed.add(current);
         continue;
       }
+      stubbed.delete(current);
       texts.set(current, text);
-      stack.push(...getDependencies(text.slice(text.indexOf("=="))));
+      const isFromGate =
+        definition !== undefined &&
+        library.triggers.has(definition.group) &&
+        isIncluded(definition.group);
+      stack.push(
+        ...getDependencies(text.slice(text.indexOf("=="))).map((name) => ({ name, isFromGate })),
+      );
     }
   };
   visit(REALM_ROOTS, true);
