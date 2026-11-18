@@ -355,9 +355,12 @@ export const compile = (
   fileName = "spec.ts",
   library?: Library,
   isNodeScript = false,
+  // The paths of the scripts that run before the model, in order, with which it shares its global
+  // scope as a page's scripts do.
+  scripts: readonly string[] = [],
 ): CompiledSpec => {
   const path = fileName.replaceAll("\\", "/");
-  const program = createProgram(source, path, library);
+  const program = createProgram(source, path, library, scripts);
   const context = createContext(
     program.checker,
     program.files,
@@ -471,6 +474,11 @@ export const compile = (
     }
     if (file !== sourceFile) files.push(file);
   };
+  // The scripts run in order before the model, as a page runs its scripts.
+  scripts.forEach((script) => {
+    const file = program.files.find((inner) => inner.fileName === script);
+    if (file !== undefined) load(file);
+  });
   load(sourceFile);
   // The modules that only an import() of a string loads, which run after those the model imports.
   const loaded = files.length;

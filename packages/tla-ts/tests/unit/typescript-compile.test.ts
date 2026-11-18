@@ -53675,4 +53675,34 @@ describe("BigInts", () => {
     ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
   });
 
+  describe("runs JavaScript as a script after another, in one global scope, as a page runs them", () => {
+    const directory = join(import.meta.dirname, "../fixtures/typescript/scripts");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var loose = 5;
+      undeclared = 7;
+      check(shared === 1, "shared");
+      check(this.loose === 5, "this");
+      check(globalThis.undeclared === 7, "implicit");
+      box.seen = typeof check;
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+    const compileScript = (source: string) =>
+      compile(source, join(directory, "model.js"), undefined, false, [
+        join(directory, "harness.ts"),
+      ]);
+
+    it("agrees with Node", async () => {
+      expect((await check(compileScript(getSource("function")))).failure).toBeUndefined();
+    });
+
+    it.each([
+      ["shared === 1", "shared === 2", "shared"],
+      ["this.loose === 5", "this.loose === 6", "this"],
+      ['"function"', '"object"', "seen function"],
+    ])("rejects %s read otherwise", async (from, to, message) => {
+      const source = getSource("function").replace(from, to);
+      expect((await check(compileScript(source))).failure?.message).toContain(message);
+    });
+  });
 });
