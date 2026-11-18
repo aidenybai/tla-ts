@@ -265,6 +265,19 @@ describe("liveness matches TLC", () => {
     expect([result.status, result.distinctStates]).toEqual(["success", 1]);
   });
 
+  it("leaves a recursive operator a temporal property calls through an operator argument unexpanded, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE s\nRECURSIVE RecOp(_)\nRecOp(n) == IF n = 0 THEN TRUE ELSE RecOp(n - 1)\nA == INSTANCE Abstract\nInit == s = 0\nNext == s' = (s + 1) % 3\nProp == A!Double(RecOp, s)\nLive == LET RECURSIVE L(_)\n            L(n) == IF n = 0 THEN TRUE ELSE L(n - 1)\n        IN  A!Double(L, s)\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop Live",
+      loadModule: (name) =>
+        name === "Abstract"
+          ? "---- MODULE Abstract ----\nVARIABLE s\nAlways(ns(_), a) == [](ns(a))\nDouble(ns(_), a) == Always(ns, a)\n===="
+          : undefined,
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+  });
+
   it("checks a property that calls a recursive LET operator", async () => {
     const result = await check({
       source:

@@ -23,11 +23,13 @@ import {
   getBoundElements,
   getDefinition,
   getReevaluatedDefinitions,
+  getRootKey,
   getStartupValue,
   lookupScope,
   resolveApplyOperator,
   resolveGlobalOperator,
   resolveOperator,
+  type Closure,
   type Context,
   type Environment,
   type Scope,
@@ -85,6 +87,8 @@ export const createTautologyError = () =>
 const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
 
 const definitionThunks = new WeakSet<Thunk>();
+
+const recursiveLetBodies = new WeakSet<Expression>();
 
 const JUNCTIONS = new Map<string, "And" | "Or">([
   ["/\\", "And"],
@@ -361,8 +365,16 @@ export const bindLetDefinitions = (
     const name = current.name;
     const definition = expression.definitions.find((item) => item.name === name);
     if (definition) letDefinitions.set(current, definition);
+    if (definition?.isRecursive) recursiveLetBodies.add(definition.body);
   }
   return bound;
+};
+
+// TLC asks the definition a call resolves to whether it is RECURSIVE, so a call through an operator argument counts.
+const isRecursiveClosure = (operator: Closure, environment: Environment) => {
+  if (recursiveLetBodies.has(operator.body)) return true;
+  const definition = getDefinition(getRootKey(operator.name, environment), environment);
+  return definition?.body === operator.body && definition.isRecursive;
 };
 
 export const toLiveExpression = (
@@ -457,7 +469,7 @@ export const toLiveExpression = (
       return toWhole(expression, scope, createJunction(junction, operands));
     }
     if (operator?.kind !== "Closure") return toCallAtom(expression, scope);
-    const isRecursive = !isLocallyResolved(expression) && definition?.isRecursive === true;
+    const isRecursive = isRecursiveClosure(operator, environment);
     if (
       isRecursive &&
       !is174 &&
