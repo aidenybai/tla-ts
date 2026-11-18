@@ -187,6 +187,22 @@ describe("the setup of the smt kernel", () => {
       ].join("\n"),
     );
   });
+
+  // Deviation from Z3: arith.solver 4 makes Z3 pick theory_mi_arith, which answers unknown with
+  // (incomplete (theory arithmetic)); the port's theory_lra stands in for it and decides.
+  it("decides nonlinear real arithmetic with the arithmetic solver that stands in for a legacy one", () => {
+    expect(
+      run([
+        "(set-option :smt.arith.solver 4)",
+        "(declare-fun a () Int)",
+        "(declare-fun b () Real)",
+        "(declare-fun c () Real)",
+        "(assert (>= a 4))",
+        "(assert (= (+ b (* b c)) 3.0))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["sat"]);
+  });
 });
 
 describe("regular expressions", () => {
