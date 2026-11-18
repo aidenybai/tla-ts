@@ -3,14 +3,16 @@ import {
   addChanged,
   getComponent,
   getComponentParameters,
-  getOwnEffects,
+  getFunctionIndex,
+  getSymbolBit,
+  isNamingBound,
   hasChanged,
   isComponentErrorMade,
   isMarked,
   markBound,
   summarizeFunctions,
 } from "./change-summaries";
-import { getPosition } from "./program-nodes";
+import { getPosition, hasBit, setBit } from "./program-nodes";
 import { getModuleObjects } from "./common-js";
 import { isAmbientCode } from "./early-errors";
 import { BUILT_INS } from "./built-ins";
@@ -75,7 +77,6 @@ import {
   getFunctionValue,
   getObjectGetter,
   type HeapClass,
-  type ChangeSummary,
   type Effects,
   type NodeEffects,
   type Context,
@@ -204,6 +205,7 @@ import {
   closeIterator,
   getIteratedSpreads,
   getIteratorFunctions,
+  takeRest,
   getTaken,
   isCaughtIteration,
   isIterablePattern,
@@ -14469,8 +14471,8 @@ const isStatementCall = (node: ts.CallExpression, path: Path, context: Context) 
   );
 };
 
-// The values that new of a typed array takes from an iterator that a script gives, before tla-ts
-// stops following it.
+// The values that new of a typed array takes from a generator that a script's @@iterator method
+// makes, before tla-ts stops following it.
 const TYPED_ARRAY_TAKE_LIMIT = 8;
 
 // new of a typed array of a value whose type doesn't tell whether it's an object that a script's
@@ -14937,38 +14939,6 @@ const translateNewBufferStatement = (
                 make(current, madeArguments, finish),
               );
       const throwWith = (after: Path) => throwTypeError(after, node, context, frame);
-      const step = (
-        current: Path,
-        iterator: Expression,
-        next: Expression,
-        taken: Expression[],
-        finish: (path: Path, value: Expression) => Formula,
-      ): Formula =>
-        taken.length > TYPED_ARRAY_TAKE_LIMIT
-          ? leaf(
-              apply("Assert", [
-                boolean(false),
-                string(
-                  `tla-ts can't take more than ${TYPED_ARRAY_TAKE_LIMIT} values into a typed array`,
-                ),
-              ]),
-            )
-          : stepIterator(
-              node,
-              iterator,
-              "next",
-              next,
-              [],
-              current,
-              context,
-              frame,
-              throwWith,
-              (done) => make(done, [tuple(taken), ...values.slice(1)], finish),
-              (stepped, result) =>
-                readValue(node, result, stepped, context, frame, (read, value) =>
-                  step(read, iterator, next, [...taken, value], finish),
-                ),
-            );
       // new of a typed array reads an object's @@iterator, and else its length and its elements in
       // order, so the first that a getter which only throws answers throws, where nothing before
       // runs code. The typed arrays of numbers and those of BigInts convert the elements apart.
@@ -15038,7 +15008,18 @@ const translateNewBufferStatement = (
                     context,
                     frame,
                     throwWith,
-                    (opened, iterator, next) => step(opened, iterator, next, [], finish),
+                    (opened, iterator, next) =>
+                      takeRest(
+                        node,
+                        iterator,
+                        next,
+                        tuple([]),
+                        TYPED_ARRAY_TAKE_LIMIT,
+                        opened,
+                        context,
+                        frame,
+                        (done, taken) => make(done, [taken, ...values.slice(1)], finish),
+                      ),
                   ),
                 ),
                 madeFrom(finish),
@@ -16177,23 +16158,61 @@ export const summarizeEffects = (context: Context) =>
 const getNodeKey = (node: ts.Node) =>
   `${node.getSourceFile().fileName}:${node.pos}:${node.end}:${node.kind}`;
 
-// A summary that a walk makes, with the components of the program's summaries that it takes the
-// changed symbols of.
-interface WalkedSummary extends ChangeSummary {
-  components: ReadonlySet<number>;
+// A summary that a walk makes: rows of bits over the table's changed symbols and its parameters,
+// with the symbols that the table's bits don't hold, and the table's components whose summaries
+// it takes, which are few of many.
+interface WalkedSummary {
+  changed: Uint32Array;
+  otherChanged: ts.Symbol[];
+  isErrorMade: boolean;
+  parameters: Uint32Array;
+  otherParameters: ts.Symbol[];
+  components: Set<number>;
 }
+
+// The summaries that the walks of one set of bindings make, by each function's index in the
+// table, or past the table's functions for one that it lacks, which the walk numbers as it meets
+// it.
+interface Walk {
+  summaries: (WalkedSummary | undefined)[];
+  others: Map<ts.Node, number>;
+  otherNodes: ts.Node[];
+}
+
+// A function's own effects in a walk: the bits of what it changes and of the parameters that it
+// calls or passes, with the symbols that the table's bits don't hold, and the functions it runs.
+interface WalkedEffects {
+  changed: ArrayLike<number>;
+  otherChanged: ts.Symbol[];
+  isErrorMade: boolean;
+  parameters: ArrayLike<number>;
+  otherParameters: ts.Symbol[];
+  called: ArrayLike<number>;
+}
+
+// The indexes of a row's bits.
+const getRowBits = (row: Uint32Array) => {
+  const found: number[] = [];
+  row.forEach((word, index) => {
+    for (let bit = 0; word !== 0 && bit < 32; bit += 1) {
+      if ((word & (1 << bit)) !== 0) found.push(index * 32 + bit);
+    }
+  });
+  return found;
+};
 
 // What a function changes, with what the functions that it runs change, where the bindings give
 // the functions that its parameters hold, for a function whose summary the bindings change or that
 // the program's summaries don't cover. The functions that run one another, a strongly connected
 // component of the call graph, change the same things, so they share one summary, which Tarjan's
 // algorithm makes once the components that they run have theirs. A function that the bindings
-// don't change, as markBound's generation tells, takes its component's summary. The summaries
+// don't change, as markBound's generation tells, takes its component's summary, and one of the
+// table whose nodes name no bound symbol takes the effects that the table found. The summaries
 // that a walk makes, by its bindings, last for the walk.
 const summarize = (
   root: ts.Node,
   bindings: ReadonlyMap<ts.Symbol, FunctionNode>,
-  walked: Map<string, Map<ts.Node, WalkedSummary>>,
+  walked: Map<string, Walk>,
   generation: number,
   context: Context,
 ) => {
@@ -16205,75 +16224,162 @@ const summarize = (
     })
     .sort()
     .join(",");
-  const summaries = walked.get(key) ?? new Map<ts.Node, WalkedSummary>();
+  const walk: Walk = walked.get(key) ?? { summaries: [], others: new Map(), otherNodes: [] };
+  walked.set(key, walk);
   const boundIds = Int32Array.from(bindings.keys(), (symbol) => ts.getSymbolId(symbol)).sort();
-  walked.set(key, summaries);
-  // The component whose summary a called function takes, or -1.
-  const getKept = (called: ts.Node) => {
-    const component = table === undefined ? -1 : getComponent(table, context.nodes, called);
-    return table !== undefined && component >= 0 && !isMarked(table, component, generation)
-      ? component
-      : -1;
+  const count = table?.functionNodes.length ?? 0;
+  const changedWords = table?.changed.words ?? 0;
+  const parameterWords = table?.parameters.words ?? 0;
+  const getIndex = (node: ts.Node) => {
+    const index = table === undefined ? -1 : getFunctionIndex(table, context.nodes, node);
+    if (index >= 0) return index;
+    const other = walk.others.get(node);
+    if (other !== undefined) return other;
+    walk.otherNodes.push(node);
+    walk.others.set(node, count + walk.otherNodes.length - 1);
+    return count + walk.otherNodes.length - 1;
   };
-  const indexes = new Map<ts.Node, number>();
-  const lowLinks = new Map<ts.Node, number>();
-  const stack: ts.Node[] = [];
-  const onStack = new Set<ts.Node>();
-  const effects = new Map<ts.Node, Effects[]>();
-  const connect = (node: ts.Node): WalkedSummary | undefined => {
-    const index = indexes.size;
-    indexes.set(node, index);
-    lowLinks.set(node, index);
-    stack.push(node);
-    onStack.add(node);
-    const found: Effects[] = [];
+  const getNode = (index: number) =>
+    index < count && table !== undefined
+      ? table.functionNodes[index]
+      : walk.otherNodes[index - count];
+  // The component whose summary a called function takes, or -1.
+  const getKept = (index: number) =>
+    table !== undefined && index < count && !isMarked(table, table.components[index], generation)
+      ? table.components[index]
+      : -1;
+  // A function's own effects, from the table where its nodes name no bound symbol, and from a walk
+  // of its nodes otherwise.
+  const getEffectsOf = (index: number): WalkedEffects => {
+    if (table !== undefined && index < count && !isNamingBound(table, index, boundIds)) {
+      return {
+        changed: table.ownChanged.subarray(
+          table.changedStarts[index],
+          table.changedStarts[index + 1],
+        ),
+        otherChanged: [],
+        isErrorMade: hasBit(table.ownErrors, index),
+        parameters: table.ownParameters.subarray(
+          table.parameterStarts[index],
+          table.parameterStarts[index + 1],
+        ),
+        otherParameters: [],
+        called: table.edges.subarray(table.edgeStarts[index], table.edgeStarts[index + 1]),
+      };
+    }
+    const changed: number[] = [];
+    const otherChanged: ts.Symbol[] = [];
+    const parameters: number[] = [];
+    const otherParameters: ts.Symbol[] = [];
+    const called: number[] = [];
+    const errors = { isErrorMade: false };
     const visit = (inner: ts.Node) => {
-      found.push(getNodeEffects(inner, bindings, context));
+      const effects = getNodeEffects(inner, bindings, context);
+      effects.changed.forEach((symbol) => {
+        const bit = table === undefined ? -1 : getSymbolBit(table.changed, symbol);
+        if (bit >= 0) changed.push(bit);
+        else otherChanged.push(symbol);
+      });
+      effects.parameters.forEach((symbol) => {
+        const bit = table === undefined ? -1 : getSymbolBit(table.parameters, symbol);
+        if (bit >= 0) parameters.push(bit);
+        else otherParameters.push(symbol);
+      });
+      if (effects.isErrorMade) errors.isErrorMade = true;
+      effects.called.forEach((inner) => called.push(getIndex(inner)));
       ts.forEachChild(inner, visit);
     };
-    // A function of the table whose nodes name no bound symbol takes the effects that it found.
-    const tabled =
-      table === undefined ? undefined : getOwnEffects(table, context.nodes, node, boundIds);
-    if (tabled === undefined) visit(node);
-    else found.push(tabled);
-    effects.set(node, found);
-    found.forEach((effect) =>
-      effect.called.forEach((called) => {
-        if (summaries.has(called) || getKept(called) >= 0) return;
-        if (!indexes.has(called)) connect(called);
-        const reached = onStack.has(called) ? (lowLinks.get(called) ?? index) : index;
-        lowLinks.set(node, Math.min(lowLinks.get(node) ?? index, reached));
-      }),
-    );
-    if (lowLinks.get(node) !== index) return undefined;
-    const component = stack.splice(stack.indexOf(node));
-    component.forEach((member) => onStack.delete(member));
-    const own = component.flatMap((member) => effects.get(member) ?? []);
-    const called = [...new Set(own.flatMap((effect) => effect.called))];
-    const reached = [...new Set(called.flatMap((inner) => summaries.get(inner) ?? []))];
-    const kept = [...new Set(called.map(getKept).filter((inner) => inner >= 0))];
-    const summary: WalkedSummary = {
-      changed: new Set([
-        ...own.flatMap((effect) => effect.changed),
-        ...reached.flatMap((inner) => [...inner.changed]),
-      ]),
-      isErrorMade:
-        own.some((effect) => effect.isErrorMade) ||
-        reached.some((inner) => inner.isErrorMade) ||
-        (table !== undefined && kept.some((inner) => isComponentErrorMade(table, inner))),
-      parameters: new Set([
-        ...own.flatMap((effect) => effect.parameters),
-        ...reached.flatMap((inner) => [...inner.parameters]),
-        ...(table === undefined
-          ? []
-          : kept.flatMap((inner) => getComponentParameters(table, inner))),
-      ]),
-      components: new Set([...kept, ...reached.flatMap((inner) => [...inner.components])]),
+    visit(getNode(index));
+    return {
+      changed,
+      otherChanged,
+      isErrorMade: errors.isErrorMade,
+      parameters,
+      otherParameters,
+      called,
     };
-    component.forEach((member) => summaries.set(member, summary));
+  };
+  // Tarjan's state by each function's index: the order it was met in plus one, its low link, and
+  // whether it is on the stack, with its own effects until its component's summary is made.
+  const met = new Map<number, number>();
+  const lowLinks = new Map<number, number>();
+  const stack: number[] = [];
+  const isOnStack = new Set<number>();
+  const owned = new Map<number, WalkedEffects>();
+  const connect = (index: number): WalkedSummary | undefined => {
+    const order = met.size;
+    met.set(index, order);
+    lowLinks.set(index, order);
+    stack.push(index);
+    isOnStack.add(index);
+    const own = getEffectsOf(index);
+    owned.set(index, own);
+    for (let edge = 0; edge < own.called.length; edge += 1) {
+      const called = own.called[edge];
+      if (walk.summaries[called] !== undefined || getKept(called) >= 0) continue;
+      if (!met.has(called)) connect(called);
+      const reached = isOnStack.has(called) ? (lowLinks.get(called) ?? order) : order;
+      lowLinks.set(index, Math.min(lowLinks.get(index) ?? order, reached));
+    }
+    if (lowLinks.get(index) !== order) return undefined;
+    const members = stack.splice(stack.lastIndexOf(index));
+    const summary: WalkedSummary = {
+      changed: new Uint32Array(changedWords),
+      otherChanged: [],
+      isErrorMade: false,
+      parameters: new Uint32Array(parameterWords),
+      otherParameters: [],
+      components: new Set<number>(),
+    };
+    const addRow = (to: Uint32Array, from: Uint32Array) => {
+      from.forEach((word, at) => {
+        to[at] |= word;
+      });
+    };
+    const reached = new Set<WalkedSummary>();
+    members.forEach((member) => {
+      isOnStack.delete(member);
+      const effects = owned.get(member);
+      owned.delete(member);
+      if (effects === undefined) return;
+      for (let own = 0; own < effects.changed.length; own += 1) {
+        setBit(summary.changed, effects.changed[own]);
+      }
+      for (let own = 0; own < effects.parameters.length; own += 1) {
+        setBit(summary.parameters, effects.parameters[own]);
+      }
+      summary.otherChanged.push(...effects.otherChanged);
+      summary.otherParameters.push(...effects.otherParameters);
+      if (effects.isErrorMade) summary.isErrorMade = true;
+      for (let edge = 0; edge < effects.called.length; edge += 1) {
+        const called = effects.called[edge];
+        const inner = walk.summaries[called];
+        if (inner !== undefined) reached.add(inner);
+        const kept = getKept(called);
+        if (table === undefined || kept < 0 || summary.components.has(kept)) continue;
+        summary.components.add(kept);
+        if (isComponentErrorMade(table, kept)) summary.isErrorMade = true;
+        addRow(
+          summary.parameters,
+          table.parameters.rows.subarray(kept * parameterWords, (kept + 1) * parameterWords),
+        );
+      }
+    });
+    reached.forEach((inner) => {
+      addRow(summary.changed, inner.changed);
+      addRow(summary.parameters, inner.parameters);
+      inner.components.forEach((component) => summary.components.add(component));
+      summary.otherChanged.push(...inner.otherChanged);
+      summary.otherParameters.push(...inner.otherParameters);
+      if (inner.isErrorMade) summary.isErrorMade = true;
+    });
+    members.forEach((member) => {
+      walk.summaries[member] = summary;
+    });
     return summary;
   };
-  return summaries.get(root) ?? connect(root);
+  const rootIndex = getIndex(root);
+  return walk.summaries[rootIndex] ?? connect(rootIndex);
 };
 
 // What a node may change, with the functions that it runs, where functions binds the parameters
@@ -16290,7 +16396,7 @@ export const findChanged = (
   const table = context.changes;
   const changed = new Set<ts.Symbol>();
   const row = new Uint32Array(table?.changed.words ?? 0);
-  const walked = new Map<string, Map<ts.Node, WalkedSummary>>();
+  const walked = new Map<string, Walk>();
   const visited = new Set<ts.Node>();
   const unbound = table === undefined ? 0 : markBound(table, []);
   const addError = (isErrorMade: boolean) => {
@@ -16309,11 +16415,20 @@ export const findChanged = (
   };
   const getComponentOf = (node: ts.Node) =>
     table === undefined ? -1 : getComponent(table, context.nodes, node);
+  const getWalkedParameters = (summary: WalkedSummary | undefined) =>
+    summary === undefined
+      ? []
+      : [
+          ...summary.otherParameters,
+          ...(table === undefined
+            ? []
+            : getRowBits(summary.parameters).map((bit) => table.parameters.symbols[bit])),
+        ];
   const getParameters = (node: ts.Node) => {
     const component = getComponentOf(node);
     return table !== undefined && component >= 0
       ? getComponentParameters(table, component)
-      : (summarize(node, NO_FUNCTIONS, walked, unbound, context)?.parameters ?? []);
+      : getWalkedParameters(summarize(node, NO_FUNCTIONS, walked, unbound, context));
   };
   const addSummary = (root: ts.Node) => {
     const bindings = new Map<ts.Symbol, FunctionNode>();
@@ -16340,7 +16455,11 @@ export const findChanged = (
     }
     const summary = summarize(root, bindings, walked, generation, context);
     if (summary === undefined) return;
-    add(summary);
+    summary.changed.forEach((word, index) => {
+      row[index] |= word;
+    });
+    summary.otherChanged.forEach((symbol) => changed.add(symbol));
+    addError(summary.isErrorMade);
     summary.components.forEach(addComponent);
   };
   const visit = (node: ts.Node) => {

@@ -284,6 +284,17 @@ export const findNames = (
   });
 };
 
+// The names of all of the program's files that a text spells, in order.
+export const findProgramNames = (table: ProgramNodes, text: string): ts.Identifier[] => {
+  const count = table.nameTexts.length;
+  const last = getTextBound(table.nameTexts, 0, count, `${text}\0`);
+  const first = getTextBound(table.nameTexts, 0, last, text);
+  return [...table.namePositions.subarray(first, last)].flatMap((position) => {
+    const node = table.nodes[position];
+    return ts.isIdentifier(node) ? [node] : [];
+  });
+};
+
 export const createReferences = (
   table: ProgramNodes,
   getSymbol: (name: ts.Identifier) => ts.Symbol | undefined,

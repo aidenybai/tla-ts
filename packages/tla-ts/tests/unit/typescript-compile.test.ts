@@ -52821,4 +52821,199 @@ describe("BigInts", () => {
       ).toThrow("Type 'string' is not assignable to type 'number'");
     });
   });
+
+  describe("makes a typed array of every value that a script's iterator gives", () => {
+    const getSource = (count: number, expected: string) => `
+      interface Counter {
+        index: number;
+        next: (this: Counter) => IteratorResult<number>;
+        [Symbol.iterator]: (this: Counter) => Counter;
+      }
+      const counter: Counter = {
+        index: 0,
+        next() {
+          if (this.index >= ${count}) return { value: undefined, done: true };
+          this.index += 1;
+          return { value: this.index * 3, done: false };
+        },
+        [Symbol.iterator]() {
+          return this;
+        },
+      };
+      const source: unknown = counter;
+      const made = new Uint8Array(source as never);
+      const result = [made.length, made[0], made[made.length - 1], counter.index].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(40, "40,3,120,40"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource(40, "39,3,117,39"))).failure?.message).toContain(
+        "40,3,120,40",
+      );
+    });
+
+    it("translates the iterator's next once, whatever the count", () => {
+      const getSize = (count: number) => printModule(compile(getSource(count, "")).source).length;
+      expect(getSize(400)).toBe(getSize(100));
+    });
+
+    const getThrown = (expected: string) => `
+      let calls = 0;
+      const iterable = {
+        [Symbol.iterator]() {
+          return {
+            next(): IteratorResult<number> {
+              calls += 1;
+              if (calls === 30) throw new RangeError("next");
+              return { value: calls, done: false };
+            },
+          };
+        },
+      };
+      const source: unknown = iterable;
+      let caught = "none";
+      try {
+        new Float64Array(source as never);
+      } catch (error) {
+        caught = error instanceof RangeError ? "range" : "other";
+      }
+      if ([caught, calls].join() !== "${expected}") throw new Error([caught, calls].join());
+    `;
+
+    it("agrees with Node where next throws", async () => {
+      expect((await checkModel(getThrown("range,30"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation where next throws", async () => {
+      expect((await checkModel(getThrown("range,29"))).failure?.message).toContain("range,30");
+    });
+  });
+
+  describe("spreads and destructures every value that a script's iterator gives", () => {
+    const getSource = (expected: string) => `
+      interface Counter {
+        index: number;
+        next: (this: Counter) => IteratorResult<number>;
+        [Symbol.iterator]: (this: Counter) => Counter;
+      }
+      let calls = 0;
+      const getCounter = (count: number): Counter => ({
+        index: 0,
+        next() {
+          calls += 1;
+          if (this.index >= count) return { value: undefined, done: true };
+          this.index += 1;
+          return { value: this.index * 2, done: false };
+        },
+        [Symbol.iterator]() {
+          return this;
+        },
+      });
+      const spread = [0, ...getCounter(30)];
+      const [first, second, ...rest] = getCounter(25);
+      const result = [spread.length, spread[30], first, second, rest.length, rest[22], calls].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("31,60,2,4,23,50,57"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("31,60,2,4,23,50,56"))).failure?.message).toContain(
+        "31,60,2,4,23,50,57",
+      );
+    });
+  });
+
+  describe("takes every entry that a script's iterator gives into Object.fromEntries", () => {
+    const getSource = (count: number, expected: string) => `
+      interface Entries {
+        index: number;
+        next: (this: Entries) => IteratorResult<[string, number]>;
+        return: () => IteratorResult<[string, number]>;
+        [Symbol.iterator]: (this: Entries) => Entries;
+      }
+      let closed = 0;
+      const entries: Entries = {
+        index: 0,
+        next() {
+          if (this.index >= ${count}) return { value: undefined, done: true };
+          this.index += 1;
+          const entry: unknown = this.index === 18 ? null : ["k" + (this.index % 12), this.index];
+          return { value: entry as [string, number], done: false };
+        },
+        return() {
+          closed += 1;
+          return { value: undefined, done: true };
+        },
+        [Symbol.iterator]() {
+          return this;
+        },
+      };
+      let made = "none";
+      try {
+        made = JSON.stringify(Object.fromEntries(entries));
+      } catch (error) {
+        made = error instanceof TypeError ? "type" : "other";
+      }
+      const result = [made, entries.index, closed].join("|");
+      if (result !== '${expected}') throw new Error(result);
+    `;
+    const read =
+      '{"k1":13,"k2":14,"k3":15,"k4":16,"k5":5,"k6":6,"k7":7,"k8":8,"k9":9,"k10":10,"k11":11,"k0":12}|16|0';
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(16, read))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource(16, read.replace('"k5":5', '"k5":17')))).failure?.message,
+      ).toContain("k11");
+    });
+
+    it("agrees with Node where an entry isn't an object", async () => {
+      expect((await checkModel(getSource(30, "type|18|1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation where an entry isn't an object", async () => {
+      expect((await checkModel(getSource(30, "type|18|0"))).failure?.message).toContain(
+        "type|18|1",
+      );
+    });
+  });
+
+  describe("revives every value of a JSON text that a script writes", () => {
+    const text = JSON.stringify(
+      Array.from({ length: 6 }, (_, row) =>
+        Array.from({ length: 11 }, (_, column) => row * 11 + column),
+      ),
+    );
+    const getSource = (expected: string) => `
+      let count = 0;
+      let keys = "";
+      const parsed: unknown = JSON.parse("${text}", (key, value) => {
+        count += 1;
+        if (count >= 10 && count <= 13) keys += key + ";";
+        return typeof value === "number" ? value * 2 : value;
+      });
+      const result = [count, keys, JSON.stringify(parsed).length].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("73,9;10;0;0;,222"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("73,9;10;0;0;,221"))).failure?.message).toContain(
+        "73,9;10;0;0;,222",
+      );
+    });
+  });
 });

@@ -3,6 +3,7 @@ import type { Expression } from "../ast";
 import {
   type Frame,
   type Path,
+  getChanged,
   throwTypeError,
   isGeneratorMade,
   takeFromHeld,
@@ -34,6 +35,7 @@ import {
   callMethod,
   getWrittenFunctions,
   isNullish,
+  loopStates,
   madeIterators,
   read,
   withHeap,
@@ -55,7 +57,7 @@ export const getTakenValue = (value: Expression) => {
 
 export const getTaken = (values: Expression[]) => getTakenValue(tuple(values));
 
-// The values that a rest element or a spread takes from an iterator before tla-ts stops following
+// The values that a rest element or a spread takes from a generator before tla-ts stops following
 // it.
 const TAKE_LIMIT = 3;
 
@@ -854,12 +856,17 @@ const takeAll = (
         finish(closed, values),
       );
     }
-    if (values.length >= count + TAKE_LIMIT) {
-      return leaf(
-        apply("Assert", [
-          boolean(false),
-          string(`tla-ts can't take more than ${TAKE_LIMIT} values into a rest element`),
-        ]),
+    if (values.length === count) {
+      return takeRest(
+        pattern,
+        iterator,
+        next,
+        tuple(values),
+        TAKE_LIMIT,
+        current,
+        context,
+        frame,
+        continueWith,
       );
     }
     return stepIterator(
@@ -928,43 +935,96 @@ export const getIteratedSpreads = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
-// Steps an iterator to its end, as a spread does, reading each value it gives.
-const stepAll = (
+interface LoopStep {
+  (
+    current: Path,
+    state: Expression,
+    inner: Frame,
+    again: (current: Path, state: Expression) => Formula,
+    stop: (current: Path, result: Expression) => Formula,
+  ): Formula;
+}
+
+// Steps an iterator in a recursive operator, as a loop's iterations run, from a state that each
+// step gives the next. A generator that a generator method made keeps its state in the path, which
+// the operator can't carry, so its steps unroll, up to a limit.
+const loopIterator = (
   site: ts.Node,
   iterator: Expression,
-  next: Expression,
+  seed: Expression,
+  limit: number,
   path: Path,
   context: Context,
   frame: Frame,
-  throwWith: (path: Path) => Formula,
-  continueWith: (path: Path, values: Expression[]) => Formula,
-) => {
-  const step = (current: Path, values: Expression[]): Formula =>
-    values.length > TAKE_LIMIT
+  step: LoopStep,
+  continueWith: (path: Path, result: Expression) => Formula,
+): Formula => {
+  if (!madeIterators.has(iterator)) {
+    // The operator carries what the iterator's functions may change, which the effects of an
+    // assignment's pattern, unlike its assignment's, leave out. A let whose declaration hasn't run
+    // has no value to carry.
+    const changed = [
+      ...new Set([
+        ...getChanged(site, path, context),
+        ...getIteratorFunctions(site, context).flatMap((called) =>
+          getChanged(called, path, context),
+        ),
+        ...(context.heap === undefined ? [] : [context.heap]),
+      ]),
+    ].filter((symbol) => !path.scope.uninitialized.has(symbol));
+    return loopStates(site, seed, changed, path, context, frame, step, continueWith);
+  }
+  const unroll = (current: Path, state: Expression, count: number): Formula =>
+    count > limit
       ? leaf(
           apply("Assert", [
             boolean(false),
-            string(`tla-ts can't spread more than ${TAKE_LIMIT} values`),
+            string(`tla-ts can't take more than ${limit} values from a generator`),
           ]),
         )
-      : stepIterator(
-          site,
-          iterator,
-          "next",
-          next,
-          [],
-          current,
-          context,
-          frame,
-          throwWith,
-          (done) => continueWith(done, values),
-          (stepped, result) =>
-            readValue(site, result, stepped, context, frame, (taken, value) =>
-              step(taken, [...values, value]),
-            ),
-        );
-  return step(path, []);
+      : step(current, state, frame, (after, next) => unroll(after, next, count + 1), continueWith);
+  return unroll(path, seed, 0);
 };
+
+// Steps an iterator to its end, as a spread does, appending each value it gives to those taken.
+export const takeRest = (
+  site: ts.Node,
+  iterator: Expression,
+  next: Expression,
+  taken: Expression,
+  limit: number,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, values: Expression) => Formula,
+) =>
+  loopIterator(
+    site,
+    iterator,
+    taken,
+    limit,
+    path,
+    context,
+    frame,
+    (current, values, inner, again, stop) =>
+      stepIterator(
+        site,
+        iterator,
+        "next",
+        next,
+        [],
+        current,
+        context,
+        inner,
+        (after) => throwTypeError(after, site, context, inner),
+        (done) => stop(done, values),
+        (stepped, result) =>
+          readValue(site, result, stepped, context, inner, (read, value) =>
+            again(read, apply("Append", [values, value])),
+          ),
+      ),
+    continueWith,
+  );
 
 // Runs spreads that iterate objects, which take and read each value of the objects' iterators, for
 // a statement that drops what they take.
@@ -999,8 +1059,16 @@ export const takeSpreads = (
                   frame,
                   throwWith,
                   (opened, iterator, next) =>
-                    stepAll(site, iterator, next, opened, context, frame, throwWith, (done) =>
-                      spread(done, rest.slice(1)),
+                    takeRest(
+                      site,
+                      iterator,
+                      next,
+                      tuple([]),
+                      TAKE_LIMIT,
+                      opened,
+                      context,
+                      frame,
+                      (done) => spread(done, rest.slice(1)),
                     ),
                 );
           return spread(path, iterables);
@@ -1051,9 +1119,7 @@ export const takeEvery = (
               apply("~", [useJavaScript("IsArray", [heap, value], context)]),
             ]),
             open(site, value, path, context, frame, throwWith, (opened, iterator, next) =>
-              stepAll(site, iterator, next, opened, context, frame, throwWith, (done, values) =>
-                rejoin(done, tuple(values)),
-              ),
+              takeRest(site, iterator, next, tuple([]), TAKE_LIMIT, opened, context, frame, rejoin),
             ),
             ifThenElse(
               isNullish(value, context),
@@ -1065,8 +1131,8 @@ export const takeEvery = (
   );
 };
 
-// The most entries that Object.fromEntries takes from a script's iterator.
-const ENTRY_LIMIT = 4;
+// The most entries that Object.fromEntries takes from a generator.
+const ENTRY_LIMIT = 3;
 
 // Object.fromEntries of an object that a script gives an iterator, as AddEntriesFromIterable runs
 // it: each step takes one entry and reads its key and value, then converts the key, before the next
@@ -1087,81 +1153,76 @@ export const takeEntries = (
     context,
     frame,
     (after) => throwTypeError(after, site, context, frame),
-    (opened, iterator, next) => {
-      const throwTo = frame.throwTo;
-      const closing: Frame = {
-        ...frame,
-        throwTo: (current, thrown) =>
-          closeQuietly(site, iterator, current, context, frame, (closed) =>
-            throwTo === undefined ? leaf(thrown.uncaught) : throwTo(closed, thrown),
-          ),
-      };
-      const finish = (current: Path, entries: readonly [Expression, Expression][]) =>
-        bind(
-          current,
-          "heap",
-          useJavaScript(
-            "Allocate",
-            [
-              getHeap(current.scope, site, context),
-              entries.reduce<Expression>(
-                (object, entry) => useJavaScript("Put", [object, ...entry], context),
-                identifier("EmptyObject"),
+    (opened, iterator, next) =>
+      loopIterator(
+        site,
+        iterator,
+        identifier("EmptyObject"),
+        ENTRY_LIMIT,
+        opened,
+        context,
+        frame,
+        (current, object, inner, again, stop) => {
+          const throwTo = inner.throwTo;
+          const closing: Frame = {
+            ...inner,
+            throwTo: (failed, thrown) =>
+              closeQuietly(site, iterator, failed, context, inner, (closed) =>
+                throwTo === undefined ? leaf(thrown.uncaught) : throwTo(closed, thrown),
               ),
-            ],
+          };
+          return stepIterator(
+            site,
+            iterator,
+            "next",
+            next,
+            [],
+            current,
             context,
-          ),
-          context,
-          (bound, heap) =>
-            continueWith(
-              withHeap(bound, heap, context),
-              useJavaScript("Allocated", [heap], context),
-            ),
-        );
-      const step = (current: Path, entries: readonly [Expression, Expression][]): Formula =>
-        entries.length >= ENTRY_LIMIT
-          ? leaf(
-              apply("Assert", [
-                boolean(false),
-                string(`tla-ts can't take more than ${ENTRY_LIMIT} entries`),
-              ]),
-            )
-          : stepIterator(
-              site,
-              iterator,
-              "next",
-              next,
-              [],
-              current,
-              context,
-              frame,
-              (after) => throwTypeError(after, site, context, frame),
-              (done) => finish(done, entries),
-              (stepped, result) =>
-                readValue(site, result, stepped, context, frame, (taken, entry) =>
-                  ifThenElse(
-                    isObject(site, taken, entry, context),
-                    read(site, entry, "0", taken, context, closing, (keyed, key) =>
-                      read(site, entry, "1", keyed, context, closing, (valued, value) =>
-                        runToPrimitive(
-                          site,
-                          key,
-                          "string",
-                          valued,
-                          context,
-                          closing,
-                          (converted, primitive) =>
-                            step(converted, [
-                              ...entries,
-                              [useJavaScript("PropertyKey", [primitive], context), value],
-                            ]),
-                        ),
+            inner,
+            (after) => throwTypeError(after, site, context, inner),
+            (done) => stop(done, object),
+            (stepped, result) =>
+              readValue(site, result, stepped, context, inner, (taken, entry) =>
+                ifThenElse(
+                  isObject(site, taken, entry, context),
+                  read(site, entry, "0", taken, context, closing, (keyed, key) =>
+                    read(site, entry, "1", keyed, context, closing, (valued, value) =>
+                      runToPrimitive(
+                        site,
+                        key,
+                        "string",
+                        valued,
+                        context,
+                        closing,
+                        (converted, primitive) =>
+                          again(
+                            converted,
+                            useJavaScript(
+                              "Put",
+                              [object, useJavaScript("PropertyKey", [primitive], context), value],
+                              context,
+                            ),
+                          ),
                       ),
                     ),
-                    throwTypeError(taken, site, context, closing),
                   ),
+                  throwTypeError(taken, site, context, closing),
                 ),
-            );
-      return step(opened, []);
-    },
+              ),
+          );
+        },
+        (done, object) =>
+          bind(
+            done,
+            "heap",
+            useJavaScript("Allocate", [getHeap(done.scope, site, context), object], context),
+            context,
+            (bound, heap) =>
+              continueWith(
+                withHeap(bound, heap, context),
+                useJavaScript("Allocated", [heap], context),
+              ),
+          ),
+      ),
   );

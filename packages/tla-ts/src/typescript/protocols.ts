@@ -1897,17 +1897,24 @@ export const loopStates = (
       throwTo &&
       ((current, thrown) => end(current, "throw", thrown.value, getThrownMessage(thrown, site))),
   };
+  const carried = tuple([state, ...parameters].map((parameter) => identifier(parameter)));
   const operator: OperatorDefinition = {
     ...define(
       name,
       [state, ...parameters].map((parameter) => ({ name: parameter, arity: 0 })),
+      // Each step evaluates the values it carries, which an operator's arguments otherwise defer,
+      // so that a state that each step builds on doesn't nest a deferred step for each one.
       render(
-        step(
-          inner,
-          identifier(state),
-          innerFrame,
-          (current, next) => leaf(call(name, [next, ...getValues(current)])),
-          (current, result) => end(current, "next", result, string("")),
+        ifThenElse(
+          apply("=", [carried, carried]),
+          step(
+            inner,
+            identifier(state),
+            innerFrame,
+            (current, next) => leaf(call(name, [next, ...getValues(current)])),
+            (current, result) => end(current, "next", result, string("")),
+          ),
+          leaf(boolean(false)),
         ),
       ),
     ),
