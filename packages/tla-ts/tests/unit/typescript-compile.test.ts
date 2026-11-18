@@ -54001,4 +54001,27 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("-8,-3"))).failure?.message).toContain("seen 8,3");
     });
   });
+
+  describe("keeps in the state a const that a call that makes a closure initializes", () => {
+    const getSource = (expected: string) => `
+      const flip = function (body: (a: number, b: number) => number) {
+        const held = body;
+        return (a: number, b: number) => held(b, a);
+      };
+      export const minus = flip((self: number, that: number) => self - that);
+      export const run = (value: 1 | 2) => {
+        const result = minus(value, 10);
+        if (result !== ${expected}) throw new Error("result " + result);
+        return result;
+      };
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("10 - value"))).failure).toBeUndefined();
+    });
+
+    it("rejects the arguments unflipped", async () => {
+      expect((await checkModel(getSource("value - 10"))).failure?.message).toContain("result 9");
+    });
+  });
 });
