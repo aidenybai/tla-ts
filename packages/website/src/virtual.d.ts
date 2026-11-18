@@ -6,6 +6,11 @@ declare module "virtual:site-data" {
   export const reference: import("./site-data").ReferenceSection[];
 }
 
+declare module "virtual:outlines" {
+  const outlines: Record<string, string>;
+  export default outlines;
+}
+
 declare module "virtual:typescript-libraries" {
   const libraries: ReadonlyMap<string, string>;
   export default libraries;

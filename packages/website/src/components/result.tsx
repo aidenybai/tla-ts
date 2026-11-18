@@ -67,3 +67,28 @@ export const ResultSection = (props: ResultSectionProps) => (
     {props.children}
   </section>
 );
+
+const SKELETON_BOX_CLASS_NAMES = ["w-24", "w-36", "w-28", "w-32"];
+
+// Bars and boxes with the sizes of a verdict and a column of states, shown only if a check
+// takes long enough to notice.
+export const ResultSkeleton = () => (
+  <div
+    role="status"
+    className="flex animate-pulse flex-col gap-6 transition-opacity delay-150 duration-150 ease-out motion-reduce:animate-none starting:opacity-0"
+  >
+    <span className="sr-only">Checking…</span>
+    <div className="grid gap-2">
+      <span className="my-1 h-3 w-14 rounded-sm bg-border" />
+      <span className="my-1 h-3 w-44 rounded-sm bg-border max-sm:my-[3px]" />
+    </div>
+    <div className="grid gap-2">
+      <span className="my-1 h-3 w-12 rounded-sm bg-border" />
+      <div className="flex flex-col gap-6">
+        {SKELETON_BOX_CLASS_NAMES.map((className) => (
+          <span key={className} className={cn("h-[22px] rounded-md bg-border", className)} />
+        ))}
+      </div>
+    </div>
+  </div>
+);

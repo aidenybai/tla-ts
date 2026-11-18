@@ -7,7 +7,7 @@ import {
   ExampleSource,
 } from "./example";
 import { HeroBody, HeroRoot, HeroTitle } from "./hero";
-import { ResultBody, ResultHeader, ResultRoot, ResultSection } from "./result";
+import { ResultBody, ResultHeader, ResultRoot, ResultSection, ResultSkeleton } from "./result";
 import { SectionRoot, SectionTitle } from "./section";
 
 export const Code = {
@@ -38,6 +38,7 @@ export const Result = {
   Header: ResultHeader,
   Body: ResultBody,
   Section: ResultSection,
+  Skeleton: ResultSkeleton,
 };
 
 export const Section = {
