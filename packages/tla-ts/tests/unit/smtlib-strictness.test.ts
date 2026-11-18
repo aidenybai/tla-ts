@@ -674,6 +674,30 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("frees the declaration that declare-fun rejects, so the next one takes its id", () => {
+    const getModel = (declarations: string[]) =>
+      run([
+        "(set-logic QF_DT)",
+        ...declarations,
+        "(declare-datatypes ((C 0)) (((k0) (k1) (k2) (k3) (k4) (k5) (k6))))",
+        "(declare-const e0 C)",
+        "(check-sat)",
+        "(get-model)",
+      ]);
+    expect(getModel(["(declare-sort V 0)", "(declare-fun f (V) Bool)"])).toEqual([
+      '(error "line 3 column 23: logic does not support uninterpreted functions")',
+      "sat",
+      ["(", "  (define-fun e0 () C", "    k4)", ")"].join("\n"),
+    ]);
+    expect(getModel(["(declare-const p Bool)", "(declare-const p Bool)"])).toEqual([
+      "(error \"line 3 column 21: invalid declaration, constant 'p' (with the given signature) already declared\")",
+      "sat",
+      ["(", "  (define-fun p () Bool", "    false)", "  (define-fun e0 () C", "    k4)", ")"].join(
+        "\n",
+      ),
+    ]);
+  });
+
   it("names the declaration that lacks a symbol, and takes _ and as only for define-const", () => {
     expect(
       run([

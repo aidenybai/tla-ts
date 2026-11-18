@@ -3439,17 +3439,24 @@ export const createSmtlibReader = (
       for (const domainVar of vars) manager.incRef(domainVar);
       for (const domainVar of vars) manager.decRef(domainVar);
     }
+    // The func_decl_ref of parse_declare_fun frees the declaration that cmd_context rejects.
     const decl = manager.mkFuncDecl(symbol.text, domain, range);
     const extra = list.items[name === "declare-fun" ? 4 : 3];
-    checkDecl(decl, extra ?? list.end);
+    const logicError = logicChecker.checkDecl(decl);
+    if (logicError !== undefined) {
+      manager.decDeclRef(decl);
+      throw new SmtParseError(logicError, extra ?? list.end);
+    }
     if (macros.has(symbol.text))
       throw new SmtUnsupportedError(`the overloaded symbol ${symbol.text}`);
     const existing = funcs.get(symbol.text) ?? [];
-    if (existing.some((other) => hasSignature(other, domain, range)))
+    if (existing.some((other) => hasSignature(other, domain, range))) {
+      manager.decDeclRef(decl);
       throw new SmtParseError(
         `invalid declaration, ${domain.length === 0 ? "constant" : "function"} '${symbol.text}' (with the given signature) already declared`,
         extra ?? list.end,
       );
+    }
     declare(funcs, symbol.text, [...existing, decl]);
     expectEnd(
       extra,
