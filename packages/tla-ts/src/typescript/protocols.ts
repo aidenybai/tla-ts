@@ -1728,7 +1728,8 @@ const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefin
 // read, an in, an assignment, or a delete of a key that the script writes, or a function of Object
 // or Reflect that runs an internal method.
 const getProxyOperation = (node: ts.Node, context: Context) => {
-  const operation = context.heap === undefined ? undefined : getOperation(node, context);
+  const operation =
+    context.heap === undefined || !context.isProxied ? undefined : getOperation(node, context);
   return operation !== undefined &&
     (operation.key !== undefined || !KEYED_TRAPS.has(operation.trap)) &&
     isProxyValue(operation.object, context)

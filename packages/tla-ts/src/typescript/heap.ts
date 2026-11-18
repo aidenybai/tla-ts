@@ -3714,6 +3714,7 @@ const isRevocableMember = (node: ts.Expression, name: string, context: Context) 
 
 // A value that is a proxy that the script makes, where a statement that reads it runs its traps.
 export const isProxyValue = (node: ts.Expression, context: Context) => {
+  if (!context.isProxied) return false;
   const origin = getOrigin(node, context);
   return isNewProxy(origin, context) || isRevocableMember(origin, "proxy", context);
 };

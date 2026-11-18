@@ -129,6 +129,9 @@ export interface Context {
   nodes: ProgramNodes;
   // Whether each name of the program's files names a global built-in, by its position.
   builtInNames: Uint32Array | undefined;
+  // Whether the program's files name Proxy or a property proxy, as new Proxy and what
+  // Proxy.revocable gives do, without which no value is a proxy that the script makes.
+  isProxied: boolean;
   references: References;
   // What each declaration that a name names reaches by name.
   reachGraph: ReachGraph;
@@ -687,6 +690,8 @@ export const createContext = (
     },
     nodes,
     builtInNames: undefined,
+    isProxied:
+      findProgramNames(nodes, "Proxy").length > 0 || findProgramNames(nodes, "proxy").length > 0,
     references,
     reachGraph: createReachGraph(nodes, references),
     makers: undefined,
