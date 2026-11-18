@@ -20558,21 +20558,23 @@ describe("errors", () => {
     }
   });
 
-  it("stops translating a helper whose callback's paths multiply its steps", () => {
-    expect(() =>
-      compile(`
-        const holder = { count: 0 };
-        function* count() {
-          for (let index = 0; index < 8; ++index) yield index;
-        }
-        const flat = count().flatMap((value) => {
-          if (value === 0) return [0];
-          if (value === 1) return [1, 1];
-          return [];
-        });
-        for (const value of flat) holder.count += value;
-      `),
-    ).toThrow("tla-ts can't follow this many paths through an iterator helper's callback");
+  it("runs a helper whose callback's paths multiply its steps", async () => {
+    const source = `
+      const holder = { count: 0 };
+      function* count() {
+        for (let index = 0; index < 8; ++index) yield index;
+      }
+      const flat = count().flatMap((value) => {
+        if (value === 0) return [0];
+        if (value === 1) return [1, 1];
+        return [];
+      });
+      for (const value of flat) holder.count += value;
+      if (holder.count !== 2) throw new Error("count " + holder.count);
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = await checkModel(source.replace("[1, 1]", "[1, 1, 1]"));
+    expect(wrong.failure?.message).toContain("count 3");
   });
 
   it("iterates the helper that a call makes in a for-of", async () => {
@@ -54410,6 +54412,52 @@ describe("BigInts", () => {
       expect((await checkModel(getClosed("7,true,true,01f012"))).failure?.message).toContain(
         "7,true,true,01f012f",
       );
+    });
+
+    const getHelpers = (expected: string) => `
+      const seen = { mapped: "" };
+      function* numbers(limit: number) {
+        for (let index = 0; index < limit; index++) yield index;
+      }
+      const evens = numbers(80).filter((value) => value % 2 === 0);
+      const first = evens.next();
+      let total = 0;
+      for (const value of evens) total += value;
+      const flat = [3, 0, 2].values().flatMap((count, position) => {
+        seen.mapped += position;
+        return count === 0 ? [] : count === 2 ? [count, -count] : [count, count, count];
+      });
+      const values: number[] = [];
+      for (const value of flat) values.push(value);
+      const taken = numbers(100)
+        .map((value) => value * 3)
+        .drop(2)
+        .take(3);
+      const firstTaken = taken.next();
+      const closed = taken.return!();
+      const after = taken.next();
+      const result = [
+        first.value,
+        total,
+        values.join(" "),
+        seen.mapped,
+        firstTaken.value,
+        closed.done,
+        after.done,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on iterator helpers of a generator and an array's iterator", async () => {
+      expect(
+        (await checkModel(getHelpers("0,1560,3 3 3 2 -2,012,6,true,true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the helpers", async () => {
+      expect(
+        (await checkModel(getHelpers("0,1560,3 3 3 -2 2,012,6,true,true"))).failure?.message,
+      ).toContain("0,1560,3 3 3 2 -2,012,6,true,true");
     });
   });
 });

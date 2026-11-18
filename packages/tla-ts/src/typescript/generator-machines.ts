@@ -20,6 +20,9 @@ import {
   getBody,
   getCast,
   getCalledReach,
+  getReturnType,
+  inlineValues,
+  isPrimitiveReturn,
   getChanged,
   hasCall,
   isSameExpression,
@@ -35,11 +38,13 @@ import {
   getSymbol,
   getUndefined,
   isAsyncGenerator,
+  skipCasts,
 } from "./context";
+import { ARRAY_ITERATOR_REPLACED, holdsArrayIteration } from "./collections";
 import { translateCondition } from "./expressions";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
 import { useJavaScript } from "./javascript";
-import type { Scope } from "./scope";
+import type { Receiver, Scope } from "./scope";
 import { getThrownMessage } from "./shared-calls";
 import {
   apply,
@@ -104,9 +109,9 @@ const getOuterExpression = (node: ts.Node): ts.Node =>
     ? getOuterExpression(node.parent)
     : node;
 
-// Whether an expression is an object of a state machine that a call of one of its methods steps, or
-// that a for-of whose body doesn't suspend iterates.
-const isStepped = (node: ts.Node, methods: ReadonlySet<string>) => {
+// Whether an expression is an object of a state machine that a call of one of its methods steps, that
+// a for-of whose body doesn't suspend iterates, or that a helper that a state machine runs wraps.
+const isStepped = (node: ts.Node, context: Context, methods: ReadonlySet<string>) => {
   const outer = getOuterExpression(node);
   const parent = outer.parent;
   const callee = ts.isPropertyAccessExpression(parent) ? getOuterExpression(parent) : undefined;
@@ -117,7 +122,7 @@ const isStepped = (node: ts.Node, methods: ReadonlySet<string>) => {
       called !== undefined &&
       ts.isCallExpression(called) &&
       called.expression === callee &&
-      methods.has(parent.name.text)) ||
+      (methods.has(parent.name.text) || isMachineHelper(called, context))) ||
     (ts.isForOfStatement(parent) &&
       parent.expression === outer &&
       parent.awaitModifier === undefined &&
@@ -140,7 +145,7 @@ const isMachineUse = (
   methods: ReadonlySet<string> = STEP_METHODS,
 ) => {
   if (!ts.isCallExpression(node)) return false;
-  if (isStepped(node, methods)) return true;
+  if (isStepped(node, context, methods)) return true;
   const outer = getOuterExpression(node);
   const parent = outer.parent;
   const name =
@@ -160,11 +165,11 @@ const isMachineUse = (
   // A variable may also take another object that a call makes, whose own call decides how it runs.
   return (
     symbol !== undefined &&
-    references.some((reference) => isStepped(reference, methods)) &&
+    references.some((reference) => isStepped(reference, context, methods)) &&
     references.every(
       (reference) =>
         ts.findAncestor(reference, ts.isFunctionLike) === owner &&
-        (isStepped(reference, methods) ||
+        (isStepped(reference, context, methods) ||
           (isAssignment(reference.parent) &&
             reference.parent.left === reference &&
             ts.isCallExpression(getCast(reference.parent.right)))),
@@ -765,6 +770,422 @@ export const getMachine = (receiver: Expression, path: Path) =>
   [...path.generators.values()].find(
     (suspension) => suspension.machine !== undefined && isSameExpression(suspension.ref, receiver),
   );
+
+const HELPER_METHODS = new Set(["map", "filter", "flatMap", "take", "drop"]);
+
+const HELPER_STEP_METHODS = new Set(["next", "return"]);
+
+// Whether a helper's call passes what a state machine runs it with: a function that the call writes
+// in place, whose body makes no functions, or a number literal for take or drop.
+const isMachineArgument = (method: string, argument: ts.Expression | undefined) => {
+  const inner = argument && skipCasts(argument);
+  if (inner === undefined) return false;
+  if (method === "take" || method === "drop") {
+    return ts.isNumericLiteral(inner) && Number(inner.text) <= 2 ** 31 - 1;
+  }
+  return (
+    (ts.isArrowFunction(inner) || ts.isFunctionExpression(inner)) &&
+    findNodes(
+      inner.body,
+      (node): node is ts.Node => ts.isFunctionLike(node) || ts.isClassLike(node),
+    ).length === 0
+  );
+};
+
+// Whether a call of Iterator.prototype's map, filter, flatMap, take, or drop makes a helper that a
+// state machine runs, where what it wraps is one too or an array's iterator.
+export const isMachineHelper = (node: ts.CallExpression, context: Context): boolean =>
+  context.heap !== undefined &&
+  ts.isPropertyAccessExpression(node.expression) &&
+  HELPER_METHODS.has(node.expression.name.text) &&
+  node.arguments.length === 1 &&
+  isMachineArgument(node.expression.name.text, node.arguments[0]) &&
+  isMachineUse(node, context, HELPER_STEP_METHODS);
+
+// Translates an iterator helper as the operators of its state machine, as ESCore's HelperStep runs
+// a helper from the slots that say where its closure stopped: the counter that it passes its
+// callback, how many values take or drop has left, and for flatMap the values of the iterable that
+// the mapper gave and the position in them, or 0 outside one.
+export const makeHelperMachine = (
+  node: ts.CallExpression,
+  method: string,
+  callback: FunctionNode | undefined,
+  callbackReceiver: Receiver | undefined,
+  limit: number | undefined,
+  // What the helper steps: an array's iterator, which keeps where it is on the heap, or the object
+  // of another state machine, with its suspension.
+  iterator: Expression,
+  sourceMachine: Suspension | undefined,
+  ref: Expression,
+  made: Path,
+  context: Context,
+  frame: Frame,
+): { machine: Machine; definitions: OperatorDefinition[] } => {
+  const heap = context.heap;
+  if (heap === undefined) throw unsupported(node);
+  const isOwn = (symbol: ts.Symbol) => callback !== undefined && isDeclaredIn(symbol, callback);
+  const referenced = new Set([
+    ...(callback === undefined ? [] : getReferenced(callback, made, context)),
+    ...(sourceMachine?.machine?.outer ?? []),
+  ]);
+  const outer = getOuter(referenced, isOwn, made, heap, node);
+  // A mapper's arrays are what flatMap flattens; a primitive throws.
+  const returned = callback === undefined ? undefined : getReturnType(callback, context);
+  const isFlattened =
+    returned !== undefined &&
+    (returned.isUnion() ? returned.types : [returned]).every(
+      (member) => context.checker.isArrayType(member) || context.checker.isTupleType(member),
+    );
+  if (
+    method === "flatMap" &&
+    callback !== undefined &&
+    !isFlattened &&
+    !isPrimitiveReturn(callback, context)
+  ) {
+    throw unsupported(node);
+  }
+  const pullName = context.names.getFresh("Pull");
+  const stepName = context.names.getFresh("Step");
+  const counterName = context.names.getFresh("counter");
+  const remainingName = context.names.getFresh("remaining");
+  const innerName = context.names.getFresh("inner");
+  const positionName = context.names.getFresh("position");
+  const modeName = context.names.getFresh("mode");
+  const sentName = context.names.getFresh("sent");
+  const outerNames = outer.map((symbol) => {
+    const binding = made.scope.bindings.get(symbol);
+    return context.names.getFresh(binding?.kind === "Identifier" ? binding.name : "value");
+  });
+  const counter = identifier(counterName);
+  const remaining = identifier(remainingName);
+  const inner = identifier(innerName);
+  const position = identifier(positionName);
+  const base: Path = {
+    ...made,
+    isMachine: true,
+    isLooping: true,
+    isLast: false,
+    tasks: undefined,
+    generators: new Map([...made.generators].filter((entry) => entry[1].machine !== undefined)),
+    scope: {
+      ...made.scope,
+      bindings: new Map([
+        ...made.scope.bindings,
+        ...outer.map((symbol, offset): [ts.Symbol, Expression] => [
+          symbol,
+          identifier(outerNames[offset]),
+        ]),
+      ]),
+    },
+  };
+  const getOuterValues = (current: Path) =>
+    outer.map((symbol) => {
+      const value = current.scope.bindings.get(symbol);
+      if (value === undefined) throw unsupported(node);
+      return value;
+    });
+  const end = (
+    current: Path,
+    kind: string,
+    value: Expression,
+    message: Expression,
+    slot: Expression,
+  ) => {
+    const values = getOuterValues(current);
+    return leaf(
+      tuple([
+        string(kind),
+        value,
+        message,
+        useJavaScript("SetMachine", [values[0], ref, slot], context),
+        ...values.slice(1),
+      ]),
+    );
+  };
+  const complete = (current: Path, kind: string, value: Expression, message = string("")) =>
+    end(current, kind, value, message, COMPLETED);
+  const finish = (current: Path) => complete(current, "return", getUndefined(context));
+  const throwEnd = (current: Path, thrown: Thrown) =>
+    complete(current, "throw", thrown.value, getThrownMessage(thrown, node));
+  const give = (current: Path, value: Expression, locals: Expression[]) =>
+    end(current, "yield", value, string(""), getSlot("suspendedYield", number(1), tuple(locals)));
+  const pull = (current: Path, locals: Expression[]) =>
+    leaf(call(pullName, [...locals, ...getOuterValues(current)]));
+  const heapOf = (current: Path) => getOuterValues(current)[0];
+  const withHeapValue = (current: Path, value: Expression): Path => ({
+    ...current,
+    scope: {
+      ...current.scope,
+      bindings: new Map([...current.scope.bindings, [heap, value]]),
+    },
+  });
+  // A step of what the helper wraps, which gives whether it's done and its value.
+  const stepSource = (
+    current: Path,
+    stepFrame: Pick<Frame, "throwTo">,
+    continueWith: (path: Path, isDone: Expression, value: Expression) => Formula,
+  ): Formula => {
+    if (sourceMachine !== undefined) {
+      return stepMachine(
+        node,
+        sourceMachine,
+        "next",
+        undefined,
+        current,
+        context,
+        stepFrame,
+        (stepped, kind, value) =>
+          continueWith(stepped, apply("=", [kind, string("return")]), value),
+      );
+    }
+    const stepped = context.names.getFresh("step");
+    const step = identifier(stepped);
+    return ifThenElse(
+      useJavaScript("HoldsIteratorNext", [heapOf(current), iterator], context),
+      bindOnce(
+        current,
+        stepped,
+        useJavaScript("BuiltInIteratorStep", [heapOf(current), iterator], context),
+        ifThenElse(
+          field(step, "isThrown"),
+          throwTypeError(current, node, context, stepFrame),
+          continueWith(
+            withHeapValue(current, field(step, "heap")),
+            field(step, "isDone"),
+            field(step, "value"),
+          ),
+        ),
+      ),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't step an iterator whose next a script replaced"),
+        ]),
+      ),
+    );
+  };
+  // IteratorClose of what the helper wraps, as its return closes it.
+  const closeSource = (
+    current: Path,
+    closeFrame: Pick<Frame, "throwTo">,
+    continueWith: (path: Path) => Formula,
+  ): Formula => {
+    if (sourceMachine !== undefined) {
+      return stepMachine(
+        node,
+        sourceMachine,
+        "return",
+        undefined,
+        current,
+        context,
+        closeFrame,
+        (closed) => continueWith(closed),
+      );
+    }
+    return ifThenElse(
+      apply("=", [
+        useJavaScript("Get", [heapOf(current), iterator, string("return")], context),
+        getUndefined(context),
+      ]),
+      continueWith(current),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string(
+            "tla-ts can't close an array's or a string's iterator through a return that a script gives",
+          ),
+        ]),
+      ),
+    );
+  };
+  // A callback that throws closes what the helper wraps, and what the close throws loses to it.
+  const callbackFrame: Frame = {
+    ...frame,
+    breakTo: undefined,
+    continueTo: undefined,
+    yieldTo: undefined,
+    awaitTo: undefined,
+    throwTo: (current, thrown) =>
+      closeSource(current, { throwTo: (closed) => throwEnd(closed, thrown) }, (closed) =>
+        throwEnd(closed, thrown),
+      ),
+  };
+  const sourceFrame = { throwTo: throwEnd };
+  const outerPhase = (current: Path): Formula => {
+    const run = stepSource(current, sourceFrame, (stepped, isDone, value) => {
+      const next = [apply("+", [counter, number(1)]), remaining, tuple([]), number(0)];
+      if (method === "take") {
+        return ifThenElse(
+          isDone,
+          finish(stepped),
+          give(stepped, value, [counter, apply("-", [remaining, number(1)]), tuple([]), number(0)]),
+        );
+      }
+      if (method === "drop") {
+        return ifThenElse(
+          isDone,
+          finish(stepped),
+          ifThenElse(
+            apply(">", [remaining, number(0)]),
+            pull(stepped, [counter, apply("-", [remaining, number(1)]), tuple([]), number(0)]),
+            give(stepped, value, [counter, remaining, tuple([]), number(0)]),
+          ),
+        );
+      }
+      if (callback === undefined) throw unsupported(node);
+      const elementName = context.names.getFresh("element");
+      const element = identifier(elementName);
+      const called = inlineValues(
+        callback,
+        [element, counter],
+        callbackReceiver,
+        stepped,
+        context,
+        callbackFrame,
+        (done, result) => {
+          const resultName = context.names.getFresh("result");
+          const mapped = identifier(resultName);
+          if (method === "map") {
+            return bindOnce(
+              done,
+              resultName,
+              result ?? getUndefined(context),
+              give(done, mapped, next),
+            );
+          }
+          if (method === "filter") {
+            return bindOnce(
+              done,
+              resultName,
+              result ?? getUndefined(context),
+              ifThenElse(
+                useJavaScript("ToBoolean", [mapped], context),
+                give(done, element, next),
+                pull(done, next),
+              ),
+            );
+          }
+          if (!isFlattened) return throwTypeError(done, node, context, callbackFrame);
+          const values = ifExpression(
+            useJavaScript("IsRef", [mapped], context),
+            useJavaScript("ArrayLikeValues", [heapOf(done), mapped], context),
+            mapped,
+          );
+          return bindOnce(
+            done,
+            resultName,
+            result ?? getUndefined(context),
+            ifThenElse(
+              holdsArrayIteration(heapOf(done), node, context),
+              pull(done, [counter, remaining, values, number(1)]),
+              leaf(apply("Assert", [boolean(false), string(ARRAY_ITERATOR_REPLACED)])),
+            ),
+          );
+        },
+      );
+      return ifThenElse(isDone, finish(stepped), bindOnce(stepped, elementName, value, called));
+    });
+    // take closes what it wraps once it has given its limit.
+    return method === "take"
+      ? ifThenElse(
+          apply("=", [remaining, number(0)]),
+          closeSource(current, sourceFrame, finish),
+          run,
+        )
+      : run;
+  };
+  // flatMap gives the values of the mapper's iterable before it steps what it wraps again.
+  const pulled =
+    method === "flatMap"
+      ? ifThenElse(
+          apply("=", [position, number(0)]),
+          outerPhase(base),
+          ifThenElse(
+            apply("<=", [position, apply("Len", [inner])]),
+            give(base, index(inner, [position]), [
+              counter,
+              remaining,
+              inner,
+              apply("+", [position, number(1)]),
+            ]),
+            pull(base, [apply("+", [counter, number(1)]), remaining, tuple([]), number(0)]),
+          ),
+        )
+      : outerPhase(base);
+  const parameters = [counterName, remainingName, innerName, positionName, ...outerNames];
+  const carried = tuple(parameters.map((name) => identifier(name)));
+  const pullDefinition: OperatorDefinition = {
+    ...define(
+      pullName,
+      parameters.map((name) => ({ name, arity: 0 })),
+      render(ifThenElse(apply("=", [carried, carried]), pulled, leaf(boolean(false)))),
+    ),
+    isRecursive: true,
+  };
+  const slotName = context.names.getFresh("slot");
+  const slot = identifier(slotName);
+  const state = field(slot, "state");
+  const locals = field(slot, "locals");
+  const outerParameters = outerNames.map((name) => identifier(name));
+  const mode = identifier(modeName);
+  const executing = (current: Path) =>
+    withHeapValue(
+      current,
+      useJavaScript(
+        "SetMachine",
+        [heapOf(current), ref, getSlot("executing", number(1), locals)],
+        context,
+      ),
+    );
+  // %IteratorHelperPrototype%'s next and return validate the helper as GeneratorValidate does. A
+  // return completes it and closes what it wraps, unless it already completed.
+  const stepped = letIn(
+    [define(slotName, [], useJavaScript("MachineOf", [outerParameters[0], ref], context))],
+    ifThenElse(
+      apply("=", [state, string("executing")]),
+      throwTypeError(base, node, context, {
+        throwTo: (current, thrown) =>
+          leaf(
+            tuple([
+              string("throw"),
+              thrown.value,
+              getThrownMessage(thrown, node),
+              ...getOuterValues(current),
+            ]),
+          ),
+      }),
+      ifThenElse(
+        apply("=", [state, string("completed")]),
+        finish(base),
+        ifThenElse(
+          apply("=", [mode, string("return")]),
+          closeSource(
+            withHeapValue(
+              base,
+              useJavaScript("SetMachine", [heapOf(base), ref, COMPLETED], context),
+            ),
+            sourceFrame,
+            finish,
+          ),
+          ifThenElse(
+            apply("=", [state, string("suspendedStart")]),
+            pull(executing(base), [number(0), number(limit ?? 0), tuple([]), number(0)]),
+            pull(
+              executing(base),
+              [1, 2, 3, 4].map((offset) => index(locals, [number(offset)])),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+  const step = define(
+    stepName,
+    [modeName, sentName, ...outerNames].map((name) => ({ name, arity: 0 })),
+    render(stepped),
+  );
+  return { machine: { step: stepName, outer }, definitions: [pullDefinition, step] };
+};
 
 // The state machines that a path holds, which keep where they suspended on the heap, so that a
 // loop's iterations can step them.

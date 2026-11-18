@@ -522,6 +522,8 @@ import {
   getMachines,
   getSteppedOuter,
   isMachineGenerator,
+  isMachineHelper,
+  makeHelperMachine,
   makeMachine,
   stepMachine,
 } from "./generator-machines";
@@ -8657,7 +8659,7 @@ const getReturnedLength = (callback: FunctionNode, context: Context) => {
   return lengths.size === 1 && !isFallible ? [...lengths][0] : undefined;
 };
 
-const getReturnType = (callback: ts.SignatureDeclaration, context: Context) => {
+export const getReturnType = (callback: ts.SignatureDeclaration, context: Context) => {
   const signature = context.checker.getSignatureFromDeclaration(callback);
   return signature && context.checker.getReturnTypeOfSignature(signature);
 };
@@ -8677,7 +8679,7 @@ const isPrimitiveType = (type: ts.Type) =>
   );
 
 // Whether a function returns only primitives.
-const isPrimitiveReturn = (callback: ts.SignatureDeclaration, context: Context) => {
+export const isPrimitiveReturn = (callback: ts.SignatureDeclaration, context: Context) => {
   const returned = getReturnType(callback, context);
   return returned !== undefined && isPrimitiveType(returned);
 };
@@ -8774,6 +8776,84 @@ const translateIteratorHelper = (
     helper.invalid === "object"
       ? getUndefined(context)
       : translateExpression(helper.receiver, path.scope, context);
+  // A helper of a state machine or of an array's iterator runs as a state machine itself, where
+  // its object only meets code that steps one.
+  const sourceMachine = getMachine(translated, path);
+  if (
+    heapSymbol !== undefined &&
+    helper.invalid === undefined &&
+    isMachineHelper(node, context) &&
+    (sourceMachine !== undefined || isBuiltInIteratorType(helper.receiver, context))
+  ) {
+    const allocated = withHeap(path, identifier(name), context);
+    const make = () =>
+      makeHelperMachine(
+        node,
+        method,
+        callback,
+        callbackReceiver,
+        limit,
+        identifier(underlyingName),
+        sourceMachine,
+        ref,
+        allocated,
+        context,
+        frame,
+      );
+    // A helper of an array's iterator can still run as the code that steps it inlines it, but the
+    // generator that a state machine runs has no inlined body.
+    const made = sourceMachine === undefined ? tryMachine(make) : make();
+    if (made !== undefined) {
+      return translateHoldsIteratorPrototype(
+        method,
+        node,
+        path,
+        context,
+        bindOnce(
+          path,
+          underlyingName,
+          translated,
+          bindOnce(
+            path,
+            name,
+            useJavaScript(
+              "Allocate",
+              [
+                getHeap(path.scope, node, context),
+                useJavaScript("MachineObject", [identifier("IteratorHelperObject")], context),
+              ],
+              context,
+            ),
+            letIn(
+              made.definitions,
+              continueWith(
+                {
+                  ...allocated,
+                  generators: new Map([
+                    ...allocated.generators,
+                    [
+                      name,
+                      {
+                        ref,
+                        generator: callback,
+                        resume: undefined,
+                        isStarted: false,
+                        isGuarded: false,
+                        isAsync: false,
+                        queue: [],
+                        machine: made.machine,
+                      },
+                    ],
+                  ]),
+                },
+                ref,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+  }
   // The generator that a next runs, which patterns check, where the receiver may hold only one.
   const suspensions = [...path.generators.values()];
   const exact = suspensions.filter((suspension) => isSameExpression(suspension.ref, translated));
