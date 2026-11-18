@@ -28,7 +28,7 @@ const DEFINITIONS = [
       p == PutValue(num.s, Val(ref), new)
   IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, IF isPostfix THEN v ELSE new)`,
   `InitializeReferencedThen(ref, r) == IF IsAbrupt(r) THEN r ELSE InitializeReferencedBinding(r.s, ref, Val(r))`,
-  `DefineMethodThen(home, r, enumerable) ==
+  `DefineElementOn(home, r, enumerable) ==
   IF IsAbrupt(r) THEN r ELSE
   LET e == Val(r)
       d == DefinePropertyOrThrow(r.s, home, e.key,

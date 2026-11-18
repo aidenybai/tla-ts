@@ -850,7 +850,7 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       ) {
         // MethodDefinitionEvaluation (§15.4.5), which makes the method an enumerable property.
         push(
-          `DefineMethodThen(Val(o), ${classElement(property, scope)(state, "ctx", "Val(o)")}, TRUE)`,
+          `DefineElementOn(Val(o), ${classElement(property, scope)(state, "ctx", "Val(o)")}, TRUE)`,
         );
         return;
       }
@@ -1226,7 +1226,7 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       ...methods.filter((record) => !record.isStatic),
     ].forEach((record) => {
       steps.push(
-        `LET ${record.name}d == DefineMethodThen(${record.isStatic ? "F" : "Val(proto)"}, Ok(${state}, Val(${record.name})), FALSE) IN IF IsAbrupt(${record.name}d) THEN ${record.name}d ELSE`,
+        `LET ${record.name}d == DefineElementOn(${record.isStatic ? "F" : "Val(proto)"}, Ok(${state}, Val(${record.name})), FALSE) IN IF IsAbrupt(${record.name}d) THEN ${record.name}d ELSE`,
       );
       state = `${record.name}d.s`;
     });
