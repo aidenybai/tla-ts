@@ -54150,4 +54150,26 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("3,-2,-4"))).failure?.message).toContain("result 3,0,-4");
     });
   });
+
+  describe("names a helper's throw apart from a script's variables named place and message", () => {
+    const getSource = (expected: number) => `
+      const box = { size: 0 };
+      const check = (value: number) => {
+        if (value > 2) throw new Error("big " + value);
+        box.size += value;
+        return value;
+      };
+      const message = [check(1), check(2)].join();
+      const place = box.size;
+      if (message !== "1,2" || place !== ${expected}) throw new Error("message " + message + " " + place);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    });
+
+    it("rejects another place", async () => {
+      expect((await checkModel(getSource(4))).failure?.message).toContain("message 1,2 3");
+    });
+  });
 });
