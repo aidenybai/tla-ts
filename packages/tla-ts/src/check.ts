@@ -19,7 +19,13 @@ import {
   UNEXPECTED_EXCEPTION,
   formatRange,
 } from "./errors";
-import { describeRange, getDefinition, type CallStack, type FingerprintFailure } from "./evaluate";
+import {
+  describeRange,
+  getDefinition,
+  type CallStack,
+  type FingerprintFailure,
+  type State,
+} from "./evaluate";
 import { EXIT_STATUS, setExitCode, withLivenessExitCode } from "./exit-codes";
 import {
   fingerprintReplayed,
@@ -79,6 +85,7 @@ import {
   type StateWriter,
 } from "./state-graph";
 import {
+  createIncompleteSuccessorError,
   forEachInitialState,
   forEachSuccessor,
   getInitialStates,
@@ -720,7 +727,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           (tlcFingerprints[successor.index] ??= Number(
             BigInt.asIntN(32, runtime.getFingerprint(successor.state)),
           )),
-        forEachActionSuccessors: (source, state, onSuccessors) => {
+        forEachActionSuccessors: (source, state, onSuccessors, replay) => {
           let successors: LiveSuccessor[] = [];
           const addSuccessor = (successor: Value[]) => {
             canonicalizeState(successor);
@@ -740,21 +747,37 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             addSuccessor(successor.state);
             return false;
           };
+          // TLC's LiveCheck#addNextState skips an incomplete successor the constraints exclude, and fails to fingerprint any other.
+          const addIncomplete = (successor: State, action: string | undefined) => {
+            if (
+              search.satisfiesConstraints(successor, state) &&
+              search.satisfiesActionConstraints(state, successor)
+            ) {
+              throw createIncompleteSuccessorError(successor, action, environment);
+            }
+          };
           const actionCount = coverage ? coverageActions.length : nextActions.length;
           for (let position = 0; position < actionCount; position++) {
             successors = [];
             const livenessSource = current.livenessSource;
             current.livenessSource = source;
             try {
-              // TLC's coverage counts the successors of each action the graph generates again.
               if (coverage) {
+                // TLC's coverage counts the successors of each action the graph generates again.
                 walkCoveredSuccessors(
                   coverage,
                   coverageActions[position],
                   state,
-                  environment,
+                  replay ?? environment,
                   addSuccessor,
+                  addIncomplete,
                 );
+              } else if (replay) {
+                const action = nextActions[position];
+                walkSuccessors(action, -1, state, replay, addSuccessor, (partial) => {
+                  addIncomplete(partial, action.name);
+                  return true;
+                });
               } else {
                 const action = nextActions[position];
                 forEachSuccessor(
@@ -763,6 +786,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
                   environment,
                   visitSuccessor,
                   action.scope,
+                  undefined,
+                  undefined,
+                  addIncomplete,
                 );
               }
             } finally {
@@ -1447,6 +1473,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return undefined;
     } catch (error) {
       if (!(error instanceof TlaEvaluationError)) throw error;
+      // TLC fails to fingerprint an incomplete successor with an exception Worker#doNextCheckLiveness doesn't rerun for a call stack.
+      if (error instanceof TlaIncompleteSuccessorError) return undefined;
       return getLiveCallStack(index, liveSuccessors);
     }
   };

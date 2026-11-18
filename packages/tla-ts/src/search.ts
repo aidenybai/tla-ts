@@ -40,7 +40,6 @@ import {
 import {
   TlaConfigError,
   TlaEvaluationError,
-  TlaIncompleteSuccessorError,
   TlaModuleError,
   UNEXPECTED_EXCEPTION,
   formatRange,
@@ -72,6 +71,7 @@ import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty 
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
+import { createIncompleteSuccessorError } from "./successors";
 import {
   getSpecDescription,
   getSpecificationValue,
@@ -687,7 +687,7 @@ const getStateChecks = (named: NamedExpression[], environment: Environment): Sta
     );
   });
 
-const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] | undefined) => {
+const isUnchangedFor = (stateCheck: StateCheck, state: State, parent: Value[] | undefined) => {
   const variables = stateCheck.variables;
   if (!parent || !variables) return false;
   for (let index = 0; index < variables.length; index++) {
@@ -767,10 +767,10 @@ export interface Search {
     tracing: Environment,
     addFingerprint: () => boolean,
   ) => boolean;
-  satisfiesConstraints: (state: Value[], parent?: Value[]) => boolean;
+  satisfiesConstraints: (state: State, parent?: Value[]) => boolean;
   findFailedInitialPredicate: (state: Value[]) => NamedExpression | undefined;
   findViolatedActionProperty: (state: Value[], next: Value[]) => ActionProperty | undefined;
-  satisfiesActionConstraints: (state: Value[], next: Value[]) => boolean;
+  satisfiesActionConstraints: (state: Value[], next: State) => boolean;
   getExcludingConstraints: (state: Value[], next: Value[]) => string[];
   trackStatePossible: (state: Value[]) => void;
   trackActionPossible: (state: Value[], next: Value[]) => void;
@@ -989,6 +989,9 @@ export const walkCoveredSuccessors = (
   state: Value[],
   environment: Environment,
   onState: (successor: Value[]) => void,
+  onIncomplete = (partial: State, name: string | undefined): void => {
+    throw createIncompleteSuccessorError(partial, name, environment);
+  },
 ) =>
   walkSuccessors(
     action,
@@ -1001,15 +1004,8 @@ export const walkCoveredSuccessors = (
     },
     (partial) => {
       coverage.primary[action.node]++;
-      const missing = environment.variables.filter(
-        (_variable, index) => partial[index] === undefined,
-      );
-      throw new TlaIncompleteSuccessorError(
-        `Successor state is not completely specified by action ${action.name}. The following variables are not assigned: ${missing.join(", ")}`,
-        partial,
-        action.name,
-        missing,
-      );
+      onIncomplete(partial, action.name);
+      return true;
     },
   );
 
@@ -1164,8 +1160,8 @@ export const createSearch = (
   const evaluateCovered = (
     covered: Coverage,
     check: CoveredCheck,
-    state: Value[],
-    next: Value[] | undefined,
+    state: State,
+    next: State | undefined,
   ) => {
     try {
       return runAtCoverageNode(covered, check.node, () =>
@@ -1183,7 +1179,7 @@ export const createSearch = (
     coverage && covered
       ? runAtCoverageNode(coverage, covered.node, () => holdsLikeTlc(covered.expression, context))
       : holdsLikeTlc(expression, context);
-  const satisfiesCovered = (checks: CoveredCheck[], state: Value[], next?: Value[]) => {
+  const satisfiesCovered = (checks: CoveredCheck[], state: State, next?: State) => {
     if (!coverage) return undefined;
     for (const check of checks) {
       const value = evaluateCovered(coverage, check, state, next);
@@ -1337,7 +1333,7 @@ export const createSearch = (
           )
           .join("")
       : prettyPrint(formatValue(getViewValue(expression, state)));
-  const holdsActionConstraint = (constraint: NamedExpression, state: Value[], next: Value[]) =>
+  const holdsActionConstraint = (constraint: NamedExpression, state: Value[], next: State) =>
     holdsLikeTlc(
       constraint.expression,
       getContext(environment, state, next),

@@ -1647,6 +1647,20 @@ describe("evaluation errors match TLC", () => {
     expect([...new Set(ranges)]).toEqual(["7:50-51", "5:7-12", "7:41-48", "7:46-46"]);
   });
 
+  it("records where the liveness check fails as it generates again the successors of a state left incomplete, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Sequences\nVARIABLES x, z\nInit == x = <<0>> /\\ z = 0\nA0 == x' = x\nA1 == x' = x /\\ (Tail(x) /\\ TRUE) /\\ z' = z\nNext == A0 \\/ A1\nSpec == Init /\\ [][Next]_<<x, z>>\nProp == [](z = 0 => (z = 0 ~> x = <<>>))\nConstraint == x' /= x\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop\nACTION_CONSTRAINT Constraint",
+    });
+    const ranges = result.failure?.callStack?.map((expression) => {
+      const range = expression.location.range;
+      return range && `${range.start.line}:${range.start.column}-${range.end.column}`;
+    });
+    expect(result.failure?.code).toBe(2109);
+    expect([...new Set(ranges)]).toEqual(["6:7-43", "6:7-33", "6:7-12", "6:18-32", "6:18-24"]);
+  });
+
   it("reports a value where the initial or next-state relation expects a formula like TLC", async () => {
     const getFailure = async (init: string, next: string) => {
       const result = await check({

@@ -83,7 +83,14 @@ export interface SearchGraph<State> {
     index: number,
     state: State,
     onSuccessors: (successors: LiveSuccessor<State>[]) => void,
+    replay?: Environment,
   ) => void;
+}
+
+interface Tracing {
+  atoms: LiveAtoms<Value[]>;
+  // The environment of a rerun for a call stack, in which TLC's CallStackTool generates successors again.
+  replay: Environment | undefined;
 }
 
 export interface LiveEvaluation<State> {
@@ -407,7 +414,7 @@ export const createLivenessChecker = (
   const live = getLiveFormula(properties, temporals, environment);
   const isShared = isSharingResults(live.formula, environment);
   const solutions = getSolutions(live.formula);
-  const tracing = { environment, atoms: getInterpretedAtoms(environment) };
+  const tracing: Tracing = { atoms: getInterpretedAtoms(environment), replay: undefined };
   const graph = createLiveGraph(
     solutions,
     {
@@ -426,16 +433,22 @@ export const createLivenessChecker = (
         }
       },
     },
-    search,
+    {
+      getFingerprint: search.getFingerprint,
+      forEachActionSuccessors: (index, state, onSuccessors) =>
+        search.forEachActionSuccessors(index, state, onSuccessors, tracing.replay),
+    },
     environment.runtime.version !== "1.7.4",
   );
   const traceWith = <Result>(replay: Environment | undefined, run: () => Result) => {
     if (replay === undefined) return run();
     tracing.atoms = getInterpretedAtoms(replay);
+    tracing.replay = replay;
     try {
       return run();
     } finally {
       tracing.atoms = getInterpretedAtoms(environment);
+      tracing.replay = undefined;
     }
   };
   return {
