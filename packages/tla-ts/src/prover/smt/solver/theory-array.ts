@@ -94,6 +94,7 @@ export class TheoryArray extends Theory {
   private elseValues: (number | ExtraFreshValue | undefined)[] = [];
   private mgParents: number[] = [];
   private selectSets = new Map<Enode, KeyedHashtable<Enode>>();
+  private selectHashes: number[] = [];
 
   constructor(context: Context) {
     super(context, FAMILY_ARRAY);
@@ -506,12 +507,12 @@ export class TheoryArray extends Theory {
     this.extensionalityTodo.push(first, second);
   }
 
-  private getSelectKey(select: Enode) {
+  private getSelectKey = (select: Enode) => {
     let key = "";
     for (let index = 1; index < select.numArgs; index++)
       key += `${select.getArg(index).root.owner},`;
     return key;
-  }
+  };
 
   private isRelevantSelectOf(parent: Enode, root: Enode) {
     return (
@@ -1132,18 +1133,18 @@ export class TheoryArray extends Theory {
     const root = node.root;
     const existing = this.selectSets.get(root);
     if (existing !== undefined) return existing;
-    const created = new KeyedHashtable(
-      (select: Enode) => {
-        const hashes: number[] = [];
-        for (let index = 1; index < select.numArgs; index++)
-          hashes.push(this.manager.hashes[select.getArg(index).root.owner]);
-        return getCompositeHash(hashes, 0);
-      },
-      (select: Enode) => this.getSelectKey(select),
-    );
+    const created = new KeyedHashtable(this.getSelectHash, this.getSelectKey);
     this.selectSets.set(root, created);
     return created;
   }
+
+  private getSelectHash = (select: Enode) => {
+    const hashes = this.selectHashes;
+    hashes.length = 0;
+    for (let index = 1; index < select.numArgs; index++)
+      hashes.push(this.manager.hashes[select.getArg(index).root.owner]);
+    return getCompositeHash(hashes, 0);
+  };
 
   private collectSelects() {
     this.selectSets.clear();
