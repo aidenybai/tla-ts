@@ -19,7 +19,7 @@ import {
   prepareSearch,
   reportAssumptionViolation,
 } from "./search";
-import { forEachInitialState, forEachSuccessor, getSuccessors } from "./successors";
+import { forEachInitialState, forEachSuccessor, getSuccessors, type Successor } from "./successors";
 import {
   formatNestedMessage,
   formatTlcDate,
@@ -313,48 +313,56 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     return NO_ERROR;
   };
 
+  let actionSuccessors: Value[][] = [];
+  let incompleteSuccessor: State | undefined;
+  let actionSuccessorCount = 0;
+  const addActionSuccessor = (successor: Value[]) => {
+    actionSuccessorCount++;
+    if (incompleteSuccessor) return false;
+    if (actionSuccessors.length === getSetBound()) throw new TlaTooManyStatesError();
+    actionSuccessors.push(successor);
+    return false;
+  };
+  const visitActionSuccessor = (successor: Successor) => addActionSuccessor(successor.state);
+  const addIncompleteSuccessor = (partial: State) => {
+    actionSuccessorCount++;
+    incompleteSuccessor ??= [...partial];
+    return true;
+  };
   // TLC's Tool#getNextStates generates every successor of the action before DFIDWorker finds an incomplete one.
   const getActionSuccessors = (index: number, state: Value[]) => {
     const action = nextActions[index];
     const coveredAction = covered?.actions[index];
-    const successors: Value[][] = [];
-    let incomplete: State | undefined;
-    let count = 0;
-    const addSuccessor = (successor: Value[]) => {
-      count++;
-      if (incomplete) return false;
-      if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
-      successors.push(successor);
-      return false;
-    };
-    const addIncomplete = (partial: State) => {
-      count++;
-      incomplete ??= [...partial];
-      return true;
-    };
+    actionSuccessors = [];
+    incompleteSuccessor = undefined;
+    actionSuccessorCount = 0;
     if (coverage && coveredAction) {
       walkSuccessors(
         coveredAction,
         coveredAction.node,
         state,
         environment,
-        addSuccessor,
-        addIncomplete,
+        addActionSuccessor,
+        addIncompleteSuccessor,
       );
-      coverage.primary[coveredAction.node] += count;
+      coverage.primary[coveredAction.node] += actionSuccessorCount;
     } else {
       forEachSuccessor(
         action.expression,
         state,
         environment,
-        (successor) => addSuccessor(successor.state),
+        visitActionSuccessor,
         action.scope,
         undefined,
         undefined,
-        addIncomplete,
+        addIncompleteSuccessor,
       );
     }
-    return { successors, incomplete, count };
+    return {
+      successors: actionSuccessors,
+      incomplete: incompleteSuccessor,
+      count: actionSuccessorCount,
+    };
   };
 
   const findCheckFailure = (state: Value[], successor: Value[], isNew: boolean) => {

@@ -24,7 +24,7 @@ import {
   walkCoveredSuccessors,
 } from "./search";
 import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
-import { forEachInitialState, forEachSuccessor } from "./successors";
+import { forEachInitialState, forEachSuccessor, type Successor } from "./successors";
 import {
   formatInnerMessage,
   formatNestedMessage,
@@ -507,8 +507,8 @@ export const simulate = (options: SimulationOptions): number => {
     let failure: WorkerError | undefined;
     runtime.deferred = undefined;
     evaluatedAction = action;
-    const visit = (state: Value[]) => {
-      const node = toNode(state, action, current);
+    const visit = (successor: Successor) => {
+      const node = toNode(successor.state, action, current);
       node.deferred = runtime.deferred;
       runtime.deferred = undefined;
       statistics.generatedStates++;
@@ -552,17 +552,19 @@ export const simulate = (options: SimulationOptions): number => {
     try {
       if (coverage && coveredAction && !options.isGenerating) {
         walkCoveredSuccessors(coverage, coveredAction, current.state, environment, (state) => {
-          if (visit(state)) throw STOP_WALK;
+          if (visit({ state, action: action.name })) throw STOP_WALK;
         });
       } else {
         forEachSuccessor(
           action.expression,
           current.state,
           environment,
-          (successor) => {
-            if (coverage && coveredAction) coverage.primary[coveredAction.node]++;
-            return visit(successor.state);
-          },
+          coverage && coveredAction
+            ? (successor) => {
+                coverage.primary[coveredAction.node]++;
+                return visit(successor);
+              }
+            : visit,
           action.scope,
           options.isGenerating ? workerRandom : undefined,
         );

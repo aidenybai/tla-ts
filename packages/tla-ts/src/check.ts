@@ -720,6 +720,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       isConstrained: search.isConstrained,
     });
   }
+  let liveState: Value[] = [];
+  const addIncomplete = (successor: State, action: string | undefined) => {
+    if (
+      search.satisfiesConstraints(successor, liveState) &&
+      search.satisfiesActionConstraints(liveState, successor)
+    ) {
+      throw createIncompleteSuccessorError(successor, action, environment);
+    }
+  };
   const liveness = withLivenessExitCode(() =>
     withUnexpectedException(() =>
       createLivenessChecker(search.properties.liveness, spec.temporals, environment, {
@@ -728,6 +737,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             BigInt.asIntN(32, runtime.getFingerprint(successor.state)),
           )),
         forEachActionSuccessors: (source, state, onSuccessors, replay) => {
+          liveState = state;
           let successors: LiveSuccessor[] = [];
           const addSuccessor = (successor: Value[]) => {
             canonicalizeState(successor);
@@ -746,14 +756,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           const visitSuccessor = (successor: Successor) => {
             addSuccessor(successor.state);
             return false;
-          };
-          const addIncomplete = (successor: State, action: string | undefined) => {
-            if (
-              search.satisfiesConstraints(successor, state) &&
-              search.satisfiesActionConstraints(state, successor)
-            ) {
-              throw createIncompleteSuccessorError(successor, action, environment);
-            }
           };
           const actionCount = coverage ? coverageActions.length : nextActions.length;
           for (let position = 0; position < actionCount; position++) {
