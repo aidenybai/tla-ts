@@ -216,6 +216,8 @@ export class AssertedFormulas {
   private bvSharing: MaxBvSharing;
   private ngLiftIte: NgPushAppIteRw;
   private boundsElim: ElimBoundsRw;
+  // The 1-bit zero of apply_bit2int.
+  private bit0: number;
   hasQuantifiers = false;
   readonly macros: MacroManager;
   isInconsistent = false;
@@ -239,6 +241,8 @@ export class AssertedFormulas {
     this.bvSharing = new MaxBvSharing(manager);
     this.ngLiftIte = new NgPushAppIteRw(manager);
     this.boundsElim = new ElimBoundsRw(manager);
+    this.bit0 = manager.mkBvNumeral(0n, 1);
+    manager.incRef(this.bit0);
   }
 
   finalize() {
@@ -246,16 +250,18 @@ export class AssertedFormulas {
     this.formulas.reset();
     this.macros.release();
     this.bvSharing.release();
-    this.rewriter.release();
+    this.rewriter.reset();
     this.substitution.cleanup();
   }
 
   release() {
     this.ngLiftIte.release();
+    this.manager.decRef(this.bit0);
     this.boundsElim.release();
     this.termIteElim.release();
     this.patternInference.release();
     this.substitution.release();
+    this.rewriter.release();
   }
 
   push() {

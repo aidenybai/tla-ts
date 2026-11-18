@@ -901,6 +901,15 @@ export const runSmtlibScript = (
     state.lastAssertions.reset();
     state.isSolverProducingModels = settings.isProducingModels;
     state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
+    state.manager.dropStartupExprs();
+    // The bv1-blaster of the QF_BV tactic makes a 1-bit one and zero.
+    if (logic === "QF_BV" && tactic === undefined) {
+      const numerals = [state.manager.mkBvNumeral(1n, 1), state.manager.mkBvNumeral(0n, 1)];
+      for (const numeral of numerals) state.manager.incRef(numeral);
+      destructors.push(() => {
+        for (const numeral of numerals) state.manager.decRef(numeral);
+      });
+    }
     state.satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
         ? new IncSatSolver(
@@ -932,7 +941,7 @@ export const runSmtlibScript = (
     try {
       resetKernel();
     } finally {
-      if (state.kernel === undefined) state.manager.dropSmtSolverZero();
+      state.manager.dropStartupExprs();
     }
   };
   // The parts of inc_sat_solver that are not ported leave its answers to the smt kernel.
@@ -2144,7 +2153,10 @@ export const runSmtlibScript = (
                 : value.text;
           checkParameterValue(getParameterName(keyword), text, value);
           // A fraction keeps its decimal, which is how Z3 prints a double.
-          settings.parameters.set(getParameterName(keyword), text.includes("/") ? value.text : text);
+          settings.parameters.set(
+            getParameterName(keyword),
+            text.includes("/") ? value.text : text,
+          );
           if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
           if (optionName === ":rlimit") settings.rlimit = Number(text);
           // Z3 reads the parameters model and unsat_core again whenever any parameter is set.

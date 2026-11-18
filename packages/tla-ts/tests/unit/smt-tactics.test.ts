@@ -2775,6 +2775,41 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 408)", "sat", "(:rlimit 882)"]);
   });
+
+  // The kernel makes bit2int's 1-bit zero and qi_queue's cost terms, and frees them as the tactic
+  // returns. The solver of QF_FD has no kernel, so the next terms take their ids, which order the
+  // clauses of tseitin-cnf.
+  it("frees the terms the kernel of the smt tactic makes, so QF_FD numbers the next ones", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> (+ x y) 3))",
+        "(assert (< (* 2 x) y))",
+        "(check-sat-using smt)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or (and p q) (and (not p) r) (and q (not r))))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(goals",
+        "(goal",
+        "  (not (<= (+ x y) 3))",
+        "  (not (<= y (* 2 x)))",
+        "  (or r p q)",
+        "  (or (not p) q)",
+        "  (or (not p) (not r) q)",
+        "  (or r q)",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
 });
 
 describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
