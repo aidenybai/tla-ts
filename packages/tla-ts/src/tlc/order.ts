@@ -158,6 +158,14 @@ const getDeclaredName = (tokens: Token[], start: number) => {
   return { name: first.text, end: close + 1 };
 };
 
+// The kind of symbol that each declaring keyword declares.
+const DECLARATION_KINDS = new Map<string, SymbolKind>([
+  ["CONSTANT", "constant"],
+  ["CONSTANTS", "constant"],
+  ["VARIABLE", "variable"],
+  ["VARIABLES", "variable"],
+]);
+
 const getDeclarations = (tokens: Token[], start: number) => {
   const names: string[] = [];
   for (let index = start; ;) {
@@ -461,12 +469,9 @@ const createContexts = (getParsed: ModuleSet) => {
       }
       if (token.kind === "ModuleEnd") depth--;
       if (depth !== 1 || token.kind !== "Keyword") continue;
-      const isDeclaration = declarationKeywords.has(`${token.line}:${token.column}`);
-      if (isDeclaration && (token.text === "CONSTANT" || token.text === "CONSTANTS")) {
-        declare(index, "constant");
-      }
-      if (isDeclaration && (token.text === "VARIABLE" || token.text === "VARIABLES")) {
-        declare(index, "variable");
+      const kind = DECLARATION_KINDS.get(token.text);
+      if (kind !== undefined && declarationKeywords.has(`${token.line}:${token.column}`)) {
+        declare(index, kind);
       }
       if (token.text === "RECURSIVE") {
         const names = getDeclarations(tokens, index + 1);
