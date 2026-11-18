@@ -71,7 +71,7 @@ import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty 
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
-import { createIncompleteSuccessorError } from "./successors";
+import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
   getSpecDescription,
   getSpecificationValue,
@@ -1003,6 +1003,7 @@ export const walkCoveredSuccessors = (
   onIncomplete = (partial: State, name: string | undefined): void => {
     throw createIncompleteSuccessorError(partial, name, environment);
   },
+  generator?: SuccessorGenerator,
 ) =>
   walkSuccessors(
     action,
@@ -1018,6 +1019,7 @@ export const walkCoveredSuccessors = (
       onIncomplete(partial, action.name);
       return true;
     },
+    generator,
   );
 
 export const reportAssumptionViolation = (

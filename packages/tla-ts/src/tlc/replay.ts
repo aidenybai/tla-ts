@@ -3,6 +3,7 @@ import { TlaEvaluationError } from "../errors";
 import { isConstantLevel } from "../dependencies";
 import {
   chargeContexts,
+  chargeRandomOrder,
   countCoverage,
   createChargedEnumerator,
   getCoverageNode,
@@ -17,6 +18,7 @@ import {
   evaluate,
   forEachBoundElement,
   freezeCallStack,
+  getContextElements,
   getLazyFunction,
   getQuantifierElements,
   mapBoundSets,
@@ -39,7 +41,9 @@ import {
   type Value,
 } from "../values";
 import { substitutionFrames } from "../instances";
+import type { SuccessorGenerator } from "../successors";
 import { MESSAGE_CODE } from "./messages";
+import { getRandomSubset, nextPrime } from "./random";
 
 interface ReplayAction {
   expression: Expression;
@@ -63,6 +67,7 @@ interface Replay {
   current: Value[] | undefined;
   onState: (state: Value[]) => void;
   onIncomplete: ((state: State) => boolean) | undefined;
+  generator: SuccessorGenerator | undefined;
 }
 
 const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Result): Result => {
@@ -475,6 +480,14 @@ const visitAssignment = (
   if (!isTlcEnumerable(set))
     throw new TlaEvaluationError("The right side of \\IN is not enumerable.");
   const elements = getStreamedElements(set);
+  const generator = replay.generator;
+  if (generator) {
+    const order = getRandomOrder(replay, set, elements);
+    for (let position = 0; position < order.length; position++) {
+      const isProduced = proceed(replay, items, assign(partial, index, order[position]), node);
+      if (generator.hasStates()) return isProduced;
+    }
+  }
   const enumerator =
     replay.coverage && createChargedEnumerator(replay.coverage, set, elements, false);
   const isProduced = elements.reduce<boolean>((isProduced, element) => {
@@ -515,6 +528,25 @@ export const getEnabledFailure = (expression: Expression) => {
     return `In computing ENABLED, TLC encountered unbounded CHOOSE. Make sure that the expression is of form CHOOSE x \\in S: P(x).\n${describeRange(expression)}`;
   }
   return undefined;
+};
+
+// TLC's Tool#getNextStates in -generate tries the disjuncts from a random one on, stepping by a random prime, until its INextStateFunctor holds a state.
+const visitRandomChoice = (generator: SuccessorGenerator, choices: (() => boolean)[]) => {
+  const start = Math.floor(generator.random.nextDouble() * choices.length);
+  const prime = nextPrime(generator.random);
+  let isProduced = false;
+  for (let attempt = 0; attempt < choices.length; attempt++) {
+    isProduced = choices[(start + attempt * prime) % choices.length]() || isProduced;
+    if (generator.hasStates()) return isProduced;
+  }
+  return isProduced;
+};
+
+const getRandomOrder = (replay: Replay, set: Value, elements: Value[]) => {
+  const runtime = replay.environment.runtime;
+  const order = getRandomSubset(elements.length, set, runtime.getRandom(), runtime.version);
+  if (replay.coverage) chargeRandomOrder(replay.coverage, set, elements.length, order);
+  return order;
 };
 
 const getBindings = (
@@ -594,6 +626,26 @@ const visitApplication = (
     }
     case "Or": {
       const operands = expression.operands;
+      const generator = replay.generator;
+      if (generator) {
+        return visitRandomChoice(
+          generator,
+          expression.isBulleted || operands.length === 2
+            ? operands.map((operand) => () => visit(replay, operand, items, scope, partial, node))
+            : [
+                () =>
+                  visitAt(
+                    replay,
+                    getPrefix(expression, operands.length - 1),
+                    items,
+                    scope,
+                    partial,
+                    getPrefixNode(replay, node),
+                  ),
+                () => visit(replay, operands[operands.length - 1], items, scope, partial, node),
+              ],
+        );
+      }
       if (expression.isBulleted || operands.length === 2) {
         return operands.reduce(
           (isProduced, operand) =>
@@ -620,6 +672,25 @@ const visitApplication = (
       return isPrefixProduced || isLastProduced;
     }
     case "Exists": {
+      const generator = replay.generator;
+      if (generator) {
+        const version = replay.environment.runtime.version;
+        const orders = runAt(replay, node, () =>
+          mapBoundSets(expression.bounds, (set) => evaluate(set, context)),
+        ).map((set, position) =>
+          getRandomOrder(
+            replay,
+            set,
+            getContextElements(set, expression.bounds[position].set, version),
+          ),
+        );
+        let isProduced = false;
+        forEachBoundElement(expression.bounds, orders, context.scope, (bound) => {
+          isProduced = visit(replay, expression.body, items, bound, partial, node) || isProduced;
+          return generator.hasStates();
+        });
+        return isProduced;
+      }
       const bound = getBindings(replay, expression, context, node);
       return bound.bindings.reduce((isProduced, scope) => {
         bound.charge?.();
@@ -796,6 +867,7 @@ const createReplay = (
   current: Value[] | undefined,
   onState: (state: Value[]) => void,
   onIncomplete?: (state: State) => boolean,
+  generator?: SuccessorGenerator,
 ): Replay => ({
   environment,
   callStack: environment.callStack,
@@ -806,6 +878,7 @@ const createReplay = (
   current,
   onState,
   onIncomplete,
+  generator,
 });
 
 const ENABLED_FOUND = new Error("The replay found a successor");
@@ -883,8 +956,9 @@ export const walkSuccessors = (
   environment: Environment,
   onState: (state: Value[]) => void,
   onIncomplete?: (state: State) => boolean,
+  generator?: SuccessorGenerator,
 ) => {
-  const replay = createReplay(environment, "next", state, onState, onIncomplete);
+  const replay = createReplay(environment, "next", state, onState, onIncomplete, generator);
   visit(replay, action.expression, undefined, action.scope, getEmptyState(environment), node);
 };
 

@@ -69,7 +69,7 @@ export interface Successor {
 }
 
 // TLC's Tool#getNextStates stops drawing once its INextStateFunctor holds a state, which skips the states a constraint drops.
-interface SuccessorGenerator {
+export interface SuccessorGenerator {
   random: JavaRandom;
   hasStates: () => boolean;
 }

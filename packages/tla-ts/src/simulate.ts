@@ -554,21 +554,24 @@ export const simulate = (options: SimulationOptions): number => {
       return false;
     };
     try {
-      if (coverage && coveredAction && !options.isGenerating) {
-        walkCoveredSuccessors(coverage, coveredAction, current.state, environment, (state) => {
-          if (visit({ state, action: action.name })) throw STOP_WALK;
-        });
+      if (coverage && coveredAction) {
+        walkCoveredSuccessors(
+          coverage,
+          coveredAction,
+          current.state,
+          environment,
+          (state) => {
+            if (visit({ state, action: action.name })) throw STOP_WALK;
+          },
+          undefined,
+          generator,
+        );
       } else {
         forEachSuccessor(
           action.expression,
           current.state,
           environment,
-          coverage && coveredAction
-            ? (successor) => {
-                coverage.primary[coveredAction.node]++;
-                return visit(successor);
-              }
-            : visit,
+          visit,
           action.scope,
           generator,
         );

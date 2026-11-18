@@ -747,6 +747,28 @@ export const tagSubset = (coverage: Coverage, set: Value, subset: Value) => {
   if (node !== undefined && typeof subset === "object") coverage.values.set(subset, node);
 };
 
+const RANDOMLY_INDEXED_KINDS = new Set<string>([
+  "Set",
+  "MixedSet",
+  "Interval",
+  "FunctionSet",
+  "RecordSet",
+  "ProductSet",
+]);
+
+// TLC's EnumerableValue#elements(Ordering.RANDOMIZED) draws indices, but a value class without its own k-out-of-n enumerator draws the whole set first, and SubsetValue converts itself to a SetEnumValue.
+export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number, order: Value[]) => {
+  if (typeof set !== "object" || RANDOMLY_INDEXED_KINDS.has(set.kind)) return;
+  if (set.kind !== "Subset") {
+    const enumerator = createEnumerator(coverage, set, size, false);
+    for (let position = 0; position <= size; position++) enumerator.next();
+    return;
+  }
+  const node = coverage.values.get(set);
+  if (node !== undefined) coverage.secondary[node] += size;
+  order.forEach((subset) => tagSubset(coverage, set, subset));
+};
+
 export const createChargedEnumerator = (
   coverage: Coverage,
   set: Value,
