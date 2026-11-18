@@ -1859,7 +1859,9 @@ export const getAnyFunction = (node: ts.Node | undefined): FunctionNode | undefi
   if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
     return node;
   }
-  return ts.isVariableDeclaration(node) ? getAnyFunction(node.initializer) : undefined;
+  return ts.isVariableDeclaration(node) && node.initializer !== undefined
+    ? getAnyFunction(skipCasts(node.initializer))
+    : undefined;
 };
 
 // The function a node is, or that a variable declaration initializes.
@@ -1868,14 +1870,21 @@ export const getFunction = (node: ts.Node | undefined) => {
   return found !== undefined && isPlain(found) ? found : undefined;
 };
 
-// The members of a class that run. TypeScript erases a method's or a constructor's signature
-// without a body, as an overload's or an abstract method's, which JavaScript never sees.
+// The members of a class that run. TypeScript erases a method's, an accessor's, or a
+// constructor's signature without a body, as an overload's or an abstract one's, and an abstract
+// or a declared field, which JavaScript never sees.
 export const getRunMembers = (node: ts.ClassLikeDeclaration) =>
   node.members.filter(
     (member) =>
       !(
-        (ts.isMethodDeclaration(member) || ts.isConstructorDeclaration(member)) &&
-        member.body === undefined
+        ((ts.isMethodDeclaration(member) ||
+          ts.isConstructorDeclaration(member) ||
+          ts.isAccessor(member)) &&
+          member.body === undefined) ||
+        (ts.isPropertyDeclaration(member) &&
+          (ts.getCombinedModifierFlags(member) &
+            (ts.ModifierFlags.Abstract | ts.ModifierFlags.Ambient)) !==
+            0)
       ),
   );
 
@@ -3612,6 +3621,22 @@ export const getClassStop = (node: ts.ClassLikeDeclaration, context: Context) =>
     : undefined;
 };
 
+// Why a function expression that a new constructs, or whose property the script writes, isn't a
+// heap function, where the reason is its place.
+export const getFunctionStop = (node: ts.FunctionExpression, context: Context) => {
+  const declared = getOutermostCast(node).parent;
+  const symbol =
+    ts.isVariableDeclaration(declared) && ts.isIdentifier(declared.name)
+      ? getSymbol(declared.name, context.checker)
+      : undefined;
+  return context.heap !== undefined &&
+    symbol !== undefined &&
+    !isOnce(declared, context) &&
+    context.objectTargets.get(node.getSourceFile())?.has(symbol) === true
+    ? "tla-ts can't make a function that a new constructs, or whose property the script writes, in code that may run more than once"
+    : undefined;
+};
+
 // The parameters that a call passes values to, without the this parameter that only types this.
 export const getParameters = (node: ts.SignatureDeclaration) =>
   node.parameters.filter(
@@ -4270,6 +4295,17 @@ export type AccessorFunction = HeapFunction | ts.MethodDeclaration;
 
 export type HeapClass = ts.ClassLikeDeclaration | HeapFunction;
 
+// The outermost of the casts around an expression, or the expression itself.
+export const getOutermostCast = (node: ts.Expression): ts.Expression =>
+  (ts.isParenthesizedExpression(node.parent) ||
+    ts.isNonNullExpression(node.parent) ||
+    ts.isAsExpression(node.parent) ||
+    ts.isSatisfiesExpression(node.parent) ||
+    ts.isTypeAssertionExpression(node.parent)) &&
+  node.parent.expression === node
+    ? getOutermostCast(node.parent)
+    : node;
+
 export const skipCasts = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) ||
   ts.isNonNullExpression(node) ||
@@ -4807,11 +4843,12 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
   if (known !== HEAP_UNKNOWN) return known === HEAP_YES;
   // A variable or an object literal's property may name a function expression, as obj.f names
   // the function of { f: function () {} }.
+  const outermost = ts.isFunctionDeclaration(node) ? node : getOutermostCast(node);
   const nameNode = ts.isFunctionDeclaration(node)
     ? node.name
-    : (ts.isVariableDeclaration(node.parent) || ts.isPropertyAssignment(node.parent)) &&
-        node.parent.initializer === node
-      ? node.parent.name
+    : (ts.isVariableDeclaration(outermost.parent) || ts.isPropertyAssignment(outermost.parent)) &&
+        outermost.parent.initializer === outermost
+      ? outermost.parent.name
       : undefined;
   const symbol =
     nameNode === undefined || !ts.isIdentifier(nameNode)
@@ -4867,7 +4904,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     symbol !== undefined &&
     node.body !== undefined &&
     isPlain(node) &&
-    isOnce(node.parent, context) &&
+    isOnce(outermost.parent, context) &&
     !isAssigned(symbol, sourceFile, context) &&
     ((named === undefined
       ? findNodes(sourceFile, (child): child is ts.Expression =>
@@ -4940,7 +4977,7 @@ export const getHeapClass = (node: ts.Expression, context: Context): HeapClass |
   const declaration = getValueDeclaration(getSymbol(inPlace, context.checker), context);
   const found =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
-      ? declaration.initializer
+      ? declaration.initializer && skipCasts(declaration.initializer)
       : declaration !== undefined &&
           ts.isPropertyDeclaration(declaration) &&
           declaration.initializer !== undefined &&

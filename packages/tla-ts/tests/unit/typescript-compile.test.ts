@@ -53832,4 +53832,297 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("holds on the heap a typed array that a module makes", () => {
+    const getSource = (expected: string) => `
+      const bytes = new Uint8Array(2);
+      const increment = (target: Uint8Array) => {
+        for (let index = target.length - 1; index >= 0; index--) {
+          if (target[index] !== 0xff) {
+            target[index]++;
+            return true;
+          }
+          target[index] = 0;
+        }
+        return false;
+      };
+      bytes[1] = 0xfe;
+      increment(bytes);
+      increment(bytes);
+      if (bytes.join() !== "${expected}") throw new Error("bytes " + bytes.join());
+      export let count = 0;
+      export const step = () => {
+        if (count < 3 && increment(bytes)) count += 1;
+      };
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("1,0"));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        4,
+      ]);
+    });
+
+    it("rejects other bytes", async () => {
+      expect((await checkModel(getSource("0,0"))).failure?.message).toContain("bytes 1,0");
+    });
+  });
+
+  describe("splices in place an array that a heap object's field holds", () => {
+    const getSource = (expected: string, statement = "tree.children.splice(1, 0, 7);") => `
+      class Tree {
+        children: number[];
+        constructor(children: number[]) {
+          this.children = children;
+        }
+      }
+      const tree = new Tree([5, 6]);
+      ${statement}
+      const result = [tree.children.join("-"), tree.children.length].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5-7-6,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects other elements", async () => {
+      expect((await checkModel(getSource("7-5-6,3"))).failure?.message).toContain("result 5-7-6,3");
+    });
+
+    it("stops where a script holds the elements that the splice removes", () => {
+      expect(() =>
+        compile(getSource("5-7,2", "const removed = tree.children.splice(1, 1, 7);")),
+      ).toThrow(
+        "tla-ts can't hold the elements that a splice removes from an array that the heap holds",
+      );
+    });
+  });
+
+  describe("makes an instance of a class whose base declares abstract or declared members", () => {
+    const getSource = (expected: string) => `
+      abstract class Shape {
+        abstract readonly kind: string;
+        declare cached: number | undefined;
+        abstract get size(): number;
+        abstract area(): number;
+        describe() {
+          return this.kind + "!";
+        }
+      }
+      class Square extends Shape {
+        readonly kind = "square";
+        side: number;
+        constructor(side: number) {
+          super();
+          this.side = side;
+        }
+        get size() {
+          return this.side;
+        }
+        area() {
+          return this.side * this.side;
+        }
+      }
+      const square = new Square(3);
+      const result = [square.describe(), Object.keys(square).join("-"), "cached" in square, square.area()].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("square!,kind-side,false,9"))).failure).toBeUndefined();
+    });
+
+    it("rejects a field that only a declaration gives", async () => {
+      expect(
+        (await checkModel(getSource("square!,kind-side-cached,false,9"))).failure?.message,
+      ).toContain("result square!,kind-side,false,9");
+    });
+  });
+
+  describe("reads an element of an array that the heap holds apart from a heap object's field that changes in place", () => {
+    const getSource = (recorded: string) => `
+      abstract class Node {
+        abstract get size(): number;
+      }
+      class Leaf extends Node {
+        value: number;
+        constructor(value: number) {
+          super();
+          this.value = value;
+        }
+        get size() {
+          return 1;
+        }
+      }
+      class Store {
+        total = 0;
+        add(value: number) {
+          this.total += value;
+        }
+      }
+      class Owner {
+        store = new Store();
+        record(value: number) {
+          this.store.add(value);
+        }
+      }
+      class Tree {
+        children: Node[] = [];
+        insert(node: Node) {
+          this.children.splice(0, 0, node);
+        }
+        first() {
+          const child = this.children[0];
+          return child;
+        }
+      }
+      const owner = new Owner();
+      const tree = new Tree();
+      const leaf = new Leaf(1);
+      tree.insert(leaf);
+      const list = [1];
+      const alias = list;
+      alias.push(2);
+      if (list.length !== 2) throw new Error("length " + list.length);
+      export let count = 0;
+      export const step = () => {
+        if (count >= 2) return;
+        count += 1;
+        owner.record(tree.first().size);
+      };
+      export const isRecorded = () => owner.store.total === ${recorded};
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("count"));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        3,
+      ]);
+    });
+
+    it("rejects another total", async () => {
+      expect((await checkModel(getSource("count + 1"))).status).toBe("invariant-violation");
+    });
+  });
+
+  describe("lets a call hold a new object that each call makes, where an object changes in place", () => {
+    const getSource = (expected: string) => `
+      const make = (text: string) => (text.length > 0 ? new Error(text) : undefined);
+      const first = make("made");
+      if (first !== undefined) first.message = "changed";
+      const second = make("made");
+      const result = [first?.message, second?.message, make("")].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("changed,made,"))).failure).toBeUndefined();
+    });
+
+    it("rejects an object that the calls share", async () => {
+      expect((await checkModel(getSource("changed,changed,"))).failure?.message).toContain(
+        "result changed,made,",
+      );
+    });
+
+    it("stops where the constructor returns an object of its own", () => {
+      const source = `
+        const kept = new Error("kept");
+        class Keeper {
+          constructor() {
+            return kept;
+          }
+        }
+        const make = (text: string) => (text.length > 0 ? (new Keeper() as Error) : undefined);
+        const first = make("made");
+        if (first !== undefined) first.message = "changed";
+        if (kept.message !== "changed") throw new Error("kept " + kept.message);
+      `;
+      expect(() => compile(source)).toThrow(
+        'tla-ts can\'t hold make("made") on the heap, which would share an object that changes in place',
+      );
+    });
+  });
+
+  describe("constructs a function that a cast gives a constructor's type", () => {
+    const getSource = (expected: string) => `
+      interface Primitive {
+        readonly value: unknown;
+        describe(): string;
+      }
+      interface PrimitiveClass {
+        new (value: unknown): Primitive;
+      }
+      const Proto = {
+        describe(this: Primitive) {
+          return "Success:" + String(this.value);
+        },
+      };
+      const ExitPrimitive = function (this: any, value: unknown) {
+        this.value = value;
+      } as unknown as PrimitiveClass;
+      ExitPrimitive.prototype = Proto;
+      const made = new ExitPrimitive(1);
+      const result = [made.describe(), Object.getPrototypeOf(made) === Proto].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("Success:1,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another prototype", async () => {
+      expect((await checkModel(getSource("Success:1,false"))).failure?.message).toContain(
+        "result Success:1,true",
+      );
+    });
+  });
+
+  it("stops at a function that a new constructs, made in code that may run more than once", () => {
+    const source = `
+      interface Primitive {
+        readonly value: unknown;
+      }
+      interface PrimitiveClass {
+        new (value: unknown): Primitive;
+      }
+      const makeExit = (tag: string) => {
+        const ExitPrimitive = function (this: any, value: unknown) {
+          this.value = tag + String(value);
+        } as unknown as PrimitiveClass;
+        ExitPrimitive.prototype = { tag };
+        return (value: unknown) => new ExitPrimitive(value);
+      };
+      export const succeed = makeExit("Success");
+      export const fail = makeExit("Failure");
+      if (succeed(1).value !== "Success1") throw new Error("value " + succeed(1).value);
+    `;
+    expect(() => compile(source)).toThrow(
+      "tla-ts can't make a function that a new constructs, or whose property the script writes, in code that may run more than once",
+    );
+  });
+
+  describe("holds on the heap a typed array's constructor that a module reads", () => {
+    const getSource = (expected: string) => `
+      const Native = Uint8Array as { readonly BYTES_PER_ELEMENT: number; readonly length: number };
+      const result = [Native.BYTES_PER_ELEMENT, Native.length, Native === Uint8Array].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+      export const width = (count: 1 | 2) => count * Native.BYTES_PER_ELEMENT;
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,3,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another length", async () => {
+      expect((await checkModel(getSource("1,0,true"))).failure?.message).toContain(
+        "result 1,3,true",
+      );
+    });
+  });
 });

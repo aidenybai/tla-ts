@@ -163,6 +163,7 @@ import {
   isBigIntLike,
   getWrappedThis,
   getCollection,
+  isHeapArray,
   isHeapSetOrMap,
   isOrderedCollection,
   isSetOrMapType,
@@ -2053,16 +2054,22 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (ts.isCallExpression(node) && context.heapCollections.has(node)) {
     const prototype = translateBuiltInValue("Array.prototype", node, context);
     // A splice gives the elements that it removes, which its statement then removes.
-    const elements =
-      isMethodCall(node) && node.expression.name.text === "splice"
-        ? translateSpliced(
-            translateExpression(node.expression.expression, scope, context),
-            node.arguments,
-            true,
-            scope,
-            context,
-          )
-        : translateCall(node, scope, context, false);
+    const isSplice = isMethodCall(node) && node.expression.name.text === "splice";
+    if (isSplice && isHeapArray(node.expression.expression, context)) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't hold the elements that a splice removes from an array that the heap holds",
+        node,
+      );
+    }
+    const elements = isSplice
+      ? translateSpliced(
+          translateExpression(node.expression.expression, scope, context),
+          node.arguments,
+          true,
+          scope,
+          context,
+        )
+      : translateCall(node, scope, context, false);
     return useJavaScript(
       "Allocate",
       [
@@ -6307,7 +6314,10 @@ export const findMadeCollections = (roots: readonly ts.Node[], context: Context)
           !(ts.isArrayLiteralExpression(node.parent) && isAssignmentTarget(node.parent))) ||
         isNewArrayOfElements(node, context) ||
         (ts.isNewExpression(node) && isFreshCollection(node, context)) ||
-        (ts.isCallExpression(node) && isFreshArrayCall(node, context)) ||
+        // A splice whose result nothing holds makes no array that the heap need hold.
+        (ts.isCallExpression(node) &&
+          isFreshArrayCall(node, context) &&
+          !isUnheldSplice(node, context)) ||
         getOrderedSetMethod(node, context) !== undefined ||
         // A rest element's array is a new one.
         (ts.isBindingElement(node) &&
