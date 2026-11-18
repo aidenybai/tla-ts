@@ -573,7 +573,11 @@ const selectSubexpression = (
     }
     deferToExpression(location.range, message);
   }
-  const body = wrapLets(current, selection.lets, location);
+  // The definitions that a selected LAMBDA's body needs go inside it, so the LAMBDA stays an operator.
+  const body =
+    current.kind === "Lambda"
+      ? { ...current, body: wrapLets(current.body, selection.lets, location) }
+      : wrapLets(current, selection.lets, location);
   const share = (expression: Expression): Expression => ({
     kind: "Selection",
     expression,
@@ -588,7 +592,7 @@ const selectSubexpression = (
     selection,
     body.kind !== "Lambda"
       ? share(body)
-      : { ...body, body: selections.has(body) ? body.body : share(body.body), location },
+      : { ...body, body: selections.has(current) ? body.body : share(body.body), location },
   );
   nullSelections.set(selected, nulls);
   if (expressionError) operatorSelectionErrors.set(selected, expressionError);

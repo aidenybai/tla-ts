@@ -123,6 +123,18 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it("passes on a selected LAMBDA that uses definitions of an enclosing LET", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nAp(G(_), v) == G(v)\nF(G(_)) == G(0)\nOp == LET W == 1 IN F(LAMBDA z : z + W)\nOp2(a) == LET W == a IN F(LAMBDA z : z + W)\nOp3 == LET W == 1 IN LET V == W + 1 IN F(LAMBDA z : z + V)\nOp6 == LET W == 1 IN F(LAMBDA z : LET U == z + W IN U)\nB == <<Ap(Op!1!1, 5), Ap(Op3!1!1!1, 5), Ap(Op6!1!1, 5), Op!1!1!(2), Op2(3)!1!1!(4)!1, Op2(3)!1!1!(4)>>\nInit == x = <<>>\nNext == x' = B\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<6, 7, 6, 3, 4, 7>>",
+    ]);
+  });
+
   it("selects into a function definition as into its constructor", async () => {
     const inner =
       "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nh[z \\in {1, 2}] == z + c\n====";
