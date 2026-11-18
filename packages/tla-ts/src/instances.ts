@@ -775,7 +775,8 @@ const substitute = (
           args,
           resolution: LOCAL_RESOLUTION,
         },
-        location: expression.location,
+        // SANY and TLC have no such LET, only the application of the LAMBDA.
+        location: { line: expression.location.line, column: expression.location.column },
       };
     }
     if (replacement) {

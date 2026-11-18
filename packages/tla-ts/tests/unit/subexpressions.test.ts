@@ -79,6 +79,15 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it("selects an argument of an operator constant that an instance sets to a LAMBDA", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT F(_)\nVal == {F(4)}\n====\nI == INSTANCE Inner WITH F <- LAMBDA y : y + 1\nVARIABLE x\nInit == x = 0\nNext == x' = I!Val!1!1\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 4 }]);
+  });
+
   it("selects a label through an instance whose operators the instancing module does not extend", async () => {
     const result = await check({
       source:
