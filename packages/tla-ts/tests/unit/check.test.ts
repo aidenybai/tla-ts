@@ -3549,6 +3549,22 @@ describe("initial predicate and next-state relation match TLC", () => {
     );
   });
 
+  it.each(["x'", "[](x = 0)"])(
+    "rejects an instanced invariant whose substitute %s is not a state predicate",
+    async (substitute) => {
+      await expect(
+        checkBody(
+          `---- MODULE N ----\nCONSTANT Op(_), k\nInv == Op(k)\n====\nVARIABLE x\nINSTANCE N WITH Op <- LAMBDA p : TRUE, k <- ${substitute}\nInit == x = 0\nNext == x' = x`,
+          "INIT Init\nNEXT Next\nINVARIANT Inv",
+        ),
+      ).rejects.toThrow(
+        new TlaConfigError(
+          "The invariant Inv is not a state predicate (one with no primes or temporal operators).",
+        ),
+      );
+    },
+  );
+
   it("binds a variable once for each time a lazy UNION streams an element", async () => {
     const set = "UNION {SUBSET {1}, {{}}}";
     const result = await checkBody(
