@@ -1905,6 +1905,24 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges a set on the left of \\subseteq per element it draws until one is missing, as TLC's EnumerableValue#isSubsetEq does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in 0..2\nNext == x' = (x + 1) % 3\nInv == {0, 1} \\subseteq {x, 0, 1} /\\ ({0, 2} \\subseteq {x} \\/ TRUE)\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines?.[2]).toEqual([
+      "line 6, col 8 to line 6, col 67 of module E: 3",
+      "|line 6, col 8 to line 6, col 33 of module E: 3",
+      "||line 6, col 8 to line 6, col 13 of module E: 3:9",
+      "||line 6, col 25 to line 6, col 33 of module E: 3",
+      "|line 6, col 39 to line 6, col 66 of module E: 3",
+      "||line 6, col 39 to line 6, col 58 of module E: 3",
+      "|||line 6, col 39 to line 6, col 44 of module E: 3:4",
+      "|||line 6, col 56 to line 6, col 58 of module E: 3",
+      "||line 6, col 63 to line 6, col 66 of module E: 3",
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",

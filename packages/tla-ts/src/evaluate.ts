@@ -1707,7 +1707,23 @@ const compileApply = (
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);
     const subset = getSubsetOperator(expression, global.evaluateBinary);
-    return (context) => subset(left(context), right(context));
+    const coverage = environment.coverage;
+    if (!coverage) return (context) => subset(left(context), right(context));
+    return (context) => {
+      const leftValue = left(context);
+      const rightValue = right(context);
+      if (
+        typeof leftValue !== "object" ||
+        leftValue.kind !== "Set" ||
+        !coverage.values.has(leftValue)
+      ) {
+        return subset(leftValue, rightValue);
+      }
+      // TLC's EnumerableValue#isSubsetEq draws the elements of a set with a cost model until one is missing.
+      const missing = leftValue.elements.findIndex((element) => !isElementOf(element, rightValue));
+      costCoverage(coverage, leftValue, (missing === -1 ? leftValue.elements.length : missing) + 1);
+      return missing === -1;
+    };
   }
   const coverage = environment.coverage;
   const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
