@@ -377,7 +377,6 @@ interface CheckResult {
   isFromTactic: boolean;
   model: ProtoModel | undefined;
   fdSolver: FdSolver | undefined;
-  // inc_sat_solver, which makes a model at each command that asks for one.
   satSolver: IncSatSolver | undefined;
   core: number[] | undefined;
   // check_sat_result::reason_unknown, where the port tracks it.
@@ -401,7 +400,6 @@ interface ScriptState {
   // The objective of each soft constraint, in the order they were asserted.
   softTrail: number[];
   optimizer: OptContext | undefined;
-  // The number of objectives at the last check-sat that optimized, as opt::context keeps them.
   checkedObjectives: number;
   scopes: Scope[];
   check: CheckResult | undefined;
@@ -416,10 +414,7 @@ interface ScriptState {
   satSolver: IncSatSolver | undefined;
   fdSolver: FdSolver | undefined;
   tacticConverters: Goal["converters"];
-  // tactic2solver's model, which it frees at its next check, assert, push or pop.
   tacticModel: ProtoModel | undefined;
-  // tactic2solver's formulas of the goal of its last unknown check without scopes, which it keeps
-  // until the next such check.
   lastAssertions: RefVector;
   // The solver takes the flag of models when it is made, and only produce-models changes it.
   isSolverProducingModels: boolean;
@@ -697,7 +692,6 @@ export const runSmtlibScript = (
       reasonUnknown: fdSolver.reasonUnknown,
     };
   };
-  // cmd_context::check_sat drops the result of the last check before it starts.
   const checkSat = (extra: number[], end: SmtToken) => {
     clearCheck();
     const deadline = Date.now() + options.timeLimitMs;
@@ -770,7 +764,6 @@ export const runSmtlibScript = (
       state.manager.limit.pop();
     }
   };
-  // The command holds a reference to the model, as its model_ref does.
   const getModel = (list: SmtList) => {
     const check = state.check;
     if (!settings.isProducingModels || check === undefined || check.status === L_FALSE)
@@ -802,7 +795,6 @@ export const runSmtlibScript = (
     model.incRef();
     return model;
   };
-  // m_check_sat_result keeps the solver that answered until cmd_context drops the result.
   const clearCheck = () => {
     state.check?.model?.decRef();
     const satSolver = state.check?.satSolver;
@@ -1819,7 +1811,6 @@ export const runSmtlibScript = (
         const evaluator = new ModelEvaluator(manager, model);
         const value = evaluator.rewrite(term);
         display(value);
-        // eval_cmd frees its model_evaluator, the value and the model, and the parser frees the term last.
         evaluator.release();
         manager.decRef(value);
         model.decRef();
@@ -1837,8 +1828,6 @@ export const runSmtlibScript = (
           );
         const manager = state.manager;
         const exprs = terms.items.map((item) => state.reader.parseTerm(item));
-        // parse_get_value keeps the terms on its expression stack until it has printed them, and
-        // then frees them in their order.
         for (const expr of exprs) manager.incRef(expr);
         let model: ProtoModel | undefined;
         try {
@@ -1865,8 +1854,7 @@ export const runSmtlibScript = (
             const value = model.eval(expr, true);
             pendingText += `${index > 0 ? "\n " : ""}(${text.slice(offsets[index], offsets[index + 1]).trim()} ${format(value)})`;
             manager.decRef(value);
-            // scoped_model_completion restores the completion once the value is gone, which
-            // resets the model's cache.
+            // Z3 restores the completion once the value is gone, which resets the model's cache.
             model.setModelCompletion(isCompleting);
           }
           print(")");
@@ -2072,7 +2060,7 @@ export const runSmtlibScript = (
           value !== undefined &&
           value.kind !== "list";
         if (isParameter) {
-          // set_option_cmd passes gparams a numeral as the string of its rational.
+          // Z3 checks a numeral as the string of its rational, so 1.5 becomes 3/2.
           checkParameterValue(
             getParameterName(keyword),
             value.kind === "decimal"

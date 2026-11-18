@@ -95,7 +95,6 @@ export class Rational {
     return new Rational((sign * num) / divisor, (sign * den) / divisor);
   }
 
-  // A decimal as SMT-LIB writes it, such as 1.25.
   static fromDecimal(text: string) {
     const [whole, fraction = ""] = text.split(".");
     return Rational.of(BigInt(whole + fraction), 10n ** BigInt(fraction.length));

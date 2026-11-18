@@ -408,7 +408,6 @@ export class IncSatSolver {
     return convertModel(this.converters, euf === null ? model : euf.updateModel(model));
   }
 
-  // The caller holds the reference to the model, as its model_ref does.
   getModel() {
     const model = this.mkModel();
     model?.incRef();

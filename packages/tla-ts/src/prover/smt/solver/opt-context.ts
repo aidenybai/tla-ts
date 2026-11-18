@@ -143,8 +143,6 @@ export class OptContext {
   private hiddenDecls: number[] = [];
   private optSolver: OptSolver | null = null;
   private satSolver: IncSatSolver | null = null;
-  // The optimizer borrows its models, so those of the sat solver live until the solver goes,
-  // where Z3's model_ref members free them as they change.
   private satModels: ProtoModel[] = [];
   private optsmt: Optsmt | null = null;
   private rawModel: ProtoModel | null = null;
