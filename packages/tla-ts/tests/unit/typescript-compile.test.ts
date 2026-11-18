@@ -57850,4 +57850,34 @@ describe("runs the script's methods in a conversion inside at most one other", (
       expect((await checkModel(getSource("70|2,4,6"))).failure?.message).toContain("80|2,4,6");
     });
   });
+
+  describe("steps a generator's state machine from another function", () => {
+    const getSource = (expected: string) => `
+      const box = { values: [] as number[], total: 0 };
+      function* numbers() {
+        for (let index = 0; index < 70; index++) yield index;
+      }
+      const counter = numbers();
+      function pull() {
+        const step = counter.next();
+        if (!step.done) box.values.push(step.value);
+      }
+      function drain() {
+        for (const value of counter) box.total += value;
+      }
+      pull();
+      pull();
+      drain();
+      const result = [box.values.join(" "), box.total].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0 1,2414"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("0 1,2415"))).failure?.message).toContain("0 1,2414");
+    });
+  });
 });

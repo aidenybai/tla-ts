@@ -534,6 +534,7 @@ import {
   type Machine,
   type MachineDelegate,
   type MachineLoop,
+  dispatchMachines,
   getMachine,
   getMachines,
   getSteppedOuter,
@@ -9471,9 +9472,8 @@ export const stepGenerator = (
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const heapSymbol = context.heap;
-  const machine = getMachine(receiver, path);
-  if (machine !== undefined && heapSymbol !== undefined) {
-    return stepMachine(
+  const stepWith = (machine: Suspension) =>
+    stepMachine(
       node,
       machine,
       method,
@@ -9493,6 +9493,43 @@ export const stepGenerator = (
           name,
           useJavaScript("Allocate", [getHeap(current.scope, node, context), result], context),
           continueWith(
+            withHeap(current, identifier(name), context),
+            useJavaScript("Allocated", [identifier(name)], context),
+          ),
+        );
+      },
+    );
+  return dispatchMachines(receiver, path, stepWith, () =>
+    resumeGenerator(
+      node,
+      receiver,
+      method,
+      argument,
+      path,
+      context,
+      frame,
+      (current, value, isDone, isResult) => {
+        if (isResult && value !== undefined) return continueWith(current, value);
+        if (heapSymbol === undefined) {
+          return continueWith(
+            current,
+            record("Record", [
+              { name: "value", value: value ?? getUndefined(context) },
+              { name: "done", value: boolean(isDone) },
+            ]),
+          );
+        }
+        const name = context.names.getFresh("heap");
+        const result = useJavaScript(
+          "IteratorResult",
+          [value ?? getUndefined(context), boolean(isDone)],
+          context,
+        );
+        return bindOnce(
+          current,
+          name,
+          useJavaScript("Allocate", [getHeap(current.scope, node, context), result], context),
+          continueWith(
             {
               ...current,
               scope: {
@@ -9504,50 +9541,8 @@ export const stepGenerator = (
           ),
         );
       },
-    );
-  }
-  return resumeGenerator(
-    node,
-    receiver,
-    method,
-    argument,
-    path,
-    context,
-    frame,
-    (current, value, isDone, isResult) => {
-      if (isResult && value !== undefined) return continueWith(current, value);
-      if (heapSymbol === undefined) {
-        return continueWith(
-          current,
-          record("Record", [
-            { name: "value", value: value ?? getUndefined(context) },
-            { name: "done", value: boolean(isDone) },
-          ]),
-        );
-      }
-      const name = context.names.getFresh("heap");
-      const result = useJavaScript(
-        "IteratorResult",
-        [value ?? getUndefined(context), boolean(isDone)],
-        context,
-      );
-      return bindOnce(
-        current,
-        name,
-        useJavaScript("Allocate", [getHeap(current.scope, node, context), result], context),
-        continueWith(
-          {
-            ...current,
-            scope: {
-              ...current.scope,
-              bindings: new Map([...current.scope.bindings, [heapSymbol, identifier(name)]]),
-            },
-          },
-          useJavaScript("Allocated", [identifier(name)], context),
-        ),
-      );
-    },
-    continueWith,
+      continueWith,
+    ),
   );
 };
 
@@ -9767,13 +9762,19 @@ export const resumeGenerator = (
   if (path.isMachine === true) {
     throw new TlaTypeScriptError("tla-ts can't resume this generator from a state machine", node);
   }
-  return generators.reduceRight(
-    (rest, entry) =>
-      ifThenElse(apply("=", [receiver, entry[1].ref]), run(entry[0], entry[1]), rest),
-    leaf(
-      apply("Assert", [boolean(false), string("tla-ts can't tell which generator this call runs")]),
-    ),
-  );
+  // The code that steps a state machine tells the receiver apart from them first.
+  return generators
+    .filter((entry) => entry[1].machine === undefined)
+    .reduceRight(
+      (rest, entry) =>
+        ifThenElse(apply("=", [receiver, entry[1].ref]), run(entry[0], entry[1]), rest),
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't tell which generator this call runs"),
+        ]),
+      ),
+    );
 };
 
 // A call that makes a generator object, through a method that the receiver must hold.
@@ -18196,23 +18197,26 @@ const translateForOfGenerator = (
     (!ts.isFunctionLike(node) && (ts.forEachChild(node, suspends) ?? false));
   const isLooped = isBuiltIn && !suspends(loop.statement);
   const iterate = (start: Path, receiver: Expression) => {
-    const machine = getMachine(receiver, start);
-    if (machine !== undefined) {
-      return translateIterations(loop, start, context, frame, continueWith, receiver, machine);
-    }
-    return isLooped &&
-      [...start.generators.values()].every(
-        (suspension) => suspension.isRestartable === true || suspension.machine !== undefined,
-      )
-      ? translateIterations(loop, start, context, frame, continueWith, receiver)
-      : iterateGenerator(
-          loop,
-          isBuiltIn ? withBuiltInIterator(loop.expression, start, receiver, context) : start,
-          receiver,
-          context,
-          frame,
-          continueWith,
-        );
+    return dispatchMachines(
+      receiver,
+      start,
+      (machine) =>
+        translateIterations(loop, start, context, frame, continueWith, receiver, machine),
+      () =>
+        isLooped &&
+        [...start.generators.values()].every(
+          (suspension) => suspension.isRestartable === true || suspension.machine !== undefined,
+        )
+          ? translateIterations(loop, start, context, frame, continueWith, receiver)
+          : iterateGenerator(
+              loop,
+              isBuiltIn ? withBuiltInIterator(loop.expression, start, receiver, context) : start,
+              receiver,
+              context,
+              frame,
+              continueWith,
+            ),
+    );
   };
   if (opened !== undefined) {
     return translateIteratorCall(loop.expression, opened, path, context, frame, (after, ref) =>

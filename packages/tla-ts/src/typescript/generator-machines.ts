@@ -194,7 +194,7 @@ const isSuspending = (node: ts.Node): boolean =>
   (!ts.isFunctionLike(node) && (ts.forEachChild(node, isSuspending) ?? false));
 
 // Whether the object that a call makes only meets the code that steps a state machine: the call is
-// stepped, or it initializes a variable that only such code in the same function reads.
+// stepped, or it initializes a variable that only such code reads.
 const isMachineUse = (
   node: ts.Node,
   context: Context,
@@ -219,17 +219,19 @@ const isMachineUse = (
       !(ts.isVariableDeclaration(identifier.parent) && identifier.parent.name === identifier) &&
       getSymbol(identifier, context.checker) === symbol,
   );
-  // A variable may also take another object that a call makes, whose own call decides how it runs.
+  // A variable may also take another object that a call makes in the same function, whose own call
+  // decides how it runs. A function that steps it steps the object that it holds where it runs, as
+  // the generators that the path holds tell.
   return (
     symbol !== undefined &&
     references.some((reference) => isStepped(reference, context, methods)) &&
     references.every(
       (reference) =>
-        ts.findAncestor(reference, ts.isFunctionLike) === owner &&
-        (isStepped(reference, context, methods) ||
-          (isAssignment(reference.parent) &&
-            reference.parent.left === reference &&
-            ts.isCallExpression(getCast(reference.parent.right)))),
+        isStepped(reference, context, methods) ||
+        (ts.findAncestor(reference, ts.isFunctionLike) === owner &&
+          isAssignment(reference.parent) &&
+          reference.parent.left === reference &&
+          ts.isCallExpression(getCast(reference.parent.right))),
     )
   );
 };
@@ -953,6 +955,30 @@ export const stepMachine = (
       continueWith(after, kind, value),
     ),
   );
+};
+
+// Runs what steps the state machine that a receiver holds: the one it holds where tla-ts can tell,
+// and otherwise each one that it may hold, as the code that its closures run reads it, before what
+// steps the other generators.
+export const dispatchMachines = (
+  receiver: Expression,
+  path: Path,
+  onMachine: (suspension: Suspension) => Formula,
+  otherwise: () => Formula,
+): Formula => {
+  const exact = getMachine(receiver, path);
+  if (exact !== undefined) return onMachine(exact);
+  const suspensions = [...path.generators.values()];
+  if (suspensions.some((suspension) => isSameExpression(suspension.ref, receiver))) {
+    return otherwise();
+  }
+  return suspensions
+    .filter((suspension) => suspension.machine !== undefined)
+    .reduceRight(
+      (rest, suspension) =>
+        ifThenElse(apply("=", [receiver, suspension.ref]), onMachine(suspension), rest),
+      otherwise(),
+    );
 };
 
 // The suspension of the state machine that a receiver holds, where tla-ts can tell which.
