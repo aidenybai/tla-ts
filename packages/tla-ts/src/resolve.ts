@@ -780,10 +780,14 @@ const checkReference = (
   return goal && { node: checkSelection(expression, selectors, goal, unit, isFact) };
 };
 
-const isInstanceName = (name: string, scope: LocalName | undefined, unit: Unit) =>
-  (lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined))?.kind === "Instance" ||
-  (findInstance(name, scope, unit) !== undefined &&
-    [...unit.bindings.keys()].some((key) => key.startsWith(`${name}!`)));
+const isInstanceName = (name: string, scope: LocalName | undefined, unit: Unit) => {
+  const binding = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
+  if (binding) return binding.kind === "Instance";
+  return (
+    findInstance(name, scope, unit) !== undefined &&
+    [...unit.bindings.keys()].some((key) => key.startsWith(`${name}!`))
+  );
+};
 
 const getSymbolArity = (
   expression: Expression & { kind: "Identifier" | "Apply" | "OperatorReference" },
