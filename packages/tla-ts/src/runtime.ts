@@ -15,6 +15,7 @@ export interface CheckerRuntime {
   getFingerprint: (state: Value[]) => bigint;
   getRandom: () => JavaRandom;
   reseedRandom: () => void;
+  runWithNewRandom: <Result>(evaluate: () => Result) => Result;
   getSimulationValue:
     | ((key: string, state: (Value | undefined)[] | undefined) => Value | undefined)
     | undefined;
@@ -47,7 +48,7 @@ export interface CheckerRuntime {
 
 export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime => {
   const startupRandom = createJavaRandom(seed);
-  const workerRandom = createJavaRandom(seed);
+  let workerRandom = createJavaRandom(seed);
   let seededState: Value[] | undefined;
   let isStartup = false;
   const runtime: CheckerRuntime = {
@@ -75,6 +76,19 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     },
     reseedRandom: () => {
       seededState = undefined;
+    },
+    // TLC's TLCTrace#getTrace rebuilds a behavior with a new generator and then goes back to the one it drew from.
+    runWithNewRandom: (evaluate) => {
+      const random = workerRandom;
+      const state = seededState;
+      workerRandom = createJavaRandom(seed);
+      seededState = undefined;
+      try {
+        return evaluate();
+      } finally {
+        workerRandom = random;
+        seededState = state;
+      }
     },
     evaluateAtStartup: (evaluate) => {
       const wasStartup = isStartup;
