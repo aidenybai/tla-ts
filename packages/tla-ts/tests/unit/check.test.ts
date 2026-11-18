@@ -2242,6 +2242,31 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it("counts no node for the parameters an instance passes to the definitions it copies, as SANY's definitions take none", async () => {
+    const lines = formatCoverage(
+      await getInstanceCoverage(
+        "I(p, q) == INSTANCE Inner WITH K <- p + q, w <- y",
+        "\\E p \\in {1, 2} : I(p, M)!A",
+        "I(1, 1)!Q /\\ I(M, 0)!G >= 0",
+      ),
+    );
+    expect(lines?.[2]).toEqual([
+      "line 8, col 8 to line 8, col 34 of module E: 3",
+      "|line 8, col 8 to line 8, col 16 of module E: 3",
+      "||line 6, col 6 to line 6, col 42 of module Inner: 3",
+      "|||line 6, col 24 to line 6, col 42 of module Inner: 6",
+      "|||line 6, col 15 to line 6, col 20 of module Inner: 3:9",
+      "|line 8, col 21 to line 8, col 34 of module E: 3",
+      "||line 8, col 21 to line 8, col 29 of module E: 3",
+      "|||line 5, col 1 to line 5, col 49 of module E: 6",
+      "|||line 5, col 37 to line 5, col 41 of module E: 5",
+      "|||line 7, col 6 to line 7, col 27 of module Inner: 3",
+      "||||line 7, col 9 to line 7, col 13 of module Inner: 3",
+      "||||line 7, col 20 to line 7, col 20 of module Inner: 2",
+      "|||line 8, col 23 to line 8, col 23 of module E: 2",
+    ]);
+  });
+
   it("orders the substitutions of an instance as SANY infers them from the instanced module's symbol table", async () => {
     const result = await check({
       source:

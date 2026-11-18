@@ -10,6 +10,7 @@ import {
 import { formatRange } from "./errors";
 import {
   frameSubstitutions,
+  instanceArguments,
   isSubstitutionDefinition,
   substitutedExpressions,
   substitutionFrames,
@@ -515,9 +516,11 @@ export const buildCoverage = (
           range,
           () => {
             if (resolved) walkDefinition(resolved);
-            expression.args.forEach((argument, index) =>
-              walkArgument(argument, index, resolved?.definition, locals),
-            );
+            expression.args.forEach((argument, index) => {
+              if (!instanceArguments.has(argument)) {
+                walkArgument(argument, index, resolved?.definition, locals);
+              }
+            });
           },
           false,
           resolved?.definition,

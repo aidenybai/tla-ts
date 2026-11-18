@@ -623,8 +623,15 @@ export const createLocalIdentifier = (name: string, location: SourceLocation): E
   resolution: LOCAL_RESOLUTION,
 });
 
+// The parameters of an instance, which each copy of its definitions takes as arguments where SANY's take none.
+export const instanceArguments = new WeakSet<Expression>();
+
 export const createLocalArguments = (params: OperatorParam[], location: SourceLocation) =>
-  params.map((param) => createLocalIdentifier(param.name, location));
+  params.map((param) => {
+    const argument = createLocalIdentifier(param.name, location);
+    instanceArguments.add(argument);
+    return argument;
+  });
 
 export const createLocalAlias = (
   name: string,
