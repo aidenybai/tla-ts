@@ -71,6 +71,30 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("reports an EXCEPT path's level error at its update, before its value's, like SANY", async () => {
+    const seqError =
+      "Level error in applying operator $Seq:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    const setError =
+      "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nA == [f EXCEPT ![[]x] = {<>x}]\nB == [f EXCEPT !.a = 1, ![<>x][1] = {[]x}]\nE == [f EXCEPT ![1] = [f EXCEPT ![[]x] = 2]]\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 4, col 16 to line 4, col 29", seqError],
+          ["line 4, col 25 to line 4, col 29", setError],
+          ["line 5, col 25 to line 5, col 41", seqError],
+          ["line 5, col 37 to line 5, col 41", setError],
+          ["line 6, col 33 to line 6, col 42", seqError],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("reports every level error in a definition, assumption, or theorem but none for an argument with its own, like SANY", async () => {
     const setError =
       "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";

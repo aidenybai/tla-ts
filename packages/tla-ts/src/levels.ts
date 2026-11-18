@@ -11,6 +11,7 @@ import {
   type Proof,
   type ProofStep,
   type SourceLocation,
+  type SourceRange,
 } from "./ast";
 import { createSanyError, formatRange, type SanyError } from "./errors";
 import { forEachChild } from "./instances";
@@ -563,18 +564,18 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return data;
   };
 
+  const reportMessages = (start: number, range: SourceRange | undefined) => {
+    if (!range) return;
+    messages
+      .splice(start)
+      .forEach((message) => errors.push({ location: formatRange(range), message: `${message}.` }));
+  };
+
   const analyze = (expression: Expression, scope: Scope): LevelData => {
     const start = messages.length;
     const data = analyzeNode(expression, scope);
     const isReported = messages.length > start;
-    const range = expression.location.range;
-    if (range) {
-      messages
-        .splice(start)
-        .forEach((message) =>
-          errors.push({ location: formatRange(range), message: `${message}.` }),
-        );
-    }
+    reportMessages(start, expression.location.range);
     return isReported ? { ...data, isCorrect: false } : data;
   };
 
@@ -733,25 +734,27 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       case "Except":
         return applyDefined(EXCEPT_LEVELS, [
           toOperand(expression.function, scope),
-          ...expression.updates.map((update): Operand => ({
-            kind: "Value",
-            data: applyDefined(PAIR_LEVELS, [
-              {
-                kind: "Value",
-                data: applyDefined(
-                  SEQ_LEVELS,
-                  update.path.map((step): Operand =>
-                    step.kind === "Field"
-                      ? { kind: "Value", data: createData() }
-                      : step.args.length === 1
-                        ? toOperand(step.args[0], scope)
-                        : { kind: "Value", data: applyBuiltin(TUPLE_LEVELS, step.args, scope) },
-                  ),
-                ),
-              },
-              toOperand(update.value, scope),
-            ]),
-          })),
+          ...expression.updates.map((update): Operand => {
+            const start = messages.length;
+            const path = applyDefined(
+              SEQ_LEVELS,
+              update.path.map((step): Operand =>
+                step.kind === "Field"
+                  ? { kind: "Value", data: createData() }
+                  : step.args.length === 1
+                    ? toOperand(step.args[0], scope)
+                    : { kind: "Value", data: applyBuiltin(TUPLE_LEVELS, step.args, scope) },
+              ),
+            );
+            reportMessages(start, update.range);
+            return {
+              kind: "Value",
+              data: applyDefined(PAIR_LEVELS, [
+                { kind: "Value", data: path },
+                toOperand(update.value, scope),
+              ]),
+            };
+          }),
         ]);
       case "FunctionApplication":
         return applyDefined(APPLY_LEVELS, [

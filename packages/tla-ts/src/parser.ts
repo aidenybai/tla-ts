@@ -1032,6 +1032,7 @@ const parse = (
       }
       if (accept("EXCEPT")) {
         const updates = parseSeparated(() => {
+          const updateStart = cursor;
           expect("!");
           const path: ExceptPathStep[] = [];
           while (isAt(".") || isAt("[")) {
@@ -1047,7 +1048,8 @@ const parse = (
             expect("]");
           }
           expect("=");
-          return { path, value: parseExpression() };
+          const value = parseExpression();
+          return { path, value, range: getRange(updateStart) };
         });
         expect("]");
         return { kind: "Except", function: expression, updates, location };

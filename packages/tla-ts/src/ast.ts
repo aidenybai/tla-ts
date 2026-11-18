@@ -221,6 +221,7 @@ export type ExceptPathStep =
 interface ExceptUpdate {
   path: ExceptPathStep[];
   value: Expression;
+  range: SourceRange;
 }
 
 interface ExceptExpression {
