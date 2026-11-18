@@ -522,6 +522,7 @@ export const createSelectorResolver =
               );
             }
             if (item.op !== "Null" && item.op !== "@") {
+              // Deviation from SANY: Generator#selectorToNode names a numbered selector here by its syntax node, N_StructOp; tla-ts names it by its number.
               return generator.addError(
                 getItemLocation(),
                 `Cannot use !${item.name} to select subexpression of a LAMBDA.`,
