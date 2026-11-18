@@ -5,6 +5,7 @@ import {
   type Definition,
   type Expression,
   type Module,
+  type NewSymbol,
   type OperatorParam,
   type Proof,
   type ProofStep,
@@ -48,7 +49,7 @@ interface LevelContext {
 }
 
 type ScopeEntry =
-  | { kind: "Formal"; arity: number }
+  | { kind: "Formal"; arity: number; level: number }
   | { kind: "Let"; definition: Definition; scope: Scope };
 
 export type Scope = Map<string, ScopeEntry>;
@@ -66,6 +67,14 @@ export const CONSTANT_LEVEL = 0;
 export const VARIABLE_LEVEL = 1;
 export const ACTION_LEVEL = 2;
 export const TEMPORAL_LEVEL = 3;
+
+const NEW_SYMBOL_LEVELS = {
+  Constant: CONSTANT_LEVEL,
+  Variable: VARIABLE_LEVEL,
+  State: VARIABLE_LEVEL,
+  Action: ACTION_LEVEL,
+  Temporal: TEMPORAL_LEVEL,
+} satisfies Record<NewSymbol["level"], number>;
 
 const SEPARATOR = "\u0000";
 
@@ -208,7 +217,7 @@ const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
         ...scope,
         ...formals.map((formal): [string, ScopeEntry] => [
           formal.name,
-          { kind: "Formal", arity: formal.arity },
+          { kind: "Formal", arity: formal.arity, level: CONSTANT_LEVEL },
         ]),
       ]);
 
@@ -232,7 +241,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const resolve = (name: string, scope: Scope): Resolved => {
     const entry = scope.get(name);
     if (entry?.kind === "Formal") {
-      return { kind: "Declared", name, level: 0, arity: entry.arity };
+      return { kind: "Declared", name, level: entry.level, arity: entry.arity };
     }
     if (entry?.kind === "Let") {
       return { kind: "Defined", levels: analyzeDefinition(entry.definition, entry.scope) };
@@ -902,7 +911,11 @@ export const analyzeAssumeProve = (
           message: "Level error:\nTemporal formula used as set.",
         });
       }
-      inner.set(assumption.name, { kind: "Formal", arity: assumption.arity });
+      inner.set(assumption.name, {
+        kind: "Formal",
+        arity: assumption.arity,
+        level: NEW_SYMBOL_LEVELS[assumption.level],
+      });
       return set ? [set] : [];
     }
     return [

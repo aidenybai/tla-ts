@@ -213,6 +213,10 @@ describe("level checking matches SANY", () => {
         ["line 6, col 23 to line 6, col 35", "Level error:\nTemporal formula used as set."],
       ],
     ],
+    [
+      "THEOREM ASSUME NEW TEMPORAL F, NEW k \\in F PROVE TRUE\nTHEOREM ASSUME NEW ACTION A, NEW j \\in A PROVE TRUE",
+      [["line 3, col 32 to line 3, col 42", "Level error:\nTemporal formula used as set."]],
+    ],
   ])("reports every error SANY reports in %j", async (definitions, errors) => {
     await expect(
       check({
