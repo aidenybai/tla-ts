@@ -53020,4 +53020,153 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a closure that a loop's head makes with the head's own bindings", () => {
+    const getSource = (expected: number) => `
+      const box = { total: 0 };
+      const a: any[] = [];
+      for (let i = 0, f = function () { return i; }; i < 3; ++i) {
+        a.push(f);
+      }
+      for (let k = 0; k < 3; ++k) {
+        box.total += a[k]();
+      }
+      if (box.total !== ${expected}) throw new Error("total " + box.total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(0))).failure).toBeUndefined();
+    });
+
+    it("rejects the later iterations' values", async () => {
+      expect((await checkModel(getSource(3))).failure?.message).toContain("total 0");
+    });
+  });
+
+  describe("gives a static field's arrow the class as its this", () => {
+    const getSource = (expected: boolean) => `
+      var C = class {
+        static f = () => this;
+      };
+      const same = C.f() === C;
+      if (same !== ${expected}) throw new Error("same " + same);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(true))).failure).toBeUndefined();
+    });
+
+    it("rejects another this", async () => {
+      expect((await checkModel(getSource(false))).failure?.message).toContain("same true");
+    });
+  });
+
+  describe("runs a helper that calls a promise's then as its own code, which queues the job", () => {
+    const getSource = (expected: string) => `
+      const seen: number[] = [];
+      const ready = Promise.resolve(1);
+      function f() {
+        ready.then((value) => {
+          seen.push(value);
+        });
+      }
+      f();
+      const check = async () => {
+        await null;
+        await null;
+        if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+      };
+      check();
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1"))).failure).toBeUndefined();
+    });
+
+    it("rejects another value", async () => {
+      expect((await checkModel(getSource("2"))).failure?.message).toContain(
+        "A promise rejected with no handler",
+      );
+    });
+  });
+
+  describe("runs a String.prototype method on a value whose type doesn't tell what it is, where it's a string", () => {
+    const getSource = (expected: string) => `
+      class Reader {
+        pos: any;
+        buffer: any;
+        constructor(buffer: any) {
+          this.pos = 0;
+          this.buffer = buffer;
+        }
+        peek() {
+          return this.buffer.charCodeAt(this.pos);
+        }
+        find(char: any) {
+          const { buffer, pos } = this;
+          const idx = buffer.indexOf(char, pos);
+          return idx === -1 ? buffer.length : idx;
+        }
+      }
+      const reader = new Reader("ab;c");
+      const result = [reader.peek(), reader.find(";"), reader.find("x")].join();
+      if (result !== "${expected}") throw new Error("read " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("97,2,4"))).failure).toBeUndefined();
+    });
+
+    it("rejects other positions", async () => {
+      expect((await checkModel(getSource("97,2,-1"))).failure?.message).toContain("read 97,2,4");
+    });
+
+    it("stops where the value isn't a string", async () => {
+      const source = getSource("97,2,4").replace('new Reader("ab;c")', "new Reader([1])");
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't tell which function this call runs",
+      );
+    });
+  });
+
+  describe("runs a String.prototype method on a value of type any after the postfix ++ that gives its argument", () => {
+    const getSource = (expected: string) => `
+      class Reader {
+        pos: any;
+        buffer: any;
+        constructor(buffer: any) {
+          this.pos = 0;
+          this.buffer = buffer;
+        }
+        next() {
+          return this.buffer.charCodeAt(this.pos++);
+        }
+      }
+      const reader = new Reader("ab");
+      const result = [reader.next(), reader.next(), reader.pos].join();
+      if (result !== "${expected}") throw new Error("read " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("97,98,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects the value after the step", async () => {
+      expect((await checkModel(getSource("98,NaN,2"))).failure?.message).toContain("read 97,98,2");
+    });
+  });
+
+  describe("iterates an object whose Symbol.iterator method another module writes", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/iterated-elsewhere.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects other values", async () => {
+      const wrong = source.replace('"10,20,30"', '"10,20"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("seen 10,20,30");
+    });
+  });
 });

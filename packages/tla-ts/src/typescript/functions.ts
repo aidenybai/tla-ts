@@ -1079,7 +1079,25 @@ const isOperatorFunction = (candidate: FunctionNode, context: Context) =>
       ts.isMetaProperty(inner),
   ).length === 0 &&
   getArgumentsReads(candidate, context).length === 0 &&
-  getKeptLocal(candidate, context) === undefined;
+  getKeptLocal(candidate, context) === undefined &&
+  !readsLoopBinding(candidate, context);
+
+// Whether a function reads a let or a const that a loop's head declares outside it, of which each
+// iteration has its own, which the function's operator can't tell.
+const readsLoopBinding = (callee: FunctionNode, context: Context) =>
+  findNodes(callee, ts.isIdentifier).some((name) => {
+    const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
+    const list = declaration?.parent;
+    return (
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      list !== undefined &&
+      ts.isVariableDeclarationList(list) &&
+      (list.flags & ts.NodeFlags.BlockScoped) !== 0 &&
+      ts.isIterationStatement(list.parent, false) &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === callee) === undefined
+    );
+  });
 
 // Whether a call may run a function as the function's operator: one where no function names a
 // let or a const of the script that's still uninitialized, whose read would throw, and nothing

@@ -126,19 +126,16 @@ export const getFunctionCandidates = (value: ts.Expression, context: Context): F
   return isRunnable(candidate) ? [candidate] : [];
 };
 
-// The functions that a script writes under a key, as methods and as getters, by key. A call of what
-// JavaScript reads under the key, as a protocol such as iteration does, branches on which of them
-// it is.
+// The functions that the program writes under a key, as methods and as getters, by key. A call of
+// what JavaScript reads under the key, as a protocol such as iteration does, branches on which of
+// them it is.
 export const getWrittenFunctions = (
   node: ts.Node,
   key: string,
   context: Context,
 ): readonly FunctionNode[] => {
   const index = context.heap === undefined ? -1 : getFileIndex(context.nodes, node);
-  const written =
-    index < 0 || index >= context.fileWritten.length
-      ? findWrittenFunctions(node.getSourceFile(), context)
-      : context.fileWritten[index];
+  const written = index < 0 ? findWrittenFunctions(node.getSourceFile(), context) : context.written;
   return written.get(key) ?? [];
 };
 

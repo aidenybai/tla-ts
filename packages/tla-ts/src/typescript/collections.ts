@@ -2666,6 +2666,76 @@ const getStoredStringMethod = (callee: ts.PropertyAccessExpression, context: Con
     : undefined;
 };
 
+// A call of a String.prototype method's name on a value whose type doesn't tell what it is, as
+// untyped JavaScript makes: a string runs the method, converting each argument as the method does,
+// where String.prototype still holds it, and any other value stops, as tla-ts can't tell which
+// function the call runs.
+export const translateAnyStringCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
+  const callee = skipCasts(node.expression);
+  if (!ts.isPropertyAccessExpression(callee) || node.arguments.some(ts.isSpreadElement)) {
+    return undefined;
+  }
+  const method = callee.name.text;
+  const primitive = STRING_METHODS.get(method);
+  const type = context.checker.getTypeAtLocation(callee.expression);
+  if (
+    primitive === undefined ||
+    node.arguments.length > primitive.parameters.length ||
+    (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0
+  ) {
+    return undefined;
+  }
+  const converted = node.arguments.map((argument, position) => {
+    const value = translateExpression(argument, scope, context);
+    const isKept =
+      primitive.parameters[position] === "number" ||
+      UNDEFINED_DEFAULTS.has(`${method} ${position}`);
+    const conversion =
+      primitive.parameters[position] === "number"
+        ? context.hasSpecialNumbers
+          ? useJavaScript("ToNumber", [value], context)
+          : useJavaScript("PlainNumber", [useJavaScript("ToNumber", [value], context)], context)
+        : useJavaScript("StringOf", [value], context);
+    return isKept
+      ? ifExpression(apply("=", [value, getUndefined(context)]), value, conversion)
+      : conversion;
+  });
+  const unknown = apply("Assert", [
+    boolean(false),
+    string("tla-ts can't tell which function this call runs"),
+  ]);
+  return share(
+    translateExpression(callee.expression, scope, context),
+    "receiver",
+    context,
+    (receiver) => {
+      const called = translatePrimitiveMethod(primitive, receiver, converted, context);
+      const held =
+        context.heap === undefined
+          ? called
+          : ifExpression(
+              useJavaScript(
+                "HoldsBuiltIn",
+                [
+                  getHeap(scope, node, context),
+                  translateBuiltInValue("String.prototype", node, context),
+                  string(method),
+                  string(`String.prototype.${method}`),
+                ],
+                context,
+              ),
+              called,
+              unknown,
+            );
+      return ifExpression(
+        apply("=", [useJavaScript("TypeOf", [receiver], context), string("string")]),
+        held,
+        unknown,
+      );
+    },
+  );
+};
+
 // The value of a primitive's method, given the primitive that it reads and its arguments.
 export const translatePrimitiveMethod = (
   method: PrimitiveMethod,
