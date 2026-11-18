@@ -48,6 +48,13 @@ const DEFINITIONS = [
                      o.class = "promise" /\\ o.slots.state = "rejected" /\\ ~o.slots.isHandled}
   IN IF rejected = {} THEN Ok(s, Undefined)
      ELSE ThrowValue(s, HeapGet(s.objs, CHOOSE i \\in rejected : \\A j \\in rejected : i <= j).slots.result)`,
+  // The timers a program set, each a task of its own after the jobs before it ran, as Node runs
+  // timers of no delay.
+  `RunTimers(s) ==
+  IF s.timers = <<>> THEN Ok(s, Undefined) ELSE
+  LET r == Call([s EXCEPT !.timers = Tail(@)], Head(s.timers), Undefined, <<>>) IN IF IsAbrupt(r) THEN r ELSE
+  LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE
+  LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTimers(u.s)`,
   // A statement's result r in a statement list, whose value is last's where r has none.
   `StatementResult(r, last) ==
   IF IsAbrupt(r) THEN Abrupt(r.s, UpdateEmpty(r.c, last))
@@ -239,6 +246,15 @@ const HOST_PATCHES = [
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
   },
+  // setTimeout, of a callback and no delay, whose callback RunTimers calls once the jobs ran.
+  {
+    name: "GlobalBuiltin",
+    from: `    [] m = "gc" ->`,
+    to: `    [] m = "setTimeout" ->
+         IF Len(args) > 1 \\/ ~IsCallable(s, Arg(args, 1)) THEN Unsupported(s, <<>>)
+         ELSE Ok([s EXCEPT !.timers = Append(@, Arg(args, 1))], Undefined)
+    [] m = "gc" ->`,
+  },
   // A frame of a program's code, whose step is "Code" and whose arguments start with the id of the
   // operator that resumes it, which ResumeCode runs.
   {
@@ -283,7 +299,7 @@ export const getHostDefinitions = (library: Library): GeneratedDefinition[] => [
 const HOST_GLOBAL: object = runInNewContext("globalThis");
 
 // The host's timers, which a host adds to a script's context to run its jobs later.
-const HOST_TIMERS = ["setTimeout", "setInterval", "setImmediate", "queueMicrotask"];
+const HOST_TIMERS = ["setInterval", "setImmediate", "queueMicrotask"];
 
 // The object an intrinsic of ESCore's names in the host, if it has one.
 const getHostObject = (owner: string): object | undefined => {
@@ -362,7 +378,7 @@ export const getRealmDefinitions = (library: Library): GeneratedDefinition[] => 
     {
       name: "RealmProperties",
       arity: 0,
-      text: `RealmProperties == SelectSeq(HostRealmProperties, LAMBDA p : <<p.o, p.k>> \\notin {${missing.join(", ")}})`,
+      text: `RealmProperties == SelectSeq(HostRealmProperties, LAMBDA p : <<p.o, p.k>> \\notin {${missing.join(", ")}}) \\o <<M("GlobalObject", Str(${getUnitsOf("setTimeout")}), "Global", "setTimeout", 2)>>`,
     },
   ];
 };

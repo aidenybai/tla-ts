@@ -128,6 +128,22 @@ export const compileToEscore = (
     ts.ScriptKind.JS,
   );
   const program = specialize(sourceFile, runtime.internalKeys);
+  // The runtime's setTimeout gives undefined where Node's gives a Timeout, so a program may only
+  // call it as a statement.
+  const findTimerValue = (node: ts.Node): ts.Node | undefined =>
+    ts.isIdentifier(node) &&
+    node.text === "setTimeout" &&
+    !(
+      ts.isCallExpression(node.parent) &&
+      node.parent.expression === node &&
+      ts.isExpressionStatement(node.parent.parent)
+    )
+      ? node
+      : ts.forEachChild(node, findTimerValue);
+  const timerValue = program.identifiers.has("setTimeout") ? findTimerValue(sourceFile) : undefined;
+  if (timerValue !== undefined) {
+    throw new TlaTypeScriptError("tla-ts can't read the value of setTimeout", timerValue);
+  }
   const hostOnly =
     runtime.hostOnlyGlobals.find((name) => program.identifiers.has(name)) ??
     runtime.hostOnlyKeys.find((key) => program.words.has(key));
@@ -136,7 +152,11 @@ export const compileToEscore = (
       `tla-ts can't run the host's ${hostOnly}, which ESCore leaves out`,
     );
   }
-  const isQueuing = program.isAsync || program.words.has("Promise") || program.words.has("then");
+  const isQueuing =
+    program.isAsync ||
+    program.words.has("Promise") ||
+    program.words.has("then") ||
+    program.identifiers.has("setTimeout");
   const isIncluded = (gate: EscoreRuntime["gates"][number]) =>
     [...gate.triggers].some((word) => program.words.has(word));
   const included = runtime.gates.filter(isIncluded);
@@ -170,7 +190,7 @@ export const compileToEscore = (
           name: "RunProgram",
           arity: 1,
           text: isQueuing
-            ? "RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE UnhandledRejection(j.s)"
+            ? "RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTimers(u.s)"
             : "RunProgram(s) == Program(s)",
         },
         {

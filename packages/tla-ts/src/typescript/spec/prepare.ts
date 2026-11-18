@@ -129,10 +129,9 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
     {
       name: "InitialState",
       arity: 0,
-      text: (library.definitions.get("InitialState")?.text ?? "").replace(
-        "HeapOf(IntrinsicObjects(0, 1))",
-        "InitialObjects",
-      ),
+      text: (library.definitions.get("InitialState")?.text ?? "")
+        .replace("HeapOf(IntrinsicObjects(0, 1))", "InitialObjects")
+        .replace("jobs |-> <<>>,", "jobs |-> <<>>, timers |-> <<>>,"),
     },
     {
       name: "DescribeResult",

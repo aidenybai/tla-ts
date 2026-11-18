@@ -503,6 +503,38 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("runs each timer of no delay as a task once the jobs before it ran", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const log: string[] = [];
+      setTimeout(() => {
+        log.push("t1");
+        Promise.resolve().then(() => log.push("j2"));
+        setTimeout(() => {
+          log.push("t3");
+          if (log.join() !== "${expected}") throw new Error(log.join());
+        });
+      });
+      setTimeout(() => log.push("t2"));
+      Promise.resolve().then(() => log.push("j1"));
+      log.push("sync");
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("sync,j1,t1,j2,t2,t3"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("sync,t1,j1,j2,t2,t3"))).message).toContain(THREW);
+    });
+
+    it("stops where a program reads what setTimeout returns", async () => {
+      const source =
+        "declare function setTimeout(callback: () => void): unknown; const timer = setTimeout(() => {});";
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
+    });
+  });
+
   describe("runs the built-ins of a global that a table of names links", () => {
     const getSource = (expected: string) => `
       const result = [...new Float32Array([3, 1.5])].join();
@@ -616,8 +648,8 @@ describe("compiles scripts by specializing ESCore", () => {
     });
 
     it("stops at a global that only the host has", async () => {
-      expect((await checkScript("setTimeout(() => {});")).message).toContain(
-        "tla-ts can't run the host's setTimeout",
+      expect((await checkScript("setImmediate(() => {});")).message).toContain(
+        "tla-ts can't run the host's setImmediate",
       );
     });
 
