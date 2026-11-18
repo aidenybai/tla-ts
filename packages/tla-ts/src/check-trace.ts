@@ -134,40 +134,31 @@ export const createTraceBuilder = (context: TraceContext) => {
     const known = traceOptions.known ?? 1;
     const loopStart = traceOptions.loopStart;
     const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
-    const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isPrintedOnly;
+    const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isPrintedOnly && steps.length > 1;
     const initialOutput =
-      known === 0 || (steps.length > 1 && (rebuilt > 0 || isRebuiltAgain || is174))
+      known === 0 || (steps.length > 1 && (rebuilt > 0 || is174))
         ? captureOutput(context.getInitialStates).lines
         : [];
-    const stepActions = steps.map((step, position) =>
-      position === 0 || step.action === "Stuttering"
+    const findPositionAction = (position: number) =>
+      position === 0 || steps[position].action === "Stuttering"
         ? { result: undefined, lines: [] }
         : captureOutput(() =>
             findStepAction(
               path[position - 1],
               steps[position - 1].state,
-              step.state,
+              steps[position].state,
               known === 2 && position === steps.length - 1,
             ),
-          ),
-    );
-    const outputs = stepActions.map((step) => step.lines);
-    if (environment.coverage && steps.length > 1) {
-      if (rebuilt > 0 && isRebuiltAgain) captureOutput(context.getInitialStates);
-      if (isRebuiltAgain) {
-        steps.slice(1).forEach((step, position) => {
-          if (step.action === "Stuttering") return;
-          captureOutput(() =>
-            findStepAction(
-              path[position],
-              steps[position].state,
-              step.state,
-              known === 2 && position === steps.length - 2,
-            ),
           );
-        });
-      }
-    }
+    const stepActions = steps.map((_step, position) => findPositionAction(position));
+    const outputs = stepActions.map((step) => step.lines);
+    // Worker#doPostCondition rebuilds the behavior once more after TLCTrace#printTrace.
+    const traceOutput = isRebuiltAgain
+      ? [
+          captureOutput(context.getInitialStates).lines,
+          ...steps.map((_step, position) => findPositionAction(position).lines),
+        ].flat()
+      : [];
     const prefixOutput = rebuilt > 0 ? [initialOutput, ...outputs.slice(1, rebuilt)].flat() : [];
     return {
       trace: steps.map((step, position) => {
@@ -194,7 +185,7 @@ export const createTraceBuilder = (context: TraceContext) => {
         }
         return traceStep;
       }),
-      traceOutput: isRebuiltAgain ? [initialOutput, ...outputs].flat() : [],
+      traceOutput,
     };
   };
   const findTraceSuccessor = (state: Value[], isMatch: (successor: Successor) => boolean) =>

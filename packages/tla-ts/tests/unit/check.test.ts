@@ -1426,6 +1426,19 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it("rebuilds the behavior once more for the postcondition after printing it, as TLC's Worker#doPostCondition does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME TLCSet(1, 0)\nInit == x = 0\nA == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(TLCGet(1)) /\\ x' = 1\nNext == A\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: () => {},
+    });
+    expect([
+      result.violation?.trace.map((step) => step.output ?? []),
+      result.violation?.traceOutput,
+    ]).toEqual([[[], ["2"]], ["3"]]);
+  });
+
   it("counts the coverage of an action under ENABLED in an invariant", async () => {
     const result = await check({
       source:
