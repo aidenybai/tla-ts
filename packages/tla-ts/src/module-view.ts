@@ -57,14 +57,12 @@ const getModuleView = (module: Module, isKept: (location: SourceLocation) => boo
   units: module.units.filter((unit) => isKept(getUnitLocation(unit))),
 });
 
-// Views of a prepared module, each with only the definitions that a text reads, directly or
-// through other definitions, so that a check reads and analyzes only those. A view keeps a leaf
-// that it reaches without what the leaf reads, for a spec that overrides the leaf. A definition
-// whose value the prepared module carries reads nothing in a view, which keeps its line and stands
-// it in for one without its body or tokens. Every other line of
-// a view is blank, so each definition keeps its line. Its tokens, syntax tree, levels, and values
-// are those of the prepared module on the lines kept.
-export const createModuleView = (prepared: PreparedModule) => {
+const getNameIds = (nameIds: ReadonlyMap<string, number>, names: string[]) =>
+  Int32Array.from(new Set(names.flatMap((name) => nameIds.get(name) ?? [])));
+
+// The tables that a module's views are made of, which hold none of the prepared module but what
+// its views keep of it.
+const readModule = (prepared: PreparedModule) => {
   // The lines of the module in units: the header, each top-level unit as the parser read it, and
   // the line that closes the module. A unit holds every line up to the next one, so its lines stay
   // together whatever their layout.
@@ -105,12 +103,11 @@ export const createModuleView = (prepared: PreparedModule) => {
   moduleUnits.forEach((unit, position) =>
     unit.names.forEach((name) => nameUnits[nameIds.get(name) ?? 0].push(position)),
   );
-  const getNameIds = (names: string[]) =>
-    Int32Array.from(new Set(names.flatMap((name) => nameIds.get(name) ?? [])));
-  const unitNameIds = moduleUnits.map((unit) => getNameIds(unit.names));
-  const unitReadIds = moduleUnits.map((unit) => getNameIds(unit.reads));
+  const unitNameIds = moduleUnits.map((unit) => getNameIds(nameIds, unit.names));
+  const unitReadIds = moduleUnits.map((unit) => getNameIds(nameIds, unit.reads));
   // A unit that defines nothing, such as the header or an ASSUME, stays with what it reads.
   const rootReadIds = getNameIds(
+    nameIds,
     moduleUnits.filter((unit) => unit.names.length === 0).flatMap((unit) => unit.reads),
   );
   // The unit of each line, and each unit's text, or the newlines that stand for it where a view
@@ -185,53 +182,87 @@ export const createModuleView = (prepared: PreparedModule) => {
   isStoodIn.forEach((isUnitStoodIn, unit) => {
     if (isUnitStoodIn) unitReadIds[unit] = new Int32Array(0);
   });
+  // The tokens of each unit, which a view keeps, but for those of a definition it stands in.
+  const unitTokens = moduleUnits.map((_unit, unit) =>
+    isStoodIn[unit] ? [] : prepared.tokens.slice(unitTokenStarts[unit], unitTokenStarts[unit + 1]),
+  );
+  const hasValues = values.size > 0;
+  const name = prepared.name;
+  const levels = prepared.levels;
+  return {
+    nameIds,
+    nameUnits,
+    unitNameIds,
+    unitReadIds,
+    rootReadIds,
+    lineUnits,
+    unitTexts,
+    unitBlanks,
+    unitTextsInOrder,
+    unitTokens,
+    module,
+    values: viewValues,
+    allTexts,
+    hasValues,
+    name,
+    levels,
+  };
+};
+
+// Views of a prepared module, each with only the definitions that a text reads, directly or
+// through other definitions, so that a check reads and analyzes only those. A view keeps a leaf
+// that it reaches without what the leaf reads, for a spec that overrides the leaf. A definition
+// whose value the prepared module carries reads nothing in a view, which keeps its line and stands
+// it in for one without its body or tokens. Every other line of a view is blank, so each definition
+// keeps its line. Its tokens, syntax tree, levels, and values are those of the prepared module on
+// the lines kept.
+export const createModuleView = (prepared: PreparedModule) => {
+  const tables = readModule(prepared);
   return (text: string, leaves: readonly string[] = []): PreparedModule => {
-    const isLeaf = new Uint8Array(nameIds.size);
-    getNameIds([...leaves]).forEach((name) => {
+    const isLeaf = new Uint8Array(tables.nameIds.size);
+    getNameIds(tables.nameIds, [...leaves]).forEach((name) => {
       isLeaf[name] = 1;
     });
-    const keptNames = new Uint8Array(nameIds.size);
-    const pending = [...getNameIds(getReadNames(text)), ...rootReadIds];
+    const keptNames = new Uint8Array(tables.nameIds.size);
+    const pending = [...getNameIds(tables.nameIds, getReadNames(text)), ...tables.rootReadIds];
     while (pending.length > 0) {
       const name = pending.pop() ?? 0;
       if (keptNames[name] === 1) continue;
       keptNames[name] = 1;
       if (isLeaf[name] === 1) continue;
-      for (const unit of nameUnits[name]) pending.push(...unitReadIds[unit]);
+      for (const unit of tables.nameUnits[name]) pending.push(...tables.unitReadIds[unit]);
     }
-    const keptUnits = Uint8Array.from(unitNameIds, (names) =>
+    const keptUnits = Uint8Array.from(tables.unitNameIds, (names) =>
       names.length === 0 || names.some((name) => keptNames[name] === 1) ? 1 : 0,
     );
-    const isKept = (location: SourceLocation) => keptUnits[lineUnits[location.line - 1]] === 1;
+    const isKept = (location: SourceLocation) =>
+      keptUnits[tables.lineUnits[location.line - 1]] === 1;
     const tokens: Token[] = [];
     keptUnits.forEach((isUnitKept, unit) => {
-      if (isUnitKept === 0 || isStoodIn[unit]) return;
-      for (let index = unitTokenStarts[unit]; index < unitTokenStarts[unit + 1]; index++) {
-        tokens.push(prepared.tokens[index]);
-      }
+      if (isUnitKept === 0) return;
+      for (const token of tables.unitTokens[unit]) tokens.push(token);
     });
     return {
-      name: prepared.name,
-      text: unitTexts
-        .map((unitText, unit) => (keptUnits[unit] === 1 ? unitText : unitBlanks[unit]))
+      name: tables.name,
+      text: tables.unitTexts
+        .map((unitText, unit) => (keptUnits[unit] === 1 ? unitText : tables.unitBlanks[unit]))
         .join("\n"),
       tokens,
-      module: getModuleView(module, isKept),
-      texts:
-        values.size > 0
-          ? allTexts
-          : {
-              parsed: unitTextsInOrder.flatMap((texts, unit) =>
-                keptUnits[unit] === 1 ? texts.parsed : [],
-              ),
-              strings: unitTextsInOrder.flatMap((texts, unit) =>
-                keptUnits[unit] === 1 ? texts.strings : [],
-              ),
-            },
-      levels: prepared.levels?.filter((_levels, position) =>
-        isKept(prepared.module.definitions[position].location),
+      module: getModuleView(tables.module, isKept),
+      texts: tables.hasValues
+        ? tables.allTexts
+        : {
+            parsed: tables.unitTextsInOrder.flatMap((texts, unit) =>
+              keptUnits[unit] === 1 ? texts.parsed : [],
+            ),
+            strings: tables.unitTextsInOrder.flatMap((texts, unit) =>
+              keptUnits[unit] === 1 ? texts.strings : [],
+            ),
+          },
+      levels: tables.levels?.filter((_levels, position) =>
+        isKept(tables.module.definitions[position].location),
       ),
-      values: viewValues,
+      values: tables.values,
     };
   };
 };
