@@ -385,7 +385,8 @@ export class IncSatSolver {
     return this.core.items;
   }
 
-  getModel() {
+  // get_model_core: a new model, which the caller releases.
+  mkModel() {
     const manager = this.manager;
     if (!this.solver.isModelCurrent || this.fmls.size > this.fmlsHead) return null;
     const euf = this.goal2sat.euf;
@@ -397,10 +398,16 @@ export class IncSatSolver {
       else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
     }
     if (this.satConverter.entries.length > 0) applyDefinitions(this.satConverter.entries, model);
-    const converted = convertModel(this.converters, euf === null ? model : euf.updateModel(model));
-    converted.incRef();
-    this.models.push(converted);
-    return converted;
+    return convertModel(this.converters, euf === null ? model : euf.updateModel(model));
+  }
+
+  // A model that lives until release, for the callers that borrow it.
+  getModel() {
+    const model = this.mkModel();
+    if (model === null) return null;
+    model.incRef();
+    this.models.push(model);
+    return model;
   }
 
   findMutexes(vars: readonly number[]) {

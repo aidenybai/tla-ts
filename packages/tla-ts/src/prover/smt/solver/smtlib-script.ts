@@ -741,6 +741,8 @@ export const runSmtlibScript = (
           ? new ProtoModel(state.manager)
           : context.getModel();
     if (model === undefined) throw new SmtParseError("model is not available", list.end);
+    // simplifier_solver keeps the model of the fd solver until its next flush.
+    if (check.fdSolver !== undefined) return model;
     model.incRef();
     check.model = model;
     return model;

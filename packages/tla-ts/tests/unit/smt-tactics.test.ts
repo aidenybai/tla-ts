@@ -1513,6 +1513,104 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
   });
 
+  // The values of the first model give their ids back when the second check frees it, and the
+  // bit-blaster orders the carries of the new multiplication by id.
+  it("frees the model of the finite-domain solver at its next check", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const p1 Bool)",
+        "(declare-const b0 (_ BitVec 4))",
+        "(declare-const b1 (_ BitVec 4))",
+        "(declare-const b2 (_ BitVec 4))",
+        "(assert (bvult (bvsub b1 (bvadd b1 (_ bv4 4))) b2))",
+        "(assert (or (=> (bvule b1 b0) (bvult (bvadd b0 (bvadd b2 b0)) b2)) (not (= (bvand b2 b2) b1))))",
+        "(assert (distinct (bvor (bvsub b0 (_ bv5 4)) b0) (bvsub b1 (_ bv4 4))))",
+        "(check-sat)",
+        "(get-model)",
+        "(assert (bvule b2 (bvmul (_ bv6 4) b0)))",
+        "(check-sat-assuming (p1))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun b2 () (_ BitVec 4)",
+        "    #xe)",
+        "  (define-fun b0 () (_ BitVec 4)",
+        "    #xd)",
+        "  (define-fun b1 () (_ BitVec 4)",
+        "    #xb)",
+        "  (define-fun p1 () Bool",
+        "    false)",
+        ")",
+      ].join("\n"),
+      "sat",
+      [
+        "(",
+        "  (define-fun p1 () Bool",
+        "    true)",
+        "  (define-fun b2 () (_ BitVec 4)",
+        "    #xe)",
+        "  (define-fun b0 () (_ BitVec 4)",
+        "    #xd)",
+        "  (define-fun b1 () (_ BitVec 4)",
+        "    #xb)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  // cmd_context keeps no model of its own, so a check right after get-model frees it too.
+  it("frees the model of the finite-domain solver at a check that follows get-model", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const p1 Bool)",
+        "(declare-const b0 (_ BitVec 4))",
+        "(declare-const b1 (_ BitVec 4))",
+        "(declare-const b2 (_ BitVec 4))",
+        "(assert (or (=> (bvule b1 b0) (bvult (bvadd (bvadd b2 b0) (bvadd b2 b0)) b2)) (= b2 (bvmul (_ bv8 4) b1))))",
+        "(assert (distinct (bvsub b0 (_ bv5 4)) (bvsub b1 (_ bv4 4))))",
+        "(check-sat)",
+        "(get-model)",
+        "(check-sat)",
+        "(assert (bvule b2 (bvmul (_ bv6 4) b0)))",
+        "(check-sat-assuming (p1))",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun b2 () (_ BitVec 4)",
+        "    #x7)",
+        "  (define-fun b1 () (_ BitVec 4)",
+        "    #xf)",
+        "  (define-fun b0 () (_ BitVec 4)",
+        "    #xc)",
+        "  (define-fun p1 () Bool",
+        "    false)",
+        ")",
+      ].join("\n"),
+      "sat",
+      "sat",
+      [
+        "(",
+        "  (define-fun p1 () Bool",
+        "    true)",
+        "  (define-fun b2 () (_ BitVec 4)",
+        "    #x2)",
+        "  (define-fun b1 () (_ BitVec 4)",
+        "    #xf)",
+        "  (define-fun b0 () (_ BitVec 4)",
+        "    #xd)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   // Deviation from Z3: Z3 5.3.2 crashes at the second check, which encodes C as an enumeration
   // without constructors. The port leaves C to the SAT solver.
   it("raises once for a datatype whose declaration failed and keeps the reason of its SAT solver", () => {
