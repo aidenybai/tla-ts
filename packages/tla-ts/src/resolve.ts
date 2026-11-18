@@ -617,7 +617,19 @@ const checkSelection = (
       state.isSufficesOpen = false;
       continue;
     }
-    if (selector.kind === "Colon") return node;
+    if (selector.kind === "Colon") {
+      if (selectors[index - 1].kind !== "Name") {
+        return report(index - 1, "!: should not follow an operand selector.");
+      }
+      const next = selectors[index + 1];
+      if (next === undefined ? index !== 1 : next.kind !== "Name") {
+        return report(
+          index,
+          "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+        );
+      }
+      continue;
+    }
     const operand =
       selector.kind === "Operand"
         ? getOperandName(selector.operand)

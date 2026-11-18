@@ -3564,6 +3564,36 @@ describe("name resolution matches SANY", () => {
       "line 3, col 9 to line 3, col 9",
       "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
     ],
+    [
+      "THEOREM T == ASSUME NEW q PROVE TRUE\nB == T!:",
+      "line 3, col 6 to line 3, col 8",
+      "Selected ASSUME/PROVE instead of expression.",
+    ],
+    [
+      "THEOREM TRUE\n<1>1. ASSUME NEW q PROVE TRUE\n<1>2. <1>1!: = 1\n<1>3. QED",
+      "line 4, col 7 to line 4, col 12",
+      "Selected ASSUME/PROVE instead of expression.",
+    ],
+    [
+      "THEOREM TRUE\n<1>1. SUFFICES ASSUME NEW q PROVE TRUE\n<1>2. <1>1!1!: = 1\n<1>3. QED",
+      "line 4, col 12 to line 4, col 12",
+      "!: should not follow an operand selector.",
+    ],
+    [
+      "THEOREM TRUE\n<1>1. ASSUME TRUE PROVE lab:: TRUE\n<1>2. <1>1!lab!: = 1\n<1>3. QED",
+      "line 4, col 16 to line 4, col 16",
+      "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+    ],
+    [
+      "THEOREM TRUE\n<1>1. ASSUME TRUE PROVE TRUE\n<1>2. <1>1!:!: = 1\n<1>3. QED",
+      "line 4, col 12 to line 4, col 12",
+      "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+    ],
+    [
+      "THEOREM TRUE\n<1>1. ASSUME TRUE PROVE TRUE\n<1>2. <1>1!:!X = 1\n<1>3. QED",
+      "line 4, col 12 to line 4, col 12",
+      "A name selector here must be from a LET clause.",
+    ],
   ])(
     "reports the selector before or after `!:' in %j like SANY",
     async (source, location, message) => {
