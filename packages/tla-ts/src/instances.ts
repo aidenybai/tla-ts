@@ -825,12 +825,15 @@ export const getFunctionConstruction = (definition: FunctionDefinition): Express
   location: definition.location,
 });
 
-export const getFunctionBody = (definition: FunctionDefinition): Expression => ({
-  kind: "Let",
-  definitions: [definition],
-  body: getFunctionConstruction(definition),
-  location: { line: definition.location.line, column: definition.location.column },
-});
+export const getFunctionBody = (definition: FunctionDefinition): Expression =>
+  definition.isSelfReferential
+    ? {
+        kind: "Let",
+        definitions: [definition],
+        body: createLocalIdentifier(definition.name, definition.location),
+        location: { line: definition.location.line, column: definition.location.column },
+      }
+    : getFunctionConstruction(definition);
 
 export const withInstanceParams = (definition: Definition, params: OperatorParam[]): Definition => {
   if (params.length === 0) return definition;

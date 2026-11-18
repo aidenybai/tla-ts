@@ -162,6 +162,21 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it("selects into a recursive function that an instance copies as into its constructor", async () => {
+    const inner =
+      "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nr[n \\in {0, 1, 2}] == IF n = 0 THEN c ELSE r[n - 1] + 1\nlr[n \\in {0, 1}] == lab(n) :: IF n = 0 THEN c ELSE lr[n - 1] * 2\n====";
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nL(p) == INSTANCE Inner WITH c <- p\nInit == x = <<>>\nNext == x' = <<L(5)!r!1, L(5)!r!(1)!1, L(5)!r!(0), L(3)!lr!lab(1)!1, LET K == INSTANCE Inner WITH c <- 4 IN K!r!(0)>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => (name === "Inner" ? inner : undefined),
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<{0, 1, 2}, FALSE, 5, FALSE, 4>>",
+    ]);
+  });
+
   it("selects a label through an instance whose operators the instancing module does not extend", async () => {
     const result = await check({
       source:

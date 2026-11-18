@@ -182,6 +182,28 @@ describe("INSTANCE matches TLC", () => {
     ]);
   });
 
+  it("evaluates the domain of a recursive function of a parameterized instance once per application", async () => {
+    const inner =
+      '---- MODULE Inner ----\nEXTENDS Naturals, TLC\nCONSTANT c\nr[n \\in {m \\in 0..2 : PrintT(<<"r", m>>)}] == IF n = 0 THEN c ELSE r[n - 1] + 1\n====';
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nL(p) == INSTANCE Inner WITH c <- p\nInit == x = L(1)!r[2] + L(2)!r[1]\nNext == UNCHANGED x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) => (name === "Inner" ? inner : undefined),
+      onPrint: (text) => printed.push(text),
+    });
+    expect(result.status).toBe("success");
+    expect(printed).toEqual([
+      '<<"r", 0>>',
+      '<<"r", 1>>',
+      '<<"r", 2>>',
+      '<<"r", 0>>',
+      '<<"r", 1>>',
+      '<<"r", 2>>',
+    ]);
+  });
+
   it("substitutes operator symbols at the end of a WITH clause", async () => {
     expect((await checkInstances("Symbols.cfg", "Symbols")).status).toBe("success");
   });

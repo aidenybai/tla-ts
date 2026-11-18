@@ -229,6 +229,17 @@ const getOperatorArgument = (operand: Expression, arity: number): Expression => 
   };
 };
 
+const getDefinitionBody = (definition: Definition) => {
+  if (definition.kind === "Function") return getFunctionConstruction(definition);
+  const body = definition.body;
+  if (body.kind !== "Let" || body.location.range || body.body.kind !== "Identifier") return body;
+  const name = body.body.name;
+  const recursive = body.definitions.find((local) => local.name === name);
+  return recursive?.kind === "Function"
+    ? { ...body, body: getFunctionConstruction(recursive) }
+    : body;
+};
+
 const applyDefinition = (definition: Definition, selection: Selection) => {
   const location = selection.location;
   const params =
@@ -390,8 +401,7 @@ const selectSubexpression = (
     }
     selection.params.push(...(definition.kind === "Operator" ? definition.params : []));
     selection.args.push(...found.args);
-    current =
-      definition.kind === "Operator" ? definition.body : getFunctionConstruction(definition);
+    current = getDefinitionBody(definition);
     operatorIndex = selectorIndex;
     selectorIndex++;
     return undefined;
