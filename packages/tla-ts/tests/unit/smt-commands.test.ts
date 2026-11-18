@@ -797,6 +797,28 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", '(:reason-unknown "canceled")']);
   });
 
+  it("restores at pop the rlimit of the scope, as cmd_context does", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(push)",
+        "(set-option :rlimit 3)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(pop)",
+        "(check-sat)",
+        "(get-option :rlimit)",
+        "(push)",
+        "(set-option :rlimit 3)",
+        "(reset-assertions)",
+        "(pop)",
+        "(assert (> x 0))",
+        "(check-sat)",
+      ]),
+    ).toEqual(["unknown", '(:reason-unknown "canceled")', "sat", "3", "sat"]);
+  });
+
   it("reports the limit that stops a push of ctx-solver-simplify as its reason", () => {
     expect(
       run([

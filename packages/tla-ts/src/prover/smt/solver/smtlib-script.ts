@@ -343,6 +343,7 @@ interface Scope {
   assertions: number;
   objectives: number;
   softTrail: number;
+  rlimit: number;
 }
 
 interface CheckResult {
@@ -1314,6 +1315,7 @@ export const runSmtlibScript = (
             assertions: state.assertions.length,
             objectives: state.objectives.length,
             softTrail: state.softTrail.length,
+            rlimit: settings.rlimit,
           });
           state.reader.push();
           state.isIncremental = true;
@@ -1342,6 +1344,7 @@ export const runSmtlibScript = (
           useSatSolver((solver) => solver.pop(count));
           state.reader.pop(count);
           restoreAssertions(scope.assertions);
+          settings.rlimit = scope.rlimit;
           resetOptimizer();
           releaseObjectives(scope.objectives, scope.softTrail);
           state.scopes.length -= count;
@@ -1367,7 +1370,12 @@ export const runSmtlibScript = (
         restoreAssertions(0);
         resetOptimizer();
         releaseObjectives(0, 0);
-        state.scopes = state.scopes.map(() => ({ assertions: 0, objectives: 0, softTrail: 0 }));
+        state.scopes = state.scopes.map((scope) => ({
+          ...scope,
+          assertions: 0,
+          objectives: 0,
+          softTrail: 0,
+        }));
         if (state.isProofsEnabled !== undefined) resetKernel();
         state.isIncremental = state.scopes.length > 0;
         state.hasChecked = false;
