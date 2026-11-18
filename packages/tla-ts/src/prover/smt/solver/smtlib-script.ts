@@ -720,7 +720,9 @@ export const runSmtlibScript = (
       throw check.isFromTactic
         ? new SmtParseError("model is not available", list.end)
         : new SmtUnsupportedError("the model of a canceled search");
-    const model = check.context?.getModel() ?? new ProtoModel(state.manager);
+    const context = check.context;
+    const model = context === undefined ? new ProtoModel(state.manager) : context.getModel();
+    if (model === undefined) throw new SmtParseError("model is not available", list.end);
     model.incRef();
     check.model = model;
     return model;

@@ -55,7 +55,7 @@ class AuxContext {
     const context = this.context;
     context.popToBaseLevel();
     const result = context.checkResearching(this.asserted, []);
-    return result === L_TRUE ? context.getModel() : result === L_FALSE ? "unsat" : "unknown";
+    return result === L_TRUE ? context.getSatModel() : result === L_FALSE ? "unsat" : "unknown";
   }
 }
 

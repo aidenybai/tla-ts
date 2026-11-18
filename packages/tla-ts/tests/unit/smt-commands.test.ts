@@ -1619,6 +1619,25 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("has no model after the limit stops the search of the incremental kernel", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> (+ x y) 2))",
+        "(push)",
+        "(set-option :rlimit 3)",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(:reason-unknown "canceled")',
+      '(error "line 8 column 10: model is not available")',
+    ]);
+  });
+
   it("bounds the tactic of apply by the rlimit", () => {
     expect(
       run([
