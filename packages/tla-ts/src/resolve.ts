@@ -118,7 +118,8 @@ export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
 const SELF_RESOLUTION = { kind: "Local", isSelf: true } as const;
 
-export const SELECTION_NAME = "$subexpression";
+// SANY names the operator that a selection with arguments applies LAMBDA.
+export const SELECTION_NAME = "LAMBDA";
 
 export interface NullSelection {
   node: Expression;
@@ -1431,7 +1432,7 @@ const resolveApply = (
     if (!isMatched && expression.location.range) {
       unit.errors.push({
         location: formatRange(expression.location.range),
-        message: `Argument number ${index + 1} to operator '${isSelection ? "LAMBDA" : operator}' \nshould be a ${params[index]}-parameter operator.`,
+        message: `Argument number ${index + 1} to operator '${operator}' \nshould be a ${params[index]}-parameter operator.`,
       });
     }
   });

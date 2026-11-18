@@ -123,6 +123,25 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it.each([
+    [
+      "Def(i) == x' = x + i /\\ TRUE",
+      "Def(5)!1",
+      "LAMBDA(5) line 4, col 11 to line 4, col 20 of module M",
+    ],
+    [
+      "Def == \\E i \\in {5} : x' = x + i",
+      "Def!(5)",
+      "LAMBDA(5) line 4, col 23 to line 4, col 32 of module M",
+    ],
+  ])("names the action %s selects by %s LAMBDA, like TLC", async (definition, reference, label) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definition}\nInit == x = 0\nNext == ${reference}\nInv == x < 2\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label]);
+  });
+
   it("selects into the definitions of the outer module before a nested module, as SANY has resolved them by then", async () => {
     const result = await check({
       source:
