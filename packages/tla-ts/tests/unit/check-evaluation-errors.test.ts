@@ -1464,6 +1464,17 @@ describe("evaluation errors match TLC", () => {
     expect(prints).toEqual(['"a"  TRUE', '"b"  TRUE', '"b"  TRUE', '"b"  TRUE']);
   });
 
+  it("caches a constant TLCEval argument in the first LET definition without parameters after a RECURSIVE operator, which TLC leaves out of the context", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nL == LET RECURSIVE r(_)\n         r(n) == IF n = 0 THEN 0 ELSE r(n - 1)\n         a == TLCEval(Print("a", TRUE))\n         b == TLCEval(Print("b", TRUE))\n     IN a /\\ b /\\ r(1) = 0 /\\ x >= 0\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == L\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"a"  TRUE', '"b"  TRUE', '"b"  TRUE', '"b"  TRUE']);
+  });
+
   it("evaluates a LET definition without parameters that calls a RECURSIVE operator defined after it, as TLC does", async () => {
     const result = await check({
       source:
