@@ -1,9 +1,6 @@
 // Of the parameters a setup picks, the port takes those in SmtConfig and the MBQI that setup_AUFLIA
-// and setup_AUFLIRA turn on. The port has one arithmetic solver, theory_lra, so it stands in for the
-// legacy ones the setups for difference logic or an arith.solver other than 6 pick, and one array
-// solver, which is theory_array_full.
-// Deviation from Z3: where a legacy solver gives up, as theory_mi_arith does on most nonlinear real
-// arithmetic, theory_lra may answer sat or unsat.
+// and setup_AUFLIRA turn on. The port has one arithmetic solver, so it stands in for the legacy
+// ones the setups for difference logic pick, and one array solver, which is theory_array_full.
 import {
   type AstManager,
   FAMILY_ARITH,
