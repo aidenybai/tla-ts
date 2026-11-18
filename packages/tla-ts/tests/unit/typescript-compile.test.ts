@@ -53894,4 +53894,39 @@ describe("BigInts", () => {
       ).toContain("seen true,5,tag,length/name/tag/hidden,2");
     });
   });
+
+  describe("makes a function that a call passes to a parameter it reads as a value an object", () => {
+    const getSource = (expected: string) => `
+      const subs = new Set<object>();
+      const createUnsubscribe = (unsubscribe: () => void) =>
+        Object.assign(unsubscribe, { [Symbol.dispose]: unsubscribe });
+      const on = () => {
+        const sub = { a: 1 };
+        subs.add(sub);
+        return createUnsubscribe(() => {
+          subs.delete(sub);
+        });
+      };
+      const first = on();
+      const second = on();
+      const sizes = [subs.size];
+      first();
+      sizes.push(subs.size);
+      second();
+      sizes.push(subs.size);
+      const seen = [...sizes, Object.getOwnPropertySymbols(second).length, first === second].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,1,0,1,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects one function for both calls", async () => {
+      expect((await checkModel(getSource("2,1,0,1,true"))).failure?.message).toContain(
+        "seen 2,1,0,1,false",
+      );
+    });
+  });
 });

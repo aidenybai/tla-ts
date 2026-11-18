@@ -3860,6 +3860,63 @@ const getHeldName = (node: ts.Node) =>
 // method or an accessor of an object literal, or one that it returns, itself or by the name of the
 // const that holds it, that reads a local of the function. An arrow reads the this of the function around it, which the environment doesn't hold,
 // and an async closure that awaits would resume after its call returns.
+// Whether a function reads a parameter as a value, as Object.assign(f, {}) or return f do, rather
+// than only calling it or passing it on to a parameter that it doesn't read as a value either.
+const isValueParameter = (
+  parameter: ts.ParameterDeclaration,
+  context: Context,
+  visited: Set<ts.Node>,
+): boolean => {
+  const symbol = ts.isIdentifier(parameter.name)
+    ? getSymbol(parameter.name, context.checker)
+    : undefined;
+  if (symbol === undefined || visited.has(parameter)) return false;
+  visited.add(parameter);
+  return findNodes(parameter.parent, ts.isIdentifier).some((name) => {
+    if (name === parameter.name || getSymbol(name, context.checker) !== symbol) return false;
+    const call = name.parent;
+    if (!ts.isCallExpression(call)) return true;
+    if (call.expression === name) return false;
+    const position = call.arguments.indexOf(name);
+    return position < 0 || isValueTarget(call, position, context, visited);
+  });
+};
+
+// Whether a call's argument at a position reaches a parameter that its function reads as a value.
+const isValueTarget = (
+  call: ts.CallExpression,
+  position: number,
+  context: Context,
+  visited: Set<ts.Node>,
+) => {
+  const callee = getCallee(call.expression, context);
+  const parameter = callee === undefined ? undefined : getParameters(callee).at(position);
+  return (
+    parameter !== undefined &&
+    callee?.body !== undefined &&
+    parameter.dotDotDotToken === undefined &&
+    !call.arguments.slice(0, position).some(ts.isSpreadElement) &&
+    isValueParameter(parameter, context, visited)
+  );
+};
+
+// A function that a call passes to a parameter that the function it calls reads as a value, so
+// the function is an object that outlives the call, as createUnsubscribe(() => {}) passes one to
+// Object.assign(unsubscribe, {}).
+const isValueArgument = (node: ts.Node, context: Context) => {
+  const call = node.parent;
+  return (
+    ts.isCallExpression(call) &&
+    call.expression !== node &&
+    isValueTarget(
+      call,
+      call.arguments.findIndex((argument) => argument === node),
+      context,
+      new Set(),
+    )
+  );
+};
+
 export const isClosure = (node: ts.Node, context: Context): node is Closure => {
   const isMember =
     ((ts.isMethodDeclaration(node) && node.body !== undefined) || isPlainAccessor(node)) &&
@@ -3912,6 +3969,7 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
       isReadingLocals()
     );
   }
+  if (isValueArgument(node, context)) return !isOnce(node.parent, context) || isReadingLocals();
   const assignment = node.parent;
   const isAssignment =
     ts.isBinaryExpression(assignment) &&
