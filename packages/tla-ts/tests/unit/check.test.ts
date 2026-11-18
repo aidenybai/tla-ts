@@ -34,6 +34,17 @@ const getCoverageCounts = async (definitions: string, config: string) => {
   });
 };
 
+const INSTANCED_MODULE =
+  "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES x, w\nR == x + K > 0\nQ == \\A e \\in {1, 2} : R /\\ x + e + K >= K\nG == IF x > 0 THEN K ELSE 0\nA == /\\ Q\n     /\\ x' = (x + K) % 3\n     /\\ w' = w\n====";
+
+const getInstanceCoverage = (instance: string, next: string, invariant: string) =>
+  check({
+    source: `---- MODULE E ----\nEXTENDS Naturals\nCONSTANT M\nVARIABLES x, y\n${instance}\nInit == x = 0 /\\ y = 0\nNext == ${next}\nInv == ${invariant}\n====`,
+    config: "CONSTANT M = 1\nINIT Init\nNEXT Next\nINVARIANT Inv",
+    coverage: 1,
+    loadModule: (name) => (name === "Inner" ? INSTANCED_MODULE : undefined),
+  });
+
 const getCoverageLines = async (source: string, config: string) => {
   const result = await check({ source, config, coverage: 1 });
   return result.coverage?.relations.map((relation) =>
@@ -2165,6 +2176,37 @@ ASSUME TLCFP(a) = -887695703
       "Action line 8, col 12 to line 8, col 16 of module P",
     ]);
   });
+
+  it.each([
+    [
+      "I == INSTANCE Inner WITH K <- M + 1, w <- y",
+      "I!A",
+      "I!Q /\\ I!G >= 0",
+      "I!A line 5, col 1 to line 5, col 1",
+    ],
+    [
+      "INSTANCE Inner WITH K <- M + 1, w <- y",
+      "A",
+      "Q /\\ G >= 0",
+      "A line 5, col 1 to line 5, col 38",
+    ],
+    [
+      "I(p, q) == INSTANCE Inner WITH K <- p + q, w <- y",
+      "\\E p \\in {1, 2} : I(p, M)!A",
+      "I(1, 1)!Q /\\ I(M, 0)!G >= 0",
+      "I!A line 5, col 1 to line 5, col 7",
+    ],
+  ])(
+    "names the action of %s by the left side of the definition, as TLC's Action#getDeclaration does",
+    async (instance, next, invariant, label) => {
+      const result = await getInstanceCoverage(instance, next, invariant);
+      expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+        "Init line 6, col 1 to line 6, col 4 of module E",
+        `${label} of module E`,
+        "Inv line 8, col 1 to line 8, col 3 of module E",
+      ]);
+    },
+  );
 });
 
 describe("formatValue matches TLC", () => {

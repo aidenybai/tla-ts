@@ -34,6 +34,7 @@ import type { TlcVersion } from "./tlc/version";
 export interface SpecAction {
   name: string;
   location: SourceLocation;
+  head?: SourceRange;
   parameters: [string, Value][];
   expression: Expression;
   scope: Scope | undefined;

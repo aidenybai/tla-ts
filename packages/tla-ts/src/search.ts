@@ -983,7 +983,7 @@ export const addActionCoverage = (
       node: addCoverageRelation(
         coverage,
         kind,
-        getCoverageLabel(action.name, action.expression, environment),
+        getCoverageLabel(action.name, action.expression, environment, action.head),
         action.expression,
         action.scope,
       ),

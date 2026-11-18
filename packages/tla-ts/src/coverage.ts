@@ -211,7 +211,9 @@ export const getCoverageLabel = (
   name: string | undefined,
   expression: Expression,
   environment: Environment,
+  actionHead?: SourceRange,
 ) => {
+  if (name !== undefined && actionHead) return `${name} ${formatRange(actionHead)}`;
   const definition = name === undefined ? undefined : environment.definitions.get(name);
   const head = definition?.kind === "Operator" ? definition.head : undefined;
   const range = getRelationRange(expression);
