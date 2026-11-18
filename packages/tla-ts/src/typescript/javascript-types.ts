@@ -58,8 +58,8 @@ const READ_ONLY_ERROR = 2540;
 // A value of a type that an operator, a call, a key, a spread, an iteration, or a for-in doesn't
 // take, or of type unknown.
 const OPERAND_ERRORS = new Set([
-  2356, 2358, 2359, 2360, 2361, 2362, 2363, 2407, 2464, 2469, 2488, 2490, 2504, 2538, 2547, 2548,
-  2549, 2556, 2571, 2731, 2767, 18046,
+  2356, 2358, 2359, 7036, 2360, 2361, 2362, 2363, 2407, 2464, 2469, 2488, 2490, 2504, 2538, 2547,
+  2548, 2549, 2556, 2571, 2731, 2767, 18046,
 ]);
 
 // A binary operator whose operands' types don't go together.
@@ -260,13 +260,21 @@ const widenName = (
   const symbol = ts.isShorthandPropertyAssignment(node.parent)
     ? checker.getShorthandAssignmentValueSymbol(node.parent)
     : checker.getSymbolAtLocation(node);
-  const declarations = (symbol?.declarations ?? []).filter(
-    (declaration) => !isExpandoWrite(declaration),
+  const all = symbol?.declarations ?? [];
+  const declarations = all.filter((declaration) => !isExpandoWrite(declaration));
+  // A global that only writes to the global object's properties declare, as this.x = 1 does in a
+  // script, takes the values that those writes give.
+  const writes = all.filter(
+    (declaration): declaration is ts.BinaryExpression =>
+      ts.isBinaryExpression(declaration) &&
+      declaration.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      declaration.getSourceFile() === file,
   );
-  const edits = declarations.map((declaration) => widenDeclaration(declaration, file, type));
-  return declarations.length > 0 && edits.every((edit) => edit !== undefined)
-    ? edits.flat()
-    : undefined;
+  const edits =
+    declarations.length > 0
+      ? declarations.map((declaration) => widenDeclaration(declaration, file, type))
+      : writes.map((write) => castExpression(write.right, file));
+  return edits.length > 0 && edits.every((edit) => edit !== undefined) ? edits.flat() : undefined;
 };
 
 // The edits that make a property any where an object literal, a class's field, or an expando

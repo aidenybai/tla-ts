@@ -55089,6 +55089,28 @@ describe("BigInts", () => {
       );
     });
 
+    it("stops at a script's write to a global that only a write to this declares", () => {
+      expect(() =>
+        compileScript(`
+          var box = { seen: "" };
+          this.p1 = 1;
+          var myObj = { p2: "b" };
+          with (myObj) {
+            p1 = "x1";
+          }
+        `),
+      ).toThrow("Only state variables and local lets can change: p1");
+    });
+
+    it("stops at an import whose specifier isn't a string", () => {
+      expect(() =>
+        compileScript(`
+          var specifier = { toString() { return "./missing.js"; } };
+          import(specifier);
+        `),
+      ).toThrow("tla-ts can't import a module that no string literal names");
+    });
+
     it("stops at a script's JavaScript that TypeScript's checker fails on", () => {
       expect(() =>
         compileScript(`
