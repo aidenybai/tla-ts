@@ -1,8 +1,16 @@
-import { PlaygroundHeader, PlaygroundPanes, PlaygroundRoot } from "./components/playground";
+import { Playground } from "./components/parts";
 
 export const PlaygroundPage = () => (
-  <PlaygroundRoot>
-    <PlaygroundHeader />
-    <PlaygroundPanes />
-  </PlaygroundRoot>
+  <Playground.Root>
+    <Playground.Header>
+      <Playground.Settings />
+      <Playground.Files />
+      <Playground.Run />
+    </Playground.Header>
+    <Playground.Workspace>
+      <Playground.Result />
+      <Playground.Arrows />
+      <Playground.Panes source={<Playground.Source />} output={<Playground.Output />} />
+    </Playground.Workspace>
+  </Playground.Root>
 );

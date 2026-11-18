@@ -7,7 +7,20 @@ import {
   ExampleSource,
 } from "./example";
 import { HeroBody, HeroRoot, HeroTitle } from "./hero";
-import { ResultBody, ResultHeader, ResultRoot, ResultSection, ResultSkeleton } from "./result";
+import { PlaygroundRoot, PlaygroundWorkspace } from "./playground";
+import {
+  PlaygroundFiles,
+  PlaygroundHeader,
+  PlaygroundRun,
+  PlaygroundSettings,
+} from "./playground-header";
+import {
+  PlaygroundArrows,
+  PlaygroundOutput,
+  PlaygroundPanes,
+  PlaygroundSource,
+} from "./playground-panes";
+import { PlaygroundResult } from "./playground-result";
 import { SectionRoot, SectionTitle } from "./section";
 
 export const Code = {
@@ -33,12 +46,18 @@ export const Hero = {
   Body: HeroBody,
 };
 
-export const Result = {
-  Root: ResultRoot,
-  Header: ResultHeader,
-  Body: ResultBody,
-  Section: ResultSection,
-  Skeleton: ResultSkeleton,
+export const Playground = {
+  Root: PlaygroundRoot,
+  Header: PlaygroundHeader,
+  Settings: PlaygroundSettings,
+  Files: PlaygroundFiles,
+  Run: PlaygroundRun,
+  Workspace: PlaygroundWorkspace,
+  Result: PlaygroundResult,
+  Arrows: PlaygroundArrows,
+  Panes: PlaygroundPanes,
+  Source: PlaygroundSource,
+  Output: PlaygroundOutput,
 };
 
 export const Section = {

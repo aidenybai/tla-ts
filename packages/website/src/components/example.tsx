@@ -6,7 +6,7 @@ import { EXAMPLES } from "../example";
 import type { RunResult } from "../run-worker";
 import type { SearchState } from "../search";
 import { useRun } from "../use-run";
-import { useSearchPath } from "./search-cell";
+import { useSearchPath } from "../use-search-path";
 import { StateGraph } from "./state-graph";
 import { CodeActions, CodeContent, CodeFooter, CodeRoot, CodeRun } from "./code";
 import { Button } from "./ui/button";
