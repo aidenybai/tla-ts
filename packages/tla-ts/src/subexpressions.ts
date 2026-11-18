@@ -2,6 +2,7 @@ import {
   getChildren,
   getDefinitionExpressions,
   getFunctionConstruction,
+  type ApplyExpression,
   type AssumeProve,
   type Bound,
   type Declaration,
@@ -219,7 +220,7 @@ const getOperatorArgument = (operand: Expression, arity: number): Expression => 
   if (operand.kind !== "Identifier" && operand.kind !== "OperatorReference") return operand;
   const operator = operand.kind === "Identifier" ? operand.name : operand.operator;
   const params = Array.from({ length: arity }, (_value, index) => `argument${index}`);
-  const application: Expression & { kind: "Apply" } = {
+  const application: ApplyExpression = {
     kind: "Apply",
     operator,
     args: params.map((name) => ({
