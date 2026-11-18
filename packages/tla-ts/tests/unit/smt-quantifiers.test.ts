@@ -173,6 +173,17 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
       ]),
     ).toEqual(["(:rlimit 185)"]);
   });
+
+  // default_qm_plugin makes the model finder whether smt.mbqi is on or not, and its auf_solver
+  // counts a step.
+  it("makes the model finder with smt.mbqi off", () => {
+    const lines = ["(set-option :smt.mbqi false)", "(declare-const x Int)", "(assert (> x 0))"];
+    expect(run([...lines, "(push)", "(get-info :rlimit)"])).toEqual(["(:rlimit 50)"]);
+    expect(run([...lines, "(check-sat-using smt)", "(get-info :rlimit)"])).toEqual([
+      "sat",
+      "(:rlimit 65)",
+    ]);
+  });
 });
 
 describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {

@@ -273,7 +273,6 @@ export class Context extends Internalizer {
       isEliminatingBounds: this.config.isEliminatingBounds,
       arithPropagationThreshold: this.config.arithPropagationThreshold,
     };
-    this.qmanager.updateParams();
   }
 
   // setup_context and setup_components. The setup's theories come in its order, then setup_card's.
