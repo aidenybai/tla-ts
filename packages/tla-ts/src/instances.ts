@@ -851,7 +851,7 @@ export const getFunctionBody = (definition: FunctionDefinition): Expression =>
     : getFunctionConstruction(definition);
 
 export const withInstanceParams = (definition: Definition, params: OperatorParam[]): Definition => {
-  if (params.length === 0) return definition;
+  if (params.length === 0) return { ...definition };
   if (definition.kind === "Operator") {
     return { ...definition, params: [...params, ...definition.params] };
   }
