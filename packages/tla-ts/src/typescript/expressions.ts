@@ -2766,10 +2766,12 @@ export const isGlobalObject = (node: ts.Expression, context: Context) => {
 
 const isUnset = (symbol: ts.Symbol, context: Context) => {
   const declarations = symbol.declarations ?? [];
+  // A global that a declaration file declares, such as NaN, holds what the host gives it.
   return (
     declarations.length > 0 &&
     declarations.every(
       (declaration) =>
+        !declaration.getSourceFile().isDeclarationFile &&
         ts.isVariableDeclaration(declaration) &&
         ts.isIdentifier(declaration.name) &&
         ts.isVariableStatement(declaration.parent.parent) &&

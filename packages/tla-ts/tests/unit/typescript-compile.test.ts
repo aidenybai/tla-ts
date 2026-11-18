@@ -52821,4 +52821,13 @@ describe("BigInts", () => {
       ).toThrow("Type 'string' is not assignable to type 'number'");
     });
   });
+
+  it("stops at NaN where a script holds no objects, rather than read it as undefined", () => {
+    expect(() =>
+      compile(`
+        const same = (left: any, right: any) => left === right;
+        if (same(NaN, NaN)) throw new Error("same");
+      `),
+    ).toThrow("tla-ts can't tell what NaN holds here");
+  });
 });
