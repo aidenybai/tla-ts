@@ -9,6 +9,7 @@ import {
   type Instance,
   type Module,
   type OperatorParam,
+  type Proof,
   type SourceLocation,
 } from "./ast";
 import type { ModuleOperator } from "./check";
@@ -235,6 +236,19 @@ const getSubstitutions = (instances: Instance[]) =>
   instances.flatMap((instance) =>
     instance.substitutions.map((substitution) => substitution.expression),
   );
+
+const getProofInstances = (proof: Proof | undefined): Instance[] =>
+  proof?.kind === "Steps"
+    ? proof.steps.flatMap((step) => [
+        ...(step.body.kind === "Instance" ? [step.body] : []),
+        ...(step.body.kind === "Define"
+          ? step.body.definitions.flatMap((definition) =>
+              definition.kind === "Instance" ? [definition] : [],
+            )
+          : []),
+        ...getProofInstances(step.proof),
+      ])
+    : [];
 
 const rejectLiterals = (expressions: Expression[]): void =>
   expressions.forEach((expression) => {
@@ -980,6 +994,13 @@ export const createEnvironment = (
       ),
       getAvailableDefinitions(visible),
     );
+    parsed.theorems
+      .flatMap((theorem) => getProofInstances(theorem.proof))
+      .filter((instance) => !getVisibleModules().has(instance.module))
+      .forEach(
+        (instance) =>
+          getStandardSymbols(instance.module) ?? getLinkedModule(instance.module, parsed.name),
+      );
     scope.errors.push(...resolveModule(module, getUnit(module)));
     module.definitions.forEach((definition) => {
       const key = getKey(definition);

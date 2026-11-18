@@ -2582,6 +2582,14 @@ describe("name resolution matches SANY", () => {
     ).resolves.toMatchObject({ status: "success" });
   });
 
+  it("accepts a module fact for a module that only a later proof step instantiates, like SANY", async () => {
+    await expect(
+      checkNames(
+        "USE MODULE FiniteSets, MODULE Bags\nTHEOREM TRUE\n<1>1. INSTANCE FiniteSets\n<1>2. DEFINE B == INSTANCE Bags\n<1> QED",
+      ),
+    ).resolves.toMatchObject({ status: "success" });
+  });
+
   const hidden =
     "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.";
   it.each<[string, string, [string, string][]]>([
