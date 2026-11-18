@@ -527,7 +527,6 @@ export interface Module {
 
 const functionConstructions = new WeakMap<FunctionDefinition, Expression>();
 
-// One construction per definition, so coverage counts it as the node SANY gives a function definition.
 export const getFunctionConstruction = (definition: FunctionDefinition, isLet: boolean) => {
   const known = functionConstructions.get(definition);
   if (known) return known;

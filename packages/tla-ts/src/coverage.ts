@@ -94,7 +94,6 @@ interface Resolved {
   scope: Local | undefined;
 }
 
-// Tool#getActions takes an action out of a LET, and TLC's cost model still follows a reference to its definitions.
 export const letDefinitions = new WeakMap<Scope, Definition>();
 
 const STANDARD_MODULES = new Set([
@@ -181,7 +180,6 @@ const findCoverageRelation = (coverage: Coverage, kind: CoverageKind, expression
     (relation) => relation.kind === kind && relation.expression === expression,
   )?.node;
 
-// SANY applies the LAMBDA of a selection with parameters where it is referenced, which tla-ts wraps in a LET without a location.
 const getRelationRange = (expression: Expression) =>
   expression.location.range ??
   (expression.kind === "Let" ? expression.body.location.range : undefined);
@@ -335,7 +333,6 @@ export const buildCoverage = (
         ? getBoundNames(definition.bounds)
         : definition.params.map((param) => param.name);
     if (definition.kind === "Function") {
-      // Only a LET definition has a scope.
       const construction = getFunctionConstruction(definition, resolved.scope !== undefined);
       enter(construction, definition.location.range, () => {
         walk(definition.body, bindNames(names, resolved.scope));
@@ -431,7 +428,6 @@ export const buildCoverage = (
         expression.definitions.forEach((definition) => {
           if (definition.kind === "Operator") letBodies.set(definition.body, expression.body);
         });
-        // SANY makes a selection with parameters the LAMBDA it applies, not a LET.
         getHashtableOrder(expression.definitions).forEach((definition) => {
           if (definition.name !== SELECTION_NAME) walkDefinition({ definition, scope: inner });
         });

@@ -77,7 +77,6 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     reseedRandom: () => {
       seededState = undefined;
     },
-    // TLC's TLCTrace#getTrace rebuilds a behavior with a new generator and then goes back to the one it drew from.
     runWithNewRandom: (evaluate) => {
       const random = workerRandom;
       const state = seededState;

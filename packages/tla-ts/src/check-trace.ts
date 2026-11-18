@@ -166,7 +166,6 @@ export const createTraceBuilder = (context: TraceContext) => {
       findPositionAction(position, known === 2 && position === last && last === 1 && !is174),
     );
     const outputs = stepActions.map((step) => step.lines);
-    // Worker#doPostCondition rebuilds the behavior once more after TLCTrace#printTrace.
     const traceOutput = isRebuiltAgain
       ? [
           ...runtime.runWithNewRandom(() => [

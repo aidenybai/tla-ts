@@ -311,7 +311,6 @@ const getActions = (
     return getInstanceActions(instanceAction, expression, scope, called, environment);
   if (!called) return [createSplitAction()];
   const args = getArguments(expression);
-  // SANY selects a subexpression with parameters as a LAMBDA.
   const calledName = isLocallyResolved(expression)
     ? called.name === SELECTION_NAME
       ? "LAMBDA"

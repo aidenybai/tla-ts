@@ -530,7 +530,6 @@ export const getEnabledFailure = (expression: Expression) => {
   return undefined;
 };
 
-// TLC's Tool#getNextStates in -generate tries the disjuncts from a random one on, stepping by a random prime, until its INextStateFunctor holds a state.
 const visitRandomChoice = (generator: SuccessorGenerator, choices: (() => boolean)[]) => {
   const start = Math.floor(generator.random.nextDouble() * choices.length);
   const prime = nextPrime(generator.random);
