@@ -72,6 +72,11 @@ interface ModuleBinding extends Binding {
   isPending?: boolean;
 }
 
+interface ModuleBindings {
+  get: (name: string) => ModuleBinding | undefined;
+  keys: () => Iterable<string>;
+}
+
 interface Unit {
   imported: Symbols;
   getInstance: (instance: Instance) => InstancedModule;
@@ -82,7 +87,7 @@ interface Unit {
   self: Definition | undefined;
   facts: Set<string>;
   goals: Map<string, Goal>;
-  bindings: Map<string, ModuleBinding>;
+  bindings: ModuleBindings;
   errors: SanyError[];
   warnings: SanyError[];
   hasLabelScope: boolean;
@@ -259,9 +264,14 @@ const bindName = (
     ? { ...added, name, parent: scope }
     : scope;
 
-const bindModuleName = (name: string, added: Binding, unit: Unit) => {
-  if (isBindable(name, unit.bindings.get(name), added, unit)) {
-    unit.bindings.set(name, { ...added, position: unit.location });
+const bindModuleName = (
+  bindings: Map<string, ModuleBinding>,
+  name: string,
+  added: Binding,
+  unit: Unit,
+) => {
+  if (isBindable(name, bindings.get(name), added, unit)) {
+    bindings.set(name, { ...added, position: unit.location });
   }
 };
 
@@ -2295,11 +2305,12 @@ const resolveStep = (
   }
 };
 
-const resolveTheorem = (theorem: Theorem, unit: Unit) => {
+const resolveTheorem = (theorem: Theorem, unit: Unit, bindings: Map<string, ModuleBinding>) => {
   const isDefinition = theorem.name !== undefined && theorem.statement.kind !== "AssumeProve";
   const scope = isDefinition ? undefined : resolveStatement(theorem.statement, undefined, unit);
   if (theorem.name !== undefined) {
     bindModuleName(
+      bindings,
       theorem.name,
       { kind: "Theorem", arity: 0, range: theorem.location.range },
       unit,
@@ -2554,36 +2565,35 @@ export const resolveSubstitutions = (
     self: undefined,
     facts: new Set(),
     goals: new Map(),
-    bindings: new Map([
-      ...[...imported].map((entry): [string, ModuleBinding] => [
-        entry[0],
-        { ...entry[1], position: positions.get(entry[0]) ?? MODULE_START },
-      ]),
-      ...[...unit.definitions].map((entry): [string, ModuleBinding] => [
-        entry[0],
-        {
-          kind: "Definition",
-          arity: getArity(entry[1]),
-          range: entry[1].location.range,
-          position: entry[1].location,
-        },
-      ]),
-      ...module.instances.flatMap((other): [string, ModuleBinding][] =>
-        other.name === undefined
-          ? []
-          : [
-              [
-                other.name,
-                {
-                  kind: "Instance",
-                  arity: other.params.length,
-                  range: other.location.range,
-                  position: other.location,
-                },
-              ],
-            ],
-      ),
-    ]),
+    bindings: {
+      get: (name): ModuleBinding | undefined => {
+        const other = module.instances.findLast((candidate) => candidate.name === name);
+        if (other) {
+          return {
+            kind: "Instance",
+            arity: other.params.length,
+            range: other.location.range,
+            position: other.location,
+          };
+        }
+        const definition = unit.definitions.get(name);
+        if (definition) {
+          return {
+            kind: "Definition",
+            arity: getArity(definition),
+            range: definition.location.range,
+            position: definition.location,
+          };
+        }
+        const symbol = imported.get(name);
+        return symbol && { ...symbol, position: positions.get(name) ?? MODULE_START };
+      },
+      keys: () => [
+        ...imported.keys(),
+        ...unit.definitions.keys(),
+        ...module.instances.flatMap((other) => (other.name === undefined ? [] : [other.name])),
+      ],
+    },
     errors: report.errors,
     warnings: report.warnings,
     hasLabelScope: false,
@@ -2690,6 +2700,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     declarations.map((declaration) =>
       createCheck(declaration.location, undefined, false, (inner) =>
         bindModuleName(
+          bindings,
           declaration.name,
           { kind, arity: declaration.arity, range: declaration.location.range },
           inner,
@@ -2782,9 +2793,10 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           bindParams(undefined, instance.params, inner);
           unit.instanced
             .get(instance)
-            ?.forEach((symbol, name) => bindModuleName(name, symbol, inner));
+            ?.forEach((symbol, name) => bindModuleName(bindings, name, symbol, inner));
           if (instance.name !== undefined) {
             bindModuleName(
+              bindings,
               instance.name,
               { kind: "Instance", arity: instance.params.length, range: instance.location.range },
               inner,
@@ -2797,6 +2809,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           resolveExpression(assumption.expression, undefined, inner);
           if (assumption.name !== undefined) {
             bindModuleName(
+              bindings,
               assumption.name,
               { kind: "Theorem", arity: 0, range: assumption.location.range },
               inner,
@@ -2806,7 +2819,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.theorems.map((theorem) =>
         createCheck(theorem.location, undefined, theorem.name !== undefined, (inner) =>
-          resolveTheorem(theorem, inner),
+          resolveTheorem(theorem, inner, bindings),
         ),
       ),
       ...module.uses.map((use) =>

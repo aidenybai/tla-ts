@@ -994,6 +994,7 @@ export const createEnvironment = (
       if (redefinition) report.errors.push(redefinition);
       if (!existing) modules.set(nested.name, linked);
     };
+    const instancingUnit = getUnit(parsed);
     [
       ...parsed.instances.map((instance) => ({
         location: instance.location,
@@ -1001,7 +1002,7 @@ export const createEnvironment = (
           const symbols = instantiate(
             instance,
             parsed,
-            getUnit(parsed),
+            instancingUnit,
             isParameterFree,
             getVisibleModules().get(instance.module),
           );

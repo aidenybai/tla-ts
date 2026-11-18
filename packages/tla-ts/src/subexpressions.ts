@@ -866,7 +866,11 @@ const createLookup = (definitions: Definition[]): Lookup => {
 };
 
 export const resolveInstanceSubexpressions = (instance: Instance, module: Module): Instance =>
-  resolveInstance(instance, createLookup(module.definitions), () => false);
+  resolveInstance(
+    instance,
+    (name) => module.definitions.findLast((definition) => definition.name === name),
+    () => false,
+  );
 
 export const createModuleSubexpressions = (
   module: Module,
