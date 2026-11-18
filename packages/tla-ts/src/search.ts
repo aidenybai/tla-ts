@@ -683,8 +683,7 @@ const hasWideString = (config: ModelConfig, environment: Environment) =>
       isWideConfigValue(constant.value) || (constant.args ?? []).some(isWideConfigValue),
   ) ||
   [...environment.definitions.values()].some(
-    (definition) =>
-      environment.preparedFacts.get(definition)?.isWide ?? isWideDefinition(definition),
+    (definition) => !environment.narrowDefinitions.has(definition) && isWideDefinition(definition),
   );
 
 export interface Search {

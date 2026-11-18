@@ -594,6 +594,26 @@ IsTwo == x \\in {2, 3}
     },
   );
 
+  it("merges states whose strings differ only above U+00FF where an extended module holds them", async () => {
+    const getResult = (words: string) =>
+      check({
+        source: `---- MODULE M ----
+EXTENDS Words
+VARIABLE s
+Init == s \\in Words
+Next == UNCHANGED s
+====
+---- MODULE Words ----
+Words == {${words}}
+====`,
+        config: "INIT Init\nNEXT Next",
+      });
+    const wide = await getResult('"é", "ǩ"');
+    expect([wide.generatedStates, wide.distinctStates]).toEqual([3, 1]);
+    const narrow = await getResult('"é", "f"');
+    expect([narrow.generatedStates, narrow.distinctStates]).toEqual([4, 2]);
+  });
+
   it("computes TLCFP with TLC's fingerprint", async () => {
     const result = await check({
       source: `---- MODULE M ----

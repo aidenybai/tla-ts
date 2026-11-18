@@ -272,6 +272,8 @@ export const createEnvironment = (
   const preparedTexts: (readonly string[] | undefined)[] = [];
   const preparedValues: ReadonlyMap<Definition, Value>[] = [];
   const preparedFacts = new Map<Definition, PreparedFacts>();
+  // The definitions that hold no wide string nor read a deserializer, as their modules tell.
+  const narrowDefinitions = new Set<Definition>();
   const parameterized = new Map<string, boolean>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
@@ -983,7 +985,7 @@ export const createEnvironment = (
     // of it.
     const isAccepted = acceptedModules.has(unlinked) && parsed === unlinked;
     // A plain module, whose names and levels SANY's checks find in one pass, links as it is.
-    const plainLevels =
+    const plain =
       isAccepted || runtime.version !== "master"
         ? undefined
         : checkPlainModule(parsed, {
@@ -995,6 +997,8 @@ export const createEnvironment = (
               return getSignatureLevels(name) ?? "declared";
             },
           });
+    const plainLevels = plain?.levels;
+    if (plain && !plain.isWide) parsed.definitions.forEach((item) => narrowDefinitions.add(item));
     const isLinkedAsIs = isAccepted || plainLevels !== undefined;
     const module = isLinkedAsIs
       ? parsed
@@ -1014,6 +1018,7 @@ export const createEnvironment = (
       module.definitions.forEach((definition) => {
         const facts = acceptedFacts.get(definition.name);
         if (facts) preparedFacts.set(definition, facts);
+        if (facts && !facts.isWide) narrowDefinitions.add(definition);
       });
     }
     module.definitions.forEach((definition, position) => {
@@ -1176,7 +1181,7 @@ export const createEnvironment = (
     variables,
     variableIndex,
     facts,
-    preparedFacts,
+    narrowDefinitions,
     startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
     substitutedDefinitions,
     instanceParams,

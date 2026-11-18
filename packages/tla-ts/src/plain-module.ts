@@ -11,6 +11,7 @@ import {
   SET_LEVELS,
   TEMPORAL_LEVEL,
 } from "./levels";
+import { isDeserializer, isWideString } from "./dependencies";
 import { LOCAL_RESOLUTION, type Symbols } from "./resolve";
 
 // What a plain module reads of the modules it extends: their symbols, and the levels of what a
@@ -44,7 +45,7 @@ const PLAIN_KINDS = new Set(["Definition", "Builtin", "Constant", "Variable"]);
 export const checkPlainModule = (
   module: Module,
   context: PlainContext,
-): OperatorLevels[] | undefined => {
+): { levels: OperatorLevels[]; isWide: boolean } | undefined => {
   if (
     module.constants.length > 0 ||
     module.variables.length > 0 ||
@@ -65,6 +66,8 @@ export const checkPlainModule = (
     return bit < MAX_PARAMS ? bit : undefined;
   };
   const own = new Map<string, OperatorLevels>();
+  // Whether the module holds a wide string or reads a deserializer, as isWideDefinition tells.
+  let isWide = false;
   // The levels of each definition so far, by its index in the module.
   const levels: OperatorLevels[] = [];
   // The names that the definition being walked binds, innermost last.
@@ -172,13 +175,16 @@ export const checkPlainModule = (
   const walk = (expression: Expression, isInExcept: boolean): number | undefined => {
     switch (expression.kind) {
       case "Number":
+        return 0;
       case "String":
+        if (isWideString(expression.value)) isWide = true;
         return 0;
       case "ExceptAt":
         return isInExcept ? 0 : undefined;
       case "Identifier":
       case "Apply": {
         const name = expression.kind === "Identifier" ? expression.name : expression.operator;
+        if (expression.kind === "Apply" && isDeserializer(name)) isWide = true;
         const args = expression.kind === "Identifier" ? [] : expression.args;
         const local = locals.findLast((candidate) => candidate.name === name);
         if (local) {
@@ -355,5 +361,5 @@ export const checkPlainModule = (
     own.set(definition.name, definitionLevels);
     levels.push(definitionLevels);
   }
-  return levels;
+  return { levels, isWide };
 };

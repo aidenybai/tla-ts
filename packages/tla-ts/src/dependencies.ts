@@ -213,9 +213,11 @@ const DESERIALIZERS = new Set(["JsonDeserialize", "ndJsonDeserialize"]);
 
 export const isWideString = (text: string) => WIDE_CHARACTER.test(text);
 
+export const isDeserializer = (name: string) => DESERIALIZERS.has(name);
+
 const isWideExpression = (expression: Expression): boolean =>
   (expression.kind === "String" && isWideString(expression.value)) ||
-  (expression.kind === "Apply" && DESERIALIZERS.has(expression.operator)) ||
+  (expression.kind === "Apply" && isDeserializer(expression.operator)) ||
   getChildren(expression).some(isWideExpression);
 
 // Whether a definition holds a string with a character above U+00FF or reads a deserializer, for
