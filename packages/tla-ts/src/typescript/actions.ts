@@ -14203,10 +14203,12 @@ const isHeapCall = (
       visited.add(callee);
       return isMaking(callee.body, visited);
     });
-  if (isMethodCall(node)) {
-    const method = getCalledMethod(node.expression, context)?.method;
-    return method?.body !== undefined && isMaking(method.body, new Set([method]));
+  // A namespace's function, as an import * names it, is no method.
+  const method = isMethodCall(node) ? getCalledMethod(node.expression, context)?.method : undefined;
+  if (method !== undefined) {
+    return method.body !== undefined && isMaking(method.body, new Set([method]));
   }
+  if (isMethodCall(node) && getCallee(node.expression, context) === undefined) return false;
   const symbol = getSymbol(node.expression, context.checker);
   const callee =
     (symbol && path.scope.functions.get(symbol)) ?? getCallee(node.expression, context);

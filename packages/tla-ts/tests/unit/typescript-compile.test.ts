@@ -55045,4 +55045,18 @@ describe("BigInts", () => {
       ).toContain("seen Action/2,Form/3,Action/4,ActionFormAction");
     });
   });
+
+  describe("runs a namespace's function that makes objects as a statement", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/namespace-call.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = source.replace('"5,7"', '"5,8"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("seen 5,7");
+    });
+  });
 });
