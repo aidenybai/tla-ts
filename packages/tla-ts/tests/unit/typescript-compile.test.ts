@@ -55361,4 +55361,201 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts an object key that a compound assignment updates as it reads and as it writes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var n = 0;
+      var key = { toString: function () { n += 1; log += "key" + n + "|"; return n === 1 ? "a" : "b"; } };
+      var obj = { a: 1, b: 10 };
+      var rhs = 5;
+      obj[key] += rhs;
+      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + "|"; return "c"; } };
+      obj.c = 2;
+      obj[other] *= 3;
+      var bad = { toString: function () { throw new RangeError("x"); } };
+      var thrown = "none";
+      try {
+        obj[bad] -= 1;
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join("|"), thrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+    const getStrictSource = (expected: string) => `
+      "use strict";
+      var log = "";
+      var bump = 1;
+      var key = { toString: function () { log += "k|"; bump += 1; return "a"; } };
+      var frozen = Object.freeze({ a: 1 });
+      var thrown = "none";
+      try {
+        frozen[key] += bump;
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var open = { a: 1 };
+      open[key] += bump;
+      var result = [thrown, frozen.a, open.a, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("1,6,6,a|b|c,RangeError,key1|key2|string|string|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("1,15,6,a|b|c,RangeError,key1|key2|string|string|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 1,6,6,a|b|c,RangeError,key1|key2|string|string|",
+      );
+    });
+
+    it("reads its value after the first conversion and throws where it can't write", async () => {
+      expect(
+        (await check(compile(getStrictSource("TypeError,1,5,k|k|k|k|"), path))).failure,
+      ).toBeUndefined();
+      expect(
+        (await check(compile(getStrictSource("TypeError,1,4,k|k|k|k|"), path))).failure?.message,
+      ).toContain("result TypeError,1,5,k|k|k|k|");
+    });
+  });
+
+  describe("calls a method through an object key, which converts before the arguments", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var key = { toString: function () { log += "key|"; return "run"; } };
+      var note = function () {
+        log += "arg|";
+        return 2;
+      };
+      var obj = {
+        count: 1,
+        run: function (step) {
+          log += "run|";
+          return this.count + step;
+        },
+      };
+      var got = obj[key](note());
+      var missing = { toString: function () { return "absent"; } };
+      var thrown = "none";
+      try {
+        obj[missing]();
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [got, thrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("3,TypeError,key|arg|run|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("3,TypeError,arg|key|run|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 3,TypeError,key|arg|run|",
+      );
+    });
+  });
+
+  describe("converts an object that a write to a typed array's index takes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var value = { valueOf() { log += "value|"; return 7; } };
+      var sample = new Int8Array(2);
+      sample[0] = value;
+      sample[5] = value;
+      var plain = { a: 1 };
+      plain[0] = value;
+      var big = new BigInt64Array(1);
+      var bigValue = { valueOf() { log += "big|"; return 3n; } };
+      big[0] = bigValue;
+      var wrong = { valueOf() { log += "wrong|"; return 3; } };
+      var thrown = "none";
+      try {
+        big[0] = wrong;
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var bad = { valueOf() { throw new RangeError("x"); } };
+      var badThrown = "none";
+      try {
+        sample[1] = bad;
+      } catch (error) {
+        badThrown = error.constructor.name;
+      }
+      var result = [sample[0], sample[1], plain[0] === value, big[0], thrown, badThrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("7,0,true,3,TypeError,RangeError,value|value|big|wrong|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("7,0,true,3,TypeError,RangeError,value|big|wrong|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 7,0,true,3,TypeError,RangeError,value|value|big|wrong|",
+      );
+    });
+  });
+
+  describe("runs the call that a compound assignment to an object key takes between its conversions", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var n = 0;
+      var key = { toString: function () { n += 1; log += "key" + n + "|"; return "a"; } };
+      var obj = { a: 1 };
+      var step = function () {
+        log += "rhs|";
+        obj.a = 100;
+        return 5;
+      };
+      obj[key] += step();
+      var bad = { toString: function () { throw new RangeError("x"); } };
+      var never = function () {
+        log += "never|";
+        return 1;
+      };
+      var thrown = "none";
+      try {
+        obj[bad] -= never();
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var boom = function () {
+        throw new SyntaxError("y");
+      };
+      var rhsThrown = "none";
+      try {
+        obj[key] *= boom();
+      } catch (error) {
+        rhsThrown = error.constructor.name;
+      }
+      var result = [obj.a, thrown, rhsThrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("6,RangeError,SyntaxError,key1|rhs|key2|key3|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("105,RangeError,SyntaxError,key1|rhs|key2|key3|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 6,RangeError,SyntaxError,key1|rhs|key2|key3|",
+      );
+    });
+  });
 });

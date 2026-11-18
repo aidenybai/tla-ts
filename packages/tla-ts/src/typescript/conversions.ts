@@ -324,8 +324,7 @@ export const isConvertedElementKey = (node: ts.Node, context: Context): node is 
       skipCasts(outer.left) === access) ||
       ((ts.isPrefixUnaryExpression(outer) || ts.isPostfixUnaryExpression(outer)) &&
         skipCasts(outer.operand) === access) ||
-      ts.isDeleteExpression(outer) ||
-      (ts.isCallExpression(outer) && skipCasts(outer.expression) === access));
+      ts.isDeleteExpression(outer));
   return (
     !isTarget ||
     (ts.isBinaryExpression(outer) && outer.operatorToken.kind === ts.SyntaxKind.EqualsToken)
