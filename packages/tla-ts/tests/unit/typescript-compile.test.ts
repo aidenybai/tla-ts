@@ -57909,4 +57909,32 @@ describe("runs the script's methods in a conversion inside at most one other", (
       expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
     });
   });
+
+  describe("runs the operators of JavaScript's values of type unknown as of type any", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: [] };
+      /**
+       * @param {unknown} left
+       * @param {unknown} right
+       */
+      function operate(left, right) {
+        return [left - right, left + right, left < right].join("/");
+      }
+      box.seen.push(operate(7, "2"), operate({ valueOf: () => 3 }, 1), operate(true, null));
+      if (box.seen.join() !== "${expected}") throw new Error("seen " + box.seen.join());
+    `;
+    const expected = "5/72/false,2/4/false,1/1/false";
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource(expected), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace("5/72", "5/9");
+      expect((await check(compile(getSource(wrong), path))).failure?.message).toContain(
+        `seen ${expected}`,
+      );
+    });
+  });
 });

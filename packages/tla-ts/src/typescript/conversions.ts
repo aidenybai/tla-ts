@@ -154,10 +154,11 @@ const hasFlags = (node: ts.Expression, flags: ts.TypeFlags, context: Context) =>
   (context.checker.getTypeAtLocation(skipCasts(node)).flags & flags) !== 0;
 
 // A primitive operand, which ToPrimitive gives back.
-// A value of type any, which the conversion tells apart as it runs: ToPrimitive converts an object
-// that the heap holds, and gives back a primitive. Any other value stops the check.
+// A value of type any, or of type unknown, which only JavaScript operates on, that the conversion
+// tells apart as it runs: ToPrimitive converts an object that the heap holds, and gives back a
+// primitive. Any other value stops the check.
 export const isAnyOperand = (node: ts.Expression, context: Context) =>
-  hasFlags(node, ts.TypeFlags.Any, context);
+  hasFlags(node, ts.TypeFlags.Any | ts.TypeFlags.Unknown, context);
 
 // How a compound assignment combines the primitives that it reads and takes, as + joins a string
 // and every other operator converts to numbers. ToNumber stops at an object.
