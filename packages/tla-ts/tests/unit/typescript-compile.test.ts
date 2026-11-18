@@ -56706,3 +56706,57 @@ describe("instanceof on a value that holds an instance of a class that extends a
     ).toContain(`seen ${expected}`);
   });
 });
+
+describe("converts a value of type never to a string as JavaScript converts what it holds", () => {
+  // A closure that outlives its call puts the script's objects on the heap.
+  const HEAP = `
+    const getCounter = () => {
+      let count = 0;
+      return () => ++count;
+    };
+    getCounter()();
+  `;
+  const getSource = (expected: string, prefix = "") => `${prefix}
+    type Shape = "circle" | "square";
+    const box = { seen: "" };
+    const sideCounts: Record<string, number> = { circle: 0, square: 4, triangle: 3 };
+    const describeShape = (shape: Shape) => {
+      if (shape === "circle" || shape === "square") return shape;
+      return [String(shape), \`\${shape}\`, "" + shape, sideCounts[shape]].join();
+    };
+    box.seen = describeShape("triangle" as string as Shape);
+    if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+  `;
+  const getErrorSource = (conversion: string) => `
+    class Failure extends Error {
+      getKind() {
+        return "failure";
+      }
+    }
+    const error: Error = new Failure("x");
+    if (error.constructor !== Failure) throw new Error("constructor");
+    const text = ${conversion};
+    if (text !== "Error: x") throw new Error("text " + text);
+  `;
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource("triangle,triangle,triangle,3"))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("triangle,triangle,triangle,3", HEAP))).failure,
+    ).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (await checkModel(getSource("triangle,triangle,triangle,4", HEAP))).failure?.message,
+    ).toContain("seen triangle,triangle,triangle,3");
+  });
+
+  it("stops where it holds an error on the heap", async () => {
+    for (const conversion of ["String(error)", "`${error}`", '"" + error']) {
+      expect((await checkModel(getErrorSource(conversion))).failure?.message).toContain(
+        "tla-ts can't convert objects to strings",
+      );
+    }
+  });
+});

@@ -2202,7 +2202,11 @@ export const translateToString = (node: ts.Expression, scope: Scope, context: Co
           ifExpression(apply("=", [text, getUndefined(context)]), string("undefined"), text),
         );
   }
-  if (isNumberLike(node, context)) return translateNumberString(value, context);
+  // A value of type never still runs where TypeScript's narrowing is wrong, as a check of an
+  // error's constructor may be, and may hold anything.
+  if (isNumberLike(node, context) && (flags & ts.TypeFlags.Never) === 0) {
+    return translateNumberString(value, context);
+  }
   if (isBigIntLike(node, context) || isBooleanLike(node, context)) {
     return useJavaScript("StringOf", [value], context);
   }
