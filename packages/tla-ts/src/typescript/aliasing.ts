@@ -27,6 +27,7 @@ import {
   isHeapSetOrMap,
   isHeapType,
   isHeldCollectionType,
+  isNumberLike,
   isSetOrMapType,
   REORDER_METHODS,
 } from "./types";
@@ -190,6 +191,28 @@ const strip = (node: ts.Expression): ts.Expression =>
     ? strip(node.expression)
     : node;
 
+// What a number key names among a heap object's fields: an index, or a name that a number converts
+// to, such as NaN, which no property's name is otherwise.
+const NUMBER_KEY = "[number]";
+
+// The field of a heap object that an access names: a property's name, or NUMBER_KEY for a number.
+const getField = (
+  node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  context: Context,
+) =>
+  ts.isPropertyAccessExpression(node)
+    ? node.name.text
+    : isNumberLike(node.argumentExpression, context)
+      ? NUMBER_KEY
+      : undefined;
+
+// Whether two fields may be one property: the same name, or a number key and a name that a number
+// converts to.
+const isSameField = (left: string, right: string) =>
+  left === right ||
+  ((left === NUMBER_KEY || right === NUMBER_KEY) &&
+    [left, right].some((field) => String(Number(field)) === field));
+
 // The variable a target is part of, and how many steps below its top the target is. A property of
 // a heap object is part of the heap, which counts as one variable.
 const getPath = (target: ts.Expression, context: Context, depth = 0): Written | undefined => {
@@ -203,7 +226,7 @@ const getPath = (target: ts.Expression, context: Context, depth = 0): Written | 
       ? {
           symbol: context.heap,
           depth,
-          field: ts.isPropertyAccessExpression(node) ? node.name.text : undefined,
+          field: getField(node, context),
         }
       : getPath(node.expression, context, depth + 1);
   }
@@ -753,16 +776,16 @@ export const findSharing = (reached: readonly ts.Node[], context: Context) => {
       }
       changedFields.set(entry.field, Math.max(changedFields.get(entry.field) ?? -1, entry.depth));
     });
-  // How deep a symbol's object changes, where a read of a heap object's field sees only that
-  // field's changes, and any other read of the heap sees every field's.
+  // How deep a symbol's object changes, where a read of a heap object's field sees only the
+  // changes of the fields that may be it, and any other read of the heap sees every field's.
   const getChangedDepth = (symbol: ts.Symbol, field: string | undefined) => {
     const depths = [
       changed.get(symbol),
       ...(symbol !== context.heap
         ? []
-        : field === undefined
-          ? changedFields.values()
-          : [changedFields.get(field)]),
+        : [...changedFields]
+            .filter((entry) => field === undefined || isSameField(field, entry[0]))
+            .map((entry) => entry[1])),
     ].filter((depth) => depth !== undefined);
     return depths.length === 0 ? undefined : Math.max(...depths);
   };
@@ -837,10 +860,7 @@ export const findSharing = (reached: readonly ts.Node[], context: Context) => {
       const changedDepth =
         symbol === undefined
           ? undefined
-          : getChangedDepth(
-              symbol,
-              isHeapRead && ts.isPropertyAccessExpression(node) ? node.name.text : undefined,
-            );
+          : getChangedDepth(symbol, isHeapRead ? getField(node, context) : undefined);
       const sourceDepth =
         symbol === undefined ||
         changedDepth === undefined ||

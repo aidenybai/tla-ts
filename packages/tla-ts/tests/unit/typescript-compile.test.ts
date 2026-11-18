@@ -53335,4 +53335,72 @@ describe("BigInts", () => {
       ).toContain("result square!,kind-side,false,9");
     });
   });
+
+  describe("reads an element of an array that the heap holds apart from a heap object's field that changes in place", () => {
+    const getSource = (recorded: string) => `
+      abstract class Node {
+        abstract get size(): number;
+      }
+      class Leaf extends Node {
+        value: number;
+        constructor(value: number) {
+          super();
+          this.value = value;
+        }
+        get size() {
+          return 1;
+        }
+      }
+      class Store {
+        total = 0;
+        add(value: number) {
+          this.total += value;
+        }
+      }
+      class Owner {
+        store = new Store();
+        record(value: number) {
+          this.store.add(value);
+        }
+      }
+      class Tree {
+        children: Node[] = [];
+        insert(node: Node) {
+          this.children.splice(0, 0, node);
+        }
+        first() {
+          const child = this.children[0];
+          return child;
+        }
+      }
+      const owner = new Owner();
+      const tree = new Tree();
+      const leaf = new Leaf(1);
+      tree.insert(leaf);
+      const list = [1];
+      const alias = list;
+      alias.push(2);
+      if (list.length !== 2) throw new Error("length " + list.length);
+      export let count = 0;
+      export const step = () => {
+        if (count >= 2) return;
+        count += 1;
+        owner.record(tree.first().size);
+      };
+      export const isRecorded = () => owner.store.total === ${recorded};
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("count"));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        3,
+      ]);
+    });
+
+    it("rejects another total", async () => {
+      expect((await checkModel(getSource("count + 1"))).status).toBe("invariant-violation");
+    });
+  });
 });
