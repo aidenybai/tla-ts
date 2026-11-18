@@ -38,6 +38,7 @@ import {
   runAtCoverageNode,
   tagSubset,
   type Coverage,
+  type NextStateMode,
 } from "./coverage";
 import { MESSAGE_CODE } from "./tlc/messages";
 import type { CheckerRuntime } from "./runtime";
@@ -1323,12 +1324,29 @@ export const toNextContext = (context: Context): Context => ({
   isKeepLazy: context.isKeepLazy,
 });
 
-const compileUnchanged =
-  (evaluator: Evaluator): Evaluator =>
-  (context) => {
-    const current = evaluator(context);
-    return valuesEqual(current, evaluator(toNextContext(context)));
-  };
+const evaluateWithNextState = (
+  coverage: Coverage,
+  nextState: NextStateMode,
+  evaluator: Evaluator,
+  context: Context,
+) => {
+  const outer = coverage.nextState;
+  coverage.nextState = nextState;
+  try {
+    return evaluator(context);
+  } finally {
+    coverage.nextState = outer;
+  }
+};
+
+const compileUnchanged = (evaluator: Evaluator, coverage: Coverage | undefined): Evaluator =>
+  coverage
+    ? (context) =>
+        valuesEqual(
+          evaluateWithNextState(coverage, "empty", evaluator, context),
+          evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
+        )
+    : (context) => valuesEqual(evaluator(context), evaluator(toNextContext(context)));
 
 const traceEvaluator =
   (
@@ -2456,10 +2474,13 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Prime": {
       const inner = getChildEvaluator(expression.expression);
-      return (context) => inner(toNextContext(context));
+      const coverage = environment.coverage;
+      return coverage
+        ? (context) => evaluateWithNextState(coverage, "primed", inner, toNextContext(context))
+        : (context) => inner(toNextContext(context));
     }
     case "Unchanged":
-      return compileUnchanged(getChildEvaluator(expression.expression));
+      return compileUnchanged(getChildEvaluator(expression.expression), environment.coverage);
     case "If": {
       const condition = getChildEvaluator(expression.condition);
       const consequent = getChildEvaluator(expression.consequent);
@@ -2606,7 +2627,10 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "BoxAction":
     case "AngleAction": {
       const action = getChildEvaluator(expression.action);
-      const unchanged = compileUnchanged(getChildEvaluator(expression.subscript));
+      const unchanged = compileUnchanged(
+        getChildEvaluator(expression.subscript),
+        environment.coverage,
+      );
       const isBox = expression.kind === "BoxAction";
       const form = isBox ? "[A]_e" : "<A>_e";
       return (context) => {

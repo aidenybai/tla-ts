@@ -64,7 +64,12 @@ export interface Coverage {
   frameEntries: number[];
   entryCount: number;
   counted: Map<Substitution, number>;
+  countedWithoutNext: Map<Substitution, number>;
+  nextState: NextStateMode;
 }
+
+// Tool evaluates with the next state, with TLCState.Empty in place of it, or with TLCState.Null inside a prime.
+export type NextStateMode = "given" | "empty" | "primed";
 
 export interface CoverageReport {
   variables: CoverageVariable[];
@@ -151,6 +156,8 @@ export const createCoverage = (variableCount: number): Coverage => ({
   frameEntries: [],
   entryCount: 0,
   counted: new Map(),
+  countedWithoutNext: new Map(),
+  nextState: "given",
 });
 
 export const createCoverageEnvironment = (
@@ -764,9 +771,18 @@ export const getSubstitutionNode = (
   const index = findFrame(coverage, substitution.frame, coverage.roots[node]);
   if (index === -1) return -1;
   const entry = coverage.frameEntries[index];
-  if (entry !== -1 && coverage.counted.get(substitution) === entry) return -1;
-  if (entry !== -1) coverage.counted.set(substitution, entry);
-  return coverage.substitutionNodes.get(coverage.frameRoots[index])?.get(substitution) ?? -1;
+  const substitutionNode =
+    coverage.substitutionNodes.get(coverage.frameRoots[index])?.get(substitution) ?? -1;
+  if (entry === -1 || coverage.nextState === "primed") return substitutionNode;
+  // LazyValue#getValue reuses a value cached without a next state for any next state, but not the reverse.
+  if (coverage.countedWithoutNext.get(substitution) === entry) return -1;
+  if (coverage.nextState === "empty") {
+    coverage.countedWithoutNext.set(substitution, entry);
+    return substitutionNode;
+  }
+  if (coverage.counted.get(substitution) === entry) return -1;
+  coverage.counted.set(substitution, entry);
+  return substitutionNode;
 };
 
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {

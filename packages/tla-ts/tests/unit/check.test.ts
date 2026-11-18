@@ -2357,6 +2357,33 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts a substitution at each primed reference and again for UNCHANGED, as TLC's LazyValue caches it only for the states it was evaluated in", async () => {
+    const lines = formatCoverage(
+      await check({
+        source:
+          "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES x, y\nI == INSTANCE Inner WITH w <- y\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ y' = y\nAC == I!C\n====",
+        config: "INIT Init\nNEXT Next\nACTION_CONSTRAINT AC",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "Inner"
+            ? "---- MODULE Inner ----\nVARIABLES x, w\nC == w' = w /\\ UNCHANGED w /\\ [x' = x]_w\n===="
+            : undefined,
+      }),
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 7, col 7 to line 7, col 9 of module E: 2",
+      "|line 4, col 1 to line 4, col 31 of module E: 4",
+      "|line 4, col 31 to line 4, col 31 of module E: 10",
+      "|line 3, col 6 to line 3, col 40 of module Inner: 2",
+      "||line 3, col 6 to line 3, col 26 of module Inner: 2",
+      "|||line 3, col 6 to line 3, col 11 of module Inner: 2",
+      "|||line 3, col 16 to line 3, col 26 of module Inner: 4",
+      "||line 3, col 31 to line 3, col 40 of module Inner: 2",
+      "|||line 3, col 32 to line 3, col 37 of module Inner: 2",
+      "|||line 3, col 40 to line 3, col 40 of module Inner: 4",
+    ]);
+  });
+
   it("assigns the variables UNCHANGED keeps through the definition of an instance, where TLC evaluates the definition and fails on an unassigned variable", async () => {
     const result = await check({
       source:
