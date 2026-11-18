@@ -1988,9 +1988,10 @@ export const runSmtlibScript = (
         const booleanOption = BOOLEAN_PRINT_OPTIONS.get(optionName);
         if (booleanOption !== undefined) settings.printOptions[booleanOption] = isTrue;
         if (
-          optionName.startsWith(":pp.") &&
-          numericOption === undefined &&
-          booleanOption === undefined
+          (optionName.startsWith(":pp.") &&
+            numericOption === undefined &&
+            booleanOption === undefined) ||
+          optionName.startsWith(":lp.")
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
       },

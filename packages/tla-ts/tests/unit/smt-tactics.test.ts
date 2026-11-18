@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { SmtInvariantError } from "../../src/errors";
+import { SmtInvariantError, SmtUnsupportedError } from "../../src/errors";
 import {
   AstManager,
   KIND_APP,
@@ -1213,6 +1213,19 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["sat", "(:rlimit 219)"]);
+  });
+
+  it("rejects the options of lp, whose cut periods the port does not read", () => {
+    expect(() =>
+      run([
+        "(set-option :lp.int_hammer_period 2)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (and (>= (+ (* 3 x) (* 5 y) (* 7 z)) 101) (<= (+ (* 3 x) (* 5 y) (* 7 z)) 102)))",
+        "(check-sat)",
+      ]),
+    ).toThrow(new SmtUnsupportedError("the option :lp.int_hammer_period"));
   });
 
   it("runs the smt tactics of qflia that skip cuts without auto_config", () => {
