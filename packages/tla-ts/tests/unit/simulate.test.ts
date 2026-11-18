@@ -293,6 +293,31 @@ it("shows the states of the lasso it finds past a revisited state", () => {
   ]);
 });
 
+// Deviation from TLC: TLC prints "Back to state: <Step(2) …>", the behavior's step after the lasso's third state, which goes to n = 1.
+it("names the step that closes the lasso it finds in a behavior that revisits a state", () => {
+  const lassos: [unknown[], string | undefined][] = [];
+  simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Integers\nVARIABLES n, k\nvals == <<1, 2, 1, 2, 0, 1>>\nInit == n = 0 /\\ k = 0\nStep(i) == k = i /\\ k' = k + 1 /\\ n' = vals[i + 1]\nNext == \\E i \\in 0..5 : Step(i)\nSpec == Init /\\ [][Next]_<<n, k>> /\\ WF_<<n, k>>(Next)\nProp == <>[](n # 0)\nView == n\n====",
+    config: "SPECIFICATION Spec\nPROPERTY Prop\nVIEW View\nCHECK_DEADLOCK FALSE",
+    seed: 4n,
+    traceDepth: 8,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: () => {},
+    onProgress: (progress) => {
+      if (progress.kind !== "violation") return;
+      lassos.push([
+        progress.violation.trace.map((step) => step.state.n),
+        progress.violation.loopLabel,
+      ]);
+    },
+  });
+  expect(lassos).toEqual([[[0, 1, 2], "Step(4) line 6, col 12 to line 6, col 50 of module M"]]);
+});
+
 // Deviation from TLC: TLC's LiveCheck1 goes on from no node that a revisited state reaches, so it reports no violation.
 it("finds a violation past a revisited state, which TLC's LiveCheck1 misses", () => {
   expect(getViewLassos("<<1, 0, 2, 3, 4>>", "[](n = 2 => [](n = 2))")).toEqual([
