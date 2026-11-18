@@ -53214,4 +53214,42 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(36))).failure?.message).toContain("total 38");
     });
   });
+
+  describe("runs an array's or a string's method on a value of type any, by what the value is", () => {
+    const getSource = (expected: string) => `
+      const box = { text: "" };
+      const find = (source: any, value: any) => source.indexOf(value);
+      const has = (source: any, value: any) => source.includes(value);
+      const pick = (source: any, position: number) => source.at(position);
+      const items: number[] = [4, 5, 6];
+      const holey: (number | undefined)[] = [1, , 3];
+      box.text = [
+        find(items, 5),
+        find("abc", "c"),
+        pick(items, -1),
+        pick("xyz", 0),
+        find(items, 9),
+        find(holey, undefined),
+        has(holey, undefined),
+      ].join();
+      if (box.text !== "${expected}") throw new Error("text " + box.text);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,2,6,x,-1,-1,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects a hole that indexOf finds", async () => {
+      expect((await checkModel(getSource("1,2,6,x,-1,1,true"))).failure?.message).toContain(
+        "text 1,2,6,x,-1,-1,true",
+      );
+    });
+
+    it("stops where the value is neither", async () => {
+      const source = getSource("1,2,6,x,-1,-1,true").replace('find("abc", "c")', "find(7, 7)");
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't tell which function this call runs",
+      );
+    });
+  });
 });
