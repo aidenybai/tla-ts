@@ -31014,17 +31014,37 @@ describe("errors", () => {
       expect((await checkModel(getSource("true,false,true"))).failure).toBeDefined();
     });
 
-    it("stops at an array or a function, which it can't convert", async () => {
-      const getStop = async (value: string) =>
-        (
-          await checkModel(`
-            const made = new String("1");
-            let x: any = ${value};
-            if (isNaN(x)) throw new Error("NaN");
-          `)
-        ).failure?.message;
-      expect(await getStop("[5]")).toContain("tla-ts can't convert this object to a number");
-      expect(await getStop("() => 1")).toContain("tla-ts can't convert this function to a number");
+    it("converts an array through its join", async () => {
+      const getSource = (expected: string) => `
+        const made = new String("1");
+        let a: any = [5];
+        let b: any = [1, 2];
+        let c: any = [];
+        let d: any = [" 7 "];
+        let e: any = [null];
+        let f: any = [true];
+        const result = [isNaN(a), isNaN(b), isNaN(c), isNaN(d), isNaN(e), isNaN(f)].join();
+        if (result !== "${expected}") throw new Error(result);
+      `;
+      expect(
+        (await checkModel(getSource("false,true,false,false,false,true"))).failure,
+      ).toBeUndefined();
+      expect(
+        (await checkModel(getSource("false,true,false,false,false,false"))).failure,
+      ).toBeDefined();
+    });
+
+    it("stops at a function, which it can't convert", async () => {
+      const failure = (
+        await checkModel(`
+          const made = new String("1");
+          let x: any = () => 1;
+          if (isNaN(x)) throw new Error("NaN");
+        `)
+      ).failure;
+      expect(failure?.message).toContain(
+        "tla-ts can't tell what this method gives where it converts an object",
+      );
     });
   });
 

@@ -5130,6 +5130,14 @@ ConvertWith(heap, ref, method) ==
           /\\ \\A position \\in DOMAIN ref : ref[position] = Null \\/ TypeOf(ref[position]) # "object"
           /\\ HoldsBuiltIn(heap, ref, "join", "Array.prototype.join") ->
             JoinValues(ref, ",")
+       [] /\\ path = "Array.prototype.toString"
+          /\\ IsHeap(ref)
+          /\\ ~IsProxy(heap, ref)
+          /\\ IsArray(heap, ref)
+          /\\ HoldsBuiltIn(heap, ref, "join", "Array.prototype.join")
+          /\\ LET values == ArrayLikeValues(heap, ref)
+             IN \\A position \\in DOMAIN values : ~IsRef(values[position]) /\\ ~IsSymbol(values[position]) ->
+            JoinValues(ArrayLikeValues(heap, ref), ",")
        [] IsTemporalConversion(path) -> TemporalConverted(heap, path, ref)
        [] OTHER -> Assert(FALSE, "tla-ts can't tell what this method gives where it converts an object")
 
