@@ -371,16 +371,15 @@ const selectSubexpression = (
     if (selections.has(current) && current.kind !== "Lambda" && current !== unwrappedSelection) {
       checkNull(current, noOperands, true);
       unwrappedSelection = current;
-      if (
+      current =
         current.kind === "Let" &&
         current.body.kind === "Apply" &&
         current.body.operator === SELECTION_NAME
-      ) {
-        current = current.body;
-      } else if (current.kind !== "Selection") {
-        // SANY wraps a selection without parameters in $Nop, whose only operand is the selection.
-        current = { kind: "Tuple", elements: [current], location: current.location };
-      }
+          ? current.body
+          : current.kind === "Selection"
+            ? current
+            : // SANY wraps a selection without parameters in $Nop, whose only operand is the selection.
+              { kind: "Tuple", elements: [current], location: current.location };
     }
     if (current.kind === "Label") {
       current = current.body;
