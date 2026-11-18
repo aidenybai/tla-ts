@@ -1769,6 +1769,22 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts the body of a lazy function under its constructor, and not in the rerun for a call stack, as TLC's FcnLambdaValue does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Integers\nVARIABLES x\nInit == x = 2\nNext == x' = 0 /\\ [i \\in {x} |-> <<i>>[4]][x] = 0\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 5, col 9 to line 5, col 14 of module E: 0",
+      "line 5, col 19 to line 5, col 49 of module E: 2",
+      "|line 5, col 19 to line 5, col 45 of module E: 2",
+      "||line 5, col 19 to line 5, col 42 of module E: 2",
+      "|||line 5, col 34 to line 5, col 41 of module E: 1",
+      "|||line 5, col 26 to line 5, col 28 of module E: 2",
+      "||line 5, col 44 to line 5, col 44 of module E: 2",
+    ]);
+  });
+
   it("charges a function constructor its domain and size, as TLC's FcnLambdaValue#toFcnRcd does", async () => {
     const lines = await getCoverageLines(
       "---- MODULE E ----\nEXTENDS Integers\nVARIABLES y, z\nInit == z = 1 /\\ y = [p \\in {1, 2} |-> z]\nNext == z' = 2 /\\ y' = [p \\in {1, 2} |-> z + 1]\nInv == y = [p \\in {1, 2} |-> z] \\/ z = 2\n====",

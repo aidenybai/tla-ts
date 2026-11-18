@@ -1889,13 +1889,24 @@ export const getFunctionBuilder = (
   const template = getLazyFunctionTemplate(bounds, expression.body);
   const boundTupleLengths = getBoundTupleLengths(bounds);
   const bodyNames = getScopeNames(expression.body);
+  const coverage = environment.coverage;
   const createLazy = (domain: Value, context: Context) => {
     const scope = trimScope(context.scope, bodyNames);
     const lambdaContext = withScope(context, scope);
+    const compute = (argument: Value) =>
+      body(withScope(lambdaContext, bindArgument(bounds, scope, argument)));
+    // TLC's FcnLambdaValue evaluates its body under the coverage node of its constructor, and under none once CallStackTool copies it.
+    // Outside an evaluation, as the search fingerprints a function, the body was counted as the function was built.
+    const node = coverage && !environment.callStack ? coverage.current : -1;
     const functionValue = keepLambda({
       value: createLazyFunction(
         domain,
-        (argument) => body(withScope(lambdaContext, bindArgument(bounds, scope, argument))),
+        coverage
+          ? (argument) =>
+              coverage.current === -1
+                ? compute(argument)
+                : runAtCoverageNode(coverage, node, () => compute(argument))
+          : compute,
         getLazyFunctionSource(template, bounds, domain),
         boundTupleLengths,
       ),
