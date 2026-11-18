@@ -200,6 +200,69 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    [
+      "---- MODULE M ----\nVARIABLE v\n---- MODULE Inner ----\nVARIABLE w\nA == {[]w}\n====\nRECURSIVE R(_)\nR(p) == {[]v} \\cup R(p)\nC == {<>v}\n====",
+      [
+        ["line 8, col 9 to line 8, col 13", "set"],
+        ["line 8, col 9 to line 8, col 23", "union"],
+        ["line 5, col 6 to line 5, col 10", "set"],
+        ["line 9, col 6 to line 9, col 10", "set"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_)\nR(p) == IF p' = 1 THEN TRUE ELSE R(p)\n====",
+      [["line 4, col 1 to line 4, col 37", "Argument 1 of recursive operator R is primed"]],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_), S(_)\nS(n) == R(n) \\/ x' = 1\nR(n) == S(n)\nASSUME R(1)\n====",
+      [["line 6, col 1 to line 6, col 11", "assume 2"]],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_)\nX(p) == R(p)\nR(p) == {[]x} \\cup X(p)\nASSUME X(1)\n====",
+      [
+        ["line 5, col 9 to line 5, col 13", "set"],
+        ["line 5, col 9 to line 5, col 23", "union"],
+        ["line 6, col 1 to line 6, col 11", "assume 3"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nB == {[]x}\nA == LET RECURSIVE F(_)\n         F(n) == {<>x} \\cup F(n)\n     IN F(1)\n====",
+      [
+        ["line 5, col 18 to line 5, col 22", "set"],
+        ["line 5, col 18 to line 5, col 32", "union"],
+        ["line 3, col 6 to line 3, col 10", "set"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nRECURSIVE R(_)\nR(p) == LET RECURSIVE F(_)\n            F(n) == {[]x} \\cup F(n) \\cup R(n)\n        IN F(p)\nC == {<>x}\n====",
+      [
+        ["line 5, col 21 to line 5, col 25", "set"],
+        ["line 5, col 21 to line 5, col 35", "union"],
+        ["line 5, col 21 to line 5, col 45", "union"],
+        ["line 7, col 6 to line 7, col 10", "set"],
+      ],
+    ],
+  ])("checks recursive sections first and twice like SANY: %j", async (source, errors) => {
+    const messages: Record<string, string> = {
+      set: "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+      union:
+        "Level error in applying operator \\union:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+      "assume 2":
+        "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.",
+      "assume 3":
+        "Level error: assumptions must be level 0 (Constant), \nbut this one has level 3.",
+    };
+    await expect(check({ source, config: "" })).rejects.toThrow(
+      createSanyError(
+        errors.map((error) => ({
+          location: `${error[0]} of module M`,
+          message: messages[error[1]] ?? error[1],
+        })),
+      ),
+    );
+  });
+
   it("checks the levels of proof steps, their facts, and the definitions they make like SANY", async () => {
     const setError =
       "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
