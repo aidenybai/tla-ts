@@ -678,7 +678,7 @@ export const runSmtlibScript = (
       setCheck(solved.result, {
         context: solved.context,
         isOptimizing,
-        isFromTactic: isFromTactic && !isUsingFdSolver(),
+        isFromTactic,
         model: solved.model,
         core: solved.core ?? solved.context?.unsatCore ?? [],
         reasonUnknown: getReasonUnknown(solved, deadline),
@@ -699,7 +699,7 @@ export const runSmtlibScript = (
       const reasonUnknown = isKernelChecking ? state.satSolver?.reasonUnknown : undefined;
       setCheck(L_UNDEF, {
         isOptimizing,
-        isFromTactic: !isKernelChecking && !isUsingFdSolver(),
+        isFromTactic: !isKernelChecking,
         reasonUnknown:
           error instanceof SmtDefaultError
             ? error.message

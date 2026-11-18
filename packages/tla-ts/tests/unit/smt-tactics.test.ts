@@ -1129,6 +1129,29 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ]);
   });
 
+  it("has no model after check-sat of QF_FD answers unknown", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(assert (and (<= 0 x) (<= x 5)))",
+        "(assert (or p (> x 2)))",
+        "(set-option :rlimit 5)",
+        "(check-sat)",
+        "(get-model)",
+        "(set-option :rlimit 0)",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "unknown",
+      '(error "line 8 column 10: model is not available")',
+      "sat",
+      "(\n  (define-fun p () Bool\n    true)\n  (define-fun x () Int\n    0)\n)",
+    ]);
+  });
+
   it("replaces the bounded integers without counting steps, as expr_safe_replace does", () => {
     expect(
       [253, 254].map((rlimit) =>
