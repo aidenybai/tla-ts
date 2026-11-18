@@ -1,12 +1,18 @@
 import type { Expression, SourceLocation } from "../ast";
-import { TlaEvaluationError } from "../errors";
+import { getKindString } from "../builtins";
+import { TlaEvaluationError, TlaUncodedError } from "../errors";
+import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { isConstantLevel } from "../dependencies";
 import {
   chargeContexts,
   chargeRandomOrder,
   countCoverage,
   createChargedEnumerator,
+  enterFrames,
+  exitFrames,
   getCoverageNode,
+  getEnteredFrames,
+  getSubstitutionNode,
   runAtCoverageNode,
   type Coverage,
 } from "../coverage";
@@ -14,6 +20,7 @@ import {
   bindDefinitions,
   bindLazyArguments,
   bindOperatorArguments,
+  describeNode,
   describeRange,
   evaluate,
   forEachBoundElement,
@@ -34,13 +41,15 @@ import {
   toUnspecifiedSubscriptError,
 } from "../evaluate";
 import {
+  formatValue,
   getStreamedElements,
   isEqualLikeTlc,
   isTlcEnumerable,
   setTrace,
   type Value,
 } from "../values";
-import { substitutionFrames } from "../instances";
+import { isSubstitutionDefinition, substitutedExpressions, substitutionFrames } from "../instances";
+import { CORE_OPERATORS } from "../standard-modules";
 import type { SuccessorGenerator } from "../successors";
 import { MESSAGE_CODE } from "./messages";
 import { getRandomSubset, nextPrime } from "./random";
@@ -56,6 +65,11 @@ interface ActionItem {
   scope: Scope | undefined;
   node: number;
   rest: ActionItem | undefined;
+}
+
+interface RunKind {
+  isInit: boolean;
+  isEnabled: boolean;
 }
 
 interface Replay {
@@ -145,22 +159,37 @@ const getPrefixNode = (replay: Replay, node: number) =>
 const getIdentifierName = (expression: Expression) =>
   expression.kind === "Identifier" ? expression.name : undefined;
 
+// Spec#collectPrimedLocs ignores the substitutions of an instance it enters, so a declaration there names a state variable only by its own name.
+const getNamedOccurrence = (expression: Expression, frames: Expression[]) => {
+  const substitution = substitutedExpressions.get(expression);
+  return substitution &&
+    substitution.replacement !== expression &&
+    frames.includes(substitution.frame)
+    ? substitutionFrames.get(expression)?.[0]
+    : undefined;
+};
+
 const getVariable = (
   environment: Environment,
   expression: Expression,
   scope: Scope | undefined,
+  frames?: Expression[],
 ): number | undefined => {
-  if (expression.kind === "Label") return getVariable(environment, expression.body, scope);
+  const occurrence = frames && getNamedOccurrence(expression, frames);
+  if (occurrence?.kind === "Identifier") return environment.variableIndex.get(occurrence.name);
+  if (expression.kind === "Label") return getVariable(environment, expression.body, scope, frames);
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
-  if (binding?.kind === "Thunk") return getVariable(environment, binding.expression, binding.scope);
+  if (binding?.kind === "Thunk") {
+    return getVariable(environment, binding.expression, binding.scope, frames);
+  }
   if (binding) return undefined;
   const index = environment.variableIndex.get(name);
   if (index !== undefined) return index;
   const operator = resolveGlobalOperator(name, environment);
   return operator?.kind === "Closure" && operator.params.length === 0
-    ? getVariable(environment, operator.body, operator.scope)
+    ? getVariable(environment, operator.body, operator.scope, frames)
     : undefined;
 };
 
@@ -168,26 +197,83 @@ const getPrimedVariable = (
   environment: Environment,
   expression: Expression,
   scope: Scope | undefined,
+  frames?: Expression[],
 ): number | undefined => {
-  if (expression.kind === "Prime") return getVariable(environment, expression.expression, scope);
-  if (expression.kind === "Label") return getPrimedVariable(environment, expression.body, scope);
+  if (expression.kind === "Prime") {
+    return getVariable(environment, expression.expression, scope, frames);
+  }
+  if (expression.kind === "Label") {
+    return getPrimedVariable(environment, expression.body, scope, frames);
+  }
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
   if (binding?.kind === "Thunk") {
-    return getPrimedVariable(environment, binding.expression, binding.scope);
+    return getPrimedVariable(environment, binding.expression, binding.scope, frames);
   }
   if (binding) return undefined;
   const operator = resolveGlobalOperator(name, environment);
   return operator?.kind === "Closure" && operator.params.length === 0
-    ? getPrimedVariable(environment, operator.body, operator.scope)
+    ? getPrimedVariable(environment, operator.body, operator.scope, frames)
     : undefined;
 };
 
-const isTrue = (value: Value) => {
-  if (typeof value !== "boolean")
-    throw new TlaEvaluationError("TLC expected a boolean expression.");
-  return value;
+export const getComputation = (run: RunKind) =>
+  run.isInit ? "initial states" : run.isEnabled ? "ENABLED" : "next states";
+
+export const createRunError = (run: RunKind, message: string) => {
+  const error = new TlaEvaluationError(message);
+  return run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
+};
+
+const getRelationMessage = (run: RunKind, expression: Expression) => {
+  const node = describeNode(expression);
+  return run.isEnabled
+    ? `Attempted to compute ENABLED on a non-boolean expression.\n${node}`
+    : `The ${run.isInit ? "init" : "next"} state relation is not a boolean expression.\n${node}`;
+};
+
+export const getIfConditionMessage = (run: RunKind, value: Value, expression: Expression) => {
+  const kind = getKindString(value);
+  const range = describeRange(expression);
+  if (run.isEnabled) {
+    return `In computing ENABLED, a non-boolean expression(${kind}) was used as the guard condition of an IF.\n${range}`;
+  }
+  return `In computing ${getComputation(run)}, a non-boolean expression (${kind}) was used as the condition of an IF.${run.isInit ? "\n" : ""}${range}`;
+};
+
+export const getCaseGuardMessage = (run: RunKind, value: Value, body: Expression) =>
+  `In computing ${getComputation(run)}, a non-boolean expression${run.isEnabled ? "" : " "}(${getKindString(value)}) was used as a guard condition of a CASE.\n${describeNode(body)}`;
+
+export const getCaseOtherMessage = (run: RunKind, expression: Expression) =>
+  `In computing ${getComputation(run)}, TLC encountered a CASE with no conditions true.\n${describeRange(expression)}`;
+
+export const getImpliesConditionMessage = (run: RunKind, value: Value, expression: Expression) => {
+  const kind = getKindString(value);
+  const range = describeRange(expression);
+  if (run.isInit)
+    return `In computing initial states of a predicate of form P => Q, P was ${kind}\n.${range}`;
+  return run.isEnabled
+    ? `While computing ENABLED of an expression of the form P => Q, P was ${kind}.\n${range}`
+    : `In computing next states of a predicate of the form P => Q, P was\n${kind}.\n${range}`;
+};
+
+const CORE_OPERATOR_NAMES = new Set(CORE_OPERATORS.map((operator) => operator.name));
+
+const isBuiltInOperation = (expression: Expression) =>
+  expression.kind === "Apply"
+    ? CORE_OPERATOR_NAMES.has(expression.operator)
+    : expression.kind !== "Identifier" && !LITERAL_KINDS.has(expression.kind);
+
+export const holdsValue = (run: RunKind, expression: Expression, value: Value, isWalked = true) => {
+  if (typeof value === "boolean") return value;
+  const message =
+    isWalked && LITERAL_KINDS.has(expression.kind)
+      ? getRelationMessage(run, expression)
+      : `In computing ${getComputation(run)}, TLC expected a boolean expression,\nbut instead found ${formatValue(value)}.\n${describeNode(expression)}`;
+  throw run.isInit && isWalked && isBuiltInOperation(expression)
+    ? new TlaUncodedError(message)
+    : createRunError(run, message);
 };
 
 export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
@@ -279,8 +365,11 @@ const proceedAssigned = (
     const isHeld =
       item.kind === "Changed"
         ? isChanged(replay, item, partial)
-        : isTrue(
+        : holdsValue(
+            replay,
+            item.expression,
             evaluateAt(replay, item.node, item.expression, getContext(replay, item.scope, partial)),
+            false,
           );
     if (!isHeld) {
       const coverage = replay.coverage;
@@ -308,19 +397,42 @@ const visitAt = (
   scope: Scope | undefined,
   partial: State,
   node: number,
+): boolean => {
+  const coverage = replay.coverage;
+  const frames = coverage && substitutionFrames.get(expression);
+  const entered = coverage && frames ? enterFrames(coverage, frames, node, false) : 0;
+  if (!coverage || entered === 0)
+    return visitFramed(replay, expression, items, scope, partial, node);
+  try {
+    return visitFramed(replay, expression, items, scope, partial, node);
+  } finally {
+    exitFrames(coverage, entered);
+  }
+};
+
+const visitFramed = (
+  replay: Replay,
+  expression: Expression,
+  items: ActionItem | undefined,
+  scope: Scope | undefined,
+  partial: State,
+  node: number,
 ): boolean =>
   withFrame(replay, expression, () => {
     switch (expression.kind) {
       case "Let": {
         const context = getContext(replay, scope, partial);
         const definitions = expression.definitions;
-        const bound =
-          replay.coverage && !replay.isEnabled
-            ? bindDefinitions(definitions, context, {
-                impure: new Set(definitions),
+        const bound = replay.coverage
+          ? runAtCoverageNode(replay.coverage, node, () =>
+              bindDefinitions(definitions, context, {
+                impure: new Set(
+                  replay.isEnabled ? definitions.filter(isSubstitutionDefinition) : definitions,
+                ),
                 streamed: new Set(),
-              })
-            : bindDefinitions(definitions, context);
+              }),
+            )
+          : bindDefinitions(definitions, context);
         return visit(replay, expression.body, items, bound, partial, node);
       }
       case "Label":
@@ -328,8 +440,9 @@ const visitAt = (
       case "Selection":
         return visit(replay, expression.expression, items, scope, partial, node);
       default:
-        if (LITERAL_KINDS.has(expression.kind))
-          throw new TlaEvaluationError("The state relation is not a boolean expression.");
+        if (LITERAL_KINDS.has(expression.kind)) {
+          throw createRunError(replay, getRelationMessage(replay, expression));
+        }
         return withFrame(replay, expression, () =>
           visitApplication(replay, expression, items, scope, partial, node),
         );
@@ -338,11 +451,12 @@ const visitAt = (
 
 const visitValue = (
   replay: Replay,
+  expression: Expression,
   value: Value,
   items: ActionItem | undefined,
   partial: State,
   node: number,
-) => isTrue(value) && proceed(replay, items, partial, node);
+) => holdsValue(replay, expression, value) && proceed(replay, items, partial, node);
 
 const BUILT_IN_OPERATORS = new Set([
   "=",
@@ -402,6 +516,7 @@ const visitDefined = (
     }
     return visitValue(
       replay,
+      expression,
       evaluateOperatorAt(replay, node, expression, context),
       items,
       partial,
@@ -418,7 +533,7 @@ const visitDefined = (
   const value = BUILT_IN_OPERATORS.has(expression.operator)
     ? evaluateAt(replay, node, expression, context)
     : evaluateOperatorAt(replay, node, expression, context);
-  return visitValue(replay, value, items, partial, node);
+  return visitValue(replay, expression, value, items, partial, node);
 };
 
 const proceedWithValue = (
@@ -584,9 +699,11 @@ const visitApplication = (
         return visitAssignment(replay, expression, items, scope, partial, node);
       }
       if (expression.operator === "=>" && expression.args.length === 2) {
-        if (isTrue(evaluateAt(replay, node, expression.args[0], context))) {
-          return visit(replay, expression.args[1], items, scope, partial, node);
+        const condition = evaluateAt(replay, node, expression.args[0], context);
+        if (typeof condition !== "boolean") {
+          throw createRunError(replay, getImpliesConditionMessage(replay, condition, expression));
         }
+        if (condition) return visit(replay, expression.args[1], items, scope, partial, node);
         return proceed(replay, items, partial, node);
       }
       return visitDefined(replay, expression, items, scope, partial, node);
@@ -710,25 +827,22 @@ const visitApplication = (
         );
       return visit(replay, expression.body, rest, bounds[0], partial, node);
     }
-    case "If":
-      return visit(
-        replay,
-        isTrue(evaluateAt(replay, node, expression.condition, context))
-          ? expression.consequent
-          : expression.alternative,
-        items,
-        scope,
-        partial,
-        node,
-      );
-    case "Case": {
-      const arm = expression.arms.find((candidate) =>
-        isTrue(evaluateAt(replay, node, candidate.condition, context)),
-      );
-      const body = arm?.body ?? expression.other;
-      if (body === undefined) {
-        throw new TlaEvaluationError("TLC encountered a CASE with no conditions true.");
+    case "If": {
+      const condition = evaluateAt(replay, node, expression.condition, context);
+      if (typeof condition !== "boolean") {
+        throw createRunError(replay, getIfConditionMessage(replay, condition, expression));
       }
+      const branch = condition ? expression.consequent : expression.alternative;
+      return visit(replay, branch, items, scope, partial, node);
+    }
+    case "Case": {
+      const arm = expression.arms.find((candidate) => {
+        const value = evaluateAt(replay, node, candidate.condition, context);
+        if (typeof value === "boolean") return value;
+        throw createRunError(replay, getCaseGuardMessage(replay, value, candidate.body));
+      });
+      const body = arm?.body ?? expression.other;
+      if (body === undefined) throw createRunError(replay, getCaseOtherMessage(replay, expression));
       return visit(replay, body, items, scope, partial, node);
     }
     case "FunctionApplication": {
@@ -774,7 +888,14 @@ const visitApplication = (
   }
   const failure = replay.isEnabled ? getEnabledFailure(expression) : undefined;
   if (failure !== undefined) throw new TlaEvaluationError(failure);
-  return visitValue(replay, evaluateAt(replay, node, expression, context), items, partial, node);
+  return visitValue(
+    replay,
+    expression,
+    evaluateAt(replay, node, expression, context),
+    items,
+    partial,
+    node,
+  );
 };
 
 export const warnChangedUnchanged = (
@@ -801,7 +922,13 @@ const visitUnchanged = (
     if (index !== undefined) {
       const value = replay.current?.[index];
       if (value === undefined) return false;
-      if (replay.isEnabled && replay.coverage) countCoverage(replay.coverage, node);
+      if (replay.isEnabled && replay.coverage) {
+        countCoverage(replay.coverage, node);
+        const substitution = substitutedExpressions.get(expression);
+        if (substitution && substitution.replacement !== expression) {
+          countCoverage(replay.coverage, getSubstitutionNode(replay.coverage, substitution, node));
+        }
+      }
       const assigned = partial[index];
       if (assigned !== undefined && !isEqualLikeTlc(assigned, value)) {
         warnChangedUnchanged(replay.environment, index, expression);
@@ -826,6 +953,7 @@ const visitUnchanged = (
       const operator = binding
         ? undefined
         : resolveGlobalOperator(expression.name, replay.environment);
+      // Deviation from TLC: Tool#processUnchanged takes the SubstInNode of an instance's definition for an expression and fails on an unassigned variable.
       if (operator?.kind === "Closure" && operator.params.length === 0) {
         return visitUnchanged(replay, operator.body, items, operator.scope, partial, node);
       }
@@ -970,9 +1098,17 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
     state: undefined,
     next: undefined,
   });
+  const frames: Expression[] = [];
   const collectUnchanged = (expression: Expression, scope: Scope | undefined): void => {
+    const occurrence = getNamedOccurrence(expression, frames);
+    if (occurrence) {
+      if (occurrence.kind === "Identifier" && environment.variableIndex.has(occurrence.name)) {
+        ranges.push(occurrence);
+      }
+      return;
+    }
     if (
-      getVariable(environment, expression, undefined) !== undefined &&
+      getVariable(environment, expression, undefined, frames) !== undefined &&
       expression.kind === "Identifier"
     ) {
       ranges.push(expression);
@@ -985,11 +1121,26 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
     if (expression.kind !== "Identifier") return;
     const binding = lookupScope(scope, expression.name);
     const operator = binding ? undefined : resolveGlobalOperator(expression.name, environment);
-    if (operator?.kind === "Closure" && operator.params.length === 0) {
+    // Spec#collectUnchangedLocs stops at the SubstInNode of a definition an instance copies.
+    if (
+      operator?.kind === "Closure" &&
+      operator.params.length === 0 &&
+      getEnteredFrames(operator.body, frames).length === 0
+    ) {
       collectUnchanged(operator.body, operator.scope);
     }
   };
   const collect = (
+    expression: Expression,
+    scope: Scope | undefined,
+    visited: Set<Expression>,
+  ): void => {
+    const entered = getEnteredFrames(expression, frames);
+    frames.push(...entered);
+    collectExpression(expression, scope, visited);
+    frames.length -= entered.length;
+  };
+  const collectExpression = (
     expression: Expression,
     scope: Scope | undefined,
     visited: Set<Expression>,
@@ -1045,7 +1196,7 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
             return;
           }
           if (expression.operator === "=" || expression.operator === "\\in") {
-            if (getPrimedVariable(environment, expression.args[0], scope) !== undefined) {
+            if (getPrimedVariable(environment, expression.args[0], scope, frames) !== undefined) {
               ranges.push(expression);
             }
             return;

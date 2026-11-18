@@ -31,6 +31,7 @@ import {
   fingerprintReplayed,
   getFailureExitCode,
   getReplayFailure,
+  getTraceFailure,
   type FailureOptions,
 } from "./check-failure";
 import {
@@ -261,6 +262,8 @@ export interface Violation {
   postcondition?: Postcondition;
   /** What TLC warns about after a counterexample, with its code. */
   warning?: { code: number; text: string };
+  /** How TLC fails to rebuild the violating step after it prints the behavior to its predecessor. */
+  traceFailure?: TraceFailure;
 }
 
 export interface Postcondition {
@@ -344,16 +347,6 @@ const toUnexpectedError = (error: TlaEvaluationError) =>
   new TlaEvaluationError(
     `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
   );
-
-const getTraceFailure = (error: TlaEvaluationError, output: OutputLine[]): TraceFailure => ({
-  ...getFailureMessage(
-    isEvalException(error)
-      ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
-      : error,
-    true,
-  ),
-  output,
-});
 
 const STOP_REPLAY = new Error("The replay stopped");
 
@@ -1148,6 +1141,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       isSeen: existing !== -1 || (isInModel && isExplored(hash, fingerprintState)),
     };
   };
+  // Deviation from TLC: under -continue, TLC reports failing to rebuild the violating step as a failure of the invariant.
+  const getViolationTrace = (index: number, successor: Successor) =>
+    options.isContinued
+      ? traces.getTrace(index, successor, { isPrintedOnly: true })
+      : traces.getTrace(index, successor, { isRebuildFailureKept: true });
   const visitSuccessor = (
     index: number,
     successor: Successor,
@@ -1206,7 +1204,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         const violated = search.findViolatedInvariant(successor.state, state);
         const violation = violated && {
           name: violated.name,
-          ...traces.getTrace(index, successor, { isPrintedOnly: options.isContinued }),
+          ...getViolationTrace(index, successor),
         };
         if (violation && !options.isContinued) {
           return withOutDegrees(reportViolation("invariant-violation", violation));
@@ -1228,7 +1226,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const violatedProperty = search.findViolatedActionProperty(state, successor.state);
     const propertyViolation = violatedProperty && {
       name: violatedProperty.name,
-      ...traces.getTrace(index, successor, { isPrintedOnly: options.isContinued }),
+      ...getViolationTrace(index, successor),
     };
     if (propertyViolation && !options.isContinued) {
       return withOutDegrees(reportViolation("liveness-violation", propertyViolation));
@@ -1855,7 +1853,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         return withOutDegrees(
           reportViolation(violatedInvariant ? "invariant-violation" : "liveness-violation", {
             name: violated.name,
-            ...traces.getTrace(parent.index, violating.successor),
+            ...getViolationTrace(parent.index, violating.successor),
           }),
         );
       }

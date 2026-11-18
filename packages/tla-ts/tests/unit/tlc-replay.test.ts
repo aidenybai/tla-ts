@@ -60,6 +60,17 @@ describe("the call stack of a replayed failure matches TLC", () => {
     });
   });
 
+  it("builds a function that a LET defines where TLC needs its values, as TLC builds $NonRecursiveFcnSpec", async () => {
+    expect(
+      await getFailure(
+        "Init == LET f[n \\in 0..2] == 10 \\div n IN x = DOMAIN f\nNext == UNCHANGED x",
+      ),
+    ).toEqual({
+      callStack: ["8.9-8.54", "8.43-8.54", "8.47-8.54", "8.54-8.54", "8.13-8.38", "8.30-8.38"],
+      exitCode: 75,
+    });
+  });
+
   it("keeps the conjuncts of a bulleted list that held", async () => {
     expect(
       await getFailure('Init == x = 0\nNext == /\\ Name[x + 1] # "z"\n        /\\ x\' = x + 1'),
@@ -184,6 +195,23 @@ describe("the call stack of a replayed failure matches TLC", () => {
     expect([result.failure?.code, result.failure?.exitCode, result.failure?.trace.length]).toEqual([
       2111, 76, 3,
     ]);
+  });
+
+  it("reports a violating step that fails to rebuild as a failure of the next-state relation under -continue, where TLC reports it as a failure of the invariant", async () => {
+    const kinds: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\n${HEADER}\nInit == x = 0\nNext == x >= 0 /\\ (x' = x + 1 \\/ (x = 1 /\\ x' = 5 /\\ 1))\nInv == x < 2\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      isContinued: true,
+      onProgress: (progress) => kinds.push(progress.kind),
+    });
+    expect([
+      result.status,
+      kinds.includes("violation"),
+      result.failure?.code,
+      result.failure?.exitCode,
+      result.failure?.trace.length,
+    ]).toEqual(["error", false, 1000, 75, 2]);
   });
 
   it("exits with the code of a standard module's failure in an action property", async () => {

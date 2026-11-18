@@ -34,15 +34,27 @@ const getCoverageCounts = async (definitions: string, config: string) => {
   });
 };
 
-const getCoverageLines = async (source: string, config: string) => {
-  const result = await check({ source, config, coverage: 1 });
-  return result.coverage?.relations.map((relation) =>
+const INSTANCED_MODULE =
+  "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES x, w\nR == x + K > 0\nQ == \\A e \\in {1, 2} : R /\\ x + e + K >= K\nG == IF x > 0 THEN K ELSE 0\nA == /\\ Q\n     /\\ x' = (x + K) % 3\n     /\\ w' = w\nB == x < 2 /\\ x' = x + 1 /\\ UNCHANGED w\n====";
+
+const getInstanceCoverage = (instance: string, next: string, invariant: string) =>
+  check({
+    source: `---- MODULE E ----\nEXTENDS Naturals\nCONSTANT M\nVARIABLES x, y\n${instance}\nInit == x = 0 /\\ y = 0\nNext == ${next}\nInv == ${invariant}\n====`,
+    config: "CONSTANT M = 1\nINIT Init\nNEXT Next\nINVARIANT Inv",
+    coverage: 1,
+    loadModule: (name) => (name === "Inner" ? INSTANCED_MODULE : undefined),
+  });
+
+const formatCoverage = (result: Awaited<ReturnType<typeof check>>) =>
+  result.coverage?.relations.map((relation) =>
     relation.expressions.map(
       (expression) =>
         `${"|".repeat(expression.depth)}${expression.location}: ${expression.count}${expression.cost > 0 ? `:${expression.cost}` : ""}`,
     ),
   );
-};
+
+const getCoverageLines = async (source: string, config: string) =>
+  formatCoverage(await check({ source, config, coverage: 1 }));
 
 describe("check matches TLC", () => {
   it("evaluates every assumption in the semantics fixture", async () => {
@@ -1403,6 +1415,26 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
+  it("counts a CASE guard of the initial predicate at the CASE without TLC's warning that its lookup failed", async () => {
+    const warnings: CheckProgress[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == CASE 1 = 2 -> x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      coverage: 1,
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress);
+      },
+    });
+    expect([formatCoverage(result), warnings]).toEqual([
+      [
+        ["line 4, col 9 to line 4, col 27 of module M: 2"],
+        ["line 5, col 9 to line 5, col 14 of module M: 0"],
+      ],
+      [],
+    ]);
+  });
+
   it("counts the coverage of each invariant it checks in an initial state under -continue", async () => {
     const result = await check({
       source:
@@ -1491,6 +1523,20 @@ ASSUME TLCFP(a) = -887695703
       ["|||line 5, col 31 to line 5, col 37 of module M", 4],
       ["||line 5, col 42 to line 5, col 52 of module M", 4],
       ["|line 8, col 22 to line 8, col 26 of module M", 2],
+    ]);
+  });
+
+  it("counts a LET definition under ENABLED at the definition that reaches the LET, as TLC's LazyValue keeps its cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nA == LET t == x + 1 IN t < 4 /\\ x' = t % 4 /\\ UNCHANGED y\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ y' = y\nInv == ENABLED A \\/ TRUE\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 7, col 8 to line 7, col 24 of module M: 3",
+      "|line 7, col 8 to line 7, col 16 of module M: 3",
+      "||line 4, col 15 to line 4, col 19 of module M: 3",
+      "||line 4, col 24 to line 4, col 42 of module M: 3",
+      "||line 4, col 47 to line 4, col 57 of module M: 3",
     ]);
   });
 
@@ -2059,6 +2105,22 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts a function a LET of the initial predicate defines at each reference, as TLC evaluates its LazyValue there", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == LET f[n \\in 0..2] == n + 1 IN x = Cardinality(DOMAIN f)\nNext == UNCHANGED x\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[0]).toEqual([
+      "line 4, col 39 to line 4, col 63 of module M: 1",
+      "|line 4, col 43 to line 4, col 63 of module M: 1",
+      "||line 4, col 55 to line 4, col 62 of module M: 1",
+      "|||line 4, col 62 to line 4, col 62 of module M: 1",
+      "||||line 4, col 13 to line 4, col 34 of module M: 1:3",
+      "|||||line 4, col 30 to line 4, col 34 of module M: 3",
+      "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",
@@ -2165,6 +2227,369 @@ ASSUME TLCFP(a) = -887695703
       "Action line 8, col 12 to line 8, col 16 of module P",
     ]);
   });
+
+  it.each([
+    [
+      "I == INSTANCE Inner WITH K <- M + 1, w <- y",
+      "I!A",
+      "I!Q /\\ I!G >= 0",
+      [
+        "line 5, col 1 to line 5, col 43 of module E: 15",
+        "line 5, col 31 to line 5, col 35 of module E: 21",
+        "line 5, col 43 to line 5, col 43 of module E: 3",
+      ],
+      [
+        "line 8, col 8 to line 8, col 22 of module E: 3",
+        "|line 8, col 8 to line 8, col 10 of module E: 3",
+        "||line 6, col 6 to line 6, col 42 of module Inner: 3",
+        "|||line 6, col 24 to line 6, col 42 of module Inner: 6",
+        "|||line 6, col 15 to line 6, col 20 of module Inner: 3:9",
+        "|line 8, col 15 to line 8, col 22 of module E: 3",
+        "||line 8, col 15 to line 8, col 17 of module E: 3",
+        "|||line 5, col 1 to line 5, col 43 of module E: 6",
+        "|||line 5, col 31 to line 5, col 35 of module E: 5",
+        "|||line 7, col 6 to line 7, col 27 of module Inner: 3",
+        "||||line 7, col 9 to line 7, col 13 of module Inner: 3",
+        "||||line 7, col 20 to line 7, col 20 of module Inner: 2",
+      ],
+    ],
+    [
+      "INSTANCE Inner WITH K <- M + 1, w <- y",
+      "A",
+      "Q /\\ G >= 0",
+      [
+        "line 5, col 1 to line 5, col 38 of module E: 15",
+        "line 5, col 26 to line 5, col 30 of module E: 21",
+        "line 5, col 38 to line 5, col 38 of module E: 3",
+      ],
+      [
+        "line 8, col 8 to line 8, col 18 of module E: 3",
+        "|line 8, col 8 to line 8, col 8 of module E: 3",
+        "||line 6, col 6 to line 6, col 42 of module Inner: 3",
+        "|||line 6, col 24 to line 6, col 42 of module Inner: 6",
+        "|||line 6, col 15 to line 6, col 20 of module Inner: 3:9",
+        "|line 8, col 13 to line 8, col 18 of module E: 3",
+        "||line 8, col 13 to line 8, col 13 of module E: 3",
+        "|||line 5, col 1 to line 5, col 38 of module E: 6",
+        "|||line 5, col 26 to line 5, col 30 of module E: 5",
+        "|||line 7, col 6 to line 7, col 27 of module Inner: 3",
+        "||||line 7, col 9 to line 7, col 13 of module Inner: 3",
+        "||||line 7, col 20 to line 7, col 20 of module Inner: 2",
+      ],
+    ],
+  ])(
+    "counts each substitution of %s as a node, at each reference in an action and once in an invariant, as TLC's cost model does",
+    async (instance, next, invariant, substitutions, invariantLines) => {
+      const lines = formatCoverage(await getInstanceCoverage(instance, next, invariant));
+      expect(lines?.[1]).toEqual([
+        ...substitutions,
+        "line 6, col 24 to line 6, col 42 of module Inner: 6",
+        "line 6, col 15 to line 6, col 20 of module Inner: 3:9",
+        "line 9, col 9 to line 9, col 24 of module Inner: 3",
+        "line 10, col 9 to line 10, col 14 of module Inner: 3",
+      ]);
+      expect(lines?.[2]).toEqual(invariantLines);
+    },
+  );
+
+  it("counts no node for the parameters an instance passes to the definitions it copies, as SANY's definitions take none", async () => {
+    const lines = formatCoverage(
+      await getInstanceCoverage(
+        "I(p, q) == INSTANCE Inner WITH K <- p + q, w <- y",
+        "\\E p \\in {1, 2} : I(p, M)!A",
+        "I(1, 1)!Q /\\ I(M, 0)!G >= 0",
+      ),
+    );
+    expect(lines?.[2]).toEqual([
+      "line 8, col 8 to line 8, col 34 of module E: 3",
+      "|line 8, col 8 to line 8, col 16 of module E: 3",
+      "||line 6, col 6 to line 6, col 42 of module Inner: 3",
+      "|||line 6, col 24 to line 6, col 42 of module Inner: 6",
+      "|||line 6, col 15 to line 6, col 20 of module Inner: 3:9",
+      "|line 8, col 21 to line 8, col 34 of module E: 3",
+      "||line 8, col 21 to line 8, col 29 of module E: 3",
+      "|||line 5, col 1 to line 5, col 49 of module E: 6",
+      "|||line 5, col 37 to line 5, col 41 of module E: 5",
+      "|||line 7, col 6 to line 7, col 27 of module Inner: 3",
+      "||||line 7, col 9 to line 7, col 13 of module Inner: 3",
+      "||||line 7, col 20 to line 7, col 20 of module Inner: 2",
+      "|||line 8, col 23 to line 8, col 23 of module E: 2",
+    ]);
+  });
+
+  it("takes the definition an instance with parameters copies for an action of constant arguments, as TLC's Tool#getActionsAppl binds them", async () => {
+    const lines = formatCoverage(
+      await getInstanceCoverage(
+        "I(p, q) == INSTANCE Inner WITH K <- p + q, w <- y",
+        "\\E p \\in {1, 2} : I(p, M)!A",
+        "I(1, 1)!Q /\\ I(M, 0)!G >= 0",
+      ),
+    );
+    expect(lines?.[1]).toEqual([
+      "line 5, col 1 to line 5, col 49 of module E: 30",
+      "line 5, col 37 to line 5, col 41 of module E: 42",
+      "line 5, col 49 to line 5, col 49 of module E: 6",
+      "line 6, col 24 to line 6, col 42 of module Inner: 12",
+      "line 6, col 15 to line 6, col 20 of module Inner: 6:18",
+      "line 9, col 9 to line 9, col 24 of module Inner: 6",
+      "line 10, col 9 to line 10, col 14 of module Inner: 6",
+    ]);
+  });
+
+  it("marks a primed or unchanged declaration of an instance as a state variable by its own name, as TLC's Spec#collectPrimedLocs ignores the substitutions", async () => {
+    const primed = formatCoverage(
+      await getInstanceCoverage(
+        "I == INSTANCE Inner WITH K <- M + 1, w <- y",
+        "I!A \\/ (x = 2 /\\ x' = 0 /\\ UNCHANGED y)",
+        "(ENABLED I!A) \\/ x = 2",
+      ),
+    );
+    expect(primed?.at(-1)).toEqual([
+      "line 8, col 8 to line 8, col 29 of module E: 3",
+      "|line 8, col 9 to line 8, col 19 of module E: 3",
+      "||line 5, col 1 to line 5, col 43 of module E: 15",
+      "||line 5, col 31 to line 5, col 35 of module E: 21",
+      "||line 5, col 43 to line 5, col 43 of module E: 3",
+      "||line 6, col 24 to line 6, col 42 of module Inner: 6",
+      "||line 6, col 15 to line 6, col 20 of module Inner: 3:9",
+      "||line 9, col 9 to line 9, col 24 of module Inner: 0",
+      "|||line 9, col 14 to line 9, col 24 of module Inner: 3",
+      "||line 10, col 9 to line 10, col 14 of module Inner: 3",
+    ]);
+    const unchanged = formatCoverage(
+      await getInstanceCoverage(
+        "J == INSTANCE Inner WITH K <- M, w <- y",
+        "J!B \\/ (x = 2 /\\ UNCHANGED <<x, y>>)",
+        "(ENABLED J!B) \\/ x = 2",
+      ),
+    );
+    expect(unchanged).toContainEqual([
+      "line 5, col 1 to line 5, col 39 of module E: 5",
+      "line 11, col 6 to line 11, col 10 of module Inner: 2",
+      "|line 11, col 6 to line 11, col 6 of module Inner: 3",
+      "line 11, col 15 to line 11, col 24 of module Inner: 2",
+      "line 11, col 29 to line 11, col 39 of module Inner: 2",
+    ]);
+  });
+
+  it("counts the substitution of a declaration that ENABLED keeps unchanged, as TLC's Tool#enabledUnchanged evaluates it", async () => {
+    const lines = formatCoverage(
+      await getInstanceCoverage(
+        "J == INSTANCE Inner WITH K <- M, w <- y",
+        "J!B \\/ (x = 2 /\\ UNCHANGED <<x, y>>)",
+        "(ENABLED J!B) \\/ x = 2",
+      ),
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 8, col 8 to line 8, col 29 of module E: 3",
+      "|line 8, col 9 to line 8, col 19 of module E: 3",
+      "||line 5, col 1 to line 5, col 39 of module E: 5",
+      "||line 5, col 39 to line 5, col 39 of module E: 2",
+      "||line 11, col 6 to line 11, col 10 of module Inner: 3",
+      "||line 11, col 15 to line 11, col 24 of module Inner: 0",
+      "|||line 11, col 20 to line 11, col 24 of module Inner: 2",
+      "||line 11, col 29 to line 11, col 39 of module Inner: 2",
+      "|line 8, col 25 to line 8, col 29 of module E: 1",
+    ]);
+  });
+
+  it("counts a substitution at each primed reference and again for UNCHANGED, as TLC's LazyValue caches it only for the states it was evaluated in", async () => {
+    const lines = formatCoverage(
+      await check({
+        source:
+          "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES x, y\nI == INSTANCE Inner WITH w <- y\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ y' = y\nAC == I!C\n====",
+        config: "INIT Init\nNEXT Next\nACTION_CONSTRAINT AC",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "Inner"
+            ? "---- MODULE Inner ----\nVARIABLES x, w\nC == w' = w /\\ UNCHANGED w /\\ [x' = x]_w\n===="
+            : undefined,
+      }),
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 7, col 7 to line 7, col 9 of module E: 2",
+      "|line 4, col 1 to line 4, col 31 of module E: 4",
+      "|line 4, col 31 to line 4, col 31 of module E: 10",
+      "|line 3, col 6 to line 3, col 40 of module Inner: 2",
+      "||line 3, col 6 to line 3, col 26 of module Inner: 2",
+      "|||line 3, col 6 to line 3, col 11 of module Inner: 2",
+      "|||line 3, col 16 to line 3, col 26 of module Inner: 4",
+      "||line 3, col 31 to line 3, col 40 of module Inner: 2",
+      "|||line 3, col 32 to line 3, col 37 of module Inner: 2",
+      "|||line 3, col 40 to line 3, col 40 of module Inner: 4",
+    ]);
+  });
+
+  it("assigns the variables UNCHANGED keeps through the definition of an instance, where TLC evaluates the definition and fails on an unassigned variable", async () => {
+    const result = await check({
+      source:
+        "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES x, y\nI == INSTANCE Inner WITH w <- y\nInit == x = 0 /\\ y = 0\nNext == y' = (y + 1) % 3 /\\ UNCHANGED I!vx\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Inner" ? "---- MODULE Inner ----\nVARIABLES x, w\nvx == <<x>>\n====" : undefined,
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      4,
+      3,
+    ]);
+  });
+
+  it("orders the actions of an instance by its definition and keeps each of them, where TLC keeps one action per location", async () => {
+    const result = await getInstanceCoverage(
+      "I == INSTANCE Inner WITH K <- M, w <- y",
+      "(x = 2 /\\ x' = 0 /\\ UNCHANGED y) \\/ I!B \\/ I!A",
+      "x < 3",
+    );
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 6, col 1 to line 6, col 4 of module E",
+      "I!A line 5, col 1 to line 5, col 1 of module E",
+      "I!B line 5, col 1 to line 5, col 1 of module E",
+      "Next line 7, col 1 to line 7, col 4 of module E (7 10 7 39)",
+      "Inv line 8, col 1 to line 8, col 3 of module E",
+    ]);
+    expect(formatCoverage(result)?.[2]).toEqual([
+      "line 5, col 1 to line 5, col 39 of module E: 5",
+      "line 11, col 6 to line 11, col 10 of module Inner: 2",
+      "|line 11, col 6 to line 11, col 6 of module Inner: 3",
+      "line 11, col 15 to line 11, col 24 of module Inner: 2",
+      "line 11, col 29 to line 11, col 39 of module Inner: 2",
+    ]);
+  });
+
+  it("names an action by the standard operator it applies, as TLC's Tool#getActionsAppl does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE E ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == (x < 3 /\\ x' = x + 1) \\/ x >= 9 \\/ x + 9 =< 0 \\/ x + 9 < 0 \\/ (x = 3 /\\ x' = 0)\n====",
+      config: "INIT Init\nNEXT Next",
+      coverage: 1,
+    });
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 4, col 1 to line 4, col 4 of module E",
+      "Next line 5, col 1 to line 5, col 4 of module E (5 10 5 28)",
+      "\\geq line 23, col 1 to line 23, col 8 of module Naturals (5 34 5 39)",
+      "\\leq line 22, col 1 to line 22, col 8 of module Naturals (5 44 5 53)",
+      "< line 20, col 1 to line 20, col 3 of module Naturals (5 58 5 66)",
+      "Next line 5, col 1 to line 5, col 4 of module E (5 72 5 86)",
+    ]);
+  });
+
+  it("counts the substitutions of an instance a subexpression is selected through, as SANY puts the instance's SubstInNode around the selection", async () => {
+    const lines = formatCoverage(
+      await check({
+        source:
+          "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE z\nOp(a) == /\\ z < a\n         /\\ z' = z + 1\n====\nI == INSTANCE Inner WITH z <- x\nInit == x = 0 /\\ y = 0\nNext == \\/ I!Op(3)!1 /\\ I!Op(3)!2 /\\ y' = y\n        \\/ I!Op(2)!2 /\\ x < 2 /\\ y' = y\n====",
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+      }),
+    );
+    expect(lines?.slice(1)).toEqual([
+      [
+        "line 7, col 13 to line 7, col 17 of module E: 3",
+        "|line 7, col 13 to line 7, col 13 of module E: 4",
+        "|line 7, col 17 to line 7, col 17 of module E: 4",
+        "line 10, col 31 to line 10, col 31 of module E: 7",
+        "line 8, col 13 to line 8, col 22 of module E: 3",
+        "line 12, col 38 to line 12, col 43 of module E: 3",
+      ],
+      [
+        "line 10, col 31 to line 10, col 31 of module E: 4",
+        "line 8, col 13 to line 8, col 22 of module E: 2",
+        "|line 8, col 18 to line 8, col 22 of module E: 4",
+        "line 13, col 25 to line 13, col 29 of module E: 2",
+        "|line 13, col 25 to line 13, col 25 of module E: 4",
+        "line 13, col 34 to line 13, col 39 of module E: 2",
+      ],
+    ]);
+  });
+
+  it("names an action by the LET definition it applies and splits the definition's body, as TLC's Tool#getActionsAppl does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nG == y < 1 /\\ y' = y + 1 /\\ x' = x\nInit == x = 0 /\\ y = 0\nNext == \\/ LET Gct == G IN Gct\n        \\/ LET Hct == x = 2 /\\ x' = 0 /\\ y' = y IN Hct\n        \\/ LET Kct(k) == y = k /\\ y' = 0 /\\ x' = x IN Kct(1)\n        \\/ LET Lct == \\/ x = 0 /\\ y = 1 /\\ x' = 1 /\\ y' = 1\n                      \\/ x = 1 /\\ y = 1 /\\ x' = 2 /\\ y' = 1 IN Lct\nInv == x < 2\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      coverage: 1,
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([
+      undefined,
+      "G line 4, col 6 to line 4, col 34 of module M",
+      "Lct line 9, col 26 to line 9, col 59 of module M",
+      "Lct line 10, col 26 to line 10, col 59 of module M",
+    ]);
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 5, col 1 to line 5, col 4 of module M",
+      "G line 4, col 1 to line 4, col 1 of module M",
+      "Hct line 7, col 16 to line 7, col 18 of module M",
+      "Kct line 8, col 16 to line 8, col 21 of module M",
+      "Lct line 9, col 16 to line 9, col 18 of module M (9 26 9 59)",
+      "Lct line 9, col 16 to line 9, col 18 of module M (10 26 10 59)",
+      "Inv line 11, col 1 to line 11, col 3 of module M",
+    ]);
+  });
+
+  it("orders the substitutions of an instance as SANY infers them from the instanced module's symbol table", async () => {
+    const result = await check({
+      source:
+        "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES a, b, c, d, z\nTwo == 1 + 1\nI == INSTANCE Inner WITH b <- z, K <- Two, T <- <<c, d>>\nJ == INSTANCE Inner WITH K <- 2, T <- <<a, a + 1>>\nInit == I!Init /\\ b = 0\nNext == (I!A /\\ UNCHANGED b) \\/ (J!A /\\ UNCHANGED z)\nInv == I!P /\\ J!P /\\ I!P\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      coverage: 1,
+      loadModule: (name) =>
+        name === "Inner"
+          ? "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES a, b, c, d, T\nInit == a = 0 /\\ b = 0 /\\ c = 0 /\\ d = 0\nA == a < 3 /\\ a' = a + K /\\ b' = b /\\ c' = T[1] /\\ d' = d\nP == a + b + c + d + K + T[2] >= 0\n===="
+          : undefined,
+    });
+    expect(formatCoverage(result)?.[1]).toEqual([
+      "line 5, col 1 to line 5, col 56 of module E: 6",
+      "line 5, col 31 to line 5, col 31 of module E: 6",
+      "line 5, col 1 to line 5, col 56 of module E: 13",
+      "line 5, col 39 to line 5, col 41 of module E: 6",
+      "line 5, col 49 to line 5, col 56 of module E: 6",
+      "line 6, col 6 to line 6, col 10 of module Inner: 6",
+      "|line 6, col 6 to line 6, col 6 of module Inner: 7",
+      "line 6, col 15 to line 6, col 24 of module Inner: 6",
+      "line 6, col 29 to line 6, col 34 of module Inner: 6",
+      "line 6, col 39 to line 6, col 47 of module Inner: 6",
+      "line 6, col 52 to line 6, col 57 of module Inner: 6",
+      "line 8, col 17 to line 8, col 27 of module E: 6",
+    ]);
+  });
+
+  it.each([
+    [
+      "I == INSTANCE Inner WITH K <- M + 1, w <- y",
+      "I!A",
+      "I!Q /\\ I!G >= 0",
+      "I!A line 5, col 1 to line 5, col 1",
+    ],
+    [
+      "INSTANCE Inner WITH K <- M + 1, w <- y",
+      "A",
+      "Q /\\ G >= 0",
+      "A line 5, col 1 to line 5, col 38",
+    ],
+    [
+      "I(p, q) == INSTANCE Inner WITH K <- p + q, w <- y",
+      "\\E p \\in {1, 2} : I(p, M)!A",
+      "I(1, 1)!Q /\\ I(M, 0)!G >= 0",
+      "I!A line 5, col 1 to line 5, col 7",
+    ],
+    [
+      "I( p ,q  ) == INSTANCE Inner WITH K <- p + q, w <- y",
+      "\\E p \\in {1, 2} : I(p, M)!A",
+      "I(1, 1)!Q /\\ I(M, 0)!G >= 0",
+      "I!A line 5, col 1 to line 5, col 10",
+    ],
+  ])(
+    "names the action of %s by the left side of the definition, as TLC's Action#getDeclaration does",
+    async (instance, next, invariant, label) => {
+      const result = await getInstanceCoverage(instance, next, invariant);
+      expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+        "Init line 6, col 1 to line 6, col 4 of module E",
+        `${label} of module E`,
+        "Inv line 8, col 1 to line 8, col 3 of module E",
+      ]);
+    },
+  );
 });
 
 describe("formatValue matches TLC", () => {

@@ -1799,6 +1799,74 @@ describe("evaluation errors match TLC", () => {
     expect(error instanceof Error && getExitCode(error)).toBe(255);
   });
 
+  it.each([
+    [
+      "x = 0",
+      "x + 2 /\\ x' = 1",
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 2.\nline 5, col 9 to line 5, col 13 of module M`,
+    ],
+    [
+      "x = 0",
+      "x' = 1 /\\ x + 2",
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC expected a boolean expression,\nbut instead found 2.\nline 5, col 19 to line 5, col 23 of module M`,
+    ],
+    [
+      "x = 0",
+      "IF x THEN x' = 1 ELSE x' = 2",
+      `${UNEXPECTED_EXCEPTION}In computing next states, a non-boolean expression (an integer) was used as the condition of an IF.line 5, col 9 to line 5, col 36 of module M`,
+    ],
+    [
+      "x = 0",
+      "CASE x -> x' = 1 [] OTHER -> x' = 2",
+      `${UNEXPECTED_EXCEPTION}In computing next states, a non-boolean expression (an integer) was used as a guard condition of a CASE.\nline 5, col 19 to line 5, col 24 of module M`,
+    ],
+    [
+      "x = 0",
+      "CASE x = 1 -> x' = 1",
+      `${UNEXPECTED_EXCEPTION}In computing next states, TLC encountered a CASE with no conditions true.\nline 5, col 9 to line 5, col 28 of module M`,
+    ],
+    [
+      "x = 0",
+      "x => x' = 1",
+      `${UNEXPECTED_EXCEPTION}In computing next states of a predicate of the form P => Q, P was\nan integer.\nline 5, col 9 to line 5, col 19 of module M`,
+    ],
+    [
+      "x = 0",
+      "3 /\\ x' = 1",
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n3`,
+    ],
+    [
+      "IF 1 THEN x = 0 ELSE x = 1",
+      "x' = x",
+      "In computing initial states, a non-boolean expression (an integer) was used as the condition of an IF.\nline 4, col 9 to line 4, col 34 of module M",
+    ],
+    [
+      "CASE 1 -> x = 0 [] OTHER -> x = 1",
+      "x' = x",
+      "In computing initial states, a non-boolean expression (an integer) was used as a guard condition of a CASE.\nline 4, col 19 to line 4, col 23 of module M",
+    ],
+    [
+      "1 => x = 0",
+      "x' = x",
+      "In computing initial states of a predicate of form P => Q, P was an integer\n.line 4, col 9 to line 4, col 18 of module M",
+    ],
+    [
+      "x = 0 /\\ x + 3",
+      "x' = x",
+      "In computing initial states, TLC expected a boolean expression,\nbut instead found 3.\nline 4, col 18 to line 4, col 22 of module M",
+    ],
+  ])(
+    "reports Init == %s and Next == %s under -coverage as without it, like TLC",
+    async (init, next, message) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        coverage: 1,
+      });
+      expect([result.failure?.message, result.failure?.exitCode]).toEqual([message, 75]);
+    },
+  );
+
   it("reports a failing constraint on a successor like a failure of the next-state relation", async () => {
     const getFailure = async (constraint: string, config: string) => {
       const result = await check({

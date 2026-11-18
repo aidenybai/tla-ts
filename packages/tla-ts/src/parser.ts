@@ -1961,8 +1961,9 @@ const parse = (
     const params = parseParams();
     expect("==");
     if (isAt("INSTANCE")) {
+      const head = getRange(start, cursor - 2);
       const instance = parseInstance(name, params, isLocal, location);
-      return { ...instance, definitionRange: getRange(definitionStart) };
+      return { ...instance, definitionRange: getRange(definitionStart), head };
     }
     return parseOperator(name, params);
   };

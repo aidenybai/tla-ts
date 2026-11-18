@@ -3,6 +3,7 @@ import {
   getFunctionConstruction,
   getReferencedName,
   isLocallyResolved,
+  isRecursiveConstruction,
   type Bound,
   type BoundPattern,
   type DecimalExpression,
@@ -31,10 +32,14 @@ import {
   countCoverage,
   createChargedEnumerator,
   createProductSetEnumerator,
+  enterFrames,
+  exitFrames,
   getCoverageNode,
+  getSubstitutionNode,
   runAtCoverageNode,
   tagSubset,
   type Coverage,
+  type NextStateMode,
 } from "./coverage";
 import { MESSAGE_CODE } from "./tlc/messages";
 import type { CheckerRuntime } from "./runtime";
@@ -46,7 +51,14 @@ import {
   isTlcEvalReached,
   type DefinitionFacts,
 } from "./dependencies";
-import { contextualApplications, substitutionFrames } from "./instances";
+import {
+  contextualApplications,
+  frameSubstitutions,
+  isSubstitutionDefinition,
+  substitutedExpressions,
+  substitutionFrames,
+  type Substitution,
+} from "./instances";
 import { prettyPrint } from "./pretty-print";
 import { isEnabled } from "./successors";
 import {
@@ -836,7 +848,7 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
     };
   }
   if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
-  const construction = getFunctionConstruction(definition, false);
+  const construction = getFunctionConstruction(definition);
   if (!definition.isSelfReferential) return getEntryEvaluator(construction, environment);
   const evaluator: Evaluator = (context) => createRecursiveFunction(definition, context);
   const coverage = environment.coverage;
@@ -1172,6 +1184,8 @@ const chainRecursiveOperatorsFirst = (
   return scope;
 };
 
+const NO_PARAMS: OperatorParam[] = [];
+
 export const bindDefinitions = (
   definitions: Definition[],
   context: Context,
@@ -1200,37 +1214,34 @@ export const bindDefinitions = (
       definition.kind === "Operator" && definition.params.length === 0 && !isRecursiveValueAtOrAfter
         ? nodes[index].parent
         : scope;
-    nodes[index].binding =
+    // A recursive function keeps one value, since its body applies that value as TLC's FcnLambdaValue applies itself.
+    const isReevaluated =
       definition.kind === "Function"
-        ? {
-            kind: "Thunk",
-            expression: getFunctionConstruction(definition, true),
-            scope,
-            state: context.state,
-            next: context.next,
-            cache: undefined,
-            isStreamed: false,
-          }
-        : definition.params.length > 0 || reevaluated?.impure.has(definition)
-          ? {
-              kind: "Operator",
-              operator: {
-                kind: "Closure",
-                name: definition.name,
-                params: definition.params,
-                body: definition.body,
-                scope: ownScope,
-              },
-            }
-          : {
-              kind: "Thunk",
-              expression: definition.body,
-              scope: ownScope,
-              state: context.state,
-              next: context.next,
-              cache: undefined,
-              isStreamed: reevaluated?.streamed.has(definition) ?? false,
-            };
+        ? !definition.isSelfReferential && reevaluated?.impure.has(definition)
+        : definition.params.length > 0 || reevaluated?.impure.has(definition);
+    const body =
+      definition.kind === "Function" ? getFunctionConstruction(definition) : definition.body;
+    nodes[index].binding = isReevaluated
+      ? {
+          kind: "Operator",
+          operator: {
+            kind: "Closure",
+            name: definition.name,
+            params: definition.kind === "Operator" ? definition.params : NO_PARAMS,
+            body,
+            scope: ownScope,
+          },
+        }
+      : {
+          kind: "Thunk",
+          expression: body,
+          scope: ownScope,
+          state: context.state,
+          next: context.next,
+          cache: undefined,
+          isStreamed:
+            definition.kind === "Operator" && (reevaluated?.streamed.has(definition) ?? false),
+        };
   }
   const coverage = context.environment.coverage;
   if (coverage && coverage.current !== -1) {
@@ -1313,12 +1324,29 @@ export const toNextContext = (context: Context): Context => ({
   isKeepLazy: context.isKeepLazy,
 });
 
-const compileUnchanged =
-  (evaluator: Evaluator): Evaluator =>
-  (context) => {
-    const current = evaluator(context);
-    return valuesEqual(current, evaluator(toNextContext(context)));
-  };
+const evaluateWithNextState = (
+  coverage: Coverage,
+  nextState: NextStateMode,
+  evaluator: Evaluator,
+  context: Context,
+) => {
+  const outer = coverage.nextState;
+  coverage.nextState = nextState;
+  try {
+    return evaluator(context);
+  } finally {
+    coverage.nextState = outer;
+  }
+};
+
+const compileUnchanged = (evaluator: Evaluator, coverage: Coverage | undefined): Evaluator =>
+  coverage
+    ? (context) =>
+        valuesEqual(
+          evaluateWithNextState(coverage, "empty", evaluator, context),
+          evaluateWithNextState(coverage, "primed", evaluator, toNextContext(context)),
+        )
+    : (context) => valuesEqual(evaluator(context), evaluator(toNextContext(context)));
 
 const traceEvaluator =
   (
@@ -1503,6 +1531,55 @@ const countEvaluator =
     }
   };
 
+const countSubstitution =
+  (substitution: Substitution, evaluator: Evaluator, coverage: Coverage): Evaluator =>
+  (context) => {
+    const outer = coverage.current;
+    coverage.current = outer === -1 ? -1 : getSubstitutionNode(coverage, substitution, outer);
+    try {
+      return evaluator(context);
+    } finally {
+      coverage.current = outer;
+    }
+  };
+
+const enterEvaluator =
+  (frames: Expression[], evaluator: Evaluator, coverage: Coverage): Evaluator =>
+  (context) => {
+    const entered = enterFrames(coverage, frames, coverage.current, true);
+    if (entered === 0) return evaluator(context);
+    try {
+      return evaluator(context);
+    } finally {
+      exitFrames(coverage, entered);
+    }
+  };
+
+const getCoverageEvaluator = (expression: Expression, evaluator: Evaluator, coverage: Coverage) => {
+  const frames = substitutionFrames.get(expression);
+  if (frames?.some((frame) => frameSubstitutions.has(frame))) {
+    return enterEvaluator(frames, countEvaluator(expression, evaluator, coverage), coverage);
+  }
+  const substitution = substitutedExpressions.get(expression);
+  if (!substitution) return countEvaluator(expression, evaluator, coverage);
+  if (substitution.replacement === expression) {
+    return countSubstitution(
+      substitution,
+      countEvaluator(expression, evaluator, coverage),
+      coverage,
+    );
+  }
+  return countEvaluator(
+    expression,
+    countSubstitution(
+      substitution,
+      countEvaluator(substitution.replacement, evaluator, coverage),
+      coverage,
+    ),
+    coverage,
+  );
+};
+
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
@@ -1514,7 +1591,7 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
     : compiled;
   const framed = callStack && frames ? traceFrames(expression, frames, traced, callStack) : traced;
   const coverage = environment.coverage;
-  const evaluator = coverage ? countEvaluator(expression, framed, coverage) : framed;
+  const evaluator = coverage ? getCoverageEvaluator(expression, framed, coverage) : framed;
   environment.evaluators.set(expression, evaluator);
   return evaluator;
 };
@@ -1908,7 +1985,7 @@ export const getFunctionBuilder = (
   expression: Expression & { kind: "FunctionConstruction" },
   environment: Environment,
 ) => {
-  const isKeptLazyExpression = isKeptLazy(expression);
+  const isLazy = isKeptLazy(expression) || isRecursiveConstruction(expression);
   const body = getEvaluator(expression.body, environment);
   const bounds = expression.bounds;
   const bound = bounds[0];
@@ -1980,12 +2057,7 @@ export const getFunctionBuilder = (
   };
   const callStack = environment.callStack;
   const build = (domain: Value, context: Context) => {
-    if (
-      expression.isRecursive ||
-      isKeptLazyExpression ||
-      context.isKeepLazy ||
-      !isEnumerable(domain)
-    ) {
+    if (isLazy || context.isKeepLazy || !isEnumerable(domain)) {
       return createLazy(domain, context);
     }
     const isReducibleDomain =
@@ -2396,10 +2468,13 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Prime": {
       const inner = getChildEvaluator(expression.expression);
-      return (context) => inner(toNextContext(context));
+      const coverage = environment.coverage;
+      return coverage
+        ? (context) => evaluateWithNextState(coverage, "primed", inner, toNextContext(context))
+        : (context) => inner(toNextContext(context));
     }
     case "Unchanged":
-      return compileUnchanged(getChildEvaluator(expression.expression));
+      return compileUnchanged(getChildEvaluator(expression.expression), environment.coverage);
     case "If": {
       const condition = getChildEvaluator(expression.condition);
       const consequent = getChildEvaluator(expression.consequent);
@@ -2435,8 +2510,15 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Let": {
       const body = getChildEvaluator(expression.body);
+      const substituted = environment.coverage
+        ? expression.definitions.filter(isSubstitutionDefinition)
+        : [];
+      const reevaluated =
+        substituted.length > 0
+          ? { impure: new Set(substituted), streamed: new Set<Definition>() }
+          : undefined;
       return (context) =>
-        body(withScope(context, bindDefinitions(expression.definitions, context)));
+        body(withScope(context, bindDefinitions(expression.definitions, context, reevaluated)));
     }
     case "Forall":
     case "Exists":
@@ -2538,7 +2620,10 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     case "BoxAction":
     case "AngleAction": {
       const action = getChildEvaluator(expression.action);
-      const unchanged = compileUnchanged(getChildEvaluator(expression.subscript));
+      const unchanged = compileUnchanged(
+        getChildEvaluator(expression.subscript),
+        environment.coverage,
+      );
       const isBox = expression.kind === "BoxAction";
       const form = isBox ? "[A]_e" : "<A>_e";
       return (context) => {

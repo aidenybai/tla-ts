@@ -17,7 +17,13 @@ import {
   type StepBody,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
-import { getSourceName, mapChildren, mapDefinition } from "./instances";
+import {
+  getSourceName,
+  mapChildren,
+  mapDefinition,
+  substitutionFrames,
+  withSubstitutionFrames,
+} from "./instances";
 import { parenthesizedRanges } from "./parser";
 import { STANDARD_LEVELS } from "./standard-definitions";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -65,7 +71,6 @@ interface SelectingName {
 }
 
 const declaredArities = new WeakMap<Definition, number>();
-const letDefinitions = new WeakSet<Definition>();
 
 const resolveDefinition = (
   definition: Definition,
@@ -231,14 +236,14 @@ const getOperatorArgument = (operand: Expression, arity: number): Expression => 
   };
 };
 
-const getDefinitionBody = (definition: Definition, isLet: boolean) => {
-  if (definition.kind === "Function") return getFunctionConstruction(definition, isLet);
+const getDefinitionBody = (definition: Definition) => {
+  if (definition.kind === "Function") return getFunctionConstruction(definition);
   const body = definition.body;
   if (body.kind !== "Let" || body.location.range || body.body.kind !== "Identifier") return body;
   const name = body.body.name;
   const recursive = body.definitions.find((local) => local.name === name);
   return recursive?.kind === "Function"
-    ? { ...body, body: getFunctionConstruction(recursive, true) }
+    ? { ...body, body: getFunctionConstruction(recursive) }
     : body;
 };
 
@@ -284,6 +289,7 @@ const selectSubexpression = (
   let selectorIndex = 0;
   let operatorIndex = -1;
   let current: Expression | undefined;
+  let enteredBody: Expression | undefined;
   let isFailed = false;
   let generatedArguments = 0;
   const nulls: NullSelection[] = [];
@@ -403,7 +409,8 @@ const selectSubexpression = (
     }
     selection.params.push(...(definition.kind === "Operator" ? definition.params : []));
     selection.args.push(...found.args);
-    current = getDefinitionBody(definition, local !== undefined || letDefinitions.has(definition));
+    current = getDefinitionBody(definition);
+    enteredBody ??= definition.body;
     operatorIndex = selectorIndex;
     selectorIndex++;
     return undefined;
@@ -651,10 +658,13 @@ const selectSubexpression = (
     }
     deferToExpression(location.range, message);
   }
+  const frames = enteredBody === undefined ? undefined : substitutionFrames.get(enteredBody);
+  const getFramed = (expression: Expression) =>
+    frames && current !== enteredBody ? withSubstitutionFrames(expression, frames) : expression;
   const body =
     current.kind === "Lambda"
-      ? { ...current, body: wrapLets(current.body, selection.lets, location) }
-      : wrapLets(current, selection.lets, location);
+      ? { ...current, body: wrapLets(getFramed(current.body), selection.lets, location) }
+      : wrapLets(getFramed(current), selection.lets, location);
   const share = (expression: Expression): Expression => ({
     kind: "Selection",
     expression,
@@ -703,7 +713,6 @@ const resolveSubexpressions = (
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
     if (expression.recursive) setDeclaredArities(expression.recursive, expression.definitions);
-    expression.definitions.forEach((definition) => letDefinitions.add(definition));
     const resolved: Definition[] = [];
     const local: Lookup = (name) =>
       resolved.find((definition) => definition.name === name) ??
@@ -711,13 +720,11 @@ const resolveSubexpressions = (
       lookup(name);
     const isLocalGoal = (name: string) =>
       !expression.definitions.some((definition) => definition.name === name) && isGoal(name);
-    expression.definitions.forEach((definition) => {
-      const resolvedDefinition = resolveDefinition(definition, (child) =>
-        resolveSubexpressions(child, local, isLocalGoal),
-      );
-      letDefinitions.add(resolvedDefinition);
-      resolved.push(resolvedDefinition);
-    });
+    expression.definitions.forEach((definition) =>
+      resolved.push(
+        resolveDefinition(definition, (child) => resolveSubexpressions(child, local, isLocalGoal)),
+      ),
+    );
     const mapped = {
       ...expression,
       definitions: resolved,
