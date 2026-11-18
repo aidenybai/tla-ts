@@ -402,7 +402,11 @@ const selectSubexpression = (
         selection.args.push(...selector.args);
         applications.push(getExpressionArguments("", range, selector.args));
       }
-      current = binder.body;
+      // A selected LAMBDA's body is the node it shares, which SANY selects without a $Nop.
+      current =
+        selections.has(current) && binder.body.kind === "Selection"
+          ? binder.body.expression
+          : binder.body;
       return;
     }
     if (current.kind === "Case") {
@@ -542,11 +546,18 @@ const selectSubexpression = (
     deferToExpression(location.range, message);
   }
   const body = wrapLets(current, selection.lets, location);
-  const selected = createApplication(selection, {
+  const share = (expression: Expression): Expression => ({
     kind: "Selection",
-    expression: body,
-    location: body.location,
+    expression,
+    location: expression.location,
   });
+  // SANY selects a LAMBDA itself rather than wrapping it in $Nop, so the selection keeps its arity.
+  const selected = createApplication(
+    selection,
+    body.kind !== "Lambda"
+      ? share(body)
+      : { ...body, body: selections.has(body) ? body.body : share(body.body), location },
+  );
   nullSelections.set(selected, nulls);
   if (expressionError) operatorSelectionErrors.set(selected, expressionError);
   return selected;

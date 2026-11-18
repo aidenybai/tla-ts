@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
+import { check, formatValue } from "../../src";
 import { createSanyError } from "../../src/errors";
 import { getModuleLoader } from "./check-harness";
 
@@ -83,6 +83,43 @@ describe("subexpression references match TLC", () => {
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
     });
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 5 }]);
+  });
+
+  it("passes a selected LAMBDA on as an operator argument", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\n---- MODULE I ----\nEXTENDS Naturals\nUse(F(_), a) == F(a)\nOp == Use(LAMBDA x : x + 10, 1)\n====\nJ == INSTANCE I\nAp(F(_), a) == F(a)\nAp2(F(_, _), a, b) == F(a, b)\nOp == Ap(LAMBDA x : x = 1, 1)\nOp2 == Ap2(LAMBDA x, y : x + y, 1, 1)\nQ == Ap(Op!1, 2)\nR == Ap(Q!1, 3)\nQ2 == Ap2(Op2!1, 2, 2)\nL == LET G(H(_)) == Ap(H, 1) IN G(Op!1)\nVARIABLE v\nInit == v = <<>>\nNext == v' = <<Ap(Op!1, 1), Ap2(Op2!1, 3, 4), Q, R, Ap(R!1, 1), Ap2(Q2!1, 5, 6), L, Q!1!(5), Q!1!(1)!1, R!1!(7)!2, Op!1!(1)!1, J!Use(J!Op!1, 1), Ap(J!Op!1, 5), Q2!1!(2, 3)>>\nInv == v = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.v))).toEqual([
+      "<<>>",
+      "<<TRUE, 7, FALSE, FALSE, TRUE, 11, TRUE, FALSE, 1, 1, 1, 11, 15, 5>>",
+    ]);
+  });
+
+  it("rejects a selected LAMBDA of the wrong arity as an operator argument, like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nAp(F(_), a) == F(a)\nAp2(F(_, _), a, b) == F(a, b)\nOp == Ap2(LAMBDA x, y : x = y, 1, 1)\nQ == Ap2(Op!1, 2, 2)\nTest == Ap(Op!1, 1) /\\ Ap(Q!1, 1)\nVARIABLE v\nInit == v = 0\nNext == v' = v\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 6, col 12 to line 6, col 15", "Expected arity 1 but found operator of arity 2."],
+          [
+            "line 6, col 9 to line 6, col 19",
+            "Argument number 1 to operator 'Ap' \nshould be a 1-parameter operator.",
+          ],
+          ["line 6, col 27 to line 6, col 29", "Expected arity 1 but found operator of arity 2."],
+          [
+            "line 6, col 24 to line 6, col 33",
+            "Argument number 1 to operator 'Ap' \nshould be a 1-parameter operator.",
+          ],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
   });
 
   it("resolves a chain of selections from definitions that select twice in linear time", async () => {
