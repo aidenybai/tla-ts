@@ -845,7 +845,10 @@ const getSymbolArity = (
   const prefix = name.includes("!") ? name.slice(0, name.indexOf("!")) : "";
   const selected =
     prefix === "" ? undefined : (lookupLocal(scope, prefix) ?? findSymbol(prefix, unit));
-  if (selected && !SELECTABLE_KINDS.has(selected.kind)) {
+  if (
+    selected &&
+    (!SELECTABLE_KINDS.has(selected.kind) || lookupLocal(scope, prefix)?.nonFactStep)
+  ) {
     reportUnselectable(
       prefix,
       (expression.kind !== "OperatorReference" && expression.selectorRanges?.[0]) ||
