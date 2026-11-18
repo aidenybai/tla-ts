@@ -704,6 +704,7 @@ const substitute = (
   bound: Map<string, string>,
 ): Expression => {
   const substituted = substituteExpression(expression, rewrite, bound);
+  if (syntheticIdentifiers.has(expression)) syntheticIdentifiers.add(substituted);
   const substitution = substitutedExpressions.get(expression);
   if (!substitution || substituted === expression || substitutedExpressions.has(substituted)) {
     return substituted;

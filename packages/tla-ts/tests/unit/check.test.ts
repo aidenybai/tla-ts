@@ -2915,6 +2915,27 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts a recursive function of an instance of an instance at its definition once", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE G ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES a, b\nD == \\E e \\in {0, K % 4} : a' = e /\\ b' = b\nRf[n \\in 0..2] == IF n = 0 THEN K ELSE Rf[n - 1] + (a % 2)\n====\n---- MODULE Mid ----\nEXTENDS Naturals\nCONSTANT L\nVARIABLES p, q\nII == INSTANCE Inner WITH K <- L + 1, a <- p, b <- q\n====\nMd == INSTANCE Mid WITH L <- 1, p <- x, q <- y\nInit == x = 0 /\\ y = 0\nNext == Md!II!D\nInv == Md!II!Rf[2] > 0\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines?.[2]).toEqual([
+      "line 20, col 8 to line 20, col 22 of module G: 2",
+      "|line 20, col 8 to line 20, col 18 of module G: 2",
+      "||line 20, col 8 to line 20, col 15 of module G: 2",
+      "|||line 17, col 38 to line 17, col 38 of module G: 2",
+      "|||line 15, col 32 to line 15, col 36 of module G: 2",
+      "|||line 15, col 44 to line 15, col 44 of module G: 2",
+      "|||line 9, col 1 to line 9, col 58 of module G: 2",
+      "||||line 9, col 19 to line 9, col 58 of module G: 6",
+      "|||||line 9, col 22 to line 9, col 26 of module G: 6",
+      "|||||line 9, col 33 to line 9, col 33 of module G: 2",
+      "|||||line 9, col 40 to line 9, col 58 of module G: 4",
+      "||||line 9, col 10 to line 9, col 13 of module G: 2",
+    ]);
+  });
+
   it("takes the definition an instance with parameters copies for an action of constant arguments, as TLC's Tool#getActionsAppl binds them", async () => {
     const lines = formatCoverage(
       await getInstanceCoverage(
