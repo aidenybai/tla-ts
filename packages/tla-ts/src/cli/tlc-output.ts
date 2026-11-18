@@ -15,6 +15,7 @@ import type {
   CheckStatus,
   InitialStates,
   SearchStatistics,
+  TraceFailure,
   TraceStep,
   Violation,
 } from "../check";
@@ -363,6 +364,16 @@ const printPostcondition = (printer: MessagePrinter, postcondition: Postconditio
   );
 };
 
+const printTraceFailure = (printer: MessagePrinter, traceFailure: TraceFailure | undefined) => {
+  if (!traceFailure) return;
+  printTraceOutput(printer, traceFailure.output);
+  printer.print(
+    traceFailure.code,
+    MESSAGE_LEVEL.error,
+    printer.isTool ? traceFailure.toolMessage : traceFailure.message,
+  );
+};
+
 const printViolation = (status: CheckStatus, violation: Violation, printer: MessagePrinter) => {
   const print = printer.print;
   const name = violation.name;
@@ -370,6 +381,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
   const isInitial =
     loopStart === undefined &&
     violation.trace.length === 1 &&
+    !violation.traceFailure &&
     (status === "invariant-violation" || status === "liveness-violation");
   const temporal = {
     code: MESSAGE_CODE.temporalPropertyViolated,
@@ -427,6 +439,7 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
     if (!isCounterExample) printTraceOutput(printer, violation.trace[0]?.output);
     printTrace(printer, violation.trace, isCounterExample ? "counter-example" : "error-trace");
   }
+  printTraceFailure(printer, violation.traceFailure);
   printTraceOutput(printer, violation.traceOutput);
   if (isLasso) {
     const label = violation.loopLabel;
@@ -553,15 +566,7 @@ export const printResult = (result: CheckResult, printer: MessagePrinter, timing
     );
     printTraceOutput(printer, failure.trace[0]?.output);
     printTrace(printer, failure.trace, "error-trace");
-    const traceFailure = failure.traceFailure;
-    if (traceFailure) {
-      printTraceOutput(printer, traceFailure.output);
-      print(
-        traceFailure.code,
-        MESSAGE_LEVEL.error,
-        printer.isTool ? traceFailure.toolMessage : traceFailure.message,
-      );
-    }
+    printTraceFailure(printer, failure.traceFailure);
     printTraceOutput(printer, failure.traceOutput);
     printPostcondition(printer, failure.postcondition);
     if (!failure.isCallStackFirst) printCallStack();

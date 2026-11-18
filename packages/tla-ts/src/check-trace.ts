@@ -1,4 +1,5 @@
-import type { CheckOptions, OutputLine, TraceStep } from "./check";
+import type { CheckOptions, OutputLine, TraceFailure, TraceStep } from "./check";
+import { getTraceFailure } from "./check-failure";
 import type { ModelConfig } from "./config";
 import { TlaEvaluationError } from "./errors";
 import { isImpure, type Environment, type State } from "./evaluate";
@@ -11,6 +12,7 @@ import { createModelValue, getFingerprintError, isSameValue, type Value } from "
 export interface Behavior {
   trace: TraceStep[];
   traceOutput?: OutputLine[];
+  traceFailure?: TraceFailure;
 }
 
 interface TraceOptions {
@@ -18,6 +20,7 @@ interface TraceOptions {
   known?: number;
   incomplete?: State;
   isPrintedOnly?: boolean;
+  isRebuildFailureKept?: boolean;
 }
 
 interface RebuiltState {
@@ -149,18 +152,27 @@ export const createTraceBuilder = (context: TraceContext) => {
         ? runtime.runWithNewRandom(() => captureOutput(context.getInitialStates).lines)
         : [];
     const last = steps.length - 1;
+    const isRebuildFailureKept = traceOptions.isRebuildFailureKept && known === 2;
     const findPositionAction = (position: number, isDrawnOn = false) =>
       position === 0 || steps[position].action === "Stuttering"
-        ? { result: undefined, lines: [] }
-        : captureOutput(() =>
-            findStepAction(
-              path[position - 1],
-              steps[position - 1].state,
-              steps[position].state,
-              known === 2 && position === last,
-              isDrawnOn,
-            ),
-          );
+        ? { result: { action: undefined }, lines: [] }
+        : captureOutput(() => {
+            try {
+              return {
+                action: findStepAction(
+                  path[position - 1],
+                  steps[position - 1].state,
+                  steps[position].state,
+                  known === 2 && position === last,
+                  isDrawnOn,
+                ),
+              };
+            } catch (error) {
+              const isKept = isRebuildFailureKept && position === last;
+              if (!isKept || !(error instanceof TlaEvaluationError)) throw error;
+              return { error };
+            }
+          });
     // TLC's TLCStateRandom reseeds only for another state, so TLC rebuilds the step to a known successor drawing on from where the search stopped, unless it rebuilt a step before it.
     const stepActions = steps.map((_step, position) =>
       findPositionAction(position, known === 2 && position === last && last === 1 && !is174),
@@ -178,9 +190,12 @@ export const createTraceBuilder = (context: TraceContext) => {
         ].flat()
       : [];
     const prefixOutput = rebuilt > 0 ? [initialOutput, ...outputs.slice(1, rebuilt)].flat() : [];
+    // TLC's ModelChecker#printTraceAndStop prints the behavior to the predecessor, then the error that rebuilding the last step throws.
+    const failed = stepActions[last].result.error;
+    const traceFailure = failed && getTraceFailure(failed, outputs[last]);
     return {
-      trace: steps.map((step, position) => {
-        const action = stepActions[position].result;
+      trace: (traceFailure ? steps.slice(0, last) : steps).map((step, position) => {
+        const action = stepActions[position].result.action;
         const traceStep: TraceStep = {
           action: step.action,
           label: action && getActionLabel(action, options.version),
@@ -204,6 +219,7 @@ export const createTraceBuilder = (context: TraceContext) => {
         return traceStep;
       }),
       traceOutput,
+      ...(traceFailure && { traceFailure }),
     };
   };
   const findTraceSuccessor = (state: Value[], isMatch: (successor: Successor) => boolean) =>

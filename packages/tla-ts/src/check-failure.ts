@@ -1,5 +1,12 @@
 import type { Expression } from "./ast";
-import { getErrorExitCode, isStackOverflow, TlaEvaluationError, TlaModuleError } from "./errors";
+import type { OutputLine, TraceFailure } from "./check";
+import {
+  getErrorExitCode,
+  isStackOverflow,
+  TlaEvaluationError,
+  TlaModuleError,
+  UNEXPECTED_EVAL_EXCEPTION,
+} from "./errors";
 import {
   createTracingEnvironment,
   type CallStack,
@@ -7,9 +14,18 @@ import {
   type FingerprintFailure,
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, getMessageExitStatus } from "./exit-codes";
-import type { TraceFailure } from "./check";
-import { getCodedMessage, isEvalException } from "./tlc/messages";
+import { getCodedMessage, getFailureMessage, isEvalException } from "./tlc/messages";
 import { getFingerprintError, getHeldValues, markFingerprinted, type Value } from "./values";
+
+export const getTraceFailure = (error: TlaEvaluationError, output: OutputLine[]): TraceFailure => ({
+  ...getFailureMessage(
+    isEvalException(error)
+      ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
+      : error,
+    true,
+  ),
+  output,
+});
 
 export interface ReplayFailure {
   callStack: Expression[];
