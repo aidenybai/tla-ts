@@ -7689,8 +7689,21 @@ CopyWithinFirstGetter(heap, ref, target, start, end) ==
 \\* indices that the object or its prototypes hold, and those that copy over them, change. The
 \\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
 LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
-  LET length == LengthOf(heap, ref)
-      to == ClampedIndex(target, length)
+  CopyWithinOf(heap, ref, LengthOf(heap, ref), target, start, end)
+
+\\* Whether copyWithin of an array that a name holds, whose arguments' conversion changed the
+\\* array, copies through the elements the array holds after, with the length it read before.
+IsCopiedWithin(heap, afterHeap, before, after) ==
+  /\\ before = after
+  /\\ IsHeap(before)
+  /\\ ~IsProxy(afterHeap, before)
+  /\\ ~IsTypedArray(afterHeap, before)
+  /\\ ~afterHeap.objects[before[Ref]].isOpaque
+  /\\ ~HasLongLength(heap, before)
+
+\\* copyWithin with the length that it read.
+CopyWithinOf(heap, ref, length, target, start, end) ==
+  LET to == ClampedIndex(target, length)
       from == ClampedIndex(start, length)
       final == IF end = Undefined THEN length ELSE ClampedIndex(end, length)
       count == IF final - from < length - to THEN final - from ELSE length - to

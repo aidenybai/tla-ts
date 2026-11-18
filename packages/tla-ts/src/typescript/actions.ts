@@ -14786,7 +14786,7 @@ const getConvertedArrayValues = (node: ts.Node, context: Context) => {
   const values = node.arguments.slice(0, count);
   return count !== undefined &&
     values.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
-    ? { receiver: skipCasts(node.expression.expression), values }
+    ? { receiver: skipCasts(node.expression.expression), method: node.expression.name.text, values }
     : undefined;
 };
 
@@ -22266,47 +22266,83 @@ export const translateStatements = (
       context,
       statementFrame,
       (after, primitives) => {
-        const run = translateStatements(
-          statements,
-          {
-            ...after,
-            scope: {
-              ...after.scope,
-              results: new Map([
-                ...after.scope.results,
-                ...values.flatMap((value, position) => {
-                  const primitive = index(primitives, [number(position + 1)]);
-                  return [[value, primitive] as const, [skipCasts(value), primitive] as const];
-                }),
-              ]),
-            },
+        const converted = {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([
+              ...after.scope.results,
+              ...values.flatMap((value, position) => {
+                const primitive = index(primitives, [number(position + 1)]);
+                return [[value, primitive] as const, [skipCasts(value), primitive] as const];
+              }),
+            ]),
           },
-          context,
-          frame,
+        };
+        const stop = leaf(
+          apply("Assert", [
+            boolean(false),
+            string(
+              "tla-ts can't follow an array method whose argument's conversion changed the array",
+            ),
+          ]),
         );
-        return ts.isIdentifier(receiver)
-          ? ifThenElse(
-              useJavaScript(
-                "ObjectKept",
-                [
-                  getHeap(path.scope, indexed.node, context),
-                  getHeap(after.scope, indexed.node, context),
-                  translateExpression(receiver, path.scope, context),
-                  translateExpression(receiver, after.scope, context),
-                ],
-                context,
-              ),
-              run,
-              leaf(
-                apply("Assert", [
-                  boolean(false),
-                  string(
-                    "tla-ts can't follow an array method whose argument's conversion changed the array",
+        if (!ts.isIdentifier(receiver))
+          return translateStatements(statements, converted, context, frame);
+        const heap = getHeap(path.scope, indexed.node, context);
+        const afterHeap = getHeap(after.scope, indexed.node, context);
+        const before = translateExpression(receiver, path.scope, context);
+        const current = translateExpression(receiver, after.scope, context);
+        // copyWithin copies with the length it read before it converted, through the elements that
+        // the array holds after.
+        const changeName = context.names.getFresh("change");
+        const change = identifier(changeName);
+        const copied =
+          indexed.method === "copyWithin"
+            ? ifThenElse(
+                useJavaScript("IsCopiedWithin", [heap, afterHeap, before, current], context),
+                bindOnce(
+                  converted,
+                  changeName,
+                  useJavaScript(
+                    "CopyWithinOf",
+                    [
+                      afterHeap,
+                      before,
+                      useJavaScript("LengthOf", [heap, before], context),
+                      ...translateCopyWithinArguments(values, converted.scope, context),
+                    ],
+                    context,
                   ),
-                ]),
-              ),
-            )
-          : run;
+                  ifThenElse(
+                    field(change, "isThrown"),
+                    throwTypeError(converted, indexed.node, context, statementFrame),
+                    translateStatements(
+                      statements,
+                      withHeap(
+                        {
+                          ...converted,
+                          scope: {
+                            ...converted.scope,
+                            results: new Map([...converted.scope.results, [indexed.node, before]]),
+                          },
+                        },
+                        field(change, "heap"),
+                        context,
+                      ),
+                      context,
+                      frame,
+                    ),
+                  ),
+                ),
+                stop,
+              )
+            : stop;
+        return ifThenElse(
+          useJavaScript("ObjectKept", [heap, afterHeap, before, current], context),
+          translateStatements(statements, converted, context, frame),
+          copied,
+        );
       },
     );
   }

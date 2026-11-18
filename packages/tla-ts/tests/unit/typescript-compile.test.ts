@@ -53601,4 +53601,37 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("copies within an array that a conversion shortened with the length read before", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      function makeArray() {
+        var a = [0];
+        for (var i = 0; i < 12; i++) {
+          a[i] = i;
+        }
+        return a;
+      }
+      function shorten() {
+        arr.length = 4;
+        return 1;
+      }
+      var arr = makeArray();
+      var copied = arr.copyWithin(8, { valueOf: shorten });
+      var result = [copied === arr, arr.length, 7 in arr, arr[8], arr[10], 11 in arr, Object.keys(arr).join("|")].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("true,11,false,1,3,false,0|1|2|3|8|9|10");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("true,12,false,1,3,false,0|1|2|3|8|9|10");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result true,11,false,1,3,false,0|1|2|3|8|9|10",
+      );
+    });
+  });
 });
