@@ -24,6 +24,7 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import {
   chargeContexts,
+  chargeFunctionConstruction,
   chargeSetOperation,
   costCoverage,
   countCoverage,
@@ -1946,6 +1947,23 @@ const compileFunctionConstruction = (
 ): Evaluator => {
   const build = getFunctionBuilder(expression, environment).build;
   const bounds = expression.bounds;
+  const coverage = environment.coverage;
+  if (coverage) {
+    return (context) => {
+      const domain = getBoundsDomain(bounds, context);
+      const value = build(domain, context);
+      const sets =
+        bounds.length === 1 || typeof domain !== "object" || domain.kind !== "ProductSet"
+          ? [domain]
+          : domain.factors;
+      const isConverted =
+        (typeof value !== "object" || value.kind !== "LazyFunction") && sets.every(isReducibleSet);
+      if (isConverted && coverage.current !== -1 && coverage.covered.has(expression)) {
+        chargeFunctionConstruction(coverage, coverage.current, sets);
+      }
+      return value;
+    };
+  }
   if (bounds.length === 1 && bounds[0].pattern.kind === "Name") {
     const set = getEvaluator(bounds[0].set, environment);
     return (context) => build(set(context), context);

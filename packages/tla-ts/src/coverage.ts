@@ -737,15 +737,8 @@ export const createChargedEnumerator = (
     isNormalized,
   );
 
-// TLC's ContextEnumerator draws each bound's next element before it returns a binding.
-export const chargeContexts = (
-  coverage: Coverage,
-  sets: Value[],
-  lists: (Value[] | IntervalValue)[],
-) => {
-  const enumerators = sets.map((set, index) =>
-    createChargedEnumerator(coverage, set, lists[index], true),
-  );
+// TLC's ContextEnumerator and FcnParams draw each bound's next element before they return a binding.
+const chargeBindings = (enumerators: ChargedEnumerator[]) => {
   enumerators.every((enumerator) => enumerator.next());
   return () => {
     for (let index = 0; index < enumerators.length; index++) {
@@ -754,6 +747,26 @@ export const chargeContexts = (
       enumerators[index].next();
     }
   };
+};
+
+export const chargeContexts = (
+  coverage: Coverage,
+  sets: Value[],
+  lists: (Value[] | IntervalValue)[],
+) =>
+  chargeBindings(
+    sets.map((set, index) => createChargedEnumerator(coverage, set, lists[index], true)),
+  );
+
+// TLC's FcnLambdaValue#toFcnRcd draws the elements of its domains and charges the function's size.
+export const chargeFunctionConstruction = (coverage: Coverage, node: number, sets: Value[]) => {
+  const sizes = sets.map((set) => getCardinality(set));
+  const advance = chargeBindings(
+    sets.map((set, index) => createEnumerator(coverage, set, sizes[index], false)),
+  );
+  const size = sizes.reduce((product, setSize) => product * setSize, 1);
+  for (let index = 0; index < size; index++) advance();
+  coverage.secondary[node] += size;
 };
 
 const getLeadingZeros = (value: bigint) => {

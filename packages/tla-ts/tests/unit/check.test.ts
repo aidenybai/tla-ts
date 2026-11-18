@@ -1769,6 +1769,37 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges a function constructor its domain and size, as TLC's FcnLambdaValue#toFcnRcd does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Integers\nVARIABLES y, z\nInit == z = 1 /\\ y = [p \\in {1, 2} |-> z]\nNext == z' = 2 /\\ y' = [p \\in {1, 2} |-> z + 1]\nInv == y = [p \\in {1, 2} |-> z] \\/ z = 2\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines).toEqual([
+      [
+        "line 4, col 18 to line 4, col 41 of module E: 1",
+        "|line 4, col 22 to line 4, col 41 of module E: 1:2",
+        "||line 4, col 40 to line 4, col 40 of module E: 2",
+        "||line 4, col 29 to line 4, col 34 of module E: 1:3",
+      ],
+      [
+        "line 5, col 9 to line 5, col 14 of module E: 3",
+        "line 5, col 19 to line 5, col 47 of module E: 3",
+        "|line 5, col 24 to line 5, col 47 of module E: 3:6",
+        "||line 5, col 42 to line 5, col 46 of module E: 6",
+        "||line 5, col 31 to line 5, col 36 of module E: 3:9",
+      ],
+      [
+        "line 6, col 8 to line 6, col 40 of module E: 3",
+        "|line 6, col 8 to line 6, col 31 of module E: 3",
+        "||line 6, col 8 to line 6, col 8 of module E: 3",
+        "||line 6, col 12 to line 6, col 31 of module E: 3:6",
+        "|||line 6, col 30 to line 6, col 30 of module E: 6",
+        "|||line 6, col 19 to line 6, col 24 of module E: 3:9",
+        "|line 6, col 36 to line 6, col 40 of module E: 1",
+      ],
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",
