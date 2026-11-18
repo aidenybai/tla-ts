@@ -53403,4 +53403,43 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("count + 1"))).status).toBe("invariant-violation");
     });
   });
+
+  describe("lets a call hold a new object that each call makes, where an object changes in place", () => {
+    const getSource = (expected: string) => `
+      const make = (text: string) => (text.length > 0 ? new Error(text) : undefined);
+      const first = make("made");
+      if (first !== undefined) first.message = "changed";
+      const second = make("made");
+      const result = [first?.message, second?.message, make("")].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("changed,made,"))).failure).toBeUndefined();
+    });
+
+    it("rejects an object that the calls share", async () => {
+      expect((await checkModel(getSource("changed,changed,"))).failure?.message).toContain(
+        "result changed,made,",
+      );
+    });
+
+    it("stops where the constructor returns an object of its own", () => {
+      const source = `
+        const kept = new Error("kept");
+        class Keeper {
+          constructor() {
+            return kept;
+          }
+        }
+        const make = (text: string) => (text.length > 0 ? (new Keeper() as Error) : undefined);
+        const first = make("made");
+        if (first !== undefined) first.message = "changed";
+        if (kept.message !== "changed") throw new Error("kept " + kept.message);
+      `;
+      expect(() => compile(source)).toThrow(
+        'tla-ts can\'t hold make("made") on the heap, which would share an object that changes in place',
+      );
+    });
+  });
 });

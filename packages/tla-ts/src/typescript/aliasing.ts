@@ -669,26 +669,61 @@ export const isMakingNode = (node: ts.Node, context: Context) =>
   ts.isRegularExpressionLiteral(node) ||
   ((ts.isCallExpression(node) || ts.isNewExpression(node)) && isAllocation(node, context));
 
-// Whether a call gives a new object each time: Array(...), or a callee that returns only object
-// literals, which nothing else can name, though the objects inside them may still be shared.
-const isFreshCall = (node: ts.Node, context: Context) => {
-  if (isArrayConstruction(node, context)) return true;
-  const callee = ts.isCallExpression(node) ? getCallee(node.expression, context) : undefined;
-  if (callee?.body === undefined || callee.asteriskToken !== undefined) return false;
-  const body = callee.body;
-  if (!ts.isBlock(body)) return ts.isObjectLiteralExpression(strip(body));
+// The return statements of a function's own body.
+const getReturns = (body: ts.Block) => {
   const returns: ts.ReturnStatement[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isReturnStatement(node)) returns.push(node);
     if (!ts.isFunctionLike(node)) ts.forEachChild(node, visit);
   };
   ts.forEachChild(body, visit);
+  return returns;
+};
+
+// Whether an expression gives a new object each time it runs, or no object: an object literal, a
+// new of what a declaration file declares or of a base class whose constructor returns nothing,
+// undefined or null, or a conditional of these.
+const isFreshValue = (node: ts.Expression, context: Context): boolean => {
+  const value = strip(node);
+  if (ts.isConditionalExpression(value)) {
+    return isFreshValue(value.whenTrue, context) && isFreshValue(value.whenFalse, context);
+  }
+  if (!ts.isNewExpression(value)) {
+    return (
+      ts.isObjectLiteralExpression(value) ||
+      value.kind === ts.SyntaxKind.NullKeyword ||
+      (ts.isIdentifier(value) && value.text === "undefined")
+    );
+  }
+  const declaration = getValueDeclaration(getSymbol(value.expression, context.checker), context);
+  const constructor =
+    declaration !== undefined && ts.isClassDeclaration(declaration)
+      ? declaration.members.find(ts.isConstructorDeclaration)
+      : undefined;
+  return (
+    declaration !== undefined &&
+    (declaration.getSourceFile().isDeclarationFile ||
+      (ts.isClassDeclaration(declaration) &&
+        declaration.heritageClauses === undefined &&
+        (constructor?.body === undefined ||
+          getReturns(constructor.body).every((statement) => statement.expression === undefined))))
+  );
+};
+
+// Whether a call gives a new object each time: Array(...), or a callee that returns only new
+// objects, which nothing else can name, though the objects inside them may still be shared.
+const isFreshCall = (node: ts.Node, context: Context) => {
+  if (isArrayConstruction(node, context)) return true;
+  const callee = ts.isCallExpression(node) ? getCallee(node.expression, context) : undefined;
+  if (callee?.body === undefined || callee.asteriskToken !== undefined) return false;
+  const body = callee.body;
+  if (!ts.isBlock(body)) return isFreshValue(body, context);
+  const returns = getReturns(body);
   return (
     returns.length > 0 &&
     returns.every(
       (statement) =>
-        statement.expression !== undefined &&
-        ts.isObjectLiteralExpression(strip(statement.expression)),
+        statement.expression !== undefined && isFreshValue(statement.expression, context),
     )
   );
 };
