@@ -107,6 +107,8 @@ export interface FilteredSetValue extends LazySet {
   kind: "FilteredSet";
   base: Value;
   test: (element: Value, isMember: boolean) => boolean;
+  // Under coverage, starts a pass over the base that charges as TLC's SetPredValue enumerator does, and as its toSetEnum does when materialized.
+  startPass?: (isMaterialized: boolean) => (element: Value) => boolean;
   source?: FilteredSetSource;
 }
 
@@ -1588,7 +1590,9 @@ const enumerateSet = (
       }
       return toFiniteSet(
         createEnumeratedSet(
-          getStreamedElements(value.base).filter((element) => value.test(element, false)),
+          getStreamedElements(value.base).filter(
+            value.startPass?.(true) ?? ((element) => value.test(element, false)),
+          ),
         ),
       ).elements;
     case "Union": {
@@ -1814,6 +1818,8 @@ const someElementOfStream = (value: ObjectValue, visit: (element: Value) => bool
     );
   }
   if (value.kind === "FilteredSet" && isTlcEnumerable(value.base)) {
+    const test = value.startPass?.(false);
+    if (test) return someStreamedElement(value.base, (element) => test(element) && visit(element));
     return someStreamedElement(
       value.base,
       (element) => value.test(element, false) && visit(element),

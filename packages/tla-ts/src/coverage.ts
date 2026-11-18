@@ -701,6 +701,19 @@ const createProductEnumerator = (
   };
 };
 
+// Draws a set of functions or records that carries a cost model as TLC's enumerator of its value class does.
+export const createProductSetEnumerator = (coverage: Coverage, set: Value) => {
+  const node = typeof set === "object" ? coverage.values.get(set) : undefined;
+  if (node === undefined || typeof set !== "object") return undefined;
+  if (set.kind === "RecordSet") return createProductEnumerator(coverage, node, set.sets);
+  if (set.kind !== "FunctionSet") return undefined;
+  return createProductEnumerator(
+    coverage,
+    node,
+    Array.from({ length: getCardinality(set.domain) }, () => set.range),
+  );
+};
+
 // Charges what TLC's enumerator of the set's value class charges as it draws each element, the final null included.
 // A normalized enumeration of a set of functions or records converts it to a SetEnumValue with the same cost model first.
 const createEnumerator = (
@@ -710,20 +723,12 @@ const createEnumerator = (
   isNormalized: boolean,
 ): ChargedEnumerator => {
   const node = typeof set === "object" ? coverage.values.get(set) : undefined;
-  if (
-    node === undefined ||
-    typeof set !== "object" ||
-    (set.kind !== "FunctionSet" && set.kind !== "RecordSet")
-  ) {
-    return createListEnumerator(coverage, node, size);
+  // TLC's SetPredValue enumerator charges for the elements of its base it draws, which the filter counts as it tests them.
+  if (!isNormalized && typeof set === "object" && set.kind === "FilteredSet") {
+    return createListEnumerator(coverage, undefined, size);
   }
-  const elements = createProductEnumerator(
-    coverage,
-    node,
-    set.kind === "RecordSet"
-      ? set.sets
-      : Array.from({ length: getCardinality(set.domain) }, () => set.range),
-  );
+  const elements = createProductSetEnumerator(coverage, set);
+  if (!elements || node === undefined) return createListEnumerator(coverage, node, size);
   if (!isNormalized) return elements;
   let count = 0;
   while (elements.next()) count++;

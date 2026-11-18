@@ -29,6 +29,7 @@ import {
   costCoverage,
   countCoverage,
   createChargedEnumerator,
+  createProductSetEnumerator,
   getCoverageNode,
   runAtCoverageNode,
   type Coverage,
@@ -1444,6 +1445,9 @@ const countEvaluator =
         expression.kind === "SetEnumeration" ||
         ((expression.kind === "SetFilter" || expression.kind === "SetMap") &&
           isReducibleSet(value)) ||
+        (expression.kind === "SetFilter" &&
+          typeof value === "object" &&
+          value.kind === "FilteredSet") ||
         ((expression.kind === "FunctionSet" || expression.kind === "RecordSet") &&
           typeof value === "object" &&
           value.kind === expression.kind);
@@ -2054,22 +2058,13 @@ export const getLazyFilter = (
     predicate: predicateNode,
   };
   const coverage = environment.coverage;
-  const testCovered = (node: number, isMember: boolean, test: () => Value) => {
-    if (!coverage || node === -1) return test();
-    if (!isMember) coverage.secondary[node]++;
-    const value = runAtCoverageNode(coverage, isMember ? -1 : node, test);
-    if (!isMember && value === true) coverage.secondary[node]++;
-    return value;
-  };
   const createFiltered = (
     base: Value,
     context: Context,
     evaluator: Evaluator,
     node: number,
-  ): RebindableFilteredSet => ({
-    kind: "FilteredSet",
-    base,
-    test: (element, isMember) => {
+  ): RebindableFilteredSet => {
+    const test = (element: Value, isMember: boolean) => {
       if (
         pattern.kind === "Tuple" &&
         getSequenceElements(element)?.length !== pattern.names.length
@@ -2078,25 +2073,41 @@ export const getLazyFilter = (
           `Attempted to check if the value:\n${prettyPrint(formatValue(element))}\nis an element of a set of ${pattern.names.length}-tuples.`,
         );
       }
-      const value = testCovered(node, isMember, () =>
-        evaluator(withScope(context, bindPattern(context.scope, pattern, element))),
-      );
+      const value = evaluator(withScope(context, bindPattern(context.scope, pattern, element)));
       if (typeof value !== "boolean") {
         throw new TlaEvaluationError(
           `${isMember ? "The evaluation of predicate" : "Evaluating predicate"} ${predicateNode} yielded non-Boolean value.`,
         );
       }
       return value;
-    },
-    source,
-    rebind: (tracing) =>
+    };
+    const rebind = (tracing: Environment) =>
       createFiltered(
         base,
         { ...context, environment: tracing },
         getEvaluator(expression.predicate, tracing),
         -1,
-      ),
-  });
+      );
+    if (!coverage || node === -1) return { kind: "FilteredSet", base, test, source, rebind };
+    return {
+      kind: "FilteredSet",
+      base,
+      test: (element, isMember) =>
+        runAtCoverageNode(coverage, isMember ? -1 : node, () => test(element, isMember)),
+      startPass: (isMaterialized) => {
+        const draws = createProductSetEnumerator(coverage, base);
+        return (element) => {
+          draws?.next();
+          coverage.secondary[node]++;
+          const value = runAtCoverageNode(coverage, node, () => test(element, false));
+          if (isMaterialized && value) coverage.secondary[node]++;
+          return value;
+        };
+      },
+      source,
+      rebind,
+    };
+  };
   return (base: Value, context: Context, node = -1) =>
     createFiltered(base, context, predicate, node);
 };

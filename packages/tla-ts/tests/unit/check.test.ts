@@ -1848,6 +1848,63 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges a filter of a set of records or functions per element it draws, as TLC's SetPredValue does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in {r \\in [a : 0..1, b : BOOLEAN] : r.a = 0}\nNext == x' \\in {r \\in [a : 0..1, b : BOOLEAN] : r.b = ~x.b}\nInv1 == \\E r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.a = x.a} : r = x\nInv2 == (CHOOSE r \\in {s \\in [a : 0..1, b : BOOLEAN] : s.b = x.b} : TRUE).b = x.b\nInv3 == \\A r \\in {s \\in {f \\in [{1} -> {0, 1}] : f[1] >= x.a} : s[1] > 0} : r[1] = 1\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv1\nINVARIANT Inv2\nINVARIANT Inv3",
+    );
+    expect(lines).toEqual([
+      [
+        "line 4, col 9 to line 4, col 55 of module E: 2",
+        "|line 4, col 15 to line 4, col 55 of module E: 1:4",
+        "||line 4, col 48 to line 4, col 54 of module E: 4",
+        "||line 4, col 22 to line 4, col 44 of module E: 1:8",
+        "|||line 4, col 23 to line 4, col 30 of module E: 1",
+        "|||line 4, col 33 to line 4, col 43 of module E: 1",
+      ],
+      [
+        "line 5, col 9 to line 5, col 59 of module E: 8",
+        "|line 5, col 16 to line 5, col 59 of module E: 4:16",
+        "||line 5, col 49 to line 5, col 58 of module E: 16",
+        "||line 5, col 23 to line 5, col 45 of module E: 4:32",
+        "|||line 5, col 24 to line 5, col 31 of module E: 4",
+        "|||line 5, col 34 to line 5, col 44 of module E: 4",
+      ],
+      [
+        "line 6, col 9 to line 6, col 68 of module E: 4",
+        "|line 6, col 64 to line 6, col 68 of module E: 6",
+        "|line 6, col 18 to line 6, col 60 of module E: 4:34",
+        "||line 6, col 51 to line 6, col 59 of module E: 16",
+        "||line 6, col 25 to line 6, col 47 of module E: 4:32",
+        "|||line 6, col 26 to line 6, col 33 of module E: 4",
+        "|||line 6, col 36 to line 6, col 46 of module E: 4",
+      ],
+      [
+        "line 7, col 9 to line 7, col 81 of module E: 4",
+        "|line 7, col 9 to line 7, col 75 of module E: 4",
+        "||line 7, col 10 to line 7, col 72 of module E: 4",
+        "|||line 7, col 69 to line 7, col 72 of module E: 4",
+        "|||line 7, col 23 to line 7, col 65 of module E: 4:28",
+        "||||line 7, col 56 to line 7, col 64 of module E: 16",
+        "||||line 7, col 30 to line 7, col 52 of module E: 4:32",
+        "|||||line 7, col 31 to line 7, col 38 of module E: 4",
+        "|||||line 7, col 41 to line 7, col 51 of module E: 4",
+        "|line 7, col 79 to line 7, col 81 of module E: 4",
+      ],
+      [
+        "line 8, col 9 to line 8, col 84 of module E: 4",
+        "|line 8, col 77 to line 8, col 84 of module E: 4",
+        "|line 8, col 18 to line 8, col 73 of module E: 4:18",
+        "||line 8, col 65 to line 8, col 72 of module E: 6",
+        "||line 8, col 25 to line 8, col 61 of module E: 4:8",
+        "|||line 8, col 50 to line 8, col 60 of module E: 8",
+        "|||line 8, col 32 to line 8, col 46 of module E: 4:8",
+        "||||line 8, col 33 to line 8, col 35 of module E: 4",
+        "||||line 8, col 40 to line 8, col 45 of module E: 4:12",
+      ],
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",
