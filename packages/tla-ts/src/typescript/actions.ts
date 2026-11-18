@@ -2689,10 +2689,14 @@ const translateCallStatementBody = (
   if (leadingLoop !== undefined) return runLeading(leadingLoop);
   if (loop?.isInherited === true) {
     return ifThenElse(
-      apply("=", [
-        translateExpression(expression.expression, path.scope, context),
-        translateBuiltInValue(`Array.prototype.${loop.method}`, expression, context),
-      ]),
+      useJavaScript(
+        "SameValue",
+        [
+          translateExpression(expression.expression, path.scope, context),
+          translateBuiltInValue(`Array.prototype.${loop.method}`, expression, context),
+        ],
+        context,
+      ),
       translateLoopCall(expression, loop, path, context, frame, continueWith),
       leaf(
         apply("Assert", [
@@ -5651,14 +5655,18 @@ const translateCallStatementBody = (
                 )
               : ITERATOR_CALLBACK_METHODS.has(target.name.text)
                 ? ifThenElse(
-                    apply("=", [
-                      value,
-                      translateBuiltInValue(
-                        `Iterator.prototype.${target.name.text}`,
-                        expression,
-                        context,
-                      ),
-                    ]),
+                    useJavaScript(
+                      "SameValue",
+                      [
+                        value,
+                        translateBuiltInValue(
+                          `Iterator.prototype.${target.name.text}`,
+                          expression,
+                          context,
+                        ),
+                      ],
+                      context,
+                    ),
                     rejectCallback(target.name.text),
                     unknown,
                   )
@@ -5668,14 +5676,18 @@ const translateCallStatementBody = (
                     isInertValue(keyNode) &&
                     isEvery(context.checker.getTypeAtLocation(keyNode), ts.TypeFlags.StringLike)
                   ? ifThenElse(
-                      apply("=", [
-                        value,
-                        translateBuiltInValue(
-                          `Object.prototype.${target.name.text}`,
-                          expression,
-                          context,
-                        ),
-                      ]),
+                      useJavaScript(
+                        "SameValue",
+                        [
+                          value,
+                          translateBuiltInValue(
+                            `Object.prototype.${target.name.text}`,
+                            expression,
+                            context,
+                          ),
+                        ],
+                        context,
+                      ),
                       continueCall(
                         path,
                         useJavaScript(
@@ -5693,14 +5705,18 @@ const translateCallStatementBody = (
                   : accessor === null || keyNode === undefined
                     ? unknown
                     : ifThenElse(
-                        apply("=", [
-                          value,
-                          translateBuiltInValue(
-                            `Object.prototype.${target.name.text}`,
-                            expression,
-                            context,
-                          ),
-                        ]),
+                        useJavaScript(
+                          "SameValue",
+                          [
+                            value,
+                            translateBuiltInValue(
+                              `Object.prototype.${target.name.text}`,
+                              expression,
+                              context,
+                            ),
+                          ],
+                          context,
+                        ),
                         translateAccessor(
                           accessor[1],
                           accessor[2] === "G" ? "get" : "set",
@@ -5733,6 +5749,7 @@ const translateCallStatementBody = (
     callee === undefined &&
     expression.questionDotToken === undefined &&
     ts.isIdentifier(skipCasts(target)) &&
+    getDispatched(expression, path.scope.functions, context) === undefined &&
     (isFunctionValue(target, context) ||
       (context.heap !== undefined &&
         context.modelValues.size === 0 &&
@@ -5748,10 +5765,11 @@ const translateCallStatementBody = (
           useJavaScript("TypeOfIn", [getHeap(path.scope, expression, context), value], context),
           string("function"),
         ]),
-        apply("=", [
-          value,
-          translateBuiltInValue("get Function.prototype.arguments", expression, context),
-        ]),
+        useJavaScript(
+          "SameValue",
+          [value, translateBuiltInValue("get Function.prototype.arguments", expression, context)],
+          context,
+        ),
         useJavaScript("ThrowsWithoutReceiver", [value], context),
       ]),
       throwTypeError(path, expression, context, frame),
@@ -14472,10 +14490,11 @@ const translateStoredRegExpCall = (
                   string("function"),
                 ]),
                 not(
-                  apply("=", [
-                    exec,
-                    translateBuiltInValue("RegExp.prototype.exec", expression, context),
-                  ]),
+                  useJavaScript(
+                    "SameValue",
+                    [exec, translateBuiltInValue("RegExp.prototype.exec", expression, context)],
+                    context,
+                  ),
                 ),
               ]),
               unfollowed,
@@ -14495,10 +14514,11 @@ const translateStoredRegExpCall = (
     .reduceRight<Formula>(
       (rest, method) =>
         ifThenElse(
-          apply("=", [
-            value,
-            translateBuiltInValue(`RegExp.prototype.${method}`, expression, context),
-          ]),
+          useJavaScript(
+            "SameValue",
+            [value, translateBuiltInValue(`RegExp.prototype.${method}`, expression, context)],
+            context,
+          ),
           rejectRegExp(method),
           rest,
         ),

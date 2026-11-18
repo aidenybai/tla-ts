@@ -6291,7 +6291,7 @@ export const findCalleeRuns = (callees: readonly ts.Expression[], context: Conte
   const placed = callees.filter((callee) => getPosition(table, callee) >= 0);
   const positions = Int32Array.from(placed, (callee) => getPosition(table, callee));
   const files = Int32Array.from(positions, (position) => table.files[position]);
-  const typeIds = Int32Array.from(placed, (callee) => checker.getTypeAtLocation(callee).id);
+  const typeIds = Int32Array.from(placed, (callee) => getCalleeType(callee, checker).id);
   const aloneBits = new Uint32Array((placed.length + 31) >>> 5);
   placed.forEach((callee, index) => {
     if (isHeldBuiltInObject(callee, context) || isSuperAccess(callee)) setBit(aloneBits, index);
@@ -6317,7 +6317,7 @@ export const findCalleeRuns = (callees: readonly ts.Expression[], context: Conte
     const callee = placed[index];
     const run = starts.length - 1;
     runOf[index] = run;
-    const type = checker.getTypeAtLocation(callee);
+    const type = getCalleeType(callee, checker);
     const row = getDispatchRow(type, context);
     const held = hasBit(aloneBits, index)
       ? [...getFunctionCandidates(callee, context), ...getClosures(callee, context)]
@@ -6325,9 +6325,7 @@ export const findCalleeRuns = (callees: readonly ts.Expression[], context: Conte
           ...getFileCandidates(callee.getSourceFile(), context).filter((candidate) =>
             isDispatchAssignable(candidate, row, type, context),
           ),
-          ...(context.closures.get(callee.getSourceFile()) ?? []).filter((closure) =>
-            checker.isTypeAssignableTo(checker.getTypeAtLocation(closure), type),
-          ),
+          ...getClosures(callee, context),
         ];
     if (held.length > 0) setBit(heldBits, run);
     held.forEach((candidate) => {
