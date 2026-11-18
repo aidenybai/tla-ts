@@ -61,6 +61,7 @@ export class IncSatSolver {
   private readonly internalized: RefVector;
   private hasUninterpreted = false;
   private models: ProtoModel[] = [];
+  private subgoals: Goal[] = [];
   private scopes: Scope[] = [];
   reasonUnknown = "no reason given";
   wasUnknown = false;
@@ -193,6 +194,7 @@ export class IncSatSolver {
   private internalizeGoal(goal: Goal) {
     this.solver.popToBaseLevel();
     if (this.solver.isInconsistent) return L_FALSE;
+    this.resetSubgoals();
     const bitBlaster = this.getBitBlaster();
     const subgoals = (() => {
       if (this.isCnf) return [goal];
@@ -213,6 +215,8 @@ export class IncSatSolver {
         return undefined;
       }
     })();
+    this.subgoals = subgoals ?? [];
+    if (!this.subgoals.includes(goal)) goal.reset();
     if (subgoals?.length !== 1) return L_UNDEF;
     const subgoal = subgoals[0];
     this.converters.converters = [...this.converters.converters, ...subgoal.converters];
@@ -385,7 +389,7 @@ export class IncSatSolver {
     return this.core.items;
   }
 
-  getModel() {
+  mkModel() {
     const manager = this.manager;
     if (!this.solver.isModelCurrent || this.fmls.size > this.fmlsHead) return null;
     const euf = this.goal2sat.euf;
@@ -397,10 +401,15 @@ export class IncSatSolver {
       else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
     }
     if (this.satConverter.entries.length > 0) applyDefinitions(this.satConverter.entries, model);
-    const converted = convertModel(this.converters, euf === null ? model : euf.updateModel(model));
-    converted.incRef();
-    this.models.push(converted);
-    return converted;
+    return convertModel(this.converters, euf === null ? model : euf.updateModel(model));
+  }
+
+  getModel() {
+    const model = this.mkModel();
+    if (model === null) return null;
+    model.incRef();
+    this.models.push(model);
+    return model;
   }
 
   findMutexes(vars: readonly number[]) {
@@ -445,15 +454,22 @@ export class IncSatSolver {
       : [];
   }
 
+  private resetSubgoals() {
+    for (const subgoal of this.subgoals) subgoal.reset();
+    this.subgoals = [];
+  }
+
   release() {
     for (const model of this.models) model.decRef();
     this.models = [];
+    this.resetSubgoals();
     this.fmls.reset();
     this.names.reset();
     this.core.reset();
     this.internalized.reset();
     this.satConverter.release();
     this.releaseBitBlaster();
+    this.goal2sat.release();
   }
 
   private releaseBitBlaster() {

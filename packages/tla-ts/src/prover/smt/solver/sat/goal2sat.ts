@@ -17,6 +17,7 @@ import {
 } from "../ast";
 import { EufSolver, type EufInternalizer, type ThSolverFactory } from "../euf/euf-solver";
 import { getDependencyValues, type Goal } from "../goal";
+import type { ObjMap } from "../hashtable";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
 import { NULL_LITERAL } from "./clause";
 import { PbSolver, type SatInternalizer } from "./pb-solver";
@@ -116,6 +117,8 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
       this.app2lit.delete(expr);
       this.lit2app.delete(lit);
     }
+    for (let index = cacheLim; index < this.cacheTrail.length; index++)
+      manager.decRef(this.cacheTrail[index]);
     this.cacheTrail.length = cacheLim;
     this.cacheLim.length -= remaining;
   }
@@ -511,10 +514,11 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     this.forcePush();
     this.app2lit.set(expr, lit);
     this.lit2app.set(lit, expr);
+    this.manager.incRef(expr);
     this.cacheTrail.push(expr);
   }
 
-  private insertDep(dep: number, dep2asm: Map<number, number>) {
+  private insertDep(dep: number, dep2asm: Map<number, number> | ObjMap<number>) {
     const manager = this.manager;
     const isSign = manager.isNot(dep);
     const atom = isSign ? manager.getArg(dep, 0) : dep;
@@ -544,7 +548,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     }
   }
 
-  runGoal(goal: Goal, dep2asm: Map<number, number>) {
+  runGoal(goal: Goal, dep2asm: Map<number, number> | ObjMap<number>) {
     const manager = this.manager;
     if (this.mkThSolver !== null) this.ensureEuf();
     try {
@@ -575,5 +579,11 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     this.results = [];
     this.app2lit = new Map();
     this.lit2app = new Map();
+  }
+
+  release() {
+    for (let index = 0; index < this.cacheTrail.length; index++)
+      this.manager.decRef(this.cacheTrail[index]);
+    this.cacheTrail = [];
   }
 }

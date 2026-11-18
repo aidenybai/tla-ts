@@ -14,7 +14,7 @@ import {
   OP_XOR,
   SORT_BOOL,
 } from "./ast";
-import type { Goal } from "./goal";
+import type { Dependency, Goal } from "./goal";
 import { RefVector } from "./ref-vector";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
@@ -63,6 +63,8 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
   const rewriter = new Rewriter(manager, { ...TACTIC_REWRITER_OPTIONS, isFlatAndOr: false });
   const pinned = new RefVector(manager);
   const clauses = new RefVector(manager);
+  const clauseDependencies: (Dependency | undefined)[] = [];
+  let dependency: Dependency | undefined;
   const cache = new Map<number, number>();
   const freshDecls: number[] = [];
   const frames: Frame[] = [];
@@ -146,7 +148,10 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
   const visitAll = (exprs: readonly number[]) =>
     exprs.reduce((isVisited, expr) => visit(expr) && isVisited, true);
 
-  const mkClause = (literals: number[]) => clauses.push(pin(rewriter.mkOr(literals)));
+  const mkClause = (literals: number[]) => {
+    clauses.push(pin(rewriter.mkOr(literals)));
+    if (goal.isCoresEnabled) clauseDependencies.push(dependency);
+  };
 
   const mkFresh = () => {
     const fresh = manager.mkFreshConst(null, SORT_BOOL);
@@ -464,7 +469,10 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
   };
 
   try {
-    for (const form of goal.forms.items) process(form);
+    for (let index = 0; index < goal.forms.size; index++) {
+      dependency = goal.getDependency(index);
+      process(goal.forms.items[index]);
+    }
   } catch (error) {
     pinned.reset();
     clauses.reset();
@@ -473,10 +481,11 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
   }
   goal.reset();
   const added = new Set<number>();
-  for (const clause of clauses.items) {
+  for (let index = 0; index < clauses.size; index++) {
+    const clause = clauses.items[index];
     if (added.has(clause)) continue;
     added.add(clause);
-    goal.assert(clause);
+    goal.assert(clause, clauseDependencies[index]);
   }
   for (const decl of freshDecls) goal.addConverter(decl);
   goal.depth++;

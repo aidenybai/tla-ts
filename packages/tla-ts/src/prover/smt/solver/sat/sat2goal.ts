@@ -135,7 +135,8 @@ export const sat2goal = (
     goal.assert(manager.falseExpr);
     return;
   }
-  converter.flushSmc(solver, atoms);
+  const isProducingModels = goal.isModelsEnabled;
+  if (isProducingModels) converter.flushSmc(solver, atoms);
   const lit2expr = new RefVector(manager);
   lit2expr.resize(2 * solver.numVars());
   for (const [expr, boolVar] of atoms) {
@@ -145,10 +146,10 @@ export const sat2goal = (
   const getExpr = (lit: number) => {
     if (lit2expr.items[lit] === -1) {
       const boolVar = lit >> 1;
-      let aux = converter.var2expr.items[boolVar] ?? -1;
+      let aux = isProducingModels ? (converter.var2expr.items[boolVar] ?? -1) : -1;
       if (aux === -1) {
         aux = manager.mkFreshConst(null, SORT_BOOL);
-        converter.insert(boolVar, aux);
+        if (isProducingModels) converter.insert(boolVar, aux);
       }
       lit2expr.set(2 * boolVar, aux);
       lit2expr.set(2 * boolVar + 1, mkNot(manager, aux));

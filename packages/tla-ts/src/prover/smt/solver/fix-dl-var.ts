@@ -132,7 +132,7 @@ export const fixDlVar = (manager: AstManager, goal: Goal, options: RewriterOptio
   if (variable === -1) return;
   const zero = manager.mkNumeralOfSort(Rational.zero, manager.sorts[variable]);
   manager.incRef(zero);
-  goal.addDefinitions([{ decl: manager.decls[variable], def: zero }]);
+  if (goal.isModelsEnabled) goal.addDefinitions([{ decl: manager.decls[variable], def: zero }]);
   const rewriter = new Rewriter(manager, options);
   rewriter.setSubstitution(new Map([[variable, zero]]));
   const size = goal.forms.size;

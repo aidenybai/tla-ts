@@ -199,7 +199,7 @@ export const runBv1Blast = (manager: AstManager) => (goal: Goal) => {
     return {
       reduce: () => {
         state.rewriteEach((form) => rewriter.rewrite(form));
-        if (rewriter.newbits.length === 0) return;
+        if (rewriter.newbits.length === 0 || !goal.isModelsEnabled) return;
         const definitions: Definition[] = rewriter.newbits.map((decl) => ({ decl, def: -1 }));
         for (const [decl, bits] of rewriter.const2bits) definitions.push({ decl, def: bits });
         goal.addDefinitions(definitions);

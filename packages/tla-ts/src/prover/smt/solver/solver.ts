@@ -99,7 +99,6 @@ export const solveAssuming = (
     return { result: L_UNDEF, context, reasonUnknown: "canceled" };
   }
   context.setupContext(params.setup, false, asserted);
-  context.internalizeAssertions(asserted);
   const result = context.checkResearching(asserted, assumptions);
   manager.limit.release();
   return { result, context };

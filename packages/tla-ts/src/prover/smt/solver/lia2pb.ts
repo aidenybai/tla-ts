@@ -149,6 +149,6 @@ export const lia2pb = (manager: AstManager, goal: Goal, options: Lia2PbOptions) 
   }
   rewriter.release();
   goal.depth++;
-  goal.addDefinitions(definitions);
+  if (goal.isModelsEnabled) goal.addDefinitions(definitions);
   terms.reset();
 };

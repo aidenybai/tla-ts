@@ -110,6 +110,7 @@ class UncnstrRewriter extends RewriterTpl {
   constructor(
     manager: AstManager,
     private isProofsEnabled: boolean,
+    private isProducingModels: boolean,
   ) {
     super(manager);
     this.terms = new RefVector(manager);
@@ -130,13 +131,14 @@ class UncnstrRewriter extends RewriterTpl {
     const cached = this.cache.get(key);
     if (cached !== undefined) return { fresh: cached, isNew: false };
     const fresh = this.pin(manager.mkFreshConst(null, sort));
-    this.entries.push({ decl: manager.decls[fresh], def: -1 });
+    if (this.isProducingModels) this.entries.push({ decl: manager.decls[fresh], def: -1 });
     this.cache.set(key, fresh);
     return { fresh, isNew: true };
   }
 
   private addDef(variable: number, def: number) {
-    this.entries.push({ decl: this.manager.decls[variable], def: this.pin(def) });
+    if (this.isProducingModels)
+      this.entries.push({ decl: this.manager.decls[variable], def: this.pin(def) });
   }
 
   private addDefs(args: number[], fresh: number, identity: number) {
@@ -204,6 +206,7 @@ class UncnstrRewriter extends RewriterTpl {
     if (!this.isFullyInterp(sort)) return -1;
     const size = manager.getSortSize(sort);
     if (size !== SORT_SIZE_INFINITE && size !== SORT_SIZE_VERY_BIG && size <= 1n) return -1;
+    if (!this.isProducingModels) return this.mkFreshFor(decl, args, SORT_BOOL).fresh;
     const diff = this.mkDiff(term);
     if (diff === -1) return -1;
     const found = this.mkFreshFor(decl, args, SORT_BOOL);
@@ -231,7 +234,8 @@ class UncnstrRewriter extends RewriterTpl {
       case OP_NOT: {
         if (!this.isUncnstr(args[0])) return -1;
         const found = this.mkFreshFor(decl, args, sort);
-        if (found.isNew) this.addDef(args[0], manager.mkApp(OP_NOT, [found.fresh], SORT_BOOL));
+        if (found.isNew && this.isProducingModels)
+          this.addDef(args[0], manager.mkApp(OP_NOT, [found.fresh], SORT_BOOL));
         return found.fresh;
       }
       case OP_AND:
@@ -240,7 +244,7 @@ class UncnstrRewriter extends RewriterTpl {
         const found = this.mkFreshFor(decl, args, sort);
         const identity =
           manager.funcDecls[decl].op === OP_AND ? manager.trueExpr : manager.falseExpr;
-        if (found.isNew) this.addDefs(args, found.fresh, identity);
+        if (found.isNew && this.isProducingModels) this.addDefs(args, found.fresh, identity);
         return found.fresh;
       }
       case OP_EQ:
@@ -255,7 +259,7 @@ class UncnstrRewriter extends RewriterTpl {
     const index = args.findIndex((arg) => this.isUncnstr(arg));
     if (index === -1) return -1;
     const found = this.mkFreshFor(decl, args, sort);
-    if (!found.isNew) return found.fresh;
+    if (!found.isNew || !this.isProducingModels) return found.fresh;
     const rest = args.filter((_value, other) => other !== index);
     const restExpr =
       rest.length === 0
@@ -285,7 +289,7 @@ class UncnstrRewriter extends RewriterTpl {
       const variable = isFirst ? first : second;
       const term = isFirst ? second : first;
       const found = this.mkFreshFor(decl, args, SORT_BOOL);
-      if (!found.isNew) return found.fresh;
+      if (!found.isNew || !this.isProducingModels) return found.fresh;
       const argSort = manager.sorts[first];
       const step = this.mkNumeral(isLe ? Rational.one : Rational.minusOne, argSort);
       const next = this.pin(manager.mkApp(OP_ADD, [term, step], argSort));
@@ -295,7 +299,7 @@ class UncnstrRewriter extends RewriterTpl {
     if (op !== OP_MUL) return -1;
     if (args.every((arg) => this.isUncnstr(arg))) {
       const found = this.mkFreshFor(decl, args, sort);
-      if (found.isNew)
+      if (found.isNew && this.isProducingModels)
         this.addDefs(args, found.fresh, this.mkNumeral(Rational.one, manager.sorts[args[0]]));
       return found.fresh;
     }
@@ -309,7 +313,7 @@ class UncnstrRewriter extends RewriterTpl {
     const value = manager.getRationalValue(args[0]);
     if (value.isZero()) return -1;
     const found = this.mkFreshFor(decl, args, sort);
-    if (found.isNew)
+    if (found.isNew && this.isProducingModels)
       this.addDef(
         args[1],
         manager.mkApp(
@@ -340,7 +344,7 @@ class UncnstrRewriter extends RewriterTpl {
     const found = this.mkFreshFor(decl, args, SORT_BOOL);
     const isBound = this.pin(manager.mkEq(term, this.pin(manager.mkBvNumeral(bound, width))));
     const result = this.pin(manager.mkOr([found.fresh, isBound]));
-    if (found.isNew) {
+    if (found.isNew && this.isProducingModels) {
       const one = this.pin(manager.mkBvNumeral(1n, width));
       const next = this.pin(mkBvApp(manager, isFirst ? OP_BADD : OP_BSUB, [term, one]));
       this.addDef(variable, manager.mkApp(OP_ITE, [result, term, next], manager.sorts[term]));
@@ -359,7 +363,7 @@ class UncnstrRewriter extends RewriterTpl {
         const width = manager.getBvSize(manager.sorts[args[0]]);
         if (isAllUncnstr) {
           const found = this.mkFreshFor(decl, args, sort);
-          if (found.isNew)
+          if (found.isNew && this.isProducingModels)
             this.addDefs(args, found.fresh, this.pin(manager.mkBvNumeral(1n, width)));
           return found.fresh;
         }
@@ -368,7 +372,7 @@ class UncnstrRewriter extends RewriterTpl {
         const inverse = getMultInverse(manager.getBvNumeralValue(args[0]), width);
         if (inverse === undefined) return -1;
         const found = this.mkFreshFor(decl, args, sort);
-        if (found.isNew)
+        if (found.isNew && this.isProducingModels)
           this.addDef(
             args[1],
             mkBvApp(manager, OP_BMUL, [this.pin(manager.mkBvNumeral(inverse, width)), found.fresh]),
@@ -381,7 +385,7 @@ class UncnstrRewriter extends RewriterTpl {
       case OP_BUDIV_I: {
         if (!isAllUncnstr) return -1;
         const found = this.mkFreshFor(decl, args, sort);
-        if (found.isNew) {
+        if (found.isNew && this.isProducingModels) {
           this.addDef(args[0], found.fresh);
           this.addDef(args[1], manager.mkBvNumeral(1n, manager.getBvSize(manager.sorts[args[0]])));
         }
@@ -393,7 +397,7 @@ class UncnstrRewriter extends RewriterTpl {
       case OP_CONCAT: {
         if (!isAllUncnstr) return -1;
         const found = this.mkFreshFor(decl, args, sort);
-        if (!found.isNew) return found.fresh;
+        if (!found.isNew || !this.isProducingModels) return found.fresh;
         let low = 0;
         for (let index = args.length - 1; index >= 0; index--) {
           const width = manager.getBvSize(manager.sorts[args[index]]);
@@ -409,7 +413,7 @@ class UncnstrRewriter extends RewriterTpl {
         const arg = args[0];
         if (!this.isUncnstr(arg)) return -1;
         const found = this.mkFreshFor(decl, args, sort);
-        if (!found.isNew) return found.fresh;
+        if (!found.isNew || !this.isProducingModels) return found.fresh;
         const [high, low] = manager.funcDecls[decl].parameters;
         const width = manager.getBvSize(manager.sorts[arg]);
         if (width === high - low + 1) {
@@ -427,13 +431,14 @@ class UncnstrRewriter extends RewriterTpl {
       case OP_BNOT: {
         if (!this.isUncnstr(args[0])) return -1;
         const found = this.mkFreshFor(decl, args, sort);
-        if (found.isNew) this.addDef(args[0], manager.mkApp(decl, [found.fresh], sort));
+        if (found.isNew && this.isProducingModels)
+          this.addDef(args[0], manager.mkApp(decl, [found.fresh], sort));
         return found.fresh;
       }
       case OP_BOR: {
         if (!isAllUncnstr) return -1;
         const found = this.mkFreshFor(decl, args, sort);
-        if (found.isNew)
+        if (found.isNew && this.isProducingModels)
           this.addDefs(
             args,
             found.fresh,
@@ -451,7 +456,7 @@ class UncnstrRewriter extends RewriterTpl {
     const op = manager.funcDecls[decl].op;
     if (op === OP_SELECT && this.isUncnstr(args[0])) {
       const found = this.mkFreshFor(decl, args, sort);
-      if (found.isNew)
+      if (found.isNew && this.isProducingModels)
         this.addDef(
           args[0],
           mkArrayApp(manager, OP_CONST_ARRAY, [found.fresh], [manager.sorts[args[0]]]),
@@ -461,7 +466,7 @@ class UncnstrRewriter extends RewriterTpl {
     if (op !== OP_STORE || !this.isUncnstr(args[0]) || !this.isUncnstr(args[args.length - 1]))
       return -1;
     const found = this.mkFreshFor(decl, args, sort);
-    if (found.isNew) {
+    if (found.isNew && this.isProducingModels) {
       this.addDef(args[args.length - 1], mkArrayApp(manager, OP_SELECT, args.slice(0, -1)));
       this.addDef(args[0], found.fresh);
     }
@@ -472,6 +477,7 @@ class UncnstrRewriter extends RewriterTpl {
   private processDatatype(decl: number, args: number[], sort: number) {
     const manager = this.manager;
     if (manager.funcDecls[decl].op !== OP_DT_ACCESSOR || !this.isUncnstr(args[0])) return -1;
+    if (!this.isProducingModels) return this.mkFreshFor(decl, args, sort).fresh;
     const constructor = getAccessorConstructor(manager, decl);
     const domain = manager.funcDecls[constructor].domain;
     if (!domain.every((argSort) => this.isFullyInterp(argSort))) return -1;
@@ -510,7 +516,7 @@ export const elimUncnstr = (manager: AstManager, goal: Goal, bodies: RefVector) 
   const vars = collectUnconstrained(manager, goal);
   const disabled = disableQuantified(manager, goal, bodies);
   if (vars.size === 0 || manager.hasRecDefs) return;
-  const rewriter = new UncnstrRewriter(manager, goal.isProofsEnabled);
+  const rewriter = new UncnstrRewriter(manager, goal.isProofsEnabled, goal.isModelsEnabled);
   rewriter.vars = vars;
   rewriter.disabled = disabled;
   let isModified = true;
@@ -535,7 +541,7 @@ export const elimUncnstr = (manager: AstManager, goal: Goal, bodies: RefVector) 
     rewriter.vars = collectUnconstrained(manager, goal);
     start = rewriter.vars.size === 0 ? size : 0;
   }
-  goal.addDefinitions(rewriter.entries);
+  if (goal.isModelsEnabled) goal.addDefinitions(rewriter.entries);
   rewriter.release();
   rewriter.terms.reset();
   goal.depth++;

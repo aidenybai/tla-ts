@@ -463,6 +463,7 @@ class Nlqsat {
       goal.assert(manager.falseExpr);
       return [goal];
     }
+    if (!goal.isModelsEnabled) return [goal];
     goal.model = this.mkModel();
     if (this.divs.length > 0) goal.addDefinitions([{ decl: OP_DIV0, def: this.getDiv0Body() }]);
     return [goal];

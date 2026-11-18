@@ -277,6 +277,7 @@ const SMT_DESCRS = getDescrs("smt", [
   ["mbqi", PARAM_BOOL, true, true],
   ["mbqi.max_iterations", PARAM_UINT, MBQI_MAX_ITERATIONS, true],
   ["arith.nl.rounds", PARAM_UINT, 1024, true],
+  ["arith.branch_cut_ratio", PARAM_UINT, 2, true],
   ["random_seed", PARAM_UINT, 0, true],
   ["auto_config", PARAM_BOOL, true, true],
 ]);
@@ -574,7 +575,7 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   try {
     for (let index = 0; !goal.isInconsistent && index < size; index++) {
       const result = nnf.apply(goal.forms.items[index], definitions);
-      goal.update(index, result);
+      goal.update(index, result, goal.getDependency(index));
       manager.decRef(result);
     }
   } catch (error) {
@@ -717,6 +718,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_depth", PARAM_UINT, 1024, true],
         ["propagate_eq", PARAM_BOOL, false],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           ctxSimplify(
@@ -759,6 +761,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           ["elim_inverses", PARAM_BOOL, true, true],
         ]),
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) => {
         const manager = environment.manager;
         const elimRemParams = new Map([...params, ["elim_rem", true]]);
@@ -791,6 +794,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "tseitin-cnf-core",
     {
       descrs: TSEITIN_DESCRS,
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => tseitinCnf(environment.manager, goal)),
     },
   ],
@@ -798,6 +802,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "tseitin-cnf",
     {
       descrs: TSEITIN_DESCRS,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) => {
           const manager = environment.manager;
@@ -894,6 +899,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["pb.solver", PARAM_SYMBOL, "solver", true],
         ["cardinality.encoding", PARAM_SYMBOL, "none", true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) => {
           checkParams(REWRITER_DESCRS, params);
@@ -908,6 +914,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["produce_models", PARAM_BOOL, false, true],
         ["norm_int_only", PARAM_BOOL, true, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) => {
           checkParams(REWRITER_DESCRS, params);
@@ -1111,6 +1118,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "distribute-forall",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => distributeForall(environment.manager, goal)),
     },
   ],
@@ -1181,6 +1189,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "occf",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => occf(environment.manager, goal)),
     },
   ],
@@ -1208,8 +1217,22 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
-  ["dt2bv", { descrs: new Map(), build: (environment) => createDt2BvTactic(environment.manager) }],
-  ["eq2bv", { descrs: new Map(), build: (environment) => createEq2BvTactic(environment.manager) }],
+  [
+    "dt2bv",
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => createDt2BvTactic(environment.manager),
+    },
+  ],
+  [
+    "eq2bv",
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => createEq2BvTactic(environment.manager),
+    },
+  ],
   [
     "bit-blast",
     {
@@ -1221,6 +1244,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["blast_quant", PARAM_BOOL, false, true],
         ["blast_full", PARAM_BOOL, false, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runBitBlast(environment.manager, {
           isBlastingMul: getBool(params, "blast_mul", true),
@@ -1232,7 +1256,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   [
     "max-bv-sharing",
-    { descrs: new Map(), build: (environment) => runMaxBvSharing(environment.manager) },
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => runMaxBvSharing(environment.manager),
+    },
   ],
   [
     "bv_bound_chk",
@@ -1386,6 +1414,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         createSatTactic(environment.manager, getSatTacticParams(environment, params)),
     },
@@ -1404,18 +1433,24 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         createSatTactic(environment.manager, getSatTacticParams(environment, params)),
     },
   ],
   [
     "snf",
-    { descrs: NNF_DESCRS, build: (environment, params) => runNnf(environment.manager, params) },
+    {
+      descrs: NNF_DESCRS,
+      isTrackingDependencies: true,
+      build: (environment, params) => runNnf(environment.manager, params),
+    },
   ],
   [
     "nnf",
     {
       descrs: NNF_DESCRS,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runNnf(environment.manager, new Map([...params, ["mode", "full"]])),
     },
