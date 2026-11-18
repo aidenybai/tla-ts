@@ -53981,4 +53981,24 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("412"))).failure?.message).toContain("total 312");
     });
   });
+
+  describe("holds on the heap the closures that a module's function makes and returns", () => {
+    const getSource = (expected: string) => `
+      const flip = function (body: (a: number, b: number) => number) {
+        const held = body;
+        return (a: number, b: number) => held(b, a);
+      };
+      export const minus = flip((self: number, that: number) => self - that);
+      const seen = [minus(2, 10), minus(1, 4)].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("8,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects the arguments unflipped", async () => {
+      expect((await checkModel(getSource("-8,-3"))).failure?.message).toContain("seen 8,3");
+    });
+  });
 });

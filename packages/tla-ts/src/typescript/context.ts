@@ -3917,13 +3917,16 @@ const isValueArgument = (node: ts.Node, context: Context) => {
   );
 };
 
-export const isClosure = (node: ts.Node, context: Context): node is Closure => {
+export const isClosure = (node: ts.Node, context: Context): node is Closure =>
+  context.heap !== undefined && isOutliving(node, context);
+
+// Whether a function is a closure, before tla-ts knows whether the heap holds objects.
+export const isOutliving = (node: ts.Node, context: Context): node is Closure => {
   const isMember =
     ((ts.isMethodDeclaration(node) && node.body !== undefined) || isPlainAccessor(node)) &&
     ts.isObjectLiteralExpression(node.parent) &&
     !isOnce(node.parent, context);
   if (
-    context.heap === undefined ||
     !(ts.isFunctionExpression(node) || ts.isArrowFunction(node) || isMember) ||
     (ts.isFunctionExpression(node) && node.name !== undefined) ||
     ((ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) &&
