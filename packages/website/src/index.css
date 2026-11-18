@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "allo-font/friendly";
+@import "./generated/allo.css";
 @import "@fontsource-variable/geist-mono";
 @import "@fontsource/caveat/600.css";
 

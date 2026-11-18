@@ -35,6 +35,7 @@
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@typescript/typescript6": "6.0.2",
+    "subset-font": "^2.9.0",
     "tailwindcss": "4.3.3",
     "typescript": "^7.0.2"
   }
