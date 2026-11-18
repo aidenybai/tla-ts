@@ -197,6 +197,23 @@ describe("the call stack of a replayed failure matches TLC", () => {
     ]);
   });
 
+  it("reports a violating step that fails to rebuild as a failure of the next-state relation under -continue, where TLC reports it as a failure of the invariant", async () => {
+    const kinds: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\n${HEADER}\nInit == x = 0\nNext == x >= 0 /\\ (x' = x + 1 \\/ (x = 1 /\\ x' = 5 /\\ 1))\nInv == x < 2\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      isContinued: true,
+      onProgress: (progress) => kinds.push(progress.kind),
+    });
+    expect([
+      result.status,
+      kinds.includes("violation"),
+      result.failure?.code,
+      result.failure?.exitCode,
+      result.failure?.trace.length,
+    ]).toEqual(["error", false, 1000, 75, 2]);
+  });
+
   it("exits with the code of a standard module's failure in an action property", async () => {
     const failure = await getFailure(
       "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == [][1 \\div (1 - x) = 1]_x",
