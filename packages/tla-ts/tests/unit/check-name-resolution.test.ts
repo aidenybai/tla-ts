@@ -2594,6 +2594,24 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("rejects a number or a string as a DEF clause entry, where SANY crashes", async () => {
+    await expect(
+      check({
+        source: '---- MODULE M ----\nA == 1\nTHEOREM TRUE BY DEF 1, "s", A\n====',
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        ["line 3, col 21 to line 3, col 21", "line 3, col 24 to line 3, col 26"].map(
+          (location) => ({
+            location: `${location} of module M`,
+            message: "DEF clause entry should describe a defined operator.",
+          }),
+        ),
+      ),
+    );
+  });
+
   it("reports an @ fact as an unknown operator like SANY", async () => {
     await expect(checkNames("USE @\nTHEOREM TRUE\nBY @\nHIDE @")).rejects.toThrow(
       createSanyError([

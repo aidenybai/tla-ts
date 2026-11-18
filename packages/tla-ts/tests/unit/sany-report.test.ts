@@ -251,6 +251,30 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects a number or a string as a DEF clause entry, where SANY crashes", () => {
+    const report = getReport({
+      M: '---- MODULE M ----\nA == 1\nTHEOREM TRUE BY DEF 1, "s", A\n====\n',
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 3, col 21 to line 3, col 21 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+        "line 3, col 24 to line 3, col 26 of module M",
+        "",
+        "DEF clause entry should describe a defined operator.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {

@@ -192,6 +192,10 @@ export const getDefEntryErrors = (file: SourceFile, expression: Expression): Def
   const span = getOperandSpan(file, expression);
   const location = getSpanLocation(file, span);
   const parts = getDefEntryParts(file, expression, span);
+  if (parts === undefined && (expression.kind === "Number" || expression.kind === "String")) {
+    // Deviation from SANY: Generator#genIdToSelector throws ArrayIndexOutOfBoundsException on a number or string; tla-ts rejects it as an entry that describes no definition.
+    return [{ location, message: "DEF clause entry should describe a defined operator." }];
+  }
   if (parts?.hasChildlessFirstChild === undefined || parts.lastKind === undefined) return [];
   const lastLocation = getSpanLocation(file, parts.last);
   return [
