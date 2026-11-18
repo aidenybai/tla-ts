@@ -515,6 +515,16 @@ import {
   REORDER_METHODS,
   LOOP_METHODS,
 } from "./types";
+import {
+  type Machine,
+  type MachineLoop,
+  getMachine,
+  getMachines,
+  getSteppedOuter,
+  isMachineGenerator,
+  makeMachine,
+  stepMachine,
+} from "./generator-machines";
 
 export interface Path {
   scope: Scope;
@@ -533,6 +543,9 @@ export interface Path {
   disposal?: Disposal;
   // The derived constructors running whose this is still uninitialized, until their super(...).
   unboundThis?: ReadonlySet<ts.ConstructorDeclaration>;
+  // Whether a generator's state machine runs the statements, whose code after a yield runs apart
+  // from the code before it, so that it can't call an operator that the code before it defines.
+  isMachine?: boolean;
 }
 
 interface KnownDefault {
@@ -540,7 +553,7 @@ interface KnownDefault {
   isRun: boolean;
 }
 
-interface Suspension {
+export interface Suspension {
   ref: Expression;
   // The function whose body a next runs, which a helper of an object that isn't an iterator lacks.
   generator: FunctionNode | undefined;
@@ -563,6 +576,8 @@ interface Suspension {
   // Whether a step may make the suspension again once it's gone, as an array's or a string's
   // iterator, whose next reads where it is from the heap.
   isRestartable?: boolean;
+  // The state machine that runs the body, which keeps where it suspended on the heap instead.
+  machine?: Machine;
 }
 
 interface Caller {
@@ -733,6 +748,8 @@ export interface Frame {
     | undefined;
   // Functions being inlined, to reject recursion.
   inlining: Set<ts.Node>;
+  // What runs a loop of a generator's body that yields, where a state machine runs the body.
+  loopTo?: MachineLoop;
 }
 
 const COMPOUND_OPERATORS = new Map([
@@ -7186,7 +7203,7 @@ const isSelfCallable = (
 
 // The declarations that a function's body names, and those that the functions it may call name. It
 // enters only a declaration that may hold a function, as a call runs no other's initializer.
-const getCalledReach = (body: ts.Node, context: Context) => {
+export const getCalledReach = (body: ts.Node, context: Context) => {
   const reached: ts.Node[] = [];
   const seen = new Set<ts.Node>();
   const isHoldingFunction = (declaration: ts.Node) =>
@@ -7970,58 +7987,109 @@ export const makeGenerator = (
         throwOnDestructured(bound.scope, inner, context, frame, continueWith(made, ref)),
       );
     }
-    return letIn(
-      bound.definitions,
-      throwOnDestructured(
-        bound.scope,
-        inner,
-        context,
-        frame,
-        bindOnce(
+    // A generator object inherits from its function's prototype object, where the heap holds it,
+    // or from what the prototype property of the function's object holds.
+    const object =
+      prototype !== undefined
+        ? useJavaScript("GeneratorObjectOf", [prototype], context)
+        : held === undefined
+          ? identifier("GeneratorObject")
+          : useJavaScript(
+              "GeneratorObjectFrom",
+              [
+                getHeap(bound.scope, node, context),
+                held,
+                translateBuiltInValue(
+                  isAsync
+                    ? "%AsyncGeneratorFunction%.prototype.prototype"
+                    : "%GeneratorFunction%.prototype.prototype",
+                  node,
+                  context,
+                ),
+              ],
+              context,
+            );
+    const allocated = {
+      ...inner,
+      scope: {
+        ...inner.scope,
+        bindings: new Map([...inner.scope.bindings, [heapSymbol, identifier(name)]]),
+      },
+    };
+    const built = isMachineGenerator(node, callee, context)
+      ? tryMachine(() => makeMachine(node, callee, ref, allocated, start.scope, context, frame))
+      : undefined;
+    const allocateObject = (value: Expression, rest: Formula) =>
+      letIn(
+        bound.definitions,
+        throwOnDestructured(
+          bound.scope,
           inner,
-          name,
-          useJavaScript(
-            "Allocate",
-            [
-              getHeap(bound.scope, node, context),
-              // A generator object inherits from its function's prototype object, where the heap
-              // holds it, or from what the prototype property of the function's object holds.
-              prototype !== undefined
-                ? useJavaScript("GeneratorObjectOf", [prototype], context)
-                : held === undefined
-                  ? identifier("GeneratorObject")
-                  : useJavaScript(
-                      "GeneratorObjectFrom",
-                      [
-                        getHeap(bound.scope, node, context),
-                        held,
-                        translateBuiltInValue(
-                          isAsync
-                            ? "%AsyncGeneratorFunction%.prototype.prototype"
-                            : "%GeneratorFunction%.prototype.prototype",
-                          node,
-                          context,
-                        ),
-                      ],
-                      context,
-                    ),
-            ],
-            context,
+          context,
+          frame,
+          bindOnce(
+            inner,
+            name,
+            useJavaScript("Allocate", [getHeap(bound.scope, node, context), value], context),
+            rest,
           ),
+        ),
+      );
+    if (built !== undefined) {
+      return allocateObject(
+        useJavaScript("MachineObject", [object], context),
+        letIn(
+          built.definitions,
           continueWith(
             {
-              ...made,
-              scope: {
-                ...made.scope,
-                bindings: new Map([...made.scope.bindings, [heapSymbol, identifier(name)]]),
-              },
+              ...allocated,
+              generators: new Map([
+                ...allocated.generators,
+                [
+                  name,
+                  {
+                    ref,
+                    generator: callee,
+                    resume: undefined,
+                    isStarted: false,
+                    isGuarded: false,
+                    isAsync,
+                    queue: [],
+                    machine: built.machine,
+                  },
+                ],
+              ]),
             },
             ref,
           ),
         ),
+      );
+    }
+    return allocateObject(
+      object,
+      continueWith(
+        {
+          ...made,
+          scope: {
+            ...made.scope,
+            bindings: new Map([...made.scope.bindings, [heapSymbol, identifier(name)]]),
+          },
+        },
+        ref,
       ),
     );
   });
+
+// Translates a state machine, or gives undefined where tla-ts can't, so that the code that steps
+// the object inlines what it runs instead.
+const tryMachine = <T>(make: () => T): T | undefined => {
+  try {
+    return make();
+  } catch (error) {
+    if (error instanceof TlaTypeScriptError) return undefined;
+    throw error;
+  }
+};
 
 // A call of a method of Iterator.prototype that steps a generator to its end, or until its
 // callback decides, then closes the generator as the method's IteratorClose does.
@@ -9003,6 +9071,41 @@ export const stepGenerator = (
   continueWith: (path: Path, value?: Expression) => Formula,
 ): Formula => {
   const heapSymbol = context.heap;
+  const machine = getMachine(receiver, path);
+  if (machine !== undefined && heapSymbol !== undefined) {
+    return stepMachine(
+      node,
+      machine,
+      method,
+      argument?.value,
+      path,
+      context,
+      frame,
+      (current, kind, value) => {
+        const name = context.names.getFresh("heap");
+        const result = useJavaScript(
+          "IteratorResult",
+          [value, apply("=", [kind, string("return")])],
+          context,
+        );
+        return bindOnce(
+          current,
+          name,
+          useJavaScript("Allocate", [getHeap(current.scope, node, context), result], context),
+          continueWith(
+            {
+              ...current,
+              scope: {
+                ...current.scope,
+                bindings: new Map([...current.scope.bindings, [heapSymbol, identifier(name)]]),
+              },
+            },
+            useJavaScript("Allocated", [identifier(name)], context),
+          ),
+        );
+      },
+    );
+  }
   return resumeGenerator(
     node,
     receiver,
@@ -9160,6 +9263,11 @@ export const resumeGenerator = (
       );
     });
   const run = (name: string, suspension: Suspension) => {
+    if (suspension.machine !== undefined) {
+      return leaf(
+        apply("Assert", [boolean(false), string("tla-ts can't follow a generator here")]),
+      );
+    }
     // A next of an async generator whose body runs waits for the body to yield.
     if (
       suspension.caller !== undefined &&
@@ -12983,7 +13091,7 @@ const translateTaggedTemplate = (
       );
 };
 
-const translateExpressionStatement = (
+export const translateExpressionStatement = (
   expression: ts.Expression,
   path: Path,
   context: Context,
@@ -16826,7 +16934,9 @@ export const translateJoined = (
   translateWith: (next: (inner: Path, value?: Expression) => Formula) => Formula,
   changed = getChanged(node, path, context),
 ): Formula => {
-  if (context.heap === undefined) return translateWith(continueWith);
+  if (context.heap === undefined || (path.isMachine === true && hasYield(node))) {
+    return translateWith(continueWith);
+  }
   const isVar = (declaration: ts.VariableDeclaration) =>
     ts.isVariableDeclarationList(declaration.parent) &&
     (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0;
@@ -17539,9 +17649,15 @@ const translateForOfGenerator = (
     (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||
     (!ts.isFunctionLike(node) && (ts.forEachChild(node, suspends) ?? false));
   const isLooped = isBuiltIn && !suspends(loop.statement);
-  const iterate = (start: Path, receiver: Expression) =>
-    isLooped &&
-    [...start.generators.values()].every((suspension) => suspension.isRestartable === true)
+  const iterate = (start: Path, receiver: Expression) => {
+    const machine = getMachine(receiver, start);
+    if (machine !== undefined) {
+      return translateIterations(loop, start, context, frame, continueWith, receiver, machine);
+    }
+    return isLooped &&
+      [...start.generators.values()].every(
+        (suspension) => suspension.isRestartable === true || suspension.machine !== undefined,
+      )
       ? translateIterations(loop, start, context, frame, continueWith, receiver)
       : iterateGenerator(
           loop,
@@ -17551,6 +17667,7 @@ const translateForOfGenerator = (
           frame,
           continueWith,
         );
+  };
   if (opened !== undefined) {
     return translateIteratorCall(loop.expression, opened, path, context, frame, (after, ref) =>
       iterate(after, ref ?? getUndefined(context)),
@@ -18512,8 +18629,15 @@ const translateLoop = (
   continueWith: (path: Path) => Formula,
 ): Formula => {
   const isYielding = frame.yieldTo !== undefined && hasYield(loop.statement);
-  const unrolled = isYielding && ts.isForStatement(loop) ? getCounts(loop, context) : undefined;
-  if (unrolled !== undefined || (isYielding && isForever(loop))) {
+  // A state machine runs a while, a do-while, or a for that yields as jumps to its head.
+  const loopTo = frame.loopTo;
+  const isJumped =
+    isYielding &&
+    loopTo !== undefined &&
+    (ts.isWhileStatement(loop) || ts.isDoStatement(loop) || ts.isForStatement(loop));
+  const unrolled =
+    isYielding && !isJumped && ts.isForStatement(loop) ? getCounts(loop, context) : undefined;
+  if (unrolled !== undefined || (isYielding && !isJumped && isForever(loop))) {
     return translateUnrolled(loop, unrolled, path, context, frame, continueWith);
   }
   const literal = ts.isForOfStatement(loop) ? getCast(loop.expression) : undefined;
@@ -18551,10 +18675,12 @@ const translateLoop = (
           0)) &&
     isFollowingPromises(loop, context);
   const runLoop = (inner: Path) =>
-    isPromiseLoop &&
-    (ts.isWhileStatement(loop) || ts.isDoStatement(loop) || ts.isForStatement(loop))
-      ? translatePromiseLoop(loop, inner, context, frame, continueWith)
-      : translateIterations(loop, inner, context, frame, continueWith);
+    isJumped && loopTo !== undefined
+      ? loopTo(loop, inner, frame, continueWith)
+      : isPromiseLoop &&
+          (ts.isWhileStatement(loop) || ts.isDoStatement(loop) || ts.isForStatement(loop))
+        ? translatePromiseLoop(loop, inner, context, frame, continueWith)
+        : translateIterations(loop, inner, context, frame, continueWith);
   // A for-of of an array whose first element a getter that only throws gives throws before its
   // first iteration, as the iterator's first next reads the element.
   if (
@@ -18661,6 +18787,8 @@ const translateLoop = (
 interface OpenedIterator {
   iterator: Expression;
   next?: Expression;
+  // The generator that a state machine runs, which each iteration steps.
+  machine?: Suspension;
 }
 
 const translateIterations = (
@@ -18669,8 +18797,10 @@ const translateIterations = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
-  // The array's or the string's iterator that a for-of steps, which its caller opened.
+  // The array's or the string's iterator that a for-of steps, which its caller opened, or the
+  // generator object of a state machine.
   builtIn?: Expression,
+  machine?: Suspension,
 ): Formula => {
   const iterated = ts.isForOfStatement(loop) || ts.isForInStatement(loop) ? loop : undefined;
   // A for-of over an array, or a set or a map that keeps its order, that the heap holds visits its
@@ -18775,6 +18905,8 @@ const translateIterations = (
     ...new Set([
       ...getChanged(loop, path, context),
       ...(builtIn === undefined || context.heap === undefined ? [] : [context.heap]),
+      ...(machine?.machine?.outer ?? []),
+      ...getSteppedOuter(loop, path, context),
     ]),
   ].filter((symbol) => !path.scope.uninitialized.has(symbol));
   // The iterator reads each element as the loop reaches it, which a copy of the elements matches
@@ -18838,16 +18970,28 @@ const translateIterations = (
     done: (path: Path) => Formula,
   ) => {
     const site = iterating.expression;
+    const closeMachine = opened.machine;
     const close = (current: Path, closeFrame: Frame, closedWith: (path: Path) => Formula) =>
-      closeIterator(
-        site,
-        opened.iterator,
-        current,
-        context,
-        closeFrame,
-        (failed) => throwTypeError(failed, site, context, closeFrame),
-        closedWith,
-      );
+      closeMachine !== undefined
+        ? stepMachine(
+            site,
+            closeMachine,
+            "return",
+            undefined,
+            current,
+            context,
+            closeFrame,
+            (closed) => closedWith(closed),
+          )
+        : closeIterator(
+            site,
+            opened.iterator,
+            current,
+            context,
+            closeFrame,
+            (failed) => throwTypeError(failed, site, context, closeFrame),
+            closedWith,
+          );
     const throwTo = bodyFrame.throwTo;
     const iterationFrame: Frame = {
       ...bodyFrame,
@@ -18871,6 +19015,20 @@ const translateIterations = (
         iterationFrame,
         (bound, innerFrame) => translateStatements([loop.statement], bound, context, innerFrame),
       );
+    const machine = opened.machine;
+    if (machine !== undefined) {
+      return stepMachine(
+        site,
+        machine,
+        "next",
+        undefined,
+        path,
+        context,
+        bodyFrame,
+        (stepped, kind, value) =>
+          ifThenElse(apply("=", [kind, string("return")]), done(stepped), runBody(stepped, value)),
+      );
+    }
     const next = opened.next;
     if (next === undefined) {
       // An array's or a string's iterator throws the TypeError of a typed array out of bounds,
@@ -19125,8 +19283,9 @@ const translateIterations = (
         parameters.map((parameter) => identifier(parameter)),
       ),
       isLooping: true,
-      // A generator from before the loop resumes only outside it, as each iteration's path ends.
-      generators: new Map(),
+      // A generator from before the loop resumes only outside it, as each iteration's path ends,
+      // except one that a state machine runs, which keeps where it suspended on the heap.
+      generators: getMachines(path),
       tasks: undefined,
     };
     const carriedValues = tuple(parameters.map((parameter) => identifier(parameter)));
@@ -19329,7 +19488,7 @@ const translateIterations = (
   };
   // A for-of of an array throws the TypeError of GetIterator before its first iteration where the
   // array's Symbol.iterator, which a script may delete from Array.prototype, isn't a function.
-  if (builtIn !== undefined) return translateFrom(path, { iterator: builtIn });
+  if (builtIn !== undefined) return translateFrom(path, { iterator: builtIn, machine });
   if (
     iterated !== undefined &&
     ts.isForOfStatement(iterated) &&
@@ -19415,7 +19574,7 @@ const isLibraryCall = (node: ts.CallExpression, context: Context) =>
 
 // Whether evaluating a node calls a function, which a function's body doesn't, as it only runs
 // where something calls it.
-const hasCall = (node: ts.Node, context: Context): boolean =>
+export const hasCall = (node: ts.Node, context: Context): boolean =>
   !ts.isFunctionLike(node) &&
   ((ts.isCallExpression(node) && !isLibraryCall(node, context)) ||
     ts.isNewExpression(node) ||

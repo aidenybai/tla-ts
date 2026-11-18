@@ -54337,4 +54337,79 @@ describe("BigInts", () => {
       ).toContain(":7,");
     });
   });
+
+  describe("runs a generator's body as a state machine", () => {
+    const getLoop = (expected: string) => `
+      function* count(limit: number) {
+        let index = 0;
+        while (index < limit) {
+          if (index % 7 === 3) {
+            index += 1;
+            continue;
+          }
+          const sent: number | undefined = yield index * 2;
+          index += sent ?? 1;
+        }
+        return "done";
+      }
+      const counter = count(90);
+      // An object that the code changes in place keeps the code's objects on the heap.
+      const totals = { total: 0 };
+      const first = counter.next();
+      const skipped = counter.next(5);
+      let seen = 0;
+      for (const value of counter) {
+        totals.total += value;
+        seen += 1;
+      }
+      const last = counter.next();
+      const result = [first.value, skipped.value, totals.total, seen, last.done, last.value].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a loop that yields more than 64 values", async () => {
+      expect((await checkModel(getLoop("0,10,6816,72,true,"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the loop", async () => {
+      expect((await checkModel(getLoop("0,10,6816,71,true,"))).failure?.message).toContain(
+        "0,10,6816,72,true,",
+      );
+    });
+
+    const getClosed = (expected: string) => `
+      const trace = { log: "" };
+      function* guarded() {
+        try {
+          for (let index = 0; index < 100; index++) {
+            trace.log += index;
+            yield index;
+          }
+        } finally {
+          trace.log += "f";
+        }
+        trace.log += "x";
+      }
+      const opened = guarded();
+      opened.next();
+      opened.next();
+      const closed = opened.return(7 as never);
+      const after = opened.next();
+      for (const value of guarded()) {
+        if (value === 2) break;
+      }
+      const result = [closed.value, closed.done, after.done, trace.log].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a return that runs a finally block", async () => {
+      expect((await checkModel(getClosed("7,true,true,01f012f"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the return", async () => {
+      expect((await checkModel(getClosed("7,true,true,01f012"))).failure?.message).toContain(
+        "7,true,true,01f012f",
+      );
+    });
+  });
 });
