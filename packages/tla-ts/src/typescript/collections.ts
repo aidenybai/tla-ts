@@ -2666,7 +2666,14 @@ const getStoredStringMethod = (callee: ts.PropertyAccessExpression, context: Con
     : undefined;
 };
 
-// A call of a String.prototype method's name on a value whose type doesn't tell what it is, as
+// The Array.prototype methods that read an array without calling back, which a call on a value whose
+// type doesn't tell what it is runs where the value is an array value.
+const ANY_ARRAY_METHODS = new Set(["indexOf", "lastIndexOf", "includes", "at", "slice"]);
+
+// A call of a String.prototype or an Array.prototype method's name on a value whose type doesn't
+// tell what it is, as untyped JavaScript makes, where the value is a string or an array value.
+// The rest of what this tells holds for strings.
+//
 // untyped JavaScript makes: a string runs the method, converting each argument as the method does,
 // where String.prototype still holds it, and any other value stops, as tla-ts can't tell which
 // function the call runs.
@@ -2676,62 +2683,122 @@ export const translateAnyStringCall = (node: ts.CallExpression, scope: Scope, co
     return undefined;
   }
   const method = callee.name.text;
-  const primitive = STRING_METHODS.get(method);
+  const found = STRING_METHODS.get(method);
+  const primitive =
+    found !== undefined && node.arguments.length <= found.parameters.length ? found : undefined;
+  // The array's method takes its indices as numbers, past what a search looks for.
+  const isArrayMethod =
+    ANY_ARRAY_METHODS.has(method) &&
+    node.arguments
+      .slice(["at", "slice"].includes(method) ? 0 : 1)
+      .every((argument) => isNumberLike(argument, context));
   const type = context.checker.getTypeAtLocation(callee.expression);
   if (
-    primitive === undefined ||
-    node.arguments.length > primitive.parameters.length ||
+    (primitive === undefined && !isArrayMethod) ||
     (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0
   ) {
     return undefined;
   }
-  const converted = node.arguments.map((argument, position) => {
+  const converted = (primitive?.parameters ?? []).flatMap((parameter, position) => {
+    const argument = node.arguments.at(position);
+    if (argument === undefined) return [];
     const value = translateExpression(argument, scope, context);
-    const isKept =
-      primitive.parameters[position] === "number" ||
-      UNDEFINED_DEFAULTS.has(`${method} ${position}`);
+    const isKept = parameter === "number" || UNDEFINED_DEFAULTS.has(`${method} ${position}`);
     const conversion =
-      primitive.parameters[position] === "number"
+      parameter === "number"
         ? context.hasSpecialNumbers
           ? useJavaScript("ToNumber", [value], context)
           : useJavaScript("PlainNumber", [useJavaScript("ToNumber", [value], context)], context)
         : useJavaScript("StringOf", [value], context);
-    return isKept
-      ? ifExpression(apply("=", [value, getUndefined(context)]), value, conversion)
-      : conversion;
+    return [
+      isKept
+        ? ifExpression(apply("=", [value, getUndefined(context)]), value, conversion)
+        : conversion,
+    ];
   });
   const unknown = apply("Assert", [
     boolean(false),
     string("tla-ts can't tell which function this call runs"),
   ]);
+  // A built-in method runs where its prototype still holds it.
+  const getHeld = (prototype: "String.prototype" | "Array.prototype", called: Expression) =>
+    context.heap === undefined
+      ? called
+      : ifExpression(
+          useJavaScript(
+            "HoldsBuiltIn",
+            [
+              getHeap(scope, node, context),
+              translateBuiltInValue(prototype, node, context),
+              string(method),
+              string(`${prototype}.${method}`),
+            ],
+            context,
+          ),
+          called,
+          unknown,
+        );
   return share(
     translateExpression(callee.expression, scope, context),
     "receiver",
     context,
     (receiver) => {
-      const called = translatePrimitiveMethod(primitive, receiver, converted, context);
-      const held =
-        context.heap === undefined
-          ? called
+      // An array value, which the heap doesn't hold, runs the array's method, and so does an array
+      // that the heap holds, whose method it reads as the array-like method reads its elements.
+      const heap = context.heap === undefined ? undefined : getHeap(scope, node, context);
+      const getHeapArray = () =>
+        heap === undefined
+          ? unknown
           : ifExpression(
-              useJavaScript(
-                "HoldsBuiltIn",
-                [
-                  getHeap(scope, node, context),
-                  translateBuiltInValue("String.prototype", node, context),
-                  string(method),
-                  string(`String.prototype.${method}`),
-                ],
-                context,
-              ),
-              called,
+              apply("/\\", [
+                useJavaScript("IsRef", [receiver], context),
+                apply("~", [useJavaScript("IsProxy", [heap, receiver], context)]),
+                useJavaScript("IsArray", [heap, receiver], context),
+                useJavaScript(
+                  "HoldsBuiltIn",
+                  [heap, receiver, string(method), string(`Array.prototype.${method}`)],
+                  context,
+                ),
+              ]),
+              translateArrayLikeCall(node, scope, context, {
+                method,
+                object: callee.expression,
+                methodArguments: node.arguments,
+              }) ?? unknown,
               unknown,
             );
-      return ifExpression(
-        apply("=", [useJavaScript("TypeOf", [receiver], context), string("string")]),
-        held,
-        unknown,
-      );
+      const ofArray = isArrayMethod
+        ? ifExpression(
+            useJavaScript("IsSequenceValue", [receiver], context),
+            getHeld(
+              "Array.prototype",
+              translateSequenceOperation(
+                {
+                  node,
+                  method,
+                  arguments: node.arguments,
+                  elementType: undefined,
+                  owner: undefined,
+                },
+                receiver,
+                scope,
+                context,
+                false,
+              ),
+            ),
+            getHeapArray(),
+          )
+        : unknown;
+      return primitive === undefined
+        ? ofArray
+        : ifExpression(
+            apply("=", [useJavaScript("TypeOf", [receiver], context), string("string")]),
+            getHeld(
+              "String.prototype",
+              translatePrimitiveMethod(primitive, receiver, converted, context),
+            ),
+            ofArray,
+          );
     },
   );
 };
