@@ -93,6 +93,7 @@ export const STANDARD_LEVELS = new Map(
     {
       name: signature[0],
       level: signature[1],
+      isCorrect: true,
       params: new Set(),
       constraints: new Map(),
       argConstraints: new Map(),

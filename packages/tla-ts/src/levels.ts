@@ -11,13 +11,7 @@ import {
   type ProofStep,
   type SourceLocation,
 } from "./ast";
-import {
-  createSanyError,
-  createSemanticError,
-  formatRange,
-  TlaSyntaxError,
-  type SanyError,
-} from "./errors";
+import { createSanyError, formatRange, type SanyError } from "./errors";
 import { forEachChild } from "./instances";
 import { collectSemanticErrors, getBoundNames, getPatternNames } from "./resolve";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -25,6 +19,7 @@ import { STANDARD_LEVELS } from "./standard-definitions";
 
 interface LevelData {
   level: number;
+  isCorrect: boolean;
   params: Set<string>;
   constraints: Map<string, number>;
   argConstraints: Map<string, number>;
@@ -94,6 +89,7 @@ const getConditionKey = (operator: number, operand: number, argument: number) =>
 
 const createData = (level = 0): LevelData => ({
   level,
+  isCorrect: true,
   params: new Set(),
   constraints: new Map(),
   argConstraints: new Map(),
@@ -223,13 +219,6 @@ const bindFormals = (scope: Scope, formals: OperatorParam[]) =>
 
 const toFormals = (names: string[]) => names.map((name) => ({ name, arity: 0 }));
 
-const createLevelError = (message: string, expression: Expression) =>
-  expression.location.range
-    ? createSemanticError(`${message}.`, expression.location.range)
-    : new TlaSyntaxError(
-        `${message} at line ${expression.location.line}, column ${expression.location.column}`,
-      );
-
 const LOGICAL_OPERATORS = new Set(["/\\", "\\/", "=>", "<=>"]);
 
 const isOperatorApplication = (expression: Expression) =>
@@ -238,6 +227,8 @@ const isOperatorApplication = (expression: Expression) =>
 export const createLevelAnalyzer = (context: LevelContext) => {
   const definitionLevels = new Map<Definition, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
+  const errors: SanyError[] = [];
+  const messages: string[] = [];
 
   const resolve = (name: string, scope: Scope): Resolved => {
     const entry = scope.get(name);
@@ -265,6 +256,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const applyDeclared = (name: string, level: number, operands: Operand[]) => {
     const data = createData(Math.max(level, ...operands.map((operand) => operand.data.level)));
+    data.isCorrect = operands.every((operand) => operand.data.isCorrect);
     data.params.add(name);
     operands.forEach((operand, index) => {
       operand.data.params.forEach((param) => {
@@ -284,14 +276,19 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     bound: string[] = [],
   ) => {
     const isBound = (name: string) => bound.includes(name);
-    operands.forEach((operand, index) => {
-      if (operand.kind !== "Value") return;
-      if (operand.data.level > getMaxLevel(operator, index)) {
-        throw new TlaSyntaxError(
-          `Level error in applying operator ${resolveSynonym(operator.name)}:\nThe level of argument ${index + 1} exceeds the maximum level allowed by the operator`,
-        );
-      }
-    });
+    const exceeding = operands.flatMap((operand, index) =>
+      operand.kind === "Value" && operand.data.level > getMaxLevel(operator, index)
+        ? [{ operand, index }]
+        : [],
+    );
+    // OpApplNode#levelCheck reports a level error only for an argument without one of its own.
+    exceeding
+      .filter((entry) => operator.isCorrect && entry.operand.data.isCorrect)
+      .forEach((entry) =>
+        messages.push(
+          `Level error in applying operator ${resolveSynonym(operator.name)}:\nThe level of argument ${entry.index + 1} exceeds the maximum level allowed by the operator`,
+        ),
+      );
     const getOperand = (formal: string) => {
       const index = operator.formals.findIndex((param) => param.name === formal);
       return index === -1 ? undefined : operands[index];
@@ -307,6 +304,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         ...ranges.map((range) => range.level),
       ),
     );
+    data.isCorrect =
+      exceeding.length === 0 &&
+      operands.every((operand) => operand.data.isCorrect) &&
+      ranges.every((range) => range.isCorrect);
     operator.params.forEach((param) => data.params.add(param));
     operands.forEach((operand, index) => {
       if (getWeight(operator, index) === 1) {
@@ -484,13 +485,16 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const operands = toOperands(expressions, bindFormals(scope, toFormals(bound)));
     const ranges = bounds.map((range) => analyze(range.set, scope));
     const data = applyDefined(operator, operands, ranges, bound);
-    const pattern = bounds[ranges.findIndex((range) => range.level > ACTION_LEVEL)]?.pattern;
-    if (pattern) {
-      const range = pattern.ranges?.[0];
-      throw new TlaSyntaxError(
-        `Level error in applying operator ${operator.name}:\nThe level of the range for the bounded variable ${range ? formatRange(range) : getPatternNames(pattern)[0]} \nexceeds the maximum level allowed by the operator`,
+    ranges.forEach((range, index) => {
+      if (range.level <= ACTION_LEVEL) return;
+      data.isCorrect = false;
+      if (!range.isCorrect) return;
+      const pattern = bounds[index].pattern;
+      const symbol = pattern.ranges?.[0];
+      messages.push(
+        `Level error in applying operator ${operator.name}:\nThe level of the range for the bounded variable ${symbol ? formatRange(symbol) : getPatternNames(pattern)[0]} \nexceeds the maximum level allowed by the operator`,
       );
-    }
+    });
     return data;
   };
 
@@ -499,26 +503,20 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ? applyDeclared(resolved.name, resolved.level, operands)
       : applyDefined(resolved.levels, operands);
 
-  const checkJunction = (operands: Operand[], expression: Expression, name: string) => {
+  const checkJunction = (operands: Operand[], name: string) => {
     const levels = operands.map((operand) => operand.data.level);
     if (levels.includes(ACTION_LEVEL) && levels.includes(TEMPORAL_LEVEL)) {
-      throw createLevelError(
-        `${name} has both temporal formula and action as arguments`,
-        expression,
-      );
+      messages.push(`${name} has both temporal formula and action as arguments`);
     }
   };
 
   const checkApply = (expression: Expression & { kind: "Apply" }, operands: Operand[]) => {
     const isLeadsTo = expression.operator === "~>" || expression.operator === "-+->";
     if (isLeadsTo && operands.some((operand) => operand.data.level === ACTION_LEVEL)) {
-      throw createLevelError(
-        "Action used where only temporal formula or state predicate allowed",
-        expression,
-      );
+      messages.push("Action used where only temporal formula or state predicate allowed");
     }
     if (LOGICAL_OPERATORS.has(expression.operator)) {
-      checkJunction(operands, expression, resolveSynonym(expression.operator));
+      checkJunction(operands, resolveSynonym(expression.operator));
     }
   };
 
@@ -529,11 +527,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const operand = expression.expression;
     const form = expression.kind === "Always" ? "BoxAction" : "AngleAction";
     if (level !== ACTION_LEVEL || !isOperatorApplication(operand) || operand.kind === form) return;
-    throw createLevelError(
+    messages.push(
       expression.kind === "Always"
         ? "[] followed by action not of form [A]_v"
         : "<> followed by action not of form <<A>>_v",
-      expression,
     );
   };
 
@@ -542,27 +539,35 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     expression.definitions.forEach((definition) =>
       inner.set(definition.name, { kind: "Let", definition, scope: inner }),
     );
+    const definitions = expression.definitions.map((definition) =>
+      analyzeDefinition(definition, inner),
+    );
     const body = analyze(expression.body, inner);
     const data = {
       level: body.level,
+      isCorrect: body.isCorrect && definitions.every((levels) => levels.isCorrect),
       params: new Set(body.params),
       constraints: new Map(body.constraints),
       argConstraints: new Map(body.argConstraints),
       argParams: new Set(body.argParams),
     };
-    expression.definitions.forEach((definition) =>
-      mergeConstraints(data, analyzeDefinition(definition, inner)),
-    );
+    definitions.forEach((levels) => mergeConstraints(data, levels));
     return data;
   };
 
   const analyze = (expression: Expression, scope: Scope): LevelData => {
-    try {
-      return analyzeNode(expression, scope);
-    } catch (error) {
-      if (!(error instanceof TlaSyntaxError) || error.sany) throw error;
-      throw createLevelError(error.message, expression);
+    const start = messages.length;
+    const data = analyzeNode(expression, scope);
+    const isReported = messages.length > start;
+    const range = expression.location.range;
+    if (range) {
+      messages
+        .splice(start)
+        .forEach((message) =>
+          errors.push({ location: formatRange(range), message: `${message}.` }),
+        );
     }
+    return isReported ? { ...data, isCorrect: false } : data;
   };
 
   const analyzeNode = (expression: Expression, scope: Scope): LevelData => {
@@ -588,7 +593,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         const isAnd = expression.kind === "And";
         checkJunction(
           operands,
-          expression,
           expression.isBulleted
             ? `${isAnd ? "Conjunction" : "Disjunction"} list`
             : isAnd
@@ -640,13 +644,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           data.level === TEMPORAL_LEVEL
             ? expression.bounds.find((bound) => analyze(bound.set, scope).level === ACTION_LEVEL)
             : undefined;
-        if (actionBound) {
-          throw createLevelError(
-            "Action-level bound of quantified temporal formula",
-            actionBound.set,
-          );
+        const range = actionBound?.set.location.range;
+        if (range) {
+          errors.push({
+            location: formatRange(range),
+            message: "Action-level bound of quantified temporal formula.",
+          });
         }
-        return data;
+        return actionBound ? { ...data, isCorrect: false } : data;
       }
       case "UnboundedQuantifier":
         return applyBuiltin(
@@ -833,6 +838,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     );
     const levels: OperatorLevels = {
       ...createData(data.level),
+      isCorrect: data.isCorrect,
       name,
       formals,
       nonLeibniz: new Set(
@@ -904,14 +910,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return levels;
   };
 
-  return { analyze, analyzeDefinition, toOperand };
+  return { analyze, analyzeDefinition, toOperand, errors };
 };
 
 export const analyzeAssumeProve = (
   assumeProve: AssumeProve,
   scope: Scope,
   analyzer: ReturnType<typeof createLevelAnalyzer>,
-  errors: SanyError[] = [],
 ): LevelData => {
   const inner = new Map(scope);
   const parts = assumeProve.assumptions.flatMap((assumption) => {
@@ -919,7 +924,7 @@ export const analyzeAssumeProve = (
       const set = assumption.set && analyzer.analyze(assumption.set, inner);
       const range = assumption.location.range;
       if (set?.level === TEMPORAL_LEVEL && range) {
-        errors.push({
+        analyzer.errors.push({
           location: formatRange(range),
           message: "Level error:\nTemporal formula used as set.",
         });
@@ -933,7 +938,7 @@ export const analyzeAssumeProve = (
     }
     return [
       assumption.kind === "AssumeProve"
-        ? analyzeAssumeProve(assumption, inner, analyzer, errors)
+        ? analyzeAssumeProve(assumption, inner, analyzer)
         : analyzer.analyze(assumption, inner),
     ];
   });
@@ -998,9 +1003,8 @@ export const checkModuleLevels = (
       ? []
       : proof.steps.flatMap((step) => {
           const body = step.body;
-          const newSymbolErrors: SanyError[] = [];
           if (body.kind === "Assert" && body.statement.kind === "AssumeProve") {
-            analyzeAssumeProve(body.statement, new Map(), analyzer, newSymbolErrors);
+            analyzeAssumeProve(body.statement, new Map(), analyzer);
           }
           const isTemporal = () => getStepLevel(step) === TEMPORAL_LEVEL;
           const pickErrors =
@@ -1018,8 +1022,9 @@ export const checkModuleLevels = (
                       : [],
                   )
               : [];
+          const levelErrors = analyzer.errors.splice(0);
           return [
-            ...newSymbolErrors,
+            ...levelErrors,
             ...checkProof(step.proof),
             ...pickErrors,
             ...(step.proof?.kind === "Steps" && isTemporal() ? checkTemporalGoal(step.proof) : []),
@@ -1031,35 +1036,38 @@ export const checkModuleLevels = (
         .filter((definition) => !definition.name.includes("!"))
         .map((definition) => ({
           location: definition.location,
-          check: () => analyzer.analyzeDefinition(definition, new Map()),
+          check: (reported: SanyError[]) => {
+            analyzer.analyzeDefinition(definition, new Map());
+            reported.push(...analyzer.errors.splice(0));
+          },
         })),
       ...module.assumptions.map((assumption) => ({
         location: assumption.location,
-        check: () => {
+        check: (reported: SanyError[]) => {
           const level = analyzer.analyze(assumption.expression, new Map()).level;
+          reported.push(...analyzer.errors.splice(0));
           const range = assumption.location.range;
           if (level !== CONSTANT_LEVEL && range) {
-            throw createSemanticError(
-              `Level error: assumptions must be level 0 (Constant), \nbut this one has level ${level}.`,
-              range,
-            );
+            reported.push({
+              location: formatRange(range),
+              message: `Level error: assumptions must be level 0 (Constant), \nbut this one has level ${level}.`,
+            });
           }
         },
       })),
       ...module.theorems.map((theorem) => ({
         location: theorem.location,
-        check: () => {
-          const newSymbolErrors: SanyError[] = [];
+        check: (reported: SanyError[]) => {
           const data =
             theorem.statement.kind === "AssumeProve"
-              ? analyzeAssumeProve(theorem.statement, new Map(), analyzer, newSymbolErrors)
+              ? analyzeAssumeProve(theorem.statement, new Map(), analyzer)
               : analyzer.analyze(theorem.statement, new Map());
-          const errors = [
-            ...newSymbolErrors,
+          reported.push(
+            ...analyzer.errors.splice(0),
             ...checkProof(theorem.proof),
             ...(data.level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
-          ];
-          if (errors.length > 0) throw createSanyError(errors);
+            ...analyzer.errors.splice(0),
+          );
         },
       })),
       ...instances,
