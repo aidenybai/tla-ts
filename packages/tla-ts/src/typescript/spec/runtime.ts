@@ -173,3 +173,87 @@ export const getHostDefinitions = (library: Library): GeneratedDefinition[] => [
   IF t = NaN THEN Assert(FALSE, "tla-ts can't tell whether the host reads this date string") ELSE t`,
   },
 ];
+
+// The host whose behavior a compiled spec models is the one that compiles it, as the reference
+// a program runs on: the object an intrinsic of ESCore's names in this host, if it has one.
+const getHostObject = (owner: string): object | undefined => {
+  if (owner === "GlobalObject") return globalThis;
+  const isPrototype = owner.endsWith("Prototype");
+  const base = isPrototype ? owner.slice(0, -"Prototype".length) : owner;
+  const temporal: unknown = Reflect.get(globalThis, "Temporal");
+  const found: unknown =
+    base === "TypedArray"
+      ? Object.getPrototypeOf(Int8Array)
+      : base.startsWith("Temporal") &&
+          base !== "Temporal" &&
+          typeof temporal === "object" &&
+          temporal !== null
+        ? Reflect.get(temporal, base.slice("Temporal".length))
+        : Reflect.get(globalThis, base);
+  if ((typeof found !== "object" && typeof found !== "function") || found === null)
+    return undefined;
+  const object: unknown = isPrototype ? Reflect.get(found, "prototype") : found;
+  return (typeof object === "object" || typeof object === "function") && object !== null
+    ? object
+    : undefined;
+};
+
+// The realm's properties that the host lacks, such as proposals engine262 has and Node doesn't,
+// which the spec's realm leaves out, so that a program that tests for one takes the host's path.
+const getMissingProperties = (library: Library) =>
+  library.properties.filter((property) => {
+    const object = getHostObject(property.owner);
+    return object !== undefined && !(property.key in object);
+  });
+
+// The host's globals that ESCore's realm lacks, such as Intl, at whose names a compile stops.
+export const getHostOnlyGlobals = (library: Library) => {
+  const realm = new Set(
+    library.properties
+      .filter((property) => property.owner === "GlobalObject")
+      .map((property) => property.key),
+  );
+  return Object.getOwnPropertyNames(globalThis).filter((name) => !realm.has(name));
+};
+
+// The keys of the host's built-ins that ESCore's realm has nowhere, such as V8's
+// Error.captureStackTrace, at whose names a compile stops.
+export const getHostOnlyKeys = (library: Library) => {
+  const known = new Set(
+    [...library.definitions.values()].flatMap((definition) =>
+      [...definition.text.matchAll(/\bSV\("([^"]+)"\)/g)].map((match) => match[1]),
+    ),
+  );
+  return [
+    ...new Set(
+      [...new Set(library.properties.map((property) => property.owner))].flatMap((owner) => {
+        const object = owner === "GlobalObject" ? undefined : getHostObject(owner);
+        return object === undefined
+          ? []
+          : Object.getOwnPropertyNames(object).filter((key) => !known.has(key));
+      }),
+    ),
+  ];
+};
+
+export const getRealmDefinitions = (library: Library): GeneratedDefinition[] => {
+  const all = library.definitions.get("RealmProperties")?.text ?? "";
+  const missing = getMissingProperties(library).map(
+    (property) => `<<"${property.owner}", Str(${getUnitsOf(property.key)})>>`,
+  );
+  return [
+    {
+      name: "HostRealmProperties",
+      arity: 0,
+      text: all.replace("RealmProperties ==", "HostRealmProperties =="),
+    },
+    {
+      name: "RealmProperties",
+      arity: 0,
+      text: `RealmProperties == SelectSeq(HostRealmProperties, LAMBDA p : <<p.o, p.k>> \\notin {${missing.join(", ")}})`,
+    },
+  ];
+};
+
+const getUnitsOf = (text: string) =>
+  `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;

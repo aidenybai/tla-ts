@@ -268,26 +268,25 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
-  describe("stops where the host's locale or time zone data would decide", () => {
+  describe("stops where the host's locale or date parsing would decide", () => {
     const getSource = (expected: string) => `
-      const result = [Date.parse("1970-01-01T00:00:00.000Z"), Temporal.PlainDate.from("2020-01-02").day].join();
+      const result = [Date.parse("1970-01-01T00:00:00.000Z"), new Date(0).toISOString()].join();
       if (result !== "${expected}") throw new Error(result);
     `;
 
     it("agrees with Node", async () => {
-      expect((await checkScript(getSource("0,2"))).message).toBeUndefined();
+      expect((await checkScript(getSource("0,1970-01-01T00:00:00.000Z"))).message).toBeUndefined();
     });
 
     it("rejects another result", async () => {
-      expect((await checkScript(getSource("0,3"))).message).toContain(THREW);
+      expect((await checkScript(getSource("1,1970-01-01T00:00:00.000Z"))).message).toContain(THREW);
     });
 
-    it("stops at a locale-sensitive method and at a named time zone", async () => {
+    it("stops at a locale-sensitive method and at a date string outside ECMA-262's formats", async () => {
       expect((await checkScript("(1234.5).toLocaleString();")).message).toContain("tla-ts can't");
-      expect(
-        (await checkScript('Temporal.ZonedDateTime.from("2020-01-01T00:00[America/New_York]");'))
-          .message,
-      ).toContain("tla-ts can't");
+      expect((await checkScript('Date.parse("Thu Jan 01 1970");')).message).toContain(
+        "tla-ts can't",
+      );
     });
   });
 
@@ -371,6 +370,34 @@ describe("compiles scripts by specializing ESCore", () => {
       expect(
         (await checkScript(getSource("undefined,undefined,undefined2"), false)).message,
       ).toContain(THREW);
+    });
+  });
+
+  describe("models the realm of the host that compiles it", () => {
+    const getSource = (expected: string) => `
+      const result = [
+        "transferToImmutable" in ArrayBuffer.prototype,
+        typeof (globalThis as Record<string, unknown>).print,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const host = [
+      "transferToImmutable" in ArrayBuffer.prototype,
+      typeof Reflect.get(globalThis, "print"),
+    ].join();
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(host))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(`${host}!`))).message).toContain(THREW);
+    });
+
+    it("stops at a global that only the host has", () => {
+      expect(() => compileToEscore("setTimeout(() => {});", "spec.ts", library)).toThrow(
+        "tla-ts can't run the host's setTimeout",
+      );
     });
   });
 });

@@ -45,6 +45,9 @@ export interface Library {
   methodKeys: Map<string, Set<string>>;
   // The property keys that ESCore's own operators get or set, such as toString and valueOf.
   internalKeys: Set<string>;
+  // The realm's properties with a string key, by the intrinsic that holds each, as the property
+  // tables list them.
+  properties: { owner: string; key: string }[];
   modules: Map<string, string>;
 }
 
@@ -185,7 +188,26 @@ export const createLibrary = (directory: string): Library => {
       readFileSync(join(directory, `${name}.tla`), "utf8"),
     ]),
   );
-  return { definitions, order, triggers, families, methodKeys, internalKeys, modules };
+  const properties = [...partTexts.values()].flatMap((text) => [
+    ...[...text.matchAll(/\b(?:M|G|V|L)\("([A-Za-z0-9_]+)", SV\("([^"]+)"\)/g)].map((match) => ({
+      owner: match[1],
+      key: match[2],
+    })),
+    ...[...text.matchAll(/GlobalLink\("[A-Za-z0-9_]+", N\("([^"]+)"\)\)/g)].map((match) => ({
+      owner: "GlobalObject",
+      key: match[1],
+    })),
+    // The globals that a table of names links: the native errors and the typed arrays.
+    ...[
+      ...text.matchAll(/^(?:NativeErrors|[A-Z][A-Za-z0-9]*Names) ==\n?((?:.*\n)*?)(?=^\S)/gm),
+    ].flatMap((table) =>
+      [...table[1].matchAll(/"([A-Z][A-Za-z0-9]*(?:Error|Array))"/g)].map((match) => ({
+        owner: "GlobalObject",
+        key: match[1],
+      })),
+    ),
+  ]);
+  return { definitions, order, triggers, families, methodKeys, internalKeys, properties, modules };
 };
 
 const getUnits = (text: string) =>
@@ -385,11 +407,17 @@ export const assembleModule = (
           `RECURSIVE ${definition.name}(${Array.from({ length: definition.arity }, () => "_").join(", ")})`,
       ),
       ...libraryDefinitions.filter((entry) => entry.definition?.isEager).map((entry) => entry.text),
+      // An override without parameters comes before the operators, which TLA+ reads in order.
+      ...overriding
+        .filter((definition) => definition.arity === 0)
+        .map((definition) => texts.get(definition.name) ?? ""),
       ...libraryDefinitions
         .filter((entry) => !entry.definition?.isEager)
         .map((entry) => entry.text),
       ...stubs.map(getStub),
-      ...overriding.map((definition) => texts.get(definition.name) ?? ""),
+      ...overriding
+        .filter((definition) => definition.arity > 0)
+        .map((definition) => texts.get(definition.name) ?? ""),
       ...generatedTexts.map((definition) => definition.text),
       "====",
       "",

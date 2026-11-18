@@ -1,7 +1,15 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { assembleModule, type Library } from "./library";
-import { getHostDefinitions, INTERPRETER, LOCALE_METHODS, RUNTIME_DEFINITIONS } from "./runtime";
+import {
+  getHostDefinitions,
+  getHostOnlyGlobals,
+  getHostOnlyKeys,
+  getRealmDefinitions,
+  INTERPRETER,
+  LOCALE_METHODS,
+  RUNTIME_DEFINITIONS,
+} from "./runtime";
 import { specialize } from "./specialize";
 
 export interface EscoreSpec {
@@ -40,8 +48,14 @@ export const compileToEscore = (source: string, fileName: string, library: Libra
     ts.ScriptKind.JS,
   );
   const program = specialize(sourceFile);
-  if (program.words.has("Intl"))
-    throw new TlaTypeScriptError("tla-ts can't run Intl, which ESCore leaves out");
+  const hostOnly =
+    getHostOnlyGlobals(library).find((name) => program.identifiers.has(name)) ??
+    getHostOnlyKeys(library).find((key) => program.words.has(key));
+  if (hostOnly !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't run the host's ${hostOnly}, which ESCore leaves out`,
+    );
+  }
   const isQueuing = program.words.has("Promise") || program.words.has("then");
   const name = "Program";
   const module = assembleModule(
@@ -69,6 +83,7 @@ export const compileToEscore = (source: string, fileName: string, library: Libra
     [
       ...RUNTIME_DEFINITIONS,
       ...getHostDefinitions(library),
+      ...getRealmDefinitions(library),
       // The realm's first objects, which the spec evaluates once, as it starts, rather than deep
       // in the realm's properties, where building them would take a deeper stack.
       {

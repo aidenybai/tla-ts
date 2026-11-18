@@ -50,6 +50,8 @@ interface LexicalDeclaration {
 export interface SpecializedProgram {
   definitions: GeneratedDefinition[];
   words: Set<string>;
+  // The names the program's identifiers resolve, which may be the global object's.
+  identifiers: Set<string>;
 }
 
 const getUnits = (text: string) =>
@@ -417,6 +419,7 @@ const getLiteralKey = (name: ts.PropertyName) => {
 export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
   const definitions: GeneratedDefinition[] = [];
   const words = new Set<string>();
+  const identifiers = new Set<string>();
   const codes: { id: number; body: string }[] = [];
   const loops: { id: number; body: string }[] = [];
   let count = 0;
@@ -459,6 +462,7 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
   const reference = (node: ts.Expression, scope: Scope): Code => {
     if (ts.isIdentifier(node)) {
       words.add(node.text);
+      identifiers.add(node.text);
       return (state, context) =>
         `ResolveBinding(${state}, ${context}, ${getUnits(node.text)}, ${getBool(scope.isStrict)})`;
     }
@@ -2118,5 +2122,6 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       ...definitions,
     ],
     words,
+    identifiers,
   };
 };
