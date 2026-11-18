@@ -36,6 +36,24 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks a shared range once after resolving a selection in it", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nT == [](x = 1) /\\ TRUE\nF == \\E v, w \\in T!1 : TRUE\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 6 to line 4, col 27 of module M",
+          message:
+            "Level error in applying operator $BoundedExists:\nThe level of the range for the bounded variable line 4, col 9 to line 4, col 9 of module M \nexceeds the maximum level allowed by the operator.",
+        },
+      ]),
+    );
+  });
+
   it("checks the level of an operator argument against its parameter", async () => {
     await expect(
       check({

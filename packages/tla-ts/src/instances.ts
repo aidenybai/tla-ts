@@ -55,7 +55,14 @@ export const renameLocals = (
 };
 
 const mapBounds = (bounds: Bound[], map: (child: Expression) => Expression) =>
-  bounds.map((bound) => ({ pattern: bound.pattern, set: map(bound.set) }));
+  bounds.reduce<Bound[]>((mapped, bound, index) => {
+    mapped.push({
+      pattern: bound.pattern,
+      set:
+        index > 0 && bounds[index - 1].set === bound.set ? mapped[index - 1].set : map(bound.set),
+    });
+    return mapped;
+  }, []);
 
 const sourceNames = new WeakMap<Definition, string>();
 
