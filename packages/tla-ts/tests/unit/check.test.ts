@@ -2452,6 +2452,38 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "a constant domain",
+      "VARIABLE v\nfib[n \\in 0..3] == IF n < 2 THEN n ELSE fib[n - 1] + fib[n - 2]",
+      ["line 7, col 8 to line 7, col 17 of module M: 2"],
+    ],
+    [
+      "a domain that reads a variable",
+      "VARIABLE v\nfib[n \\in 0..(v + 3)] == IF n < 2 THEN n ELSE fib[n - 1] + fib[n - 2]",
+      [
+        "line 7, col 8 to line 7, col 17 of module M: 2",
+        "|line 7, col 8 to line 7, col 13 of module M: 2",
+        "||line 7, col 8 to line 7, col 10 of module M: 2",
+        "|||line 4, col 1 to line 4, col 69 of module M: 2:4",
+        "||||line 4, col 26 to line 4, col 69 of module M: 10",
+        "|||||line 4, col 29 to line 4, col 33 of module M: 10",
+        "|||||line 4, col 40 to line 4, col 40 of module M: 7",
+        "|||||line 4, col 47 to line 4, col 69 of module M: 3",
+        "||||line 4, col 11 to line 4, col 20 of module M: 2",
+      ],
+    ],
+  ])(
+    "counts no evaluation of %s when TLC replays an invariant that applies a recursive function outside it, as the replay keeps the function's domain",
+    async (_title, definitions, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers\n${definitions}\nInit == v = 0\nNext == UNCHANGED v\nInv == fib[7] = 1\n====`,
+        "INIT Init\nNEXT Next\nINVARIANT Inv",
+      );
+      expect(lines?.[2]).toEqual(expected);
+    },
+  );
+
   it("counts no node for the reference that applies a recursive function a parameterized instance copies", async () => {
     const result = await check({
       source:

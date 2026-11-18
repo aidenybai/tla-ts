@@ -808,8 +808,8 @@ const getRecursiveCostModel = (coverage: Coverage | undefined, node: number) =>
 const createRecursiveFunction = (
   definition: FunctionDefinition,
   context: Context,
+  domain: Value,
 ): RebindableLazyFunction => {
-  const domain = getBoundsDomain(definition.bounds, context);
   const compute = (argument: Value, self: Value) =>
     evaluate(
       definition.body,
@@ -845,7 +845,11 @@ const createRecursiveFunction = (
   });
   const rebindable: RebindableLazyFunction = Object.assign(functionValue, {
     rebind: (tracing: Environment) => {
-      const rebound = createRecursiveFunction(definition, { ...context, environment: tracing });
+      const rebound = createRecursiveFunction(
+        definition,
+        { ...context, environment: tracing },
+        functionValue.domain,
+      );
       rebound.enumerated = functionValue.enumerated;
       return rebound;
     },
@@ -883,7 +887,8 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
   if (definition.kind !== "Function") return getEntryEvaluator(definition.body, environment);
   const construction = getFunctionConstruction(definition);
   if (!definition.isSelfReferential) return getEntryEvaluator(construction, environment);
-  const evaluator: Evaluator = (context) => createRecursiveFunction(definition, context);
+  const evaluator: Evaluator = (context) =>
+    createRecursiveFunction(definition, context, getBoundsDomain(definition.bounds, context));
   const coverage = environment.coverage;
   return coverage ? countEvaluator(construction, evaluator, coverage) : evaluator;
 };
