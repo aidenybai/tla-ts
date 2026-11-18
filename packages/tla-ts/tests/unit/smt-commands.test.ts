@@ -1579,6 +1579,62 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     expect(run(["(set-option :produce-models false)", ...lines])).toEqual(["sat", "(:rlimit 49)"]);
   });
 
+  it("reads the model parameter as produce-models, which the solver takes only when it is made", () => {
+    const lines = [
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(assert (= x (+ y 1)))",
+      "(assert (> (* 2 y) 7))",
+    ];
+    expect(
+      run([
+        "(set-option :model false)",
+        ...lines,
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-option :produce-models)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 152)",
+      '(error "line 8 column 10: model is not available")',
+      "false",
+    ]);
+    expect(
+      run([
+        ...lines,
+        "(set-option :model false)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 165)", '(error "line 8 column 10: model is not available")']);
+    expect(
+      run([
+        "(set-option :model false)",
+        "(set-option :produce-models true)",
+        "(get-option :produce-models)",
+        "(set-option :smt.random_seed 3)",
+        "(get-option :produce-models)",
+      ]),
+    ).toEqual(["true", "false"]);
+  });
+
+  it("reads the unsat_core parameter as produce-unsat-cores", () => {
+    expect(
+      run([
+        "(set-option :unsat_core true)",
+        "(get-option :produce-unsat-cores)",
+        "(declare-const p Bool)",
+        "(assert (! p :named a))",
+        "(assert (! (not p) :named b))",
+        "(check-sat)",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["true", "unsat", "(a b)"]);
+  });
+
   it("charges each pivot of the simplex the cells it touches", () => {
     expect(
       run([

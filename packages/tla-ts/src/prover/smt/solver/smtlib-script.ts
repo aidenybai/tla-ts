@@ -421,6 +421,8 @@ interface ScriptState {
   // tactic2solver's formulas of the goal of its last unknown check without scopes, which it keeps
   // until the next such check.
   lastAssertions: RefVector;
+  // The solver takes the flag of models when it is made, and only produce-models changes it.
+  isSolverProducingModels: boolean;
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -495,6 +497,7 @@ export const runSmtlibScript = (
       tacticConverters: [],
       tacticModel: undefined,
       lastAssertions: new RefVector(manager),
+      isSolverProducingModels: settings.isProducingModels,
     };
   };
   let state = createState();
@@ -615,7 +618,7 @@ export const runSmtlibScript = (
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
   const solveWithStrategy = () => {
     releaseTacticModel();
-    const goal = getGoal();
+    const goal = getGoal(state.isSolverProducingModels);
     try {
       const strategy =
         settings.parameters.get("tactic.default_tactic") ??
@@ -851,6 +854,7 @@ export const runSmtlibScript = (
     state.tacticConverters = [];
     releaseTacticModel();
     state.lastAssertions.reset();
+    state.isSolverProducingModels = settings.isProducingModels;
     state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
     state.satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
@@ -978,10 +982,10 @@ export const runSmtlibScript = (
     );
     return state.datalog;
   };
-  const getGoal = (isTrackingDependencies = false) => {
+  const getGoal = (isModelsEnabled: boolean, isTrackingDependencies = false) => {
     const goal = new Goal(state.manager);
     goal.isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
-    goal.isModelsEnabled = settings.isProducingModels;
+    goal.isModelsEnabled = isModelsEnabled;
     goal.isCoresEnabled = settings.isProducingUnsatCores;
     for (const [index, assertion] of state.assertions.entries())
       goal.assert(
@@ -1001,7 +1005,7 @@ export const runSmtlibScript = (
         "Frontend does not support simultaneous generation of proofs and unsat cores",
         end,
       );
-    return getGoal(isTrackingDependencies);
+    return getGoal(settings.isProducingModels, isTrackingDependencies);
   };
   const hasNames = () => state.names.some((name) => name !== -1);
   // parse_check_sat shrinks the expression stack once the check has run.
@@ -2035,7 +2039,10 @@ export const runSmtlibScript = (
             `error setting '${keyword}', option value cannot be modified after assertions have been added`,
             value ?? list.end,
           );
-        if (keyword === ":produce-models") settings.isProducingModels = isTrue;
+        if (keyword === ":produce-models") {
+          settings.isProducingModels = isTrue;
+          state.isSolverProducingModels = isTrue;
+        }
         if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
         if (keyword === ":produce-unsat-assumptions") settings.isProducingUnsatAssumptions = isTrue;
         if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;
@@ -2076,6 +2083,11 @@ export const runSmtlibScript = (
             value,
           );
           settings.parameters.set(getParameterName(keyword), value.text);
+          // Z3 reads the parameters model and unsat_core again whenever any parameter is set.
+          const model = settings.parameters.get("model");
+          if (model !== undefined) settings.isProducingModels = model === "true";
+          if (settings.parameters.get("unsat_core") === "true")
+            settings.isProducingUnsatCores = true;
         }
         if (optionName === ":print_success") settings.isPrintingSuccess = isTrue;
         if (
