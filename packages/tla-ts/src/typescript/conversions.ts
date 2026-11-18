@@ -91,7 +91,7 @@ const STRING_LOOKUPS = new Map<string, Lookup["key"][]>([
 
 const CONVERSION_KEYS = ["@@toPrimitive", "valueOf", "toString"];
 
-const NUMBER_OPERATIONS = new Map([
+export const NUMBER_OPERATIONS = new Map([
   [ts.SyntaxKind.MinusToken, "Subtract"],
   [ts.SyntaxKind.AsteriskToken, "Multiply"],
   [ts.SyntaxKind.SlashToken, "Divide"],
@@ -579,10 +579,10 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
     return conversion && { ...conversion, thrownSymbols: "none" };
   }
   // a > b and a <= b compare b with a, though they convert a first. Two strings don't convert, and
-  // a value of type any compares as it is.
-  const isOrdered =
-    !operands.every((operand) => hasFlags(operand, ts.TypeFlags.StringLike, context)) &&
-    !operands.some((operand) => isAnyOperand(operand, context));
+  // a value of type any converts as it runs, as IsLessThan converts each operand to a primitive.
+  const isOrdered = !operands.every((operand) =>
+    hasFlags(operand, ts.TypeFlags.StringLike, context),
+  );
   const compare = (name: string, left: Expression, right: Expression) =>
     useJavaScript(name, [left, right], context);
   if (kind === ts.SyntaxKind.LessThanToken || kind === ts.SyntaxKind.GreaterThanToken) {

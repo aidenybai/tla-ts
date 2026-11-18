@@ -176,6 +176,7 @@ import {
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
+import { isAnyOperand, NUMBER_OPERATIONS } from "./conversions";
 import { getNamespaceModule, getNamespaceName, getNamespaceRef, isBindingRead } from "./namespaces";
 import { getThisOwner, isBeforeDeclaration, isCaughtBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
@@ -2226,6 +2227,78 @@ const getUnverifiedPrimitive = (node: ts.Expression, context: Context) => {
           : undefined;
 };
 
+// An arithmetic operator or an ordering of a value of type any where no heap holds objects, so that
+// the value is a primitive or a value that tla-ts can't convert, as a list, which stops where it
+// runs. The operator converts the primitives as JavaScript's does: + joins a string, an ordering
+// runs IsLessThan, and the others convert to numbers.
+const translateAnyOperation = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
+  const kind = node.operatorToken.kind;
+  const operands = [node.left, node.right];
+  const operation = NUMBER_OPERATIONS.get(kind);
+  const isPrimitiveTyped = (operand: ts.Expression) =>
+    isEvery(
+      context.checker.getTypeAtLocation(operand),
+      ts.TypeFlags.NumberLike |
+        ts.TypeFlags.StringLike |
+        ts.TypeFlags.BooleanLike |
+        ts.TypeFlags.BigIntLike |
+        ts.TypeFlags.Null |
+        ts.TypeFlags.Undefined,
+    );
+  if (
+    context.heap !== undefined ||
+    !(
+      ORDERING_OPERATORS.has(kind) ||
+      kind === ts.SyntaxKind.PlusToken ||
+      operation !== undefined
+    ) ||
+    !operands.some((operand) => isAnyOperand(operand, context)) ||
+    !operands.every((operand) => isAnyOperand(operand, context) || isPrimitiveTyped(operand))
+  ) {
+    return undefined;
+  }
+  context.prelude.add("Null");
+  const plain = (value: Expression) =>
+    context.hasSpecialNumbers ? value : useJavaScript("PlainNumber", [value], context);
+  return share(translateExpression(node.left, scope, context), "left", context, (left) =>
+    share(translateExpression(node.right, scope, context), "right", context, (right) => {
+      const value = ORDERING_OPERATORS.has(kind)
+        ? kind === ts.SyntaxKind.LessThanToken
+          ? useJavaScript("LessThanPrimitives", [left, right], context)
+          : kind === ts.SyntaxKind.GreaterThanToken
+            ? useJavaScript("LessThanPrimitives", [right, left], context)
+            : kind === ts.SyntaxKind.LessThanEqualsToken
+              ? useJavaScript("LessOrEqualPrimitives", [left, right], context)
+              : useJavaScript("LessOrEqualPrimitives", [right, left], context)
+        : operation === undefined
+          ? plain(useJavaScript("AddPrimitives", [left, right], context))
+          : plain(
+              useJavaScript(
+                operation,
+                [left, right].map((primitive) => useJavaScript("ToNumber", [primitive], context)),
+                context,
+              ),
+            );
+      const isPrimitive = (operand: Expression) =>
+        apply("\\/", [
+          apply("=", [operand, identifier("Null")]),
+          apply("\\notin", [
+            useJavaScript("TypeOf", [operand], context),
+            set([string("object"), string("function")]),
+          ]),
+        ]);
+      return ifExpression(
+        apply("/\\", [isPrimitive(left), isPrimitive(right)]),
+        value,
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't convert this value to a primitive where no heap holds objects"),
+        ]),
+      );
+    }),
+  );
+};
+
 const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
   const kind = node.operatorToken.kind;
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
@@ -2308,6 +2381,8 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     ORDERING_OPERATORS.has(kind) && isBooleanLike(side, context);
   const translateOperand = (side: ts.Expression) =>
     isOrderedBoolean(side) ? translateToNumber(side, node, scope, context) : translate(side);
+  const anyOperation = translateAnyOperation(node, scope, context);
+  if (anyOperation !== undefined) return anyOperation;
   if (
     ARITHMETIC_OPERATORS.has(kind) &&
     [node.left, node.right].some((side) => !isNumberLike(side, context) && !isOrderedBoolean(side))

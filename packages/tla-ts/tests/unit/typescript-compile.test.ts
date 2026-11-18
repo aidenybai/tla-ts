@@ -52830,4 +52830,70 @@ describe("BigInts", () => {
       `),
     ).toThrow("tla-ts can't tell what NaN holds here");
   });
+
+  describe("orders values of type any as IsLessThan does, converting objects first", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const compare = (left: any, right: any) => {
+        box.seen.push(String(left < right), String(left >= right));
+      };
+      compare("a", "b");
+      compare("10", 9);
+      compare(1n, 2);
+      compare("3", 2n);
+      compare("x", 2n);
+      compare(undefined, 0);
+      compare(null, 0);
+      compare({ valueOf: () => 5 }, 4);
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected =
+      "true,false,false,true,true,false,false,true,false,false,false,false,false,true,false,true";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace(/^true/, "false");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("runs the operators of values of type any where a script holds no objects", () => {
+    const getSource = (expected: string) => `
+      const less = (left: any, right: any) => left < right;
+      const atLeast = (left: any, right: any) => left >= right;
+      const subtract = (left: any, right: any) => left - right;
+      const add = (left: any, right: any) => left + right;
+      const seen = [
+        less(5, 2), less("1", "2"), less("10", 9), atLeast(undefined, 0), atLeast(null, 0),
+        subtract("7", 1), add("a", 1), add(true, 1), less(1n, "2"),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(getSource("false,true,false,false,true,6,a1,2,true"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      await expect(checkModel(getSource("false,true,true,false,true,6,a1,2,true"))).rejects.toThrow(
+        "seen false,true,false,false,true,6,a1,2,true",
+      );
+    });
+
+    it("stops at a list, which it can't convert where no heap holds it", async () => {
+      await expect(
+        checkModel(`
+          const less = (left: any, right: any) => left < right;
+          if (less([1], 2)) throw new Error("less");
+        `),
+      ).rejects.toThrow(
+        "tla-ts can't convert this value to a primitive where no heap holds objects",
+      );
+    });
+  });
 });
