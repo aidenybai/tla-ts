@@ -57754,4 +57754,62 @@ describe("runs the script's methods in a conversion inside at most one other", (
       "tla-ts can't tell what this method gives where it converts an object",
     );
   });
+
+  describe("runs a generator's state machine through yield*", () => {
+    const getDelegated = (expected: string) => `
+      const trace = { log: "" };
+      function* leaf(count: number): Generator<number, number, unknown> {
+        for (let index = 0; index < count; index++) yield index;
+        return count;
+      }
+      function* tree(): Generator<number, number, unknown> {
+        let total = 0;
+        for (let round = 0; round < 10; round++) total += yield* leaf(3);
+        try {
+          yield* leaf(2);
+        } finally {
+          trace.log += "f";
+        }
+        return total;
+      }
+      let seen = 0;
+      let sum = 0;
+      for (const value of tree()) {
+        seen += 1;
+        sum += value;
+      }
+      const closing = tree();
+      closing.next();
+      const closed = closing.return(7);
+      function* thrower(): Generator<number, void, unknown> {
+        yield 1;
+        throw new Error("boom");
+      }
+      function* wrapper(): Generator<number, string, unknown> {
+        try {
+          yield* thrower();
+        } catch (error) {
+          return "caught " + (error as Error).message;
+        }
+        return "missed";
+      }
+      const wrapped = wrapper();
+      wrapped.next();
+      const caught = wrapped.next();
+      const result = [seen, sum, trace.log, closed.value, closed.done, caught.value].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a yield* that delegates to a state machine", async () => {
+      expect(
+        (await checkModel(getDelegated("32|31|f|7|true|caught boom"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the yield*", async () => {
+      expect(
+        (await checkModel(getDelegated("32|30|f|7|true|caught boom"))).failure?.message,
+      ).toContain("32|31|f|7|true|caught boom");
+    });
+  });
 });

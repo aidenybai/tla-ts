@@ -532,6 +532,7 @@ import {
 } from "./types";
 import {
   type Machine,
+  type MachineDelegate,
   type MachineLoop,
   getMachine,
   getMachines,
@@ -563,6 +564,9 @@ export interface Path {
   // Whether a generator's state machine runs the statements, whose code after a yield runs apart
   // from the code before it, so that it can't call an operator that the code before it defines.
   isMachine?: boolean;
+  // The operators of the state machines that such statements make, which the machine that runs
+  // them defines for all of its code.
+  hoisted?: OperatorDefinition[];
 }
 
 interface KnownDefault {
@@ -767,6 +771,8 @@ export interface Frame {
   inlining: Set<ts.Node>;
   // What runs a loop of a generator's body that yields, where a state machine runs the body.
   loopTo?: MachineLoop;
+  // What runs a yield* of a generator that a state machine runs, where one runs the body too.
+  delegateTo?: MachineDelegate;
 }
 
 const COMPOUND_OPERATORS = new Map([
@@ -8097,15 +8103,17 @@ export const makeGenerator = (
         ? record("Record", [{ name: "generator", value: string(name) }])
         : useJavaScript("Allocated", [identifier(name)], context);
     const isAsync = isAsyncGenerator(callee);
-    // An async generator's body changes the heap as it awaits, which makes promises.
-    const changed = isAsync
-      ? [
-          ...new Set([
-            ...getChanged(callee, inner, context),
-            ...(heapSymbol === undefined ? [] : [heapSymbol]),
-          ]),
-        ]
-      : getChanged(callee, inner, context);
+    // An async generator's body changes the heap as it awaits, which makes promises, and a yield*
+    // as the state machine that it delegates to steps.
+    const changed =
+      isAsync || hasDelegation(callee)
+        ? [
+            ...new Set([
+              ...getChanged(callee, inner, context),
+              ...(heapSymbol === undefined ? [] : [heapSymbol]),
+            ]),
+          ]
+        : getChanged(callee, inner, context);
     const isOuter = (symbol: ts.Symbol) =>
       !(symbol.declarations ?? []).some(
         (declaration) =>
@@ -8324,7 +8332,7 @@ export const makeGenerator = (
       },
     };
     const built = isMachineGenerator(node, callee, isLooped, context)
-      ? tryMachine(() => makeMachine(node, callee, ref, allocated, start.scope, context, frame))
+      ? tryMachine(() => makeMachine(node, callee, allocated, start.scope, context, frame))
       : undefined;
     const allocateObject = (value: Expression, rest: Formula) =>
       letIn(
@@ -8343,10 +8351,13 @@ export const makeGenerator = (
         ),
       );
     if (built !== undefined) {
+      // A state machine's body defines the operators of the machines that it makes where each of
+      // its arms can call them.
+      allocated.hoisted?.push(...built.definitions);
       return allocateObject(
-        useJavaScript("MachineObject", [object], context),
+        useJavaScript("MachineObject", [object, built.locals], context),
         letIn(
-          built.definitions,
+          allocated.hoisted === undefined ? built.definitions : [],
           continueWith(
             {
               ...allocated,
@@ -9125,7 +9136,11 @@ const translateIteratorHelper = (
               "Allocate",
               [
                 getHeap(path.scope, node, context),
-                useJavaScript("MachineObject", [identifier("IteratorHelperObject")], context),
+                useJavaScript(
+                  "MachineObject",
+                  [identifier("IteratorHelperObject"), tuple([])],
+                  context,
+                ),
               ],
               context,
             ),
@@ -12717,11 +12732,55 @@ const delegateToGenerator = (
                   },
                 ),
         );
+  // A generator that a state machine runs steps through its operator: from a state machine's body
+  // without a limit, and otherwise as far as the code that delegates to it unrolls.
+  const delegateMachine = (
+    current: Path,
+    inner: Suspension,
+    method: string,
+    value: Expression | undefined,
+    count: number,
+  ): Formula =>
+    count > DELEGATION_LIMIT
+      ? leaf(
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't follow more than ${DELEGATION_LIMIT} values of a yield*`),
+          ]),
+        )
+      : stepMachine(node, inner, method, value, current, context, frame, (stepped, kind, result) =>
+          ifThenElse(
+            apply("=", [kind, string("return")]),
+            method === "return" ? frame.exit(stepped, result) : continueWith(stepped, result),
+            yieldTo(
+              stepped,
+              result,
+              (resumed, sent) => delegateMachine(resumed, inner, "next", sent, count + 1),
+              throwWith,
+              {
+                isDelegated: true,
+                isGuarded: true,
+                abortRest: (aborted, abrupt, abruptValue) =>
+                  delegateMachine(aborted, inner, abrupt, abruptValue, count + 1),
+              },
+            ),
+          ),
+        );
+  const start = (current: Path, generator: Expression) => {
+    const inner = getMachine(generator, current);
+    const delegateTo = frame.delegateTo;
+    if (inner === undefined || inner.machine?.isHelper === true) {
+      return delegate(current, generator, "next", undefined, 0);
+    }
+    return delegateTo === undefined
+      ? delegateMachine(current, inner, "next", undefined, 0)
+      : delegateTo(node, inner, current, frame, continueWith);
+  };
   return ts.isCallExpression(iterated)
     ? translateCallStatement(iterated, path, context, frame, (after, generator) =>
-        delegate(after, generator ?? getUndefined(context), "next", undefined, 0),
+        start(after, generator ?? getUndefined(context)),
       )
-    : delegate(path, translateExpression(iterated, path.scope, context), "next", undefined, 0);
+    : start(path, translateExpression(iterated, path.scope, context));
 };
 
 // An async generator's yield* over a generator, which the async-from-sync iterator resumes with the
@@ -18785,6 +18844,16 @@ const getCounts = (loop: ts.ForStatement, context: Context) => {
     ? undefined
     : { symbol, counts: values.slice(0, length), after: isVar ? values[length] : undefined };
 };
+
+// Whether a function's body delegates with yield*.
+const hasDelegation = (callee: FunctionNode) =>
+  findNodes(
+    callee,
+    (node): node is ts.YieldExpression =>
+      ts.isYieldExpression(node) &&
+      node.asteriskToken !== undefined &&
+      ts.findAncestor(node.parent, ts.isFunctionLike) === callee,
+  ).length > 0;
 
 // Whether a node yields outside the functions it holds.
 const hasYield = (node: ts.Node): boolean =>

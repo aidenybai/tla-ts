@@ -1833,8 +1833,8 @@ GeneratorObjectOf(prototype) == [GeneratorObject EXCEPT !.prototype = prototype]
 \\* A generator object that a state machine runs, as ESCore's generator object keeps its state and
 \\* frames in its slots: [[GeneratorState]], and where the body suspended, as a resume point and the
 \\* locals saved there.
-MachineObject(object) ==
-  [generator |-> [state |-> "suspendedStart", point |-> 0, locals |-> <<>>]] @@ object
+MachineObject(object, locals) ==
+  [generator |-> [state |-> "suspendedStart", point |-> 0, locals |-> locals]] @@ object
 
 MachineOf(heap, ref) == heap.objects[ref[Ref]].generator
 

@@ -62,8 +62,10 @@ import {
 } from "./tla";
 
 export interface Machine {
-  // The operator that runs the body for a next, a return, or a throw, from where it suspended.
+  // The operator that runs the body for a next, a return, or a throw, from where it suspended. A
+  // generator's takes the generator object, and a helper's has its object built in.
   step: string;
+  isHelper?: boolean;
   // The values from outside the body that it reads or changes, the heap first, which a step takes
   // and gives back.
   outer: readonly ts.Symbol[];
@@ -76,6 +78,17 @@ export interface MachineLoop {
     path: Path,
     frame: Frame,
     continueWith: (path: Path) => Formula,
+  ): Formula;
+}
+
+// Passes the steps of a yield* on to the state machine of the generator that it delegates to.
+export interface MachineDelegate {
+  (
+    yielded: ts.YieldExpression,
+    inner: Suspension,
+    path: Path,
+    frame: Frame,
+    continueWith: (path: Path, value: Expression) => Formula,
   ): Formula;
 }
 
@@ -110,7 +123,8 @@ const getOuterExpression = (node: ts.Node): ts.Node =>
     : node;
 
 // Whether an expression is an object of a state machine that a call of one of its methods steps, that
-// a for-of whose body doesn't suspend iterates, or that a helper that a state machine runs wraps.
+// a for-of whose body doesn't suspend iterates, that a helper that a state machine runs wraps, or
+// that a sync generator's yield* delegates to.
 const isStepped = (node: ts.Node, context: Context, methods: ReadonlySet<string>) => {
   const outer = getOuterExpression(node);
   const parent = outer.parent;
@@ -127,9 +141,41 @@ const isStepped = (node: ts.Node, context: Context, methods: ReadonlySet<string>
       parent.expression === outer &&
       parent.awaitModifier === undefined &&
       !isSuspending(parent.initializer) &&
-      !isSuspending(parent.statement))
+      !isSuspending(parent.statement)) ||
+    (ts.isYieldExpression(parent) &&
+      parent.asteriskToken !== undefined &&
+      parent.expression === outer &&
+      isSyncGeneratorBody(parent, context))
   );
 };
+
+// Whether a node is in the body of a sync generator that a state machine may run, whose yield*
+// steps a generator with its next.
+const isSyncGeneratorBody = (node: ts.Node, context: Context) => {
+  const owner = ts.findAncestor(node.parent, ts.isFunctionLike);
+  return (
+    owner !== undefined &&
+    (ts.isFunctionDeclaration(owner) ||
+      ts.isFunctionExpression(owner) ||
+      ts.isMethodDeclaration(owner)) &&
+    owner.asteriskToken !== undefined &&
+    isMachineBody(owner, context)
+  );
+};
+
+// Whether a sync generator's body is one that a state machine can run: one that makes no functions,
+// so that its locals are values, and doesn't read its arguments object.
+const isMachineBody = (callee: FunctionNode, context: Context) =>
+  !isAsyncGenerator(callee) &&
+  callee.body !== undefined &&
+  ts.isBlock(callee.body) &&
+  findNodes(
+    callee.body,
+    (inner): inner is ts.Node => ts.isFunctionLike(inner) || ts.isClassLike(inner),
+  ).length === 0 &&
+  findNodes(callee, ts.isIdentifier).every(
+    (identifier) => getArgumentsOwner(identifier, context.checker) !== callee,
+  );
 
 // Whether code yields or awaits outside the functions that it makes, which a loop's operator can't,
 // as an await using does where it disposes.
@@ -195,16 +241,7 @@ export const isMachineGenerator = (
   context: Context,
 ) =>
   context.heap !== undefined &&
-  !isAsyncGenerator(callee) &&
-  callee.body !== undefined &&
-  ts.isBlock(callee.body) &&
-  findNodes(
-    callee.body,
-    (inner): inner is ts.Node => ts.isFunctionLike(inner) || ts.isClassLike(inner),
-  ).length === 0 &&
-  findNodes(callee, ts.isIdentifier).every(
-    (identifier) => getArgumentsOwner(identifier, context.checker) !== callee,
-  ) &&
+  isMachineBody(callee, context) &&
   (isLooped || isMachineUse(node, context));
 
 // Whether a loop's own statements are the only code around it in the body that runs more than once
@@ -320,12 +357,11 @@ const COMPLETED = getSlot("completed", number(0), tuple([]));
 export const makeMachine = (
   node: ts.Node,
   callee: FunctionNode,
-  ref: Expression,
   made: Path,
   start: Scope,
   context: Context,
   frame: Frame,
-): { machine: Machine; definitions: OperatorDefinition[] } => {
+): { machine: Machine; definitions: OperatorDefinition[]; locals: Expression } => {
   const heap = context.heap;
   const body = callee.body;
   if (heap === undefined || body === undefined) throw unsupported(node);
@@ -342,6 +378,8 @@ export const makeMachine = (
           ts.isBindingElement(declaration),
       ),
   );
+  const selfName = context.names.getFresh("self");
+  const ref = identifier(selfName);
   const resumeName = context.names.getFresh("Resume");
   const stepName = context.names.getFresh("Step");
   const pointName = context.names.getFresh("point");
@@ -354,8 +392,11 @@ export const makeMachine = (
   });
   const mode = identifier(modeName);
   const sent = identifier(sentName);
+  // The machines that the body makes, whose operators each arm can call.
+  const hoisted: OperatorDefinition[] = [];
   const base: Path = {
     ...made,
+    hoisted,
     isMachine: true,
     isLooping: true,
     isLast: false,
@@ -405,7 +446,9 @@ export const makeMachine = (
     if (
       captured.tasks !== undefined ||
       captured.disposal !== base.disposal ||
-      !isSameEntries(captured.generators, base.generators) ||
+      // A generator that the code made since the body started steps only where a state machine
+      // runs it, which keeps where it is on the heap.
+      [...captured.generators.values()].some((suspension) => suspension.machine === undefined) ||
       (scope.destructured ?? []).length > 0 ||
       !isSameEntries(scope.read, base.scope.read) ||
       !isSameEntries(scope.initialReads, base.scope.initialReads) ||
@@ -425,12 +468,21 @@ export const makeMachine = (
         .map((entry) => entry[0]),
     };
   };
-  const save = (current: Path, layout: Layout) =>
-    tuple([
+  // The values that each code that goes to a resume point saves, from the arm that it runs in,
+  // which the names that the point's code keeps from that arm may extend.
+  const saves = new Map<number, { arm: number; elements: Expression[] }[]>();
+  const sizes = new Map<number, number>();
+  const arming = { current: 0 };
+  const save = (current: Path, layout: Layout, point: number) => {
+    const elements = [
       ...layout.locals.map((symbol) => current.scope.bindings.get(symbol) ?? getUndefined(context)),
       ...layout.results.map((key) => current.scope.results.get(key) ?? getUndefined(context)),
       ...layout.allocated.map((key) => current.scope.allocated.get(key) ?? getUndefined(context)),
-    ]);
+    ];
+    saves.set(point, [...(saves.get(point) ?? []), { arm: arming.current, elements }]);
+    sizes.set(point, elements.length);
+    return tuple(elements);
+  };
   // Runs code from a resume point, with names of its own for the values that the point saved and
   // that the step passed, so that code that an arm keeps from another can't read them unnoticed.
   const resumeFrom = (
@@ -507,10 +559,11 @@ export const makeMachine = (
   const jump = (current: Path, head: Head) =>
     leaf(
       call(resumeName, [
+        ref,
         number(head.point),
         string("next"),
         getUndefined(context),
-        save(current, head.layout),
+        save(current, head.layout, head.point),
         ...getOuterValues(current),
       ]),
     );
@@ -564,6 +617,61 @@ export const makeMachine = (
     });
     return jump(current, head);
   };
+  // A yield* of another state machine passes each step on to it, from a resume point of its own that
+  // keeps the inner generator, as ESCore's YieldStarLoop passes on what it received: a next's value,
+  // a throw, or a return, until the inner generator completes.
+  const delegateTo: MachineDelegate = (yielded, inner, current, delegateFrame, continueWith) => {
+    const withInner = (after: Path, value?: Expression): Path => ({
+      ...after,
+      scope: {
+        ...after.scope,
+        results: new Map(
+          value === undefined
+            ? [...after.scope.results].filter((entry) => entry[0] !== yielded)
+            : [...after.scope.results, [yielded, value]],
+        ),
+      },
+    });
+    const kept = withInner(current, inner.ref);
+    const layout = getLayout(kept);
+    const head: Head = { point: arms.length + 1, layout };
+    addArm(() =>
+      resumeFrom(kept, layout, (resumed, sent) =>
+        stepMachine(
+          yielded,
+          inner,
+          mode,
+          sent,
+          resumed,
+          context,
+          {
+            throwTo: (after, thrown) =>
+              delegateFrame.throwTo === undefined
+                ? leaf(thrown.uncaught)
+                : delegateFrame.throwTo(withInner(after), thrown),
+          },
+          (stepped, kind, value) =>
+            ifThenElse(
+              apply("=", [kind, string("yield")]),
+              end(
+                stepped,
+                "yield",
+                value,
+                string(""),
+                getSlot("suspendedYield", number(head.point), save(stepped, layout, head.point)),
+              ),
+              ifThenElse(
+                apply("=", [mode, string("return")]),
+                delegateFrame.exit(withInner(stepped), value),
+                continueWith(withInner(stepped), value),
+              ),
+            ),
+          resumed.scope.results.get(yielded),
+        ),
+      ),
+    );
+    return jump(kept, head);
+  };
   const bodyFrame: Frame = {
     next: (current) => complete(current, "return", getUndefined(context)),
     exit: (current, value) => complete(current, "return", value ?? getUndefined(context)),
@@ -604,32 +712,81 @@ export const makeMachine = (
         "yield",
         value ?? getUndefined(context),
         string(""),
-        getSlot("suspendedYield", number(point), save(current, layout)),
+        getSlot("suspendedYield", number(point), save(current, layout, point)),
       );
     },
     awaitTo: undefined,
     inlining: new Set([...frame.inlining, callee]),
     loopTo,
+    delegateTo,
   };
-  const started = render(
-    resumeFrom(base, { locals: [], results: [], allocated: [] }, (entered) =>
-      translateStatements(getBody(callee, entered.scope, context), entered, context, bodyFrame),
-    ),
+  // The body starts from the parameters that the call bound, which the object keeps.
+  const startLayout = getLayout(base);
+  const startFormula = resumeFrom(base, startLayout, (entered) =>
+    translateStatements(getBody(callee, entered.scope, context), entered, context, bodyFrame),
   );
   // Translating an arm may add the arms of the points that it reaches.
-  const translated: Expression[] = [];
+  const formulas: Formula[] = [startFormula];
   for (let position = 0; position < arms.length; position++) {
-    translated.push(render(arms[position].translate()));
+    arming.current = arms[position].point;
+    formulas.push(arms[position].translate());
   }
-  // Each arm runs on its own, so it can't read what another arm defines, such as the operator of a
-  // statement whose paths join after a yield.
+  // The names that each arm binds, and those that it reads where it doesn't bind them.
+  const getNames = (rendered: readonly Expression[]) =>
+    rendered.map((arm) => {
+      const binders = new Set<string>();
+      const free = new Set<string>();
+      collectNames(arm, new Set(), binders, free);
+      return { binders, free };
+    });
+  const firstNames = getNames(formulas.map(render));
+  const bound = new Set(firstNames.flatMap((names) => [...names.binders]));
+  // An arm may keep code from the arm that went to its point, such as an operand that a statement
+  // evaluated before it yielded, which reads names that arm bound. The point saves their values
+  // too, as ESCore's frames keep the values of the steps that wait on a yield, and the arm binds the
+  // names again. A name that the arm that goes there doesn't bind itself it keeps the same way.
+  const kept = new Map<number, string[]>();
+  const keep = (point: number, name: string): void => {
+    if (point === 0 || firstNames[point].binders.has(name)) throw unsupported(node);
+    if ((kept.get(point) ?? []).includes(name)) return;
+    kept.set(point, [...(kept.get(point) ?? []), name]);
+    (saves.get(point) ?? []).forEach((saved) => {
+      if (!firstNames[saved.arm].binders.has(name)) keep(saved.arm, name);
+    });
+  };
+  firstNames.forEach((names, point) =>
+    [...names.free].filter((name) => bound.has(name)).forEach((name) => keep(point, name)),
+  );
+  kept.forEach((names, point) =>
+    (saves.get(point) ?? []).forEach((saved) =>
+      saved.elements.push(...names.map((name) => identifier(name))),
+    ),
+  );
+  const rendered = formulas.map((formula, point) =>
+    render(
+      letIn(
+        (kept.get(point) ?? []).map((name, offset) =>
+          define(
+            name,
+            [],
+            index(identifier(savedName), [number((sizes.get(point) ?? 0) + offset + 1)]),
+          ),
+        ),
+        formula,
+      ),
+    ),
+  );
+  // Each arm runs on its own, so it can't read what another arm defines and its point doesn't keep,
+  // such as the operator of a statement whose paths join after a yield.
   const binders = new Set<string>();
-  const reads = [started, ...translated].map((arm) => {
+  const reads = [...rendered, ...hoisted.map((definition) => definition.body)].map((arm) => {
     const free = new Set<string>();
     collectNames(arm, new Set(), binders, free);
     return free;
   });
   if (reads.some((free) => [...free].some((name) => binders.has(name)))) throw unsupported(node);
+  const started = rendered[0];
+  const translated = rendered.slice(1);
   const dispatched = arms.reduceRight<Formula>(
     (rest, arm, position) =>
       ifThenElse(
@@ -648,7 +805,10 @@ export const makeMachine = (
   const resume: OperatorDefinition = {
     ...define(
       resumeName,
-      [pointName, modeName, sentName, savedName, ...outerNames].map((name) => ({ name, arity: 0 })),
+      [selfName, pointName, modeName, sentName, savedName, ...outerNames].map((name) => ({
+        name,
+        arity: 0,
+      })),
       // Each step evaluates what it carries, as a loop's iteration does.
       render(ifThenElse(apply("=", [carried, carried]), dispatched, leaf(boolean(false)))),
     ),
@@ -691,6 +851,7 @@ export const makeMachine = (
         ),
         leaf(
           call(resumeName, [
+            ref,
             field(slot, "point"),
             mode,
             sent,
@@ -712,10 +873,16 @@ export const makeMachine = (
   );
   const step = define(
     stepName,
-    [modeName, sentName, ...outerNames].map((name) => ({ name, arity: 0 })),
+    [selfName, modeName, sentName, ...outerNames].map((name) => ({ name, arity: 0 })),
     render(stepped),
   );
-  return { machine: { step: stepName, outer }, definitions: [resume, step] };
+  return {
+    machine: { step: stepName, outer },
+    definitions: [...hoisted, resume, step],
+    locals: tuple(
+      startLayout.locals.map((symbol) => start.bindings.get(symbol) ?? getUndefined(context)),
+    ),
+  };
 };
 
 // Steps the generator that a state machine runs, for its next, return, or throw with the value that
@@ -724,12 +891,14 @@ export const makeMachine = (
 export const stepMachine = (
   node: ts.Node,
   suspension: Suspension,
-  method: string,
+  method: string | Expression,
   argument: Expression | undefined,
   path: Path,
   context: Context,
   frame: Pick<Frame, "throwTo">,
   continueWith: (path: Path, kind: Expression, value: Expression) => Formula,
+  // The generator object, where a resume point keeps it rather than the suspension.
+  ref = suspension.ref,
 ): Formula => {
   const machine = suspension.machine;
   if (machine === undefined) throw unsupported(node);
@@ -766,7 +935,12 @@ export const stepMachine = (
   return bindOnce(
     path,
     result,
-    call(machine.step, [string(method), argument ?? getUndefined(context), ...values]),
+    call(machine.step, [
+      ...(machine.isHelper === true ? [] : [ref]),
+      typeof method === "string" ? string(method) : method,
+      argument ?? getUndefined(context),
+      ...values,
+    ]),
     ifThenElse(
       apply("=", [kind, string("throw")]),
       throwTo === undefined ? leaf(uncaught) : throwTo(after, { value, uncaught }),
@@ -1194,7 +1368,10 @@ export const makeHelperMachine = (
     [modeName, sentName, ...outerNames].map((name) => ({ name, arity: 0 })),
     render(stepped),
   );
-  return { machine: { step: stepName, outer }, definitions: [pullDefinition, step] };
+  return {
+    machine: { step: stepName, outer, isHelper: true },
+    definitions: [pullDefinition, step],
+  };
 };
 
 // The state machines that a path holds, which keep where they suspended on the heap, so that a
