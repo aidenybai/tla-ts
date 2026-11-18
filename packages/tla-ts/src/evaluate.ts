@@ -1214,11 +1214,9 @@ export const bindDefinitions = (
       definition.kind === "Operator" && definition.params.length === 0 && !isRecursiveValueAtOrAfter
         ? nodes[index].parent
         : scope;
-    // A recursive function keeps one value, since its body applies that value as TLC's FcnLambdaValue applies itself.
     const isReevaluated =
-      definition.kind === "Function"
-        ? !definition.isSelfReferential && reevaluated?.impure.has(definition)
-        : definition.params.length > 0 || reevaluated?.impure.has(definition);
+      (definition.kind === "Operator" && definition.params.length > 0) ||
+      reevaluated?.impure.has(definition);
     const body =
       definition.kind === "Function" ? getFunctionConstruction(definition) : definition.body;
     nodes[index].binding = isReevaluated
@@ -2031,28 +2029,28 @@ export const getFunctionBuilder = (
   const boundTupleLengths = getBoundTupleLengths(bounds);
   const bodyNames = getScopeNames(expression.body);
   const coverage = environment.coverage;
+  const selfName = isRecursiveConstruction(expression) ? expression.definition?.name : undefined;
   const createLazy = (domain: Value, context: Context) => {
-    const scope = trimScope(context.scope, bodyNames);
-    const lambdaContext = withScope(context, scope);
+    const outer = trimScope(context.scope, bodyNames);
+    let scope = outer;
+    const lambdaContext = withScope(context, outer);
     const compute = (argument: Value) =>
       body(withScope(lambdaContext, bindArgument(bounds, scope, argument)));
     const node = coverage && !environment.callStack ? coverage.current : -1;
-    const functionValue = keepLambda({
-      value: createLazyFunction(
-        domain,
-        coverage
-          ? (argument) =>
-              coverage.current === -1
-                ? compute(argument)
-                : runAtCoverageNode(coverage, node, () => compute(argument))
-          : compute,
-        getLazyFunctionSource(template, bounds, domain),
-        boundTupleLengths,
-      ),
-      bounds,
-      body: expression.body,
-      scope,
-    });
+    const value = createLazyFunction(
+      domain,
+      coverage
+        ? (argument) =>
+            coverage.current === -1
+              ? compute(argument)
+              : runAtCoverageNode(coverage, node, () => compute(argument))
+        : compute,
+      getLazyFunctionSource(template, bounds, domain),
+      boundTupleLengths,
+    );
+    // Tool#eval binds a $RecursiveFcnSpec's name to the FcnLambdaValue it builds, which the body applies.
+    if (selfName !== undefined) scope = bindValue(outer, selfName, value);
+    const functionValue = keepLambda({ value, bounds, body: expression.body, scope });
     return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
   };
   const callStack = environment.callStack;

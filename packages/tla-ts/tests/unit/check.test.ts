@@ -2121,6 +2121,31 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts a recursive function a LET of the initial predicate defines at each reference, as TLC builds a FcnLambdaValue there", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == LET f[n \\in 0..2] == IF n = 0 THEN 0 ELSE f[n - 1] + 1 IN x = f[2] + f[1]\nNext == UNCHANGED x\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[0]).toEqual([
+      "line 4, col 67 to line 4, col 81 of module M: 1",
+      "|line 4, col 71 to line 4, col 81 of module M: 1",
+      "||line 4, col 71 to line 4, col 74 of module M: 1",
+      "|||line 4, col 71 to line 4, col 71 of module M: 1",
+      "||||line 4, col 13 to line 4, col 62 of module M: 1",
+      "|||||line 4, col 30 to line 4, col 62 of module M: 3",
+      "||||||line 4, col 33 to line 4, col 37 of module M: 3",
+      "||||||line 4, col 51 to line 4, col 62 of module M: 2",
+      "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+      "||line 4, col 78 to line 4, col 81 of module M: 1",
+      "|||line 4, col 78 to line 4, col 78 of module M: 1",
+      "||||line 4, col 13 to line 4, col 62 of module M: 1",
+      "|||||line 4, col 30 to line 4, col 62 of module M: 2",
+      "||||||line 4, col 33 to line 4, col 37 of module M: 2",
+      "||||||line 4, col 51 to line 4, col 62 of module M: 1",
+      "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",
