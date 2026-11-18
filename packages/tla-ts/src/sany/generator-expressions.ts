@@ -1023,6 +1023,21 @@ const generateBoundsWithRanges = (
   };
 };
 
+// Generator#generateLabel returns its nullLabelNode, a LabelNode around nullOAN, for a label it rejects.
+const createNullLabel = (generation: ModuleGeneration): LabelNode => {
+  const body = createNullNode(generation);
+  return {
+    ...createLevelFields(body.id),
+    kind: "Label",
+    name: "nullLabelNode",
+    params: [],
+    body,
+    labels: new Map(),
+    isAssumeProve: false,
+    location: body.location,
+  };
+};
+
 const generateLabel = (
   generation: ModuleGeneration,
   expression: Expression & { kind: "Label" },
@@ -1031,7 +1046,7 @@ const generateLabel = (
   const scope = generation.labelScopes.at(-1);
   if (scope === undefined) {
     generation.addError(location, "Label not in definition or proof step.");
-    return createNullNode(generation);
+    return createNullLabel(generation);
   }
   if (
     generation.assumeProveState.isDeclared
@@ -1042,11 +1057,11 @@ const generateLabel = (
       location,
       "Label not allowed within scope of declaration in nested ASSUME/PROVE.",
     );
-    return createNullNode(generation);
+    return createNullLabel(generation);
   }
   if (generation.exceptStack.length > 0 && generation.exceptSpecStack.length > 0) {
     generation.addError(location, "Labels inside EXCEPT clauses are not yet implemented.");
-    return createNullNode(generation);
+    return createNullLabel(generation);
   }
   pushLabelScope(generation);
   const body = generateExpression(generation, expression.body);

@@ -251,6 +251,31 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("keeps a label it rejects out of the HIDE fact check, as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nA == 1\nTHEOREM T == TRUE\nHIDE lab:: A, T\nUSE lab:: A\nASSUME lab:: TRUE\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 3",
+        "",
+        ...[
+          "line 4, col 6 to line 4, col 12",
+          "line 5, col 5 to line 5, col 11",
+          "line 6, col 8 to line 6, col 17",
+        ].flatMap((location) => [
+          `${location} of module M`,
+          "",
+          "Label not in definition or proof step.",
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
   it("rejects a DEF clause entry whose first child nests, where SANY reports line 2147483647", () => {
     const report = getReport({
       M: "---- MODULE M ----\nA == 1\nB == 2\nf == [x \\in {1} |-> x]\nF(x) == x\nTHEOREM TRUE BY DEF A + B + A, A /\\ B /\\ A, f[1] + B, A'', F(A)[1], A\n====\n",
