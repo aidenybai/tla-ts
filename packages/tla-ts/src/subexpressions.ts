@@ -195,6 +195,41 @@ const createApplication = (selection: Selection, body: Expression): Expression =
   };
 };
 
+// SANY expects an operator argument only of a user-defined operator, which a standard module's built-in operators stand for.
+const getCalleeParams = (
+  expression: Expression & { kind: "Apply" },
+  callee: Definition | undefined,
+) =>
+  callee?.kind === "Operator"
+    ? callee.params
+    : STANDARD_LEVELS.get(expression.operator.slice(expression.operator.lastIndexOf("!") + 1))
+        ?.formals;
+
+// SANY selects an operator that an operator argument names as that operator, not as an expression.
+const getOperatorArgument = (operand: Expression, arity: number): Expression => {
+  if (operand.kind !== "Identifier" && operand.kind !== "OperatorReference") return operand;
+  const operator = operand.kind === "Identifier" ? operand.name : operand.operator;
+  const params = Array.from({ length: arity }, (_value, index) => `argument${index}`);
+  return {
+    kind: "Lambda",
+    params,
+    body: {
+      kind: "Apply",
+      operator,
+      args: params.map((name) => ({
+        kind: "Identifier",
+        name,
+        location: operand.location,
+        resolution: LOCAL_RESOLUTION,
+      })),
+      location: operand.location,
+      ...(operand.kind === "Identifier" && { resolution: operand.resolution }),
+    },
+    operator,
+    location: operand.location,
+  };
+};
+
 const applyDefinition = (definition: Definition, selection: Selection) => {
   const location = selection.location;
   const params =
@@ -268,6 +303,9 @@ const selectSubexpression = (
     isFailed = true;
     return undefined;
   };
+
+  const findCallee = (name: string) =>
+    selection.lets.flat().findLast((definition) => definition.name === name) ?? lookup(name);
 
   // A LET without a source range only keeps definitions in scope, and SANY has no node for it.
   const enterScopes = (node: Expression): Expression => {
@@ -415,6 +453,10 @@ const selectSubexpression = (
       current = current.body;
       return;
     }
+    if (current.kind === "Lambda" && current.operator !== undefined) {
+      report(range, "Trying to select subexpression of an operator argument.");
+      return;
+    }
     if (current.kind === "Lambda" && selector.kind !== "Bound" && selector.kind !== "At") {
       // Deviation from SANY: SANY names a numbered selector here by its syntax node, N_StructOp; tla-ts names it by its number, as the CLI does.
       const name = selector.kind === "Operand" ? selector.operand : getSelectorName(selector);
@@ -506,12 +548,17 @@ const selectSubexpression = (
       report(range, nonexistent);
       return;
     }
-    const operand = operands?.[getOperandIndex(selector.operand, operands.length)];
+    const index = getOperandIndex(selector.operand, operands?.length ?? 0);
+    const operand = operands?.[index];
     if (!operand) {
       report(range, nonexistent);
       return;
     }
-    current = operand;
+    const arity =
+      current.kind === "Apply"
+        ? (getCalleeParams(current, findCallee(current.operator))?.[index]?.arity ?? 0)
+        : 0;
+    current = arity > 0 ? getOperatorArgument(operand, arity) : operand;
   };
 
   const first = enterDefinition(undefined);
@@ -673,15 +720,10 @@ const resolveSubexpressions = (
         }
       : mapped;
   }
-  const callee = expression.kind === "Apply" ? lookup(expression.operator) : undefined;
-  // SANY expects an operator argument only of a user-defined operator, which a standard module's built-in operators stand for.
   const calleeParams =
-    callee?.kind === "Operator"
-      ? callee.params
-      : expression.kind === "Apply"
-        ? STANDARD_LEVELS.get(expression.operator.slice(expression.operator.lastIndexOf("!") + 1))
-            ?.formals
-        : undefined;
+    expression.kind === "Apply"
+      ? getCalleeParams(expression, lookup(expression.operator))
+      : undefined;
   const rebuilt =
     expression.kind === "Apply"
       ? {

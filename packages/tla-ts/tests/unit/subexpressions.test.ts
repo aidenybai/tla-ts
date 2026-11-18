@@ -135,6 +135,18 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it("passes on a selected operator that an operator argument names", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nF(G(_)) == G(0)\nAp(G(_), v) == G(v)\nFoo(a) == a + 1\nOp == F(Foo)\nOp4 == F(-.)\nOp5 == LET L(b) == b * 2 IN F(L)\nInit == x = <<>>\nNext == x' = <<Ap(Op!1, 4), Ap(Op4!1, 3), Ap(Op5!1!1, 5)>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<5, -3, 10>>",
+    ]);
+  });
+
   it("selects into a function definition as into its constructor", async () => {
     const inner =
       "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nh[z \\in {1, 2}] == z + c\n====";
@@ -588,6 +600,30 @@ describe("subexpression references into theorems match SANY", () => {
         ["line 7, col 7 to line 7, col 10", "Selected operator argument when expression expected."],
         [
           "line 7, col 13 to line 7, col 20",
+          "Selected operator argument when expression expected.",
+        ],
+      ],
+    ],
+    [
+      "a selected operator that an operator argument names",
+      "F(G(_)) == G(0)\nFoo(a) == a\nOp == F(Foo)\nQ == Op!1\nA == Op!1!(4)\nB == Op!1!1\nAp2(G(_, _), v) == G(v, v)\nR == Ap2(Op!1, 4)\nOp2(H(_)) == F(H)\nS == Op2(Foo)!1",
+      [
+        ["line 6, col 6 to line 6, col 9", "Selected operator argument when expression expected."],
+        [
+          "line 7, col 11 to line 7, col 13",
+          "Trying to select subexpression of an operator argument.",
+        ],
+        [
+          "line 8, col 11 to line 8, col 11",
+          "Trying to select subexpression of an operator argument.",
+        ],
+        ["line 10, col 10 to line 10, col 13", "Expected arity 2 but found operator of arity 1."],
+        [
+          "line 10, col 6 to line 10, col 17",
+          "Argument number 1 to operator 'Ap2' \nshould be a 2-parameter operator.",
+        ],
+        [
+          "line 12, col 6 to line 12, col 15",
           "Selected operator argument when expression expected.",
         ],
       ],
