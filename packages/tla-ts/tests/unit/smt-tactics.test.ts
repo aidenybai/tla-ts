@@ -2517,4 +2517,25 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 7583)", "sat", "(:rlimit 14970)"]);
   });
+
+  it("frees the model that a model converter replaces, so the next check does Z3's work", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(set-option :produce-models true)",
+        "(declare-const v0 (_ BitVec 6))",
+        "(declare-const v1 (_ BitVec 6))",
+        "(declare-const p0 Bool)",
+        "(declare-const p1 Bool)",
+        "(declare-const p2 Bool)",
+        "(assert (=> (bvult (bvurem (_ bv38 6) (bvshl v1 (_ bv17 6))) (bvshl v0 v0)) (not p1)))",
+        "(assert (distinct (_ bv21 6) (_ bv22 6)))",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(assert (bvult v0 (_ bv14 6)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 0)", "sat", "sat", "(:rlimit 610)"]);
+  });
 });

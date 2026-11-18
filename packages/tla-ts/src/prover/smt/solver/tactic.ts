@@ -2149,7 +2149,15 @@ export const applyDefinitions = (definitions: readonly Definition[], model: Prot
 };
 
 const applyConverter = (entry: Goal["converters"][number], model: ProtoModel) => {
-  if ("convert" in entry) return entry.convert(model);
+  if ("convert" in entry) {
+    const converted = entry.convert(model);
+    // The model_ref that the converter assigns frees the model it replaced.
+    if (converted !== model) {
+      model.incRef();
+      model.decRef();
+    }
+    return converted;
+  }
   if ("definitions" in entry) return applyDefinitions(entry.definitions, model);
   model.unregisterDecl(entry.decl);
   return model;
