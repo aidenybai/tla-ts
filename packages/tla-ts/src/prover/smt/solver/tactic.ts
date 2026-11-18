@@ -749,7 +749,10 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
-  ["unit-subsume-simplify", { descrs: new Map(), build: runUnitSubsume }],
+  [
+    "unit-subsume-simplify",
+    { isTrackingDependencies: true, descrs: new Map(), build: runUnitSubsume },
+  ],
   [
     "purify-arith",
     {

@@ -555,6 +555,42 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       "(:rlimit 356)",
     ]);
   });
+
+  it("unit-subsume-simplify keeps the dependencies of the clauses it does not subsume", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (! p :named a1))",
+        "(assert (! (or p q) :named a2))",
+        "(assert (! (or (not p) r) :named a3))",
+        "(assert (! (or (not r) (not p)) :named a4))",
+        "(assert (! (or q r) :named a5))",
+        "(apply unit-subsume-simplify :print_dependencies true)",
+        "(check-sat-using (then unit-subsume-simplify smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  p",
+        "  |- a3",
+        "  (or (not p) r)",
+        "  |- a4",
+        "  (or (not r) (not p))",
+        "  :precision precise :depth 0)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a4 a1 a3)",
+      "(:rlimit 1400)",
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {
