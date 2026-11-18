@@ -1214,6 +1214,10 @@ export const createSearch = (
     return true;
   };
   if (config.rlReward !== undefined) getConfigOperator("rlreward", config.rlReward, environment);
+  const reward =
+    config.rlReward === undefined
+      ? undefined
+      : createIdentifier(getRootKey(config.rlReward, environment));
   if (config.periodic !== undefined) getConfigOperator("periodic", config.periodic, environment);
   const possible = getPossiblePredicates(config.possible, environment);
   if (environment.variables.length === 0) return undefined;
@@ -1610,11 +1614,10 @@ export const createSearch = (
             trackPossible(actionPossible, runtime, getContext(environment, state, next)),
     findUnwitnessedPossible,
     getReward: (state, next, fallback) => {
-      if (config.rlReward === undefined) return fallback;
-      const expression = createIdentifier(getRootKey(config.rlReward, environment));
-      const value = evaluate(expression, getContext(environment, state, next));
+      if (reward === undefined) return fallback;
+      const value = evaluate(reward, getContext(environment, state, next));
       if (typeof value !== "number") {
-        throw new TlaEvaluationError(getExpectedValue("integer", expression, environment));
+        throw new TlaEvaluationError(getExpectedValue("integer", reward, environment));
       }
       return value;
     },
