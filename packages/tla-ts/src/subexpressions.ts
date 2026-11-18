@@ -16,7 +16,7 @@ import {
   type StepBody,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
-import { getSourceName, mapChildren, mapDefinition } from "./instances";
+import { getFunctionConstruction, getSourceName, mapChildren, mapDefinition } from "./instances";
 import { parenthesizedRanges } from "./parser";
 import { STANDARD_LEVELS } from "./standard-definitions";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -352,12 +352,10 @@ const selectSubexpression = (
         `Subexpression of  \`${found.name}' used inside the operator's definition.`,
       );
     }
-    if (definition.kind !== "Operator") {
-      throw createError(`Cannot select a subexpression of ${definition.name}`, location);
-    }
-    selection.params.push(...definition.params);
+    selection.params.push(...(definition.kind === "Operator" ? definition.params : []));
     selection.args.push(...found.args);
-    current = definition.body;
+    current =
+      definition.kind === "Operator" ? definition.body : getFunctionConstruction(definition);
     operatorIndex = selectorIndex;
     selectorIndex++;
     return undefined;

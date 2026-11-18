@@ -6,6 +6,7 @@ import {
   type BoundPattern,
   type Definition,
   type Expression,
+  type FunctionDefinition,
   type Instance,
   type Module,
   type OperatorParam,
@@ -818,11 +819,22 @@ const substitute = (
   return renameNames(mapped, bound, rename);
 };
 
-export const withInstanceParams = (
-  definition: Definition,
-  params: OperatorParam[],
-  location: SourceLocation,
-): Definition => {
+export const getFunctionConstruction = (definition: FunctionDefinition): Expression => ({
+  kind: "FunctionConstruction",
+  bounds: definition.bounds,
+  body: definition.body,
+  location: definition.location,
+});
+
+// SANY's function definition is an operator whose body is the function's constructor. The LET, which SANY has no node for, keeps the function's name for its recursive calls.
+export const getFunctionBody = (definition: FunctionDefinition): Expression => ({
+  kind: "Let",
+  definitions: [definition],
+  body: getFunctionConstruction(definition),
+  location: { line: definition.location.line, column: definition.location.column },
+});
+
+export const withInstanceParams = (definition: Definition, params: OperatorParam[]): Definition => {
   if (params.length === 0) return definition;
   if (definition.kind === "Operator") {
     return { ...definition, params: [...params, ...definition.params] };
@@ -831,12 +843,7 @@ export const withInstanceParams = (
     kind: "Operator",
     name: definition.name,
     params,
-    body: {
-      kind: "Let",
-      definitions: [definition],
-      body: createLocalIdentifier(definition.name, location),
-      location,
-    },
+    body: getFunctionBody(definition),
     isLocal: definition.isLocal,
     isRecursive: false,
     location: definition.location,
@@ -885,7 +892,7 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
     // TLC's call stack holds the SubstInNode an instance puts around each definition it copies.
     if (frame)
       substitutionFrames.set(body, [frame, ...(substitutionFrames.get(definition.body) ?? [])]);
-    return withInstanceParams({ ...mapped, body }, instantiation.params, definition.location);
+    return withInstanceParams({ ...mapped, body }, instantiation.params);
   });
 };
 
@@ -917,7 +924,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
       const definition = instantiation.getDefinition(key);
       if (!definition) return key;
       return instantiation.addDefinition(key, definition.name, () =>
-        withInstanceParams(definition, instantiation.params, definition.location),
+        withInstanceParams(definition, instantiation.params),
       );
     },
   };

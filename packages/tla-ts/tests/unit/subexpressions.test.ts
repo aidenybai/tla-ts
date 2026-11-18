@@ -123,6 +123,21 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it("selects into a function definition as into its constructor", async () => {
+    const inner =
+      "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nh[z \\in {1, 2}] == z + c\n====";
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\ng[z \\in {1, 2}] == z + 1\nr[n \\in {0, 1}] == IF n = 0 THEN 0 ELSE r[n - 1] + 1\nm[a \\in {1}, b \\in {2, 3}] == a + b\nt[<<a, b>> \\in {<<1, 2>>}] == a + b\nlg[z \\in {1, 2}] == lab(z) :: z + 1\nL(p) == INSTANCE Inner WITH c <- p\nVARIABLE x\nInit == x = <<>>\nNext == x' = <<g!1, g!(1), r!1, r!(0)!1, m!2, m!(1, 3), t!1, t!(1, 2), lg!lab(2)!1, L(5)!h!1, LET K == INSTANCE Inner WITH c <- 3 IN K!h!(2)>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => (name === "Inner" ? inner : undefined),
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<{1, 2}, 2, {0, 1}, TRUE, {2, 3}, 4, {<<1, 2>>}, 3, 2, {1, 2}, 5>>",
+    ]);
+  });
+
   it("selects a label through an instance whose operators the instancing module does not extend", async () => {
     const result = await check({
       source:

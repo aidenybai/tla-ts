@@ -6,6 +6,7 @@ import {
   type Declaration,
   type Definition,
   type Expression,
+  type FunctionDefinition,
   type Instance,
   type Module,
   type OperatorParam,
@@ -44,6 +45,7 @@ import {
   createLocalArguments,
   createLocalIdentifier,
   getEnabledVariableName,
+  getFunctionBody,
   renameLocals,
   withInstanceParams,
   withLetInstances,
@@ -205,16 +207,11 @@ const getNodeWord = (kind: SymbolKind) =>
 const getNodeClass = (kind: SymbolKind) =>
   kind === "Theorem" ? "ThmOrAssumpDefNode" : getNodeWord(kind);
 
-const createLocalFunction = (definition: Definition, key: string): Definition => ({
+const createLocalFunction = (definition: FunctionDefinition, key: string): Definition => ({
   kind: "Operator",
   name: key,
   params: [],
-  body: {
-    kind: "Let",
-    definitions: [definition],
-    body: createLocalIdentifier(definition.name, definition.location),
-    location: definition.location,
-  },
+  body: getFunctionBody(definition),
   isLocal: true,
   isRecursive: false,
   location: definition.location,
@@ -777,8 +774,7 @@ export const createEnvironment = (
         const key = instantiation.getKey(entry[1].key);
         const copy = copies.find((candidate) => candidate.name === key);
         const original = definitions.get(key);
-        const definition =
-          copy ?? (original && withInstanceParams(original, instance.params, location));
+        const definition = copy ?? (original && withInstanceParams(original, instance.params));
         if (definition) {
           return { ...definition, name, body: withSubstitutionFrames(definition.body, frames) };
         }
