@@ -41280,15 +41280,14 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("0,2,1"))).failure?.message).toContain("seen 0,2,3");
     });
 
-    it("stops at an element of one", async () => {
+    it("reads an element of one", async () => {
       const result = await checkModel(`
         const seen: unknown[] = [];
         const getFirst = (value: string | unknown[]) => value[0];
-        seen.push(getFirst([1]));
+        seen.push(getFirst([1]), getFirst("ab"));
+        if (seen.join() !== "1,a") throw new Error("seen " + seen.join());
       `);
-      expect(result.failure?.message).toContain(
-        "tla-ts can't read an element of a string or an array here",
-      );
+      expect(result.failure).toBeUndefined();
     });
   });
 
@@ -56209,6 +56208,26 @@ describe("BigInts", () => {
 
     it("rejects another result", async () => {
       expect((await checkModel(getSource("8,8"))).failure?.message).toContain("seen 8,12");
+    });
+  });
+
+  describe("reads an element of a value that may be a string or an array by a number", () => {
+    const getSource = (expected: string) => `
+      function arrayAt(arr: string | unknown[], relIndex: number) {
+        var realIndex = relIndex < 0 ? arr.length + relIndex : relIndex;
+        if (realIndex < 0 || realIndex >= arr.length) return undefined;
+        return arr[realIndex];
+      }
+      const seen = [arrayAt("abc", -1), arrayAt(["x", "y"], 0), arrayAt("abc", 5), arrayAt(["x"], 1)].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("c,x,,"))).failure).toBeUndefined();
+    });
+
+    it("rejects another element", async () => {
+      await expect(checkModel(getSource("c,y,,"))).rejects.toThrow("seen c,x,,");
     });
   });
 });

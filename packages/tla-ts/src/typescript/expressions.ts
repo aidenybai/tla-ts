@@ -4136,15 +4136,31 @@ const translateElementRead = (
           index(object, [shared]),
           getUndefined(context),
         );
-        return mayBeStringOrArray(node.expression, context)
-          ? ifExpression(
-              isStringOrArray(object, context),
-              apply("Assert", [
-                boolean(false),
-                string("tla-ts can't read an element of a string or an array here"),
-              ]),
-              read,
+        // A number reads a string's or an array's element, as the value turns out to be one.
+        const element = isNumberLike(skipCasts(argument), context)
+          ? share(
+              context.hasSpecialNumbers
+                ? useJavaScript("ElementPosition", [shared], context)
+                : apply("+", [shared, number(1)]),
+              "position",
+              context,
+              (position) =>
+                ifExpression(
+                  apply("=", [useJavaScript("TypeOf", [object], context), string("string")]),
+                  ifExpression(
+                    apply("\\in", [position, apply("..", [number(1), apply("Len", [object])])]),
+                    apply("SubSeq", [object, position, position]),
+                    getUndefined(context),
+                  ),
+                  getElement(object, position, context),
+                ),
             )
+          : apply("Assert", [
+              boolean(false),
+              string("tla-ts can't read an element of a string or an array here"),
+            ]);
+        return mayBeStringOrArray(node.expression, context)
+          ? ifExpression(isStringOrArray(object, context), element, read)
           : read;
       }),
     );
