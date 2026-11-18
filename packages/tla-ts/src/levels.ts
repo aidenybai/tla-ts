@@ -857,7 +857,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return levels;
   };
 
-  return { analyze, analyzeDefinition, toOperand };
+  const getOperatorLevels = (name: string) => {
+    const resolved = resolve(name, new Map());
+    return resolved.kind === "Defined" ? resolved.levels : undefined;
+  };
+
+  return { analyze, analyzeDefinition, toOperand, getOperatorLevels };
 };
 
 export const analyzeAssumeProve = (
