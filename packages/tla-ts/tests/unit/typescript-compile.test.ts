@@ -55124,4 +55124,32 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the object computed keys of an object literal before their values", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var value = "bad";
+      var log = "";
+      var symbol = Symbol("s");
+      var key = { toString() { value = "ok"; return "p"; } };
+      var first = { [key]: value };
+      var key1 = { valueOf: function () { log += "one|"; return 1; }, toString: null };
+      var key2 = { toString: function () { log += "two|"; return symbol; } };
+      var obj = { a: "A", [key1]: "B", c: "C", [key2]: "D" };
+      var result = [first.p, obj[1], obj[symbol], Object.getOwnPropertyNames(obj).join("|"), log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("ok,B,D,1|a|c,one|two|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("ok,B,D,1|a|c,two|one|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result ok,B,D,1|a|c,one|two|",
+      );
+    });
+  });
 });

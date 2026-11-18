@@ -183,6 +183,7 @@ import {
   getKeyedConversionFunctions,
   isConvertedClassKey,
   isConvertedElementKey,
+  isConvertedLiteralKey,
   isConvertedPropertyKey,
   isConvertedStringArgument,
   isAnyOperand,
@@ -20478,7 +20479,8 @@ const findLeadingCall = (
   if (
     isConvertedPropertyKey(node, context) ||
     isConvertedStringArgument(node, context) ||
-    isConvertedElementKey(node, context)
+    isConvertedElementKey(node, context) ||
+    isConvertedLiteralKey(node, context)
   ) {
     return { ...blocked, conversion: node };
   }

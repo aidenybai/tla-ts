@@ -341,6 +341,17 @@ export const isConvertedClassKey = (node: ts.Node, context: Context): node is ts
   ts.isClassLike(node.parent.parent.parent) &&
   isObjectOperand(node, context);
 
+// An object that a name holds which an object literal's computed key converts to a property key
+// before the literal evaluates the property's value.
+export const isConvertedLiteralKey = (node: ts.Node, context: Context): node is ts.Expression =>
+  context.heap !== undefined &&
+  ts.isExpression(node) &&
+  ts.isIdentifier(skipCasts(node)) &&
+  ts.isComputedPropertyName(node.parent) &&
+  ts.isObjectLiteralElement(node.parent.parent) &&
+  ts.isObjectLiteralExpression(node.parent.parent.parent) &&
+  isObjectOperand(node, context);
+
 // An object that a call converts to a property key, which runs its toString and valueOf: a name's,
 // or a wrapper's that new makes, as the key
 // of Object.defineProperty, Object.getOwnPropertyDescriptor, or Object.hasOwn of an object, which
@@ -385,7 +396,11 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
   if (context.heap === undefined) return undefined;
   // A property key converts to a primitive, which the call converts as ToPropertyKey does.
   // ToPropertyKey keeps a symbol that the object converts to.
-  if (isConvertedClassKey(node, context) || isConvertedElementKey(node, context)) {
+  if (
+    isConvertedClassKey(node, context) ||
+    isConvertedLiteralKey(node, context) ||
+    isConvertedElementKey(node, context)
+  ) {
     return {
       operands: [node],
       hints: ["string"],
