@@ -227,6 +227,27 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this);
   }
 
+  release(asserted: AssertedFormulas) {
+    const manager = this.manager;
+    const state = this.modelState;
+    this.relevancy.release();
+    if (state.kind !== "none") state.generated.model.decRef();
+    this.deleteClauses(this.auxClauses, 0);
+    this.deleteClauses(this.lemmas, 0);
+    this.popTrail(0);
+    this.qmanager.release();
+    if (this.isDiseqTmp !== -1) manager.decRef(this.isDiseqTmp);
+    asserted.finalize();
+    for (const assumption of this.unsatCore) manager.decRef(assumption);
+    if (state.kind === "final") state.model.decRef();
+    if (state.kind === "proto" || state.kind === "final") state.generated.model.decRef();
+    this.dynAck.release();
+    this.conflictResolution.lemmaAtoms.reset();
+    for (const theory of this.theories) theory.release();
+    this.rewriter.release();
+    asserted.release();
+  }
+
   // As in Z3, rereading the parameters drops the setup's tuning of what smt_params reads, but relevancy stays lower.
   updateParams(params: KernelParams) {
     this.params.isMbqi = params.isMbqi;
@@ -1697,13 +1718,9 @@ export class Context extends Internalizer {
     this.isSearching = true;
     const currentLevel = this.scopeLevel;
     let result: number | undefined;
-    while (result === undefined) {
-      const status = this.boundedSearch();
-      result =
-        status !== L_FALSE && this.checkCanceled() ? L_UNDEF : this.restart(status, currentLevel);
-    }
+    while (result === undefined) result = this.restart(this.boundedSearch(), currentLevel);
     this.isSearching = false;
-    return result;
+    return result === L_TRUE && this.checkCanceled() ? L_UNDEF : result;
   }
 
   getNumConflicts() {

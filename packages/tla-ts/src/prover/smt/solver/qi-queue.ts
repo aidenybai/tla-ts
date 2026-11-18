@@ -334,6 +334,12 @@ export class QiQueue {
     shrink(this.scopes, offset);
   }
 
+  release() {
+    this.lemmas.reset();
+    this.initSearchEh();
+    this.subst.release();
+  }
+
   initSearchEh() {
     const manager = this.context.manager;
     for (const expr of this.instanceRefs) manager.decRef(expr);

@@ -79,7 +79,7 @@ import { simplifyGoal } from "./quant-tactics";
 import { SolveEqs } from "./solve-eqs";
 import { RefVector } from "./ref-vector";
 import { type RewriterOptions, TACTIC_REWRITER_OPTIONS } from "./rewriter";
-import { lia2card } from "./lia2card";
+import { createLia2Card } from "./lia2card";
 import { LOGIC_TACTICS, QFAUFBV, QFUFBV_ACKR_PREAMBLE } from "./logic-tactics";
 import {
   createCommandReader,
@@ -108,7 +108,9 @@ interface ParamDescr {
   isPorted: boolean;
 }
 
-type ParamDescrs = ReadonlyMap<string, ParamDescr>;
+interface ParamDescrs {
+  get(name: string): ParamDescr | undefined;
+}
 
 export interface Tactic {
   (goal: Goal): Goal[];
@@ -123,7 +125,15 @@ export interface TacticEnvironment {
   write: (text: string, isDiagnostic: boolean) => void;
   parameters: ReadonlyMap<string, string>;
   hasDefinitions: () => boolean;
+  destructors: (() => void)[];
+  cleanups: (() => void)[];
 }
+
+// Z3's and-then frees its last tactic first.
+export const destroyTactics = (destructors: (() => void)[]) => {
+  for (let index = destructors.length - 1; index >= 0; index--) destructors[index]();
+  destructors.length = 0;
+};
 
 // A tactic that tracks dependencies keeps the dependency of every formula it changes, so the goal
 // gets the assertion names only for those.
@@ -377,16 +387,33 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
     extracted.assumptions.length === 0
       ? solveGoal(manager, goal.forms.items, kernelParams)
       : solveAssuming(manager, extracted.clauses.items, extracted.assumptions, kernelParams);
-  extracted.clauses.reset();
-  if (solved.result === L_UNDEF)
-    throw new SmtTacticError(solved.reasonUnknown ?? getSmtTacticFailure(solved.context));
+  const context = solved.context;
+  const release = () => {
+    extracted.clauses.reset();
+    context.release(solved.asserted);
+  };
+  if (solved.result === L_UNDEF) {
+    const reasonUnknown = solved.reasonUnknown ?? getSmtTacticFailure(context);
+    release();
+    throw new SmtTacticError(reasonUnknown);
+  }
   goal.reset();
   if (solved.result === L_FALSE) {
-    goal.assert(environment.manager.falseExpr, mkCoreDependency(solved.context.unsatCore));
+    goal.assert(environment.manager.falseExpr, mkCoreDependency(context.unsatCore));
+    release();
     return [goal];
   }
-  if (goal.isModelsEnabled) goal.model = solved.context.getModel();
-  if (solved.context.checkCanceled()) throw new SmtTacticError("canceled");
+  const model = goal.isModelsEnabled ? context.getModel() : undefined;
+  if (model !== undefined) {
+    model.incRef();
+    goal.addModelConversion(
+      () => model.copy(),
+      () => model.decRef(),
+    );
+  }
+  const isCanceled = context.checkCanceled();
+  release();
+  if (isCanceled) throw new SmtTacticError("canceled");
   return [goal];
 };
 
@@ -424,18 +451,23 @@ const runParallelSmt = (environment: TacticEnvironment) => (goal: Goal) => {
   return [goal];
 };
 
-const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrSolver => {
+const createTacticSolver = (environment: TacticEnvironment, strategy: string): AckrSolver => {
+  const manager = environment.manager;
+  const destructors: (() => void)[] = [];
+  const cleanups: (() => void)[] = [];
+  const tactic = compileInternalTactic({ ...environment, destructors, cleanups }, strategy);
   const assertions = new RefVector(manager);
   let model: ProtoModel | undefined;
   let converters: Goal["converters"] = [];
   return {
     assert: (expr) => assertions.push(expr),
     check: () => {
+      for (const cleanup of cleanups) cleanup();
       model?.decRef();
       model = undefined;
       const goal = new Goal(manager);
       for (const assertion of assertions.items) goal.assert(assertion);
-      const checked = checkSatUsing(getTactic(), goal);
+      const checked = checkSatUsing(tactic, goal);
       // tactic2solver keeps the goal's model converter until its next check.
       decConverterRefs(manager, converters);
       converters = goal.converters;
@@ -448,6 +480,7 @@ const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrS
     getModel: () => model as ProtoModel,
     release: () => {
       decConverterRefs(manager, converters);
+      destroyTactics(destructors);
       model?.decRef();
       assertions.reset();
     },
@@ -754,7 +787,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       isRejectingUnknown: false,
       build: (environment, params) =>
         inPlace(
-          createCtxSolverSimplify(environment.manager, {
+          createCtxSolverSimplify(environment.manager, () => ({
             isMbqi: getBool(params, "mbqi", environment.isMbqi),
             mbqiMaxIterations: getUint(
               params,
@@ -762,7 +795,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
               environment.mbqiMaxIterations,
             ),
             isFindingMacros: environment.isFindingMacros,
-          }),
+          })),
         ),
     },
   ],
@@ -891,6 +924,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       ]),
       build: (environment) => {
         const bodies = new RefVector(environment.manager);
+        environment.destructors.push(() => bodies.reset());
         return inPlace((goal) => elimUncnstr(environment.manager, goal, bodies));
       },
     },
@@ -900,16 +934,16 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       isTrackingDependencies: true,
       descrs: getDescrs("", [["compile_equality", PARAM_BOOL, true, true]]),
-      build: (environment, params) =>
-        inPlace((goal) =>
-          lia2card(
-            environment.manager,
-            goal,
-            getUint(params, "lia2card.max_range", 100),
-            getUint(params, "lia2card.max_ite_nesting", 4),
-            getBool(params, "compile_equality", true),
-          ),
-        ),
+      build: (environment, params) => {
+        const tactic = createLia2Card(
+          environment.manager,
+          getUint(params, "lia2card.max_range", 100),
+          getUint(params, "lia2card.max_ite_nesting", 4),
+          getBool(params, "compile_equality", true),
+        );
+        environment.destructors.push(tactic.release);
+        return inPlace(tactic.run);
+      },
     },
   ],
   [
@@ -1259,7 +1293,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isTrackingDependencies: true,
-      build: (environment) => createDt2BvTactic(environment.manager),
+      build: (environment) => {
+        const tactic = createDt2BvTactic(environment.manager);
+        environment.cleanups.push(tactic.cleanup);
+        return tactic.run;
+      },
     },
   ],
   [
@@ -1361,7 +1399,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
           runCond(
             isQfufbv,
             createQfufbvAckrTactic(manager, getRewriterOptions(manager, new Map()), true, () =>
-              createTacticSolver(manager, () => compileInternalTactic(environment, QFAUFBV)),
+              createTacticSolver(environment, QFAUFBV),
             ),
             runSmt(environment, params),
           ),
@@ -1463,8 +1501,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
       isTrackingDependencies: true,
-      build: (environment, params) =>
-        createSatTactic(environment.manager, getSatTacticParams(environment, params)),
+      build: (environment, params) => (goal) =>
+        createSatTactic(environment.manager, getSatTacticParams(environment, params))(goal),
     },
   ],
   [
@@ -1472,8 +1510,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) =>
-        createFdTactic(environment.manager, getSatTacticParams(environment, params)),
+      build: (environment, params) => (goal) =>
+        createFdTactic(environment.manager, getSatTacticParams(environment, params))(goal),
     },
   ],
   [
@@ -1482,8 +1520,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       descrs: SAT_DESCRS,
       isRejectingUnknown: false,
       isTrackingDependencies: true,
-      build: (environment, params) =>
-        createSatTactic(environment.manager, getSatTacticParams(environment, params)),
+      build: (environment, params) => (goal) =>
+        createSatTactic(environment.manager, getSatTacticParams(environment, params))(goal),
     },
   ],
   [
@@ -1657,7 +1695,15 @@ const getParams = (
 };
 
 const mergeDescrs = (builders: TacticBuilder[]) => ({
-  descrs: new Map(builders.flatMap((builder) => [...builder.descrs])),
+  descrs: {
+    get: (name: string) => {
+      for (let index = 0; index < builders.length; index++) {
+        const descr = builders[index].descrs.get(name);
+        if (descr !== undefined) return descr;
+      }
+      return undefined;
+    },
+  },
   isRejectingUnknown: builders.every((builder) => builder.isRejectingUnknown),
   isTrackingDependencies: builders.every((builder) => builder.isTrackingDependencies),
 });

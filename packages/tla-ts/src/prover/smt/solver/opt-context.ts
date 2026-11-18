@@ -40,7 +40,12 @@ import { InfEps } from "./inf-eps";
 import { getModelValueBound, OptParetoSolver, OptSolver } from "./opt-solver";
 import { ObjectiveValue } from "./opt-value";
 import { Optsmt, type OptsmtParams } from "./optsmt";
-import { compileInternalTactic, convertModel, type TacticEnvironment } from "./tactic";
+import {
+  compileInternalTactic,
+  convertModel,
+  destroyTactics,
+  type TacticEnvironment,
+} from "./tactic";
 
 const NORMALIZER =
   "(and-then (using-params simplify :som true) propagate-values solve-eqs simplify)";
@@ -797,6 +802,7 @@ export class OptContext {
     for (const fixed of this.fixedModels.values()) fixed.decRef();
     this.fixedModels.clear();
     this.hiddenDecls = [];
+    destroyTactics(this.environment.destructors);
     this.normalizedGoal = null;
     this.normalizedTerms.reset();
     this.normalized = [];

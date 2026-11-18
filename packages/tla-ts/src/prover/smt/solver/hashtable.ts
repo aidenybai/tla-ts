@@ -140,6 +140,34 @@ export class ObjMap<V> {
   }
 }
 
+export class KeyedHashtable<T> {
+  private firsts: T[] = [];
+  private indices = new Map<string, number>();
+  private table: ObjMap<T>;
+
+  constructor(
+    getHash: (item: T) => number,
+    private getKey: (item: T) => string,
+  ) {
+    this.table = new ObjMap((index) => getHash(this.firsts[index]));
+  }
+
+  has(item: T) {
+    return this.indices.has(this.getKey(item));
+  }
+
+  insert(item: T) {
+    const key = this.getKey(item);
+    const index = this.indices.get(key) ?? this.firsts.push(item) - 1;
+    this.indices.set(key, index);
+    this.table.set(index, item);
+  }
+
+  values() {
+    return this.table.values();
+  }
+}
+
 export class ObjHashtable {
   private map: ObjMap<true>;
 

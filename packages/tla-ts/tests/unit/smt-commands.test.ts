@@ -670,6 +670,29 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("counts the steps of a search that restarts", () => {
+    expect(
+      run([...getPigeonholeLines(7), "(check-sat-assuming (p0_0))", "(get-info :rlimit)"]),
+    ).toEqual(["unsat", "(:rlimit 27949)"]);
+  });
+
+  it("counts the steps of an unknown answer", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic skip)",
+        "(declare-const q Real)",
+        "(declare-const p Bool)",
+        "(assert (= (^ 2.0 q) 3.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat-using smt)",
+        "(get-info :rlimit)",
+        "(check-sat-assuming (p))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 8)", "unknown", "(:rlimit 169)", "unknown", "(:rlimit 448)"]);
+  });
+
   // The sat tactic leaves the reason of its solver on the goal. A tactic's checkpoint reports an
   // exhausted rlimit, where the smt kernel reports a cancel.
   it("prints the reason of a check stopped at a limit", () => {

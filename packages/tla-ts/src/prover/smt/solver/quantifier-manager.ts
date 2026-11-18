@@ -43,6 +43,12 @@ export class DefaultQuantifierManager {
     this.mbqi = { finder, checker: new ModelChecker(context, finder, this) };
   }
 
+  release() {
+    this.mbqi?.checker.release();
+    this.mbqi?.finder.release();
+    this.qiQueue.release();
+  }
+
   getNumInstances() {
     return this.qiQueue.numInstances;
   }

@@ -16,6 +16,8 @@ import {
 } from "./ast";
 import type { Context } from "./context";
 import { type Enode, TheoryJustification } from "./enode";
+import { getCompositeHash } from "./hash";
+import { KeyedHashtable } from "./hashtable";
 import { FALSE_LITERAL, getVar, isNegated, type Literal, negate, TRUE_LITERAL } from "./literal";
 import { UnionFind } from "./lp/union-find";
 import { FuncInterp, type ProtoModel } from "./proto-model";
@@ -91,7 +93,8 @@ export class TheoryArray extends Theory {
   private defaults: (Enode | null)[] = [];
   private elseValues: (number | ExtraFreshValue | undefined)[] = [];
   private mgParents: number[] = [];
-  private selectSets = new Map<Enode, Map<string, Enode>>();
+  private selectSets = new Map<Enode, KeyedHashtable<Enode>>();
+  private selectHashes: number[] = [];
 
   constructor(context: Context) {
     super(context, FAMILY_ARRAY);
@@ -504,12 +507,12 @@ export class TheoryArray extends Theory {
     this.extensionalityTodo.push(first, second);
   }
 
-  private getSelectKey(select: Enode) {
+  private getSelectKey = (select: Enode) => {
     let key = "";
     for (let index = 1; index < select.numArgs; index++)
       key += `${select.getArg(index).root.owner},`;
     return key;
-  }
+  };
 
   private isRelevantSelectOf(parent: Enode, root: Enode) {
     return (
@@ -1130,10 +1133,18 @@ export class TheoryArray extends Theory {
     const root = node.root;
     const existing = this.selectSets.get(root);
     if (existing !== undefined) return existing;
-    const created = new Map<string, Enode>();
+    const created = new KeyedHashtable(this.getSelectHash, this.getSelectKey);
     this.selectSets.set(root, created);
     return created;
   }
+
+  private getSelectHash = (select: Enode) => {
+    const hashes = this.selectHashes;
+    hashes.length = 0;
+    for (let index = 1; index < select.numArgs; index++)
+      hashes.push(this.manager.hashes[select.getArg(index).root.owner]);
+    return getCompositeHash(hashes, 0);
+  };
 
   private collectSelects() {
     this.selectSets.clear();
@@ -1147,11 +1158,8 @@ export class TheoryArray extends Theory {
           context.isRelevant(parent.owner) &&
           this.isOp(parent, OP_SELECT) &&
           parent.getArg(0).root === root
-        ) {
-          const set = this.getSelectSet(root);
-          const key = this.getSelectKey(parent);
-          if (!set.has(key)) set.set(key, parent);
-        }
+        )
+          this.getSelectSet(root).insert(parent);
     }
   }
 
@@ -1166,13 +1174,12 @@ export class TheoryArray extends Theory {
       )
         continue;
       const parentSet = this.getSelectSet(parent);
-      const key = this.getSelectKey(select);
-      if (parentSet.has(key)) continue;
+      if (parentSet.has(select)) continue;
       let index = 1;
       while (index < select.numArgs && select.getArg(index).root === parent.getArg(index).root)
         index++;
       if (index < select.numArgs) {
-        parentSet.set(key, select);
+        parentSet.insert(select);
         todo.push([parent.root, select]);
       }
     }

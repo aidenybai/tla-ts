@@ -25,6 +25,10 @@ export class DynAckManager {
 
   constructor(private readonly context: Context) {}
 
+  release() {
+    this.resetAppPairs();
+  }
+
   private resetAppPairs() {
     const manager = this.context.manager;
     for (const pair of this.appPairs) {

@@ -15,7 +15,7 @@ interface ExprPos {
   expr: number;
 }
 
-export const createCtxSolverSimplify = (manager: AstManager, params: KernelParams) => {
+export const createCtxSolverSimplify = (manager: AstManager, getParams: () => KernelParams) => {
   const boolFn = manager.mkFuncDecl(FRESH_SYMBOL, [SORT_INT], SORT_BOOL);
   const fns = new Map<number, number>();
   return (goal: Goal) => {
@@ -23,7 +23,7 @@ export const createCtxSolverSimplify = (manager: AstManager, params: KernelParam
       goal.depth++;
       return;
     }
-    const kernel = new SmtKernel(manager, params);
+    const kernel = new SmtKernel(manager, getParams());
     const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
     const trail = new RefVector(manager);
     const pin = (expr: number) => {
