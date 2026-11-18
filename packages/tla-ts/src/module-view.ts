@@ -1,6 +1,16 @@
-import type { Module, ModuleUnit, SourceLocation } from "./ast";
+import type { Definition, Module, ModuleUnit, SourceLocation } from "./ast";
 import type { Token } from "./lexer";
+import { parseModule } from "./parser";
 import { getParsedTexts, type PreparedModule } from "./tlc/order";
+
+// The body of a definition that a view stands in for one whose value the prepared module carries,
+// which a check never evaluates, and which fails if it did: CHOOSE from the empty set.
+const STAND_IN_BODY = parseModule(
+  "---- MODULE StandIn ----\nStandIn == CHOOSE value \\in {} : TRUE\n====",
+).definitions[0].body;
+
+// Characters and operators whose presence in a definition changes how TLC fingerprints strings.
+const WIDE_TOKEN = /[\u0100-\uffff]|^(?:nd)?JsonDeserialize$/;
 
 // The names that a text reads, of the definitions of a prepared module, which name each with a
 // capital.
@@ -48,7 +58,10 @@ const getModuleView = (module: Module, isKept: (location: SourceLocation) => boo
 });
 
 // Views of a prepared module, each with only the definitions that a text reads, directly or
-// through other definitions, so that a check reads and analyzes only those. Every other line of
+// through other definitions, so that a check reads and analyzes only those. A view keeps a leaf
+// that it reaches without what the leaf reads, for a spec that overrides the leaf. A definition
+// whose value the prepared module carries reads nothing in a view, which keeps its line and stands
+// it in for one without its body or tokens. Every other line of
 // a view is blank, so each definition keeps its line. Its tokens, syntax tree, levels, and values
 // are those of the prepared module on the lines kept.
 export const createModuleView = (prepared: PreparedModule) => {
@@ -128,13 +141,62 @@ export const createModuleView = (prepared: PreparedModule) => {
       ],
     };
   });
-  return (text: string): PreparedModule => {
+  const values = prepared.values ?? new Map();
+  const definitions = new Map(
+    prepared.module.definitions.map((definition) => [definition.name, definition]),
+  );
+  const isStoodIn = moduleUnits.map(
+    (unit, position) =>
+      unit.names.length > 0 &&
+      unit.names.every((name) => {
+        const definition = definitions.get(name);
+        return (
+          definition?.kind === "Operator" &&
+          definition.params.length === 0 &&
+          values.has(definition)
+        );
+      }) &&
+      !prepared.tokens
+        .slice(unitTokenStarts[position], unitTokenStarts[position + 1])
+        .some((token) => WIDE_TOKEN.test(token.text)),
+  );
+  const standIns = new Map<Definition, Definition>(
+    prepared.module.definitions.flatMap((definition) =>
+      definition.kind === "Operator" && isStoodIn[lineUnits[definition.location.line - 1]]
+        ? [[definition, { ...definition, body: STAND_IN_BODY }]]
+        : [],
+    ),
+  );
+  const getStandIn = (definition: Definition) => standIns.get(definition) ?? definition;
+  const module: Module = {
+    ...prepared.module,
+    definitions: prepared.module.definitions.map(getStandIn),
+    units: prepared.module.units.map((unit) =>
+      unit.kind === "Definition" ? { ...unit, definition: getStandIn(unit.definition) } : unit,
+    ),
+  };
+  // A view of a module that carries values adds every text of the module to TLC's order of
+  // strings, in which alone its values' strings keep the order they were evaluated in.
+  const allTexts = {
+    parsed: unitTextsInOrder.flatMap((texts) => texts.parsed),
+    strings: unitTextsInOrder.flatMap((texts) => texts.strings),
+  };
+  const viewValues = new Map([...values].map((entry) => [getStandIn(entry[0]), entry[1]]));
+  isStoodIn.forEach((isUnitStoodIn, unit) => {
+    if (isUnitStoodIn) unitReadIds[unit] = new Int32Array(0);
+  });
+  return (text: string, leaves: readonly string[] = []): PreparedModule => {
+    const isLeaf = new Uint8Array(nameIds.size);
+    getNameIds([...leaves]).forEach((name) => {
+      isLeaf[name] = 1;
+    });
     const keptNames = new Uint8Array(nameIds.size);
     const pending = [...getNameIds(getReadNames(text)), ...rootReadIds];
     while (pending.length > 0) {
       const name = pending.pop() ?? 0;
       if (keptNames[name] === 1) continue;
       keptNames[name] = 1;
+      if (isLeaf[name] === 1) continue;
       for (const unit of nameUnits[name]) pending.push(...unitReadIds[unit]);
     }
     const keptUnits = Uint8Array.from(unitNameIds, (names) =>
@@ -143,7 +205,7 @@ export const createModuleView = (prepared: PreparedModule) => {
     const isKept = (location: SourceLocation) => keptUnits[lineUnits[location.line - 1]] === 1;
     const tokens: Token[] = [];
     keptUnits.forEach((isUnitKept, unit) => {
-      if (isUnitKept === 0) return;
+      if (isUnitKept === 0 || isStoodIn[unit]) return;
       for (let index = unitTokenStarts[unit]; index < unitTokenStarts[unit + 1]; index++) {
         tokens.push(prepared.tokens[index]);
       }
@@ -154,19 +216,22 @@ export const createModuleView = (prepared: PreparedModule) => {
         .map((unitText, unit) => (keptUnits[unit] === 1 ? unitText : unitBlanks[unit]))
         .join("\n"),
       tokens,
-      module: getModuleView(prepared.module, isKept),
-      texts: {
-        parsed: unitTextsInOrder.flatMap((texts, unit) =>
-          keptUnits[unit] === 1 ? texts.parsed : [],
-        ),
-        strings: unitTextsInOrder.flatMap((texts, unit) =>
-          keptUnits[unit] === 1 ? texts.strings : [],
-        ),
-      },
+      module: getModuleView(module, isKept),
+      texts:
+        values.size > 0
+          ? allTexts
+          : {
+              parsed: unitTextsInOrder.flatMap((texts, unit) =>
+                keptUnits[unit] === 1 ? texts.parsed : [],
+              ),
+              strings: unitTextsInOrder.flatMap((texts, unit) =>
+                keptUnits[unit] === 1 ? texts.strings : [],
+              ),
+            },
       levels: prepared.levels?.filter((_levels, position) =>
         isKept(prepared.module.definitions[position].location),
       ),
-      values: prepared.values,
+      values: viewValues,
     };
   };
 };
