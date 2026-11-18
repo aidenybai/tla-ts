@@ -5855,7 +5855,7 @@ export const findFunctionCandidates = (sourceFile: ts.SourceFile, context: Conte
         undefined &&
       getFunctionValue(candidate, context) === candidate;
     // A function that a call or a new runs where the script writes it is no value that another call
-    // may run, unless its arguments.callee names it.
+    // may run, unless its own name or its arguments.callee names it.
     const called =
       candidate === undefined
         ? undefined
@@ -5869,10 +5869,12 @@ export const findFunctionCandidates = (sourceFile: ts.SourceFile, context: Conte
       candidate !== undefined &&
       skipCasts(called.expression) === candidate &&
       (ts.isArrowFunction(candidate) ||
-        findNodes(
-          candidate,
-          (node): node is ts.Identifier => ts.isIdentifier(node) && node.text === "arguments",
-        ).length === 0);
+        (ts.isFunctionExpression(candidate) &&
+          candidate.name === undefined &&
+          findNodes(
+            candidate,
+            (node): node is ts.Identifier => ts.isIdentifier(node) && node.text === "arguments",
+          ).length === 0));
     return (
       candidate?.body !== undefined &&
       !isRunInPlace &&
