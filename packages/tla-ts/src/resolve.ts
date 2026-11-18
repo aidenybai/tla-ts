@@ -848,6 +848,7 @@ const getSymbolArity = (
   name: string,
   scope: LocalName | undefined,
   unit: Unit,
+  isOperatorArgument = false,
 ) => {
   const location = expression.location;
   if (isSelectionReported(expression, scope, unit)) return undefined;
@@ -876,7 +877,8 @@ const getSymbolArity = (
   if (isInstanceName(name, scope, unit)) {
     const instance = lookupLocal(scope, name) ?? getModuleBinding(name, unit, undefined);
     const count = expression.kind === "Apply" ? expression.args.length : 0;
-    if (instance?.kind === "Instance" && instance.arity !== count) {
+    // SANY counts an instance's arguments only where an expression is expected.
+    if (!isOperatorArgument && instance?.kind === "Instance" && instance.arity !== count) {
       unit.errors.push({
         location: formatRange(
           (expression.kind === "Apply" && expression.argumentsRange) ||
@@ -1362,7 +1364,7 @@ const matchArgument = (
   }
   const name = arg.kind === "Identifier" ? arg.name : arg.operator;
   const argParams = findBinding(name, scope, unit)?.params ?? [];
-  const argArity = getSymbolArity(arg, name, scope, unit);
+  const argArity = getSymbolArity(arg, name, scope, unit, true);
   if (arg.kind === "Identifier" && argArity !== undefined && argArity !== expected) {
     report(
       getSpelledNameRange(arg, name),

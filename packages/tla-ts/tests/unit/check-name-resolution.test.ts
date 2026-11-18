@@ -3710,6 +3710,25 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it("reports a parameterized instance name passed as an operator argument as incomplete, like SANY", async () => {
+    await expect(
+      checkNames(
+        "---- MODULE I ----\nCONSTANT c\nK == c\n====\nJ(x) == INSTANCE I WITH c <- x\nAp(P(_)) == P(1)\nB == Ap(J)",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 8, col 9 to line 8, col 9 of module M",
+          message: "Operator name J is incomplete.",
+        },
+        {
+          location: "line 8, col 6 to line 8, col 10 of module M",
+          message: "Argument number 1 to operator 'Ap' \nshould be a 1-parameter operator.",
+        },
+      ]),
+    );
+  });
+
   it("accepts an instance name as a fact like SANY", async () => {
     await expect(
       checkNames(
