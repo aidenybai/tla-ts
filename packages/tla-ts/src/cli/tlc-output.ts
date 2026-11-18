@@ -70,6 +70,7 @@ const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefin
     if (line.kind === "initial-states-progress") {
       return printInitialStatesProgress(printer, line.count);
     }
+    if (line.kind === "warning") return printer.print(line.code, MESSAGE_LEVEL.warning, line.text);
     const headline = getInitialViolationHeadline(line.status, line.name);
     printer.print(
       headline.code,

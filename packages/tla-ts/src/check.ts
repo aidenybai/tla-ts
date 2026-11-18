@@ -194,7 +194,13 @@ export interface InitialStateViolation {
   state: Record<string, Value>;
 }
 
-export type OutputLine = string | InitialStatesProgress | InitialStateViolation;
+export interface EvaluationWarning {
+  kind: "warning";
+  code: number;
+  text: string;
+}
+
+export type OutputLine = string | InitialStatesProgress | InitialStateViolation | EvaluationWarning;
 
 export type CheckProgress =
   | { kind: "parsed" }
@@ -217,7 +223,7 @@ export type CheckProgress =
     }
   | { kind: "liveness-finished" }
   | { kind: "sequential-fallback"; string: string }
-  | { kind: "warning"; code: number; text: string }
+  | EvaluationWarning
   | { kind: "violation"; status: CheckStatus; violation: Violation }
   | ({ kind: "java-override" } & JavaOverride);
 
@@ -392,6 +398,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const created = createCheckEnvironment(config, options, print);
   const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
+  const reportWarning = specification.environment.runtime.warn;
+  specification.environment.runtime.warn = (code, text) => {
+    if (capturedLines) capturedLines.push({ kind: "warning", code, text });
+    else reportWarning(code, text);
+  };
   const coverage =
     options.coverage === undefined
       ? undefined
