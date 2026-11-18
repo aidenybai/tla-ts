@@ -1105,6 +1105,20 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "---- MODULE Full ----\nG == 1\nH(h) == h\n====\n---- MODULE Inner ----\nL(a) == INSTANCE Full\n====\nJ(b) == INSTANCE Inner\nF == J(1)!L(2)!G = U1 /\\ J!L(2)!G = U2 /\\ J(1)!L(2, 3)!G = U3 /\\ J(1)!L!G = U4 /\\ J(1)!L(2)!H(3, 4) = U5",
+      [
+        ["line 10, col 20 to line 10, col 21", "Unknown operator: `U1'."],
+        ["line 10, col 26 to line 10, col 33", "The operator J requires 1 arguments."],
+        ["line 10, col 37 to line 10, col 38", "Unknown operator: `U2'."],
+        ["line 10, col 49 to line 10, col 54", "The operator J!L requires 1 arguments."],
+        ["line 10, col 60 to line 10, col 61", "Unknown operator: `U3'."],
+        ["line 10, col 66 to line 10, col 73", "The operator J!L requires 1 arguments."],
+        ["line 10, col 77 to line 10, col 78", "Unknown operator: `U4'."],
+        ["line 10, col 94 to line 10, col 99", "The operator J!L!H requires 1 arguments."],
+        ["line 10, col 103 to line 10, col 104", "Unknown operator: `U5'."],
+      ],
+    ],
+    [
       "THEOREM TRUE\n<1>1. CASE TRUE\n  <2>1. TRUE BY <1>1, <1>2\n  <2>2. QED BY <2>1\n<1>2. TRUE BY <2>1, <1>3\n<1>3. QED BY <1>1, <1>2, <1>3, <1>9",
       [
         ["line 4, col 23 to line 4, col 26", "Unknown operator: `<1>2'."],

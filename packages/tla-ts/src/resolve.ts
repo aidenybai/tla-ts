@@ -1153,16 +1153,17 @@ const resolveDefinitions = (
   return resolvedScope;
 };
 
-const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) => {
-  const prefix = name.split("!")[0];
-  const binding =
-    prefix === name
-      ? undefined
-      : (lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined));
-  return binding?.kind === "Instance"
-    ? { name: prefix, arity: binding.arity, range: binding.range }
-    : undefined;
-};
+const getInstances = (names: string[], scope: LocalName | undefined, unit: Unit) =>
+  names.slice(0, -1).map((_name, index) => {
+    const prefix = names.slice(0, index + 1).join("!");
+    const binding = lookupLocal(scope, prefix) ?? getModuleBinding(prefix, unit, undefined);
+    return binding?.kind === "Instance"
+      ? { name: prefix, arity: binding.arity, range: binding.range }
+      : undefined;
+  });
+
+const findInstance = (name: string, scope: LocalName | undefined, unit: Unit) =>
+  getInstances(name.split("!"), scope, unit)[0];
 
 const isInstanceArityReported = (
   expression: Expression,
@@ -1172,24 +1173,29 @@ const isInstanceArityReported = (
   if (!isReference(expression)) return false;
   const selectors = getSelectors(expression);
   const nameCount = selectors.findIndex((selector) => selector.kind !== "Name");
-  const instance = findInstance(
-    selectors
-      .slice(0, nameCount === -1 ? selectors.length : nameCount)
-      .flatMap((selector) => (selector.kind === "Name" ? [selector.name] : []))
-      .join("!"),
+  const names = selectors
+    .slice(0, nameCount === -1 ? selectors.length : nameCount)
+    .flatMap((selector) => (selector.kind === "Name" ? [selector] : []));
+  // SANY checks the arguments of each instance that a name goes through, from the outermost.
+  const instances = getInstances(
+    names.map((name) => name.name),
     scope,
     unit,
   );
-  const first = selectors[0];
-  const count = first.kind === "Name" ? first.args.length : 0;
-  if (!instance || count === instance.arity) return false;
+  const index = instances.findIndex(
+    (instance, position) =>
+      instance !== undefined &&
+      (instances[position - 1]?.arity ?? 0) + names[position].args.length !== instance.arity,
+  );
+  const instance = instances[index];
+  if (!instance) return false;
   const range =
-    (expression.kind === "Identifier" ? undefined : expression.argumentRanges?.[0]) ??
+    (expression.kind === "Identifier" ? undefined : expression.argumentRanges?.[index]) ??
     expression.location.range;
   if (range) {
     unit.errors.push({
       location: formatRange(range),
-      message: `The operator ${instance.name} requires ${instance.arity} arguments.`,
+      message: `The operator ${instance.name} requires ${instance.arity - (instances[index - 1]?.arity ?? 0)} arguments.`,
     });
   }
   return true;
@@ -1357,7 +1363,7 @@ const resolveApply = (
   if (arity !== undefined && arity !== expression.args.length) {
     unit.errors.push({
       location: formatRange(expression.argumentsRange ?? getSpelledNameRange(expression, operator)),
-      message: `The operator ${resolveSynonym(operator)} requires ${arity - (findInstance(operator, scope, unit)?.arity ?? 0)} arguments.`,
+      message: `The operator ${resolveSynonym(operator)} requires ${arity - (getInstances(operator.split("!"), scope, unit).findLast((instance) => instance !== undefined)?.arity ?? 0)} arguments.`,
     });
   }
   if (arity !== expression.args.length) {
