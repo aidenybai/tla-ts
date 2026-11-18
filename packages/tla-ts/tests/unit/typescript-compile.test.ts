@@ -53476,4 +53476,28 @@ describe("BigInts", () => {
       );
     });
   });
+
+  it("stops at a function that a new constructs, made in code that may run more than once", () => {
+    const source = `
+      interface Primitive {
+        readonly value: unknown;
+      }
+      interface PrimitiveClass {
+        new (value: unknown): Primitive;
+      }
+      const makeExit = (tag: string) => {
+        const ExitPrimitive = function (this: any, value: unknown) {
+          this.value = tag + String(value);
+        } as unknown as PrimitiveClass;
+        ExitPrimitive.prototype = { tag };
+        return (value: unknown) => new ExitPrimitive(value);
+      };
+      export const succeed = makeExit("Success");
+      export const fail = makeExit("Failure");
+      if (succeed(1).value !== "Success1") throw new Error("value " + succeed(1).value);
+    `;
+    expect(() => compile(source)).toThrow(
+      "tla-ts can't make a function that a new constructs, or whose property the script writes, in code that may run more than once",
+    );
+  });
 });

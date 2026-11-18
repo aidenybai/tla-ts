@@ -3600,6 +3600,22 @@ export const getClassStop = (node: ts.ClassLikeDeclaration, context: Context) =>
     : undefined;
 };
 
+// Why a function expression that a new constructs, or whose property the script writes, isn't a
+// heap function, where the reason is its place.
+export const getFunctionStop = (node: ts.FunctionExpression, context: Context) => {
+  const declared = getOutermostCast(node).parent;
+  const symbol =
+    ts.isVariableDeclaration(declared) && ts.isIdentifier(declared.name)
+      ? getSymbol(declared.name, context.checker)
+      : undefined;
+  return context.heap !== undefined &&
+    symbol !== undefined &&
+    !isOnce(declared, context) &&
+    context.objectTargets.get(node.getSourceFile())?.has(symbol) === true
+    ? "tla-ts can't make a function that a new constructs, or whose property the script writes, in code that may run more than once"
+    : undefined;
+};
+
 // The parameters that a call passes values to, without the this parameter that only types this.
 export const getParameters = (node: ts.SignatureDeclaration) =>
   node.parameters.filter(

@@ -77,6 +77,7 @@ import {
   rejectDeclaredCall,
   isDeclarationOnly,
   getClassStop,
+  getFunctionStop,
   getValueDeclaration,
   getRunMembers,
 } from "./context";
@@ -4833,6 +4834,10 @@ export const translateNode = (
       ? translateNew(node, scope, context)
       : translateNewError(node, classes, scope, context);
   }
-  const stop = ts.isClassExpression(node) ? getClassStop(node, context) : undefined;
+  const stop = ts.isClassExpression(node)
+    ? getClassStop(node, context)
+    : ts.isFunctionExpression(node)
+      ? getFunctionStop(node, context)
+      : undefined;
   throw new TlaTypeScriptError(stop ?? `Unsupported expression: ${node.getText()}`, node);
 };
