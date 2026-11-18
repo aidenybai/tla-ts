@@ -777,25 +777,28 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         const name = isAnd ? "\\land" : "\\lor";
         const start = getWrittenRange(expression.operands[0]);
         const operands: Operand[] = [];
-        const isPrefixMixed = expression.operands.map((operand, index) => {
-          const prefix = operands.map((analyzed) => analyzed.data.level);
-          operands.push(toOperand(operand, scope));
-          if (index === 0) return false;
-          const levels = [Math.max(...prefix), operands[index].data.level];
+        let prefixLevel = CONSTANT_LEVEL;
+        let isPrefixMixed = false;
+        expression.operands.forEach((operand, index) => {
+          const analyzed = toOperand(operand, scope);
+          operands.push(analyzed);
+          const levels = [prefixLevel, analyzed.data.level];
+          prefixLevel = Math.max(prefixLevel, analyzed.data.level);
+          if (index === 0) return;
           const end = getWrittenRange(operand);
           if (index === expression.operands.length - 1 || !start || !end) {
             checkJunction(levels, name);
-            return false;
+            return;
           }
-          if (!isMixed(levels)) return false;
+          if (!isMixed(levels)) return;
           errors.push({
             location: formatRange({ ...start, end: end.end }),
             message: `${name} has both temporal formula and action as arguments.`,
           });
-          return true;
+          isPrefixMixed = true;
         });
         const data = applyDefined(isAnd ? AND_LEVELS : OR_LEVELS, operands);
-        return isPrefixMixed.includes(true) ? { ...data, isCorrect: false } : data;
+        return isPrefixMixed ? { ...data, isCorrect: false } : data;
       }
       case "Prime":
         return applyBuiltin(PRIME_LEVELS, [expression.expression], scope);
