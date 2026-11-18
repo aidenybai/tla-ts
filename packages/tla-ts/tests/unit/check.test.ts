@@ -2343,6 +2343,21 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("assigns the variables UNCHANGED keeps through the definition of an instance, where TLC evaluates the definition and fails on an unassigned variable", async () => {
+    const result = await check({
+      source:
+        "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES x, y\nI == INSTANCE Inner WITH w <- y\nInit == x = 0 /\\ y = 0\nNext == y' = (y + 1) % 3 /\\ UNCHANGED I!vx\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Inner" ? "---- MODULE Inner ----\nVARIABLES x, w\nvx == <<x>>\n====" : undefined,
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      4,
+      3,
+    ]);
+  });
+
   it("orders the substitutions of an instance as SANY infers them from the instanced module's symbol table", async () => {
     const result = await check({
       source:

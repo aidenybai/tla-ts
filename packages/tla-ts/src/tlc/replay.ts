@@ -878,6 +878,7 @@ const visitUnchanged = (
       const operator = binding
         ? undefined
         : resolveGlobalOperator(expression.name, replay.environment);
+      // Deviation from TLC: Tool#processUnchanged takes the SubstInNode of an instance's definition for an expression and fails on an unassigned variable.
       if (operator?.kind === "Closure" && operator.params.length === 0) {
         return visitUnchanged(replay, operator.body, items, operator.scope, partial, node);
       }
