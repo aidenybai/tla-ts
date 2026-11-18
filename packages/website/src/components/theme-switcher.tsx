@@ -40,12 +40,7 @@ export const useTheme = () => ({
 export const ThemeSwitcherRoot = (props: RootProps) => {
   const theme = useTheme();
   return (
-    <ToggleGroup
-      label="Theme"
-      value={theme.theme}
-      onValueChange={theme.setTheme}
-      className="rounded-lg"
-    >
+    <ToggleGroup label="Theme" value={theme.theme} onValueChange={theme.setTheme}>
       {props.children}
     </ToggleGroup>
   );
@@ -58,7 +53,7 @@ interface OptionProps {
 }
 
 export const ThemeSwitcherOption = (props: OptionProps) => (
-  <ToggleGroupItem value={props.value} label={props.label} className="size-7 rounded-md">
+  <ToggleGroupItem value={props.value} label={props.label} className="size-7">
     {props.children}
   </ToggleGroupItem>
 );

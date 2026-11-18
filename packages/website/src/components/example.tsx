@@ -145,7 +145,7 @@ export const ExampleHint = () => {
   );
 };
 
-const VIEW_ITEM_CLASS_NAME = "h-7 rounded-md px-2 text-xs";
+const VIEW_ITEM_CLASS_NAME = "h-7 px-2 text-xs";
 
 export const ExampleSource = () => {
   const state = exampleContext.useParts();
@@ -184,7 +184,7 @@ export const ExampleSource = () => {
             value={state.isCompiled ? "tla" : "typescript"}
             isDisabled={state.isRunning}
             onValueChange={(value) => state.setIsCompiled(value === "tla")}
-            className="mr-1 -ml-1.5 rounded-lg"
+            className="mr-1 -ml-1.5"
           >
             <ToggleGroupItem value="typescript" className={VIEW_ITEM_CLASS_NAME}>
               TypeScript

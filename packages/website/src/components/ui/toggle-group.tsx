@@ -36,7 +36,10 @@ export const ToggleGroup = (props: ToggleGroupProps) => {
         role="group"
         aria-label={props.label}
         data-slot="toggle-group"
-        className={cn("flex w-fit shrink-0 items-center bg-muted p-0.5", props.className)}
+        className={cn(
+          "pixel-corners relative flex w-fit shrink-0 items-center bg-muted p-0.5",
+          props.className,
+        )}
       >
         {props.children}
       </div>
@@ -71,7 +74,7 @@ export const ToggleGroupItem = (props: ToggleGroupItemProps) => {
         <m.span
           layoutId={group.indicatorId}
           transition={{ type: "spring", duration: 0.3, bounce: 0 }}
-          className="absolute inset-0 rounded-[inherit] bg-raised shadow-raised"
+          className="pixel-corners absolute inset-0 bg-raised [--pixel-edge:var(--shadow-edge)]"
         />
       )}
       <span className="relative z-10 flex">{props.children}</span>

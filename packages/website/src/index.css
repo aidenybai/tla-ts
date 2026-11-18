@@ -6,6 +6,59 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Corners cut in two steps of one pixel each, as in pixel art. The mask shapes the element, and
+   the pseudo-element draws its edge along the steps, where a border would be cut off, so the
+   element must be positioned. A mask
+   also hides a focus ring, so focus thickens the edge. */
+@utility pixel-corners {
+  --pixel: 2px;
+  --pixel-edge: transparent;
+  --pixel-edge-width: 1px;
+  --pixel-inset: 0px;
+  border-radius: 0;
+  mask:
+    linear-gradient(#000 0 0) calc(var(--pixel) * 2) 0 / calc(100% - var(--pixel) * 4) 100%
+      no-repeat,
+    linear-gradient(#000 0 0) var(--pixel) var(--pixel) / calc(100% - var(--pixel) * 2)
+      calc(100% - var(--pixel) * 2) no-repeat,
+    linear-gradient(#000 0 0) 0 calc(var(--pixel) * 2) / 100% calc(100% - var(--pixel) * 4)
+      no-repeat;
+
+  &::before {
+    --step-1: calc(var(--pixel) + var(--pixel-edge-width));
+    --step-2: calc(var(--pixel) * 2 + var(--pixel-edge-width));
+    content: "";
+    position: absolute;
+    inset: calc(var(--pixel-inset) * -1);
+    background: var(--pixel-edge);
+    pointer-events: none;
+    /* The outer shape and the shape one edge-width in, each as five bands that do not overlap.
+       Excluding one from the other leaves the edge. */
+    mask:
+      linear-gradient(#000 0 0) left calc(var(--pixel) * 2) top 0 / calc(100% - var(--pixel) * 4)
+        var(--pixel) no-repeat,
+      linear-gradient(#000 0 0) left var(--pixel) top var(--pixel) / calc(100% - var(--pixel) * 2)
+        var(--pixel) no-repeat,
+      linear-gradient(#000 0 0) left 0 top calc(var(--pixel) * 2) / 100%
+        calc(100% - var(--pixel) * 4) no-repeat,
+      linear-gradient(#000 0 0) left var(--pixel) bottom var(--pixel) /
+        calc(100% - var(--pixel) * 2) var(--pixel) no-repeat,
+      linear-gradient(#000 0 0) left calc(var(--pixel) * 2) bottom 0 / calc(100% - var(--pixel) * 4)
+        var(--pixel) no-repeat,
+      linear-gradient(#000 0 0) left var(--step-2) top var(--pixel-edge-width) /
+        calc(100% - var(--step-2) * 2) var(--pixel) no-repeat,
+      linear-gradient(#000 0 0) left var(--step-1) top var(--step-1) /
+        calc(100% - var(--step-1) * 2) var(--pixel) no-repeat,
+      linear-gradient(#000 0 0) left var(--pixel-edge-width) top var(--step-2) /
+        calc(100% - var(--pixel-edge-width) * 2) calc(100% - var(--step-2) * 2) no-repeat,
+      linear-gradient(#000 0 0) left var(--step-1) bottom var(--step-1) /
+        calc(100% - var(--step-1) * 2) var(--pixel) no-repeat,
+      linear-gradient(#000 0 0) left var(--step-2) bottom var(--pixel-edge-width) /
+        calc(100% - var(--step-2) * 2) var(--pixel) no-repeat;
+    mask-composite: exclude;
+  }
+}
+
 :root {
   --background: #fdfdfc;
   --foreground: #21201c;
