@@ -4070,8 +4070,13 @@ const compileStep = (
     if (!isEnabled && primed.some((code) => code === undefined)) return () => "H.deopt();";
     return () => getEmitCode(primed);
   }
-  // With warnings on, TLC evaluates what is left once every variable is assigned, without branching.
-  if (program.environment.runtime.isWarningEnabled && primed.every((code) => code !== undefined)) {
+  // With warnings on, TLC evaluates what is left of a step once every variable is assigned, without
+  // branching, but not of one ENABLED needs.
+  if (
+    !isEnabled &&
+    program.environment.runtime.isWarningEnabled &&
+    primed.every((code) => code !== undefined)
+  ) {
     const guards = pending.map((item) => {
       if (item.expression.kind !== "Unchanged") {
         return expectBool(

@@ -360,6 +360,25 @@ describe("typed tier matches TLC", () => {
     expect(await getLines(false)).toEqual(['"x"  TRUE']);
   });
 
+  it("tries each disjunct of a step ENABLED needs once every variable is assigned, as TLC's Tool#enabled does", async () => {
+    const results = await Promise.all(
+      [undefined, INTERPRETED_SET_SIZE].map((maxSetSize) =>
+        check({
+          source:
+            '---- MODULE E ----\nEXTENDS Integers, TLC\nVARIABLE x\nA == UNCHANGED x /\\ (x < 2 \\/ Assert(x < 0, "bound"))\nSpec == x = 0 /\\ [][A]_x /\\ WF_x(A)\nProp == []<>(x < 3)\n====',
+          config: "SPECIFICATION Spec\nPROPERTY Prop",
+          maxSetSize,
+        }),
+      ),
+    );
+    expect(results.map((result) => [result.failure?.message, result.failure?.exitCode])).toEqual(
+      Array.from({ length: 2 }, () => [
+        'The first argument of Assert evaluated to FALSE; the second argument was:\n"bound"',
+        14,
+      ]),
+    );
+  });
+
   it("branches on the right side of => only with warnings off, like TLC", async () => {
     const results = await Promise.all([
       checkFixture("ImpliesBranches", false),
