@@ -16,6 +16,21 @@ const checkInstances = (configName: string, moduleName = "Instances") =>
     loadModule,
   });
 
+const SHADOWED_MODULES = new Map([
+  [
+    "N",
+    "---- MODULE N ----\nEXTENDS Naturals, Sequences\nTwo == 2 + 2\nSmall == Nat \\cap {1}\nLength == Len(<<1, 2>>)\n====",
+  ],
+  ["Plus", "---- MODULE Plus ----\na + b == 99\n===="],
+]);
+
+const checkShadowed = (unit: string, assumption: string, config = "") =>
+  check({
+    source: `---- MODULE M ----\n${unit}\nI == INSTANCE N\nASSUME ${assumption}\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\n====`,
+    config: `INIT Init\nNEXT Next\n${config}`,
+    loadModule: (name) => SHADOWED_MODULES.get(name),
+  });
+
 describe("INSTANCE matches TLC", () => {
   it("substitutes constants and variables in named, parameterized, and unnamed instances", async () => {
     const result = await checkInstances("Instances.cfg");
@@ -262,19 +277,23 @@ describe("INSTANCE matches TLC", () => {
   ])(
     "keeps a standard operator in an instanced module apart from %s of the same name",
     async (_title, unit, assumption) => {
-      const modules = new Map([
-        [
-          "N",
-          "---- MODULE N ----\nEXTENDS Naturals, Sequences\nTwo == 2 + 2\nSmall == Nat \\cap {1}\nLength == Len(<<1, 2>>)\n====",
-        ],
-        ["Plus", "---- MODULE Plus ----\na + b == 99\n===="],
-      ]);
-      const result = await check({
-        source: `---- MODULE M ----\n${unit}\nI == INSTANCE N\nASSUME ${assumption}\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\n====`,
-        config: "INIT Init\nNEXT Next",
-        loadModule: (name) => modules.get(name),
-      });
-      expect(result.status).toBe("success");
+      expect((await checkShadowed(unit, assumption)).status).toBe("success");
+    },
+  );
+
+  it.each([
+    ["assigns a value", "Nat == {7}", "I!Small = {1} /\\ Nat = {9}", "CONSTANT Nat = {9}"],
+    [
+      "replaces with an operator",
+      "a + b == 99\nPlus(a, b) == 5",
+      "I!Two = 4 /\\ 1 + 1 = 5",
+      "CONSTANT + <- Plus",
+    ],
+    ["defines by a table", "Len(s) == 42", "I!Length = 2", "CONSTANT Len(s) = 3"],
+  ])(
+    "keeps a standard operator in an instanced module apart from a root definition of the same name that the configuration %s",
+    async (_title, unit, assumption, config) => {
+      expect((await checkShadowed(unit, assumption, config)).status).toBe("success");
     },
   );
 });

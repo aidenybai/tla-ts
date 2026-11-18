@@ -127,7 +127,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     return symbol?.kind === "Definition" ? symbol : undefined;
   };
   const getSubstitutedKeys = (item: { name: string; module?: string }) => {
-    if (item.module === undefined) return [item.name, getRootKey(item.name)];
+    if (item.module === undefined) return [getRootKey(item.name)];
     const symbol = getScopedSymbol(item);
     return symbol ? [symbol.key] : [];
   };

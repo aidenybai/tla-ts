@@ -221,29 +221,31 @@ const getConfigOperator = (kind: string, name: string, environment: Environment)
 const isLiteralDefinition = (definition: Definition) =>
   definition.body.kind === "Number" || definition.body.kind === "String";
 
-const getConstantValue = (name: string, definition: Definition, environment: Environment) => {
-  if (environment.constants.has(name)) return environment.constants.get(name);
+const getConstantValue = (key: string, definition: Definition, environment: Environment) => {
+  if (environment.constants.has(key)) return environment.constants.get(key);
   return isLiteralDefinition(definition) ? undefined : getStartupValue(definition, environment);
 };
 
 const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
-  if (environment.constants.has(name)) {
+  const key = getRootKey(name, environment);
+  if (environment.constants.has(key)) {
     throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
   }
   const definition = getConfigOperator(kind, name, environment);
-  if (getConstantValue(name, definition, environment) !== undefined) {
+  if (getConstantValue(key, definition, environment) !== undefined) {
     throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
   }
   return definition;
 };
 
 const getConfigPredicate = (kind: string, name: string, environment: Environment) => {
-  const definition = environment.constants.has(name)
+  const key = getRootKey(name, environment);
+  const definition = environment.constants.has(key)
     ? undefined
     : getConfigOperator(kind, name, environment);
   const value = definition
-    ? getConstantValue(name, definition, environment)
-    : environment.constants.get(name);
+    ? getConstantValue(key, definition, environment)
+    : environment.constants.get(key);
   if (value !== undefined && value !== true) {
     throw new TlaConfigError(`The ${kind} of ${name} is equal to ${formatValue(value)}`);
   }
@@ -374,10 +376,11 @@ const getSpecification = (
   const initConjuncts: ScopedExpression[] = [];
   const nextActions: ScopedExpression[] = [];
   const temporals: ScopedExpression[] = [];
-  const value = environment.constants.has(config.specification)
-    ? environment.constants.get(config.specification)
+  const specificationKey = getRootKey(config.specification, environment);
+  const value = environment.constants.has(specificationKey)
+    ? environment.constants.get(specificationKey)
     : getConstantValue(
-        config.specification,
+        specificationKey,
         getConfigOperator("name", config.specification, environment),
         environment,
       );

@@ -100,8 +100,9 @@ export const getSymmetryGroup = (
   environment: Environment,
   substitutions: Substitution[],
 ): Images[] | undefined => {
-  const definition = environment.definitions.get(getRootKey(name, environment));
-  if (definition === undefined && !environment.constants.has(name)) {
+  const key = getRootKey(name, environment);
+  const definition = environment.definitions.get(key);
+  if (definition === undefined && !environment.constants.has(key)) {
     throw new TlaConfigError(
       `The symmetry function ${name} specified in the configuration file\nis not defined in the specification.`,
     );
