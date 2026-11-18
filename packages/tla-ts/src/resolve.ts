@@ -2227,6 +2227,26 @@ const checkSubstitutions = (
       return;
     }
     const parenthesized = parenthesizedRanges.get(expression);
+    const reference = parenthesized ? undefined : selections.get(expression);
+    if (reference) {
+      const arity = expression.kind === "Lambda" ? expression.params.length : 0;
+      const failed = findNullError(nullSelections.get(expression));
+      if (expression.kind === "Lambda") resolveExpression(expression, scope, unit);
+      else if (failed) unit.errors.push(failed);
+      if (!failed && arity !== declaration.arity && reference.location.range) {
+        unit.errors.push({
+          location: formatRange(reference.location.range),
+          message: `Expected arity ${declaration.arity} but found operator of arity ${arity}.`,
+        });
+      }
+      if (failed || arity !== declaration.arity) reportArity(declaration, BUILTIN_LOCATION);
+      return;
+    }
+    if (expression.kind === "Subexpression" && !parenthesized) {
+      resolveExpression(expression, scope, unit);
+      reportArity(declaration, BUILTIN_LOCATION);
+      return;
+    }
     if (expression.kind === "Lambda" && !parenthesized) {
       resolveLambda(expression, scope, unit);
       if (expression.params.length !== declaration.arity && range) {

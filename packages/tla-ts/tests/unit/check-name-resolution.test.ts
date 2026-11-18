@@ -2175,6 +2175,27 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "selections substituted for a CONSTANT operator",
+      "---- MODULE Inner ----\nCONSTANT F(_)\n====\nCONSTANT c\nW == {c, 2}\nU(a, b) == {a, b}\nL == lab :: {1}\nI == INSTANCE Inner WITH F <- W!1\nJ == INSTANCE Inner WITH F <- U!1\nK == INSTANCE Inner WITH F <- W!3\nN == INSTANCE Inner WITH F <- L!lab",
+      [
+        ["line 9, col 31 to line 9, col 33", "Expected arity 1 but found operator of arity 0."],
+        [
+          "In module --TLA+ BUILTINS--",
+          "An operator must be substituted for symbol 'F', and it must have arity 1.",
+        ],
+        ["line 10, col 31 to line 10, col 33", "Expected arity 1 but found operator of arity 2."],
+        [
+          "line 11, col 33 to line 11, col 33",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        ["line 12, col 31 to line 12, col 35", "Expected arity 1 but found operator of arity 0."],
+      ].map((error) => ({
+        location: error[0].startsWith("In") ? error[0] : `${error[0]} of module M`,
+        message: error[1],
+      })),
+      [],
+    ],
+    [
       "declarations, assumptions, theorems, and USE between a RECURSIVE declaration and its definition",
       "RECURSIVE f(_)\nVARIABLES y,\n  z\nCONSTANT C\nASSUME TRUE\nTHEOREM T == TRUE\nUSE T\nf(n) == n\nVARIABLE w",
       [
