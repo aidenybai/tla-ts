@@ -244,6 +244,51 @@ describe("tactics keep the dependencies Z3 keeps", () => {
     ).toEqual(["sat", "unsat", "(n1 n2)"]);
   });
 
+  it("keeps the dependencies in bit-blast, max-bv-sharing, card2bv and distribute-forall", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(declare-const b Bool)",
+        "(assert (! (bvult x #x05) :named a1))",
+        "(assert (! (= y (bvadd x #x01)) :named a2))",
+        "(assert (! (bvugt y #x07) :named a3))",
+        "(assert (! (or b (= x #x02)) :named a4))",
+        "(check-sat-using (then max-bv-sharing bit-blast sat))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(a1 a2 a3)", "(:rlimit 305)"]);
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const b Bool)",
+        "(declare-const n Int)",
+        "(declare-const m Int)",
+        "(assert (! (>= n 3) :named c1))",
+        "(assert (! (<= (+ n m) 1) :named c2))",
+        "(assert (! (>= m 0) :named c3))",
+        "(assert (! b :named c4))",
+        "(check-sat-using (then card2bv smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(c3 c1 c2)", "(:rlimit 250)"]);
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const b Bool)",
+        "(declare-const n Int)",
+        "(assert (! (forall ((z Int)) (and (> z n) b)) :named d1))",
+        "(assert (! (not b) :named d2))",
+        "(check-sat-using (then distribute-forall smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(d1 d2)", "(:rlimit 27)"]);
+  });
+
   it("internalizes the assertions of the smt tactic once when it assumes the names", () => {
     expect(
       run([

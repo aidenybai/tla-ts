@@ -896,6 +896,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["pb.solver", PARAM_SYMBOL, "solver", true],
         ["cardinality.encoding", PARAM_SYMBOL, "none", true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) => {
           checkParams(REWRITER_DESCRS, params);
@@ -1113,6 +1114,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "distribute-forall",
     {
       descrs: new Map(),
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => distributeForall(environment.manager, goal)),
     },
   ],
@@ -1223,6 +1225,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["blast_quant", PARAM_BOOL, false, true],
         ["blast_full", PARAM_BOOL, false, true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         runBitBlast(environment.manager, {
           isBlastingMul: getBool(params, "blast_mul", true),
@@ -1234,7 +1237,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   [
     "max-bv-sharing",
-    { descrs: new Map(), build: (environment) => runMaxBvSharing(environment.manager) },
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => runMaxBvSharing(environment.manager),
+    },
   ],
   [
     "bv_bound_chk",
