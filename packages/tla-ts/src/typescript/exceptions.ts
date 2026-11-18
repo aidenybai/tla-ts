@@ -546,7 +546,11 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
   }
   const value = translateExpression(node.left, scope, context);
   const subclasses = set(getSubclasses(node, classes[0], context));
-  if (getErrorClass(context.checker.getTypeAtLocation(node.left).getSymbol(), context)) {
+  // A value of an error's type is a record, but where the heap holds objects it may be an instance
+  // of a class that extends an error, which the heap holds.
+  const isErrorTyped =
+    getErrorClass(context.checker.getTypeAtLocation(node.left).getSymbol(), context) !== undefined;
+  if (isErrorTyped && context.heap === undefined) {
     return apply("\\in", [field(value, "constructor"), subclasses]);
   }
   // A value of type unknown or any, such as a parameter's, may be any value, as a caught one may.
@@ -554,7 +558,7 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
     (context.checker.getTypeAtLocation(node.left).flags &
       (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !==
     0;
-  if (!isAnyValue && !isCaught(node.left, context)) {
+  if (!isErrorTyped && !isAnyValue && !isCaught(node.left, context)) {
     throw new TlaTypeScriptError("instanceof needs an error or a value of any type", node);
   }
   if (context.heap === undefined) return useJavaScript("IsErrorOf", [value, subclasses], context);

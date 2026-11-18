@@ -56646,3 +56646,63 @@ describe("BigInts", () => {
     });
   });
 });
+
+describe("instanceof on a value that holds an instance of a class that extends an error", () => {
+  const getSource = (expected: string) => `
+    class Failure extends Error {
+      getKind() {
+        return "failure";
+      }
+    }
+    class Timeout extends Failure {}
+    class BadInput extends TypeError {
+      getKind() {
+        return "bad input";
+      }
+    }
+    const failure: Error = new Failure("failure");
+    const timeout: Error = new Timeout("timeout");
+    const badInput: TypeError = new BadInput("bad input");
+    const unknownValue: unknown = new Timeout("unknown");
+    const anyValue: any = new BadInput("any");
+    const getCaught = () => {
+      try {
+        throw new Timeout("thrown");
+      } catch (error) {
+        const typed = error as Error;
+        return [error instanceof Error, error instanceof Failure, typed instanceof TypeError].join();
+      }
+    };
+    const seen = [
+      failure instanceof Error,
+      failure instanceof Failure,
+      failure instanceof Timeout,
+      failure instanceof TypeError,
+      timeout instanceof Error,
+      timeout instanceof Failure,
+      badInput instanceof TypeError,
+      badInput instanceof Error,
+      badInput instanceof RangeError,
+      badInput instanceof BadInput,
+      unknownValue instanceof Failure,
+      unknownValue instanceof TypeError,
+      anyValue instanceof TypeError,
+      anyValue instanceof Failure,
+      getCaught(),
+    ].join();
+    if (seen !== "${expected}") throw new Error("seen " + seen);
+  `;
+  const expected =
+    "true,true,false,false,true,true,true,true,false,true,true,false,true,false,true,true,false";
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (await checkModel(getSource(expected.replace("true,true,false", "true,true,true")))).failure
+        ?.message,
+    ).toContain(`seen ${expected}`);
+  });
+});
