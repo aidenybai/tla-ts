@@ -123,6 +123,37 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it.each([
+    [
+      "Def(i) == x' = x + i /\\ TRUE",
+      "Def(5)!1",
+      "LAMBDA(5) line 4, col 11 to line 4, col 20 of module M",
+    ],
+    [
+      "Def == \\E i \\in {5} : x' = x + i",
+      "Def!(5)",
+      "LAMBDA(5) line 4, col 23 to line 4, col 32 of module M",
+    ],
+  ])("names the action %s selects by %s LAMBDA, like TLC", async (definition, reference, label) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definition}\nInit == x = 0\nNext == ${reference}\nInv == x < 2\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label]);
+  });
+
+  it("selects into the definitions of the outer module before a nested module, as SANY has resolved them by then", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nBase == <<{7, 8}, 9>>\nOp == Base!1\nF(a) == {a, 8}\nL == lab :: 2 + 3\n---- MODULE Inner ----\nCONSTANT c\nP == Op!1\nQ == F(c)!1\nR == L!lab!1\n====\nI == INSTANCE Inner WITH c <- 3\nVARIABLE x\nInit == x = <<>>\nNext == x' = <<I!P, I!Q, I!R>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<{7, 8}, 3, 2>>",
+    ]);
+  });
+
   it("passes on a selected LAMBDA that uses definitions of an enclosing LET", async () => {
     const result = await check({
       source:
@@ -162,6 +193,15 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it("selects in a function's domain when nothing else in the module selects", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nS == {1, 2} \\cup {3}\nf[n \\in S!1] == n\nASSUME f[1] = 1\nInit == x = DOMAIN f\nNext == UNCHANGED x\nInv == x = {1, 2}\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.status).toBe("success");
+  });
+
   it("selects into a recursive function that an instance copies as into its constructor", async () => {
     const inner =
       "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nr[n \\in {0, 1, 2}] == IF n = 0 THEN c ELSE r[n - 1] + 1\nlr[n \\in {0, 1}] == lab(n) :: IF n = 0 THEN c ELSE lr[n - 1] * 2\n====";
@@ -175,6 +215,62 @@ describe("subexpression references match TLC", () => {
       "<<>>",
       "<<{0, 1, 2}, FALSE, 5, FALSE, 4>>",
     ]);
+  });
+
+  const RECURSIVE_MODULES = new Map([
+    [
+      "Inner",
+      "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nr[n \\in {0, 1}] == IF n = 0 THEN c ELSE r[n - 1] + 1\n====",
+    ],
+    [
+      "Plain",
+      "---- MODULE Plain ----\nEXTENDS Naturals\nr[n \\in {0, 1}] == IF n = 0 THEN 0 ELSE r[n - 1] + 1\n====",
+    ],
+  ]);
+
+  const checkRecursive = (expression: string) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nr[n \\in {0, 1}] == IF n = 0 THEN 0 ELSE r[n - 1] + 1\nlr[n \\in {0, 1}] == lab(n) :: IF n = 0 THEN 0 ELSE lr[n - 1] + 1\nAp(Op(_)) == Op(1)\nP(p) == INSTANCE Inner WITH c <- p\nInit == x = 0\nNext == x' = ${expression}\nInv == x = 0\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => RECURSIVE_MODULES.get(name),
+    });
+
+  it.each([
+    ["r!(1)", "r", "line 4, col 41 to line 4, col 41 of module M"],
+    ["lr!lab(1)", "lr", "line 5, col 52 to line 5, col 53 of module M"],
+    ["Ap(r!@)", "r", "line 4, col 41 to line 4, col 41 of module M"],
+    [
+      "LET s[n \\in {0, 1}] == IF n = 0 THEN 0 ELSE s[n - 1] + 1 IN s!(1)",
+      "s",
+      "line 9, col 58 to line 9, col 58 of module M",
+    ],
+    ["LET L == INSTANCE Plain IN L!r!(1)", "r", "line 3, col 41 to line 3, col 41 of module Plain"],
+    [
+      "LET L == INSTANCE Inner WITH c <- 5 IN L!r!(1)",
+      "r",
+      "line 4, col 41 to line 4, col 41 of module Inner",
+    ],
+    ["P(2)!r!(1)", "r", "line 4, col 41 to line 4, col 41 of module Inner"],
+  ])(
+    "fails on the recursive call that %s selects, as TLC leaves the function's name unbound",
+    async (expression, name, location) => {
+      const result = await checkRecursive(expression);
+      expect(result.failure?.message).toContain(
+        `: In evaluation, the identifier ${name} is either undefined or not an operator.\n${location}`,
+      );
+    },
+  );
+
+  it("evaluates a selected recursive function whole, and its body where it makes no recursive call", async () => {
+    const result = await checkRecursive(
+      "<<r!(0), r!:[1], LET L == INSTANCE Plain IN L!r!:[1], LET L == INSTANCE Inner WITH c <- 5 IN <<L!r!(0), L!r[1]>>, P(2)!r!:[1]>>",
+    );
+    expect(result.failure?.message).toContain("<<0, 1, 1, <<5, 6>>, 3>>");
+  });
+
+  it("takes a selection passed to an operator parameter in a selection's arguments for an operator, like TLC", async () => {
+    const result = await checkRecursive("Ap(r!@)!1");
+    expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 1 }]);
   });
 
   it("keeps a recursive function lazy where a selection names its constructor, as TLC keeps $RecursiveFcnSpec", async () => {

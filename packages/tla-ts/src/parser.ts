@@ -501,9 +501,10 @@ export const getDefEntryBinder = (expression: Expression): Expression | undefine
 };
 
 export const extractModule = (source: string, name: string) => {
-  const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
   const lines = source.replace(/\r?\n$/, "").split(/\r?\n/);
-  const start = lines.findIndex((line) => header.test(line));
+  const start = lines.findIndex(
+    (line) => /^-{4,}\s*MODULE\s+(\w+)\s*-{3,}$/.exec(line)?.[1] === name,
+  );
   if (start === -1) return undefined;
   const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
   return `${lines.slice(start, end === -1 ? undefined : end + 1).join("\n")}\n`;
@@ -1419,7 +1420,7 @@ const parse = (
         const instances: Instance[] = [];
         const recursive: Declaration[] = [];
         recursiveScopes.push(new Set());
-        while (!accept("IN")) {
+        do {
           if (isTlapm && isAt("RECURSIVE")) throw createUnexpected("Unexpected keyword RECURSIVE");
           if (accept("RECURSIVE")) {
             recursive.push(...declareRecursive());
@@ -1429,7 +1430,7 @@ const parse = (
           const unit = parseDefinition(!isTlapm && accept("LOCAL"));
           if (unit.kind === "Instance") instances.push(unit);
           else definitions.push(unit);
-        }
+        } while (!accept("IN"));
         recursiveScopes.pop();
         return {
           kind: "Let",
@@ -2012,7 +2013,9 @@ const parse = (
     if (isOperatorDeclaration) {
       advance();
       const name = advance().text;
-      return { name, arity: accept("_") ? 2 : 1, location };
+      const isInfix = INFIX_OPERATORS.has(name);
+      if (isInfix) expect("_");
+      return { name, arity: isInfix ? 2 : 1, location };
     }
     const isPrefixOperator =
       peek().kind !== "String" &&

@@ -10,6 +10,7 @@ import {
   type FunctionDefinition,
   type Instance,
   type Module,
+  type OperatorDefinition,
   type OperatorParam,
   type SourceLocation,
   type Theorem,
@@ -66,7 +67,14 @@ export const renameLocals = (
 };
 
 const mapBounds = (bounds: Bound[], map: (child: Expression) => Expression) =>
-  bounds.map((bound) => ({ pattern: bound.pattern, set: map(bound.set) }));
+  bounds.reduce<Bound[]>((mapped, bound, index) => {
+    mapped.push({
+      pattern: bound.pattern,
+      set:
+        index > 0 && bounds[index - 1].set === bound.set ? mapped[index - 1].set : map(bound.set),
+    });
+    return mapped;
+  }, []);
 
 const sourceNames = new WeakMap<Definition, string>();
 
@@ -379,6 +387,7 @@ interface Instantiation {
   addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
   createName: (name: string) => string;
   frame?: Expression;
+  isLocal?: boolean;
 }
 
 const LAMBDA_NAME = "LAMBDA";
@@ -660,6 +669,7 @@ const getInstanceOperator = (
   params: OperatorParam[],
   arity: number,
   location: SourceLocation,
+  resolution: typeof LOCAL_RESOLUTION | undefined,
 ): Expression => {
   const names = Array.from({ length: arity }, (_value, index) => `argument${index}`);
   return {
@@ -673,6 +683,7 @@ const getInstanceOperator = (
         ...names.map((name) => createLocalIdentifier(name, location)),
       ],
       location,
+      resolution,
     },
     location,
   };
@@ -695,6 +706,7 @@ const substitute = (
   }
   const instantiation = rewrite.instantiation;
   const params = instantiation.params;
+  const resolution = instantiation.isLocal ? LOCAL_RESOLUTION : undefined;
   const isFree = (name: string) => !bound.has(name) && !isLocallyResolved(expression);
   if (expression.kind === "Enabled" && rewrite.mode === "Normal") {
     return {
@@ -740,16 +752,23 @@ const substitute = (
     }
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
-    if (params.length === 0) return { ...expression, name: copy };
+    if (params.length === 0) return { ...expression, name: copy, resolution };
     const definition = instantiation.getDefinition(expression.name);
     if (definition && getArity(definition) > 0) {
-      return getInstanceOperator(copy, params, getArity(definition), expression.location);
+      return getInstanceOperator(
+        copy,
+        params,
+        getArity(definition),
+        expression.location,
+        resolution,
+      );
     }
     return {
       kind: "Apply",
       operator: copy,
       args: createLocalArguments(params, expression.location),
       location: expression.location,
+      resolution,
     };
   }
   if (expression.kind === "Apply" && isFree(expression.operator)) {
@@ -814,6 +833,7 @@ const substitute = (
       ...expression,
       operator: copy,
       args: [...createLocalArguments(params, expression.location), ...args],
+      resolution,
     };
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
@@ -829,7 +849,13 @@ const substitute = (
     if (copy === undefined) return expression;
     const definition = instantiation.getDefinition(expression.operator);
     if (params.length > 0 && definition) {
-      return getInstanceOperator(copy, params, getArity(definition), expression.location);
+      return getInstanceOperator(
+        copy,
+        params,
+        getArity(definition),
+        expression.location,
+        resolution,
+      );
     }
     return { ...expression, operator: copy };
   }
@@ -842,7 +868,7 @@ const substitute = (
   return renameNames(mapped, bound, rename);
 };
 
-export const getFunctionBody = (definition: FunctionDefinition): Expression =>
+const getFunctionBody = (definition: FunctionDefinition): Expression =>
   definition.isSelfReferential
     ? {
         kind: "Let",
@@ -852,20 +878,23 @@ export const getFunctionBody = (definition: FunctionDefinition): Expression =>
       }
     : getFunctionConstruction(definition);
 
+export const getOperatorDefinition = (definition: Definition): OperatorDefinition =>
+  definition.kind === "Operator"
+    ? definition
+    : {
+        kind: "Operator",
+        name: definition.name,
+        params: [],
+        body: getFunctionBody(definition),
+        isLocal: definition.isLocal,
+        isRecursive: false,
+        location: definition.location,
+      };
+
 export const withInstanceParams = (definition: Definition, params: OperatorParam[]): Definition => {
   if (params.length === 0) return { ...definition };
-  if (definition.kind === "Operator") {
-    return { ...definition, params: [...params, ...definition.params] };
-  }
-  return {
-    kind: "Operator",
-    name: definition.name,
-    params,
-    body: getFunctionBody(definition),
-    isLocal: definition.isLocal,
-    isRecursive: false,
-    location: definition.location,
-  };
+  const operator = getOperatorDefinition(definition);
+  return { ...operator, params: [...params, ...operator.params] };
 };
 
 const copyDefinition = (rewrite: Rewrite, key: string): string => {
@@ -906,11 +935,10 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
             // TLC has no such LET, so the call stack it prints has no position for it.
             location: { line: mapped.body.location.line, column: mapped.body.location.column },
           };
-    const frame = instantiation.frame;
-    // TLC's call stack holds the SubstInNode an instance puts around each definition it copies.
-    if (frame)
-      substitutionFrames.set(body, [frame, ...(substitutionFrames.get(definition.body) ?? [])]);
-    return withInstanceParams({ ...mapped, body }, instantiation.params);
+    const copied = withInstanceParams({ ...mapped, body }, instantiation.params);
+    const frames = substitutionFrames.get(definition.body);
+    if (frames && copied.kind === "Operator") substitutionFrames.set(copied.body, frames);
+    return copied;
   });
 };
 
@@ -934,11 +962,23 @@ export const createInstantiation = (instantiation: Instantiation) => {
   const rewrite = createRewrite("Normal");
   createRewrite("Enabled");
   createRewrite("Primed");
+  const getEntry = (key: string, copy: string) => {
+    const frame = instantiation.frame;
+    const definition = instantiation.getDefinition(copy);
+    if (!frame || !definition) return copy;
+    return instantiation.addDefinition(key, definition.name, () => {
+      const operator = getOperatorDefinition(definition);
+      return { ...operator, body: withSubstitutionFrames(operator.body, [frame]) };
+    });
+  };
   return {
-    getKey: (key: string) => getCopy(rewrite, key) ?? key,
+    getKey: (key: string) => {
+      const copy = getCopy(rewrite, key);
+      return copy === undefined ? key : getEntry(key, copy);
+    },
     getQualifiedKey: (key: string) => {
       const copy = getCopy(rewrite, key);
-      if (copy !== undefined) return copy;
+      if (copy !== undefined) return getEntry(key, copy);
       const definition = instantiation.getDefinition(key);
       if (!definition) return key;
       return instantiation.addDefinition(key, definition.name, () =>
@@ -948,7 +988,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
   };
 };
 
-const hasLetInstance = (expression: Expression): boolean =>
+export const hasLetInstance = (expression: Expression): boolean =>
   (expression.kind === "Let" && expression.instances !== undefined) ||
   getChildren(expression).some(hasLetInstance);
 
@@ -961,7 +1001,12 @@ const expandLetInstances = (
   const mapped = mapChildren(expression, (child) =>
     expandLetInstances(child, instantiate, visibleLets),
   );
-  if (mapped.kind !== "Let" || !mapped.instances) return mapped;
+  if (mapped.kind !== "Let" || !mapped.instances) {
+    const children = getChildren(expression);
+    return getChildren(mapped).every((child, index) => child === children[index])
+      ? expression
+      : mapped;
+  }
   const definitions = mapped.instances.reduce((current, instance) => {
     const position = current.findIndex((definition) =>
       isBefore(instance.location, definition.location),
@@ -981,10 +1026,10 @@ const getUnnamedStatement = (theorem: Theorem) =>
     ? theorem.statement
     : undefined;
 
-export const withLetInstances = (
+export const getLetInstanceExpansion = (
   module: Module,
   instantiate: (instance: Instance, lets: Definition[]) => Definition[],
-): Module => {
+) => {
   const hasLetInstances =
     module.definitions.some((definition) => hasLetInstance(definition.body)) ||
     module.assumptions.some((assumption) => hasLetInstance(assumption.expression)) ||
@@ -992,21 +1037,7 @@ export const withLetInstances = (
       const statement = getUnnamedStatement(theorem);
       return statement !== undefined && hasLetInstance(statement);
     });
-  if (!hasLetInstances) return module;
-  return {
-    ...module,
-    definitions: module.definitions.map((definition) =>
-      mapDefinition(definition, (child) => expandLetInstances(child, instantiate, [])),
-    ),
-    assumptions: module.assumptions.map((assumption) => ({
-      ...assumption,
-      expression: expandLetInstances(assumption.expression, instantiate, []),
-    })),
-    theorems: module.theorems.map((theorem) => {
-      const statement = getUnnamedStatement(theorem);
-      return statement === undefined
-        ? theorem
-        : { ...theorem, statement: expandLetInstances(statement, instantiate, []) };
-    }),
-  };
+  return hasLetInstances
+    ? (expression: Expression) => expandLetInstances(expression, instantiate, [])
+    : undefined;
 };

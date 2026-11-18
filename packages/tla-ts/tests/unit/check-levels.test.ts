@@ -24,6 +24,82 @@ describe("level checking matches SANY", () => {
     await expect(checkDefinition(definition)).rejects.toThrow(message);
   });
 
+  it("checks the range shared by bounded variables once, for the first", async () => {
+    await expect(checkDefinition("\\E v, w \\in [](x = 1) : TRUE")).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 6 to line 3, col 33 of module M",
+          message:
+            "Level error in applying operator $BoundedExists:\nThe level of the range for the bounded variable line 3, col 9 to line 3, col 9 of module M \nexceeds the maximum level allowed by the operator.",
+        },
+      ]),
+    );
+  });
+
+  it("checks a shared range once after resolving a selection in it", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nT == [](x = 1) /\\ TRUE\nF == \\E v, w \\in T!1 : TRUE\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 6 to line 4, col 27 of module M",
+          message:
+            "Level error in applying operator $BoundedExists:\nThe level of the range for the bounded variable line 4, col 9 to line 4, col 9 of module M \nexceeds the maximum level allowed by the operator.",
+        },
+      ]),
+    );
+  });
+
+  it.each([
+    [
+      "another definition",
+      "G == (x' = 2) /\\ []x /\\ TRUE\nH == LET J == INSTANCE Naturals IN J!+(1, 2)",
+    ],
+    [
+      "the same definition",
+      "G == (x' = 2) /\\ []x /\\ LET J == INSTANCE Naturals IN J!+(1, 2) = 3",
+    ],
+  ])(
+    "locates a parenthesized operand at its parenthesis when %s has a LET INSTANCE",
+    async (_, definitions) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
+          config: "",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: "line 4, col 6 to line 4, col 20 of module M",
+            message: "\\land has both temporal formula and action as arguments.",
+          },
+        ]),
+      );
+    },
+  );
+
+  it("checks the level of an operator argument against its parameter", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nHiC(G(_)) == G(1) = 1\nF == {HiC(LAMBDA p : [](x = p)) : v \\in {1}}\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 7 to line 4, col 31 of module M",
+          message:
+            "Level error in applying operator HiC:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        },
+      ]),
+    );
+  });
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({

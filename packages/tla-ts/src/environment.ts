@@ -47,11 +47,11 @@ import {
   createLocalIdentifier,
   frameSubstitutions,
   getEnabledVariableName,
-  getFunctionBody,
+  getLetInstanceExpansion,
+  getOperatorDefinition,
   renameLocals,
   substitutedExpressions,
   withInstanceParams,
-  withLetInstances,
   withSubstitutionFrames,
   type Substitution,
 } from "./instances";
@@ -87,7 +87,7 @@ import {
   STANDARD_EXTENDS,
 } from "./standard-modules";
 import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
-import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
+import { createModuleSubexpressions, resolveInstanceSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
@@ -159,6 +159,7 @@ export interface LinkedModule {
 interface ModuleScope {
   id: string;
   symbols: Symbols;
+  getDefinition: (name: string) => Definition | undefined;
   modules: Map<string, LinkedModule>;
   nested: Module[];
   errors: SanyError[];
@@ -214,13 +215,9 @@ const getNodeClass = (kind: SymbolKind) =>
   kind === "Theorem" ? "ThmOrAssumpDefNode" : getNodeWord(kind);
 
 const createLocalFunction = (definition: FunctionDefinition, key: string): Definition => ({
-  kind: "Operator",
+  ...getOperatorDefinition(definition),
   name: key,
-  params: [],
-  body: getFunctionBody(definition),
   isLocal: true,
-  isRecursive: false,
-  location: definition.location,
 });
 
 const getSubstitutionFrame = (instance: Instance): Expression => {
@@ -431,6 +428,7 @@ export const createEnvironment = (
     const linked = linkModule(parsed, {
       id: parsed.name,
       symbols: new Map(),
+      getDefinition: () => undefined,
       modules: new Map(),
       nested,
       errors,
@@ -804,6 +802,7 @@ export const createEnvironment = (
         return key;
       },
       createName,
+      isLocal: true,
     });
     const frames = declarations.length > 0 ? [getSubstitutionFrame(instance)] : [];
     const declared = new Set(declarations.map((declaration) => declaration.name));
@@ -825,12 +824,6 @@ export const createEnvironment = (
       });
     return [...substitutionDefinitions, ...copies, ...exported];
   };
-
-  const getAvailableDefinitions = (visible: Symbols) =>
-    [...visible].flatMap((entry) => {
-      const definition = definitions.get(entry[1].key);
-      return definition ? [{ ...definition, name: entry[0] }] : [];
-    });
 
   const javaOverrides = new Map<string, JavaOverride[]>();
   const linkModule = (unlinked: Module, scope: ModuleScope): LinkedModule => {
@@ -1009,6 +1002,17 @@ export const createEnvironment = (
         (symbols, entry) => (symbols.has(entry[0]) ? symbols : symbols.set(entry[0], entry[1])),
         new Map(visible),
       );
+    const subexpressions = createModuleSubexpressions(
+      parsed,
+      getLetInstanceExpansion(parsed, (instance, lets) =>
+        instantiateLocally(instance, lets, parsed.name, getLetModule(instance)),
+      ),
+      (name) => {
+        const symbol = visible.get(name);
+        const definition = symbol && definitions.get(symbol.key);
+        return definition ? { ...definition, name } : scope.getDefinition(name);
+      },
+    );
     const linkNested = (nested: Module) => {
       const visibleModules = getVisibleModules();
       const existing = visibleModules.get(nested.name);
@@ -1017,9 +1021,11 @@ export const createEnvironment = (
       scope.nested.push(nested);
       const report: ModuleReport = { location: nested.location, errors: [], warnings: [] };
       reports.push(report);
+      const getDefinitionBefore = subexpressions.getDefinitionsBefore(nested.location);
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         symbols: getSymbolsBefore(nested.location),
+        getDefinition: (name) => getDefinitionBefore(name) ?? scope.getDefinition(name),
         modules: visibleModules,
         nested: scope.nested,
         errors: report.errors,
@@ -1029,6 +1035,7 @@ export const createEnvironment = (
       if (redefinition) report.errors.push(redefinition);
       if (!existing) modules.set(nested.name, linked);
     };
+    const instancingUnit = getUnit(parsed);
     [
       ...parsed.instances.map((instance) => ({
         location: instance.location,
@@ -1036,7 +1043,7 @@ export const createEnvironment = (
           const symbols = instantiate(
             instance,
             parsed,
-            getUnit(parsed),
+            instancingUnit,
             isParameterFree,
             getVisibleModules().get(instance.module),
             getSymbolsBefore(instance.location),
@@ -1065,12 +1072,7 @@ export const createEnvironment = (
     ]
       .sort((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
       .forEach((unit) => unit.link());
-    const module = resolveModuleSubexpressions(
-      withLetInstances(parsed, (instance, lets) =>
-        instantiateLocally(instance, lets, parsed.name, getLetModule(instance)),
-      ),
-      getAvailableDefinitions(visible),
-    );
+    const module = subexpressions.resolve();
     parsed.theorems
       .flatMap((theorem) => getProofInstances(theorem.proof))
       .filter((instance) => !getVisibleModules().has(instance.module))

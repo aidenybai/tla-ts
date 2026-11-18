@@ -276,6 +276,27 @@ describe("nested module scoping matches SANY", () => {
     );
   });
 
+  it("reads a module's name right after MODULE in its header", async () => {
+    expect(
+      (await checkSource("EXTENDS Foo\nASSUME A = 1", { Foo: "---- MODULEFoo ----\nA == 1\n====" }))
+        .status,
+    ).toBe("success");
+    await expect(
+      checkSource("EXTENDS test", { test: "---- MODULE_test ----\nA == 1\n====" }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          {
+            location: "Unknown location",
+            message:
+              "File name 'test' does not match the name '_test' of the top level module it contains.",
+          },
+        ],
+        true,
+      ),
+    );
+  });
+
   it.each([
     [
       "LET",

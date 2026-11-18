@@ -324,7 +324,7 @@ export const getNumeralValue = (text: string) =>
     ? parseInt(text.slice(2), NUMBER_BASES.get(text[1].toLowerCase()))
     : Number(text);
 
-const MODULE_HEADER = /-{4,} *MODULE\b/;
+const MODULE_HEADER = /-{4,} *MODULE/;
 
 const CODE_TAB = 9;
 const CODE_NEWLINE = 10;
@@ -574,8 +574,12 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
     if (code === CODE_DASH && source.startsWith("----", index)) {
       const length = skipWhile(source, index, (next) => next === "-") - index;
       const keyword = skipWhile(source, index + length, (next) => next === " ");
-      if (source.startsWith("MODULE", keyword)) moduleDepth++;
       pushToken("Separator", "----", length);
+      if (!source.startsWith("MODULE", keyword)) continue;
+      // SANY and tlapm lex a module header through MODULE, so a name may follow it without a space.
+      moduleDepth++;
+      advanceOver(keyword - index);
+      pushToken("Keyword", "MODULE", 6);
       continue;
     }
     if (code === CODE_EQUALS && source.startsWith("====", index)) {
