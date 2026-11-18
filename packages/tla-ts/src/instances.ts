@@ -187,7 +187,7 @@ export const mapChildren = (
         updates: expression.updates.map((update) => ({
           ...update,
           path: update.path.map((step) =>
-            step.kind === "Index" ? { kind: "Index", args: step.args.map(mapUnbound) } : step,
+            step.kind === "Index" ? { ...step, args: step.args.map(mapUnbound) } : step,
           ),
           value: mapUnbound(update.value),
         })),

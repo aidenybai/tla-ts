@@ -95,6 +95,50 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("locates the tuple of an EXCEPT path at the part of its update SANY picks", async () => {
+    const tupleError =
+      "Level error in applying operator $Tuple:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          '---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nA == [f EXCEPT ![[]x, 1] = 1]\nB == [f EXCEPT ![1][[]x, 2] = 1]\nC == [f EXCEPT ![1][2][[]x, 3] = ((1))]\nD == [f EXCEPT !.a[[]x, 2] = 1]\nE == [f EXCEPT ![1][[]x, 2][3] = 1]\nG == [f EXCEPT ![[]x, 1][2] = 1, !["a"][<>x, 2] = 1 = 2]\nH == [f EXCEPT ![1][2][[]x, 3] = [f EXCEPT ![1][<>x, 2] = 3]]\nInit == x = 0\nNext == x\' = x\n====',
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          "line 4, col 17 to line 4, col 24",
+          "line 5, col 29 to line 5, col 29",
+          "line 6, col 34 to line 6, col 38",
+          "line 7, col 28 to line 7, col 28",
+          "line 8, col 28 to line 8, col 30",
+          "line 9, col 17 to line 9, col 24",
+          "line 9, col 49 to line 9, col 49",
+          "line 10, col 34 to line 10, col 60",
+          "line 10, col 57 to line 10, col 57",
+        ].map((location) => ({ location: `${location} of module M`, message: tupleError })),
+      ),
+    );
+  });
+
+  it("locates the tuple of a late EXCEPT path component at the component, where SANY's Generator throws", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nA == [f EXCEPT ![1][2][3][[]x, 4] = 1]\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 4, col 26 to line 4, col 33 of module M",
+          message:
+            "Level error in applying operator $Tuple:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        },
+      ]),
+    );
+  });
+
   it("reports every level error in a definition, assumption, or theorem but none for an argument with its own, like SANY", async () => {
     const setError =
       "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";

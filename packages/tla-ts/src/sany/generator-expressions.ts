@@ -29,6 +29,7 @@ import {
   getMatchingIndex,
   getParenthesizedSpan,
   getPreComments,
+  getRangeSpan,
   getSpanLocation,
   getTokenIndex,
   getTokenLocation,
@@ -435,14 +436,13 @@ const generateExcept = (
         return createString(generation, step.name, getTokenLocation(generation.file, nameIndex));
       }
       const open = findToken(generation.file, pathCursor, span.end, "[");
-      const close = getMatchingIndex(generation.file, open);
-      pathCursor = close + 1;
+      pathCursor = getMatchingIndex(generation.file, open) + 1;
       if (step.args.length === 1) return generateExpression(generation, step.args[0]);
       return applyBuiltin(
         generation,
         "$Tuple",
         step.args.map((innerArgument) => generateExpression(generation, innerArgument)),
-        getSpanLocation(generation.file, { start: open, end: close }),
+        getSpanLocation(generation.file, getRangeSpan(generation.file, step.tupleRange)),
       );
     });
     const sequence = applyBuiltin(generation, "$Seq", components, specLocation);

@@ -205,6 +205,52 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("locates the tuple of an EXCEPT path at the part of its update SANY picks", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nB == [f EXCEPT ![1][[]x, 2] = 1]\nC == [f EXCEPT ![1][2][[]x, 3] = ((1))]\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 4, col 29 to line 4, col 29 of module M",
+        "",
+        "Level error in applying operator $Tuple:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+        "line 5, col 34 to line 5, col 38 of module M",
+        "",
+        "Level error in applying operator $Tuple:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("locates the tuple of a late EXCEPT path component at the component, where SANY crashes", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nf == [v \\in {1} |-> v]\nA == [f EXCEPT ![1][2][3][[]x, 4] = 1]\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 4, col 26 to line 4, col 33 of module M",
+        "",
+        "Level error in applying operator $Tuple:",
+        "The level of argument 1 exceeds the maximum level allowed by the operator.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {

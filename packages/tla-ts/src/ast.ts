@@ -216,7 +216,7 @@ interface RecordExpression {
 
 export type ExceptPathStep =
   | { kind: "Field"; name: string }
-  | { kind: "Index"; args: Expression[] };
+  | { kind: "Index"; args: Expression[]; tupleRange: SourceRange };
 
 interface ExceptUpdate {
   path: ExceptPathStep[];

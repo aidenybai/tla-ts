@@ -1032,24 +1032,45 @@ const parse = (
       }
       if (accept("EXCEPT")) {
         const updates = parseSeparated(() => {
-          const updateStart = cursor;
+          const heirStarts = [cursor];
           expect("!");
-          const path: ExceptPathStep[] = [];
+          const components: (string | Expression[])[] = [];
           while (isAt(".") || isAt("[")) {
+            heirStarts.push(cursor);
             if (accept(".")) {
               if (!isFieldName(peek()))
                 throw createUnexpected(`Expected a field name but found ${describeToken(peek())}`);
               if (!isTlapm && isAt("@")) throw createUnexpected("@ used in !.@");
-              path.push({ kind: "Field", name: advance().text });
+              components.push(advance().text);
               continue;
             }
             expect("[");
-            path.push({ kind: "Index", args: parseSeparated(() => parseExpression()) });
+            components.push(parseSeparated(() => parseExpression()));
             expect("]");
           }
+          heirStarts.push(cursor, cursor + 1);
           expect("=");
           const value = parseExpression();
-          return { path, value, range: getRange(updateStart) };
+          heirStarts.push(cursor);
+          const getHeirRange = (index: number) =>
+            getRange(heirStarts[index], heirStarts[index + 1] - 1);
+          return {
+            path: components.map((component, index): ExceptPathStep =>
+              typeof component === "string"
+                ? { kind: "Field", name: component }
+                : {
+                    kind: "Index",
+                    args: component,
+                    // SANY's Generator locates the $Tuple of component i at heir 2i + 1 of its ExceptSpec, not i + 1.
+                    // Deviation from SANY: past the last heir, that throws ArrayIndexOutOfBoundsException; tla-ts locates it at the component.
+                    tupleRange: getHeirRange(
+                      2 * index + 1 < heirStarts.length - 1 ? 2 * index + 1 : index + 1,
+                    ),
+                  },
+            ),
+            value,
+            range: getRange(heirStarts[0]),
+          };
         });
         expect("]");
         return { kind: "Except", function: expression, updates, location };
