@@ -828,7 +828,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     }
     return -2 - position;
   };
-  const canonicalizeState = createCanonicalizer();
+  // TLC's states keep their own values, and coverage charges the cost model each value carries.
+  const canonicalizeState = coverage ? (state: Value[]) => state : createCanonicalizer();
 
   const toRecord = search.toRecord;
   const getUncoveredInitialStates = () =>

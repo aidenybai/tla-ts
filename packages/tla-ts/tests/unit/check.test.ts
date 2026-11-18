@@ -1974,6 +1974,20 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges each state's set to the expression that built it, as TLC's states keep their own values", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES x, n\nInit == x = {1, 2} /\\ n = 0\nNext == n < 3 /\\ \\A e \\in x : e > 0 /\\ x' = {1, 2} /\\ n' = n + 1\n====",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect([
+      lines?.[0]?.[0],
+      lines?.[1]?.find((line) => line.includes("col 45 to line 5")),
+    ]).toEqual([
+      "line 4, col 9 to line 4, col 18 of module E: 1:3",
+      "|||line 5, col 45 to line 5, col 50 of module E: 6:6",
+    ]);
+  });
+
   it("charges x' \\subseteq S for each element drawn from a subset it assigns, as TLC's Tool#getNextStates gives the SUBSET its cost model", async () => {
     const lines = await getCoverageLines(
       "---- MODULE E ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = {}\nNext == x' \\subseteq {1, 2} /\\ \\A e \\in x' : e > 1\n====",
