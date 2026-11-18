@@ -32,6 +32,7 @@ import {
   createProductSetEnumerator,
   getCoverageNode,
   runAtCoverageNode,
+  tagSubset,
   type Coverage,
 } from "./coverage";
 import { MESSAGE_CODE } from "./tlc/messages";
@@ -1473,7 +1474,11 @@ const countEvaluator =
           value.kind === "FilteredSet") ||
         ((expression.kind === "FunctionSet" || expression.kind === "RecordSet") &&
           typeof value === "object" &&
-          value.kind === expression.kind);
+          value.kind === expression.kind) ||
+        (expression.kind === "Apply" &&
+          expression.operator === "SUBSET" &&
+          typeof value === "object" &&
+          value.kind === "Subset");
       if (typeof value === "object" && isTagged) coverage.values.set(value, node);
       return value;
     } finally {
@@ -2137,6 +2142,7 @@ export const getLazyFilter = (
         const draws = createProductSetEnumerator(coverage, base);
         return (element) => {
           draws?.next();
+          tagSubset(coverage, base, element);
           coverage.secondary[node]++;
           const value = runAtCoverageNode(coverage, node, () => test(element, false));
           if (isMaterialized && value) coverage.secondary[node]++;

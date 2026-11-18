@@ -1923,6 +1923,31 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges SUBSET for each element drawn from a subset it gives, as TLC's SubsetValue gives each subset its cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Naturals, FiniteSets\nVARIABLES x, y\nInit == x = 0 /\\ y \\in SUBSET {1, 2} /\\ \\A e \\in y : e > 1\nNext == UNCHANGED <<x, y>>\nInv == Cardinality({s \\in SUBSET {1, 2} : s \\subseteq y}) > 0\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect([lines?.[0], lines?.[2]]).toEqual([
+      [
+        "line 4, col 18 to line 4, col 36 of module E: 2",
+        "|line 4, col 24 to line 4, col 36 of module E: 1:7",
+        "||line 4, col 31 to line 4, col 36 of module E: 1",
+        "line 4, col 41 to line 4, col 58 of module E: 4",
+        "|line 4, col 54 to line 4, col 58 of module E: 3",
+        "|line 4, col 50 to line 4, col 50 of module E: 4",
+      ],
+      [
+        "line 6, col 8 to line 6, col 61 of module E: 2",
+        "|line 6, col 8 to line 6, col 57 of module E: 2",
+        "||line 6, col 20 to line 6, col 56 of module E: 2:11",
+        "|||line 6, col 43 to line 6, col 55 of module E: 8",
+        "|||line 6, col 27 to line 6, col 39 of module E: 2:9",
+        "||||line 6, col 34 to line 6, col 39 of module E: 2",
+      ],
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",

@@ -724,7 +724,10 @@ const createEnumerator = (
 ): ChargedEnumerator => {
   const node = typeof set === "object" ? coverage.values.get(set) : undefined;
   // TLC's SetPredValue enumerator charges for the elements of its base it draws, which the filter counts as it tests them.
-  if (!isNormalized && typeof set === "object" && set.kind === "FilteredSet") {
+  if (
+    typeof set === "object" &&
+    (set.kind === "Subset" || (!isNormalized && set.kind === "FilteredSet"))
+  ) {
     return createListEnumerator(coverage, undefined, size);
   }
   const elements = createProductSetEnumerator(coverage, set);
@@ -736,18 +739,26 @@ const createEnumerator = (
   return createListEnumerator(coverage, node, count);
 };
 
+// TLC's SubsetValue enumerators charge nothing but give each subset the SUBSET's cost model, which charges as the subset is drawn from later.
+export const tagSubset = (coverage: Coverage, set: Value, subset: Value) => {
+  const node =
+    typeof set === "object" && set.kind === "Subset" ? coverage.values.get(set) : undefined;
+  if (node !== undefined && typeof subset === "object") coverage.values.set(subset, node);
+};
+
 export const createChargedEnumerator = (
   coverage: Coverage,
   set: Value,
   list: Value[] | IntervalValue,
   isNormalized: boolean,
-) =>
-  createEnumerator(
-    coverage,
-    set,
-    Array.isArray(list) ? list.length : list.high - list.low + 1,
-    isNormalized,
-  );
+) => {
+  const size = Array.isArray(list) ? list.length : list.high - list.low + 1;
+  if (typeof set !== "object" || set.kind !== "Subset" || !Array.isArray(list)) {
+    return createEnumerator(coverage, set, size, isNormalized);
+  }
+  list.forEach((subset) => tagSubset(coverage, set, subset));
+  return createListEnumerator(coverage, undefined, size);
+};
 
 // TLC's ContextEnumerator and FcnParams draw each bound's next element before they return a binding.
 const chargeBindings = (enumerators: ChargedEnumerator[]) => {
