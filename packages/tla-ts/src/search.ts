@@ -487,6 +487,7 @@ const getSpecification = (
               next: undefined,
               cache: undefined,
               isStreamed: false,
+              isRebuilt: false,
             },
             parent,
           },

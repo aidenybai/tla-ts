@@ -154,6 +154,7 @@ export interface Thunk {
   next: State | undefined;
   cache: Value | undefined;
   isStreamed: boolean;
+  isRebuilt: boolean;
   isReleased?: boolean;
 }
 
@@ -926,7 +927,14 @@ const forceThunk = (thunk: Thunk, context: Context) => {
   const isCached =
     cache !== undefined &&
     isStateWithin(context.state, thunk.state) &&
-    isStateWithin(context.next, thunk.next);
+    isStateWithin(context.next, thunk.next) &&
+    // TLC builds the function again at each reference, and outside KeepLazy evaluates each element.
+    !(
+      thunk.isRebuilt &&
+      !context.isKeepLazy &&
+      typeof cache === "object" &&
+      cache.kind === "LazyFunction"
+    );
   if (isCached) return cache;
   const coverage = context.environment.coverage;
   const node = coverage?.current === -1 ? undefined : coverage?.values.get(thunk);
@@ -941,7 +949,12 @@ const forceThunk = (thunk: Thunk, context: Context) => {
     thunk.state = context.state;
     thunk.next = context.next;
   }
-  if (thunk.cache !== undefined && thunk.state === undefined && thunk.next === undefined) {
+  if (
+    thunk.cache !== undefined &&
+    thunk.state === undefined &&
+    thunk.next === undefined &&
+    !thunk.isRebuilt
+  ) {
     thunk.scope = undefined;
     thunk.isReleased = true;
   }
@@ -1065,6 +1078,7 @@ const createThunk = (expression: Expression, context: Context): Thunk => ({
   next: context.next,
   cache: undefined,
   isStreamed: false,
+  isRebuilt: false,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1157,6 +1171,7 @@ const callOperator = (
 interface ReevaluatedDefinitions {
   impure: ReadonlySet<Definition>;
   streamed: ReadonlySet<Definition>;
+  isFunctionRebuilt?: boolean;
 }
 
 const isRecursiveOperator = (definition: Definition) =>
@@ -1239,6 +1254,10 @@ export const bindDefinitions = (
           cache: undefined,
           isStreamed:
             definition.kind === "Operator" && (reevaluated?.streamed.has(definition) ?? false),
+          isRebuilt:
+            reevaluated?.isFunctionRebuilt === true &&
+            definition.kind === "Function" &&
+            !definition.isSelfReferential,
         };
   }
   const coverage = context.environment.coverage;
@@ -1294,6 +1313,7 @@ export const getReevaluatedDefinitions = (
   streamed: new Set(
     definitions.filter((definition) => isImpureDefinition(definition, environment, "streamed")),
   ),
+  isFunctionRebuilt: true,
 });
 
 export const isImpure = (environment: Environment) =>

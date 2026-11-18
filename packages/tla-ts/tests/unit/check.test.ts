@@ -2175,6 +2175,32 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("builds a function a LET of the next-state relation defines at each reference, so TLC fails to fingerprint a set of it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 1\nNext == LET f[n \\in 0..2] == 10 \\div (n * x) IN x' = f[1] + Cardinality({f})\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    const frames = result.failure?.callStack
+      ?.filter((expression, index, stack) => expression !== stack[index - 1])
+      .map((expression) => {
+        const range = expression.location.range;
+        return range
+          ? `Line ${range.start.line}, column ${range.start.column} to line ${range.end.line}, column ${range.end.column} in ${range.module}`
+          : "";
+      });
+    expect(frames).toEqual([
+      "Line 5, column 49 to line 5, column 76 in M",
+      "Line 5, column 54 to line 5, column 76 in M",
+      "Line 5, column 61 to line 5, column 76 in M",
+      "Line 5, column 73 to line 5, column 75 in M",
+      "Line 5, column 74 to line 5, column 74 in M",
+      "Line 5, column 13 to line 5, column 44 in M",
+      "Line 5, column 30 to line 5, column 44 in M",
+    ]);
+    expect(result.failure?.fingerprint?.reason).toBe("The second argument of \\div is 0.");
+  });
+
   it("counts no node for the reference that applies a recursive function a parameterized instance copies", async () => {
     const result = await check({
       source:
