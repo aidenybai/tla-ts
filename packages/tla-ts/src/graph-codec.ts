@@ -60,7 +60,8 @@ export const encodeGraph = (root: unknown): EncodedGraph => {
     if (typeof value !== "object" || value === null) continue;
     const seen = counts.get(value) ?? 0;
     counts.set(value, seen + 1);
-    if (seen === 0) pending.push(...getChildren(value));
+    if (seen > 0) continue;
+    for (const child of getChildren(value)) pending.push(child);
   }
   const sharedIds = new Map<object, number>();
   const getStringId = (text: string) => {
