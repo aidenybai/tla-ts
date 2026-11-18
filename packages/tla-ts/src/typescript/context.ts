@@ -1847,14 +1847,21 @@ export const getFunction = (node: ts.Node | undefined) => {
   return found !== undefined && isPlain(found) ? found : undefined;
 };
 
-// The members of a class that run. TypeScript erases a method's or a constructor's signature
-// without a body, as an overload's or an abstract method's, which JavaScript never sees.
+// The members of a class that run. TypeScript erases a method's, an accessor's, or a
+// constructor's signature without a body, as an overload's or an abstract one's, and an abstract
+// or a declared field, which JavaScript never sees.
 export const getRunMembers = (node: ts.ClassLikeDeclaration) =>
   node.members.filter(
     (member) =>
       !(
-        (ts.isMethodDeclaration(member) || ts.isConstructorDeclaration(member)) &&
-        member.body === undefined
+        ((ts.isMethodDeclaration(member) ||
+          ts.isConstructorDeclaration(member) ||
+          ts.isAccessor(member)) &&
+          member.body === undefined) ||
+        (ts.isPropertyDeclaration(member) &&
+          (ts.getCombinedModifierFlags(member) &
+            (ts.ModifierFlags.Abstract | ts.ModifierFlags.Ambient)) !==
+            0)
       ),
   );
 

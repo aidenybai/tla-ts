@@ -53294,4 +53294,45 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("makes an instance of a class whose base declares abstract or declared members", () => {
+    const getSource = (expected: string) => `
+      abstract class Shape {
+        abstract readonly kind: string;
+        declare cached: number | undefined;
+        abstract get size(): number;
+        abstract area(): number;
+        describe() {
+          return this.kind + "!";
+        }
+      }
+      class Square extends Shape {
+        readonly kind = "square";
+        side: number;
+        constructor(side: number) {
+          super();
+          this.side = side;
+        }
+        get size() {
+          return this.side;
+        }
+        area() {
+          return this.side * this.side;
+        }
+      }
+      const square = new Square(3);
+      const result = [square.describe(), Object.keys(square).join("-"), "cached" in square, square.area()].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("square!,kind-side,false,9"))).failure).toBeUndefined();
+    });
+
+    it("rejects a field that only a declaration gives", async () => {
+      expect(
+        (await checkModel(getSource("square!,kind-side-cached,false,9"))).failure?.message,
+      ).toContain("result square!,kind-side,false,9");
+    });
+  });
 });
