@@ -200,6 +200,23 @@ describe("the setup of the smt kernel", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 430)"]);
   });
+
+  it("counts a step again once the random update of a shared variable finds its freedom interval", () => {
+    expect(
+      run([
+        "(set-logic QF_UFLIA)",
+        "(declare-const x0 Int)",
+        "(declare-const x1 Int)",
+        "(declare-fun f (Int) Int)",
+        "(assert (<= -1 x0))",
+        "(assert (= (f (+ x1 1)) x0))",
+        "(assert (not (= (f x1) (f x0))))",
+        "(assert (<= (+ x0 x1) 1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 325)"]);
+  });
 });
 
 describe("regular expressions", () => {
