@@ -243,7 +243,7 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   isSortingStore: getBool(params, "sort_store", false),
   isPullingCheapIte: getBool(params, "pull_cheap_ite", false),
   isPushingIteBv: getBool(params, "push_ite_bv", false),
-  isKeepingDistinct: !getBool(params, "blast_distinct", false),
+  isBlastingDistinct: getBool(params, "blast_distinct", false),
   blastDistinctThreshold: getUint(params, "blast_distinct_threshold", UINT_MAX),
   localCtxLimit: getBool(params, "local_ctx", false)
     ? getUint(params, "local_ctx_limit", UINT_MAX)
@@ -830,7 +830,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
             simplifyGoal(manager, goal, {
               ...getRewriterOptions(manager, params),
               isEliminatingAnd: true,
-              isKeepingDistinct: false,
+              isBlastingDistinct: true,
             });
             if (!goal.isDecided()) tseitinCnf(manager, goal);
           } finally {

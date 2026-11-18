@@ -85,7 +85,7 @@ export interface RewriterOptions {
   readonly isRewritingPatterns: boolean;
   readonly isPullingCheapIte?: boolean;
   readonly isPushingIteBv?: boolean;
-  readonly isKeepingDistinct?: boolean;
+  readonly isBlastingDistinct?: boolean;
   readonly blastDistinctThreshold?: number;
   readonly bv?: BvRewriterOptions;
   readonly isFlatAndOr?: boolean;
@@ -99,7 +99,6 @@ export const KERNEL_REWRITER_OPTIONS: RewriterOptions = {
   isEliminatingAnd: false,
   arith: KERNEL_ARITH_OPTIONS,
   isRewritingPatterns: true,
-  isKeepingDistinct: true,
 };
 
 export const TACTIC_REWRITER_OPTIONS: RewriterOptions = {
@@ -1058,8 +1057,6 @@ export class Rewriter extends RewriterTpl {
     return undefined;
   }
 
-  // As in Z3, a distinct of more than two arguments stays unless blast_distinct is set, but the
-  // rewriters that leave isKeepingDistinct unset still expand it.
   private mkDistinct(args: number[]): number | Rewrite {
     const manager = this.manager;
     if (args.length <= 1) return manager.trueExpr;
@@ -1075,7 +1072,7 @@ export class Rewriter extends RewriterTpl {
     if (isAllDifferent) return manager.trueExpr;
     if (manager.sorts[args[0]] === SORT_BOOL) return manager.falseExpr;
     if (
-      this.options.isKeepingDistinct === true ||
+      this.options.isBlastingDistinct !== true ||
       args.length >= (this.options.blastDistinctThreshold ?? Infinity)
     )
       return -1;
