@@ -278,6 +278,21 @@ describe("liveness matches TLC", () => {
     expect([result.status, result.distinctStates]).toEqual(["success", 3]);
   });
 
+  it("evaluates a constant part of a violated temporal property again as it names the property, as TLC translates the property again", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nS(v) == v < 0 /\\ PrintT("s")\nInit == x = 0\nNext == x < 4 /\\ x\' = x + 1\nProp == <>S(x)\n====',
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(String(text)),
+    });
+    expect([result.status, result.violation?.name, printed]).toEqual([
+      "liveness-violation",
+      "Prop",
+      ['"s"', '"s"'],
+    ]);
+  });
+
   it("checks a property that calls a recursive operator with a variable", async () => {
     const result = await check({
       source:
