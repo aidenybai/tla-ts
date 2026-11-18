@@ -354,18 +354,17 @@ const findLasso = (
       lasso = getLasso(node);
     }
   };
+  const canStutter = (node: GraphNode) => {
+    const stutter = node.successors.indexOf(node);
+    return (
+      stutter !== -1 && firstComponentNumber <= node.number && isEventuallyAlways(node, stutter)
+    );
+  };
   const extractSubcomponent = (node: GraphNode) => {
     let popped = pop(stack);
-    if (popped === node) {
-      const stutter = node.successors.indexOf(node);
-      if (
-        stutter === -1 ||
-        firstComponentNumber > node.number ||
-        !isEventuallyAlways(node, stutter)
-      ) {
-        node.number = thirdNumber++;
-        return false;
-      }
+    if (popped === node && !canStutter(node)) {
+      node.number = thirdNumber++;
+      return false;
     }
     popped.number = thirdNumber;
     while (popped !== node) {
@@ -394,11 +393,11 @@ const findLasso = (
     if (lowlink === node.number && extractSubcomponent(node)) checkSubcomponent(node);
     return lowlink;
   };
-  const checkComponent = (node: GraphNode) => {
+  const extractComponent = (node: GraphNode) => {
     let popped = pop(stack);
     if (popped === node && !node.successors.includes(node)) {
       node.number = MAX_FIRST;
-      return;
+      return undefined;
     }
     const nodes: GraphNode[] = [];
     firstComponentNumber = secondNumber++;
@@ -410,6 +409,11 @@ const findLasso = (
       popped.number = firstComponentNumber;
       nodes.push(popped);
     }
+    return nodes;
+  };
+  const checkComponent = (node: GraphNode) => {
+    const nodes = extractComponent(node);
+    if (!nodes) return;
     for (const errorModel of solution.models) {
       model = errorModel;
       startSecondNumber = secondNumber;
