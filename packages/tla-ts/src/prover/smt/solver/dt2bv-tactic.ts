@@ -51,12 +51,13 @@ const constrainDomain = (manager: AstManager, bounds: RefVector, expr: number, s
     bounds.push(mkBvApp(manager, OP_ULEQ, [expr, mkEnumValue(manager, domainSize - 1, sort)]));
 };
 
-class Enum2BvRewriter extends RewriterTpl {
+export class Enum2BvRewriter extends RewriterTpl {
   readonly enumIndexes: ObjMap<number>;
   readonly enumConsts: number[] = [];
   readonly enumBvs: number[] = [];
   readonly enumDefs: RefVector;
   readonly bounds: RefVector;
+  private readonly enumConstsLimits: number[] = [];
 
   // Without fd sorts, every enumeration sort is finite-domain.
   constructor(
@@ -179,6 +180,25 @@ class Enum2BvRewriter extends RewriterTpl {
     manager.incRef(result);
     bounds.reset();
     return result;
+  }
+
+  push() {
+    this.enumConstsLimits.push(this.enumConsts.length);
+  }
+
+  pop(numScopes: number) {
+    const manager = this.manager;
+    if (numScopes > 0) {
+      const size = this.enumConstsLimits.length - numScopes;
+      const limit = this.enumConstsLimits[size];
+      for (let index = this.enumConsts.length - 1; index >= limit; index--)
+        this.enumIndexes.delete(this.enumConsts[index]);
+      this.enumConstsLimits.length = size;
+      for (const decl of this.enumConsts.splice(limit)) manager.decDeclRef(decl);
+      this.enumDefs.shrink(limit);
+      for (const decl of this.enumBvs.splice(limit)) manager.decDeclRef(decl);
+    }
+    this.reset();
   }
 
   // ~imp: the rewriter goes before the vectors.

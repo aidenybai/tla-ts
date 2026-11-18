@@ -53,7 +53,7 @@ import { isMbqiByFeatures, isMbqiByLogic } from "./smt-setup";
 import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
-import { checkFdSolver, getFdConsequences } from "./fd-solver";
+import { FdSolver } from "./fd-solver";
 import { SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
@@ -363,6 +363,8 @@ interface CheckResult {
   isOptimizing: boolean;
   isFromTactic: boolean;
   model: ProtoModel | undefined;
+  // The fd solver of the check, which makes its model on demand.
+  fdSolver: FdSolver | undefined;
   core: number[] | undefined;
   // check_sat_result::reason_unknown, where the port tracks it.
   reasonUnknown?: string;
@@ -396,6 +398,8 @@ interface ScriptState {
   // undefined while Z3 has made no such kernel.
   kernel: SmtKernel | undefined;
   satSolver: IncSatSolver | undefined;
+  // mk_special_solver_for_logic's fd solver of QF_FD and SAT, which takes every check.
+  fdSolver: FdSolver | undefined;
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -465,6 +469,7 @@ export const runSmtlibScript = (
       datalog: undefined,
       kernel: undefined,
       satSolver: undefined,
+      fdSolver: undefined,
     };
   };
   let state = createState();
@@ -585,11 +590,6 @@ export const runSmtlibScript = (
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
   const solveWithStrategy = () => {
     try {
-      if (isUsingFdSolver())
-        return {
-          ...checkFdSolver(state.manager, getSatParams(settings.parameters), state.assertions),
-          context: undefined,
-        };
       const goal = getGoal();
       const strategy =
         settings.parameters.get("tactic.default_tactic") ??
@@ -643,11 +643,16 @@ export const runSmtlibScript = (
     isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),
   });
-  // mk_special_solver_for_logic gives these logics the finite-domain solver, incremental or not.
-  const isUsingFdSolver = () =>
-    (state.logic === "QF_FD" || state.logic === "SAT") &&
-    !settings.isProducingProofs &&
-    !settings.parameters.has("tactic.default_tactic");
+  const checkFdSolver = (fdSolver: FdSolver, extra: number[]) => {
+    const result = fdSolver.check(extra);
+    return {
+      result,
+      context: undefined,
+      model: undefined,
+      core: result === L_FALSE ? [...fdSolver.getUnsatCore()] : undefined,
+      reasonUnknown: fdSolver.reasonUnknown,
+    };
+  };
   const checkSat = (extra: number[], end: SmtToken) => {
     const deadline = Date.now() + options.timeLimitMs;
     state.manager.limit.restart(deadline);
@@ -663,8 +668,9 @@ export const runSmtlibScript = (
     const isAssuming = isNamed || extra.length > 0;
     if (isAssuming) state.isIncremental = true;
     if (!isOptimizing) state.hasChecked = true;
+    const fdSolver = state.fdSolver;
     const isKernelChecking =
-      isAssuming || (state.isIncremental && !isOptimizing && !isUsingFdSolver());
+      fdSolver === undefined && (isAssuming || (state.isIncremental && !isOptimizing));
     try {
       const kernel = isKernelChecking ? checkKernel(names, extra) : undefined;
       // Z3 retries a quantifier-free problem with its tactic when the incremental kernel gives up.
@@ -674,16 +680,21 @@ export const runSmtlibScript = (
           kernel.result === L_UNDEF &&
           !state.assertions.some((assertion) => manager.hasQuantifierFlags[assertion]) &&
           manager.limit.inc());
-      const solved = isFromTactic ? { ...solveWithStrategy(), core: undefined } : kernel;
+      const solved =
+        fdSolver !== undefined
+          ? checkFdSolver(fdSolver, extra)
+          : isFromTactic
+            ? { ...solveWithStrategy(), core: undefined }
+            : kernel;
       setCheck(solved.result, {
         context: solved.context,
         isOptimizing,
         isFromTactic,
         model: solved.model,
+        fdSolver,
         core: solved.core ?? solved.context?.unsatCore ?? [],
         reasonUnknown: getReasonUnknown(solved, deadline),
       });
-      if (isFromTactic && isUsingFdSolver()) solved.model?.decRef();
       print(getVerdict(solved.result));
     } catch (error) {
       if (
@@ -695,7 +706,10 @@ export const runSmtlibScript = (
       )
         throw error;
       const context = isKernelChecking ? state.kernel?.context : undefined;
-      const reasonUnknown = isKernelChecking ? state.satSolver?.reasonUnknown : undefined;
+      // check_sat_result::set_reason_unknown keeps the reason the solver has.
+      const reasonUnknown = isKernelChecking
+        ? state.satSolver?.reasonUnknown
+        : state.fdSolver?.reasonUnknown;
       setCheck(L_UNDEF, {
         isOptimizing,
         isFromTactic: !isKernelChecking,
@@ -721,7 +735,12 @@ export const runSmtlibScript = (
         ? new SmtParseError("model is not available", list.end)
         : new SmtUnsupportedError("the model of a canceled search");
     const context = check.context;
-    const model = context === undefined ? new ProtoModel(state.manager) : context.getModel();
+    const model =
+      check.fdSolver !== undefined
+        ? check.fdSolver.getModel()
+        : context === undefined
+          ? new ProtoModel(state.manager)
+          : context.getModel();
     if (model === undefined) throw new SmtParseError("model is not available", list.end);
     model.incRef();
     check.model = model;
@@ -746,6 +765,7 @@ export const runSmtlibScript = (
       isOptimizing: false,
       isFromTactic: false,
       model: undefined,
+      fdSolver: undefined,
       core: undefined,
       ...result,
     };
@@ -769,9 +789,17 @@ export const runSmtlibScript = (
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
         ? new IncSatSolver(state.manager, getSatParams(parameters), true, isEuf ? mkThSolver : null)
         : undefined;
+    state.fdSolver?.release();
+    state.fdSolver =
+      (logic === "QF_FD" || logic === "SAT") &&
+      !isProofsEnabled &&
+      !parameters.has("tactic.default_tactic")
+        ? new FdSolver(state.manager, getSatParams(parameters))
+        : undefined;
     for (let index = 0; index < state.scopes.length; index++) {
       state.kernel?.push();
       useSatSolver((solver) => solver.push());
+      state.fdSolver?.push();
     }
   };
   const initManager = () => {
@@ -800,6 +828,7 @@ export const runSmtlibScript = (
     useSatSolver((solver) =>
       name === -1 ? solver.assertExpr(formula) : solver.assertNamed(formula, name),
     );
+    state.fdSolver?.assertExpr(formula, name);
     const kernel = state.kernel;
     if (kernel === undefined) return;
     const asserted = name === -1 ? formula : manager.mkApp(OP_IMPLIES, [name, formula], SORT_BOOL);
@@ -1305,20 +1334,16 @@ export const runSmtlibScript = (
         manager.limit.push(settings.rlimit);
         const names = state.names.filter((name) => name !== -1);
         try {
-          if (isUsingFdSolver()) {
+          const fdSolver = state.fdSolver;
+          if (fdSolver !== undefined) {
             if (names.length > 0)
               throw new SmtUnsupportedError("the named assertions of the finite-domain solver");
-            const found = getFdConsequences(
-              manager,
-              new Map(),
-              state.assertions,
-              assumptions,
-              vars,
-            );
+            const found = fdSolver.getConsequences(assumptions, vars);
             setCheck(found.result, {
-              model: found.model,
-              core: found.core,
-              reasonUnknown: found.reasonUnknown,
+              isFromTactic: true,
+              fdSolver,
+              core: [...fdSolver.getUnsatCore()],
+              reasonUnknown: fdSolver.reasonUnknown,
             });
             print(getVerdict(found.result));
             print("");
@@ -1398,6 +1423,7 @@ export const runSmtlibScript = (
           try {
             state.kernel?.push();
             useSatSolver((solver) => solver.push());
+            state.fdSolver?.push();
           } catch (error) {
             if (!(error instanceof SmtCanceledError)) throw error;
             throw new SmtParseError(limit.getCancelMessage(), list.end);
@@ -1425,6 +1451,7 @@ export const runSmtlibScript = (
           const scope = state.scopes[state.scopes.length - count];
           state.kernel?.pop(count);
           useSatSolver((solver) => solver.pop(count));
+          state.fdSolver?.pop(count);
           state.reader.pop(count);
           restoreAssertions(scope.assertions);
           settings.rlimit = scope.rlimit;

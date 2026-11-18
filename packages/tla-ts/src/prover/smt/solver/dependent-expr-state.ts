@@ -4,6 +4,7 @@ import type { Definition, Goal } from "./goal";
 // The formula read last stays referenced, as m_dep, until the next read or the end of the tactic.
 export class DependentExprState {
   private held = -1;
+  qhead = 0;
 
   constructor(
     readonly manager: AstManager,
@@ -22,7 +23,7 @@ export class DependentExprState {
   forEachIndex(visit: (index: number) => void) {
     const goal = this.goal;
     const end = goal.forms.size;
-    for (let index = 0; index !== end;) {
+    for (let index = this.qhead; index !== end;) {
       visit(index);
       index =
         !this.manager.limit.inc() || goal.isInconsistent || index >= goal.forms.size
