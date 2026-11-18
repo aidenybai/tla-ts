@@ -2195,6 +2195,24 @@ ASSUME TLCFP(a) = -887695703
     expect(result.failure?.fingerprint?.reason).toBe("The second argument of \\div is 0.");
   });
 
+  it("builds a function a LET definition of the next-state relation without parameters yields at each reference, so TLC fails to fingerprint a set of it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == x = 1\nNext == LET g == [n \\in 0..2 |-> 10 \\div (n * x)] IN x' = g[1] + Cardinality({g})\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(formatCallStackLines(result)).toEqual([
+      "Line 5, column 54 to line 5, column 81 in M",
+      "Line 5, column 59 to line 5, column 81 in M",
+      "Line 5, column 66 to line 5, column 81 in M",
+      "Line 5, column 78 to line 5, column 80 in M",
+      "Line 5, column 79 to line 5, column 79 in M",
+      "Line 5, column 18 to line 5, column 49 in M",
+      "Line 5, column 34 to line 5, column 48 in M",
+    ]);
+    expect(result.failure?.fingerprint?.reason).toBe("The second argument of \\div is 0.");
+  });
+
   it("counts no application of the copy EXCEPT makes of a lazy function, as FcnLambdaValue#takeExcept drops the cost model", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == LET f[n \\in 0..2] == 10 \\div (n + 1) IN x = [f EXCEPT ![2] = 0][1]\nNext == UNCHANGED x\n====",

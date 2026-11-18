@@ -1255,9 +1255,8 @@ export const bindDefinitions = (
           isStreamed:
             definition.kind === "Operator" && (reevaluated?.streamed.has(definition) ?? false),
           isRebuilt:
-            reevaluated?.isFunctionRebuilt === true &&
-            definition.kind === "Function" &&
-            !definition.isSelfReferential,
+            (definition.kind === "Operator" || !definition.isSelfReferential) &&
+            reevaluated?.isFunctionRebuilt === true,
         };
   }
   const coverage = context.environment.coverage;
