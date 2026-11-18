@@ -117,4 +117,49 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource("1,true"), false)).message).toContain(THREW);
     });
   });
+
+  describe("runs classes, accessors, loops, and exceptions as ESCore does", () => {
+    const getSource = (expected: string) => `
+      class Shape {
+        sides = 0;
+        constructor(public name: string) {}
+        get label() { return this.name + ":" + this.sides; }
+        static make(name: string) { return new this(name); }
+      }
+      class Square extends Shape {
+        sides = 4;
+        get label() { return "[" + super.label + "]"; }
+      }
+      const square = Square.make("sq");
+      let log = square.label + "," + (square instanceof Shape);
+      try {
+        (Shape as unknown as () => void)();
+      } catch (error) {
+        log += "," + (error as Error).constructor.name;
+      } finally {
+        log += ",done";
+      }
+      outer: for (const value of [1, 2, 3]) {
+        switch (value) {
+          case 2:
+            continue outer;
+          default:
+            log += value;
+        }
+      }
+      if (log !== "${expected}") throw new Error(log);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("[sq:4],true,TypeError,done13"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("[sq:4],true,TypeError,done123"))).message).toContain(
+        THREW,
+      );
+    });
+  });
 });
