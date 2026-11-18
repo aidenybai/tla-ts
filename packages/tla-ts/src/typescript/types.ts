@@ -804,10 +804,19 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
     symbol !== undefined && ts.isIdentifier(node) && isAutoTyped(node, context)
       ? getAssignedValues(symbol, context)
       : undefined;
+  // Where it's assigned other values too, a read whose type TypeScript narrows to an array's reads
+  // what an assignment of an array gave it.
+  const checker = context.checker;
+  const isArrayLike = (type: ts.Type) => checker.isArrayType(type) || checker.isTupleType(type);
+  const arrays = (assigned ?? []).filter(
+    (value) => ts.isArrayLiteralExpression(value) || isArrayLike(checker.getTypeAtLocation(value)),
+  );
   if (
     assigned !== undefined &&
-    assigned.length > 0 &&
-    assigned.every(
+    arrays.length > 0 &&
+    (arrays.length === assigned.length ||
+      isArrayLike(checker.getNonNullableType(checker.getTypeAtLocation(node)))) &&
+    arrays.every(
       (value) => ts.isArrayLiteralExpression(value) && context.heapCollections.has(value),
     )
   ) {

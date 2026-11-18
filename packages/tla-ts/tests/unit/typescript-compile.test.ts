@@ -54230,4 +54230,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads an array that a variable without a type or a value holds among objects", () => {
+    const getSource = (expected: string) => `
+      const holder: { [key: string]: unknown } = {};
+      function run() {
+        var o;
+        o = { a: 3, b: 2 };
+        const first = Object.keys(o).join();
+        o = [0, 1, 2];
+        return first + ";" + Object.keys(o).join();
+      }
+      const seen = run();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a,b;0,1,2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another array's keys", async () => {
+      expect((await checkModel(getSource("a,b;0,1"))).failure?.message).toContain("seen a,b;0,1,2");
+    });
+  });
 });
