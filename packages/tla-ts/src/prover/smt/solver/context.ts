@@ -1,4 +1,4 @@
-import { SmtCanceledError, SmtInvariantError } from "../../../errors";
+import { SmtCanceledError, SmtDefaultError, SmtInvariantError } from "../../../errors";
 import type { AssertedFormulas } from "./asserted-formulas";
 import {
   AstManager,
@@ -1542,6 +1542,21 @@ export class Context extends Internalizer {
     this.isBaseScopeInconsistent.push(this.isInconsistent());
     this.baseLevel++;
     this.searchLevel++;
+  }
+
+  // context::push internalizes and propagates the assertions before it opens the scope.
+  internalizeAndPush(asserted: AssertedFormulas) {
+    const wasConsistent = !this.isInconsistent();
+    this.internalizeAssertions(asserted);
+    const limit = this.manager.limit;
+    if (!limit.inc()) throw new SmtDefaultError("push canceled");
+    const wasSuspended = limit.isSuspended;
+    limit.isSuspended = true;
+    if (!this.isInconsistent()) this.propagate();
+    if (wasConsistent && this.isInconsistent() && !asserted.isInconsistent) this.resolveConflict();
+    limit.isSuspended = wasSuspended;
+    this.push();
+    asserted.push();
   }
 
   pop(numScopes: number) {

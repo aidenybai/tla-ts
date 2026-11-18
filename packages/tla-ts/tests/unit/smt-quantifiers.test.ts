@@ -208,6 +208,29 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
   });
 });
 
+describe("the model checker, as Z3 5.3.2 counts its steps", () => {
+  // context::push internalizes and propagates the auxiliary context's formulas before it opens
+  // the scope.
+  it("pushes its context as the kernel does", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-fun h (Int Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-const c0 Int)",
+        "(declare-const c1 Int)",
+        "(declare-const c2 Int)",
+        "(assert (forall ((x Int)) (! (p (f x)) :pattern ((f x)) :weight 4)))",
+        "(assert (p (g 0)))",
+        "(assert (= 1 c1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 356)"]);
+  });
+});
+
 describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {
   it("lifts the one term if-then-else out of each application with a bound variable", () => {
     expect(

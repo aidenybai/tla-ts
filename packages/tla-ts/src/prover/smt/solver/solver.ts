@@ -2,6 +2,7 @@
 import {
   isStackOverflow,
   SmtCanceledError,
+  SmtDefaultError,
   type SmtParseError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -160,9 +161,12 @@ export const decideSmt = (
   try {
     return checkSmt(text, options, report).verdict;
   } catch (error) {
+    // cmd_context::check_sat answers unknown for a default_exception, such as the model checker's
+    // "push canceled".
     if (
       error instanceof SmtUnsupportedError ||
       error instanceof SmtCanceledError ||
+      error instanceof SmtDefaultError ||
       isStackOverflow(error)
     )
       return "unknown";
