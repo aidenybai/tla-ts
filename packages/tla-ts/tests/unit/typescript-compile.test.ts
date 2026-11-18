@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { printModule } from "../../src/printer";
 import { compile } from "../../src/typescript/compile";
 import { createLibrary } from "../../src/typescript/program";
+import { getJavaScriptModule } from "../../src/typescript/javascript";
 import { printRegions } from "../../src/typescript/regions";
 
 const checkModel = (source: string) => check(compile(source));
@@ -52794,6 +52795,30 @@ describe("BigInts", () => {
       expect((await check(compile(source, path))).failure?.message).toContain(
         "result false,true,true,3",
       );
+    });
+  });
+
+  it("prunes the rows of the JavaScript module's tables with the definitions that hold them", () => {
+    const text = getJavaScriptModule("").text;
+    expect(text).not.toContain("TUmalquraMonths");
+    expect(text).not.toMatch(/^\s*<<\s*$/m);
+  });
+
+  describe("type checks a model with its project's globals and a package's declarations", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/projects/globals/main.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects a type error that the project's globals show", () => {
+      expect(() =>
+        compile(
+          source.replace("const kind: string = typeof label;", "const kind: number = label;"),
+          path,
+        ),
+      ).toThrow("Type 'string' is not assignable to type 'number'");
     });
   });
 });
