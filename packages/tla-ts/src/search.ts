@@ -1365,6 +1365,7 @@ export const createSearch = (
     properties,
     spec,
     toRecord,
+    // Deviation from TLC: StatePrinter fingerprints the alias it prints, so a VIEW that fails on the alias's values crashes TLC.
     evaluateAlias: (alias, state, next, isTool) => {
       const getStateRecord = () =>
         toRecord(state.map((value) => value ?? createModelValue("null")));
