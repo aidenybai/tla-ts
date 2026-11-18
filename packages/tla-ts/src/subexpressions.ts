@@ -17,7 +17,13 @@ import {
   type StepBody,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type SanyError } from "./errors";
-import { getSourceName, mapChildren, mapDefinition } from "./instances";
+import {
+  getSourceName,
+  mapChildren,
+  mapDefinition,
+  substitutionFrames,
+  withSubstitutionFrames,
+} from "./instances";
 import { parenthesizedRanges } from "./parser";
 import { STANDARD_LEVELS } from "./standard-definitions";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -288,6 +294,7 @@ const selectSubexpression = (
   let generatedArguments = 0;
   const nulls: NullSelection[] = [];
   const applications: SelectionArguments[] = [];
+  const entered: Definition[] = [];
   let expressionError: SanyError | undefined;
   const deferToExpression = (range: SourceRange | undefined, message: string) => {
     if (!expressionError && range) expressionError = { location: formatRange(range), message };
@@ -404,6 +411,7 @@ const selectSubexpression = (
     selection.params.push(...(definition.kind === "Operator" ? definition.params : []));
     selection.args.push(...found.args);
     current = getDefinitionBody(definition, local !== undefined || letDefinitions.has(definition));
+    entered.push(definition);
     operatorIndex = selectorIndex;
     selectorIndex++;
     return undefined;
@@ -655,9 +663,15 @@ const selectSubexpression = (
     current.kind === "Lambda"
       ? { ...current, body: wrapLets(current.body, selection.lets, location) }
       : wrapLets(current, selection.lets, location);
+  // SANY puts the substitutions of an instance that a selection goes through around what it selects.
+  const frames = entered.flatMap((definition) =>
+    definition.kind === "Operator" && definition.body !== current
+      ? (substitutionFrames.get(definition.body) ?? [])
+      : [],
+  );
   const share = (expression: Expression): Expression => ({
     kind: "Selection",
-    expression,
+    expression: withSubstitutionFrames(expression, frames),
     // SANY's $Nop, which TLC's call stack shows at the reference, wraps only a selection without parameters.
     location:
       selection.params.length === 0 && body.kind !== "Lambda"

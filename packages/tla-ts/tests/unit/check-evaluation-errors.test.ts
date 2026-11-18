@@ -1775,6 +1775,16 @@ describe("evaluation errors match TLC", () => {
         "Inner 6:20-6:24",
       ],
     ],
+    [
+      "L == INSTANCE Inner WITH c <- TRUE",
+      "L!K!1",
+      ["M 6:9-6:18", "M 6:14-6:18", "M 4:1-4:34", "Inner 8:7-8:11"],
+    ],
+    [
+      "L == INSTANCE Inner WITH c <- TRUE",
+      "L!G(1)!1",
+      ["M 6:9-6:21", "M 6:14-6:21", "M 4:1-4:34", "Inner 5:9-5:12", "Inner 4:9-4:13"],
+    ],
   ])(
     "records the substitutions of %s where its name reaches %s, not in the calls and functions it reaches, like TLC",
     async (instance, reference, expected) => {
@@ -1783,15 +1793,16 @@ describe("evaluation errors match TLC", () => {
         config: "INIT Init\nNEXT Next",
         loadModule: (name) =>
           name === "Inner"
-            ? "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nF(a) == a + c\nG(a) == F(a) + 1\nh[z \\in {1, 2}] == z + c\nH == h[1] + 1\n===="
+            ? "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nF(a) == a + c\nG(a) == F(a) + 1\nh[z \\in {1, 2}] == z + c\nH == h[1] + 1\nK == {c + 1, 2}\n===="
             : undefined,
       });
-      const ranges = result.failure?.callStack?.map((expression) => {
+      const ranges = result.failure?.callStack?.flatMap((expression) => {
         const range = expression.location.range;
-        return (
-          range &&
-          `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`
-        );
+        return range
+          ? [
+              `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+            ]
+          : [];
       });
       expect(ranges?.filter((range, index) => range !== ranges[index - 1])).toEqual(expected);
     },
