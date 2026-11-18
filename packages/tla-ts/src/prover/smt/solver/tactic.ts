@@ -272,8 +272,7 @@ export const getRewriterOptions = (manager: AstManager, params: TacticParams): R
   },
 });
 
-// arith.nl.rounds only bounds arith.solver 2, which the port does not use. lar_solver::updt_params
-// sets the cut periods from arith.branch_cut_ratio, and lp_settings::updt_params then overwrites them.
+// arith.nl.rounds only bounds arith.solver 2, which the port does not use.
 const SMT_DESCRS = getDescrs("smt", [
   ["mbqi", PARAM_BOOL, true, true],
   ["mbqi.max_iterations", PARAM_UINT, MBQI_MAX_ITERATIONS, true],

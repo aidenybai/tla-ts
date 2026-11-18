@@ -198,8 +198,7 @@ export const createEq2BvTactic = (manager: AstManager) => (goal: Goal) => {
     manager.decRef(rewritten);
   }
   rewriter.release();
-  // Deviation from Z3: bound_manager keeps the dependencies of the bounds without a reference, so
-  // Z3 5.3.2 reads them after the updates above free them and crashes with unsat cores.
+  // Deviation from Z3: Z3 5.3.2 frees the bound dependencies above, then reads them and crashes.
   for (const variable of max.keys()) {
     const bv = fd.get(variable) as number;
     const width = manager.getBvSize(manager.sorts[bv]);

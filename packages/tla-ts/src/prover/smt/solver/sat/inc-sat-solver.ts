@@ -385,7 +385,6 @@ export class IncSatSolver {
     return this.core.items;
   }
 
-  // get_model_core: a new model, which the caller releases.
   mkModel() {
     const manager = this.manager;
     if (!this.solver.isModelCurrent || this.fmls.size > this.fmlsHead) return null;
@@ -401,7 +400,6 @@ export class IncSatSolver {
     return convertModel(this.converters, euf === null ? model : euf.updateModel(model));
   }
 
-  // A model that lives until release, for the callers that borrow it.
   getModel() {
     const model = this.mkModel();
     if (model === null) return null;

@@ -1526,8 +1526,6 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ).toEqual(["unknown", '(:reason-unknown "max. resource limit exceeded")']);
   });
 
-  // The values of the first model give their ids back when the second check frees it, and the
-  // bit-blaster orders the carries of the new multiplication by id.
   it("frees the model of the finite-domain solver at its next check", () => {
     expect(
       run([
@@ -1575,7 +1573,6 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ]);
   });
 
-  // cmd_context keeps no model of its own, so a check right after get-model frees it too.
   it("frees the model of the finite-domain solver at a check that follows get-model", () => {
     expect(
       run([
@@ -1624,8 +1621,7 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ]);
   });
 
-  // Deviation from Z3: Z3 5.3.2 crashes at the second check, which encodes C as an enumeration
-  // without constructors. The port leaves C to the SAT solver.
+  // Deviation from Z3: Z3 5.3.2 crashes at the second check.
   it("raises once for a datatype whose declaration failed and keeps the reason of its SAT solver", () => {
     expect(
       run([

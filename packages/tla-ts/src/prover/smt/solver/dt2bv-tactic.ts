@@ -27,9 +27,7 @@ import { ObjMap } from "./hashtable";
 import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 
-// is_enum_sort reads the constructors, so a datatype whose declaration failed raises once.
-// Deviation from Z3: Z3 then counts it as an enumeration without constructors and crashes when it
-// encodes one, where the port leaves it to the solver.
+// Deviation from Z3: Z3 5.3.2 takes a failed datatype for an empty enumeration and crashes.
 const isEnumSort = (manager: AstManager, sort: number) => {
   if (!manager.isDatatypeSort(sort)) return false;
   const constructors = getDatatypeConstructors(manager, sort);
