@@ -3827,6 +3827,27 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it("rejects an ASSUME/PROVE theorem or step used as an expression or operator like SANY", async () => {
+    await expect(
+      checkNames(
+        "THEOREM T == ASSUME NEW q PROVE TRUE\nA == T = 1\nB == T(1) = 1\nOp(G(_)) == 1\nC == Op(T)\nTHEOREM TRUE\n<1>1. ASSUME NEW r PROVE TRUE\n<1>2. <1>1 = 1\n<1>3. QED BY <1>1",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 3, col 6 to line 3, col 6", "ASSUME/PROVE used where an expression is required."],
+          ["line 4, col 7 to line 4, col 9", "The operator T requires 0 arguments."],
+          ["line 6, col 9 to line 6, col 9", "Expected arity 1 but found operator of arity 0."],
+          [
+            "line 6, col 6 to line 6, col 10",
+            "Argument number 1 to operator 'Op' \nshould be a 1-parameter operator.",
+          ],
+          ["line 9, col 7 to line 9, col 10", "ASSUME/PROVE used where an expression is required."],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", async () => {
     await expect(
       checkNames("RECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)"),

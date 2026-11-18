@@ -879,6 +879,7 @@ const getSymbolArity = (
   }
   if (local && expression.kind !== "OperatorReference") expression.resolution = LOCAL_RESOLUTION;
   if (local) return local.arity;
+  if (getGoal(name, unit)?.statement.kind === "AssumeProve") return 0;
   const symbol = findSymbol(name, unit);
   if (symbol) {
     if (expression.kind === "Identifier") expression.name = symbol.key;
@@ -1502,6 +1503,14 @@ const resolveExpression = (
           isFact(name, unit)
         ) {
           emptyExpressions.add(expression);
+        }
+        const local = lookupLocal(scope, name);
+        if ((local ? local.goal : getGoal(name, unit))?.statement.kind === "AssumeProve") {
+          unit.errors.push({
+            location: formatRange(getSpelledNameRange(expression, name)),
+            message: "ASSUME/PROVE used where an expression is required.",
+          });
+          return;
         }
         isArgumentCountReported(binding, name, 0, getSpelledNameRange(expression, name), unit);
         return;
