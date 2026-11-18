@@ -1735,12 +1735,53 @@ const translateBuiltInCall = (
       context,
     );
   }
+  // A variable that holds Object.prototype's method, as var own = Object.prototype.hasOwnProperty
+  // does, runs it where it still holds the built-in as the call reads it.
+  const alias = skipCasts(receiver);
+  const aliasDeclaration = ts.isIdentifier(alias)
+    ? getValueDeclaration(getSymbol(alias, context.checker), context)
+    : undefined;
+  const aliased =
+    method !== "call" || aliasDeclaration === undefined
+      ? undefined
+      : ts.isVariableDeclaration(aliasDeclaration) && aliasDeclaration.initializer !== undefined
+        ? getBuiltInPath(aliasDeclaration.initializer, context)
+        : getBuiltInPath(alias, context);
+  const aliasedMethod =
+    aliased === "Object.prototype.hasOwnProperty" ||
+    aliased === "Object.prototype.propertyIsEnumerable"
+      ? aliased.slice("Object.prototype.".length)
+      : undefined;
   const calledMethod =
     method === "call" &&
     ts.isPropertyAccessExpression(receiver) &&
     getBuiltInPath(receiver.expression, context) === "Object.prototype"
       ? receiver.name.text
-      : undefined;
+      : aliasedMethod;
+  const guardAlias = (value: Expression) =>
+    aliased === undefined || aliasedMethod === undefined
+      ? value
+      : ifExpression(
+          useJavaScript(
+            "SameValue",
+            [
+              translateExpression(receiver, scope, context),
+              translateBuiltInValue(
+                aliasedMethod === "hasOwnProperty"
+                  ? "Object.prototype.hasOwnProperty"
+                  : "Object.prototype.propertyIsEnumerable",
+                node,
+                context,
+              ),
+            ],
+            context,
+          ),
+          value,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which function this call runs"),
+          ]),
+        );
   const ownMethod =
     calledMethod ?? (global === "Object" && method === "hasOwn" ? "hasOwnProperty" : method);
   const owned =
@@ -1754,27 +1795,29 @@ const translateBuiltInCall = (
   // A function that the heap doesn't hold owns its keys, none of them enumerable.
   const ownFunctionKeys = isOwnMethod ? getOwnFunctionKeys(owned[0], context) : undefined;
   if (ownFunctionKeys !== undefined) {
-    return share(translateExpression(owned[0], scope, context), "function", context, (value) =>
-      share(translatePropertyKey(owned[1], scope, context), "key", context, (key) =>
-        ifExpression(
-          useJavaScript("IsRef", [value], context),
-          useJavaScript(
-            ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
-            [getHeap(scope, node, context), value, key],
-            context,
+    return guardAlias(
+      share(translateExpression(owned[0], scope, context), "function", context, (value) =>
+        share(translatePropertyKey(owned[1], scope, context), "key", context, (key) =>
+          ifExpression(
+            useJavaScript("IsRef", [value], context),
+            useJavaScript(
+              ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
+              [getHeap(scope, node, context), value, key],
+              context,
+            ),
+            ownMethod === "propertyIsEnumerable"
+              ? boolean(false)
+              : ifExpression(
+                  apply("\\in", [key, set([string("arguments"), string("caller")])]),
+                  apply("Assert", [
+                    boolean(false),
+                    string(
+                      "tla-ts can't tell whether this function has its own arguments and caller",
+                    ),
+                  ]),
+                  apply("\\in", [key, set(ownFunctionKeys.map(string))]),
+                ),
           ),
-          ownMethod === "propertyIsEnumerable"
-            ? boolean(false)
-            : ifExpression(
-                apply("\\in", [key, set([string("arguments"), string("caller")])]),
-                apply("Assert", [
-                  boolean(false),
-                  string(
-                    "tla-ts can't tell whether this function has its own arguments and caller",
-                  ),
-                ]),
-                apply("\\in", [key, set(ownFunctionKeys.map(string))]),
-              ),
         ),
       ),
     );
@@ -1785,14 +1828,36 @@ const translateBuiltInCall = (
       (context.heap !== undefined && isBuiltInObject(owned[0], context)) ||
       isFunctionValue(owned[0], context))
   ) {
-    return useJavaScript(
-      ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
-      [
-        getHeap(scope, node, context),
-        translateFunctionObject(owned[0], scope, context),
-        translatePropertyKey(owned[1], scope, context),
-      ],
-      context,
+    return guardAlias(
+      useJavaScript(
+        ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
+        [
+          getHeap(scope, node, context),
+          translateFunctionObject(owned[0], scope, context),
+          translatePropertyKey(owned[1], scope, context),
+        ],
+        context,
+      ),
+    );
+  }
+  // A value that may be an object or another reads its own key where the heap holds it, and stops
+  // otherwise.
+  if (isOwnMethod && mayBeHeapObject(owned[0], context)) {
+    return guardAlias(
+      share(translateExpression(owned[0], scope, context), "owner", context, (value) =>
+        ifExpression(
+          useJavaScript("IsHeldObject", [value], context),
+          useJavaScript(
+            ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
+            [getHeap(scope, node, context), value, translatePropertyKey(owned[1], scope, context)],
+            context,
+          ),
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't run ${ownMethod} on a value that isn't an object here`),
+          ]),
+        ),
+      ),
     );
   }
   if (calledMethod === "toString" && node.arguments.length <= 1) {

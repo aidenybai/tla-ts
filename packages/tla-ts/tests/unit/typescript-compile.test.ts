@@ -56225,4 +56225,53 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs Object.prototype's own-key methods through call where a variable holds them", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: "" };
+      const hasOwnProperty = Object.prototype.hasOwnProperty;
+      const isEnumerable = Object.prototype.propertyIsEnumerable;
+      const hasValidKey = (config: { key?: number }) => hasOwnProperty.call(config, "key");
+      const proto = { inherited: 1 };
+      const child = Object.create(proto) as { inherited: number; own?: number };
+      child.own = 2;
+      Object.defineProperty(child, "hidden", { value: 3, enumerable: false });
+      box.seen = [
+        hasValidKey({ key: 1 }),
+        hasValidKey({}),
+        hasOwnProperty.call(child, "inherited"),
+        hasOwnProperty.call(child, "own"),
+        isEnumerable.call(child, "own"),
+        isEnumerable.call(child, "hidden"),
+      ].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+    const getScript = (expected: string) => `
+      "use strict";
+      var box = { seen: "" };
+      var hasOwnProperty = Object.prototype.hasOwnProperty;
+      function hasValidKey(config) {
+        return hasOwnProperty.call(config, "key");
+      }
+      box.seen = [hasValidKey({ key: 1 }), hasValidKey({})].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+    const path = join(import.meta.dirname, "model.js");
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("true,false,false,true,true,false"))).failure,
+      ).toBeUndefined();
+      expect((await check(compile(getScript("true,false"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects an inherited key as own", async () => {
+      expect(
+        (await checkModel(getSource("true,false,true,true,true,false"))).failure?.message,
+      ).toContain("seen true,false,false,true,true,false");
+      expect((await check(compile(getScript("true,true"), path))).failure?.message).toContain(
+        "seen true,false",
+      );
+    });
+  });
 });
