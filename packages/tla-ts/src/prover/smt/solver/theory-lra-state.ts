@@ -14,7 +14,6 @@ export abstract class TheoryLraState extends Theory {
     this.updateParams();
   }
 
-  // theory_lra::updt_params, which lp_settings::updt_params makes read the global lp parameters.
   updateParams() {
     this.solver.settings.updateParams(this.context.params.intHammerPeriod ?? DEFAULT_HAMMER_PERIOD);
   }

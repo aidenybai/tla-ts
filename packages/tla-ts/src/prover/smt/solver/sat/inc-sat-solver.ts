@@ -471,7 +471,6 @@ export class IncSatSolver {
     this.subgoals = [];
   }
 
-  // ~inc_sat_solver frees the model converters of each scope before the subgoals.
   release() {
     for (const model of this.models) model.decRef();
     this.models = [];

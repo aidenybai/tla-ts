@@ -796,8 +796,6 @@ export class AstManager {
     this.numDecls--;
   }
 
-  // FIRST_DECLARED_SMALL_ID counts a declaration that Z3 makes as it starts its smt solver, so the
-  // next declaration of a manager without that solver takes its id.
   dropSmtSolverDecl() {
     this.freeSmallIds.push(FIRST_DECLARED_SMALL_ID - 1);
     this.numDecls--;
@@ -1653,8 +1651,6 @@ export class AstManager {
   }
 
   // The parameters are those of the port, and parameterHashes hash Z3's.
-  // mk_func_decl shares a declaration by Z3's parameters, which name a constructor and an accessor
-  // where the port keeps their indexes.
   mkDatatypeDecl(
     op: number,
     name: string,

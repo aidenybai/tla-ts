@@ -3444,7 +3444,6 @@ export const createSmtlibReader = (
       for (const domainVar of vars) manager.incRef(domainVar);
       for (const domainVar of vars) manager.decRef(domainVar);
     }
-    // The func_decl_ref of parse_declare_fun frees the declaration that cmd_context rejects.
     const decl = manager.mkFuncDecl(symbol.text, domain, range);
     const extra = list.items[name === "declare-fun" ? 4 : 3];
     const logicError = logicChecker.checkDecl(decl);

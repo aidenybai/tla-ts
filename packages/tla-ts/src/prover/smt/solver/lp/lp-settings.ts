@@ -75,7 +75,6 @@ export class LpSettings {
 
   constructor(readonly isCanceled: (cost?: number) => boolean) {}
 
-  // lp_settings::updt_params gives the cube, Gomory and hnf heuristics lp.int_hammer_period.
   updateParams(hammerPeriod: number) {
     this.intFindCubePeriod = hammerPeriod;
     this.intGomoryCutPeriod = hammerPeriod;

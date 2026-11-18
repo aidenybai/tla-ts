@@ -78,8 +78,7 @@ export class SubstReplacer extends RewriterTpl {
   }
 }
 
-// default_expr_replacer joins the dependencies of the substitutions it uses, and empties its cache
-// after a rewrite that used one.
+// default_expr_replacer empties its cache after a rewrite that used a dependency.
 class DependentSubstReplacer extends SubstReplacer {
   private usedDependency: Dependency | undefined = undefined;
 
@@ -549,7 +548,6 @@ export class SolveEqs {
     }
   }
 
-  // Each equation has the dependencies of the formula it comes from.
   private setDependencies(eqs: DependentEq[], start: number, index: number) {
     const dependency = this.goal.getDependency(index);
     for (let current = start; current < eqs.length; current++) eqs[current].dependency = dependency;

@@ -126,8 +126,7 @@ export interface TacticEnvironment {
 }
 
 // A tactic that tracks dependencies keeps the dependency of every formula it changes, so the goal
-// gets the assertion names only for those. The goal has dependencies only with unsat cores, so a
-// tactic that fails on those tracks them too.
+// gets the assertion names only for those.
 interface TacticBuilder {
   descrs: ParamDescrs;
   isRejectingUnknown: boolean;
@@ -2228,7 +2227,6 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal) => {
   try {
     return getTacticCheck(goal, goals);
   } finally {
-    // check_sat frees the result goals, and its caller then frees the goal.
     if (Array.isArray(goals))
       for (const result of goals)
         if (result !== goal) {

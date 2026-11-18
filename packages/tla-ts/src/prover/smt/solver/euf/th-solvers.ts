@@ -18,8 +18,7 @@ import { QSolver } from "./q-solver";
 import type { ThSolver } from "./th-solver";
 
 // euf::solver::get_solver: the theory solver of a family, or of quantifiers for family -1. Model
-// values have none. A goal that needs a theory the port lacks goes back to the smt kernel. The
-// arithmetic solver reads lp.int_hammer_period, as arith::solver does through lp_settings.
+// values have none. A goal that needs a theory the port lacks goes back to the smt kernel.
 export const mkThSolver =
   (parameters: ReadonlyMap<string, string>) =>
   (ctx: EufSolver, family: number): ThSolver | null => {

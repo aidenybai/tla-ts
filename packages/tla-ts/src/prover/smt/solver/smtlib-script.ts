@@ -406,7 +406,6 @@ interface ScriptState {
   kernel: SmtKernel | undefined;
   satSolver: IncSatSolver | undefined;
   fdSolver: FdSolver | undefined;
-  // tactic2solver's model converter, of the goal of its last check.
   tacticConverters: Goal["converters"];
 }
 

@@ -60,7 +60,6 @@ export const createQfufbvAckrTactic =
     if (isConverted) {
       model.incRef();
       const info = lackr.info;
-      // ackr_model_converter frees its abstract model before its info.
       result.addModelConversion(
         (converted) => convertAckrModel(info, model, converted),
         () => {

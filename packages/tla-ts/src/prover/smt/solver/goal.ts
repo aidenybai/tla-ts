@@ -58,7 +58,6 @@ export interface Definition {
   def: number;
 }
 
-// Each list of converters holds a reference to its converters, as a model_converter_ref does.
 interface HiddenDecl {
   decl: number;
   refs: number;
@@ -79,8 +78,7 @@ export const incConverterRefs = (converters: Goal["converters"]) => {
   for (const converter of converters) converter.refs++;
 };
 
-// concat_model_converter frees its second converter before its first, and
-// generic_model_converter frees each entry's definition before its declaration.
+// concat_model_converter frees its second converter before its first.
 export const decConverterRefs = (manager: AstManager, converters: Goal["converters"]) => {
   for (let index = converters.length - 1; index >= 0; index--) {
     const converter = converters[index];
