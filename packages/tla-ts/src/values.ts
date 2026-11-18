@@ -1159,16 +1159,25 @@ export const createSet = (elements: Value[]): SetValue => {
   return createSortedSet(unique);
 };
 
+// TLC sorts a set literal only once an operation needs it sorted, so a lazy function the sort would evaluate keeps the literal unsorted.
+let isSortingLiteral = false;
+
 export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue => {
   if (isAscendingIntegers(elements)) return createSortedSet(elements);
-  const set = computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
-    createSet,
-    (mixed) => ({ kind: "MixedSet", elements: mixed }),
-    elements,
-    undefined,
-  );
-  if (set.kind === "Set" && set.elements !== elements) set.writtenElements = elements;
-  return set;
+  const isOuterSorting = isSortingLiteral;
+  isSortingLiteral = true;
+  try {
+    const set = computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
+      createSet,
+      (mixed) => ({ kind: "MixedSet", elements: mixed }),
+      elements,
+      undefined,
+    );
+    if (set.kind === "Set" && set.elements !== elements) set.writtenElements = elements;
+    return set;
+  } finally {
+    isSortingLiteral = isOuterSorting;
+  }
 };
 
 export const EMPTY_SET = createSortedSet([]);
@@ -1680,7 +1689,11 @@ export const toFiniteSet = (value: Value): SetValue => {
   if (lazy?.enumerated) return lazy.enumerated;
   const sets = setTrace.sets;
   sets?.push(value);
+  // Enumerating a lazy set other than a literal evaluates the spec, which must not stop halfway.
+  const isOuterSorting = isSortingLiteral;
+  isSortingLiteral = isOuterSorting && lazy?.kind === "MixedSet";
   const elements = enumerateSet(value);
+  isSortingLiteral = isOuterSorting;
   sets?.pop();
   const isSorted =
     typeof value === "object" &&
@@ -2373,6 +2386,7 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "Function") return value;
   if (typeof value === "object" && value.kind === "LazyFunction") {
     if (value.enumerated) return value.enumerated;
+    if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a lazy function");
     if (!isEnumerable(value.domain)) getCardinality(value.domain);
     if (!isSetValue(value.domain)) {
       throw new TlaEvaluationError("The domains of formal parameters must be enumerable.");
