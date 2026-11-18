@@ -71,7 +71,7 @@ export interface Successor {
 // TLC's Tool#getNextStates stops drawing once its INextStateFunctor holds a state, which skips the states a constraint drops.
 export interface SuccessorGenerator {
   random: JavaRandom;
-  hasStates: () => boolean;
+  kept: number;
 }
 
 interface Run {
@@ -532,7 +532,7 @@ const compileMembership = (
         run.environment.runtime.version,
       )) {
         onComplete(assign(partial, index, element), action);
-        if (run.generator.hasStates() || run.isStopped) return;
+        if (run.generator.kept > 0 || run.isStopped) return;
       }
     }
     for (let position = 0; position < elements.length && !run.isStopped; position++) {
@@ -899,7 +899,7 @@ const compileRandomChoice =
         isFixed,
         onComplete,
       );
-      if (generator.hasStates() || run.isStopped) return;
+      if (generator.kept > 0 || run.isStopped) return;
     }
   };
 
@@ -923,7 +923,7 @@ const compileRandomExists = (
     const visit = (position: number, boundScope: Scope | undefined): boolean => {
       if (position < 0) {
         body(run, boundScope, partial, action, isFixed, onComplete);
-        return run.generator?.hasStates() === true || run.isStopped;
+        return (run.generator?.kept ?? 0) > 0 || run.isStopped;
       }
       const pattern = expression.bounds[position].pattern;
       return orders[position].some((element) =>

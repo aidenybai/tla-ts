@@ -485,7 +485,7 @@ const visitAssignment = (
     const order = getRandomOrder(replay, set, elements);
     for (let position = 0; position < order.length; position++) {
       const isProduced = proceed(replay, items, assign(partial, index, order[position]), node);
-      if (generator.hasStates()) return isProduced;
+      if (generator.kept > 0) return isProduced;
     }
   }
   const enumerator =
@@ -537,7 +537,7 @@ const visitRandomChoice = (generator: SuccessorGenerator, choices: (() => boolea
   let isProduced = false;
   for (let attempt = 0; attempt < choices.length; attempt++) {
     isProduced = choices[(start + attempt * prime) % choices.length]() || isProduced;
-    if (generator.hasStates()) return isProduced;
+    if (generator.kept > 0) return isProduced;
   }
   return isProduced;
 };
@@ -687,7 +687,7 @@ const visitApplication = (
         let isProduced = false;
         forEachBoundElement(expression.bounds, orders, context.scope, (bound) => {
           isProduced = visit(replay, expression.body, items, bound, partial, node) || isProduced;
-          return generator.hasStates();
+          return generator.kept > 0;
         });
         return isProduced;
       }

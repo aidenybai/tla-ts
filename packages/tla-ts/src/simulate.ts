@@ -500,14 +500,12 @@ export const simulate = (options: SimulationOptions): number => {
     isException: false,
     isSummarized: true,
   });
-  let keptSuccessors: TraceNode[] = [];
-  const generator = options.isGenerating
-    ? { random: workerRandom, hasStates: () => keptSuccessors.length > 0 }
-    : undefined;
+  const generator = options.isGenerating ? { random: workerRandom, kept: 0 } : undefined;
   const getSuccessors = (current: TraceNode, index: number) => {
     const action = nextActions[index];
     const coveredAction = covered?.actions[index];
-    keptSuccessors = [];
+    const keptSuccessors: TraceNode[] = [];
+    if (generator) generator.kept = 0;
     let failure: WorkerError | undefined;
     runtime.deferred = undefined;
     evaluatedAction = action;
@@ -551,6 +549,7 @@ export const simulate = (options: SimulationOptions): number => {
       if (keptSuccessors.length === getSetBound()) throw new TlaTooManyStatesError();
       if (coverage && coveredAction) coverage.secondary[coveredAction.node]++;
       keptSuccessors.push(node);
+      if (generator) generator.kept++;
       return false;
     };
     try {
