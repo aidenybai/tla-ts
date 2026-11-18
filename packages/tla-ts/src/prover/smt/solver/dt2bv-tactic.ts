@@ -263,7 +263,6 @@ export const createDt2BvTactic = (manager: AstManager) => {
     goal.depth++;
     return [goal];
   };
-  // The sorts gather over the runs in a check, and Z3's cleanup forgets them.
   return {
     run,
     cleanup: () => {

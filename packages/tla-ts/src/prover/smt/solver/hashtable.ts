@@ -140,8 +140,6 @@ export class ObjMap<V> {
   }
 }
 
-// Z3's ptr_hashtable with an equality coarser than identity, such as select_set, which compares
-// selects by the roots of their indices. Equal elements share the slot of the first one inserted.
 export class KeyedHashtable<T> {
   private firsts: T[] = [];
   private indices = new Map<string, number>();

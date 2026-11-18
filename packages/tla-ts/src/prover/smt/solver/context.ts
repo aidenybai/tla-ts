@@ -227,7 +227,6 @@ export class Context extends Internalizer {
     this.qmanager = new DefaultQuantifierManager(this);
   }
 
-  // Z3's destructor frees in this order, which decides the ids that later terms reuse.
   release(asserted: AssertedFormulas) {
     const manager = this.manager;
     const state = this.modelState;
@@ -235,7 +234,6 @@ export class Context extends Internalizer {
     if (state.kind !== "none") state.generated.model.decRef();
     this.deleteClauses(this.auxClauses, 0);
     this.deleteClauses(this.lemmas, 0);
-    // Z3 undoes the whole trail here, so nodes and Boolean variables go last created first.
     this.popTrail(0);
     this.qmanager.release();
     if (this.isDiseqTmp !== -1) manager.decRef(this.isDiseqTmp);
@@ -1722,7 +1720,6 @@ export class Context extends Internalizer {
     let result: number | undefined;
     while (result === undefined) result = this.restart(this.boundedSearch(), currentLevel);
     this.isSearching = false;
-    // check_finalize reads the cancel flag once the search finds a model.
     return result === L_TRUE && this.checkCanceled() ? L_UNDEF : result;
   }
 

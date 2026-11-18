@@ -415,8 +415,6 @@ interface ScriptState {
   kernel: SmtKernel | undefined;
   satSolver: IncSatSolver | undefined;
   fdSolver: FdSolver | undefined;
-  // Z3 builds tactic2solver's tactic as it makes the solver, and the tactic keeps what its tactics
-  // hold across the solver's checks.
   strategy: string;
   tactic: Tactic | undefined;
   tacticDestructors: (() => void)[];
@@ -742,8 +740,7 @@ export const runSmtlibScript = (
           : isFromTactic
             ? { ...solveWithStrategy(), core: undefined }
             : kernel;
-      // solver::check_sat and cmd_context::check_sat each count a step to see whether the limit
-      // stopped a search that gave up. checkFdSolver counts both itself.
+      // solver::check_sat and cmd_context::check_sat each count a step for an unknown answer.
       if (fdSolver === undefined && !isOptimizing && solved.result === L_UNDEF) {
         manager.limit.inc();
         manager.limit.inc();

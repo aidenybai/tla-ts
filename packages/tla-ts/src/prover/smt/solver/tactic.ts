@@ -125,9 +125,7 @@ export interface TacticEnvironment {
   write: (text: string, isDiagnostic: boolean) => void;
   parameters: ReadonlyMap<string, string>;
   hasDefinitions: () => boolean;
-  // Free what the tactics built here keep across their runs, as Z3 does once it frees them.
   destructors: (() => void)[];
-  // Forget what the tactics built here gather over a check, as tactic2solver's cleanup does.
   cleanups: (() => void)[];
 }
 
@@ -390,7 +388,6 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
       ? solveGoal(manager, goal.forms.items, kernelParams)
       : solveAssuming(manager, extracted.clauses.items, extracted.assumptions, kernelParams);
   const context = solved.context;
-  // Z3 frees the kernel as the tactic returns, after the clauses it was given.
   const release = () => {
     extracted.clauses.reset();
     context.release(solved.asserted);
@@ -408,7 +405,6 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
   }
   const model = goal.isModelsEnabled ? context.getModel() : undefined;
   if (model !== undefined) {
-    // model2mc keeps the kernel's model for as long as the goal's model converter lives.
     model.incRef();
     goal.addModelConversion(
       () => model.copy(),

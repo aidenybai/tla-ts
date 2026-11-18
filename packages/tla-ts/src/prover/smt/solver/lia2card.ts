@@ -187,7 +187,6 @@ class PbRewriter extends RewriterTpl {
 export const getPbSum = (manager: AstManager, term: number, terms: RefVector) =>
   new PbRewriter(manager, terms, 4, true).getPbSum(term);
 
-// Z3 keeps the rewriter, and with it its cache, for as long as the tactic lives.
 export const createLia2Card = (
   manager: AstManager,
   maxRange: number,

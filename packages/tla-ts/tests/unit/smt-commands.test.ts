@@ -670,15 +670,12 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
-  // Seven restarts, after none of which context::search reads the cancel flag.
   it("counts the steps of a search that restarts", () => {
     expect(
       run([...getPigeonholeLines(7), "(check-sat-assuming (p0_0))", "(get-info :rlimit)"]),
     ).toEqual(["unsat", "(:rlimit 27949)"]);
   });
 
-  // check-sat and check-sat-assuming count two steps for an unknown answer, where
-  // check-sat-using counts none.
   it("counts the steps of an unknown answer", () => {
     expect(
       run([
