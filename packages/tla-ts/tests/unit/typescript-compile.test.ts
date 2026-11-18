@@ -1290,15 +1290,17 @@ describe("top-level statements", () => {
     ).toThrow("Unsupported operator: =");
   });
 
-  it("reject a function's prototype that a value of type any reaches in a script with objects", () => {
-    expect(() =>
-      compile(`
-        const box = {};
-        function Shape() {}
-        Shape.prototype.inner = { sides: 4 };
-        Shape.prototype.inner.sides = 3;
-      `),
-    ).toThrow("Unsupported property: Shape.prototype");
+  it("write through a function's prototype that a value of type any reaches in a script with objects", async () => {
+    const getSource = (expected: number) => `
+      "use strict";
+      const box = {};
+      function Shape() {}
+      Shape.prototype.inner = { sides: 4 };
+      Shape.prototype.inner.sides = 3;
+      if (Shape.prototype.inner.sides !== ${expected}) throw new Error("sides " + Shape.prototype.inner.sides);
+    `;
+    expect((await checkModel(getSource(3))).failure).toBeUndefined();
+    expect((await checkModel(getSource(4))).failure?.message).toContain("sides 3");
   });
 
   it("destructure an object that a value of type any holds in a script with objects", async () => {
@@ -16612,17 +16614,20 @@ describe("errors", () => {
     expect((await checkModel(getSource("70", "15"))).failure).toBeUndefined();
     expect((await checkModel(getSource("50", "15"))).failure?.message).toContain('"count"');
     expect((await checkModel(getSource("70", "8"))).failure?.message).toContain('"count"');
-    expect(() =>
-      compile(`
-        const createCount = (start: number) => {
-          let count = start;
-          return () => ++count;
-        };
-        const first = createCount(0);
-        const second = createCount(10);
-        if (first() !== 1 || second() !== 11) throw new Error("count");
-      `),
-    ).toThrow("Unsupported expression");
+  });
+
+  it("runs the closures that a factory returns, each with its own variables", async () => {
+    const getCounts = (expected: number) => `
+      const createCount = (start: number) => {
+        let count = start;
+        return () => ++count;
+      };
+      const first = createCount(0);
+      const second = createCount(10);
+      if (first() !== 1 || second() !== ${expected}) throw new Error("count");
+    `;
+    expect((await checkModel(getCounts(11))).failure).toBeUndefined();
+    expect((await checkModel(getCounts(12))).failure?.message).toContain('"count"');
   });
 
   it("runs a call in an operand that runs only sometimes inside another", async () => {
