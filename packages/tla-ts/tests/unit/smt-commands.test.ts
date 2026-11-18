@@ -243,7 +243,6 @@ const BV_GOAL_LINES = [
   "(assert (bvult a b))",
 ];
 
-// Three soft constraints over a satisfiable hard one, for the step limits of maxres.
 const getSoftLines = (rlimit: number) => [
   "(declare-const p Bool)",
   "(declare-const q Bool)",

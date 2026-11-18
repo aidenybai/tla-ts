@@ -121,7 +121,6 @@ class RewriterCore {
     this.scopes = [];
   }
 
-  // The destructor of rewriter_core, which also frees the results of a rewrite that the limit stopped.
   protected releaseCore() {
     for (const cache of this.caches) cache.reset();
     this.numFrames = 0;

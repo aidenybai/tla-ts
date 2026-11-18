@@ -64,7 +64,6 @@ export class Rule {
     return false;
   }
 
-  // symbol::str of the name, where undefined is the null symbol.
   getNameText() {
     return this.name ?? "<null>";
   }

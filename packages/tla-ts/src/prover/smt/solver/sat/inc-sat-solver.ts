@@ -47,7 +47,6 @@ export class IncSatSolver {
   private bitBlaster: BitBlasterRewriter | undefined;
   // m_mcs.back(), the model converters of the preprocessed goals.
   private readonly converters: Goal;
-  // m_sat_mc, which no scope restores.
   private readonly satConverter: Sat2GoalConverter;
   private isInternalizedConverted = false;
   private readonly internalized: RefVector;
@@ -118,7 +117,6 @@ export class IncSatSolver {
     this.assertExpr(manager.mkApp(OP_IMPLIES, [name, expr], SORT_BOOL));
   }
 
-  // inc_sat_solver::push pushes its scope also when internalizing the formulas throws.
   push() {
     try {
       this.internalizeFormulas();

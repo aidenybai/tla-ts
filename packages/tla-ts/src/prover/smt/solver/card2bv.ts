@@ -99,7 +99,6 @@ class CardPbRewriter extends RewriterTpl {
   }
 }
 
-// The finite-domain solver runs the simplifier itself, without the goal of the tactic.
 export const createCard2Bv =
   (manager: AstManager, options: RewriterOptions) => (state: DependentExprState) => {
     const rewriter = new Rewriter(manager, options);

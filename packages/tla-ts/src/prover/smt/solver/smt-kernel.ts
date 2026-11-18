@@ -14,7 +14,6 @@ export class SmtKernel {
   isSetUp = false;
   private setup: SmtSetup | undefined;
   private isCoreMinimizing: boolean;
-  // solver_na2as::m_scopes: a push that fails leaves no scope for a pop.
   private scopeCount = 0;
 
   constructor(manager: AstManager, params: KernelParams) {

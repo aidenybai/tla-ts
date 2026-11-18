@@ -12,8 +12,6 @@ export const isLiteral = (manager: AstManager, expr: number) =>
   manager.isUninterpretedConst(expr) ||
   (manager.isNot(expr) && manager.isUninterpretedConst(manager.getArg(expr, 0)));
 
-// sat2goal::mc, which inc_sat_solver keeps across conversions, so a variable keeps its auxiliary
-// constant and each definition is made once.
 export class Sat2GoalConverter {
   readonly smc = new ModelConverter();
   readonly var2expr: number[] = [];

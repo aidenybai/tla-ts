@@ -123,8 +123,6 @@ const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
   }
 };
 
-// The formulas of simplifier_solver. Unlike a goal, it keeps a formula as it comes, and
-// flatten_suffix moves the conjuncts of a formula to the end after each simplifier.
 class SolverFormulas extends Goal {
   override assert(form: number) {
     if (this.manager.isFalse(form)) this.isInconsistent = true;
@@ -165,9 +163,6 @@ class SolverFormulas extends Goal {
   }
 }
 
-// simplifier_solver runs mk_fd_simplifier, a then_simplifier, as the one simplifier of its own
-// then_simplifier. Each checks the limit before a simplifier and stops at one that the limit
-// stopped, and simplifier_solver::flush then leaves the formulas out of the solver.
 const runFdSimplifier = (manager: AstManager, forms: readonly number[]) => {
   const fmls = new SolverFormulas(manager);
   for (const form of forms) fmls.assert(form);
@@ -332,7 +327,6 @@ export const createFdTactic = (manager: AstManager, params: SatParams) => (goal:
     goal.reset();
     if (result === L_TRUE) {
       const model = solver.getModel();
-      // simplifier_solver::get_model_core converts the model of its solver within the tactic.
       const converted = model === null ? null : convertModel(fmls, model);
       converted?.incRef();
       if (converted !== null) goal.model = converted;
@@ -349,8 +343,6 @@ export const createFdTactic = (manager: AstManager, params: SatParams) => (goal:
   }
 };
 
-// mk_fd_solver, which check-sat runs for QF_FD. It keeps the reason of inc_sat_solver, also past an
-// exception, and get-model converts its model outside the limit of the check.
 export const checkFdSolver = (manager: AstManager, params: SatParams, forms: readonly number[]) => {
   const fmls = runFdSimplifier(manager, forms);
   const solver = new IncSatSolver(manager, params);
@@ -368,7 +360,6 @@ export const checkFdSolver = (manager: AstManager, params: SatParams, forms: rea
     })();
     const model = result === L_TRUE ? solver.getModel() : null;
     limit.isSuspended = true;
-    // The caller holds a reference to the model past the solver, as cmd_context keeps its solver.
     const converted = model === null ? undefined : convertModel(fmls, model);
     converted?.incRef();
     return { result, model: converted, reasonUnknown: solver.reasonUnknown };

@@ -1984,15 +1984,13 @@ interface TacticCheck {
   model: ProtoModel | undefined;
   core: Dependency | undefined;
   reasonUnknown: string | undefined;
-  // Whether the limit stopped the conversion of the model, which check_sat does not catch.
   isConversionCanceled: boolean;
 }
 
 // The port's declarations of division by zero leave out their domain; Z3's have two arguments.
 const DIVISION_BY_ZERO_DECLS = new Set([OP_DIV0, OP_IDIV0, OP_MOD0, OP_POWER0]);
 
-// generic_model_converter::operator(): a definition of -1 hides the declaration, and a constant of
-// an uninterpreted sort the model lacks puts its value in that sort's universe.
+// A constant of an uninterpreted sort the model lacks puts its value in that sort's universe.
 export const applyDefinitions = (definitions: readonly Definition[], model: ProtoModel) => {
   const manager = model.manager;
   const universe: number[] = [];
@@ -2055,8 +2053,6 @@ const applyConverter = (entry: Goal["converters"][number], model: ProtoModel) =>
 export const convertModel = (goal: Goal, model: ProtoModel) =>
   goal.converters.reduceRight((converted, entry) => applyConverter(entry, converted), model);
 
-// model_converter2model makes the model before it converts it, so a limit that stops a converter
-// leaves the model as far as the conversion got.
 const getConvertedModel = (goal: Goal) => {
   let model = goal.model?.copy() ?? new ProtoModel(goal.manager).mkModel();
   for (let index = goal.converters.length - 1; index >= 0; index--) {
@@ -2104,7 +2100,6 @@ const getTacticCheck = (goal: Goal, goals: Goal[] | string | undefined): TacticC
   };
 };
 
-// The goals let go of their formulas once the check is done, as Z3 frees them.
 export const checkSatUsing = (tactic: Tactic, goal: Goal) => {
   let goals: Goal[] | string | undefined;
   try {

@@ -695,7 +695,6 @@ export const runSmtlibScript = (
       )
         throw error;
       const context = isKernelChecking ? state.kernel?.context : undefined;
-      // solver::check_sat keeps the reason that inc_sat_solver had before the exception.
       const reasonUnknown = isKernelChecking ? state.satSolver?.reasonUnknown : undefined;
       setCheck(L_UNDEF, {
         isOptimizing,
@@ -775,7 +774,6 @@ export const runSmtlibScript = (
       useSatSolver((solver) => solver.push());
     }
   };
-  // cmd_context::init_manager runs at the first command that needs the manager.
   const initManager = () => {
     if (state.isProofsEnabled !== undefined) return;
     state.isProofsEnabled = settings.parameters.get("proof") === "true";
@@ -1099,7 +1097,6 @@ export const runSmtlibScript = (
     print("; Suppported get-info parameters:");
     for (const supported of GET_INFO_KEYWORDS) print(`; (get-info ${supported})`);
   };
-  // get-unsat-core and get-unsat-assumptions both print the core of the last check.
   const printCore = () => {
     const check = state.check;
     if (check?.core === undefined)

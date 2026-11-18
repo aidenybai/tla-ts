@@ -1286,8 +1286,6 @@ export class Context extends Internalizer {
     this.modelState = { kind: "generated", generated: state.generated };
   }
 
-  // mk_proto_model makes no model while relevant atoms are unassigned or after a search stopped by
-  // a limit.
   private mkProtoModel() {
     const failure = this.lastSearchFailure;
     if (this.hasCaseSplits() || failure === FAILURE_CANCELED || failure === FAILURE_NUM_CONFLICTS)
@@ -1346,7 +1344,6 @@ export class Context extends Internalizer {
     return model;
   }
 
-  // A sat answer has a model, as its final check left no relevant atom unassigned.
   getSatModel() {
     const model = this.getModel();
     if (model === undefined) throw new SmtInvariantError("a sat answer without a model");
