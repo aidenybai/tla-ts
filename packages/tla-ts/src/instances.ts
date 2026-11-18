@@ -776,7 +776,6 @@ const substitute = (
           args,
           resolution: LOCAL_RESOLUTION,
         },
-        // SANY and TLC have no such LET, only the application of the LAMBDA.
         location: { line: expression.location.line, column: expression.location.column },
       };
     }
@@ -826,7 +825,6 @@ export const getFunctionConstruction = (definition: FunctionDefinition): Express
   location: definition.location,
 });
 
-// SANY's function definition is an operator whose body is the function's constructor. The LET, which SANY has no node for, keeps the function's name for its recursive calls.
 export const getFunctionBody = (definition: FunctionDefinition): Expression => ({
   kind: "Let",
   definitions: [definition],

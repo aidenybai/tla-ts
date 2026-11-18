@@ -205,7 +205,6 @@ const getCalleeParams = (
     : STANDARD_LEVELS.get(expression.operator.slice(expression.operator.lastIndexOf("!") + 1))
         ?.formals;
 
-// SANY selects an operator that an operator argument names as that operator, not as an expression.
 const getOperatorArgument = (operand: Expression, arity: number): Expression => {
   if (operand.kind !== "Identifier" && operand.kind !== "OperatorReference") return operand;
   const operator = operand.kind === "Identifier" ? operand.name : operand.operator;
@@ -307,7 +306,6 @@ const selectSubexpression = (
   const findCallee = (name: string) =>
     selection.lets.flat().findLast((definition) => definition.name === name) ?? lookup(name);
 
-  // A LET without a source range only keeps definitions in scope, and SANY has no node for it.
   const enterScopes = (node: Expression): Expression => {
     if (node.kind !== "Let" || node.location.range) return node;
     selection.lets.push(node.definitions);
@@ -641,7 +639,6 @@ const selectSubexpression = (
     }
     deferToExpression(location.range, message);
   }
-  // The definitions that a selected LAMBDA's body needs go inside it, so the LAMBDA stays an operator.
   const body =
     current.kind === "Lambda"
       ? { ...current, body: wrapLets(current.body, selection.lets, location) }

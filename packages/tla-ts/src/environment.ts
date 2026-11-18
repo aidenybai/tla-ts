@@ -764,7 +764,6 @@ export const createEnvironment = (
       },
       createName,
     });
-    // TLC's call stack holds the SubstInNode around a definition only when the instance's name reaches it.
     const frames = declarations.length > 0 ? [getSubstitutionFrame(instance)] : [];
     const declared = new Set(declarations.map((declaration) => declaration.name));
     const exported = [...linked.exported]

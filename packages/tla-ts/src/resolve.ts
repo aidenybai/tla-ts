@@ -144,7 +144,6 @@ const emptyExpressions = new WeakSet<Expression>();
 const isEmptyExpression = (expression: Expression): boolean =>
   emptyExpressions.has(expression) || findNullError(nullSelections.get(expression)) !== undefined;
 
-// SANY decides whether a selection fails once, when it generates it, so an earlier selection's result is already known.
 const findNullSelection = (nulls: NullSelection[] | undefined) =>
   nulls?.find((selection) =>
     selection.isEmpty
@@ -1191,7 +1190,6 @@ const isInstanceArityReported = (
   const names = selectors
     .slice(0, nameCount === -1 ? selectors.length : nameCount)
     .flatMap((selector) => (selector.kind === "Name" ? [selector] : []));
-  // SANY checks the arguments of each instance that a name goes through, from the outermost.
   const instances = getInstances(
     names.map((name) => name.name),
     scope,
