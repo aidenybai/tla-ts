@@ -317,6 +317,11 @@ const getBoundNames = (bounds: Bound[]) =>
     bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
   );
 
+// SANY locates the OpApplNode of a substituted name at the name in the instanced module.
+const getSubstitutedRange = (expression: Expression) =>
+  substitutionFrames.get(expression)?.find((frame) => !frameSubstitutions.has(frame))?.location
+    .range;
+
 export const getEnteredFrames = (expression: Expression, frames: Expression[]) =>
   (substitutionFrames.get(expression) ?? []).filter(
     (frame) => frameSubstitutions.has(frame) && !frames.includes(frame),
@@ -481,7 +486,7 @@ export const buildCoverage = (
       expressions.forEach((item) => walk(item, locals));
     const substitution = substitutedExpressions.get(expression);
     if (substitution && substitution.replacement !== expression) {
-      enter(expression, substitutionFrames.get(expression)?.[0]?.location.range, () => undefined);
+      enter(expression, getSubstitutedRange(expression), () => undefined);
       return;
     }
     switch (expression.kind) {
@@ -516,13 +521,12 @@ export const buildCoverage = (
       case "Identifier": {
         if (syntheticIdentifiers.has(expression)) return;
         const resolved = resolve(expression, expression.name, locals);
+        const isSubstituted = resolved && isSubstitutionDefinition(resolved.definition);
         enter(
           expression,
-          range,
+          (isSubstituted && getSubstitutedRange(expression)) || range,
           () => {
-            if (resolved && !isSubstitutionDefinition(resolved.definition)) {
-              walkDefinition(resolved);
-            }
+            if (resolved && !isSubstituted) walkDefinition(resolved);
           },
           false,
           resolved?.definition,

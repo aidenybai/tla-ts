@@ -2804,6 +2804,32 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts the substitutions of a LET INSTANCE under the operator it copies, at the name each one replaces, as SANY builds a SubstInNode there too", async () => {
+    const result = await check({
+      source:
+        "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == LET I == INSTANCE Inner WITH a <- x + 0 IN I!P /\\ x' = x + 1 /\\ y' = y\nInv == LET J == INSTANCE Inner WITH a <- y IN J!P\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      coverage: 1,
+      loadModule: (name) =>
+        name === "Inner"
+          ? "---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLE a\nA == a' = a + 1\nP == a < 3\n===="
+          : undefined,
+    });
+    expect(formatCoverage(result)?.slice(1)).toEqual([
+      [
+        "line 5, col 43 to line 5, col 47 of module E: 10",
+        "line 5, col 6 to line 5, col 10 of module Inner: 9",
+        "|line 5, col 6 to line 5, col 6 of module Inner: 10",
+        "line 5, col 59 to line 5, col 68 of module E: 9",
+        "line 5, col 73 to line 5, col 78 of module E: 9",
+      ],
+      [
+        "line 5, col 6 to line 5, col 10 of module Inner: 4",
+        "line 6, col 47 to line 6, col 49 of module E: 4",
+      ],
+    ]);
+  });
+
   it("takes the definition an instance with parameters copies for an action of constant arguments, as TLC's Tool#getActionsAppl binds them", async () => {
     const lines = formatCoverage(
       await getInstanceCoverage(
