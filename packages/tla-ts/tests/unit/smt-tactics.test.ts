@@ -515,6 +515,46 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       "(:rlimit 306)",
     ]);
   });
+
+  it("dom-simplify leaves the formulas that have dependencies and keeps them", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const x Int)",
+        "(assert p)",
+        "(assert (ite p (> x 3) q))",
+        "(assert (! (or (not p) (< x 2)) :named a1))",
+        "(assert (! (ite p (< x 0) q) :named a2))",
+        "(assert (! (or q (> x 5)) :named a3))",
+        "(apply dom-simplify :print_dependencies true)",
+        "(check-sat-using (then dom-simplify smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |-",
+        "  p",
+        "  |-",
+        "  (> x 3)",
+        "  |- a1",
+        "  (or (not p) (< x 2))",
+        "  |- a2",
+        "  (ite p (< x 0) q)",
+        "  |- a3",
+        "  (or q (> x 5))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a1)",
+      "(:rlimit 356)",
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {

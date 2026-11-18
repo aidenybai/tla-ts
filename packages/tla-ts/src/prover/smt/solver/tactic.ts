@@ -1179,6 +1179,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "dom-simplify",
     {
+      isTrackingDependencies: true,
       descrs: new Map(),
       build: (environment) => inPlace((goal) => domSimplify(environment.manager, goal)),
     },
