@@ -123,11 +123,13 @@ const findLabel = (
   if (expression.kind === "Lambda" || expression.kind === "Selection") return undefined;
   const generated = generatedArgumentCounts.get(expression);
   const enclosing =
-    expression.kind === "Apply" && generated === undefined
+    (expression.kind === "Apply" && generated === undefined) ||
+    expression.kind === "FunctionApplication"
       ? [...applications, expression]
       : applications;
   for (const child of getChildren(expression).slice(0, generated)) {
-    const found = findLabel(child, name, lets, enclosing);
+    const isFunction = expression.kind === "FunctionApplication" && child === expression.function;
+    const found = findLabel(child, name, lets, isFunction ? applications : enclosing);
     if (found) return found;
   }
   return undefined;

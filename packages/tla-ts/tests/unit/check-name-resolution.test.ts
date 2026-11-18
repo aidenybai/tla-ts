@@ -2219,6 +2219,26 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "a function applied to the wrong number of arguments",
+      "f[n \\in {1}] == n\ng[a, b \\in {1}, <<c, d>> \\in {<<1, 2>>}] == a\nh[n \\in {1}] == IF n = 0 THEN 0 ELSE h[1, 2]\nA == f[1, 2] /\\ (f)[1, Undef]\nB == g[1, 2] /\\ g[<<1, 2, 3>>] /\\ g[1, 2, 3]\nC == LET k[n \\in {1}] == n IN k[1, 2]\nD == (lab:: f)[1, 2] /\\ f[1, lab2:: 2]\nE == D!lab /\\ D!lab2",
+      [
+        ["line 5, col 6 to line 5, col 12", "f", 1],
+        ["line 5, col 17 to line 5, col 29", "f", 1],
+        ["line 6, col 6 to line 6, col 12", "g", 3],
+        ["line 7, col 31 to line 7, col 37", "k", 1],
+        ["line 8, col 25 to line 8, col 38", "f", 1],
+      ]
+        .map((error) => ({
+          location: `${error[0]} of module M`,
+          message: `Function '${error[1]}' is defined with ${error[2]} parameters, but is applied to 2 arguments.`,
+        }))
+        .concat({
+          location: "line 9, col 17 to line 9, col 20 of module M",
+          message: "Cannot find label `lab2'.",
+        }),
+      [],
+    ],
+    [
       "declarations, assumptions, theorems, and USE between a RECURSIVE declaration and its definition",
       "RECURSIVE f(_)\nVARIABLES y,\n  z\nCONSTANT C\nASSUME TRUE\nTHEOREM T == TRUE\nUSE T\nf(n) == n\nVARIABLE w",
       [

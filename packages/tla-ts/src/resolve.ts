@@ -41,6 +41,7 @@ interface Binding {
   arity: number;
   params?: number[];
   range?: SourceRange;
+  functionArity?: number;
 }
 
 export interface ModuleSymbol extends Binding {
@@ -183,6 +184,11 @@ export const getParamArities = (definition: Definition) =>
 
 const isInstantiated = (definition: Definition) => definition.name.includes("!");
 
+const getFunctionArity = (definition: Definition) =>
+  definition.kind === "Function" && !isInstantiated(definition)
+    ? definition.bounds.length
+    : undefined;
+
 const lookupLocal = (scope: LocalName | undefined, name: string) => {
   for (let current = scope; current; current = current.parent) {
     if (current.name === name) return current;
@@ -307,6 +313,7 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
       params: declared?.params ?? getParamArities(definition),
       kind: "Definition",
       range: definition.location.range,
+      functionArity: getFunctionArity(definition),
     };
   }
   const binding = getModuleBinding(name, unit, undefined);
@@ -504,6 +511,8 @@ const findLabel = (expression: Expression, name: string): LabelExpression | unde
   const generated = generatedArgumentCounts.get(expression);
   if (expression.kind === "Apply" && generated === undefined && isEmptyExpression(expression))
     return undefined;
+  if (expression.kind === "FunctionApplication" && isEmptyExpression(expression))
+    return findLabel(expression.function, name);
   return getChildren(expression)
     .slice(0, generated)
     .reduce<LabelExpression | undefined>(
@@ -1083,6 +1092,7 @@ const resolveDefinitions = (
       kind: "Definition",
       range: definition.location.range,
       parent: current,
+      functionArity: getFunctionArity(definition),
     };
     if (isInstantiated(definition)) return { ...local, params: getParamArities(definition) };
     const isInstanced = instances.some((instance) => instance.location === definition.location);
@@ -1585,9 +1595,24 @@ const resolveExpression = (
         resolveExpression(update.value, scope, { ...unit, isInExcept: true });
       });
       return;
-    case "FunctionApplication":
-      resolveAll([expression.function, ...expression.args]);
+    case "FunctionApplication": {
+      resolveExpression(expression.function, scope, unit);
+      const name = expression.function.kind === "Identifier" ? expression.function.name : undefined;
+      const arity = name === undefined ? undefined : findBinding(name, scope, unit)?.functionArity;
+      const count = expression.args.length;
+      if (arity === undefined || count < 2 || arity === count) {
+        resolveAll(expression.args);
+        return;
+      }
+      emptyExpressions.add(expression);
+      if (expression.location.range) {
+        unit.errors.push({
+          location: formatRange(expression.location.range),
+          message: `Function '${name}' is defined with ${arity} parameters, but is applied to ${count} arguments.`,
+        });
+      }
       return;
+    }
     case "FieldAccess":
       resolveExpression(expression.record, scope, unit);
       return;
