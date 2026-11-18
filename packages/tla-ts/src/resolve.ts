@@ -146,6 +146,8 @@ export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 export const generatedArgumentCounts = new WeakMap<Expression, number>();
+// A selected operator argument applies its operand by name before the operand resolves to its key.
+export const operandApplications = new WeakMap<Expression, (Expression & { kind: "Apply" })[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 
@@ -920,6 +922,9 @@ const getSymbolArity = (
   if (symbol) {
     if (expression.kind === "Identifier") expression.name = symbol.key;
     else expression.operator = symbol.key;
+    operandApplications.get(expression)?.forEach((application) => {
+      application.operator = symbol.key;
+    });
     renamedArities.set(expression, symbol.arity);
     return symbol.arity;
   }
