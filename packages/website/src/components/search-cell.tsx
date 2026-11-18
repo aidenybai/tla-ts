@@ -1,7 +1,7 @@
 import { X } from "@phosphor-icons/react";
-import { memo, useMemo, useState } from "react";
+import { memo } from "react";
 import { cn } from "cn";
-import { getPath, type Search, type SearchState } from "../search";
+import type { Search, SearchState } from "../search";
 
 const STEP_DELAY_MS = 80;
 const VALUES = /"[^"]*"|\b(?:TRUE|FALSE)\b|-?\b\d+\b|[^"\d\-TF]+|./g;
@@ -14,21 +14,11 @@ interface SearchCellProps {
   className?: string;
 }
 
-export const useSearchPath = (search: Search | undefined) => {
-  const [hoveredStateId, setHoveredStateId] = useState<string>();
-  const statesById = useMemo(
-    () => new Map(search?.listedStates.map((state) => [state.id, state])),
-    [search],
-  );
-  const states = useMemo(() => getPath(statesById, hoveredStateId), [statesById, hoveredStateId]);
-  return { states, hover: setHoveredStateId };
-};
-
 interface ValueTextProps {
   text: string;
 }
 
-export const ValueText = memo((props: ValueTextProps) =>
+const ValueText = memo((props: ValueTextProps) =>
   (props.text.match(VALUES) ?? []).map((value, index) => (
     <span
       key={index}
