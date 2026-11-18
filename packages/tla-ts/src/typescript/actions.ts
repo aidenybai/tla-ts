@@ -14285,7 +14285,8 @@ const isDispatchedCall = (
       !(
         ts.isElementAccessExpression(callee) &&
         (ts.isStringLiteral(callee.argumentExpression) ||
-          ts.isNumericLiteral(callee.argumentExpression))
+          ts.isNumericLiteral(callee.argumentExpression) ||
+          isConvertedElementKey(skipCasts(callee.argumentExpression), context))
       ) &&
       !isAnyMember(callee, context)) ||
     declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
@@ -19698,9 +19699,12 @@ const isPlainCallee = (
       ts.isGetAccessorDeclaration,
     ) &&
     isPlainCallee(getCast(node.expression), context, results)) ||
-  // A key that a string or a number literal writes reads as a name does.
+  // A key that a string or a number literal writes reads as a name does, as does an object key that
+  // a statement converted first.
   (ts.isElementAccessExpression(node) &&
-    (ts.isStringLiteral(node.argumentExpression) || ts.isNumericLiteral(node.argumentExpression)) &&
+    (ts.isStringLiteral(node.argumentExpression) ||
+      ts.isNumericLiteral(node.argumentExpression) ||
+      (results?.has(skipCasts(node.argumentExpression)) ?? false)) &&
     getObjectGetter(node, context) === undefined &&
     !(getSymbol(node.argumentExpression, context.checker)?.declarations ?? []).some(
       ts.isGetAccessorDeclaration,
@@ -20831,6 +20835,15 @@ const findLeadingCall = (
       (ts.isElementAccessExpression(node.expression) &&
         getHeapRegExpCall(node, context) !== undefined &&
         isPlainCallee(getCast(node.expression.expression), context, path.scope.results));
+    // A method that an object key names converts the key as the call reads the method, before
+    // the call evaluates its arguments.
+    if (
+      ts.isElementAccessExpression(callee) &&
+      !path.scope.results.has(skipCasts(callee.argumentExpression)) &&
+      isConvertedElementKey(skipCasts(callee.argumentExpression), context)
+    ) {
+      return { ...blocked, conversion: skipCasts(callee.argumentExpression) };
+    }
     // super evaluates nothing before its arguments.
     if (
       !isListed &&

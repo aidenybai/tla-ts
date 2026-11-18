@@ -55369,4 +55369,45 @@ describe("BigInts", () => {
       ).toContain("result TypeError,1,5,k|k|k|k|");
     });
   });
+
+  describe("calls a method through an object key, which converts before the arguments", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var key = { toString: function () { log += "key|"; return "run"; } };
+      var note = function () {
+        log += "arg|";
+        return 2;
+      };
+      var obj = {
+        count: 1,
+        run: function (step) {
+          log += "run|";
+          return this.count + step;
+        },
+      };
+      var got = obj[key](note());
+      var missing = { toString: function () { return "absent"; } };
+      var thrown = "none";
+      try {
+        obj[missing]();
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [got, thrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("3,TypeError,key|arg|run|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("3,TypeError,arg|key|run|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 3,TypeError,key|arg|run|",
+      );
+    });
+  });
 });
