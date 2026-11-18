@@ -795,6 +795,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "tseitin-cnf-core",
     {
       descrs: TSEITIN_DESCRS,
+      isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => tseitinCnf(environment.manager, goal)),
     },
   ],
@@ -802,6 +803,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "tseitin-cnf",
     {
       descrs: TSEITIN_DESCRS,
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) => {
           const manager = environment.manager;

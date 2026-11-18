@@ -388,6 +388,26 @@ describe("tactics keep the dependencies Z3 keeps", () => {
     ).toEqual(["unsat", "(a4 a1 a3 a5 a2)", "(:rlimit 173)"]);
   });
 
+  it("gives each clause of tseitin-cnf the dependencies of its formula", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(declare-const s Bool)",
+        "(assert (! (or (and p q) (and r s)) :named a1))",
+        "(assert (! (= p (or r (not s))) :named a2))",
+        "(assert (! (ite q (not r) s) :named a3))",
+        "(assert (! (not (and (or p r) (or q s))) :named a4))",
+        "(assert (or (and p q) s))",
+        "(check-sat-using (then tseitin-cnf sat))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(a4 a2 a1)", "(:rlimit 207)"]);
+  });
+
   it("internalizes the assertions of the smt tactic once when it assumes the names", () => {
     expect(
       run([
