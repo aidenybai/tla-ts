@@ -21297,9 +21297,8 @@ const getTypedObjectWrite = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
-// A compound assignment to a key that is an object that a name holds, of an object that a name
-// holds which can't be undefined or null, other than super's, and how it combines what it reads
-// with its value.
+// A compound assignment to a key that is an object that a name holds, or that a call gives, of an
+// object that a name holds, other than super's, and how it combines what it reads with its value.
 const getKeyUpdate = (node: ts.Expression, context: Context) => {
   if (context.heap === undefined || !ts.isBinaryExpression(node)) return undefined;
   const update = getPrimitiveUpdate(node.operatorToken.kind, context);
@@ -21308,13 +21307,14 @@ const getKeyUpdate = (node: ts.Expression, context: Context) => {
     update === undefined ||
     !ts.isElementAccessExpression(access) ||
     access.questionDotToken !== undefined ||
-    !ts.isIdentifier(skipCasts(access.expression)) ||
-    isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression)))
+    !ts.isIdentifier(skipCasts(access.expression))
   ) {
     return undefined;
   }
   const key = skipCasts(access.argumentExpression);
-  return ts.isIdentifier(key) && isObjectOperand(key, context)
+  const isNullish = isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression)));
+  return (ts.isIdentifier(key) && isObjectOperand(key, context)) ||
+    (ts.isCallExpression(key) && (isNullish || isObjectOperand(key, context)))
     ? { node, access, key, update }
     : undefined;
 };
@@ -22667,16 +22667,9 @@ export const translateStatements = (
   if (keyUpdate !== undefined && isPlainUpdateValue(keyUpdate.node.right, path, context)) {
     const site = keyUpdate.node;
     const object = translateExpression(keyUpdate.access.expression, path.scope, context);
-    const keyValue = translateExpression(keyUpdate.key, path.scope, context);
     const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
-    return runToPrimitive(
-      site,
-      keyValue,
-      "string",
-      path,
-      context,
-      statementFrame,
-      (read, first) => {
+    const update = (keyed: Path, keyValue: Expression) =>
+      runToPrimitive(site, keyValue, "string", keyed, context, statementFrame, (read, first) => {
         const readHeap = getHeap(read.scope, site, context);
         const readKey = useJavaScript("PropertyKey", [first], context);
         return ifThenElse(
@@ -22755,8 +22748,21 @@ export const translateStatements = (
           ),
           stop("tla-ts can't read this key of this object here"),
         );
-      },
-    );
+      });
+    // A base that is undefined or null throws the TypeError of ToObject before the key converts,
+    // once the assignment evaluates the key.
+    const guarded = (keyed: Path, keyValue: Expression) =>
+      ifThenElse(
+        apply("\\in", [object, set([getUndefined(context), identifier("Null")])]),
+        throwTypeError(keyed, site, context, statementFrame),
+        update(keyed, keyValue),
+      );
+    const key = keyUpdate.key;
+    return ts.isCallExpression(key) && !path.scope.results.has(key)
+      ? translateCallStatement(key, path, context, statementFrame, (after, value) =>
+          guarded(after, value ?? getUndefined(context)),
+        )
+      : guarded(path, translateExpression(key, path.scope, context));
   }
   // A write of an object to a typed array's numeric key converts it to a number or a BigInt, once
   // the assignment evaluates it, before it checks the index.

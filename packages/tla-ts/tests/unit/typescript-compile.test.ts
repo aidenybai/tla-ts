@@ -55558,4 +55558,55 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a compound assignment's key call and throws for an undefined or null base", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      function DummyError() {}
+      var first = "ok";
+      var nullBase = null;
+      var throwingProp = function () {
+        log += "prop|";
+        throw new DummyError();
+      };
+      var expr = function () {
+        log += "expr|";
+        return 1;
+      };
+      try {
+        nullBase[throwingProp()] /= expr();
+      } catch (error) {
+        first = error instanceof DummyError ? "dummy" : error.constructor.name;
+      }
+      var second = "ok";
+      var undefinedBase = undefined;
+      var keyObject = { toString: function () { log += "key|"; return "p"; } };
+      try {
+        undefinedBase[keyObject] /= expr();
+      } catch (error) {
+        second = error.constructor.name;
+      }
+      var base = { p: 6 };
+      var makeKey = function () {
+        log += "call|";
+        return keyObject;
+      };
+      base[makeKey()] -= 2;
+      var result = [first, second, base.p, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("dummy,TypeError,4,prop|call|key|key|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("dummy,TypeError,4,prop|key|call|key|key|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result dummy,TypeError,4,prop|call|key|key|",
+      );
+    });
+  });
 });
