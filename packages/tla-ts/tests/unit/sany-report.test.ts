@@ -1216,6 +1216,27 @@ Spec == Init /\\ [][Next]_x
     expect(report.text).toContain(`\n\n${error}\n`);
   });
 
+  it.each([
+    [
+      "RECURSIVE _ ^# _",
+      'Was expecting "==== or more Module body"\nEncountered "_" at line 3, column 16 and token "^#" ',
+    ],
+    [
+      "RECURSIVE _ ++",
+      'Was expecting "_"\nEncountered "Beginning of definition" at line 4, column 1 and token "++" ',
+    ],
+    [
+      "F(_ ^+ _) == 1",
+      'Was expecting "COMMA or )"\nEncountered "_" at line 3, column 8 and token "^+" ',
+    ],
+  ])("rejects the operator symbol declaration %j of the wrong fixity", (unit, error) => {
+    const report = getReport({
+      M: `---- MODULE M ----\nEXTENDS Naturals\n${unit}\nx == 1\n====\n`,
+    });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(`***Parse Error***\n${error}\n`);
+  });
+
   it("reports a file without a module as a parse error", () => {
     const report = getReport({ Headless: "Nothing here\n" });
     expect(report.isFailed).toBe(true);

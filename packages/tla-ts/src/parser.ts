@@ -2012,7 +2012,9 @@ const parse = (
     if (isOperatorDeclaration) {
       advance();
       const name = advance().text;
-      return { name, arity: accept("_") ? 2 : 1, location };
+      const isInfix = INFIX_OPERATORS.has(name);
+      if (isInfix) expect("_");
+      return { name, arity: isInfix ? 2 : 1, location };
     }
     const isPrefixOperator =
       peek().kind !== "String" &&
