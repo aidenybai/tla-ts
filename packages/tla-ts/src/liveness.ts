@@ -205,11 +205,13 @@ export const getLevel = (
       const operator = isLocallyResolved(expression)
         ? undefined
         : resolveGlobalOperator(expression.operator, environment);
+      // A recursive call binds a new argument each time, so a RECURSIVE operator counts every argument.
       if (
         isBound ||
         level === operatorLevel ||
         operator?.kind !== "Closure" ||
-        operator.params.length !== expression.args.length
+        operator.params.length !== expression.args.length ||
+        getDefinition(expression.operator, environment)?.isRecursive
       ) {
         return level;
       }

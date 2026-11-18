@@ -278,6 +278,19 @@ describe("liveness matches TLC", () => {
     expect([result.status, result.distinctStates]).toEqual(["success", 3]);
   });
 
+  it("checks a property that calls a recursive operator with a variable", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE s\nRECURSIVE RecOp(_)\nRecOp(n) == IF n = 0 THEN TRUE ELSE RecOp(n - 1)\nInit == s = 0\nNext == s' = (s + 1) % 3\nProp == []RecOp(s)\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      4,
+      3,
+    ]);
+  });
+
   it("checks a property that calls a recursive LET operator", async () => {
     const result = await check({
       source:
