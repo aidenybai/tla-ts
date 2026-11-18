@@ -52796,4 +52796,82 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the object arguments of a buffer's slice, resize, grow, and transfer once it checks the buffer", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = [];
+      var buffer = new ArrayBuffer(8, { maxByteLength: 16 });
+      var start = { valueOf() { log.push("start"); return 2; } };
+      var end = { valueOf() { log.push("end"); return 6; } };
+      var sliced = buffer.slice(start, end);
+      buffer.resize({ valueOf() { log.push("resize"); return 12; } });
+      var thrown = "none";
+      try {
+        buffer.resize({ valueOf() { log.push("v"); return {}; }, toString() { log.push("s"); return {}; } });
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      var fixed = new ArrayBuffer(4);
+      var notResizable = "none";
+      try {
+        fixed.resize({ valueOf() { log.push("never"); return 1; } });
+      } catch (error) {
+        notResizable = error instanceof TypeError ? "TypeError" : "other";
+      }
+      var moved = buffer.transfer({ valueOf() { log.push("transfer"); return 3; } });
+      var shared = new SharedArrayBuffer(2, { maxByteLength: 8 });
+      shared.grow({ valueOf() { log.push("grow"); return 4; } });
+      var result = [sliced.byteLength, moved.byteLength, buffer.detached, shared.byteLength, thrown, notResizable, log.join()].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("4,3,true,4,TypeError,TypeError,start,end,resize,v,s,transfer,grow");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource(
+        "4,3,true,4,TypeError,TypeError,start,end,resize,v,s,transfer,never",
+      );
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 4,3,true,4,TypeError,TypeError,start,end,resize,v,s,transfer,grow",
+      );
+    });
+  });
+
+  describe("throws what converting the object maxByteLength of new of a buffer throws", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = [];
+      var options = {
+        maxByteLength: {
+          toString: function () { log.push("toString"); return {}; },
+          valueOf: function () { log.push("valueOf"); return {}; },
+        },
+      };
+      var thrown = "none";
+      try {
+        new ArrayBuffer(0, options);
+      } catch (error) {
+        thrown = error instanceof TypeError ? "TypeError" : "other";
+      }
+      var plain = new ArrayBuffer(2, { maxByteLength: 4 });
+      var result = [thrown, log.join(), plain.maxByteLength].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("TypeError,valueOf,toString,4");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("TypeError,toString,valueOf,4");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result TypeError,valueOf,toString,4",
+      );
+    });
+  });
 });

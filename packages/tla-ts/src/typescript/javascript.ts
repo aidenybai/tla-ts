@@ -7031,6 +7031,15 @@ TypedArraySubarray(heap, ref, arguments, length, bufferPrototype, constructors) 
             > Len(buffer.bytes) -> Thrown(heap, "RangeError")
        [] OTHER -> Returned(viewing, Allocated(viewing))
 
+\\* Whether a buffer's method throws the TypeError of its checks before it converts its arguments:
+\\* of a receiver that isn't a buffer of its kind, of a resize or a grow of a buffer that can't
+\\* resize, or of an ArrayBuffer's slice of a detached buffer.
+BufferThrowsBefore(heap, ref, method, isShared) ==
+  \\/ ~IsBuffer(heap, ref)
+  \\/ heap.objects[ref[Ref]].isShared # isShared
+  \\/ method \\in {"resize", "grow"} /\\ heap.objects[ref[Ref]].maxLength = Undefined
+  \\/ method = "slice" /\\ ~isShared /\\ heap.objects[ref[Ref]].isDetached
+
 \\* Whether a typed array and the buffer it views are as they were before a conversion.
 TypedArrayKept(before, after, ref) ==
   LET view == before.objects[ref[Ref]]

@@ -3890,7 +3890,7 @@ const translateCallStatementBody = (
       translateExpression(value, path.scope, context),
     );
     const typedArguments = tuple(typedValues);
-    const getOperation = (heap: Expression) =>
+    const getOperation = (heap: Expression, args = values) =>
       viewCall.owner === "TypedArray"
         ? useJavaScript(
             "TypedArrayMethod",
@@ -3908,20 +3908,20 @@ const translateCallStatementBody = (
           ? useJavaScript("WeakRefDeref", [heap, ref], context)
           : viewCall.owner === "FinalizationRegistry"
             ? method === "register"
-              ? useJavaScript("FinalizationRegistryRegister", [heap, ref, ...values], context)
-              : useJavaScript("FinalizationRegistryUnregister", [heap, ref, values[0]], context)
+              ? useJavaScript("FinalizationRegistryRegister", [heap, ref, ...args], context)
+              : useJavaScript("FinalizationRegistryUnregister", [heap, ref, args[0]], context)
             : viewCall.owner === "DataView"
               ? method.startsWith("get")
-                ? useJavaScript("DataViewGet", [heap, ref, type, values[0], values[1]], context)
-                : useJavaScript("DataViewSet", [heap, ref, type, ...values], context)
+                ? useJavaScript("DataViewGet", [heap, ref, type, args[0], args[1]], context)
+                : useJavaScript("DataViewSet", [heap, ref, type, ...args], context)
               : method === "slice"
                 ? useJavaScript(
                     "BufferSlice",
                     [
                       heap,
                       ref,
-                      values[0],
-                      values[1],
+                      args[0],
+                      args[1],
                       isShared,
                       translateBuiltInValue(
                         viewCall.owner === "SharedArrayBuffer"
@@ -3934,7 +3934,7 @@ const translateCallStatementBody = (
                     context,
                   )
                 : method === "resize" || method === "grow"
-                  ? useJavaScript("Resize", [heap, ref, values[0], isShared], context)
+                  ? useJavaScript("Resize", [heap, ref, args[0], isShared], context)
                   : viewCall.owner === "Atomics"
                     ? useJavaScript(
                         "AtomicsCall",
@@ -3955,7 +3955,7 @@ const translateCallStatementBody = (
                         [
                           heap,
                           ref,
-                          values[0],
+                          args[0],
                           boolean(method === "transfer"),
                           translateBuiltInValue("ArrayBuffer.prototype", expression, context),
                         ],
@@ -4253,6 +4253,49 @@ const translateCallStatementBody = (
           ),
       );
     };
+    // A buffer's slice, resize, grow, transfer, and transferToFixedLength check the buffer, then
+    // convert their arguments in order, and run as they would with the primitives where the
+    // conversions left the buffer as it was.
+    const convertedBufferValues = getConvertedBufferValues(expression, context);
+    const runConvertedBuffer = (converted: readonly ts.Expression[]) =>
+      ifThenElse(
+        useJavaScript("BufferThrowsBefore", [heap, ref, string(method), isShared], context),
+        throwTypeError(path, expression, context, frame),
+        runConversion(
+          expression,
+          {
+            operands: converted,
+            hints: converted.map(() => "number" as const),
+            combine: (primitives) => tuple([...primitives]),
+          },
+          path,
+          context,
+          frame,
+          (after, primitives) => {
+            const afterHeap = getHeap(after.scope, expression, context);
+            const args = [0, 1, 2].map((position) =>
+              position < converted.length
+                ? index(primitives, [number(position + 1)])
+                : getUndefined(context),
+            );
+            return ifThenElse(
+              apply("=", [
+                index(field(afterHeap, "objects"), [index(ref, [identifier("Ref")])]),
+                index(field(heap, "objects"), [index(ref, [identifier("Ref")])]),
+              ]),
+              runChange(after, getOperation(afterHeap, args)),
+              leaf(
+                apply("Assert", [
+                  boolean(false),
+                  string(
+                    "tla-ts can't follow a buffer method whose argument's conversion changed the buffer",
+                  ),
+                ]),
+              ),
+            );
+          },
+        ),
+      );
     // fill, slice, copyWithin, at, and join convert their arguments in order once they read the
     // typed array's length, and run as they would with the primitives where the conversions left
     // the typed array and its buffer as they were.
@@ -4329,22 +4372,28 @@ const translateCallStatementBody = (
               ? runConvertedSearch(convertedSearchValues)
               : convertedTypedValues !== undefined
                 ? runConvertedTyped(convertedTypedValues)
-                : viewCall.owner === "TypedArray" &&
-                    method === "set" &&
-                    getThrowingGetters(expression, context).length > 0
-                  ? throwFirstGetter(
-                      expression,
-                      apply("#", [setGetter, getUndefined(context)]),
-                      setGetter,
-                      typedValues[0] ?? getUndefined(context),
-                      withHeap(
-                        useJavaScript("TypedArraySetBefore", [heap, ref, typedArguments], context),
-                      ),
-                      context,
-                      frame,
-                      runOperation(),
-                    )
-                  : runOperation();
+                : convertedBufferValues !== undefined
+                  ? runConvertedBuffer(convertedBufferValues)
+                  : viewCall.owner === "TypedArray" &&
+                      method === "set" &&
+                      getThrowingGetters(expression, context).length > 0
+                    ? throwFirstGetter(
+                        expression,
+                        apply("#", [setGetter, getUndefined(context)]),
+                        setGetter,
+                        typedValues[0] ?? getUndefined(context),
+                        withHeap(
+                          useJavaScript(
+                            "TypedArraySetBefore",
+                            [heap, ref, typedArguments],
+                            context,
+                          ),
+                        ),
+                        context,
+                        frame,
+                        runOperation(),
+                      )
+                    : runOperation();
     return bindOnce(
       path,
       receiver,
@@ -14538,9 +14587,28 @@ const isLengthConvertingBuffer = (node: ts.Expression, context: Context) => {
     (buffers[0] === "ArrayBuffer" || buffers[0] === "SharedArrayBuffer") &&
     construction?.newTarget === construction?.callee &&
     length !== undefined &&
-    !ts.isSpreadElement(length) &&
-    !isPrimitiveIndex(getCast(length), context)
+    !(construction?.arguments ?? []).some(ts.isSpreadElement) &&
+    (!isPrimitiveIndex(getCast(length), context) || isMaximumConverted(node, context))
   );
+};
+
+// new of a buffer whose options' maxByteLength may be an object, which it converts with ToIndex
+// once it converts its length.
+const isMaximumConverted = (node: ts.Expression, context: Context) => {
+  const options = getBufferConstruction(node, context)?.arguments.at(1);
+  if (options === undefined) return false;
+  const types = [options, skipCasts(options)].map((inner) =>
+    context.checker.getTypeAtLocation(inner),
+  );
+  return types.some((type) => {
+    const maximum = type.getProperty("maxByteLength");
+    const maximumType = maximum && context.checker.getTypeOfSymbol(maximum);
+    return (
+      (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+      (maximumType !== undefined &&
+        (maximumType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object)) !== 0)
+    );
+  });
 };
 
 // A call of a Date's setter with an object, which it converts to a number, running the object's
@@ -14623,6 +14691,19 @@ const getConvertedSearchValues = (node: ts.Node, context: Context) => {
     !call.values.some(ts.isSpreadElement) &&
     (isObjectOperand(call.values[1], context) || isAnyOperand(call.values[1], context))
     ? call.values.slice(1)
+    : undefined;
+};
+
+// The arguments of a buffer's slice, resize, grow, transfer, or transferToFixedLength where one
+// is an object or of type any, which the method converts in turn once it checks the buffer.
+const getConvertedBufferValues = (node: ts.Node, context: Context) => {
+  const call = getViewCall(node, context);
+  return (call?.owner === "ArrayBuffer" || call?.owner === "SharedArrayBuffer") &&
+    ["slice", "resize", "grow", "transfer", "transferToFixedLength"].includes(call.method) &&
+    !call.values.some(ts.isSpreadElement) &&
+    call.values.length <= (call.method === "slice" ? 2 : 1) &&
+    call.values.some((value) => isObjectOperand(value, context) || isAnyOperand(value, context))
+    ? call.values
     : undefined;
 };
 
@@ -14866,9 +14947,36 @@ const translateNewBufferStatement = (
         !isConverted
           ? make(current, madeArguments, finish)
           : isLengthConvertingBuffer(node, context)
-            ? toIndex(current, madeArguments[0], (after, length) =>
-                make(after, [length, ...madeArguments.slice(1)], finish),
-              )
+            ? toIndex(current, madeArguments[0], (after, length) => {
+                const options = madeArguments[1] ?? getUndefined(context);
+                const afterHeap = getHeap(after.scope, node, context);
+                const maximum = useJavaScript(
+                  "Get",
+                  [afterHeap, options, string("maxByteLength")],
+                  context,
+                );
+                // A maxByteLength that converts through its methods stops once it converts, but
+                // throws what the conversion throws.
+                return isMaximumConverted(node, context)
+                  ? ifThenElse(
+                      apply("/\\", [
+                        useJavaScript("IsObjectIn", [afterHeap, options], context),
+                        useJavaScript("IsObjectIn", [afterHeap, maximum], context),
+                      ]),
+                      runToPrimitive(node, maximum, "number", after, context, frame, () =>
+                        leaf(
+                          apply("Assert", [
+                            boolean(false),
+                            string(
+                              "tla-ts can't make a buffer whose maxByteLength converts through its methods",
+                            ),
+                          ]),
+                        ),
+                      ),
+                      make(after, [length, ...madeArguments.slice(1)], finish),
+                    )
+                  : make(after, [length, ...madeArguments.slice(1)], finish);
+              })
             : ifThenElse(
                 useJavaScript(
                   "IsBuffer",
@@ -15927,7 +16035,8 @@ const getEffects = (
     getConvertedAtomicsValues(node, context) !== undefined ||
     getConvertedSubarrayValues(node, context) !== undefined ||
     getConvertedSearchValues(node, context) !== undefined ||
-    getConvertedTypedValues(node, context) !== undefined
+    getConvertedTypedValues(node, context) !== undefined ||
+    getConvertedBufferValues(node, context) !== undefined
       ? getConversionFunctions(node, context)
       : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
         ? getKeyedConversionFunctions(node, context)
