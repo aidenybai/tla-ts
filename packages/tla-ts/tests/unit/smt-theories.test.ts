@@ -364,3 +364,22 @@ describe("regular expressions", () => {
     ]);
   });
 });
+
+describe("algebraic datatypes", () => {
+  it("rewrites each term that it enumerates for a fresh value of a mutually recursive datatype", () => {
+    expect(
+      run([
+        "(declare-datatypes ((A 0) (B 0)) (((a0) (a1 (ab B))) ((b0) (b1 (ba A)))))",
+        "(declare-const x B)",
+        "(assert (not (= x b0)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 132)",
+      ["(", "  (define-fun x () B", "    (b1 a0))", ")"].join("\n"),
+    ]);
+  });
+});

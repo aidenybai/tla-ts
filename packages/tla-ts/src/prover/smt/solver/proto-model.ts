@@ -1033,6 +1033,7 @@ export class ProtoModel {
     this.arithValues.reset();
     this.bvValues.reset();
     this.datatypeValues.reset();
+    for (const enumeration of this.freshEnumerations.values()) enumeration.release();
     this.enumeratedTerms.reset();
     for (const entry of this.constInterps) {
       this.manager.decDeclRef(entry[0]);
