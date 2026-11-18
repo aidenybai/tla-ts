@@ -55558,4 +55558,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("carries a time zone's table only into a script that reaches Temporal", () => {
+    const getModule = (zone: string) =>
+      printModule(
+        compile(`
+          const zone = "Europe/London";
+          const label = ${zone}.toLowerCase();
+          if (label !== "europe/london") throw new Error("label " + label);
+        `).source,
+      );
+
+    it("leaves the table out of a script without Temporal", () => {
+      const module = getModule("zone");
+      expect(module).toContain("UsedTimeZones == <<>>");
+      expect(module).not.toContain('key |-> "europe/london"');
+    });
+
+    it("carries the table into a script with Temporal", () => {
+      expect(getModule("new Temporal.ZonedDateTime(0n, zone).timeZoneId")).toContain(
+        'key |-> "europe/london"',
+      );
+    });
+  });
 });
