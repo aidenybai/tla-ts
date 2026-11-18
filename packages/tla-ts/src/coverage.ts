@@ -733,7 +733,8 @@ export const enterFrames = (
 ) => {
   const root = node === -1 ? -1 : coverage.roots[node];
   let entered = 0;
-  for (const frame of frames) {
+  for (let index = 0; index < frames.length; index++) {
+    const frame = frames[index];
     if (!frameSubstitutions.has(frame) || findFrame(coverage, frame, root) !== -1) continue;
     coverage.frames.push(frame);
     coverage.frameRoots.push(root);

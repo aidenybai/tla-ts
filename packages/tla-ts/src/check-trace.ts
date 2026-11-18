@@ -152,7 +152,6 @@ export const createTraceBuilder = (context: TraceContext) => {
         ? runtime.runWithNewRandom(() => captureOutput(context.getInitialStates).lines)
         : [];
     const last = steps.length - 1;
-    const isRebuildFailureKept = traceOptions.isRebuildFailureKept && known === 2;
     const findPositionAction = (position: number, isDrawnOn = false) =>
       position === 0 || steps[position].action === "Stuttering"
         ? { result: { action: undefined }, lines: [] }
@@ -168,7 +167,7 @@ export const createTraceBuilder = (context: TraceContext) => {
                 ),
               };
             } catch (error) {
-              const isKept = isRebuildFailureKept && position === last;
+              const isKept = traceOptions.isRebuildFailureKept && known === 2 && position === last;
               if (!isKept || !(error instanceof TlaEvaluationError)) throw error;
               return { error };
             }
