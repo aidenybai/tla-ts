@@ -1,13 +1,6 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
-import {
-  allocate,
-  type Frame,
-  isMaybeNullish,
-  type Path,
-  throwTypeError,
-  translateJoined,
-} from "./actions";
+import { allocate, type Frame, type Path, throwTypeError, translateJoined } from "./actions";
 import {
   type Context,
   findNodes,
@@ -288,7 +281,7 @@ const isInertObject = (node: ts.Expression) =>
     ));
 
 // An object that an element access reads, or that a plain assignment writes, as its key, inside any
-// casts, which ToPropertyKey converts once the access has its object, which can't be undefined or
+// casts, which ToPropertyKey converts once the access has its object, where it isn't undefined or
 // null, and, for a write, the value it writes.
 export const isConvertedElementKey = (node: ts.Node, context: Context): node is ts.Expression => {
   if (!ts.isExpression(node) || skipCasts(node) !== node) return false;
@@ -305,8 +298,6 @@ export const isConvertedElementKey = (node: ts.Node, context: Context): node is 
     access.questionDotToken !== undefined ||
     // super reads the home object's prototype before the key converts.
     access.expression.kind === ts.SyntaxKind.SuperKeyword ||
-    // A base that may be undefined or null throws its TypeError before the key converts.
-    isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression))) ||
     !isObjectOperand(node, context) ||
     !isInertObject(node)
   ) {
@@ -572,6 +563,16 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
         true,
       );
     }
+    // BigInt converts its value to a primitive with the number hint, and then to a BigInt.
+    if (node.expression.text === "BigInt") {
+      return make(
+        [argument],
+        "number",
+        (primitives) => useJavaScript("BigIntOfPrimitive", [primitives[0]], context),
+        false,
+        true,
+      );
+    }
     // isNaN and isFinite convert their value to a number.
     if (
       (node.expression.text === "isNaN" || node.expression.text === "isFinite") &&
@@ -807,11 +808,13 @@ export const getKeyedConversionFunctions = (node: ts.Node, context: Context) =>
 
 // The Symbol.toPrimitive methods that tla-ts calls, which can't see the hint that it doesn't pass.
 // A call, such as a regexp's protocol, may convert many values, so it runs only the methods that
-// read neither their hint nor their arguments, as each one's body would copy into each.
+// read neither their hint nor their arguments, as each one's body would copy into each, but for a
+// call that converts its argument once.
 const getExoticMethods = (node: ts.Node, context: Context) =>
   getMethods(node, "@@toPrimitive", context).filter(
     (method) =>
       !ts.isCallExpression(node) ||
+      getConversion(node, context) !== undefined ||
       (getParameters(method).length === 0 &&
         findNodes(method, ts.isIdentifier).every((name) => name.text !== "arguments")),
   );
