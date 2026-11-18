@@ -902,11 +902,10 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
             // TLC has no such LET, so the call stack it prints has no position for it.
             location: { line: mapped.body.location.line, column: mapped.body.location.column },
           };
-    const frame = instantiation.frame;
-    // TLC's call stack holds the SubstInNode an instance puts around each definition it copies.
-    if (frame)
-      substitutionFrames.set(body, [frame, ...(substitutionFrames.get(definition.body) ?? [])]);
-    return withInstanceParams({ ...mapped, body }, instantiation.params);
+    const copied = withInstanceParams({ ...mapped, body }, instantiation.params);
+    const frames = substitutionFrames.get(definition.body);
+    if (frames && copied.kind === "Operator") substitutionFrames.set(copied.body, frames);
+    return copied;
   });
 };
 
@@ -930,11 +929,26 @@ export const createInstantiation = (instantiation: Instantiation) => {
   const rewrite = createRewrite("Normal");
   createRewrite("Enabled");
   createRewrite("Primed");
+  // TLC's call stack holds the SubstInNode an instance puts around a definition where the
+  // instance's name reaches it, not where the instanced module calls it, and around a function's
+  // constructor rather than the body each application evaluates.
+  const getEntry = (key: string, copy: string) => {
+    const frame = instantiation.frame;
+    const definition = instantiation.getDefinition(copy);
+    if (!frame || definition?.kind !== "Operator") return copy;
+    return instantiation.addDefinition(key, definition.name, () => ({
+      ...definition,
+      body: withSubstitutionFrames(definition.body, [frame]),
+    }));
+  };
   return {
-    getKey: (key: string) => getCopy(rewrite, key) ?? key,
+    getKey: (key: string) => {
+      const copy = getCopy(rewrite, key);
+      return copy === undefined ? key : getEntry(key, copy);
+    },
     getQualifiedKey: (key: string) => {
       const copy = getCopy(rewrite, key);
-      if (copy !== undefined) return copy;
+      if (copy !== undefined) return getEntry(key, copy);
       const definition = instantiation.getDefinition(key);
       if (!definition) return key;
       return instantiation.addDefinition(key, definition.name, () =>

@@ -1747,6 +1747,58 @@ describe("evaluation errors match TLC", () => {
 
   it.each([
     [
+      "L == INSTANCE Inner WITH c <- TRUE",
+      "L!G(1)",
+      [
+        "M 6:9-6:19",
+        "M 6:14-6:19",
+        "M 4:1-4:34",
+        "Inner 5:9-5:16",
+        "Inner 5:9-5:12",
+        "Inner 4:9-4:13",
+      ],
+    ],
+    [
+      "L(p) == INSTANCE Inner WITH c <- p",
+      "L(TRUE)!h[2]",
+      ["M 6:9-6:25", "M 6:14-6:25", "Inner 6:20-6:24"],
+    ],
+    [
+      "L == INSTANCE Inner WITH c <- TRUE",
+      "L!H",
+      [
+        "M 6:9-6:16",
+        "M 6:14-6:16",
+        "M 4:1-4:34",
+        "Inner 7:6-7:13",
+        "Inner 7:6-7:9",
+        "Inner 6:20-6:24",
+      ],
+    ],
+  ])(
+    "records the substitutions of %s where its name reaches %s, not in the calls and functions it reaches, like TLC",
+    async (instance, reference, expected) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${instance}\nInit == x = 0\nNext == x' = ${reference}\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) =>
+          name === "Inner"
+            ? "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nF(a) == a + c\nG(a) == F(a) + 1\nh[z \\in {1, 2}] == z + c\nH == h[1] + 1\n===="
+            : undefined,
+      });
+      const ranges = result.failure?.callStack?.map((expression) => {
+        const range = expression.location.range;
+        return (
+          range &&
+          `${range.module} ${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`
+        );
+      });
+      expect(ranges?.filter((range, index) => range !== ranges[index - 1])).toEqual(expected);
+    },
+  );
+
+  it.each([
+    [
       'Assert(FALSE, "bound")',
       'The first argument of Assert evaluated to FALSE; the second argument was:\n"bound"',
     ],
