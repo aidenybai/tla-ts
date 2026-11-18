@@ -135,12 +135,15 @@ export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
   apply: (argument: Value) => Value;
-  costModel?: CostModel;
   boundTupleLengths?: (number | undefined)[];
   source?: LazyFunctionSource;
   functionClass?: FunctionClass;
   enumerated?: FunctionValue;
   isFingerprinted?: boolean;
+}
+
+interface CountedLazyFunctionValue extends LazyFunctionValue {
+  costModel: CostModel;
 }
 
 interface LazyFunctionCopy extends LazyFunctionValue {
@@ -2347,6 +2350,9 @@ export const isUpdatedElementOf = (element: Value, member: Value, set: Value): b
   );
 };
 
+const isCountedLazyFunction = (value: LazyFunctionValue): value is CountedLazyFunctionValue =>
+  "costModel" in value;
+
 const isLazyFunctionCopy = (value: LazyFunctionValue): value is LazyFunctionCopy =>
   "original" in value;
 
@@ -2378,7 +2384,9 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
         ? domain.map((key) => getCopiedValue(value, key))
         : domain.map((key) => value.apply(key)),
     );
-    if (value.costModel) value.costModel.secondary[value.costModel.node] += domain.length;
+    if (isCountedLazyFunction(value)) {
+      value.costModel.secondary[value.costModel.node] += domain.length;
+    }
     return value.enumerated;
   }
   throw new TlaEvaluationError(`Expected a function but found ${formatValue(value)}`);

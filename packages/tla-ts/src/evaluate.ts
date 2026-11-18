@@ -790,10 +790,9 @@ const createLazyFunction = (
     domain,
     source,
     boundTupleLengths,
-    costModel,
     apply: (argument) => compute(argument, self),
   };
-  return self;
+  return costModel ? Object.assign(self, { costModel }) : self;
 };
 
 const getBoundTupleLengths = (bounds: Bound[]) =>
