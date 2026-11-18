@@ -243,6 +243,23 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       ]),
     ).toEqual(["sat", "unsat", "(n1 n2)"]);
   });
+
+  it("internalizes the assertions of the smt tactic once when it assumes the names", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (! p :named a1))",
+        "(assert (! (not p) :named a2))",
+        "(assert (! (or p q) :named a3))",
+        "(check-sat-using smt)",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(a1 a2)", "(:rlimit 140)"]);
+  });
+
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {
