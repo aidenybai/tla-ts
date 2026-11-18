@@ -217,6 +217,48 @@ describe("the setup of the smt kernel", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 325)"]);
   });
+
+  it("keeps nnf_cnf and propagates equalities in lp again when a set-option rereads the parameters", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (and (<= (+ (* 2 x) y) 7) (>= x 1) (or (>= y 2) (>= z 5)) (or (<= y 0) (<= z 1)) (< (+ x z) 4)))",
+        "(push 1)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(set-option :pp.max_depth 10)",
+        "(assert (> y -5))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 209)", "sat", "(:rlimit 261)"]);
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x0 Int)",
+        "(declare-const x1 Int)",
+        "(declare-const x2 Int)",
+        "(assert (< (* -1 x2) 13))",
+        "(assert (<= x0 13))",
+        "(assert (>= (+ (* -9 x1) (* -9 x0)) 14))",
+        "(assert (or (> (+ (* 6 x1) (* 7 x0)) -5) (= (* 4 x0) -1)))",
+        "(assert (or (>= (+ (* -7 x2) (* -1 x1)) -6) (> (+ (* -8 x0) x1) 6)))",
+        "(assert (or (> x0 12) (<= (* -3 x1) -1)))",
+        "(assert (>= (* -2 x1) -4))",
+        "(assert (< (* 6 x2) 19))",
+        "(push 1)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(set-option :pp.max_depth 10)",
+        "(assert (or (> (+ (* -5 x2) (* 3 x0)) -17) (>= (* -5 x2) 6)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 432)", "sat", "(:rlimit 561)"]);
+  });
 });
 
 describe("regular expressions", () => {

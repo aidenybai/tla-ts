@@ -75,7 +75,9 @@ export class LpSettings {
 
   constructor(readonly isCanceled: (cost?: number) => boolean) {}
 
+  // As in Z3, rereading the parameters sets arith.propagate_eqs again over the setup's choice.
   updateParams(hammerPeriod: number) {
+    this.isPropagatingEqs = true;
     this.intFindCubePeriod = hammerPeriod;
     this.intGomoryCutPeriod = hammerPeriod;
     this.hnfCutPeriod = hammerPeriod;
