@@ -184,7 +184,7 @@ export const getParamArities = (definition: Definition) =>
 
 const isInstantiated = (definition: Definition) => definition.name.includes("!");
 
-const getFunctionArity = (definition: Definition) =>
+export const getFunctionArity = (definition: Definition) =>
   definition.kind === "Function" && !isInstantiated(definition)
     ? definition.bounds.length
     : undefined;
@@ -1094,7 +1094,13 @@ const resolveDefinitions = (
       parent: current,
       functionArity: getFunctionArity(definition),
     };
-    if (isInstantiated(definition)) return { ...local, params: getParamArities(definition) };
+    if (isInstantiated(definition)) {
+      return {
+        ...local,
+        params: getParamArities(definition),
+        functionArity: lookupLocal(current, definition.name)?.functionArity,
+      };
+    }
     const isInstanced = instances.some((instance) => instance.location === definition.location);
     const isGenerated = unit.isGenerated || definition.isLocal || isKey(definition.name);
     const inner = isInstanced
@@ -1596,11 +1602,17 @@ const resolveExpression = (
       });
       return;
     case "FunctionApplication": {
-      resolveExpression(expression.function, scope, unit);
-      const name = expression.function.kind === "Identifier" ? expression.function.name : undefined;
+      const applied = expression.function;
+      const name =
+        applied.kind === "Identifier"
+          ? applied.name
+          : applied.kind === "Apply"
+            ? applied.operator
+            : undefined;
       const arity = name === undefined ? undefined : findBinding(name, scope, unit)?.functionArity;
+      resolveExpression(applied, scope, unit);
       const count = expression.args.length;
-      if (arity === undefined || count < 2 || arity === count) {
+      if (arity === undefined || count < 2 || arity === count || isEmptyExpression(applied)) {
         resolveAll(expression.args);
         return;
       }

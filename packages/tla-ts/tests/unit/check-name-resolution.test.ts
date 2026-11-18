@@ -1425,6 +1425,34 @@ describe("name resolution matches SANY", () => {
     expect(result.status).toBe("success");
   });
 
+  it("checks the arguments of a function from EXTENDS or an instance without substitutions like SANY", async () => {
+    const modules = new Map([
+      ["Base", "---- MODULE Base ----\nf[n \\in {1}] == n\n===="],
+      ["Param", "---- MODULE Param ----\nEXTENDS Base\nCONSTANT c\ng[n \\in {c}] == n\n===="],
+    ]);
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Base\nI == INSTANCE Base\nJ(p) == INSTANCE Base\nK == INSTANCE Param WITH c <- 1\nA == f[1, 2] /\\ I!f[1, 2] /\\ J(0)!f[1, 2]\nB == K!f[1, 2] /\\ K!g[1, 2]\nC == LET L == INSTANCE Base IN L!f[1, 2]\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) => modules.get(name),
+      }),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          ["line 6, col 6 to line 6, col 12", "f"],
+          ["line 6, col 17 to line 6, col 25", "I!f"],
+          ["line 6, col 30 to line 6, col 41", "J!f"],
+          ["line 8, col 32 to line 8, col 40", "L!f"],
+        ].map((error) => ({
+          location: `${error[0]} of module M`,
+          message: `Function '${error[1]}' is defined with 1 parameters, but is applied to 2 arguments.`,
+        })),
+        warnings: [],
+      },
+    });
+  });
+
   it.each([
     [
       "a definition defined twice",

@@ -51,6 +51,7 @@ import { overrideDefinitions, type JavaOverride } from "./java-overrides";
 import { extractModule } from "./parser";
 import {
   getArity,
+  getFunctionArity,
   getParamArities,
   isBefore,
   isTheoremDefinition,
@@ -597,6 +598,8 @@ export const createEnvironment = (
                   parameterized.get(entry[1].key) === true
                     ? instance.location.range
                     : entry[1].range,
+                functionArity:
+                  parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,
               },
             ];
           }
@@ -611,6 +614,7 @@ export const createEnvironment = (
                 ...entry[1].params,
               ],
               kind: entry[1].kind,
+              functionArity: declarations.length > 0 ? undefined : entry[1].functionArity,
             },
           ];
         }),
@@ -872,6 +876,7 @@ export const createEnvironment = (
       params: getParamArities(definition),
       kind: isTheoremDefinition(parsed, definition) ? "Theorem" : "Definition",
       range: definition.location.range,
+      functionArity: getFunctionArity(definition),
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const getKey = (definition: Definition) =>
