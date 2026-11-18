@@ -978,6 +978,30 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ).toEqual(["sat", "(:rlimit 558)"]);
   });
 
+  it("eliminates unconstrained terms in elim-uncnstr without the definitions of a model", () => {
+    expect(
+      run([
+        "(set-option :produce-models false)",
+        "(declare-datatypes ((C 0)) (((k0) (k1) (k2))))",
+        "(declare-const x C)",
+        "(declare-const p Bool)",
+        "(assert (or p (= x k0)))",
+        "(assert (not p))",
+        "(apply elim-uncnstr)",
+      ]),
+    ).toEqual(["(goals\n(goal\n  (or p k!0)\n  (not p)\n  :precision precise :depth 1)\n)"]);
+    expect(
+      run([
+        "(set-option :produce-models false)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (<= (+ x (* 2 y)) 3))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 91)"]);
+  });
+
   it("walks each formula that is not a constraint with the pb2bv rewriter in pb2bv", () => {
     expect(
       run([
