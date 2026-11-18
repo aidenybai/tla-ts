@@ -179,6 +179,7 @@ import {
   getConversionFunctions,
   getKeyedConversionFunctions,
   isConvertedPropertyKey,
+  isConvertedSymbolArgument,
   isAnyOperand,
   isCompoundAssignment,
   isObjectOperand,
@@ -20088,7 +20089,9 @@ const findLeadingCall = (
   if ((ts.isExpression(node) || ts.isSpreadElement(node)) && path.scope.results.has(node)) {
     return none;
   }
-  if (isConvertedPropertyKey(node, context)) return { ...blocked, conversion: node };
+  if (isConvertedPropertyKey(node, context) || isConvertedSymbolArgument(node, context)) {
+    return { ...blocked, conversion: node };
+  }
   // An object that spreads a proxy runs its traps.
   if (ts.isObjectLiteralExpression(node) && isProxyOperation(node, context)) {
     return { call: undefined, isBlocked: true, read: node };

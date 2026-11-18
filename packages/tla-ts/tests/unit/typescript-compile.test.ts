@@ -52960,4 +52960,40 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the object that Symbol and Symbol.for take to a string", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var calls = [];
+      var symbol = Symbol.for({ toString: function () { calls.push("for"); return "test262"; } });
+      var same = Symbol.for("test262");
+      var described = Symbol({ valueOf: function () { return 1; }, toString: function () { calls.push("d"); return 7; } });
+      var thrown = "none";
+      try {
+        var unused = Symbol.for({ toString: function () { throw new RangeError("x"); } });
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var symbolThrown = "none";
+      try {
+        var other = Symbol.for({ toString: function () { return Symbol(); } });
+      } catch (error) {
+        symbolThrown = error.constructor.name;
+      }
+      var result = [symbol.description, symbol === same, described.description, calls.join("|"), thrown, symbolThrown].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("test262,true,7,for|d,RangeError,TypeError");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("test262,true,7,d|for,RangeError,TypeError");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result test262,true,7,for|d,RangeError,TypeError",
+      );
+    });
+  });
 });

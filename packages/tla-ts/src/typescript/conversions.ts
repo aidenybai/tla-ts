@@ -207,6 +207,43 @@ const isConvertedPrimitive = (node: ts.Expression, context: Context) =>
     context,
   ) && !hasFlags(node, ts.TypeFlags.NumberLike, context);
 
+// An object that Symbol takes for its description or Symbol.for for its key, which it converts to
+// a string first: a name's, or one that a literal of methods and literals makes, inside any casts.
+export const isConvertedSymbolArgument = (
+  node: ts.Node,
+  context: Context,
+): node is ts.Expression => {
+  if (!ts.isExpression(node) || skipCasts(node) !== node) return false;
+  const argument = ts.findAncestor(
+    node,
+    (ancestor) => !(ts.isExpression(ancestor.parent) && skipCasts(ancestor.parent) === node),
+  );
+  const call = argument?.parent;
+  return (
+    context.heap !== undefined &&
+    call !== undefined &&
+    ts.isCallExpression(call) &&
+    call.arguments.length === 1 &&
+    call.arguments[0] === argument &&
+    (getBuiltIn(call.expression, context) === "Symbol" ||
+      (ts.isPropertyAccessExpression(call.expression) &&
+        call.expression.name.text === "for" &&
+        getBuiltIn(call.expression.expression, context) === "Symbol")) &&
+    (isObjectOperand(node, context) || isAnyOperand(node, context)) &&
+    (ts.isIdentifier(node) ||
+      (ts.isObjectLiteralExpression(node) &&
+        node.properties.every(
+          (property) =>
+            (ts.isMethodDeclaration(property) && !ts.isComputedPropertyName(property.name)) ||
+            (ts.isPropertyAssignment(property) &&
+              !ts.isComputedPropertyName(property.name) &&
+              (ts.isFunctionExpression(property.initializer) ||
+                ts.isArrowFunction(property.initializer) ||
+                ts.isLiteralExpression(property.initializer))),
+        )))
+  );
+};
+
 // An object that a call converts to a property key, which runs its toString and valueOf: a name's,
 // or a wrapper's that new makes, as the key
 // of Object.defineProperty, Object.getOwnPropertyDescriptor, or Object.hasOwn of an object, which
@@ -250,6 +287,9 @@ export const isConvertedPropertyKey = (node: ts.Node, context: Context): node is
 export const getConversion = (node: ts.Node, context: Context): Conversion | undefined => {
   if (context.heap === undefined) return undefined;
   // A property key converts to a primitive, which the call converts as ToPropertyKey does.
+  if (isConvertedSymbolArgument(node, context)) {
+    return { operands: [node], hints: ["string"], combine: (primitives) => primitives[0] };
+  }
   if (isConvertedPropertyKey(node, context)) {
     return {
       operands: [node],
