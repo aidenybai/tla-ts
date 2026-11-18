@@ -89,7 +89,6 @@ export interface SearchGraph<State> {
 
 interface Tracing {
   atoms: LiveAtoms<Value[]>;
-  // The environment of a rerun for a call stack, in which TLC's CallStackTool generates successors again.
   replay: Environment | undefined;
 }
 
@@ -336,8 +335,6 @@ export const getLiveExpressions = (solutions: Solution[]) =>
     getAtomExpressions(atom).map((item) => item.expression),
   );
 
-// A check evaluated once for a state shows what TLC shows when no check repeats an effect. A
-// definition TLC evaluates as it starts repeats nothing, but a scope can bind any definition.
 const isSharingResults = (formula: LiveExpression, environment: Environment) => {
   const formulaAtoms = new Set<LiveAtom>();
   collectAtoms(formula, formulaAtoms);

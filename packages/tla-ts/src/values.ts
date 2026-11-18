@@ -107,7 +107,6 @@ export interface FilteredSetValue extends LazySet {
   kind: "FilteredSet";
   base: Value;
   test: (element: Value, isMember: boolean) => boolean;
-  // Under coverage, starts a pass over the base that charges as TLC's SetPredValue enumerator does, and as its toSetEnum does when materialized.
   startPass?: (isMaterialized: boolean) => (element: Value) => boolean;
   source?: FilteredSetSource;
 }

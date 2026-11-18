@@ -417,7 +417,6 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         return `(${frame.state}?.[${global.index}] ?? unassigned(${name}, ${node}))`;
       }
       if (global?.kind === "Value") return addReference(generator, global.value);
-      // TLC evaluates an operator without parameters in its caller's context, which TLCEval tells from an empty one.
       return generateDelegate(
         generator,
         expression,

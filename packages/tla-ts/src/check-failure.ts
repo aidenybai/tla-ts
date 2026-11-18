@@ -28,7 +28,6 @@ export interface FailureOptions {
   traceFailure?: TraceFailure;
 }
 
-// When TLC's rerun of the initial states for a call stack doesn't fail again, it exits with the code of the TLCRuntimeException, or of EC.GENERAL for an EvalException.
 const getInitialExitCode = (error: TlaEvaluationError) => {
   const coded = getCodedMessage(error.message);
   return (

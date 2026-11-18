@@ -839,7 +839,6 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
   return getEntryEvaluator(getDefinitionSource(definition), environment);
 };
 
-// Stands for the caller's context that TLC's Tool#getOpContext passes on to an operator without parameters, so TLCEval#tlcEval in it doesn't cache.
 const CALLER_SCOPE: Scope = {
   name: "",
   binding: { kind: "Value", value: false },
@@ -1724,7 +1723,6 @@ const compileApply = (
       ) {
         return subset(leftValue, rightValue);
       }
-      // TLC's EnumerableValue#isSubsetEq draws the elements of a set with a cost model until one is missing.
       const missing = leftValue.elements.findIndex((element) => !isElementOf(element, rightValue));
       costCoverage(coverage, leftValue, (missing === -1 ? leftValue.elements.length : missing) + 1);
       return missing === -1;
@@ -1943,8 +1941,6 @@ export const getFunctionBuilder = (
     const lambdaContext = withScope(context, scope);
     const compute = (argument: Value) =>
       body(withScope(lambdaContext, bindArgument(bounds, scope, argument)));
-    // TLC's FcnLambdaValue evaluates its body under the coverage node of its constructor, and under none once CallStackTool copies it.
-    // Outside an evaluation, as the search fingerprints a function, the body was counted as the function was built.
     const node = coverage && !environment.callStack ? coverage.current : -1;
     const functionValue = keepLambda({
       value: createLazyFunction(

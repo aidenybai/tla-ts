@@ -622,7 +622,6 @@ export const costCoverage = (coverage: Coverage, value: Value, cost: number) => 
   if (node !== undefined) coverage.secondary[node] += cost;
 };
 
-// TLC's SetEnumValue#diff and #cap keep the receiver's cost model; #cup draws a reducible operand into a set without one.
 export const chargeSetOperation = (
   coverage: Coverage,
   operator: string,
@@ -668,7 +667,6 @@ const createListEnumerator = (coverage: Coverage, node: number | undefined, size
   };
 };
 
-// TLC's SetOfFcnsValue and SetOfRcdsValue enumerators charge an element's width as they draw it, one set per domain element or field, the last fastest.
 const createProductEnumerator = (
   coverage: Coverage,
   node: number,
@@ -704,7 +702,6 @@ const createProductEnumerator = (
   };
 };
 
-// Draws a set of functions or records that carries a cost model as TLC's enumerator of its value class does.
 export const createProductSetEnumerator = (coverage: Coverage, set: Value) => {
   const node = typeof set === "object" ? coverage.values.get(set) : undefined;
   if (node === undefined || typeof set !== "object") return undefined;
@@ -717,8 +714,6 @@ export const createProductSetEnumerator = (coverage: Coverage, set: Value) => {
   );
 };
 
-// Charges what TLC's enumerator of the set's value class charges as it draws each element, the final null included.
-// A normalized enumeration of a set of functions or records converts it to a SetEnumValue with the same cost model first.
 const createEnumerator = (
   coverage: Coverage,
   set: Value,
@@ -726,7 +721,6 @@ const createEnumerator = (
   isNormalized: boolean,
 ): ChargedEnumerator => {
   const node = typeof set === "object" ? coverage.values.get(set) : undefined;
-  // TLC's SetPredValue enumerator charges for the elements of its base it draws, which the filter counts as it tests them.
   if (
     typeof set === "object" &&
     (set.kind === "Subset" || (!isNormalized && set.kind === "FilteredSet"))
@@ -742,7 +736,6 @@ const createEnumerator = (
   return createListEnumerator(coverage, node, count);
 };
 
-// TLC's SubsetValue enumerators charge nothing but give each subset the SUBSET's cost model, which charges as the subset is drawn from later.
 export const tagSubset = (coverage: Coverage, set: Value, subset: Value) => {
   const node =
     typeof set === "object" && set.kind === "Subset" ? coverage.values.get(set) : undefined;
@@ -763,7 +756,6 @@ export const createChargedEnumerator = (
   return createListEnumerator(coverage, undefined, size);
 };
 
-// TLC's ContextEnumerator and FcnParams draw each bound's next element before they return a binding.
 const chargeBindings = (enumerators: ChargedEnumerator[]) => {
   enumerators.every((enumerator) => enumerator.next());
   return () => {
@@ -784,7 +776,6 @@ export const chargeContexts = (
     sets.map((set, index) => createChargedEnumerator(coverage, set, lists[index], true)),
   );
 
-// TLC's FcnLambdaValue#toFcnRcd draws the elements of its domains and charges the function's size.
 export const chargeFunctionConstruction = (coverage: Coverage, node: number, sets: Value[]) => {
   const sizes = sets.map((set) => getCardinality(set));
   const advance = chargeBindings(

@@ -32,7 +32,6 @@ export interface TraceLasso {
   backPosition: number | undefined;
 }
 
-// TLC's LiveCheck1 numbers the nodes in each pass of its search from a range of its own.
 const MAX_FIRST = 2 ** 50;
 const MAX_SECOND = 2 ** 51;
 
@@ -109,8 +108,6 @@ const createGraph = (
     rows.set(fingerprint, row);
     return row;
   };
-  // With the targets as its sources, it links the nodes it adds too, as TLC's loop over a growing
-  // Vect does.
   const extend = (
     sources: GraphNode[],
     targets: GraphNode[],
@@ -441,7 +438,6 @@ const findLasso = (
   return undefined;
 };
 
-// TLC's LiveCheck1#checkTrace checks a behavior against one solution after another, up to the first it violates.
 export const findTraceLasso = (
   trace: Value[][],
   fingerprints: bigint[],
@@ -460,8 +456,6 @@ export const findTraceLasso = (
       stateCache,
     );
   };
-  // TLC evaluates the checks at each position, which gives what the first position with the same
-  // state gives unless a check repeats an effect.
   const statePositions = trace.map((_state, position) => position);
   const stepPositions = trace.map((_state, position) => position);
   if (isShared) {

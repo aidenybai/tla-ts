@@ -747,7 +747,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             addSuccessor(successor.state);
             return false;
           };
-          // TLC's LiveCheck#addNextState skips an incomplete successor the constraints exclude, and fails to fingerprint any other.
           const addIncomplete = (successor: State, action: string | undefined) => {
             if (
               search.satisfiesConstraints(successor, state) &&

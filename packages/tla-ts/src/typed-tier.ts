@@ -107,8 +107,6 @@ interface TupType {
 interface SeqType {
   kind: "Seq";
   element: Type;
-  // The sequence it was unified with, or the sparse function it becomes when it meets one in the
-  // sparse pass.
   target?: SeqType | MapType;
 }
 
@@ -4074,8 +4072,7 @@ const compileStep = (
     if (!isEnabled && primed.some((code) => code === undefined)) return () => "H.deopt();";
     return () => getEmitCode(primed);
   }
-  // With warnings on, TLC evaluates what is left of a step once every variable is assigned, without
-  // branching, but not of one ENABLED needs.
+  // With warnings on, TLC evaluates what is left of a step once every variable is assigned, without branching, but not under ENABLED.
   if (
     !isEnabled &&
     program.environment.runtime.isWarningEnabled &&
