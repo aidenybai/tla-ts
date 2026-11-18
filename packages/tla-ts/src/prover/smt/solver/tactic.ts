@@ -278,6 +278,7 @@ const SMT_DESCRS = getDescrs("smt", [
   ["mbqi.max_iterations", PARAM_UINT, MBQI_MAX_ITERATIONS, true],
   ["arith.nl.rounds", PARAM_UINT, 1024, true],
   ["random_seed", PARAM_UINT, 0, true],
+  ["auto_config", PARAM_BOOL, true, true],
 ]);
 
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
@@ -285,13 +286,21 @@ const SMT_DESCRS = getDescrs("smt", [
 const getKernelParams = (environment: TacticEnvironment, params: TacticParams, goal: Goal) => {
   const manager = environment.manager;
   const hasQuantifiers = goal.forms.items.some((form) => manager.hasQuantifierFlags[form]);
+  // smt_params ands the auto_config of the tactic with the global one, which smt does not scope.
+  const setup = {
+    ...environment.setup,
+    isAutoConfig:
+      getBool(
+        params,
+        "auto_config",
+        getParameter(environment, "smt.auto_config", "true") !== "false",
+      ) && getParameter(environment, "auto_config", "true") !== "false",
+  };
   return {
-    isMbqi:
-      getBool(params, "mbqi", environment.isMbqi) ||
-      isMbqiByFeatures(environment.setup, hasQuantifiers),
+    isMbqi: getBool(params, "mbqi", environment.isMbqi) || isMbqiByFeatures(setup, hasQuantifiers),
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
-    setup: environment.setup,
+    setup,
     randomSeed: getUint(
       params,
       "random_seed",

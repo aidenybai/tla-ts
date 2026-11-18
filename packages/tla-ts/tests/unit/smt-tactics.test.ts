@@ -930,6 +930,54 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ]);
   });
 
+  it("sets up the smt tactic without the static features under auto_config false", () => {
+    const lines = [
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(assert (<= (+ x (* 2 y)) 3))",
+    ];
+    expect(
+      run([
+        ...lines,
+        "(check-sat-using (using-params smt :auto_config false))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 95)"]);
+    expect(
+      run([
+        "(set-option :smt.auto_config false)",
+        ...lines,
+        "(check-sat-using (using-params smt :auto_config true))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 82)"]);
+  });
+
+  it("runs the smt tactics of qflia that skip cuts without auto_config", () => {
+    const declarations = ["(set-logic QF_LIA)", "(declare-const x Int)", "(declare-const y Int)"];
+    expect(
+      run([
+        ...declarations,
+        "(assert (>= (+ x y) 3))",
+        "(assert (<= (- x y) 1))",
+        "(assert (>= (+ (* 2 x) (* 3 y)) 7))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 410)"]);
+    expect(
+      run([
+        ...declarations,
+        "(assert (and (<= 0 x) (<= x 50) (<= 0 y) (<= y 50)))",
+        "(assert (>= (+ x y) 30))",
+        "(assert (<= (- x y) 1))",
+        "(assert (>= (+ (* 2 x) (* 3 y)) 71))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 558)"]);
+  });
+
   it("completes the models of nlsat and nlqsat with false, as a model rather than a proto_model does", () => {
     const bools = ["(declare-const b0 Bool)", "(declare-const b1 Bool)", "(declare-const b2 Bool)"];
     const bindings =
