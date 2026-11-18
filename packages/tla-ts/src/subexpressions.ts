@@ -819,7 +819,10 @@ const createLookup = (definitions: Definition[]): Lookup => {
 export const resolveInstanceSubexpressions = (instance: Instance, module: Module): Instance =>
   resolveInstance(instance, createLookup(module.definitions), () => false);
 
-export const resolveModuleSubexpressions = (module: Module, available: Definition[]): Module => {
+export const createModuleSubexpressions = (
+  module: Module,
+  expand: ((expression: Expression) => Expression) | undefined,
+) => {
   const goals = new Set(
     module.theorems.flatMap((theorem) =>
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve" ? [theorem.name] : [],
@@ -877,15 +880,17 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       }
       return resolvedDefinitions.get(definition) ?? definition;
     };
-  const proofLookup = createLookup([...available, ...module.definitions]);
   const isGoal = (name: string) => goals.has(name);
-  const definitionLookup = createLookup([...available, ...module.definitions, ...clauses]);
-  const resolve = (expression: Expression, location: SourceLocation) =>
-    resolveSubexpressions(
-      expression,
-      getVisibleLookup(definitionLookup, location),
-      (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
-    );
+  const getExpanded = (expression: Expression) => (expand ? expand(expression) : expression);
+  const createResolver = (available: Definition[]) => {
+    const lookup = createLookup([...available, ...module.definitions, ...clauses]);
+    return (expression: Expression, location: SourceLocation) =>
+      resolveSubexpressions(
+        expression,
+        getVisibleLookup(lookup, location),
+        (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
+      );
+  };
   const createProofResolver = (lookup: Lookup) => {
     const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
     const resolveInProof = (expression: Expression) =>
@@ -992,54 +997,83 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       resolveProof,
     };
   };
-  const hasReferences =
+  const isMapped =
+    expand !== undefined ||
     module.definitions.some((definition) => containsReference(definition.body)) ||
     module.assumptions.some((assumption) => containsReference(assumption.expression));
-  if (hasReferences) {
+  const resolveDefinitions = (
+    available: Definition[],
+    isIncluded: (definition: Definition) => boolean,
+  ) => {
+    if (!isMapped) return;
+    const resolve = createResolver(available);
     [...module.definitions, ...clauses]
+      .filter((definition) => !resolvedDefinitions.has(definition) && isIncluded(definition))
       .toSorted((left, right) => compareLocations(left.location, right.location))
       .forEach((definition) =>
         resolvedDefinitions.set(
           definition,
-          resolveDefinition(definition, (expression) => resolve(expression, definition.location)),
+          resolveDefinition(definition, (expression) =>
+            resolve(
+              clauses.includes(definition) ? expression : getExpanded(expression),
+              definition.location,
+            ),
+          ),
         ),
       );
-  }
-  const resolved = {
-    ...module,
-    theorems: module.theorems.map((theorem) => {
-      const resolver = createProofResolver(getVisibleLookup(proofLookup, theorem.location));
-      return {
-        ...theorem,
-        statement:
-          theorem.name !== undefined && theorem.statement.kind !== "AssumeProve"
-            ? theorem.statement
-            : resolver.resolveStatement(theorem.statement),
-        proof:
-          theorem.proof &&
-          createProofResolver(getVisibleLookup(proofLookup, theorem.proof.location)).resolveProof(
-            theorem.proof,
-          ),
-      };
-    }),
-    uses: module.uses.map((use) => {
-      const resolver = createProofResolver(getVisibleLookup(proofLookup, use.location));
-      return {
-        ...use,
-        facts: resolver.resolveFacts(use.facts),
-        defs: resolver.resolveDefs(use.defs),
-      };
-    }),
   };
-  if (!hasReferences) return resolved;
   return {
-    ...resolved,
-    definitions: module.definitions.map(
-      (definition) => resolvedDefinitions.get(definition) ?? definition,
-    ),
-    assumptions: module.assumptions.map((assumption) => ({
-      ...assumption,
-      expression: resolve(assumption.expression, assumption.location),
-    })),
+    // SANY resolves a module's definitions in order, so a nested module selects from those before it.
+    getDefinitionsBefore: (location: SourceLocation, available: Definition[]) => {
+      resolveDefinitions(available, (definition) => isBefore(definition.location, location));
+      return module.definitions.flatMap((definition) =>
+        isBefore(definition.location, location)
+          ? [resolvedDefinitions.get(definition) ?? definition]
+          : [],
+      );
+    },
+    resolve: (available: Definition[]): Module => {
+      resolveDefinitions(available, () => true);
+      const resolve = createResolver(available);
+      const proofLookup = createLookup([...available, ...module.definitions]);
+      return {
+        ...module,
+        definitions: module.definitions.map(
+          (definition) => resolvedDefinitions.get(definition) ?? definition,
+        ),
+        assumptions: isMapped
+          ? module.assumptions.map((assumption) => ({
+              ...assumption,
+              expression: resolve(getExpanded(assumption.expression), assumption.location),
+            }))
+          : module.assumptions,
+        theorems: module.theorems.map((theorem) => {
+          const resolver = createProofResolver(getVisibleLookup(proofLookup, theorem.location));
+          const statement = theorem.statement;
+          return {
+            ...theorem,
+            statement:
+              statement.kind === "AssumeProve"
+                ? resolver.resolveStatement(statement)
+                : theorem.name === undefined
+                  ? resolver.resolveStatement(getExpanded(statement))
+                  : statement,
+            proof:
+              theorem.proof &&
+              createProofResolver(
+                getVisibleLookup(proofLookup, theorem.proof.location),
+              ).resolveProof(theorem.proof),
+          };
+        }),
+        uses: module.uses.map((use) => {
+          const resolver = createProofResolver(getVisibleLookup(proofLookup, use.location));
+          return {
+            ...use,
+            facts: resolver.resolveFacts(use.facts),
+            defs: resolver.resolveDefs(use.defs),
+          };
+        }),
+      };
+    },
   };
 };

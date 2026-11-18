@@ -958,10 +958,11 @@ const getUnnamedStatement = (theorem: Theorem) =>
     ? theorem.statement
     : undefined;
 
-export const withLetInstances = (
+// Expands each LET INSTANCE into the definitions it instantiates, when the module has any.
+export const getLetInstanceExpansion = (
   module: Module,
   instantiate: (instance: Instance, lets: Definition[]) => Definition[],
-): Module => {
+) => {
   const hasLetInstances =
     module.definitions.some((definition) => hasLetInstance(definition.body)) ||
     module.assumptions.some((assumption) => hasLetInstance(assumption.expression)) ||
@@ -969,21 +970,7 @@ export const withLetInstances = (
       const statement = getUnnamedStatement(theorem);
       return statement !== undefined && hasLetInstance(statement);
     });
-  if (!hasLetInstances) return module;
-  return {
-    ...module,
-    definitions: module.definitions.map((definition) =>
-      mapDefinition(definition, (child) => expandLetInstances(child, instantiate, [])),
-    ),
-    assumptions: module.assumptions.map((assumption) => ({
-      ...assumption,
-      expression: expandLetInstances(assumption.expression, instantiate, []),
-    })),
-    theorems: module.theorems.map((theorem) => {
-      const statement = getUnnamedStatement(theorem);
-      return statement === undefined
-        ? theorem
-        : { ...theorem, statement: expandLetInstances(statement, instantiate, []) };
-    }),
-  };
+  return hasLetInstances
+    ? (expression: Expression) => expandLetInstances(expression, instantiate, [])
+    : undefined;
 };

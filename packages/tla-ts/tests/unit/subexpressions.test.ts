@@ -123,6 +123,18 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it("selects into the definitions of the outer module before a nested module, as SANY has resolved them by then", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nBase == <<{7, 8}, 9>>\nOp == Base!1\nF(a) == {a, 8}\nL == lab :: 2 + 3\n---- MODULE Inner ----\nCONSTANT c\nP == Op!1\nQ == F(c)!1\nR == L!lab!1\n====\nI == INSTANCE Inner WITH c <- 3\nVARIABLE x\nInit == x = <<>>\nNext == x' = <<I!P, I!Q, I!R>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<{7, 8}, 3, 2>>",
+    ]);
+  });
+
   it("passes on a selected LAMBDA that uses definitions of an enclosing LET", async () => {
     const result = await check({
       source:

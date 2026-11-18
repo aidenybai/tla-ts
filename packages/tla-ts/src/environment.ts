@@ -46,9 +46,9 @@ import {
   createLocalIdentifier,
   getEnabledVariableName,
   getFunctionBody,
+  getLetInstanceExpansion,
   renameLocals,
   withInstanceParams,
-  withLetInstances,
   withSubstitutionFrames,
 } from "./instances";
 import { overrideDefinitions, type JavaOverride } from "./java-overrides";
@@ -83,7 +83,7 @@ import {
   STANDARD_EXTENDS,
 } from "./standard-modules";
 import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
-import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
+import { createModuleSubexpressions, resolveInstanceSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
@@ -153,6 +153,8 @@ export interface LinkedModule {
 interface ModuleScope {
   id: string;
   symbols: Symbols;
+  // The enclosing modules' definitions before this one, which SANY has resolved by then.
+  definitions: Definition[];
   modules: Map<string, LinkedModule>;
   nested: Module[];
   errors: SanyError[];
@@ -425,6 +427,7 @@ export const createEnvironment = (
     const linked = linkModule(parsed, {
       id: parsed.name,
       symbols: new Map(),
+      definitions: [],
       modules: new Map(),
       nested,
       errors,
@@ -968,6 +971,13 @@ export const createEnvironment = (
         (symbols, entry) => (symbols.has(entry[0]) ? symbols : symbols.set(entry[0], entry[1])),
         new Map(visible),
       );
+    const subexpressions = createModuleSubexpressions(
+      parsed,
+      getLetInstanceExpansion(parsed, (instance, lets) =>
+        instantiateLocally(instance, lets, parsed.name, getLetModule(instance)),
+      ),
+    );
+    const getAvailable = () => [...scope.definitions, ...getAvailableDefinitions(visible)];
     const linkNested = (nested: Module) => {
       const visibleModules = getVisibleModules();
       const existing = visibleModules.get(nested.name);
@@ -979,6 +989,10 @@ export const createEnvironment = (
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         symbols: getSymbolsBefore(nested.location),
+        definitions: [
+          ...scope.definitions,
+          ...subexpressions.getDefinitionsBefore(nested.location, getAvailable()),
+        ],
         modules: visibleModules,
         nested: scope.nested,
         errors: report.errors,
@@ -1023,12 +1037,7 @@ export const createEnvironment = (
     ]
       .sort((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
       .forEach((unit) => unit.link());
-    const module = resolveModuleSubexpressions(
-      withLetInstances(parsed, (instance, lets) =>
-        instantiateLocally(instance, lets, parsed.name, getLetModule(instance)),
-      ),
-      getAvailableDefinitions(visible),
-    );
+    const module = subexpressions.resolve(getAvailable());
     parsed.theorems
       .flatMap((theorem) => getProofInstances(theorem.proof))
       .filter((instance) => !getVisibleModules().has(instance.module))
