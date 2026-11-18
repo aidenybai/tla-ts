@@ -5703,6 +5703,24 @@ export const getFactoryCall = (
   );
   const body = factory?.body;
   if (factory === undefined || !isPlain(factory) || body === undefined) return undefined;
+  // A factory's call stands for the function it returns only where the script calls the name that
+  // holds it; another read takes the function as a value, which a closure on the heap is.
+  const holder = ts.isVariableDeclaration(node.parent) ? node.parent.name : undefined;
+  const held =
+    holder !== undefined && ts.isIdentifier(holder)
+      ? getSymbol(holder, context.checker)
+      : undefined;
+  if (
+    context.heap !== undefined &&
+    held !== undefined &&
+    findReferences(held, node.getSourceFile(), context).some(
+      (reference) =>
+        reference !== holder &&
+        !(ts.isCallExpression(reference.parent) && reference.parent.expression === reference),
+    )
+  ) {
+    return undefined;
+  }
   const returned = ts.isBlock(body) ? body.statements.at(-1) : undefined;
   const statements = ts.isBlock(body) ? body.statements.slice(0, -1) : [];
   const variables = statements.flatMap((statement) =>

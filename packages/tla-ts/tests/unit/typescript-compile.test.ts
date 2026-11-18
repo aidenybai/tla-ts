@@ -55012,4 +55012,37 @@ describe("BigInts", () => {
       ).toThrow("Optional chaining isn't supported");
     });
   });
+
+  describe("takes the function that a factory's call returns as a value, as a closure", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      const createDispatcher =
+        (primitive: string) =>
+        (initial: number): [string, number] => {
+          box.log += primitive;
+          return [primitive, initial + 1];
+        };
+      const useAction = createDispatcher("Action");
+      const useForm = createDispatcher("Form");
+      const dispatcher = { useAction, useForm };
+      const first = dispatcher.useAction(1);
+      const second = dispatcher.useForm(2);
+      const third = useAction(3);
+      const seen = [first.join("/"), second.join("/"), third.join("/"), box.log].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("Action/2,Form/3,Action/4,ActionFormAction"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects one closure for both", async () => {
+      expect(
+        (await checkModel(getSource("Action/2,Form/3,Action/4,ActionActionAction"))).failure
+          ?.message,
+      ).toContain("seen Action/2,Form/3,Action/4,ActionFormAction");
+    });
+  });
 });
