@@ -126,6 +126,18 @@ describe("the call stack of a replayed failure matches TLC", () => {
     ).toEqual({ callStack: ["10.10-10.26", "10.10-10.20"], exitCode: 75 });
   });
 
+  it("evaluates a selection under UNCHANGED, in which TLC finds no variable", async () => {
+    const result = await checkSpec(
+      "VARIABLE y\nPair == <<x, y>>\nInit == x = 0 /\\ y = 0\nNext == x' = 1 /\\ UNCHANGED Pair!2",
+      "INIT Init\nNEXT Next",
+    );
+    expect([
+      result.generatedStates,
+      result.distinctStates,
+      formatCallStack(result.failure?.callStack)?.at(-1),
+    ]).toEqual([1, 1, "9.14-9.14"]);
+  });
+
   it("stops at a failure of the next-state relation under -continue, where TLC goes on to report a deadlock", async () => {
     const result = await check({
       source: `---- MODULE M ----\n${HEADER}\nInit == x = 0\nNext == x' = (x /\\ TRUE)\n====`,

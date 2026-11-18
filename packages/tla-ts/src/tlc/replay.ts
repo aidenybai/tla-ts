@@ -145,9 +145,6 @@ const getVariable = (
   scope: Scope | undefined,
 ): number | undefined => {
   if (expression.kind === "Label") return getVariable(environment, expression.body, scope);
-  if (expression.kind === "Selection") {
-    return getVariable(environment, expression.expression, scope);
-  }
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
@@ -168,9 +165,6 @@ const getPrimedVariable = (
 ): number | undefined => {
   if (expression.kind === "Prime") return getVariable(environment, expression.expression, scope);
   if (expression.kind === "Label") return getPrimedVariable(environment, expression.body, scope);
-  if (expression.kind === "Selection") {
-    return getPrimedVariable(environment, expression.expression, scope);
-  }
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
