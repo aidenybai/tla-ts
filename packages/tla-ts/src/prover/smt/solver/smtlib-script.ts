@@ -683,6 +683,7 @@ export const runSmtlibScript = (
         core: solved.core ?? solved.context?.unsatCore ?? [],
         reasonUnknown: getReasonUnknown(solved, deadline),
       });
+      if (isFromTactic && isUsingFdSolver()) solved.model?.decRef();
       print(getVerdict(solved.result));
     } catch (error) {
       if (

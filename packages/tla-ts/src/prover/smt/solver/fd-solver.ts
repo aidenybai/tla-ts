@@ -367,11 +367,10 @@ export const checkFdSolver = (manager: AstManager, params: SatParams, forms: rea
     })();
     const model = result === L_TRUE ? solver.getModel() : null;
     limit.isSuspended = true;
-    return {
-      result,
-      model: model === null ? undefined : convertModel(fmls, model.copy()),
-      reasonUnknown: solver.reasonUnknown,
-    };
+    // The caller holds a reference to the model past the solver, as cmd_context keeps its solver.
+    const converted = model === null ? undefined : convertModel(fmls, model);
+    converted?.incRef();
+    return { result, model: converted, reasonUnknown: solver.reasonUnknown };
   } finally {
     limit.isSuspended = wasSuspended;
     solver.release();

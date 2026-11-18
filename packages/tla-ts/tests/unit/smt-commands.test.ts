@@ -1177,6 +1177,31 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("orders the model of the SAT solver by its variables, as inc_sat_solver registers them", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const c Bool)",
+        "(declare-const a Bool)",
+        "(declare-const b (_ BitVec 2))",
+        "(assert (or a c))",
+        "(assert (= b #b10))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun a () Bool",
+      "    true)",
+      "  (define-fun c () Bool",
+      "    false)",
+      "  (define-fun b () (_ BitVec 2)",
+      "    #b10)",
+      ")",
+    ]);
+  });
+
   // The reason is left out: Z3 gives canceled when the sat solver throws at a checkpoint, and no
   // reason when its search stops first.
   it("answers unknown when the finite-domain solver stops in get-consequences", () => {

@@ -352,18 +352,14 @@ export class IncSatSolver {
     const manager = this.manager;
     if (!this.solver.isModelCurrent || this.fmls.size > this.fmlsHead) return null;
     const euf = this.goal2sat.euf;
-    // The euf solver fills a model rather than a proto_model, so its declarations keep their order.
-    const model = euf === null ? new ProtoModel(manager) : new ProtoModel(manager).mkModel();
+    const model = new ProtoModel(manager).mkModel();
     for (const [expr, boolVar] of this.goal2sat.atoms) {
       if (!manager.isUninterpretedConst(expr)) continue;
       const value = this.solver.model[boolVar];
       if (value === L_TRUE) model.registerConst(manager.decls[expr], manager.trueExpr);
       else if (value === L_FALSE) model.registerConst(manager.decls[expr], manager.falseExpr);
     }
-    const converted = convertModel(
-      this.converters,
-      euf === null ? model.mkModel() : euf.updateModel(model),
-    );
+    const converted = convertModel(this.converters, euf === null ? model : euf.updateModel(model));
     converted.incRef();
     this.models.push(converted);
     return converted;
