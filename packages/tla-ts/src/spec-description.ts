@@ -27,6 +27,7 @@ import {
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { bindLetDefinitions, getLevel } from "./liveness";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
+import { SELECTION_NAME } from "./resolve";
 import { LITERAL_KINDS } from "./tlc/replay";
 import type { TlcVersion } from "./tlc/version";
 
@@ -310,8 +311,11 @@ const getActions = (
     return getInstanceActions(instanceAction, expression, scope, called, environment);
   if (!called) return [createSplitAction()];
   const args = getArguments(expression);
+  // SANY selects a subexpression with parameters as a LAMBDA.
   const calledName = isLocallyResolved(expression)
-    ? called.name
+    ? called.name === SELECTION_NAME
+      ? "LAMBDA"
+      : called.name
     : (environment.instanceNames.get(getOperatorName(expression) ?? "") ?? called.name);
   const callAction = (): SpecAction[] => [
     { name: calledName, location: expression.location, parameters: [], expression, scope },

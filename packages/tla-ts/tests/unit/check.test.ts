@@ -2080,6 +2080,19 @@ ASSUME TLCFP(a) = -887695703
       "Next line 7, col 1 to line 7, col 4 of module A (7 18 7 22)",
     ]);
   });
+
+  it("names the action a selection with parameters gives LAMBDA, as SANY selects it as a LAMBDA it applies", async () => {
+    const result = await check({
+      source:
+        "---- MODULE L ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nH == \\E k \\in 1..2 : x' = x + k\nNext == H!(1) \\/ H!(2)\nInv == x < 3\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([
+      undefined,
+      "LAMBDA(1) line 5, col 22 to line 5, col 31 of module L",
+      "LAMBDA(2) line 5, col 22 to line 5, col 31 of module L",
+    ]);
+  });
 });
 
 describe("formatValue matches TLC", () => {
