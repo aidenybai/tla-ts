@@ -1033,12 +1033,33 @@ export const getArgumentsOwner = (node: ts.Node, checker: ts.TypeChecker) => {
 
 // A name that no declaration binds, whose reading throws a ReferenceError, but for a global that
 // Node gives, or a variable of a CommonJS module that an ES module reads.
-export const isUnresolved = (node: ts.Node, context: Context): node is ts.Identifier =>
+export const isUndeclared = (node: ts.Node, context: Context): node is ts.Identifier =>
   ts.isIdentifier(node) &&
   ((context.checker.getSymbolAtLocation(node) === undefined &&
     !NODE_GLOBALS.has(node.text) &&
     getWrapperName(node, context.checker) === undefined) ||
     isAbsentModuleVariable(node, context));
+
+// A name whose reading throws a ReferenceError: one that no declaration binds, or a parameter that
+// a default reads before the call binds it.
+export const isUnresolved = (node: ts.Node, context: Context): node is ts.Identifier =>
+  isUndeclared(node, context) || (ts.isIdentifier(node) && isUninitializedParameter(node, context));
+
+// A read in a parameter's default of that parameter or of a later one, which its binding doesn't
+// hold yet, so it throws a ReferenceError, outside a function that the default makes.
+const isUninitializedParameter = (node: ts.Identifier, context: Context) => {
+  const declaration = context.checker.getSymbolAtLocation(node)?.valueDeclaration;
+  if (declaration === undefined || !ts.isParameter(declaration)) return false;
+  const reading = ts.findAncestor(node.parent, (ancestor) =>
+    ts.isFunctionLike(ancestor) ? "quit" : ts.isParameter(ancestor),
+  );
+  return (
+    reading !== undefined &&
+    ts.isParameter(reading) &&
+    reading.parent === declaration.parent &&
+    reading.pos <= declaration.pos
+  );
+};
 
 // The names that an assignment target writes, through the elements of its patterns.
 const getAssignedNames = (target: ts.Expression): ts.Expression[] => {

@@ -18,12 +18,13 @@ const ANY = "/** @type {any} */ ";
 // setter's return of a value, which the write drops, an implicit any, a module that TypeScript
 // can't find, or a name that no declaration binds, which tla-ts resolves as Node does, a property
 // that the type lacks, which TypeScript reads as any, as it does a class field's computed key that
-// it leaves out of the type, and a read before a declaration, which throws as tla-ts follows.
+// it leaves out of the type, and a read before a declaration or of a parameter in a default before
+// it's bound, which throws as tla-ts follows.
 const IGNORED_ERRORS = new Set([
-  1166, 1170, 2695, 2304, 2307, 2792, 2408, 2339, 2448, 2449, 2450, 2550, 2551, 2552, 2580, 2581,
-  2582, 2583, 2584, 2591, 2592, 2593, 2662, 2663, 2683, 2867, 2868, 7005, 7006, 7008, 7010, 7011,
-  7015, 7016, 7017, 7018, 7019, 7022, 7023, 7024, 7025, 7031, 7032, 7033, 7034, 7041, 7052, 7053,
-  7055, 7056, 7057,
+  1166, 1170, 2372, 2373, 2695, 2304, 2307, 2792, 2408, 2339, 2448, 2449, 2450, 2550, 2551, 2552,
+  2580, 2581, 2582, 2583, 2584, 2591, 2592, 2593, 2662, 2663, 2683, 2867, 2868, 7005, 7006, 7008,
+  7010, 7011, 7015, 7016, 7017, 7018, 7019, 7022, 7023, 7024, 7025, 7031, 7032, 7033, 7034, 7041,
+  7052, 7053, 7055, 7056, 7057,
 ]);
 
 // Errors that a project's options add about code that runs as written: a declaration that nothing
@@ -472,28 +473,101 @@ const getEdits = (
   return undefined;
 };
 
+// Whether a literal fits a pattern as its value, which an array pattern reads as an array: an array
+// literal for an array pattern, with each element that a nested pattern reads fitting it, an object
+// literal for an object pattern, and null, undefined, or a missing element for either.
+const isLiteralFit = (value: ts.Node, pattern: ts.BindingName): boolean => {
+  const inner = ts.isExpression(value) ? skipCasts(value) : value;
+  const isNullish =
+    inner.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(inner) && inner.text === "undefined");
+  if (ts.isIdentifier(pattern) || isNullish) return true;
+  if (ts.isObjectBindingPattern(pattern)) return ts.isObjectLiteralExpression(inner);
+  return (
+    ts.isArrayLiteralExpression(inner) &&
+    !inner.elements.some(ts.isSpreadElement) &&
+    pattern.elements.every((element, position) => {
+      const item = inner.elements.at(position);
+      return (
+        ts.isOmittedExpression(element) ||
+        element.dotDotDotToken !== undefined ||
+        item === undefined ||
+        ts.isOmittedExpression(item) ||
+        ts.isIdentifier(element.name) ||
+        isLiteralFit(item, element.name)
+      );
+    })
+  );
+};
+
 // The pattern parameters of the functions that a write gives a variable that TypeScript types by
-// what it's assigned, as var f; f = function ([x]) {} does, whose calls TypeScript reads as of a
-// value of type any, so it checks no argument against the type that it makes of the pattern.
+// what it's assigned, as var f; f = function ([x]) {} does, whose calls TypeScript may read as of a
+// value of type any, so that it checks no argument against the type that it makes of the pattern.
+// A parameter keeps that type where the variable is only called, with an argument of a type that
+// fits it.
 const getUncheckedPatterns = (file: ts.SourceFile, checker: ts.TypeChecker) => {
   const parameters: ts.ParameterDeclaration[] = [];
+  const getReferences = (symbol: ts.Symbol) => {
+    const references: ts.Identifier[] = [];
+    const visit = (node: ts.Node) => {
+      if (
+        ts.isIdentifier(node) &&
+        !isName(node) &&
+        !isWritten(node) &&
+        checker.getSymbolAtLocation(node) === symbol
+      ) {
+        references.push(node);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+    return references;
+  };
+  const isFitted = (
+    parameter: ts.ParameterDeclaration,
+    position: number,
+    references: ts.Identifier[],
+  ) =>
+    references.every((reference) => {
+      const call = reference.parent;
+      const argument = ts.isCallExpression(call) ? call.arguments.at(position) : undefined;
+      return (
+        ts.isCallExpression(call) &&
+        call.expression === reference &&
+        !call.arguments.some(ts.isSpreadElement) &&
+        (argument === undefined
+          ? parameter.initializer !== undefined
+          : checker.isTypeAssignableTo(
+              checker.getTypeAtLocation(argument),
+              checker.getTypeAtLocation(parameter),
+            ) || isLiteralFit(argument, parameter.name))
+      );
+    });
   const visit = (node: ts.Node) => {
     const parent = node.parent;
-    const declaration =
+    const symbol =
       (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) &&
       isAssignment(parent) &&
       parent.right === node &&
       ts.isIdentifier(parent.left)
-        ? checker.getSymbolAtLocation(parent.left)?.valueDeclaration
+        ? checker.getSymbolAtLocation(parent.left)
         : undefined;
+    const declaration = symbol?.valueDeclaration;
     if (
+      symbol !== undefined &&
       declaration !== undefined &&
       ts.isVariableDeclaration(declaration) &&
       declaration.initializer === undefined &&
       declaration.type === undefined &&
       (ts.isFunctionExpression(node) || ts.isArrowFunction(node))
     ) {
-      parameters.push(...node.parameters.filter((parameter) => !ts.isIdentifier(parameter.name)));
+      const references = getReferences(symbol);
+      parameters.push(
+        ...node.parameters.filter(
+          (parameter, position) =>
+            !ts.isIdentifier(parameter.name) && !isFitted(parameter, position, references),
+        ),
+      );
     }
     ts.forEachChild(node, visit);
   };
@@ -525,13 +599,30 @@ export const typeJavaScript = (
   isReported: (diagnostic: ts.Diagnostic) => boolean,
 ) => {
   const checker = program.getTypeChecker();
-  // A private name that no class declares, arguments where no function binds it, as in a field's
-  // initializer, and an export of a name that nothing declares are early errors that TypeScript reports as names it can't find.
+  // A private name that no class body around it declares, as in a class's heritage, arguments
+  // where no function binds it, as in a field's initializer, and an export of a name that nothing
+  // declares are early errors that TypeScript reports as names it can't find. A private name that a
+  // class body around it declares reads an object that may lack it, which throws as tla-ts follows.
   const isIgnored = (diagnostic: ts.Diagnostic) => {
     const node = getDiagnosedNode(file, diagnostic);
+    const isUndeclaredPrivate =
+      ts.isPrivateIdentifier(node) &&
+      ts.findAncestor(
+        node,
+        (ancestor) =>
+          ts.isClassLike(ancestor) &&
+          node.pos >= ancestor.members.pos &&
+          node.end <= ancestor.members.end &&
+          ancestor.members.some(
+            (member) =>
+              member.name !== undefined &&
+              ts.isPrivateIdentifier(member.name) &&
+              member.name.text === node.text,
+          ),
+      ) === undefined;
     return (
       IGNORED_ERRORS.has(diagnostic.code) &&
-      !(ts.isPrivateIdentifier(node) && PRIVATE_NAME_ERRORS.has(diagnostic.code)) &&
+      !(isUndeclaredPrivate && PRIVATE_NAME_ERRORS.has(diagnostic.code)) &&
       !(ts.isIdentifier(node) && node.text === "arguments") &&
       !ts.isExportSpecifier(node.parent)
     );

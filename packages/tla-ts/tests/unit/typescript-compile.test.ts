@@ -52411,10 +52411,15 @@ describe("BigInts", () => {
     it.each([
       ["await in an arrow's parameters", "async () => { (a = await/r/g) => {}; };", "SyntaxError"],
       ["await as a rest parameter", "async (a = (...await) => {}) => {};", "SyntaxError"],
-      ["an undeclared private name", "class C { x = this.#foo; }", "TS2339"],
+      ["an undeclared private name", "class C { x = this.#foo; }", "SyntaxError"],
       ["arguments in a field", "var C = class { x = () => arguments; };", "SyntaxError"],
       ["arguments in a static block", "class C { static { arguments; } }", "SyntaxError"],
       ["super's private name", "class C { #x() {} m() { super.#x(); } }", "SyntaxError"],
+      [
+        "a private name in a class's heritage",
+        "var C = class extends class { x = this.#foo; } { #foo; };",
+        "SyntaxError",
+      ],
       ["a module's repeated function", "function x() {}\nfunction x() {}", "SyntaxError"],
       ["an export of an undeclared name", "export { missing };", "TS2304"],
       ["an import of eval", 'import eval from "./missing.js";', "SyntaxError"],
@@ -52598,6 +52603,128 @@ describe("BigInts", () => {
     `;
     expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
       "Give this pattern's value an array type",
+    );
+  });
+
+  it("fires a stop in a value that a statement assigns before a later statement throws", async () => {
+    const source = `
+      var box = { seen: "" };
+      function get() {
+        return /** @type {any} */ (undefined);
+      }
+      var read = 0;
+      try {
+        read = get().x;
+        read = 1;
+        throw new Error("after");
+      } catch (error) {
+        box.seen = error instanceof TypeError ? "type" : error.message;
+      }
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
+  });
+
+  describe("throws the ReferenceError of a default that reads its parameter or a later one", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      function self(a = a) {}
+      var later;
+      later = (a = b, b) => {};
+      function earlier(a, b = a) {
+        return b;
+      }
+      try {
+        self();
+      } catch (error) {
+        box.seen += error instanceof ReferenceError;
+      }
+      try {
+        later(undefined, 1);
+      } catch (error) {
+        box.seen += error instanceof ReferenceError;
+      }
+      box.seen += [self(1), earlier(1)].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("truetrue,1"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("falsetrue,1"), path))).failure?.message).toContain(
+        "seen truetrue,1",
+      );
+    });
+
+    it("keeps the global object's key that a default reads before its parameter", async () => {
+      const source = `
+        var box = { seen: 0 };
+        function later(a = b, b = 1) {
+          return a;
+        }
+        globalThis.b = 2;
+        box.seen = globalThis.b;
+        if (box.seen !== 2) throw new Error("seen " + box.seen);
+      `;
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+  });
+
+  describe("keeps a JavaScript pattern parameter's type where each call passes a literal that fits it", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var take;
+      take = function ([[first]], { second }) {
+        return first + second;
+      };
+      function run() {
+        try {
+          take([null], {});
+        } catch (error) {
+          box.seen += error instanceof TypeError;
+        }
+        var sum = take([[5]], { second: 1 });
+        box.seen += sum;
+      }
+      run();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("true6"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await check(compile(getSource("false6"), path))).failure?.message).toContain(
+        "seen true6",
+      );
+    });
+  });
+
+  it("stops rather than skips at a JavaScript private name that a class declares and that an object may lack", () => {
+    const source = `
+      var box = { seen: "" };
+      var C = class {
+        static #f() {
+          return 42;
+        }
+        g() {
+          return this.#f();
+        }
+      };
+      try {
+        new C().g();
+      } catch (error) {
+        box.seen += error instanceof TypeError;
+      }
+    `;
+    expect(() => compile(source, join(import.meta.dirname, "model.js"))).toThrow(
+      "Unsupported statement: this.#f()",
     );
   });
 

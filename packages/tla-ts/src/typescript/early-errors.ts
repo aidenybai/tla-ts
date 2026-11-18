@@ -311,6 +311,27 @@ export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
     ) {
       reject("A module's export names can't have lone surrogates", node);
     }
+    // A private name that a read or an in names is one that a class body around it declares.
+    if (
+      ts.isPrivateIdentifier(node) &&
+      ((ts.isPropertyAccessExpression(node.parent) && node.parent.name === node) ||
+        (ts.isBinaryExpression(node.parent) && node.parent.left === node)) &&
+      ts.findAncestor(
+        node,
+        (ancestor) =>
+          ts.isClassLike(ancestor) &&
+          node.pos >= ancestor.members.pos &&
+          node.end <= ancestor.members.end &&
+          ancestor.members.some(
+            (member) =>
+              member.name !== undefined &&
+              ts.isPrivateIdentifier(member.name) &&
+              member.name.text === node.text,
+          ),
+      ) === undefined
+    ) {
+      reject(`Private field '${node.text}' must be declared in an enclosing class`, node);
+    }
     if (
       ts.isPropertyAccessExpression(node) &&
       node.expression.kind === ts.SyntaxKind.SuperKeyword &&

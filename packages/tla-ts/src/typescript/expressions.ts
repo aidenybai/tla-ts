@@ -79,6 +79,7 @@ import {
   getClassStop,
   getValueDeclaration,
   getRunMembers,
+  isUnresolved,
 } from "./context";
 import {
   getImportedCommonJs,
@@ -3065,6 +3066,14 @@ const translateIdentifier = (node: ts.Identifier, scope: Scope, context: Context
     return identifier("GlobalObject");
   }
   if (symbol !== undefined && isUnset(symbol, context)) return getUndefined(context);
+  // A parameter that a default reads before the call binds it throws a ReferenceError where the
+  // read runs, which an argument may keep from running.
+  if (symbol !== undefined && isUnresolved(node, context)) {
+    return apply("Assert", [
+      boolean(false),
+      string(`tla-ts can't throw the ReferenceError of reading ${node.text} before its binding`),
+    ]);
+  }
   // A name that nothing declares throws a ReferenceError where a read runs, which a literal
   // condition may keep from running.
   if (symbol === undefined && isSkipped(node, context)) {
