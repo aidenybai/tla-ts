@@ -962,10 +962,12 @@ export const compile = (
       ) &&
       ["Object", "Reflect"].includes(getBuiltIn(node.expression.expression, context) ?? "")) ||
     (ts.forEachChild(node, isDescribing) ?? false);
-  // A buffer, a view of one, or a typed array is an object that only the heap makes.
+  // A buffer, a view of one, or a typed array is an object that only the heap makes, and the
+  // constructor of one is an object that only the heap holds.
   const isMakingBuffer = (node: ts.Node): boolean =>
-    (ts.isNewExpression(node) && isBufferName(getBuiltIn(node.expression, context) ?? "")) ||
-    (ts.forEachChild(node, isMakingBuffer) ?? false);
+    !ts.isTypeNode(node) &&
+    ((ts.isIdentifier(node) && isBufferName(getBuiltIn(node, context) ?? "")) ||
+      (ts.forEachChild(node, isMakingBuffer) ?? false));
   // A module whose code reads a module's namespace object holds it on the heap, as a script does.
   const isHeapFile =
     isScript(sourceFile) ||

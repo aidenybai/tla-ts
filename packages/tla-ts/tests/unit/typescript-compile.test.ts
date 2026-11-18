@@ -53500,4 +53500,23 @@ describe("BigInts", () => {
       "tla-ts can't make a function that a new constructs, or whose property the script writes, in code that may run more than once",
     );
   });
+
+  describe("holds on the heap a typed array's constructor that a module reads", () => {
+    const getSource = (expected: string) => `
+      const Native = Uint8Array as { readonly BYTES_PER_ELEMENT: number; readonly length: number };
+      const result = [Native.BYTES_PER_ELEMENT, Native.length, Native === Uint8Array].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+      export const width = (count: 1 | 2) => count * Native.BYTES_PER_ELEMENT;
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,3,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another length", async () => {
+      expect((await checkModel(getSource("1,0,true"))).failure?.message).toContain(
+        "result 1,3,true",
+      );
+    });
+  });
 });
