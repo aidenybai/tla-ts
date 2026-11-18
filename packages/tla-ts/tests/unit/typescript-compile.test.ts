@@ -54796,4 +54796,82 @@ describe("BigInts", () => {
       ).toContain("tla-ts can't convert this object to a primitive here");
     });
   });
+
+  it("fires a stop in a value that a statement reads before a call that throws in it", async () => {
+    const source = `
+      var box = { seen: "" };
+      function get() {
+        return /** @type {any} */ (undefined);
+      }
+      function thrower() {
+        throw new Error("after");
+      }
+      function run() {
+        var read = 0;
+        try {
+          (read = get().x), thrower();
+        } catch (error) {
+          box.seen = error instanceof TypeError ? "type" : error.message;
+        }
+      }
+      run();
+    `;
+    expect(
+      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+    ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
+  });
+
+  describe("runs JavaScript as a script after another, in one global scope, as a page runs them", () => {
+    const directory = join(import.meta.dirname, "../fixtures/typescript/scripts");
+    const getSource = (expected: string) => `
+      var box = { seen: "" };
+      var loose = 5;
+      undeclared = 7;
+      check(shared === 1, "shared");
+      check(this.loose === 5, "this");
+      check(globalThis.undeclared === 7, "implicit");
+      box.seen = typeof check;
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+    const compileScript = (source: string) =>
+      compile(source, join(directory, "model.js"), undefined, false, [
+        join(directory, "harness.ts"),
+      ]);
+
+    it("agrees with Node", async () => {
+      expect((await check(compileScript(getSource("function")))).failure).toBeUndefined();
+    });
+
+    it("stops at a key of a primitive that an element access names and its type lacks", async () => {
+      const result = await check(
+        compileScript(`
+          var box = { seen: "" };
+          var symbol = Symbol("66");
+          symbol[62] = 0;
+          box.seen = String(symbol[62]);
+        `),
+      );
+      expect(result.failure?.message).toContain("tla-ts can't read the properties of Symbol");
+    });
+
+    it("stops at a script's JavaScript that TypeScript's checker fails on", () => {
+      expect(() =>
+        compileScript(`
+          var items = {};
+          items[Symbol.iterator] = function () {
+            return 1;
+          };
+        `),
+      ).toThrow("tla-ts can't type this JavaScript, as TypeScript fails");
+    });
+
+    it.each([
+      ["shared === 1", "shared === 2", "shared"],
+      ["this.loose === 5", "this.loose === 6", "this"],
+      ['"function"', '"object"', "seen function"],
+    ])("rejects %s read otherwise", async (from, to, message) => {
+      const source = getSource("function").replace(from, to);
+      expect((await check(compileScript(source))).failure?.message).toContain(message);
+    });
+  });
 });

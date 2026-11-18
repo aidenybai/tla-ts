@@ -15,7 +15,7 @@ import {
   isHeapSetOrMap,
 } from "./types";
 import { TlaTypeScriptError } from "../errors";
-import { getImportedCommonJs, getWrapperName, isCommonJsFile, isJavaScriptFile } from "./common-js";
+import { getImportedCommonJs, getWrapperName, isJavaScriptFile } from "./common-js";
 import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
@@ -831,10 +831,11 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
 
 // A file that imports, exports, or awaits outside a function, which Node runs only as a module.
 // Node runs another file as a script where it strips its types, and a CommonJS module's code in a
-// function. A JavaScript file is a module where Node loads it as one.
+// function. A JavaScript file is a module where Node loads it as one, and a script, as a page's,
+// where it runs as no module.
 export const isModuleFile = (file: ts.SourceFile) =>
   isJavaScriptFile(file.fileName)
-    ? !isCommonJsFile(file)
+    ? file.impliedNodeFormat === ts.ModuleKind.ESNext
     : file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
 
 // The variables that Node gives a CommonJS module's code, which an ES module doesn't have, though
