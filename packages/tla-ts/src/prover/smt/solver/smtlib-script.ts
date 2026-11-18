@@ -420,6 +420,7 @@ interface ScriptState {
   strategy: string;
   tactic: Tactic | undefined;
   tacticDestructors: (() => void)[];
+  tacticCleanups: (() => void)[];
   tacticConverters: Goal["converters"];
   tacticModel: ProtoModel | undefined;
   lastAssertions: RefVector;
@@ -499,6 +500,7 @@ export const runSmtlibScript = (
       strategy: "default",
       tactic: undefined,
       tacticDestructors: [],
+      tacticCleanups: [],
       tacticConverters: [],
       tacticModel: undefined,
       lastAssertions: new RefVector(manager),
@@ -564,6 +566,7 @@ export const runSmtlibScript = (
         parameters: settings.parameters,
         hasDefinitions: () => state.reader.hasDefinitions(),
         destructors: [],
+        cleanups: [],
       },
       objectives,
     );
@@ -627,9 +630,10 @@ export const runSmtlibScript = (
     const goal = getGoal(state.isSolverProducingModels);
     try {
       state.tactic ??= compileInternalTactic(
-        getTacticEnvironment(state.tacticDestructors),
+        getTacticEnvironment(state.tacticDestructors, state.tacticCleanups),
         state.strategy,
       );
+      for (const cleanup of state.tacticCleanups) cleanup();
       const checked = checkSatUsing(state.tactic, goal);
       if (checked.status === L_UNDEF && state.scopes.length === 0) {
         state.lastAssertions.reset();
@@ -857,6 +861,7 @@ export const runSmtlibScript = (
     decConverterRefs(state.manager, state.tacticConverters);
     state.tacticConverters = [];
     destroyTactics(state.tacticDestructors);
+    state.tacticCleanups.length = 0;
     state.tactic = undefined;
     state.strategy =
       parameters.get("tactic.default_tactic") ?? getLogicStrategy(logic, isProofsEnabled);
@@ -973,7 +978,7 @@ export const runSmtlibScript = (
       settings.parameters.get("smt.auto_config") !== "false",
   });
   // tactic2solver gives its tactic the parameters as they are at each check.
-  const getTacticEnvironment = (destructors: (() => void)[]) => ({
+  const getTacticEnvironment = (destructors: (() => void)[], cleanups: (() => void)[]) => ({
     manager: state.manager,
     get isMbqi() {
       return settings.isMbqi;
@@ -991,6 +996,7 @@ export const runSmtlibScript = (
     parameters: settings.parameters,
     hasDefinitions: () => state.reader.hasDefinitions(),
     destructors,
+    cleanups,
   });
   const getDatalog = () => {
     state.datalog ??= createDatalogContext(
@@ -1367,7 +1373,7 @@ export const runSmtlibScript = (
           throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
         expectClosed(list.items[1]);
         const destructors: (() => void)[] = [];
-        const builder = compileTactic(getTacticEnvironment(destructors), list.items[1]);
+        const builder = compileTactic(getTacticEnvironment(destructors, []), list.items[1]);
         const tactic = builder.build(params);
         const goal = getCommandGoal(builder.isTrackingDependencies, list.end);
         clearCheck();
@@ -1664,7 +1670,7 @@ export const runSmtlibScript = (
         // apply_tactic_cmd, unlike check-sat-using, gives the tactic no logic.
         const destructors: (() => void)[] = [];
         const builder = compileTactic(
-          { ...getTacticEnvironment(destructors), setup: { ...getSetup(), logic: undefined } },
+          { ...getTacticEnvironment(destructors, []), setup: { ...getSetup(), logic: undefined } },
           list.items[1],
         );
         const tactic = builder.build(params);

@@ -1007,6 +1007,7 @@ describe("the optimizer releases what Z3 releases", () => {
         parameters: new Map(),
         hasDefinitions: () => false,
         destructors: [],
+        cleanups: [],
       },
       { getBaseModel: () => null, setModel: () => {} },
       {
@@ -2693,6 +2694,27 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["sat", "(:rlimit 191)", "sat", "(:rlimit 357)"]);
+  });
+
+  it("forgets the sorts dt2bv saw in an earlier check", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then dt2bv smt)")',
+        "(declare-datatypes ((C 0)) (((r) (g) (b))))",
+        "(declare-fun f (C) Int)",
+        "(declare-const x C)",
+        "(declare-const y Real)",
+        "(assert (= (^ 2.0 y) 3.0))",
+        "(assert (not (= x r)))",
+        "(push)",
+        "(assert (= (f x) 1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(pop)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 567)", "unknown", "(:rlimit 1053)"]);
   });
 
   it("reads tactic.default_tactic as it makes the solver", () => {

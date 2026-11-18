@@ -221,7 +221,7 @@ export const createDt2BvTactic = (manager: AstManager) => {
   const argsCannotBeFd = (expr: number) => {
     for (const arg of manager.getArgs(expr)) if (isFd(arg)) nonFdSorts.add(manager.sorts[arg]);
   };
-  return (goal: Goal) => {
+  const run = (goal: Goal) => {
     const visited = new Set<number>();
     const todo = [...goal.forms.items];
     for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
@@ -262,6 +262,14 @@ export const createDt2BvTactic = (manager: AstManager) => {
       );
     goal.depth++;
     return [goal];
+  };
+  // The sorts gather over the runs in a check, and Z3's cleanup forgets them.
+  return {
+    run,
+    cleanup: () => {
+      fdSorts.clear();
+      nonFdSorts.clear();
+    },
   };
 };
 

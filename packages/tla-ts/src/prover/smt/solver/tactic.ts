@@ -127,6 +127,8 @@ export interface TacticEnvironment {
   hasDefinitions: () => boolean;
   // Free what the tactics built here keep across their runs, as Z3 does once it frees them.
   destructors: (() => void)[];
+  // Forget what the tactics built here gather over a check, as tactic2solver's cleanup does.
+  cleanups: (() => void)[];
 }
 
 // Z3's and-then frees its last tactic first.
@@ -456,13 +458,15 @@ const runParallelSmt = (environment: TacticEnvironment) => (goal: Goal) => {
 const createTacticSolver = (environment: TacticEnvironment, strategy: string): AckrSolver => {
   const manager = environment.manager;
   const destructors: (() => void)[] = [];
-  const tactic = compileInternalTactic({ ...environment, destructors }, strategy);
+  const cleanups: (() => void)[] = [];
+  const tactic = compileInternalTactic({ ...environment, destructors, cleanups }, strategy);
   const assertions = new RefVector(manager);
   let model: ProtoModel | undefined;
   let converters: Goal["converters"] = [];
   return {
     assert: (expr) => assertions.push(expr),
     check: () => {
+      for (const cleanup of cleanups) cleanup();
       model?.decRef();
       model = undefined;
       const goal = new Goal(manager);
@@ -1293,7 +1297,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isTrackingDependencies: true,
-      build: (environment) => createDt2BvTactic(environment.manager),
+      build: (environment) => {
+        const tactic = createDt2BvTactic(environment.manager);
+        environment.cleanups.push(tactic.cleanup);
+        return tactic.run;
+      },
     },
   ],
   [
