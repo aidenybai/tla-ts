@@ -126,9 +126,20 @@ const findLabel = (
   return undefined;
 };
 
+// A node SANY doesn't build has no range, so TLC's call stack doesn't show it.
+const getHiddenLocation = (location: SourceLocation) => ({
+  line: location.line,
+  column: location.column,
+});
+
 const wrapLets = (body: Expression, lets: Definition[][], location: SourceLocation) =>
   lets.reduceRight<Expression>(
-    (inner, definitions) => ({ kind: "Let", definitions, body: inner, location }),
+    (inner, definitions) => ({
+      kind: "Let",
+      definitions,
+      body: inner,
+      location: getHiddenLocation(location),
+    }),
     body,
   );
 
@@ -172,7 +183,7 @@ const createApplication = (selection: Selection, body: Expression): Expression =
       location,
       resolution: LOCAL_RESOLUTION,
     },
-    location,
+    location: getHiddenLocation(location),
   };
 };
 
@@ -549,7 +560,11 @@ const selectSubexpression = (
   const share = (expression: Expression): Expression => ({
     kind: "Selection",
     expression,
-    location: expression.location,
+    // SANY's $Nop, which TLC's call stack shows at the reference, wraps only a selection without parameters.
+    location:
+      selection.params.length === 0 && body.kind !== "Lambda"
+        ? location
+        : getHiddenLocation(location),
   });
   // SANY selects a LAMBDA itself rather than wrapping it in $Nop, so the selection keeps its arity.
   const selected = createApplication(

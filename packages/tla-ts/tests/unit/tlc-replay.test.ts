@@ -13,14 +13,12 @@ const HEADER = [
 ].join("\n");
 
 const formatCallStack = (expressions: Expression[] | undefined) =>
-  expressions
-    ?.filter((expression, index) => expression !== expressions[index - 1])
-    .map((expression) => {
-      const range = expression.location.range;
-      return range
-        ? `${range.start.line}.${range.start.column}-${range.end.line}.${range.end.column}`
-        : "?";
-    });
+  expressions?.flatMap((expression, index) => {
+    const range = expression.location.range;
+    return range && expression !== expressions[index - 1]
+      ? [`${range.start.line}.${range.start.column}-${range.end.line}.${range.end.column}`]
+      : [];
+  });
 
 const checkSpec = (definitions: string, config: string, version?: TlcVersion) =>
   check({
@@ -136,6 +134,31 @@ describe("the call stack of a replayed failure matches TLC", () => {
       result.distinctStates,
       formatCallStack(result.failure?.callStack)?.at(-1),
     ]).toEqual([1, 1, "9.14-9.14"]);
+  });
+
+  it.each([
+    [
+      "VARIABLE y\nPair == <<x, y>>\nInit == x = 0 /\\ y = 0\nNext == x' = 1 /\\ UNCHANGED Pair!2",
+      ["11.9-11.34", "11.9-11.14", "11.19-11.34", "11.29-11.34", "9.14-9.14"],
+    ],
+    [
+      'Pair == {Name[x + 3], 1}\nInit == x = 0\nNext == x\' = 1 /\\ Pair!1 = "a"',
+      ["10.9-10.30", "10.9-10.14", "10.19-10.30", "10.19-10.24", "8.10-8.20"],
+    ],
+    [
+      'Sel == LET k == 3 IN {Name[k], 1}\nInit == x = 0\nNext == x\' = 1 /\\ Sel!1!1 = "a"',
+      ["10.9-10.31", "10.9-10.14", "10.19-10.31", "10.19-10.25", "8.23-8.29"],
+    ],
+    [
+      'Sel(k) == {Name[k], 1}\nInit == x = 0\nNext == x\' = 1 /\\ Sel(3)!1 = "a"',
+      ["10.9-10.32", "10.9-10.14", "10.19-10.32", "10.19-10.26", "8.12-8.18"],
+    ],
+    [
+      'Sel == \\A k \\in {1} : Name[k + 2] = "a"\nInit == x = 0\nNext == x\' = 1 /\\ Sel!(1)',
+      ["10.9-10.25", "10.9-10.14", "10.19-10.25", "8.23-8.39", "8.23-8.33"],
+    ],
+  ])("enters a selection where SANY's $Nop or LAMBDA is in %j", async (definitions, callStack) => {
+    expect(await getFailure(definitions)).toEqual({ callStack, exitCode: 75 });
   });
 
   it("stops at a failure of the next-state relation under -continue, where TLC goes on to report a deadlock", async () => {
