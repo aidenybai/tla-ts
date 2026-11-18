@@ -2804,6 +2804,57 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "an initial state",
+      2,
+      [
+        "line 5, col 9 to line 5, col 16 of module R: 2",
+        "|line 5, col 13 to line 5, col 16 of module R: 2",
+        "||line 4, col 13 to line 4, col 62 of module R: 2:6",
+        "|||line 4, col 30 to line 4, col 62 of module R: 12",
+        "||||line 4, col 33 to line 4, col 37 of module R: 12",
+        "||||line 4, col 44 to line 4, col 44 of module R: 6",
+        "||||line 4, col 51 to line 4, col 62 of module R: 6",
+        "|||line 4, col 21 to line 4, col 24 of module R: 2",
+        "||line 4, col 67 to line 4, col 67 of module R: 2",
+      ],
+    ],
+    [
+      "a successor",
+      1,
+      [
+        "line 5, col 9 to line 5, col 16 of module R: 3",
+        "|line 5, col 13 to line 5, col 16 of module R: 3",
+        "||line 4, col 13 to line 4, col 62 of module R: 3:9",
+        "|||line 4, col 30 to line 4, col 62 of module R: 18",
+        "||||line 4, col 33 to line 4, col 37 of module R: 18",
+        "||||line 4, col 44 to line 4, col 44 of module R: 9",
+        "||||line 4, col 51 to line 4, col 62 of module R: 9",
+        "|||line 4, col 21 to line 4, col 24 of module R: 3",
+        "||line 4, col 67 to line 4, col 67 of module R: 3",
+      ],
+    ],
+  ])(
+    "enumerates a recursive function again as the trace to a deadlock at %s fingerprints each initial state it rebuilds",
+    async (_title, start, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE R ----\nEXTENDS Naturals\nVARIABLE x\nF(c) == LET r[n \\in 0..2] == IF n = 0 THEN c ELSE r[n - 1] + 1 IN r\nInit == x = F(${start})\nNext == x[1] < 3 /\\ x' = [x EXCEPT ![1] = 5]\n====`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(lines?.[0]).toEqual(expected);
+    },
+  );
+
+  it("prints what a recursive function a deadlocked initial state holds prints again after the trace, as the rebuild fingerprints it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE P ----\nEXTENDS Naturals, TLC\nVARIABLE x\nF(c) == LET r[n \\in 0..1] == Print(n, IF n = 0 THEN c ELSE r[n - 1] + 1) IN r\nInit == x = F(2)\nNext == x[1] < 3 /\\ x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.violation?.traceOutput).toEqual(["0  2", "0  2", "1  3"]);
+  });
+
   it("counts the substitutions of a LET INSTANCE under the operator it copies, at the name each one replaces, as SANY builds a SubstInNode there too", async () => {
     const result = await check({
       source:
