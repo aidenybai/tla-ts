@@ -16281,7 +16281,8 @@ const getEffects = (
     getConvertedSearchValues(node, context) !== undefined ||
     getConvertedTypedValues(node, context) !== undefined ||
     getConvertedBufferValues(node, context) !== undefined ||
-    getConvertedArrayValues(node, context) !== undefined
+    getConvertedArrayValues(node, context) !== undefined ||
+    (ts.isExpression(node) && getKeyUpdate(node, context) !== undefined)
       ? getConversionFunctions(node, context)
       : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
         ? getKeyedConversionFunctions(node, context)
@@ -21220,6 +21221,39 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
   return { node, conversion };
 };
 
+// A compound assignment to a key that is an object that a name holds, of an object that a name
+// holds which can't be undefined or null, other than super's, and how it combines what it reads
+// with its value.
+const getKeyUpdate = (node: ts.Expression, context: Context) => {
+  if (context.heap === undefined || !ts.isBinaryExpression(node)) return undefined;
+  const update = getPrimitiveUpdate(node.operatorToken.kind, context);
+  const access = skipCasts(node.left);
+  if (
+    update === undefined ||
+    !ts.isElementAccessExpression(access) ||
+    access.questionDotToken !== undefined ||
+    !ts.isIdentifier(skipCasts(access.expression)) ||
+    isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression)))
+  ) {
+    return undefined;
+  }
+  const key = skipCasts(access.argumentExpression);
+  return ts.isIdentifier(key) && isObjectOperand(key, context)
+    ? { node, access, key, update }
+    : undefined;
+};
+
+// A value that a compound assignment evaluates that runs nothing, so that it reads what it reads
+// whether it evaluates before or after the key's conversions, but for what they change.
+const isPlainUpdateValue = (node: ts.Expression, path: Path, context: Context) => {
+  const found = findLeadingCall(node, [], path, context);
+  return (
+    found.call === undefined &&
+    !found.isBlocked &&
+    findNodes(node, (inner): inner is ts.Expression => isAssignment(inner)).length === 0
+  );
+};
+
 // The first computed key of a class that a statement makes that converts an object, which runs as
 // its own statement, where the class evaluates only names and literals before it. Nothing that the
 // class evaluates before it may read what the conversion's methods change.
@@ -22548,6 +22582,89 @@ export const translateStatements = (
           }),
         )
       : gather(path);
+  }
+  // A compound assignment to an object key converts the key as it reads the property and again as
+  // it writes it, as Node does, once it evaluates its value.
+  const keyUpdate = ts.isExpressionStatement(statement)
+    ? getKeyUpdate(skipCasts(statement.expression), context)
+    : undefined;
+  if (keyUpdate !== undefined && isPlainUpdateValue(keyUpdate.node.right, path, context)) {
+    const site = keyUpdate.node;
+    const object = translateExpression(keyUpdate.access.expression, path.scope, context);
+    const keyValue = translateExpression(keyUpdate.key, path.scope, context);
+    const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
+    return runToPrimitive(
+      site,
+      keyValue,
+      "string",
+      path,
+      context,
+      statementFrame,
+      (read, first) => {
+        const readHeap = getHeap(read.scope, site, context);
+        const readKey = useJavaScript("PropertyKey", [first], context);
+        return ifThenElse(
+          useJavaScript("IsPlainKeyAccess", [readHeap, object, readKey], context),
+          bind(
+            read,
+            "current",
+            useJavaScript("Get", [readHeap, object, readKey], context),
+            context,
+            (current, held) =>
+              bind(
+                current,
+                "operand",
+                translateExpression(keyUpdate.node.right, current.scope, context),
+                context,
+                (operated, operand) =>
+                  ifThenElse(
+                    apply("\\/", [
+                      useJavaScript("IsObjectIn", [readHeap, held], context),
+                      useJavaScript("IsObjectIn", [readHeap, operand], context),
+                    ]),
+                    stop(
+                      "tla-ts can't convert the objects that a compound assignment combines here",
+                    ),
+                    runToPrimitive(
+                      site,
+                      keyValue,
+                      "string",
+                      operated,
+                      context,
+                      statementFrame,
+                      (written, second) => {
+                        const writeHeap = getHeap(written.scope, site, context);
+                        const writeKey = useJavaScript("PropertyKey", [second], context);
+                        return ifThenElse(
+                          useJavaScript("IsPlainKeyAccess", [writeHeap, object, writeKey], context),
+                          ifThenElse(
+                            useJavaScript("CanPut", [writeHeap, object, writeKey], context),
+                            continueWith(
+                              withHeap(
+                                written,
+                                useJavaScript(
+                                  "SetProperty",
+                                  [writeHeap, object, writeKey, keyUpdate.update(held, operand)],
+                                  context,
+                                ),
+                                context,
+                              ),
+                            ),
+                            isStrictCode(site)
+                              ? throwTypeError(written, site, context, statementFrame)
+                              : stop("tla-ts can't ignore a failed write outside strict mode"),
+                          ),
+                          stop("tla-ts can't write this key of this object here"),
+                        );
+                      },
+                    ),
+                  ),
+              ),
+          ),
+          stop("tla-ts can't read this key of this object here"),
+        );
+      },
+    );
   }
   const classKey = getHoistedClassKey(statement, path, context);
   if (classKey !== undefined) {

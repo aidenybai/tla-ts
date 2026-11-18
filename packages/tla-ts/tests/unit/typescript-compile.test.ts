@@ -55307,4 +55307,66 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts an object key that a compound assignment updates as it reads and as it writes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var n = 0;
+      var key = { toString: function () { n += 1; log += "key" + n + "|"; return n === 1 ? "a" : "b"; } };
+      var obj = { a: 1, b: 10 };
+      var rhs = 5;
+      obj[key] += rhs;
+      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + "|"; return "c"; } };
+      obj.c = 2;
+      obj[other] *= 3;
+      var bad = { toString: function () { throw new RangeError("x"); } };
+      var thrown = "none";
+      try {
+        obj[bad] -= 1;
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join("|"), thrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+    const getStrictSource = (expected: string) => `
+      "use strict";
+      var log = "";
+      var bump = 1;
+      var key = { toString: function () { log += "k|"; bump += 1; return "a"; } };
+      var frozen = Object.freeze({ a: 1 });
+      var thrown = "none";
+      try {
+        frozen[key] += bump;
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var open = { a: 1 };
+      open[key] += bump;
+      var result = [thrown, frozen.a, open.a, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("1,6,6,a|b|c,RangeError,key1|key2|string|string|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("1,15,6,a|b|c,RangeError,key1|key2|string|string|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 1,6,6,a|b|c,RangeError,key1|key2|string|string|",
+      );
+    });
+
+    it("reads its value after the first conversion and throws where it can't write", async () => {
+      expect(
+        (await check(compile(getStrictSource("TypeError,1,5,k|k|k|k|"), path))).failure,
+      ).toBeUndefined();
+      expect(
+        (await check(compile(getStrictSource("TypeError,1,4,k|k|k|k|"), path))).failure?.message,
+      ).toContain("result TypeError,1,5,k|k|k|k|");
+    });
+  });
 });

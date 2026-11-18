@@ -2877,6 +2877,14 @@ FirstElementGetter(heap, ref) ==
 
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
 
+\\* Whether a compound assignment to a key that converts reads or writes an object plainly: one that
+\\* the heap holds, which is no proxy or typed array, with no accessor at the key.
+IsPlainKeyAccess(heap, ref, key) ==
+  /\\ IsHeap(ref)
+  /\\ ~IsProxy(heap, ref)
+  /\\ ~IsTypedArray(heap, ref)
+  /\\ AccessorOf(heap, ref, key) = Undefined
+
 \\* The getter that an object that the heap holds reads its then through, where it isn't a promise, a
 \\* generator, or a proxy, whose then tla-ts reads otherwise.
 ThenGetter(heap, value) ==
