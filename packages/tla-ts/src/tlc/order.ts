@@ -1,11 +1,12 @@
 import type { Module, SourceLocation } from "../ast";
 import type { ConfigValue, ModelConfig } from "../config";
-import { createMissingModuleError } from "../errors";
+import { createMissingModuleError, createSanyError, TlaSyntaxError } from "../errors";
 import { getJavaHashCode } from "../java-hash";
 import { tokenize, type Token } from "../lexer";
 import { extractModule, parseModule, parseModuleTokens } from "../parser";
 import { isBefore } from "../resolve";
 import { SANY_STANDARD_MODULES } from "../sany/modules";
+import { getSanyParseError } from "../sany/parse-error";
 import {
   SANY_BUILTINS,
   SANY_NODE_NAMES,
@@ -271,6 +272,25 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     if (text !== undefined) texts.set(text, read);
     return read;
   };
+  const parseFile = (text: string, name: string) => {
+    try {
+      return readText(text).getModule();
+    } catch (error) {
+      if (!(error instanceof TlaSyntaxError)) throw error;
+      const parseError = getSanyParseError(text);
+      if (parseError === undefined) throw error;
+      throw createSanyError(
+        [
+          {
+            location: `In module ${name}`,
+            message: `Could not parse module ${name} from file ${name}.tla`,
+          },
+        ],
+        true,
+        parseError,
+      );
+    }
+  };
   const getFile = (name: string | undefined) => {
     const cached = files.get(name ?? "");
     if (cached) return cached;
@@ -284,7 +304,14 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     const moduleText = readText(text);
     const tokens = moduleText.tokens;
     const range = moduleText.ranges.get(getModuleName(tokens) ?? "") ?? { start: 0, end: 0 };
-    const file = { tokens, ...range, getModule: moduleText.getModule };
+    const file = {
+      tokens,
+      ...range,
+      getModule:
+        name === undefined || text === undefined
+          ? moduleText.getModule
+          : () => parseFile(text, name),
+    };
     files.set(name ?? "", file);
     moduleText.ranges.forEach((nestedRange, nestedName) => {
       if (nestedRange.start === range.start || nestedModules.has(nestedName)) return;
@@ -301,6 +328,7 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     getParsed: (name: string | undefined): ParsedModule =>
       (name === undefined ? undefined : nestedModules.get(name)) ?? getFile(name),
     parseText: (text: string) => readText(text).getModule(),
+    parseFile,
   };
 };
 
@@ -509,6 +537,7 @@ const getStringOrder = (
   const findInstantiation = createSearch((module) => module.instances);
   const parsedUnits = new Set<string | undefined>([undefined]);
   const dependencies = new Map<string | undefined, string[]>();
+  getParsed(undefined).getModule();
   getParsedTexts(getUnitTokens(undefined)).forEach((text, index) => {
     if (index === 3) SANY_NODE_NAMES.forEach(intern);
     intern(text);
@@ -527,6 +556,7 @@ const getStringOrder = (
       const importer = module.unit ?? getModuleName(getParsed(undefined).tokens);
       throw createMissingModuleError(name, importer);
     }
+    getParsed(name).getModule();
     getParsedTexts(getUnitTokens(name)).forEach(intern);
   }
   SEMANTIC_PRELUDE.forEach(intern);
@@ -562,6 +592,7 @@ export interface TlcOrder {
   getInstanceDeclarations: (module: string) => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
   parseModule: (source: string) => Module;
+  parseFile: (source: string, name: string) => Module;
 }
 
 export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrder => {
@@ -585,6 +616,7 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
         .filter((entry) => entry.kind === "constant" || entry.kind === "variable")
         .map((entry) => entry.name),
     parseModule: modules.parseText,
+    parseFile: modules.parseFile,
     createDefinitionOrder: () => {
       const moduleContexts = getContexts();
       moduleContexts.getContext(undefined);

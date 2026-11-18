@@ -35,8 +35,40 @@ describe("name resolution matches SANY", () => {
   });
 
   it("fails to parse an EXTENDS of a name that is not an identifier", async () => {
-    await expect(checkNames("EXTENDS)Sequences")).rejects.toBeInstanceOf(TlaSyntaxError);
-    await expect(checkNames("EXTENDS +, Sequences")).rejects.toBeInstanceOf(TlaSyntaxError);
+    await expect(checkNames("EXTENDS)Sequences")).rejects.toThrow("line 2, column 8");
+    await expect(checkNames("EXTENDS +, Sequences")).rejects.toThrow("line 2, column 9");
+  });
+
+  it("reports a parse error in an extended module before a module after it that is missing", async () => {
+    const result = check({
+      source: "---- MODULE M ----\nEXTENDS Broken, Missing\n====",
+      config: "",
+      loadModule: (name) =>
+        name === "Broken" ? "---- MODULE Broken ----\nBad == [a/b |-> 1]\n====" : undefined,
+    });
+    await expect(result).rejects.toThrow(
+      createSanyError(
+        [
+          {
+            location: "In module Broken",
+            message: "Could not parse module Broken from file Broken.tla",
+          },
+        ],
+        true,
+        [
+          "***Parse Error***",
+          'Encountered "|->" at line 2, column 13 and token "b" ',
+          "",
+          "Residual stack trace follows:",
+          "Some [] Form starting at line 2, column 8.",
+          "ExtendableExpr starting at line 2, column 8.",
+          "Expression starting at line 2, column 8.",
+          "Definition starting at line 2, column 1.",
+          "Module body starting at line 2, column 1.",
+          "",
+        ].join("\n"),
+      ),
+    );
   });
 
   it.each([

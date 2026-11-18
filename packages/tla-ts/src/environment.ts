@@ -77,7 +77,6 @@ import {
 } from "./resolve";
 import { createRuntime } from "./runtime";
 import { getSanyStandardModules } from "./sany/modules";
-import { getSanyParseError } from "./sany/parse-error";
 import {
   CORE_OPERATORS,
   getJavaOverrides,
@@ -175,26 +174,6 @@ const getDeclarations = (linked: LinkedModule): Declaration[] => [
     location: linked.variableLocations[index],
   })),
 ];
-
-const parseModuleFile = (source: string, name: string, order: TlcOrder) => {
-  try {
-    return order.parseModule(source);
-  } catch (error) {
-    if (!(error instanceof TlaSyntaxError)) throw error;
-    const parseError = getSanyParseError(source);
-    if (parseError === undefined) throw error;
-    throw createSanyError(
-      [
-        {
-          location: `In module ${name}`,
-          message: `Could not parse module ${name} from file ${name}.tla`,
-        },
-      ],
-      true,
-      parseError,
-    );
-  }
-};
 
 const createModuleRedefinedError = (module: Module) =>
   new TlaSyntaxError(
@@ -396,7 +375,7 @@ export const createEnvironment = (
       getSanyStandardModules(runtime.version).get(name) ??
       extractModule(options.source, name);
     if (source === undefined) throw createMissingModuleError(name, importer);
-    const module = parseModuleFile(source, name, order);
+    const module = order.parseFile(source, name);
     if (module.name !== name) {
       throw createSanyError(
         [
