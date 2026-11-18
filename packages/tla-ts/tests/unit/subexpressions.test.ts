@@ -79,6 +79,18 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it("selects the operands of an infix junction as SANY nests them", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nOp == TRUE /\\ TRUE /\\ FALSE /\\ TRUE\nOr == FALSE \\/ TRUE \\/ FALSE\nVARIABLE x\nInit == x = <<>>\nNext == x' = <<Op!1, Op!1!1, Op!1!1!2, Op!2, Or!1>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<FALSE, TRUE, TRUE, TRUE, TRUE>>",
+    ]);
+  });
+
   it("selects an argument of an operator constant that an instance sets to a LAMBDA", async () => {
     const result = await check({
       source:
@@ -486,6 +498,20 @@ describe("subexpression references into theorems match SANY", () => {
         [
           "line 7, col 20 to line 7, col 20",
           "Nonexistent operand specified by `argument selector 2'.",
+        ],
+      ],
+    ],
+    [
+      "a third operand of an infix junction",
+      "A == TRUE /\\ FALSE /\\ TRUE\nB == A!3\nC == A!1!3",
+      [
+        [
+          "line 4, col 8 to line 4, col 8",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+        [
+          "line 5, col 10 to line 5, col 10",
+          "Nonexistent operand specified by `argument selector 3'.",
         ],
       ],
     ],

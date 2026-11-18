@@ -448,13 +448,28 @@ export const getBinder = (
   }
 };
 
+// SANY parses `a /\ b /\ c` as `(a /\ b) /\ c`, so an infix junction has two operands.
+const getJunctionOperands = (expression: Expression & { kind: "And" | "Or" }) => {
+  const operands = expression.operands;
+  const range = expression.location.range;
+  const end = expression.prefixEnds?.[operands.length - 3];
+  if (expression.isBulleted || !range || !end) return operands;
+  const prefix: Expression = {
+    ...expression,
+    operands: operands.slice(0, -1),
+    prefixEnds: expression.prefixEnds?.slice(0, -1),
+    location: { ...expression.location, range: { ...range, end } },
+  };
+  return [prefix, operands[operands.length - 1]];
+};
+
 export const getOperands = (expression: Expression): Expression[] | undefined => {
   switch (expression.kind) {
     case "Apply":
       return expression.args;
     case "And":
     case "Or":
-      return expression.operands;
+      return getJunctionOperands(expression);
     case "If":
       return [expression.condition, expression.consequent, expression.alternative];
     case "Tuple":
