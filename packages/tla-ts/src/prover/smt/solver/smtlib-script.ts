@@ -65,6 +65,7 @@ import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
 import { mkThSolver } from "./euf/th-solvers";
 import { getHammerPeriod } from "./lp/lp-settings";
+import { UINT_MAX } from "./sat/clause";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
@@ -2028,7 +2029,9 @@ export const runSmtlibScript = (
             numericOption === undefined &&
             booleanOption === undefined) ||
           (optionName.startsWith(":lp.") &&
-            (optionName !== ":lp.int_hammer_period" || value?.kind !== "numeral"))
+            (optionName !== ":lp.int_hammer_period" ||
+              value?.kind !== "numeral" ||
+              Number(value.text) > UINT_MAX))
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
       },

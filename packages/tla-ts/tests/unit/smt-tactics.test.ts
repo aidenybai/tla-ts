@@ -1666,12 +1666,15 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ).toEqual(["unsat", "(:rlimit 4414)", "unsat", "(:rlimit 7199)"]);
   });
 
-  it("rejects the other options of lp, and a hammer period that is not a numeral", () => {
+  it("rejects the other options of lp, and a hammer period that is not an unsigned numeral", () => {
     const lines = ["(declare-const x Int)", "(assert (>= (* 3 x) 101))", "(check-sat)"];
     expect(() => run(["(set-option :lp.random_hammers false)", ...lines])).toThrow(
       new SmtUnsupportedError("the option :lp.random_hammers"),
     );
     expect(() => run(["(set-option :lp.int_hammer_period foo)", ...lines])).toThrow(
+      new SmtUnsupportedError("the option :lp.int_hammer_period"),
+    );
+    expect(() => run(["(set-option :lp.int_hammer_period 4294967296)", ...lines])).toThrow(
       new SmtUnsupportedError("the option :lp.int_hammer_period"),
     );
   });
