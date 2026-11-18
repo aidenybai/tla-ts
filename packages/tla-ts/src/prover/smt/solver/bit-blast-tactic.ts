@@ -595,8 +595,16 @@ export const runBitBlast =
         manager.incRef(entry[1]);
         consts.push({ decl: entry[0], bits: entry[1] });
       }
-      for (const decl of rewriter.newbits) manager.incDeclRef(decl);
-      goal.addModelConversion((model) => convertModel(manager, consts, model));
+      const newbits = [...rewriter.newbits];
+      for (const decl of newbits) manager.incDeclRef(decl);
+      goal.addModelConversion(
+        (model) => convertModel(manager, consts, model),
+        () => {
+          for (const decl of newbits) manager.decDeclRef(decl);
+          for (const entry of consts) manager.decRef(entry.bits);
+          for (const entry of consts) manager.decDeclRef(entry.decl);
+        },
+      );
     }
     goal.depth++;
     rewriter.cleanup();

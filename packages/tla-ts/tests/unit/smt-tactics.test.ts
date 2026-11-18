@@ -2451,3 +2451,33 @@ describe("eq2bv, as Z3 5.3.2 encodes the bounded integers", () => {
     ]);
   });
 });
+
+describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
+  it("frees the model converter of apply's goal, so the next bit-blast numbers its bits anew", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const v0 (_ BitVec 2))",
+        "(declare-const v1 (_ BitVec 2))",
+        "(assert (bvult (bvmul v0 v1) #b10))",
+        "(assert (bvuge (bvadd v1 #b01) v0))",
+        "(apply bit-blast :print false)",
+        "(apply (then simplify bit-blast))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (let ((a!1 (ite k!4",
+        "                  (ite k!5 (not (= k!7 k!6)) k!7)",
+        "                  (not (or (not k!5) (not k!6))))))",
+        "    (not a!1))",
+        "  (let ((a!1 (or k!5 (not (or (not k!4) (not k!6)))))",
+        "        (a!2 (or (not (or (not k!4) (not k!6))) (= k!7 k!6))))",
+        "    (or (not (or k!5 (= k!7 k!6))) (not a!1) (not a!2)))",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+});

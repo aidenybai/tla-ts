@@ -20,7 +20,13 @@ import {
   SORT_INT,
   SORT_REAL,
 } from "./ast";
-import { Goal, getDependencyValues, mkDependencyLeaf, PRECISION_NAMES } from "./goal";
+import {
+  decConverterRefs,
+  Goal,
+  getDependencyValues,
+  mkDependencyLeaf,
+  PRECISION_NAMES,
+} from "./goal";
 import { Rational } from "./rational";
 import { Rewriter } from "./rewriter";
 import { ResourceLimit } from "./rlimit";
@@ -398,6 +404,8 @@ interface ScriptState {
   kernel: SmtKernel | undefined;
   satSolver: IncSatSolver | undefined;
   fdSolver: FdSolver | undefined;
+  // tactic2solver's model converter, of the goal of its last check.
+  tacticConverters: Goal["converters"];
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -468,6 +476,7 @@ export const runSmtlibScript = (
       kernel: undefined,
       satSolver: undefined,
       fdSolver: undefined,
+      tacticConverters: [],
     };
   };
   let state = createState();
@@ -587,12 +596,17 @@ export const runSmtlibScript = (
   };
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
   const solveWithStrategy = () => {
+    const goal = getGoal();
     try {
-      const goal = getGoal();
       const strategy =
         settings.parameters.get("tactic.default_tactic") ??
         getLogicStrategy(state.logic, goal.isProofsEnabled);
       const checked = checkSatUsing(compileInternalTactic(getTacticEnvironment(), strategy), goal);
+      // tactic2solver keeps the goal's model converter until its next check.
+      decConverterRefs(state.manager, state.tacticConverters);
+      state.tacticConverters = goal.converters;
+      goal.converters = [];
+      goal.reset();
       return {
         result: checked.status,
         context: undefined,
@@ -600,6 +614,8 @@ export const runSmtlibScript = (
         reasonUnknown: checked.reasonUnknown,
       };
     } catch (error) {
+      goal.reset();
+      goal.releaseConverters();
       if (!(error instanceof SmtUnsupportedError)) throw error;
       const hasQuantifiers = state.assertions.some(
         (assertion) => state.manager.hasQuantifierFlags[assertion],
@@ -786,6 +802,8 @@ export const runSmtlibScript = (
       parameters.get("sat.smt") === "true" ||
       isEuf;
     state.satSolver?.release();
+    decConverterRefs(state.manager, state.tacticConverters);
+    state.tacticConverters = [];
     state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
     state.satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
@@ -1298,6 +1316,8 @@ export const runSmtlibScript = (
               : getVerdict(checked.status),
           );
         } finally {
+          goal.reset();
+          goal.releaseConverters();
           state.manager.limit.pop();
         }
         validateCheck(list.end);
@@ -1585,6 +1605,7 @@ export const runSmtlibScript = (
         // apply_tactic_cmd releases the result goals and then the input goal.
         if (goals === undefined) {
           input.reset();
+          input.releaseConverters();
           return;
         }
         try {
@@ -1670,8 +1691,13 @@ export const runSmtlibScript = (
           print([...lines, "(check-sat)"].join("\n"));
           for (const assertion of assertions) manager.decRef(assertion);
         } finally {
-          for (const goal of goals) if (goal !== input) goal.reset();
+          for (const goal of goals)
+            if (goal !== input) {
+              goal.reset();
+              goal.releaseConverters();
+            }
           input.reset();
+          input.releaseConverters();
         }
       },
     ],

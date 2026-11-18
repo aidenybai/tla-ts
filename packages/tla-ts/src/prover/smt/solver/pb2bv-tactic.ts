@@ -518,14 +518,22 @@ class Pb2Bv {
       manager.incDeclRef(decl);
       c2bit.push({ decl, bit: -1 });
     }
-    goal.addModelConversion((model) => {
-      for (const entry of c2bit) {
-        const value = entry.bit === -1 ? undefined : model.constInterps.get(entry.bit);
-        const isOne = value !== undefined && !manager.isFalse(value);
-        model.registerConst(entry.decl, manager.mkNumeral(isOne ? 1n : 0n));
-      }
-      return model;
-    });
+    goal.addModelConversion(
+      (model) => {
+        for (const entry of c2bit) {
+          const value = entry.bit === -1 ? undefined : model.constInterps.get(entry.bit);
+          const isOne = value !== undefined && !manager.isFalse(value);
+          model.registerConst(entry.decl, manager.mkNumeral(isOne ? 1n : 0n));
+        }
+        return model;
+      },
+      () => {
+        for (const entry of c2bit) {
+          manager.decDeclRef(entry.decl);
+          if (entry.bit !== -1) manager.decDeclRef(entry.bit);
+        }
+      },
+    );
   }
 
   private throwNonPb(expr: number): never {

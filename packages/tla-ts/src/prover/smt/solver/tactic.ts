@@ -16,6 +16,7 @@ import { createCtxSolverSimplify } from "./ctx-solver-simplify";
 import {
   type Definition,
   type Dependency,
+  decConverterRefs,
   Goal,
   getDependencyValues,
   joinDependencies,
@@ -423,6 +424,7 @@ const runParallelSmt = (environment: TacticEnvironment) => (goal: Goal) => {
 const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrSolver => {
   const assertions = new RefVector(manager);
   let model: ProtoModel | undefined;
+  let converters: Goal["converters"] = [];
   return {
     assert: (expr) => assertions.push(expr),
     check: () => {
@@ -431,12 +433,18 @@ const createTacticSolver = (manager: AstManager, getTactic: () => Tactic): AckrS
       const goal = new Goal(manager);
       for (const assertion of assertions.items) goal.assert(assertion);
       const checked = checkSatUsing(getTactic(), goal);
+      // tactic2solver keeps the goal's model converter until its next check.
+      decConverterRefs(manager, converters);
+      converters = goal.converters;
+      goal.converters = [];
+      goal.reset();
       model = checked.model;
       model?.incRef();
       return checked.status;
     },
     getModel: () => model as ProtoModel,
     release: () => {
+      decConverterRefs(manager, converters);
       model?.decRef();
       assertions.reset();
     },
@@ -1678,16 +1686,21 @@ const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
 
 const runOrElse = (tactics: Tactic[]) => (goal: Goal) => {
   const original = goal.copy();
-  for (const tactic of tactics.slice(0, -1)) {
-    try {
-      return tactic(goal);
-    } catch (error) {
-      if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
+  try {
+    for (const tactic of tactics.slice(0, -1)) {
+      try {
+        return tactic(goal);
+      } catch (error) {
+        if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
+      }
+      goal.resetAll();
+      goal.copyFrom(original);
     }
-    goal.resetAll();
-    goal.copyFrom(original);
+    return tactics[tactics.length - 1](goal);
+  } finally {
+    original.reset();
+    original.releaseConverters();
   }
-  return tactics[tactics.length - 1](goal);
 };
 
 const isEqualGoal = (first: Goal, second: Goal) => {
@@ -1704,7 +1717,10 @@ const runRepeat = (tactic: Tactic, maxDepth: number) => {
     if (depth > maxDepth) return [goal];
     const original = goal.copy();
     const goals = tactic(goal);
-    if (goals.length === 1 && isEqualGoal(original, goals[0])) return goals;
+    const isEqual = goals.length === 1 && isEqualGoal(original, goals[0]);
+    original.reset();
+    original.releaseConverters();
+    if (isEqual) return goals;
     if (goals.length === 1) return goals[0].isDecided() ? goals : run(depth + 1, goals[0]);
     const results: Goal[] = [];
     const unsatGoals: Goal[] = [];
@@ -2192,8 +2208,13 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal) => {
   try {
     return getTacticCheck(goal, goals);
   } finally {
-    goal.reset();
-    if (Array.isArray(goals)) for (const result of goals) result.reset();
+    // check_sat frees the result goals, and its caller then frees the goal.
+    if (Array.isArray(goals))
+      for (const result of goals)
+        if (result !== goal) {
+          result.reset();
+          result.releaseConverters();
+        }
   }
 };
 

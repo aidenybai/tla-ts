@@ -58,17 +58,43 @@ export interface Definition {
   def: number;
 }
 
+// Each list of converters holds a reference to its converters, as a model_converter_ref does.
 interface HiddenDecl {
   decl: number;
+  refs: number;
 }
 
 interface Definitions {
   definitions: Definition[];
+  refs: number;
 }
 
 interface ModelConversion {
   convert: (model: ProtoModel) => ProtoModel;
+  release: () => void;
+  refs: number;
 }
+
+export const incConverterRefs = (converters: Goal["converters"]) => {
+  for (const converter of converters) converter.refs++;
+};
+
+// concat_model_converter frees its second converter before its first, and
+// generic_model_converter frees each entry's definition before its declaration.
+export const decConverterRefs = (manager: AstManager, converters: Goal["converters"]) => {
+  for (let index = converters.length - 1; index >= 0; index--) {
+    const converter = converters[index];
+    converter.refs--;
+    if (converter.refs > 0) continue;
+    if ("convert" in converter) converter.release();
+    else if ("definitions" in converter)
+      for (const definition of converter.definitions) {
+        if (definition.def !== -1) manager.decRef(definition.def);
+        manager.decDeclRef(definition.decl);
+      }
+    else manager.decDeclRef(converter.decl);
+  }
+};
 
 export class Goal {
   readonly forms: RefVector;
@@ -103,6 +129,8 @@ export class Goal {
     this.depth = Math.max(this.depth, source.depth);
     this.isInconsistent = source.isInconsistent;
     this.precision = getPrecisionUnion(source.precision, this.precision);
+    incConverterRefs(source.converters);
+    decConverterRefs(this.manager, this.converters);
     this.converters = source.converters;
     this.isProofsEnabled = source.isProofsEnabled;
     this.isModelsEnabled = source.isModelsEnabled;
@@ -121,13 +149,18 @@ export class Goal {
     this.precision = PRECISE;
   }
 
+  releaseConverters() {
+    decConverterRefs(this.manager, this.converters);
+    this.converters = [];
+  }
+
   updatePrecision(precision: number) {
     this.precision = getPrecisionUnion(this.precision, precision);
   }
 
   addConverter(decl: number) {
     this.manager.incDeclRef(decl);
-    this.converters = [...this.converters, { decl }];
+    this.converters = [...this.converters, { decl, refs: 1 }];
   }
 
   addDefinitions(definitions: Definition[]) {
@@ -135,11 +168,11 @@ export class Goal {
       this.manager.incDeclRef(definition.decl);
       if (definition.def !== -1) this.manager.incRef(definition.def);
     }
-    this.converters = [...this.converters, { definitions }];
+    this.converters = [...this.converters, { definitions, refs: 1 }];
   }
 
-  addModelConversion(convert: (model: ProtoModel) => ProtoModel) {
-    this.converters = [...this.converters, { convert }];
+  addModelConversion(convert: (model: ProtoModel) => ProtoModel, release: () => void) {
+    this.converters = [...this.converters, { convert, release, refs: 1 }];
   }
 
   getDependency(index: number) {
