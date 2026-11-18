@@ -54637,4 +54637,48 @@ describe("BigInts", () => {
       expect((await check(compile(wrong, path))).failure?.message).toContain("caught undefined");
     });
   });
+
+  describe("writes the properties of a function value that the heap holds", () => {
+    const getSource = (expected: string) => `
+      const make = (k: number) => {
+        const doubled = k * 2;
+        const read = () => doubled;
+        return read;
+      };
+      const g = () => 1;
+      const held = g as typeof g & { c?: number };
+      held.c = 3;
+      held.c += 1;
+      const made = make(1) as (() => number) & { tag?: number };
+      made.tag = 5;
+      made["tag"] = 6;
+      const had = "c" in held;
+      delete held.c;
+      const seen = [had, "c" in held, made.tag + made(), held()].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,false,8,1"))).failure).toBeUndefined();
+    });
+
+    it("rejects the first write kept", async () => {
+      expect((await checkModel(getSource("true,false,7,1"))).failure?.message).toContain(
+        "seen true,false,8,1",
+      );
+    });
+
+    it("stops where a sloppy function's object isn't on the heap", async () => {
+      const sloppy = `
+        function g() {
+          return 1;
+        }
+        const held = g as typeof g & { c?: number };
+        held.c = 3;
+      `;
+      expect((await checkModel(sloppy)).failure?.message).toContain(
+        "tla-ts can't read this function as an object",
+      );
+    });
+  });
 });

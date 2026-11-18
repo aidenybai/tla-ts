@@ -319,6 +319,7 @@ import {
   translateComputedKey,
   translateObjectChange,
   translateObjectValue,
+  translateFunctionObject,
   getSuperLookup,
   isFunctionValue,
   getOwnFunctionKeys,
@@ -926,7 +927,12 @@ const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWr
       (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !==
       0;
   if (!isAny) rejectAnyReceiver(receiver, context);
-  if (!isBuiltIn && !isAny && getKind(receiver, context) !== "object") return undefined;
+  // A function is an object where the heap or the built-in objects hold it, and the write stops
+  // where it's another.
+  const isFunction = isFunctionValue(receiver, context);
+  if (!isBuiltIn && !isAny && !isFunction && getKind(receiver, context) !== "object") {
+    return undefined;
+  }
   const symbol = context.heap;
   const heap = symbol === undefined ? undefined : path.scope.bindings.get(symbol);
   if (symbol === undefined || heap === undefined || !path.mutable.has(symbol)) {
@@ -935,7 +941,9 @@ const getHeapWrite = (node: ts.Expression, path: Path, context: Context): HeapWr
   return {
     symbol,
     heap,
-    ref: translateObjectValue(receiver, path.scope, context),
+    ref: isFunction
+      ? translateFunctionObject(receiver, path.scope, context)
+      : translateObjectValue(receiver, path.scope, context),
     key: ts.isPropertyAccessExpression(node)
       ? string(node.name.text)
       : translatePropertyKey(node.argumentExpression, path.scope, context),
@@ -1214,6 +1222,18 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
           ),
         ),
     };
+  }
+  // A function is no record, so only the heap holds its properties.
+  if (
+    (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+    getTypeNames(context.checker.getTypeAtLocation(node.expression), context.checker)?.includes(
+      "function",
+    ) === true
+  ) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't write a property of a function where no heap holds objects",
+      node,
+    );
   }
   if (ts.isPropertyAccessExpression(node)) {
     if (getKind(node.expression, context) !== "other") {
