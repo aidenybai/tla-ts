@@ -16,7 +16,7 @@ import { getIndexedKind, INDEX_PARAMETERS, SET_LIKE_METHODS } from "../src/types
 import { compile } from "../src/typescript/compile";
 import { printModule } from "../src/printer";
 import { compileToEscore } from "../src/typescript/spec/compile";
-import { createLibrary } from "../src/typescript/spec/library";
+import { prepareRuntime } from "../src/typescript/spec/prepare";
 import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
 
 type Outcome = "pass" | "wrong" | "untranslatable" | "skipped";
@@ -4206,7 +4206,7 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
 const ESCORE =
   process.env.TLA_TS_ESCORE === undefined
     ? undefined
-    : createLibrary(join(import.meta.dirname, "../ecmascript"));
+    : prepareRuntime(join(import.meta.dirname, "../ecmascript"));
 
 // Compiles a program and checks it, where a TypeScript error gives the run that onTypeError makes.
 const checkProgram = async (

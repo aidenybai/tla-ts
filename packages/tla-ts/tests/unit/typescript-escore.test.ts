@@ -1,11 +1,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
-import { afterAll, describe, expect, it } from "vite-plus/test";
-import { compileToEscore } from "../../src/typescript/spec/compile";
-import { createLibrary } from "../../src/typescript/spec/library";
-
-const library = createLibrary(join(import.meta.dirname, "../../ecmascript"));
+import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 interface ScriptResult {
   status: string;
@@ -13,25 +9,38 @@ interface ScriptResult {
 }
 
 // ESCore's evaluation nests deeper than a test's stack, so checks run on one worker with the
-// stack that test262-engine262 gives ESCore, which imports tla-ts once for them all.
+// stack that test262-engine262 gives ESCore, which prepares ESCore's runtime once for them all.
 const worker = new Worker(
-  `const { parentPort, workerData } = require("node:worker_threads");
-  const loading = import(workerData.url);
+  `const { register } = require("node:module");
+  const { parentPort, workerData } = require("node:worker_threads");
+  // HACK: Node strips the types of tla-ts's sources, whose imports leave out the extension.
+  register("data:text/javascript," + encodeURIComponent(\`export const resolve = (specifier, context, next) =>
+    next(specifier, context).catch((error) => (specifier.startsWith(".") ? next(specifier + ".ts", context) : Promise.reject(error)));\`));
+  const loading = Promise.all([
+    import(workerData.source + "/parallel.ts"),
+    import(workerData.source + "/typescript/spec/compile.ts"),
+    import(workerData.source + "/typescript/spec/prepare.ts"),
+  ]).then(([parallel, compile, prepare]) => ({
+    check: parallel.check,
+    compileToEscore: compile.compileToEscore,
+    runtime: prepare.prepareRuntime(workerData.directory),
+  }));
+  loading.then(() => parentPort.postMessage({ id: -1 }));
   parentPort.on("message", async (spec) => {
-    const tla = await loading;
-    const result = await tla.check({
-      source: spec.source,
-      config: spec.config,
-      loadModule: (name) => workerData.modules[name],
-      onPrint: () => {},
-    });
-    parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message });
+    const loaded = await loading;
+    try {
+      const compiled = loaded.compileToEscore(spec.source, "spec.ts", loaded.runtime);
+      const result = await loaded.check({ ...compiled, workers: 1, onPrint: () => {} });
+      parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message });
+    } catch (error) {
+      parentPort.postMessage({ id: spec.id, status: "stopped", message: error.message });
+    }
   });`,
   {
     eval: true,
     workerData: {
-      url: pathToFileURL(join(import.meta.dirname, "../../dist/index.js")).href,
-      modules: Object.fromEntries(library.modules),
+      source: pathToFileURL(join(import.meta.dirname, "../../src")).href,
+      directory: join(import.meta.dirname, "../../ecmascript"),
     },
     resourceLimits: { stackSizeMb: 256 },
   },
@@ -40,15 +49,22 @@ worker.unref();
 afterAll(() => worker.terminate());
 
 const pending: ((result: ScriptResult) => void)[] = [];
-worker.on("message", (result: ScriptResult & { id: number }) => pending[result.id](result));
+const ready = new Promise((resolve) => {
+  worker.on("message", (result: ScriptResult & { id: number }) =>
+    result.id === -1 ? resolve(undefined) : pending[result.id](result),
+  );
+});
+// The worker prepares the runtime before the first check, which takes longer than a check.
+beforeAll(() => ready, 60_000);
 
-const checkScript = (source: string, isStrict = true) => {
-  const spec = compileToEscore(`${isStrict ? '"use strict";' : ""}\n${source}`, "spec.ts", library);
-  return new Promise<ScriptResult>((resolve) => {
-    worker.postMessage({ id: pending.length, source: spec.source, config: spec.config });
+const checkScript = (source: string, isStrict = true) =>
+  new Promise<ScriptResult>((resolve) => {
+    worker.postMessage({
+      id: pending.length,
+      source: `${isStrict ? '"use strict";' : ""}\n${source}`,
+    });
     pending.push(resolve);
   });
-};
 
 const THREW = "the script threw an exception";
 
@@ -182,7 +198,7 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
-  describe("keeps the built-in methods that a script names and stops at the others", () => {
+  describe("runs the methods of a buffer's view", () => {
     const getSource = (expected: string) => `
       const view = new DataView(new ArrayBuffer(4));
       view.setUint8(1, 200);
@@ -293,7 +309,7 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
-  describe("keeps the built-ins of a global that a table of names links", () => {
+  describe("runs the built-ins of a global that a table of names links", () => {
     const getSource = (expected: string) => `
       const result = [...new Float32Array([3, 1.5])].join();
       if (result !== "${expected}") throw new Error(result);
@@ -397,8 +413,8 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource(`${host}!`))).message).toContain(THREW);
     });
 
-    it("stops at a global that only the host has", () => {
-      expect(() => compileToEscore("setTimeout(() => {});", "spec.ts", library)).toThrow(
+    it("stops at a global that only the host has", async () => {
+      expect((await checkScript("setTimeout(() => {});")).message).toContain(
         "tla-ts can't run the host's setTimeout",
       );
     });
