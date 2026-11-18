@@ -400,6 +400,7 @@ export class IncSatSolver {
     sat2goal(this.manager, this.solver, this.goal2sat.atoms, goal, this.satConverter);
     this.internalized.reset();
     for (const form of goal.forms.items) this.internalized.push(form);
+    goal.reset();
     this.isInternalizedConverted = true;
     return this.internalized.items;
   }
@@ -409,7 +410,7 @@ export class IncSatSolver {
   getConverters(): Goal["converters"] {
     this.getAssertions();
     return this.isInternalizedConverted
-      ? [...this.converters.converters, { definitions: this.satConverter.entries }]
+      ? [...this.converters.converters, { definitions: this.satConverter.copyEntries() }]
       : [];
   }
 
@@ -420,6 +421,7 @@ export class IncSatSolver {
     this.names.reset();
     this.core.reset();
     this.internalized.reset();
+    this.satConverter.release();
     this.releaseBitBlaster();
   }
 

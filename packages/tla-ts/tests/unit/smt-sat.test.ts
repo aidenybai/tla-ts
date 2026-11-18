@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import { SmtCanceledError } from "../../src/errors";
+import { AstManager, SORT_BOOL } from "../../src/prover/smt/solver/ast";
 import { L_UNDEF } from "../../src/prover/smt/solver/lbool";
 import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
+import { IncSatSolver } from "../../src/prover/smt/solver/sat/inc-sat-solver";
 import { Solver } from "../../src/prover/smt/solver/sat/solver";
 import { runSmtlibScript } from "../../src/prover/smt/solver/smtlib-script";
 
@@ -114,6 +116,22 @@ describe("sat2goal", () => {
         ")",
       ].join("\n"),
     );
+  });
+
+  it("frees the terms of its conversions once the incremental solver is released", () => {
+    const manager = new AstManager(new ResourceLimit(Infinity));
+    const [p, q, r] = [0, 1, 2].map(() => manager.mkFreshConst(null, SORT_BOOL));
+    for (const atom of [p, q, r]) manager.incRef(atom);
+    const negations = [p, q, r].map((atom) => manager.mkNot(atom));
+    const solver = new IncSatSolver(manager, new Map());
+    solver.assertExpr(manager.mkOr([p, q]));
+    solver.check();
+    solver.assertExpr(manager.mkOr([negations[0], r]));
+    solver.check();
+    const converted = [...solver.getAssertions()];
+    expect(converted.length).toBe(2);
+    solver.release();
+    expect([...converted, ...negations].filter((expr) => manager.ids[expr] !== -1)).toEqual([]);
   });
 
   it("adds the equalities of the egraph in sat.euf mode", () => {
