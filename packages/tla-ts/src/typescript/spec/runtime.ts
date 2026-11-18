@@ -29,6 +29,10 @@ const DEFINITIONS = [
              ELSE BigInt(IF isIncrement THEN BigIntAdd(v.value, BigIntFromInt(1)) ELSE BigIntSub(v.value, BigIntFromInt(1)))
       p == PutValue(num.s, Val(ref), new)
   IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, IF isPostfix THEN v ELSE new)`,
+  // A statement's result r in a statement list, whose value is last's where r has none.
+  `StatementResult(r, last) ==
+  IF IsAbrupt(r) THEN Abrupt(r.s, UpdateEmpty(r.c, last))
+  ELSE Ok(r.s, IF Val(r) = Empty THEN last ELSE Val(r))`,
   `InitializeReferencedThen(ref, r) == IF IsAbrupt(r) THEN r ELSE InitializeReferencedBinding(r.s, ref, Val(r))`,
   `DefineElementOn(home, r, enumerable) ==
   IF IsAbrupt(r) \\/ Val(r).key.type = "private" THEN r ELSE

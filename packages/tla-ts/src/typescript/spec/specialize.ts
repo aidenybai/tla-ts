@@ -1854,22 +1854,26 @@ export const specialize = (
   // value, each statement in its own operator.
   const statementList = (statements: readonly ts.Statement[], scope: Scope): Code => {
     if (statements.length === 0) return (state) => `Ok(${state}, Empty)`;
-    const codesInOrder = statements.map((current) => statement(current, scope, []));
-    let next: string | undefined;
-    for (let index = codesInOrder.length - 1; index >= 0; index--) {
-      const code = codesInOrder[index];
-      const continuation =
-        next === undefined
-          ? "Ok(r.s, IF Val(r) = Empty THEN last ELSE Val(r))"
-          : `${next}(r.s, ctx, IF Val(r) = Empty THEN last ELSE Val(r))`;
-      next = define(
-        "Statement",
-        ["s", "ctx", "last"],
-        `LET r == ${code("s", "ctx")} IN IF IsAbrupt(r) THEN Abrupt(r.s, UpdateEmpty(r.c, last)) ELSE ${continuation}`,
-      );
-    }
-    const first = next;
-    return (state, context) => `${first}(${state}, ${context}, Empty)`;
+    const codes = statements.map((current) => statement(current, scope, []));
+    // Each statement's result, its value Empty's where it has none, of the statement before it.
+    const results = codes.map(
+      (code, index) =>
+        `StatementResult(${code(index === 0 ? "s" : `q${index}.s`, "ctx")}, ${index === 0 ? "Empty" : `Val(q${index})`})`,
+    );
+    const name = define(
+      "Statements",
+      ["s", "ctx"],
+      [
+        ...results
+          .slice(0, -1)
+          .map(
+            (result, index) =>
+              `LET q${index + 1} == ${result} IN IF IsAbrupt(q${index + 1}) THEN q${index + 1} ELSE`,
+          ),
+        results[results.length - 1],
+      ].join("\n  "),
+    );
+    return (state, context) => `${name}(${state}, ${context})`;
   };
 
   // Blocks (§14.2.2) and BlockDeclarationInstantiation (§14.2.3). A block that declares nothing
