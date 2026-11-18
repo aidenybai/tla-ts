@@ -5208,24 +5208,6 @@ ParseInt(value, radix) ==
                  [] magnitude = 0 -> NegativeZero
                  [] OTHER -> -magnitude
 
-\\* JavaScript's + of two primitives, which joins them as strings where either is a string and adds
-\\* them as numbers otherwise.
-AddPrimitives(left, right) ==
-  IF TypeOf(left) = "string" \\/ TypeOf(right) = "string"
-  THEN StringOf(left) \\o StringOf(right)
-  ELSE Add(ToNumber(left), ToNumber(right))
-
-\\* JavaScript's < of two primitives.
-LessThanPrimitives(left, right) ==
-  IF TypeOf(left) = "string" /\\ TypeOf(right) = "string"
-  THEN StringLessThan(left, right)
-  ELSE LessThan(ToNumber(left), ToNumber(right))
-
-\\* JavaScript's <= of two primitives.
-LessOrEqualPrimitives(left, right) ==
-  IF TypeOf(left) = "string" /\\ TypeOf(right) = "string"
-  THEN ~StringLessThan(right, left)
-  ELSE LessOrEqual(ToNumber(left), ToNumber(right))
 
 \\* A number in a script that holds only integers, which can't hold NaN, the infinities, or -0.
 PlainNumber(value) ==
@@ -5265,6 +5247,48 @@ LOCAL StringToBigInt(value) ==
        [] unsigned = "" \\/ \\E position \\in 1..Len(unsigned) : SubSeq(unsigned, position, position) \\notin DigitsOf(radix) ->
             Undefined
        [] OTHER -> BigIntOf(Prefix(text, 1) = "-", NatOfDigits(unsigned, radix, <<>>))
+
+\\* ToNumeric of a primitive: a BigInt as it is, and ToNumber of another.
+ToNumeric(value) == IF IsBigInt(value) THEN value ELSE ToNumber(value)
+
+\\* An arithmetic operator of two primitives, which converts them with ToNumeric: two BigInts take
+\\* the BigInt operation, and a BigInt with a number throws a TypeError.
+NumericOperation(NumberOperation(_, _), BigIntOperation(_, _), left, right) ==
+  LET numeric == <<ToNumeric(left), ToNumeric(right)>>
+  IN  CASE IsBigInt(numeric[1]) /\\ IsBigInt(numeric[2]) -> BigIntOperation(numeric[1], numeric[2])
+        [] IsBigInt(numeric[1]) \\/ IsBigInt(numeric[2]) ->
+             Assert(FALSE, "tla-ts can't throw the TypeError of mixing a BigInt with a number")
+        [] OTHER -> NumberOperation(numeric[1], numeric[2])
+
+\\* JavaScript's + of two primitives, which joins them as strings where either is a string and adds
+\\* them as numbers or as BigInts otherwise.
+AddPrimitives(left, right) ==
+  IF TypeOf(left) = "string" \\/ TypeOf(right) = "string"
+  THEN StringOf(left) \\o StringOf(right)
+  ELSE NumericOperation(Add, BigIntAdd, left, right)
+
+\\* IsLessThan of two primitives: TRUE, FALSE, or Undefined, which a NaN gives, or a string that holds
+\\* no BigInt where the other is one. Two strings compare by their code units, and a BigInt with a
+\\* number by their mathematical values.
+LOCAL PrimitiveLessThan(left, right) ==
+  CASE TypeOf(left) = "string" /\\ TypeOf(right) = "string" -> StringLessThan(left, right)
+    [] IsBigInt(left) /\\ TypeOf(right) = "string" ->
+         LET parsed == StringToBigInt(right)
+         IN  IF parsed = Undefined THEN Undefined ELSE NumericLessThan(left, parsed)
+    [] TypeOf(left) = "string" /\\ IsBigInt(right) ->
+         LET parsed == StringToBigInt(left)
+         IN  IF parsed = Undefined THEN Undefined ELSE NumericLessThan(parsed, right)
+    [] OTHER ->
+         LET numeric == <<ToNumeric(left), ToNumeric(right)>>
+         IN  IF numeric[1] = NaN \\/ numeric[2] = NaN
+             THEN Undefined
+             ELSE NumericLessThan(numeric[1], numeric[2])
+
+\\* JavaScript's < of two primitives.
+LessThanPrimitives(left, right) == PrimitiveLessThan(left, right) = TRUE
+
+\\* JavaScript's <= of two primitives, which an undefined comparison makes false.
+LessOrEqualPrimitives(left, right) == PrimitiveLessThan(right, left) = FALSE
 
 LOCAL EqualsText(number, text) ==
   ReadNumber(text, LAMBDA kind, isNegative, magnitude :

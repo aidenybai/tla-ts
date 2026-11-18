@@ -180,6 +180,7 @@ import {
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
+import { isAnyOperand, NUMBER_OPERATIONS, translateNumericOperation } from "./conversions";
 import { getNamespaceModule, getNamespaceName, getNamespaceRef, isBindingRead } from "./namespaces";
 import { getThisOwner, isBeforeDeclaration, isCaughtBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
@@ -2238,6 +2239,72 @@ const getUnverifiedPrimitive = (node: ts.Expression, context: Context) => {
           : undefined;
 };
 
+// An arithmetic operator or an ordering of a value of type any that no statement converts first, as
+// in a loop's condition, or where no heap holds objects, whose value is a primitive or an object,
+// which stops where it runs. The operator converts the primitives as JavaScript's does: + joins a
+// string, an ordering runs IsLessThan, and the others run ToNumeric.
+const translateAnyOperation = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
+  const kind = node.operatorToken.kind;
+  const operands = [node.left, node.right];
+  const operation = NUMBER_OPERATIONS.get(kind);
+  const isPrimitiveTyped = (operand: ts.Expression) =>
+    isEvery(
+      context.checker.getTypeAtLocation(operand),
+      ts.TypeFlags.NumberLike |
+        ts.TypeFlags.StringLike |
+        ts.TypeFlags.BooleanLike |
+        ts.TypeFlags.BigIntLike |
+        ts.TypeFlags.Null |
+        ts.TypeFlags.Undefined,
+    );
+  if (
+    !(
+      ORDERING_OPERATORS.has(kind) ||
+      kind === ts.SyntaxKind.PlusToken ||
+      operation !== undefined
+    ) ||
+    !operands.some((operand) => isAnyOperand(operand, context)) ||
+    !operands.every((operand) => isAnyOperand(operand, context) || isPrimitiveTyped(operand))
+  ) {
+    return undefined;
+  }
+  context.prelude.add("Null");
+  const plain = (value: Expression) =>
+    context.hasSpecialNumbers ? value : useJavaScript("PlainNumber", [value], context);
+  return share(translateExpression(node.left, scope, context), "left", context, (left) =>
+    share(translateExpression(node.right, scope, context), "right", context, (right) => {
+      const value = ORDERING_OPERATORS.has(kind)
+        ? kind === ts.SyntaxKind.LessThanToken
+          ? useJavaScript("LessThanPrimitives", [left, right], context)
+          : kind === ts.SyntaxKind.GreaterThanToken
+            ? useJavaScript("LessThanPrimitives", [right, left], context)
+            : kind === ts.SyntaxKind.LessThanEqualsToken
+              ? useJavaScript("LessOrEqualPrimitives", [left, right], context)
+              : useJavaScript("LessOrEqualPrimitives", [right, left], context)
+        : plain(
+            translateNumericOperation(kind, left, right, context) ??
+              useJavaScript("AddPrimitives", [left, right], context),
+          );
+      const isPrimitive = (operand: Expression) =>
+        apply("\\/", [
+          apply("=", [operand, identifier("Null")]),
+          apply("\\notin", [
+            useJavaScript("TypeOf", [operand], context),
+            set([string("object"), string("function")]),
+          ]),
+        ]);
+      return ifExpression(
+        apply("/\\", [isPrimitive(left), isPrimitive(right)]),
+        value,
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't convert this object to a primitive here"),
+        ]),
+      );
+    }),
+  );
+};
+
 const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
   const kind = node.operatorToken.kind;
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
@@ -2320,6 +2387,8 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     ORDERING_OPERATORS.has(kind) && isBooleanLike(side, context);
   const translateOperand = (side: ts.Expression) =>
     isOrderedBoolean(side) ? translateToNumber(side, node, scope, context) : translate(side);
+  const anyOperation = translateAnyOperation(node, scope, context);
+  if (anyOperation !== undefined) return anyOperation;
   if (
     ARITHMETIC_OPERATORS.has(kind) &&
     [node.left, node.right].some((side) => !isNumberLike(side, context) && !isOrderedBoolean(side))
@@ -2778,10 +2847,12 @@ export const isGlobalObject = (node: ts.Expression, context: Context) => {
 
 const isUnset = (symbol: ts.Symbol, context: Context) => {
   const declarations = symbol.declarations ?? [];
+  // A global that a declaration file declares, such as NaN, holds what the host gives it.
   return (
     declarations.length > 0 &&
     declarations.every(
       (declaration) =>
+        !declaration.getSourceFile().isDeclarationFile &&
         ts.isVariableDeclaration(declaration) &&
         ts.isIdentifier(declaration.name) &&
         ts.isVariableStatement(declaration.parent.parent) &&
@@ -3326,6 +3397,23 @@ const translatePrimitiveRead = (
   );
 };
 
+// The built-in object that a node is, through casts and a const that holds it.
+const getHeldBuiltInName = (node: ts.Expression, context: Context) => {
+  const inner = skipCasts(node);
+  const symbol = ts.isIdentifier(inner) ? getSymbol(inner, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  const initializer =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0
+      ? declaration.initializer
+      : undefined;
+  return (
+    getBuiltIn(inner, context) ??
+    (initializer === undefined ? undefined : getBuiltIn(skipCasts(initializer), context))
+  );
+};
+
 const translatePropertyAccess = (
   node: ts.PropertyAccessExpression,
   scope: Scope,
@@ -3595,6 +3683,14 @@ const translatePropertyAccess = (
   }
   if (isAddedToBuiltIn(node, context)) {
     throw new TlaTypeScriptError("tla-ts can't read a key that a built-in object lacks", node);
+  }
+  // A built-in object, such as Error, that a cast or a const gives another type isn't a record.
+  const heldBuiltIn = getHeldBuiltInName(receiver, context);
+  if (heldBuiltIn !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't read ${name} of ${heldBuiltIn}, which isn't a record here`,
+      node,
+    );
   }
   // A string or an array isn't a record, so a value that may be either reads its length as they
   // do.
