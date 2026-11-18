@@ -100,6 +100,29 @@ describe("subexpression references match TLC", () => {
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 4 }]);
   });
 
+  it("selects into the definitions of an instance inside a LET", async () => {
+    const modules = new Map([
+      [
+        "Inner",
+        "---- MODULE Inner ----\nEXTENDS Naturals\nF(a) == \\A y \\in {a} : y + a = 3\nG == {7, 8}\n====",
+      ],
+      [
+        "Inner2",
+        "---- MODULE Inner2 ----\nEXTENDS Naturals\nCONSTANT c\nH(a) == \\E y \\in {a} : y + c = 5\nK == {c, 9}\n====",
+      ],
+    ]);
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nB == <<LET L == INSTANCE Inner IN L!F(1)!(2), LET L == INSTANCE Inner IN L!G!2, LET L(p) == INSTANCE Inner2 WITH c <- p IN L(3)!H(1)!(2), LET L(p) == INSTANCE Inner2 WITH c <- p IN L(3)!K!1, LET L == INSTANCE Inner2 WITH c <- 4 IN L!K!1>>\nInit == x = <<>>\nNext == x' = B\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => modules.get(name),
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<TRUE, 8, TRUE, 3, 4>>",
+    ]);
+  });
+
   it("selects a label through an instance whose operators the instancing module does not extend", async () => {
     const result = await check({
       source:

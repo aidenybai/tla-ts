@@ -45,7 +45,9 @@ import {
   createLocalIdentifier,
   getEnabledVariableName,
   renameLocals,
+  withInstanceParams,
   withLetInstances,
+  withSubstitutionFrames,
 } from "./instances";
 import { overrideDefinitions, type JavaOverride } from "./java-overrides";
 import { extractModule } from "./parser";
@@ -217,6 +219,20 @@ const createLocalFunction = (definition: Definition, key: string): Definition =>
   isRecursive: false,
   location: definition.location,
 });
+
+const getSubstitutionFrame = (instance: Instance): Expression => {
+  const range = instance.definitionRange
+    ? {
+        ...instance.definitionRange,
+        start: { line: instance.location.line, column: instance.location.column },
+      }
+    : instance.instanceRange;
+  return {
+    kind: "Identifier",
+    name: instance.name ?? instance.module,
+    location: { ...range.start, range },
+  };
+};
 
 const mentionsName = (expression: Expression, names: Set<string>): boolean => {
   const name = getReferencedName(expression);
@@ -526,12 +542,6 @@ export const createEnvironment = (
     });
     const params = instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` }));
     params.forEach((param) => instanceParams.add(param));
-    const substitutionRange = instance.definitionRange
-      ? {
-          ...instance.definitionRange,
-          start: { line: instance.location.line, column: instance.location.column },
-        }
-      : instance.instanceRange;
     const instantiation = createInstantiation({
       params,
       substitutions: new Map(
@@ -555,13 +565,7 @@ export const createEnvironment = (
         return key;
       },
       createName,
-      ...(declarations.length > 0 && {
-        frame: {
-          kind: "Identifier",
-          name: instance.name ?? instance.module,
-          location: { ...substitutionRange.start, range: substitutionRange },
-        },
-      }),
+      ...(declarations.length > 0 && { frame: getSubstitutionFrame(instance) }),
     });
     return getInstanceSymbols(instance, linked.exported, declarations, (key, name) => {
       const copy =
@@ -763,22 +767,25 @@ export const createEnvironment = (
       },
       createName,
     });
+    // TLC's call stack holds the SubstInNode around a definition only when the instance's name reaches it.
+    const frames = declarations.length > 0 ? [getSubstitutionFrame(instance)] : [];
     const declared = new Set(declarations.map((declaration) => declaration.name));
-    const aliases = [...linked.exported]
+    const exported = [...linked.exported]
       .filter((entry) => !declared.has(entry[0]) && entry[1].kind !== "Instance")
       .map((entry) => {
+        const name = instance.name === undefined ? entry[0] : `${instance.name}!${entry[0]}`;
         const key = instantiation.getKey(entry[1].key);
+        const copy = copies.find((candidate) => candidate.name === key);
+        const original = definitions.get(key);
+        const definition =
+          copy ?? (original && withInstanceParams(original, instance.params, location));
+        if (definition) {
+          return { ...definition, name, body: withSubstitutionFrames(definition.body, frames) };
+        }
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
-        const params = [...instance.params, ...ownParams];
-        return createLocalAlias(
-          instance.name === undefined ? entry[0] : `${instance.name}!${entry[0]}`,
-          key,
-          params,
-          key === entry[1].key ? ownParams : params,
-          location,
-        );
+        return createLocalAlias(name, key, [...instance.params, ...ownParams], ownParams, location);
       });
-    return [...substitutionDefinitions, ...copies, ...aliases];
+    return [...substitutionDefinitions, ...copies, ...exported];
   };
 
   const getAvailableDefinitions = (visible: Symbols) =>

@@ -818,7 +818,7 @@ const substitute = (
   return renameNames(mapped, bound, rename);
 };
 
-const withInstanceParams = (
+export const withInstanceParams = (
   definition: Definition,
   params: OperatorParam[],
   location: SourceLocation,
