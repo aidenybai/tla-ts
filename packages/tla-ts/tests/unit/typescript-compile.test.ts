@@ -54081,4 +54081,27 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("leaves a var that a declare global block declares to the host", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/es-modules/ambient-global.ts");
+    const source = readFileSync(path, "utf8");
+    const written = source
+      .replace("try {", "globalThis.hookX = undefined;\ntry {")
+      .replace('caught !== "reference"', 'caught !== "undefined"');
+
+    it("stops at the ReferenceError of reading it before anything writes it", async () => {
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "tla-ts can't throw the ReferenceError of reading hookX",
+      );
+    });
+
+    it("agrees with Node once the global object holds it", async () => {
+      expect((await check(compile(written, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another value", async () => {
+      const wrong = written.replace('caught !== "undefined"', 'caught !== "reference"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("caught undefined");
+    });
+  });
 });
