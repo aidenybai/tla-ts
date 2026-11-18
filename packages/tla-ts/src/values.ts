@@ -131,23 +131,23 @@ export interface CostModel {
   node: number;
 }
 
-export interface LazyExcept {
-  function: LazyFunctionValue;
-  key: Value;
-  apply: (argument: Value) => Value;
-}
-
 export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
   apply: (argument: Value) => Value;
   costModel?: CostModel;
-  except?: LazyExcept;
   boundTupleLengths?: (number | undefined)[];
   source?: LazyFunctionSource;
   functionClass?: FunctionClass;
   enumerated?: FunctionValue;
   isFingerprinted?: boolean;
+}
+
+interface LazyFunctionCopy extends LazyFunctionValue {
+  original: LazyFunctionValue;
+  replacedKey: Value;
+  replacement: Value;
+  applyBody: (argument: Value) => Value;
 }
 
 export type Value =
@@ -2347,6 +2347,22 @@ export const isUpdatedElementOf = (element: Value, member: Value, set: Value): b
   );
 };
 
+const isLazyFunctionCopy = (value: LazyFunctionValue): value is LazyFunctionCopy =>
+  "original" in value;
+
+// FcnLambdaValue#toFcnRcd evaluates the body at every key of an EXCEPT copy, then applies its EXCEPTs.
+const getCopiedValue = (copy: LazyFunctionCopy, key: Value) => {
+  const value = copy.applyBody(key);
+  for (
+    let current: LazyFunctionValue = copy;
+    isLazyFunctionCopy(current);
+    current = current.original
+  ) {
+    if (isEqualLikeTlc(current.replacedKey, key)) return current.replacement;
+  }
+  return value;
+};
+
 export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "Function") return value;
   if (typeof value === "object" && value.kind === "LazyFunction") {
@@ -2358,12 +2374,10 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
     const domain = getFunctionDomain(value.domain);
     value.enumerated = createSortedFunction(
       domain,
-      domain.map((key) => value.apply(key)),
+      isLazyFunctionCopy(value)
+        ? domain.map((key) => getCopiedValue(value, key))
+        : domain.map((key) => value.apply(key)),
     );
-    // FcnLambdaValue#toFcnRcd evaluates an EXCEPT copy at the keys it replaces too.
-    for (let copy = value; copy.except; copy = copy.except.function) {
-      copy.except.apply(copy.except.key);
-    }
     if (value.costModel) value.costModel.secondary[value.costModel.node] += domain.length;
     return value.enumerated;
   }
@@ -2621,14 +2635,17 @@ export const updateFunction = (
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
     const apply = applyUnrecorded ?? functionValue.apply;
-    return setFunctionClass<LazyFunctionValue>(
+    return setFunctionClass<LazyFunctionCopy>(
       {
         kind: "LazyFunction",
         domain: functionValue.domain,
         apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
-        except: { function: functionValue, key: argument, apply },
         source: functionValue.source,
         boundTupleLengths: functionValue.boundTupleLengths,
+        original: functionValue,
+        replacedKey: argument,
+        replacement: updated,
+        applyBody: isLazyFunctionCopy(functionValue) ? functionValue.applyBody : apply,
       },
       getFunctionClass(functionValue),
     );

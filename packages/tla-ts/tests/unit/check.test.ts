@@ -2501,6 +2501,22 @@ ASSUME TLCFP(a) = -887695703
   );
 
   it.each([
+    ["an EXCEPT copy of it", "[g EXCEPT ![1] = 7]", ["1", "0", "1", "2"]],
+    ["a copy of that copy", "[[g EXCEPT ![1] = 7] EXCEPT ![0] = 8]", ["1", "0", "0", "1", "2"]],
+  ])(
+    "evaluates the body of a recursive function at each key in order when TLC fingerprints a state holding %s, as FcnLambdaValue#toFcnRcd does",
+    async (_title, copy, expected) => {
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\ng[n \\in 0..2] == IF n < 0 THEN g[0] ELSE x + n + (IF PrintT(n) THEN 0 ELSE 1)\nInit == x = 0 /\\ y = <<>>\nNext == x < 1 /\\ x' = x + 1 /\\ y' = <<${copy}>>\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected);
+    },
+  );
+
+  it.each([
     [
       "a constant domain",
       "VARIABLE v\nfib[n \\in 0..3] == IF n < 2 THEN n ELSE fib[n - 1] + fib[n - 2]",
