@@ -1816,6 +1816,38 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges a set of records per record a successor or quantifier draws, as TLC's SetOfRcdsValue does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in [a : 0..1, b : BOOLEAN]\nNext == \\/ x.a = 0 /\\ x' \\in [a : {x.a, 1}, b : {TRUE}]\n        \\/ x.a = 1 /\\ x' = [a |-> 1 - x.a, b |-> x.b]\n        \\/ \\E r \\in [b : {x.b}, a : 0..1] : x' = r\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect([lines?.[0], lines?.[1], lines?.[3]]).toEqual([
+      [
+        "line 4, col 9 to line 4, col 37 of module E: 4",
+        "|line 4, col 15 to line 4, col 37 of module E: 1:8",
+        "||line 4, col 16 to line 4, col 23 of module E: 1",
+        "||line 4, col 26 to line 4, col 36 of module E: 1",
+      ],
+      [
+        "line 5, col 12 to line 5, col 18 of module E: 6",
+        "|line 5, col 12 to line 5, col 14 of module E: 4",
+        "line 5, col 23 to line 5, col 55 of module E: 4",
+        "|line 5, col 30 to line 5, col 55 of module E: 2:8",
+        "||line 5, col 35 to line 5, col 42 of module E: 2:6",
+        "|||line 5, col 36 to line 5, col 38 of module E: 2",
+        "||line 5, col 49 to line 5, col 54 of module E: 2:10",
+        "|||line 5, col 50 to line 5, col 53 of module E: 2",
+      ],
+      [
+        "line 7, col 45 to line 7, col 50 of module E: 8",
+        "line 7, col 21 to line 7, col 41 of module E: 4:36",
+        "|line 7, col 26 to line 7, col 30 of module E: 4:20",
+        "||line 7, col 27 to line 7, col 29 of module E: 4",
+        "|line 7, col 33 to line 7, col 40 of module E: 4",
+      ],
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",

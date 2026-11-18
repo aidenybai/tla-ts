@@ -14,7 +14,6 @@ import {
   getCardinality,
   isEmptySet,
   isReducibleSet,
-  type FunctionSetValue,
   type IntervalValue,
   type Value,
 } from "./values";
@@ -666,38 +665,36 @@ const createListEnumerator = (coverage: Coverage, node: number | undefined, size
   };
 };
 
-// TLC's SetOfFcnsValue enumerator charges the domain's size per function and draws the range once per domain element, the last fastest.
-const createFunctionSetEnumerator = (
+// TLC's SetOfFcnsValue and SetOfRcdsValue enumerators charge an element's width as they draw it, one set per domain element or field, the last fastest.
+const createProductEnumerator = (
   coverage: Coverage,
   node: number,
-  set: FunctionSetValue,
+  sets: Value[],
 ): ChargedEnumerator => {
-  const width = getCardinality(set.domain);
-  const rangeSize = width === 0 ? 0 : getCardinality(set.range);
-  if (width > 0 && rangeSize === 0) return { next: () => false, reset: () => undefined };
-  const ranges = Array.from({ length: width }, () =>
-    createEnumerator(coverage, set.range, rangeSize, false),
+  if (sets.some((set) => isEmptySet(set))) return { next: () => false, reset: () => undefined };
+  const enumerators = sets.map((set) =>
+    createEnumerator(coverage, set, getCardinality(set), false),
   );
   const advance = () => {
-    for (let index = width - 1; index > 0; index--) {
-      if (ranges[index].next()) return true;
-      ranges[index].reset();
-      ranges[index].next();
+    for (let index = enumerators.length - 1; index > 0; index--) {
+      if (enumerators[index].next()) return true;
+      enumerators[index].reset();
+      enumerators[index].next();
     }
-    return width > 0 && ranges[0].next();
+    return enumerators.length > 0 && enumerators[0].next();
   };
-  let isDone = !ranges.every((range) => range.next());
+  let isDone = !enumerators.every((enumerator) => enumerator.next());
   return {
     next: () => {
       if (isDone) return false;
-      coverage.secondary[node] += Math.max(width, 1);
+      coverage.secondary[node] += Math.max(enumerators.length, 1);
       isDone = !advance();
       return true;
     },
     reset: () => {
-      ranges.forEach((range) => {
-        range.reset();
-        range.next();
+      enumerators.forEach((enumerator) => {
+        enumerator.reset();
+        enumerator.next();
       });
       isDone = false;
     },
@@ -705,7 +702,7 @@ const createFunctionSetEnumerator = (
 };
 
 // Charges what TLC's enumerator of the set's value class charges as it draws each element, the final null included.
-// A normalized enumeration of a set of functions converts it to a SetEnumValue with the same cost model first.
+// A normalized enumeration of a set of functions or records converts it to a SetEnumValue with the same cost model first.
 const createEnumerator = (
   coverage: Coverage,
   set: Value,
@@ -713,13 +710,23 @@ const createEnumerator = (
   isNormalized: boolean,
 ): ChargedEnumerator => {
   const node = typeof set === "object" ? coverage.values.get(set) : undefined;
-  if (node === undefined || typeof set !== "object" || set.kind !== "FunctionSet") {
+  if (
+    node === undefined ||
+    typeof set !== "object" ||
+    (set.kind !== "FunctionSet" && set.kind !== "RecordSet")
+  ) {
     return createListEnumerator(coverage, node, size);
   }
-  const functions = createFunctionSetEnumerator(coverage, node, set);
-  if (!isNormalized) return functions;
+  const elements = createProductEnumerator(
+    coverage,
+    node,
+    set.kind === "RecordSet"
+      ? set.sets
+      : Array.from({ length: getCardinality(set.domain) }, () => set.range),
+  );
+  if (!isNormalized) return elements;
   let count = 0;
-  while (functions.next()) count++;
+  while (elements.next()) count++;
   coverage.secondary[node] += count;
   return createListEnumerator(coverage, node, count);
 };

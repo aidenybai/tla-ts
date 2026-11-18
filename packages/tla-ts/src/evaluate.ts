@@ -1444,9 +1444,9 @@ const countEvaluator =
         expression.kind === "SetEnumeration" ||
         ((expression.kind === "SetFilter" || expression.kind === "SetMap") &&
           isReducibleSet(value)) ||
-        (expression.kind === "FunctionSet" &&
+        ((expression.kind === "FunctionSet" || expression.kind === "RecordSet") &&
           typeof value === "object" &&
-          value.kind === "FunctionSet");
+          value.kind === expression.kind);
       if (typeof value === "object" && isTagged) coverage.values.set(value, node);
       return value;
     } finally {
