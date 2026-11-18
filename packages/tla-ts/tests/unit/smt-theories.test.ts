@@ -382,4 +382,18 @@ describe("algebraic datatypes", () => {
       ["(", "  (define-fun x () B", "    (b1 a0))", ")"].join("\n"),
     ]);
   });
+
+  it("rewrites an equality of two constructor applications through a conjunction of one equality", () => {
+    expect(
+      run([
+        "(declare-datatypes ((B 0)) (((b0) (b1 (ba Int)))))",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (= (b1 y) (b1 z)))",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 12)", "sat", "(:rlimit 56)"]);
+  });
 });
