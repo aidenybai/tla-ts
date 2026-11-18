@@ -193,7 +193,6 @@ interface CodeBinding {
     getScope: () => TierScope;
     isNext: boolean;
   };
-  // Whether the code is a recursive function's own name in its body.
   isSelf?: boolean;
 }
 

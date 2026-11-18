@@ -675,7 +675,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     bound = getBoundNames(bounds),
   ) => {
     const operands = toOperands(expressions, bindFormals(scope, toFormals(bound)));
-    // SANY checks the range of x, y \in S once, for x.
     const groups = bounds.filter((range, index) => range.set !== bounds[index - 1]?.set);
     const ranges = groups.map((range) => analyze(range.set, scope));
     const data = applyDefined(operator, operands, ranges, bound);

@@ -368,7 +368,6 @@ interface Instantiation {
   addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
   createName: (name: string) => string;
   frame?: Expression;
-  // A LET INSTANCE's copies are LET definitions, which a reference finds in scope.
   isLocal?: boolean;
 }
 
@@ -933,9 +932,6 @@ export const createInstantiation = (instantiation: Instantiation) => {
   const rewrite = createRewrite("Normal");
   createRewrite("Enabled");
   createRewrite("Primed");
-  // TLC's call stack holds the SubstInNode an instance puts around a definition where the
-  // instance's name reaches it, not where the instanced module calls it, and around a function's
-  // constructor rather than the body each application evaluates.
   const getEntry = (key: string, copy: string) => {
     const frame = instantiation.frame;
     const definition = instantiation.getDefinition(copy);
@@ -995,7 +991,6 @@ const getUnnamedStatement = (theorem: Theorem) =>
     ? theorem.statement
     : undefined;
 
-// Expands each LET INSTANCE into the definitions it instantiates, when the module has any.
 export const getLetInstanceExpansion = (
   module: Module,
   instantiate: (instance: Instance, lets: Definition[]) => Definition[],

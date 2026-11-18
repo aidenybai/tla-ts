@@ -516,7 +516,6 @@ const getLetUnits = (file: SourceFile, expression: Expression & { kind: "Let" })
     const isInUnit = units.some((entry) => entry.span.start <= index && index <= entry.span.end);
     if (isToken(file, index, "RECURSIVE") && !isInUnit) recursiveIndexes.push(index);
   }
-  // A RECURSIVE statement declares the names up to the next one.
   const recursives = recursiveIndexes.map((start, position) => {
     const end = recursiveIndexes[position + 1] ?? bodyStart;
     const declarations = (expression.recursive ?? []).filter((declaration) => {

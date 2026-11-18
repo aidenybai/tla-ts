@@ -1,6 +1,5 @@
 interface LocalResolution {
   kind: "Local";
-  // A recursive function's name in its body, which TLC binds only while it applies the function.
   isSelf?: boolean;
 }
 
@@ -195,7 +194,6 @@ export interface FunctionConstructionExpression {
   body: Expression;
   location: SourceLocation;
   isRecursive?: boolean;
-  // The name of the recursive function the constructor defines, which its body calls it by.
   name?: string;
 }
 
@@ -537,7 +535,6 @@ const isNameReferenced = (expression: Expression, name: string): boolean =>
   getReferencedName(expression) === name ||
   getChildren(expression).some((child) => isNameReferenced(child, name));
 
-// SANY's function definition is an operator whose body is the function's constructor, which binds the function's name for the calls in it.
 export const getFunctionConstruction = (definition: FunctionDefinition, isLet: boolean) => {
   const known = functionConstructions.get(definition);
   if (known) return known;

@@ -153,7 +153,6 @@ export interface LinkedModule {
 interface ModuleScope {
   id: string;
   symbols: Symbols;
-  // The enclosing modules' definitions before this one, which SANY has resolved by then.
   definitions: Definition[];
   modules: Map<string, LinkedModule>;
   nested: Module[];

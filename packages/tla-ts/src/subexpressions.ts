@@ -675,7 +675,6 @@ const selectSubexpression = (
     current.kind === "Lambda"
       ? { ...current, body: wrapLets(current.body, selection.lets, location) }
       : wrapLets(current, selection.lets, location);
-  // SANY puts the substitutions of an instance that a selection goes through around what it selects.
   const frames = entered.flatMap((definition) =>
     definition.kind === "Operator" && definition.body !== current
       ? (substitutionFrames.get(definition.body) ?? [])
@@ -1071,7 +1070,6 @@ export const createModuleSubexpressions = (
       );
   };
   return {
-    // SANY resolves a module's definitions in order, so a nested module selects from those before it.
     getDefinitionsBefore: (location: SourceLocation, available: Definition[]) => {
       resolveDefinitions(available, (definition) => isBefore(definition.location, location));
       return module.definitions.flatMap((definition) =>
