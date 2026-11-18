@@ -699,6 +699,19 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", "(:rlimit 870)"]);
   });
 
+  // nra's check_assignment has nlsat evaluate a clause's literals once to see whether all are
+  // false and again to see whether one is true.
+  it("evaluates nlsat's clauses twice to check nla's assignment", () => {
+    expect(
+      run([
+        "(declare-const q Real)",
+        "(assert (> (* q q) 2.0))",
+        "(check-sat-using smt)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1038)"]);
+  });
+
   it("counts the steps of an unknown answer", () => {
     expect(
       run([
