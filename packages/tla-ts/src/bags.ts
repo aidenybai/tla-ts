@@ -4,18 +4,15 @@ import {
   defineConstant,
   defineHigherOrderOperator,
   defineOperator,
-  getKindString,
   getOperator,
   getValue,
   isOutOfRange,
 } from "./builtins";
-import { TlaEvaluationError, TlaModuleError } from "./errors";
+import { TlaModuleError } from "./errors";
 import type { Builtin, BuiltinArgument } from "./evaluate";
 import { prettyPrint } from "./pretty-print";
 import {
-  createEnumeratedSet,
   createFunction,
-  createSet,
   createSortedFunction,
   formatValue,
   getDomain,
@@ -133,7 +130,7 @@ const getPairs = (functionValue: FunctionValue) =>
 
 const EMPTY_BAG = createSortedFunction([], []);
 
-export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Builtin[] => [
+export const BAGS_OPERATORS: Builtin[] = [
   defineConstant("EmptyBag", EMPTY_BAG),
   defineOperator("IsABag", 1, (args) => {
     const functionValue = toFunction(getValue(args, 0, "IsABag"));
@@ -235,45 +232,6 @@ export const createBagsOperators = (builtins: ReadonlyMap<string, Builtin>): Bui
       addToBag(pairs, operator.call([key]), functionValue.range[index], createError),
     );
     return createFunction(pairs);
-  }),
-  defineOperator("SubBag", 1, (args) => {
-    const value = getValue(args, 0, "SubBag");
-    if (!isFunctionValue(value)) {
-      throw new TlaEvaluationError(
-        `Attempted to apply the operator DOMAIN to a non-function\n(${getKindString(value)})\nline 106, col 58 to line 106, col 65 of module Bags`,
-      );
-    }
-    const functionValue = toFiniteFunction(value);
-    const range = toFiniteSet(createEnumeratedSet(functionValue.range)).elements;
-    const invalid = range.find((count) => typeof count !== "number");
-    // A count that isn't an integer fails the comparison.
-    if (invalid !== undefined) builtins.get(">=")?.evaluateBinary?.(range[0], invalid);
-    const counts = functionValue.range.filter((count) => typeof count === "number");
-    if (counts.some((count) => count < 1)) {
-      throw new TlaEvaluationError(
-        `Attempted to apply a function to ${formatValue(functionValue)}, which is not in its domain`,
-      );
-    }
-    return createSet(
-      functionValue.domain
-        .reduce<[Value, Value][][]>(
-          (subBags, key, index) =>
-            subBags.flatMap((entries) => [
-              entries,
-              ...Array.from({ length: counts[index] }, (_value, copies): [Value, Value][] => [
-                ...entries,
-                [key, copies + 1],
-              ]),
-            ]),
-          [[]],
-        )
-        .map((entries) =>
-          createSortedFunction(
-            entries.map((entry) => entry[0]),
-            entries.map((entry) => entry[1]),
-          ),
-        ),
-    );
   }),
   defineOperator("BagToSet", 1, (args) => getDomain(getFunction(args, 0, "BagToSet"))),
   defineOperator("SetToBag", 1, (args) => {

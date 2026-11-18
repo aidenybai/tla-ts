@@ -20,7 +20,7 @@ import {
 import type { Builtin, BuiltinArgument, Context } from "./evaluate";
 import { prettyPrint } from "./pretty-print";
 import type { CheckerRuntime } from "./runtime";
-import { createBagsOperators } from "./bags";
+import { BAGS_OPERATORS } from "./bags";
 import { createIoUtilsOperators, createJsonOperators, type FileSystem } from "./json";
 import { createTlcTraceOperators } from "./tlc/value-stream";
 import { createRandomizationOperators, createRandomSubsetSet } from "./randomization";
@@ -604,7 +604,6 @@ export const getJavaOverrides = (
   print: (text: string) => void,
   runtime: CheckerRuntime,
   files: FileSystem,
-  builtins: ReadonlyMap<string, Builtin>,
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
@@ -612,7 +611,7 @@ export const getJavaOverrides = (
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (name === "_TLCTrace") return createTlcTraceOperators(files);
   if (!getSanyStandardModules(runtime.version).has(name)) return undefined;
-  const operators = getStandardOperators(name, print, runtime, files, builtins);
+  const operators = getStandardOperators(name, print, runtime, files);
   return name === "Randomization" && operators
     ? [...operators, createRandomSubsetSet(runtime)]
     : operators;
@@ -626,7 +625,6 @@ export const STANDARD_DEPENDENCIES = new Map([
   ["Randomization", ["Naturals", "FiniteSets", "Sequences"]],
   ["_Possible", ["TLC", "TLCExt", "Naturals", "Sequences", "FiniteSets", "Integers"]],
   ["Json", ["Sequences", "FiniteSets", "TLC", "Naturals"]],
-  ["Bags", ["Naturals"]],
   ["TLCExt", ["TLC", "Integers", "Naturals", "Sequences", "FiniteSets"]],
 ]);
 
@@ -637,7 +635,6 @@ export const getStandardOperators = (
   print: (text: string) => void,
   runtime: CheckerRuntime,
   files: FileSystem,
-  builtins: ReadonlyMap<string, Builtin>,
 ): Builtin[] | undefined => {
   switch (name) {
     case "Naturals":
@@ -657,7 +654,7 @@ export const getStandardOperators = (
     case "Json":
       return createJsonOperators(files);
     case "Bags":
-      return withJavaMethods("Bags", createBagsOperators(builtins));
+      return withJavaMethods("Bags", BAGS_OPERATORS);
     case "TLCExt":
       return withJavaMethods("TLCExt", createTlcExtOperators(print, runtime));
     default:
