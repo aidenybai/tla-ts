@@ -37259,14 +37259,10 @@ describe("buffers", () => {
     it.each([
       [
         "writes a number",
-        "const value: any = 1; let thrown = ''; try { new BigInt64Array(1)[0] = value; } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('number');",
-        "tla-ts can't throw the TypeError of converting a number to a BigInt",
+        "const value: any = 1; let thrown = ''; try { new BigInt64Array(1)[0] = value; } catch (error) { thrown = error instanceof TypeError ? 'type' : 'other'; } if (thrown !== 'type') throw new Error('number');",
+        "const value: any = 1; let thrown = ''; try { new BigInt64Array(1)[0] = value; } catch (error) { thrown = error instanceof TypeError ? 'type' : 'other'; } if (thrown === 'type') throw new Error('number');",
+        "number",
       ],
-    ])("stops where a script %s", async (_, source, message) => {
-      expect((await checkModel(source)).failure?.message).toContain(message);
-    });
-
-    it.each([
       [
         "converts a string that isn't decimal digits",
         "const texts: any = ['1e3']; let thrown = ''; try { new BigInt64Array(texts); } catch (error) { thrown = 'thrown'; } if (thrown === '') throw new Error('syntax');",
