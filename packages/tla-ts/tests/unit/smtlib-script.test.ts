@@ -708,7 +708,7 @@ describe("runSmtlibScript prints what Z3 prints", () => {
         "(set-option :produce-unsat-cores true)",
         "(declare-const x Int)",
         "(assert (! (= x 1) :named a))",
-        "(apply solve-eqs :print-dependencies true)",
+        "(apply ctx-solver-simplify :print-dependencies true)",
       ]),
     ).toThrow(SmtUnsupportedError);
   });

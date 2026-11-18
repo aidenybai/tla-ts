@@ -631,6 +631,74 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       "(:rlimit 397)",
     ]);
   });
+
+  it("solve-eqs joins the dependencies of the equations it substitutes", () => {
+    const declarations = [
+      "(set-option :produce-unsat-cores true)",
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(declare-const z Int)",
+      "(declare-const w Int)",
+      "(assert (! (= x (+ y 1)) :named a1))",
+      "(assert (! (= y (* 2 z)) :named a2))",
+      "(assert (= w (+ z 3)))",
+      "(assert (! (> (+ x w) 10) :named a3))",
+      "(assert (! (< z 1) :named a4))",
+      "(assert (! (> w 0) :named a5))",
+    ];
+    expect(
+      run([...declarations, "(apply solve-eqs :print_dependencies true)", "(get-info :rlimit)"]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a3 a2 a1",
+        "  (not (<= w 5))",
+        "  |- a4",
+        "  (not (<= 4 w))",
+        "  |- a5",
+        "  (not (<= w 0))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "(:rlimit 283)",
+    ]);
+    expect(
+      run([
+        ...declarations,
+        "(check-sat-using (then solve-eqs smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(a4 a3 a1 a2)", "(:rlimit 495)"]);
+  });
+
+  it("solve-eqs gives an equation it solves in context the dependencies of its formula", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (! (or (not p) (= x 5)) :named a1))",
+        "(assert (! p :named a2))",
+        "(assert (! (=> q (= y (+ x 1))) :named a3))",
+        "(assert (! q :named a4))",
+        "(assert (! (< (+ x y) 3) :named a5))",
+        "(assert (! (> y 0) :named a6))",
+        "(apply (using-params solve-eqs :context_solve true) :print_dependencies true)",
+        "(check-sat-using (then (using-params solve-eqs :context_solve true) smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  |- a5 a3 a4 a1 a2\n  false\n  :precision precise :depth 1)\n)",
+      "unsat",
+      "(a5 a3 a4 a1 a2)",
+      "(:rlimit 521)",
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {

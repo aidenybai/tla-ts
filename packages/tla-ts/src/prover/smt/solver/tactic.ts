@@ -840,6 +840,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "solve-eqs",
     {
+      isTrackingDependencies: true,
       // Z3 never counts the occurrences that solve_eqs_max_occs bounds, so the bound has no effect.
       descrs: getDescrs("", [
         ["solve_eqs_max_occs", PARAM_UINT, UINT_MAX, true],
