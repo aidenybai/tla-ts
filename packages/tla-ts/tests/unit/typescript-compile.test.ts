@@ -53523,4 +53523,24 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs a call through a number literal key as a statement", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var count = 0;
+      var holder = { 1: function () { count += 1; return 2; } };
+      var result = [holder[1](), count].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("2,1"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await check(compile(getSource("2,0"), path))).failure?.message).toContain(
+        "result 2,1",
+      );
+    });
+  });
 });

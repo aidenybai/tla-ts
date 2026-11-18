@@ -14213,7 +14213,11 @@ const isDispatchedCall = (
     (declarations.length === 0 &&
       !ts.isCallExpression(callee) &&
       !isSuperAccess(callee) &&
-      !(ts.isElementAccessExpression(callee) && ts.isStringLiteral(callee.argumentExpression)) &&
+      !(
+        ts.isElementAccessExpression(callee) &&
+        (ts.isStringLiteral(callee.argumentExpression) ||
+          ts.isNumericLiteral(callee.argumentExpression))
+      ) &&
       !isAnyMember(callee, context)) ||
     declarations.some((declaration) => declaration.getSourceFile().isDeclarationFile) ||
     (assigned === undefined ? getCallee(callee, context) !== undefined : isPlain(assigned)) ||
@@ -19463,9 +19467,9 @@ const isPlainCallee = (
       ts.isGetAccessorDeclaration,
     ) &&
     isPlainCallee(getCast(node.expression), context, results)) ||
-  // A key that a string literal writes reads as a name does.
+  // A key that a string or a number literal writes reads as a name does.
   (ts.isElementAccessExpression(node) &&
-    ts.isStringLiteral(node.argumentExpression) &&
+    (ts.isStringLiteral(node.argumentExpression) || ts.isNumericLiteral(node.argumentExpression)) &&
     getObjectGetter(node, context) === undefined &&
     !(getSymbol(node.argumentExpression, context.checker)?.declarations ?? []).some(
       ts.isGetAccessorDeclaration,
