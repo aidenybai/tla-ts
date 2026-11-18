@@ -10,7 +10,13 @@ import { formatRange } from "./errors";
 import type { Environment, Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
-import type { IntervalValue, Value } from "./values";
+import {
+  getCardinality,
+  isEmptySet,
+  isReducibleSet,
+  type IntervalValue,
+  type Value,
+} from "./values";
 
 export type CoverageKind = "init" | "next" | "invariant" | "constraint" | "implied";
 
@@ -611,6 +617,34 @@ export const runAtCoverageNode = <Result>(
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
   const node = typeof value === "object" ? coverage.values.get(value) : undefined;
   if (node !== undefined) coverage.secondary[node] += cost;
+};
+
+// TLC's SetEnumValue#diff and #cap keep the receiver's cost model; #cup draws a reducible operand into a set without one.
+export const chargeSetOperation = (
+  coverage: Coverage,
+  operator: string,
+  left: Value,
+  right: Value,
+  result: Value,
+): Value => {
+  const receiver = isReducibleSet(left)
+    ? left
+    : operator !== "\\" && isReducibleSet(right)
+      ? right
+      : undefined;
+  if (receiver === undefined || typeof result !== "object") return result;
+  const other = receiver === left ? right : left;
+  if (operator === "\\cup") {
+    if (isEmptySet(receiver) || !isReducibleSet(other)) return result;
+    const otherNode = coverage.values.get(other);
+    if (otherNode !== undefined) coverage.secondary[otherNode] += getCardinality(other) + 1;
+  }
+  const node = operator === "\\cup" ? undefined : coverage.values.get(receiver);
+  if (coverage.values.get(result) === node) return result;
+  const isShared = result === left || result === right || coverage.values.has(result);
+  const charged = isShared ? { ...result } : result;
+  if (node !== undefined) coverage.values.set(charged, node);
+  return charged;
 };
 
 // TLC's ContextEnumerator draws each bound's next element, the final null included, before it returns a binding.

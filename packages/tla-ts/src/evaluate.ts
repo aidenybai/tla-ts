@@ -24,6 +24,7 @@ import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { generateEvaluator } from "./codegen";
 import {
   chargeContexts,
+  chargeSetOperation,
   costCoverage,
   countCoverage,
   getCoverageNode,
@@ -1589,6 +1590,8 @@ const compileClosureCall = (
   };
 };
 
+const SET_OPERATORS = new Set(["\\cup", "\\cap", "\\"]);
+
 const compileApply = (
   expression: Expression & { kind: "Apply" },
   environment: Environment,
@@ -1653,6 +1656,23 @@ const compileApply = (
     const right = getEvaluator(args[1], environment);
     const subset = getSubsetOperator(expression, global.evaluateBinary);
     return (context) => subset(left(context), right(context));
+  }
+  const coverage = environment.coverage;
+  const combine = global?.kind === "Builtin" ? global.evaluateBinary : undefined;
+  if (coverage && combine && SET_OPERATORS.has(expression.operator) && args.length === 2) {
+    const left = getEvaluator(args[0], environment);
+    const right = getEvaluator(args[1], environment);
+    return (context) => {
+      const leftValue = left(context);
+      const rightValue = right(context);
+      return chargeSetOperation(
+        coverage,
+        expression.operator,
+        leftValue,
+        rightValue,
+        combine(leftValue, rightValue),
+      );
+    };
   }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
   if (expression.operator === "\\cdot" && args.length === 2) {

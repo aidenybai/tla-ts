@@ -1702,6 +1702,39 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges the sets of \\, \\cap and \\cup as TLC's SetEnumValue does, through a state's value too", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE S ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = {0, 1}\nNext == x < 2 /\\ x' = x + 1 /\\ y' = y\nInv1 == \\E e \\in {0, 1, 2} \\ {x} : e # x\nInv2 == \\E e \\in y \\cup {x} : e = x\nInv3 == \\E e \\in {x} \\cup y : e = x\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv1\nINVARIANT Inv2\nINVARIANT Inv3",
+    );
+    expect([lines?.[0], ...(lines?.slice(2) ?? [])]).toEqual([
+      [
+        "line 4, col 18 to line 4, col 27 of module S: 3",
+        "|line 4, col 22 to line 4, col 27 of module S: 3:9",
+      ],
+      [
+        "line 6, col 9 to line 6, col 40 of module S: 3",
+        "|line 6, col 36 to line 6, col 40 of module S: 3",
+        "|line 6, col 18 to line 6, col 32 of module S: 3",
+        "||line 6, col 18 to line 6, col 26 of module S: 3:6",
+        "||line 6, col 30 to line 6, col 32 of module S: 3",
+      ],
+      [
+        "line 7, col 9 to line 7, col 35 of module S: 3",
+        "|line 7, col 31 to line 7, col 35 of module S: 6",
+        "|line 7, col 18 to line 7, col 27 of module S: 3",
+        "||line 7, col 18 to line 7, col 18 of module S: 3",
+        "||line 7, col 25 to line 7, col 27 of module S: 3:6",
+        "|||line 7, col 26 to line 7, col 26 of module S: 3",
+      ],
+      [
+        "line 8, col 9 to line 8, col 35 of module S: 3",
+        "|line 8, col 31 to line 8, col 35 of module S: 6",
+        "|line 8, col 18 to line 8, col 27 of module S: 3",
+      ],
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",
