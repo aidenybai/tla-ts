@@ -55,4 +55,8 @@ export class TheoryPolymorphism extends Theory {
   override shouldResearch(unsatCore: readonly number[]) {
     return unsatCore.includes(this.assumption);
   }
+
+  override release() {
+    if (this.assumption !== -1) this.manager.decRef(this.assumption);
+  }
 }

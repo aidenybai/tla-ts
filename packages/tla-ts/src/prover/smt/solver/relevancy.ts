@@ -83,6 +83,13 @@ export class RelevancyPropagator {
       this.trailHandlers[cell - 1]();
   }
 
+  release() {
+    const manager = this.context.manager;
+    for (let index = this.trailExprs.length - 1; index >= 0; index--)
+      manager.decRef(this.trailExprs[index]);
+    for (const expr of this.relevantExprs) manager.decRef(expr);
+  }
+
   push() {
     this.scopes.push(this.relevantExprs.length, this.trailKinds.length);
   }

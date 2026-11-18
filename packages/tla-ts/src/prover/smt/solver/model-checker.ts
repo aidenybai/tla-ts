@@ -36,6 +36,10 @@ class AuxContext {
     this.context.setupContext(parent.setup, false, this.asserted);
   }
 
+  release() {
+    this.context.release(this.asserted);
+  }
+
   push() {
     this.context.push();
     this.asserted.push();
@@ -75,6 +79,11 @@ export class ModelChecker {
     private qmanager: DefaultQuantifierManager,
   ) {
     this.pinnedExprs = new RefVector(context.manager);
+  }
+
+  release() {
+    this.aux?.release();
+    this.pinnedExprs.reset();
   }
 
   private get manager() {

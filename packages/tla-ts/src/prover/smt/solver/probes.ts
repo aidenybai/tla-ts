@@ -194,7 +194,8 @@ const mkNonLira =
     )
       return true;
     const family = manager.getFamily(expr);
-    if (family === FAMILY_BASIC || (isArray && family === FAMILY_ARRAY)) return false;
+    if (family === FAMILY_BASIC) return false;
+    // Z3's is-qfauflia allows array-sorted symbols but no array operation such as select.
     if (family !== FAMILY_ARITH)
       return isArray ? !manager.isUninterpreted(expr) : !manager.isUninterpretedConst(expr);
     const op = manager.getOp(expr);

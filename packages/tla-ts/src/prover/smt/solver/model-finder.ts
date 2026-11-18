@@ -39,6 +39,13 @@ export class ModelFinder {
     return info;
   }
 
+  release() {
+    for (const quantifier of this.quantifiers) this.q2info.get(quantifier)?.release();
+    this.aufSolver.release();
+    this.macroRewriter.release();
+    this.rewriter.release();
+  }
+
   pushScope() {
     this.scopes.push(this.quantifiers.length);
   }
