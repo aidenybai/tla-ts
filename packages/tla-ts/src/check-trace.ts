@@ -57,7 +57,7 @@ interface TraceContext {
   depths: number[];
   tracedSteps: WeakMap<TraceStep, TracedStep>;
   captureOutput: <Result>(rebuild: () => Result) => { result: Result; lines: OutputLine[] };
-  getInitialStates: () => Value[][];
+  forEachInitialState: (onState: (state: Value[]) => void) => void;
   getUncoveredInitialStates: () => Value[][];
   findSuccessorAction: (
     state: Value[],
@@ -100,6 +100,21 @@ export const createTraceBuilder = (context: TraceContext) => {
       runtime.getLevel = searchLevel;
       runtime.getBehavior = searchBehavior;
     }
+  };
+  // TLC's Tool#getState fingerprints each state it rebuilds, which sorts its records in place.
+  const hasFingerprint = (state: Value[], index: number) => {
+    const fingerprintState = getFingerprintState(state);
+    const stored = context.fingerprintStates[index];
+    return (
+      getStateHash(fingerprintState) === getStateHash(stored) &&
+      isSameState(fingerprintState, stored)
+    );
+  };
+  const rebuildInitialState = (index: number) => {
+    let isFound = false;
+    context.forEachInitialState((state) => {
+      isFound ||= hasFingerprint(state, index);
+    });
   };
   const rebuildFrom = (state: Value[], level: number) => {
     current.rebuilt = { state, level };
@@ -149,7 +164,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isPrintedOnly && steps.length > 1;
     const initialOutput =
       known === 0 || (steps.length > 1 && (rebuilt > 0 || is174))
-        ? runtime.runWithNewRandom(() => captureOutput(context.getInitialStates).lines)
+        ? runtime.runWithNewRandom(() => captureOutput(() => rebuildInitialState(path[0])).lines)
         : [];
     const last = steps.length - 1;
     const findPositionAction = (position: number, isDrawnOn = false) =>
@@ -180,7 +195,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     const traceOutput = isRebuiltAgain
       ? [
           ...runtime.runWithNewRandom(() => [
-            captureOutput(context.getInitialStates).lines,
+            captureOutput(() => rebuildInitialState(path[0])).lines,
             ...steps
               .slice(1, last)
               .map((_step, position) => findPositionAction(position + 1).lines),
@@ -230,15 +245,6 @@ export const createTraceBuilder = (context: TraceContext) => {
       }
       return undefined;
     }).result;
-  // TLC's Tool#getState fingerprints each state it rebuilds, which sorts its records in place.
-  const hasFingerprint = (state: Value[], index: number) => {
-    const fingerprintState = getFingerprintState(state);
-    const stored = context.fingerprintStates[index];
-    return (
-      getStateHash(fingerprintState) === getStateHash(stored) &&
-      isSameState(fingerprintState, stored)
-    );
-  };
   const findSuccessorWithFingerprint = (state: Value[], source: number, target: number) => {
     const rebuilt = current.rebuilt;
     rebuildFrom(state, depths[source]);
@@ -287,7 +293,9 @@ export const createTraceBuilder = (context: TraceContext) => {
   const getStateTrace = (index: number, traceOptions: TraceOptions = {}): Behavior => {
     if (context.parents[index] !== -1) return getTrace(index, undefined, traceOptions);
     const traceOutput =
-      is174 || traceOptions.isPrintedOnly ? [] : captureOutput(context.getInitialStates).lines;
+      is174 || traceOptions.isPrintedOnly
+        ? []
+        : captureOutput(() => rebuildInitialState(index)).lines;
     const state = states[index];
     if (traceOptions.incomplete !== undefined) {
       return {

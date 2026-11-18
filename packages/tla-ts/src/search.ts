@@ -1176,15 +1176,10 @@ export const createSearch = (
     check: CoveredCheck,
     state: State,
     next: State | undefined,
-  ) => {
-    try {
-      return runAtCoverageNode(covered, check.node, () =>
-        evaluate(check.expression, getContext(environment, state, next, check.scope)),
-      );
-    } catch {
-      return undefined;
-    }
-  };
+  ) =>
+    runAtCoverageNode(covered, check.node, () =>
+      evaluate(check.expression, getContext(environment, state, next, check.scope)),
+    );
   const holdsReplayed = (
     covered: CoveredCheck | undefined,
     expression: Expression,
@@ -1275,6 +1270,14 @@ export const createSearch = (
           );
     });
   const violatingStates = new WeakSet<Value[]>();
+  const getInvariantError = (error: unknown, name: string, parent: Value[] | undefined) =>
+    parent
+      ? withHeadline(
+          setExitCode(error, EXIT_STATUS.safetyEvaluationFailure),
+          MESSAGE_CODE.invariantEvaluationFailed,
+          `Evaluating invariant ${name} failed.`,
+        )
+      : error;
   const isViolated = (invariant: StateCheck, state: Value[], parent: Value[] | undefined) => {
     const checkedParent = parent && !violatingStates.has(parent) ? parent : undefined;
     if (isUnchangedFor(invariant, state, checkedParent)) return false;
@@ -1289,12 +1292,7 @@ export const createSearch = (
           )
         : !holdsAsConjunct(invariant, context);
     } catch (error) {
-      if (!parent) throw error;
-      throw withHeadline(
-        setExitCode(error, EXIT_STATUS.safetyEvaluationFailure),
-        MESSAGE_CODE.invariantEvaluationFailed,
-        `Evaluating invariant ${invariant.name} failed.`,
-      );
+      throw getInvariantError(error, invariant.name, parent);
     }
   };
   const isPredicateViolated = (
@@ -1303,14 +1301,18 @@ export const createSearch = (
     parent: Value[] | undefined,
   ) => {
     const covered = coveredInvariantChecks.get(predicate.predicate);
-    const value =
-      coverage && covered ? evaluateCovered(coverage, covered, state, undefined) : undefined;
-    return typeof value === "boolean"
-      ? !value
-      : invariants.some(
-          (invariant) =>
-            invariant.predicate === predicate.predicate && isViolated(invariant, state, parent),
-        );
+    if (coverage && covered) {
+      try {
+        const value = evaluateCovered(coverage, covered, state, undefined);
+        if (typeof value === "boolean") return !value;
+      } catch (error) {
+        throw getInvariantError(error, predicate.name, parent);
+      }
+    }
+    return invariants.some(
+      (invariant) =>
+        invariant.predicate === predicate.predicate && isViolated(invariant, state, parent),
+    );
   };
   const isFingerprintedLikeTlc = hasWideString(config, environment);
   runtime.getFingerprint = getTlcStateFingerprint;
@@ -1549,10 +1551,10 @@ export const createSearch = (
     findFailedInitialPredicate,
     findViolatedActionProperty: (state, next) =>
       actionProperties.find((property, index) => {
-        const value =
-          coverage && evaluateCovered(coverage, coveredActionProperties[index], state, next);
-        if (typeof value === "boolean") return !value;
         try {
+          const value =
+            coverage && evaluateCovered(coverage, coveredActionProperties[index], state, next);
+          if (typeof value === "boolean") return !value;
           return (
             !holdsLikeTlc(
               property.action,

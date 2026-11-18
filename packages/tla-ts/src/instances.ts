@@ -32,7 +32,7 @@ export const frameSubstitutions = new WeakMap<Expression, () => Substitution[]>(
 export const substitutedExpressions = new WeakMap<Expression, Substitution>();
 
 export const isSubstitutionDefinition = (definition: Definition) =>
-  substitutedExpressions.get(definition.body)?.replacement === definition.body;
+  substitutedExpressions.has(definition.body) && !substitutionFrames.has(definition.body);
 
 export const withSubstitutionFrames = (expression: Expression, frames: Expression[]) => {
   if (frames.length === 0) return expression;
@@ -41,6 +41,9 @@ export const withSubstitutionFrames = (expression: Expression, frames: Expressio
   substitutionFrames.set(copy, [...frames, ...(substitutionFrames.get(expression) ?? [])]);
   return copy;
 };
+
+const withReplacedFrames = (replacement: Expression, expression: Expression) =>
+  withSubstitutionFrames(replacement, [...(substitutionFrames.get(expression) ?? []), expression]);
 
 export const renameLocals = (
   expression: Expression,
@@ -697,6 +700,23 @@ const substitute = (
   rewrite: Rewrite,
   bound: Map<string, string>,
 ): Expression => {
+  const substituted = substituteExpression(expression, rewrite, bound);
+  if (syntheticIdentifiers.has(expression)) syntheticIdentifiers.add(substituted);
+  const substitution = substitutedExpressions.get(expression);
+  if (!substitution || substituted === expression || substitutedExpressions.has(substituted)) {
+    return substituted;
+  }
+  substitutedExpressions.set(substituted, substitution);
+  const frames = substitutionFrames.get(expression);
+  if (frames && !substitutionFrames.has(substituted)) substitutionFrames.set(substituted, frames);
+  return substituted;
+};
+
+const substituteExpression = (
+  expression: Expression,
+  rewrite: Rewrite,
+  bound: Map<string, string>,
+): Expression => {
   const recurse = (node: Expression) => substitute(node, rewrite, bound);
   if (expression.kind === "Selection" && [...bound].every((entry) => entry[0] === entry[1])) {
     const selected = expression.expression;
@@ -740,7 +760,7 @@ const substitute = (
     const replacement = instantiation.substitutions.get(expression.name);
     const bindings = rewrite.bindings;
     if (replacement && (bindings === undefined || !isBoundOnce(replacement, instantiation))) {
-      const copy = withSubstitutionFrames(replacement, [expression]);
+      const copy = withReplacedFrames(replacement, expression);
       const substitution = substitutedExpressions.get(replacement);
       if (substitution) substitutedExpressions.set(copy, substitution);
       return copy;
@@ -748,7 +768,10 @@ const substitute = (
     if (replacement && bindings) {
       const name = getSubstitutionName(expression.name);
       bindings.set(name, replacement);
-      return createLocalIdentifier(name, expression.location);
+      return withSubstitutionFrames(
+        createLocalIdentifier(name, expression.location),
+        substitutionFrames.get(expression) ?? [],
+      );
     }
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
@@ -843,7 +866,7 @@ const substitute = (
       replacement?.kind === "OperatorReference" ||
       replacement?.kind === "Lambda"
     ) {
-      return withSubstitutionFrames(replacement, [expression]);
+      return withReplacedFrames(replacement, expression);
     }
     const copy = getCopy(rewrite, expression.operator);
     if (copy === undefined) return expression;
@@ -907,10 +930,11 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
     rewrite.copies.set(key, copyKey);
     const rename = createRenamer(rewrite);
     const bindings = new Map<string, Expression>();
+    const unboundRewrite = getMode(rewrite, rewrite.mode);
     const bodyRewrite =
       definition.kind === "Operator" && rewrite.mode === "Normal"
-        ? { ...rewrite, bindings, selections: new Map<Expression, Expression>() }
-        : rewrite;
+        ? { ...unboundRewrite, bindings, selections: new Map<Expression, Expression>() }
+        : unboundRewrite;
     const mapped = renameParams(
       mapDefinition(definition, (child, bound) =>
         substitute(child, bodyRewrite, bindNames(new Map(), bound, rename)),

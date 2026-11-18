@@ -475,6 +475,34 @@ it("prints each step whose VIEW fails without -difftrace, where TLC's StatePrint
   ]);
 });
 
+it("prints a state whose function the RL scheduler fails to fingerprint, where TLC's StatePrinter fingerprints the state and crashes", () => {
+  const outputs: string[] = [];
+  const status = simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, z\nRf[n \\in 0..2] == IF n = 0 THEN z ELSE Rf[n - 1] + 1\nInit == x = Rf /\\ z = 1\nNext == UNCHANGED <<x, z>>\n====",
+    config: "INIT Init\nNEXT Next",
+    seed: 4n,
+    traceDepth: 3,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "rl",
+    onSimulation: (output) => {
+      if (output.kind === "message" && output.isError) outputs.push(output.message);
+      if (output.kind === "behavior") {
+        output.trace.forEach((step) => outputs.push(formatValue(step.state.x)));
+      }
+    },
+  });
+  expect([status, outputs]).toEqual([
+    151,
+    [
+      "In evaluation, the identifier z is either undefined or not an operator.\nline 4, col 33 to line 4, col 33 of module M",
+      "[n \\in 0..2 |-> <expression line 4, col 19 to line 4, col 52 of module M>]",
+    ],
+  ]);
+});
+
 it("keeps the incomplete step of a successor error under -difftrace, where TLC's TLCStateMut#fingerPrint crashes", () => {
   const definitions =
     "Next == \\/ y < 2 /\\ y' = y + 1 /\\ z' = z\n        \\/ y = 2 /\\ y' = y + 1\nInv == TRUE\nView == y \\div 2";

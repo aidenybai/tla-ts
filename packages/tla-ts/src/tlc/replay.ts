@@ -107,7 +107,7 @@ const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Re
 };
 
 const getNode = (replay: Replay, node: number, expression: Expression) =>
-  replay.coverage ? getCoverageNode(replay.coverage, node, expression) : -1;
+  replay.coverage && node >= 0 ? getCoverageNode(replay.coverage, node, expression) : -1;
 
 const runAt = <Result>(replay: Replay, node: number, run: () => Result) =>
   replay.coverage ? runAtCoverageNode(replay.coverage, node, run) : run();
@@ -932,7 +932,7 @@ const visitUnchanged = (
         countCoverage(replay.coverage, node);
         const substitution = substitutedExpressions.get(expression);
         if (substitution && substitution.replacement !== expression) {
-          countCoverage(replay.coverage, getSubstitutionNode(replay.coverage, substitution, node));
+          countCoverage(replay.coverage, getSubstitutionNode(replay.coverage, substitution));
         }
       }
       const assigned = partial[index];

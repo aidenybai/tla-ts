@@ -59,13 +59,16 @@ export interface Coverage {
   registers: Uint8Array;
   relations: CoverageRelation[];
   substitutionNodes: Map<number, Map<Substitution, number>>;
-  frames: Expression[];
-  frameRoots: number[];
-  frameEntries: number[];
-  entryCount: number;
-  counted: Map<Substitution, number>;
-  countedWithoutNext: Map<Substitution, number>;
+  frames: CoverageFrame[];
   nextState: NextStateMode;
+}
+
+export interface CoverageFrame {
+  frame: Expression;
+  root: number;
+  isCached: boolean;
+  counted: Substitution[];
+  countedWithoutNext: Substitution[];
 }
 
 export type NextStateMode = "given" | "empty" | "primed";
@@ -154,11 +157,6 @@ export const createCoverage = (variableCount: number): Coverage => ({
   relations: [],
   substitutionNodes: new Map(),
   frames: [],
-  frameRoots: [],
-  frameEntries: [],
-  entryCount: 0,
-  counted: new Map(),
-  countedWithoutNext: new Map(),
   nextState: "given",
 });
 
@@ -317,6 +315,10 @@ const getBoundNames = (bounds: Bound[]) =>
   bounds.flatMap((bound) =>
     bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
   );
+
+const getSubstitutedRange = (expression: Expression) =>
+  substitutionFrames.get(expression)?.find((frame) => !frameSubstitutions.has(frame))?.location
+    .range;
 
 export const getEnteredFrames = (expression: Expression, frames: Expression[]) =>
   (substitutionFrames.get(expression) ?? []).filter(
@@ -482,7 +484,7 @@ export const buildCoverage = (
       expressions.forEach((item) => walk(item, locals));
     const substitution = substitutedExpressions.get(expression);
     if (substitution && substitution.replacement !== expression) {
-      enter(expression, substitutionFrames.get(expression)?.[0]?.location.range, () => undefined);
+      enter(expression, getSubstitutedRange(expression), () => undefined);
       return;
     }
     switch (expression.kind) {
@@ -517,13 +519,12 @@ export const buildCoverage = (
       case "Identifier": {
         if (syntheticIdentifiers.has(expression)) return;
         const resolved = resolve(expression, expression.name, locals);
+        const isSubstituted = resolved && isSubstitutionDefinition(resolved.definition);
         enter(
           expression,
-          range,
+          (isSubstituted && getSubstitutedRange(expression)) || range,
           () => {
-            if (resolved && !isSubstitutionDefinition(resolved.definition)) {
-              walkDefinition(resolved);
-            }
+            if (resolved && !isSubstituted) walkDefinition(resolved);
           },
           false,
           resolved?.definition,
@@ -630,12 +631,28 @@ export const buildCoverage = (
       case "Except":
         enter(expression, range, () => {
           walk(expression.function, locals);
-          expression.updates.forEach((update) => {
-            update.path.forEach((step) => {
-              if (step.kind === "Index") walkAll(step.args);
-            });
-            walk(update.value, locals);
-          });
+          // SANY locates an update's $Pair and the $Seq of its selectors both at its ExceptSpec.
+          expression.updates.forEach((update) =>
+            enter(
+              undefined,
+              update.range,
+              () => {
+                enter(
+                  undefined,
+                  update.range,
+                  () =>
+                    update.path.forEach((step) => {
+                      if (step.kind !== "Index") return;
+                      if (step.args.length === 1) walkAll(step.args);
+                      else enter(undefined, step.tupleRange, () => walkAll(step.args), true);
+                    }),
+                  true,
+                );
+                walk(update.value, locals);
+              },
+              true,
+            ),
+          );
         });
         return;
       case "Prime":
@@ -739,47 +756,57 @@ export const enterFrames = (
   let entered = 0;
   for (let index = 0; index < frames.length; index++) {
     const frame = frames[index];
-    if (!frameSubstitutions.has(frame) || findFrame(coverage, frame, root) !== -1) continue;
-    coverage.frames.push(frame);
-    coverage.frameRoots.push(root);
-    coverage.frameEntries.push(isCached ? coverage.entryCount++ : -1);
+    if (!frameSubstitutions.has(frame) || findFrame(coverage, frame, root)) continue;
+    coverage.frames.push({ frame, root, isCached, counted: [], countedWithoutNext: [] });
     entered++;
   }
   return entered;
 };
 
-const findFrame = (coverage: Coverage, frame: Expression, root: number) => {
+const findFrame = (coverage: Coverage, frame: Expression, root: number | undefined) => {
   for (let index = coverage.frames.length - 1; index >= 0; index--) {
-    if (coverage.frames[index] === frame && coverage.frameRoots[index] === root) return index;
+    const entry = coverage.frames[index];
+    if (entry.frame === frame && (root === undefined || entry.root === root)) return entry;
   }
-  return -1;
+  return undefined;
 };
 
 export const exitFrames = (coverage: Coverage, entered: number) => {
   coverage.frames.length -= entered;
-  coverage.frameRoots.length -= entered;
-  coverage.frameEntries.length -= entered;
 };
 
-export const getSubstitutionNode = (
+export const getCoverageFrames = (coverage: Coverage) =>
+  coverage.frames.length === 0 ? undefined : coverage.frames.slice();
+
+export const runInCoverageFrames = <Result>(
   coverage: Coverage,
-  substitution: Substitution,
   node: number,
-) => {
-  const index = findFrame(coverage, substitution.frame, coverage.roots[node]);
-  if (index === -1) return -1;
-  const entry = coverage.frameEntries[index];
-  const substitutionNode =
-    coverage.substitutionNodes.get(coverage.frameRoots[index])?.get(substitution) ?? -1;
-  if (entry === -1 || coverage.nextState === "primed") return substitutionNode;
+  frames: CoverageFrame[] | undefined,
+  run: () => Result,
+): Result => {
+  if (!frames) return runAtCoverageNode(coverage, node, run);
+  const length = coverage.frames.length;
+  coverage.frames.push(...frames);
+  try {
+    return runAtCoverageNode(coverage, node, run);
+  } finally {
+    coverage.frames.length = length;
+  }
+};
+
+export const getSubstitutionNode = (coverage: Coverage, substitution: Substitution) => {
+  const entry = findFrame(coverage, substitution.frame, undefined);
+  if (!entry) return -1;
+  const substitutionNode = coverage.substitutionNodes.get(entry.root)?.get(substitution) ?? -1;
+  if (!entry.isCached || coverage.nextState === "primed") return substitutionNode;
   // LazyValue#getValue reuses a value cached without a next state for any next state, but not the reverse.
-  if (coverage.countedWithoutNext.get(substitution) === entry) return -1;
+  if (entry.countedWithoutNext.includes(substitution)) return -1;
   if (coverage.nextState === "empty") {
-    coverage.countedWithoutNext.set(substitution, entry);
+    entry.countedWithoutNext.push(substitution);
     return substitutionNode;
   }
-  if (coverage.counted.get(substitution) === entry) return -1;
-  coverage.counted.set(substitution, entry);
+  if (entry.counted.includes(substitution)) return -1;
+  entry.counted.push(substitution);
   return substitutionNode;
 };
 

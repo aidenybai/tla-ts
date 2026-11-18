@@ -769,7 +769,7 @@ export const simulate = (options: SimulationOptions): number => {
     reportMessage(error.code, error.message, error.toolMessage);
     const trace = getTrace(error.node, search.getTlcOrder());
     const isLastStateOnly = traceDepth === INFINITE_DEPTH;
-    // Deviation from TLC: StatePrinter fingerprints each state it prints, so a VIEW that fails on one crashes TLC without -difftrace too.
+    // Deviation from TLC: StatePrinter fingerprints each state it prints, so a state whose VIEW or function fails to fingerprint crashes TLC without -difftrace too.
     const shown =
       options.isDiffTrace && !isLastStateOnly
         ? getDiffTracePositions(trace)

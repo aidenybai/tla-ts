@@ -512,6 +512,33 @@ export const createEnvironment = (
     return top.linked;
   };
 
+  // SANY infers a substitution for each declaration the instancing module resolves, in the order of the instanced module's symbol table, and appends the others.
+  const setFrameSubstitutions = (
+    frame: Expression,
+    module: string,
+    replacements: Map<string, Expression>,
+    isInferred: (name: string) => boolean,
+  ) => {
+    const byName = new Map(
+      [...replacements].map((entry): [string, Substitution] => [
+        entry[0],
+        { frame, replacement: entry[1] },
+      ]),
+    );
+    byName.forEach((substitution) =>
+      substitutedExpressions.set(substitution.replacement, substitution),
+    );
+    frameSubstitutions.set(frame, () => {
+      const inferred = order
+        .getInstanceDeclarations(module)
+        .filter((name) => byName.has(name) && isInferred(name));
+      return [
+        ...inferred.flatMap((name) => byName.get(name) ?? []),
+        ...[...byName].flatMap((entry) => (inferred.includes(entry[0]) ? [] : [entry[1]])),
+      ];
+    });
+  };
+
   const instantiate = (
     instance: Instance,
     module: Module,
@@ -549,29 +576,15 @@ export const createEnvironment = (
     );
     const frame = declarations.length > 0 ? getSubstitutionFrame(instance) : undefined;
     if (frame) {
-      const byName = new Map(
-        [...replacements].map((entry): [string, Substitution] => [
-          entry[0],
-          { frame, replacement: entry[1] },
-        ]),
+      setFrameSubstitutions(
+        frame,
+        instance.module,
+        replacements,
+        (name) =>
+          substitutions.get(name)?.location === instance.location ||
+          instance.params.some((param) => param.name === name) ||
+          resolved.has(name),
       );
-      byName.forEach((substitution) =>
-        substitutedExpressions.set(substitution.replacement, substitution),
-      );
-      // SANY infers a substitution for each declaration the instancing module resolves, in the order of the instanced module's symbol table, and appends the others.
-      const isInferred = (name: string) =>
-        substitutions.get(name)?.location === instance.location ||
-        instance.params.some((param) => param.name === name) ||
-        resolved.has(name);
-      frameSubstitutions.set(frame, () => {
-        const inferred = order
-          .getInstanceDeclarations(instance.module)
-          .filter((name) => byName.has(name) && isInferred(name));
-        return [
-          ...inferred.flatMap((name) => byName.get(name) ?? []),
-          ...[...byName].flatMap((entry) => (inferred.includes(entry[0]) ? [] : [entry[1]])),
-        ];
-      });
     }
     const instantiation = createInstantiation({
       params,
@@ -715,6 +728,7 @@ export const createEnvironment = (
     lets: Definition[],
     instancer: string,
     nested: LinkedModule | undefined,
+    isResolved: (name: string) => boolean,
   ): Definition[] => {
     const location = instance.location;
     const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
@@ -755,8 +769,11 @@ export const createEnvironment = (
     const instanceParamNames = new Set(instance.params.map((param) => param.name));
     const isParameterDependent = (declaration: OperatorParam) =>
       mentionsName(getReplacement(declaration), instanceParamNames);
+    const frame = declarations.length > 0 ? getSubstitutionFrame(instance) : undefined;
+    const substitutionBodies = new Map<string, Expression>();
     const substitutionDefinitions = declarations.map((declaration): Definition => {
       const substitution = getSubstitutionBody(getReplacement(declaration), declaration, location);
+      if (declaration.arity === 0) substitutionBodies.set(declaration.name, substitution.body);
       return {
         kind: "Operator",
         name: `${declaration.name}${suffix}`,
@@ -804,7 +821,18 @@ export const createEnvironment = (
       createName,
       isLocal: true,
     });
-    const frames = declarations.length > 0 ? [getSubstitutionFrame(instance)] : [];
+    if (frame) {
+      setFrameSubstitutions(
+        frame,
+        instance.module,
+        substitutionBodies,
+        (name) =>
+          !explicitSubstitutions.has(name) ||
+          instanceParamNames.has(name) ||
+          isResolved(name) ||
+          lets.some((definition) => definition.name === name),
+      );
+    }
     const declared = new Set(declarations.map((declaration) => declaration.name));
     const exported = [...linked.exported]
       .filter((entry) => !declared.has(entry[0]) && entry[1].kind !== "Instance")
@@ -817,7 +845,11 @@ export const createEnvironment = (
         if (definition) {
           const operator =
             definition.kind === "Operator" ? definition : createLocalFunction(definition, name);
-          return { ...operator, name, body: withSubstitutionFrames(operator.body, frames) };
+          return {
+            ...operator,
+            name,
+            body: withSubstitutionFrames(operator.body, frame ? [frame] : []),
+          };
         }
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
         return createLocalAlias(name, key, [...instance.params, ...ownParams], ownParams, location);
@@ -1005,7 +1037,9 @@ export const createEnvironment = (
     const subexpressions = createModuleSubexpressions(
       parsed,
       getLetInstanceExpansion(parsed, (instance, lets) =>
-        instantiateLocally(instance, lets, parsed.name, getLetModule(instance)),
+        instantiateLocally(instance, lets, parsed.name, getLetModule(instance), (name) =>
+          getSymbolsBefore(instance.location).has(name),
+        ),
       ),
       (name) => {
         const symbol = visible.get(name);
