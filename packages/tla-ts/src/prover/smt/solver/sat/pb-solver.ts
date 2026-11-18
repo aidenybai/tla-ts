@@ -1421,23 +1421,26 @@ export class PbSolver implements SatExtension, ConstraintHost {
     const decl = manager.decls[expr];
     const k = getPbK(manager, decl);
     const isUnit = hasUnitCoefficients(manager, decl);
+    // A constraint asserted in a user scope gets a literal, which the scope's clause guards.
+    // Deviation from Z3: convert_eq_k asserts it at the base level, so it outlives the scope.
+    const isBase = isRoot && this.solver.numUserScopes === 0;
     switch (manager.getOp(expr)) {
       case OP_AT_MOST_K:
-        return this.convertAtMostK(expr, k, isRoot, isSign);
+        return this.convertAtMostK(expr, k, isBase, isSign);
       case OP_AT_LEAST_K:
-        return this.convertAtLeastK(expr, k, isRoot, isSign);
+        return this.convertAtLeastK(expr, k, isBase, isSign);
       case OP_PB_LE:
         return isUnit
-          ? this.convertAtMostK(expr, k, isRoot, isSign)
-          : this.convertPbLe(expr, isRoot, isSign);
+          ? this.convertAtMostK(expr, k, isBase, isSign)
+          : this.convertPbLe(expr, isBase, isSign);
       case OP_PB_GE:
         return isUnit
-          ? this.convertAtLeastK(expr, k, isRoot, isSign)
-          : this.convertPbGe(expr, isRoot, isSign);
+          ? this.convertAtLeastK(expr, k, isBase, isSign)
+          : this.convertPbGe(expr, isBase, isSign);
       case OP_PB_EQ:
         return isUnit
-          ? this.convertEqK(expr, k, isRoot, isSign)
-          : this.convertPbEq(expr, isRoot, isSign);
+          ? this.convertEqK(expr, k, isBase, isSign)
+          : this.convertPbEq(expr, isBase, isSign);
       default:
         throw new SmtTacticError("unexpected pseudo-Boolean operator");
     }

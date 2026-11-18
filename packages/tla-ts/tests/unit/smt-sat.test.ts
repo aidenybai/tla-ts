@@ -238,4 +238,25 @@ describe("sat solver", () => {
       ]),
     ).toBe("sat\nsat");
   });
+
+  it("keeps the cardinality constraints of a user scope to that scope", () => {
+    const getScript = (constraint: string) => [
+      "(set-option :tactic.default_tactic sat)",
+      "(declare-const a Bool)",
+      "(declare-const b Bool)",
+      "(declare-const c Bool)",
+      "(declare-const d Bool)",
+      "(assert ((_ at-most 3) a b c d))",
+      "(check-sat)",
+      "(push 1)",
+      `(assert ${constraint})`,
+      "(check-sat)",
+      "(pop 1)",
+      "(assert a)",
+      "(assert b)",
+      "(check-sat)",
+    ];
+    expect(run(getScript("((_ at-most 1) a b c d)"))).toBe("sat\nsat\nsat");
+    expect(run(getScript("((_ pbeq 1 1 1 1 1) a b c d)"))).toBe("sat\nsat\nsat");
+  });
 });
