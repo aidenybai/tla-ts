@@ -44,6 +44,7 @@ import {
 import { apply, boolean, identifier, junction, string, tuple } from "./tla";
 import { getCaughtElements } from "./scope";
 import { getCollectionType, isLibraryIterable } from "./types";
+import { getMachine, stepMachine } from "./generator-machines";
 
 // The values that patterns took from iterators, which they bind as they would an array's.
 const taken = new WeakSet<Expression>();
@@ -470,7 +471,7 @@ interface Opener {
 // Calls an object's method under a key, and reads the next method of the iterator it makes, where
 // openMissing opens the object without the method.
 const openWith =
-  (key: string, openMissing: Opener): Opener =>
+  (key: string, openMissing: Opener, isLooped = false): Opener =>
   (site, iterable, path, context, frame, throwWith, continueWith) =>
     bind(path, "iterable", iterable, context, (current, held) =>
       read(site, held, key, current, context, frame, (found, method) =>
@@ -487,8 +488,15 @@ const openWith =
             context,
             frame,
             throwWith,
-            (made, result) =>
-              bind(made, "iterator", result, context, (bound, iterator) => {
+            (made, result) => {
+              // The object of a state machine keeps its ref, which tells the loop which one it is.
+              const bindIterator = (
+                continueBound: (bound: Path, iterator: Expression) => Formula,
+              ) =>
+                getMachine(result, made) === undefined
+                  ? bind(made, "iterator", result, context, continueBound)
+                  : continueBound(made, result);
+              return bindIterator((bound, iterator) => {
                 const isMade = isGeneratorMade(found, made);
                 if (isMade) madeIterators.add(iterator);
                 const readNext = readMethod(
@@ -507,7 +515,9 @@ const openWith =
                       readNext,
                       throwWith(bound),
                     );
-              }),
+              });
+            },
+            isLooped,
           ),
         ),
       ),
@@ -519,15 +529,25 @@ export const openIterator = openWith(
   (_site, _iterable, found, _context, _frame, throwWith) => throwWith(found),
 );
 
+// Calls an object's Symbol.iterator method for a loop that steps the iterator to its end.
+export const openLoopedIterator = openWith(
+  ITERATOR_KEY,
+  (_site, _iterable, found, _context, _frame, throwWith) => throwWith(found),
+  true,
+);
+
 // Calls an object's Symbol.iterator method as Array.from does, which reads an object without one as
 // an array-like object, which tla-ts doesn't follow.
-export const openFromIterator = openWith(ITERATOR_KEY, () =>
-  leaf(
-    apply("Assert", [
-      boolean(false),
-      string("tla-ts can't call Array.from of an object without Symbol.iterator"),
-    ]),
-  ),
+export const openFromIterator = openWith(
+  ITERATOR_KEY,
+  () =>
+    leaf(
+      apply("Assert", [
+        boolean(false),
+        string("tla-ts can't call Array.from of an object without Symbol.iterator"),
+      ]),
+    ),
+  true,
 );
 
 // Calls an object's Symbol.asyncIterator method, and reads the next method of the iterator it makes.
@@ -957,6 +977,37 @@ const loopIterator = (
   visit: LoopVisit,
   continueWith: (path: Path, result: Expression) => Formula,
 ): Formula => {
+  // A state machine keeps where the generator suspended on the heap, which the operator carries.
+  const machine = getMachine(iterator, path);
+  if (machine?.machine !== undefined) {
+    return loopStates(
+      site,
+      seed,
+      [...new Set([...getChanged(site, path, context), ...machine.machine.outer])].filter(
+        (symbol) => !path.scope.uninitialized.has(symbol),
+      ),
+      path,
+      context,
+      frame,
+      (current, state, inner, again, stop) =>
+        stepMachine(
+          site,
+          machine,
+          "next",
+          undefined,
+          current,
+          context,
+          inner,
+          (stepped, kind, value) =>
+            ifThenElse(
+              apply("=", [kind, string("return")]),
+              stop(stepped, state),
+              visit(stepped, state, value, inner, again),
+            ),
+        ),
+      continueWith,
+    );
+  }
   if (madeIterators.has(iterator)) {
     // Each step names the state it carries, which the next builds on.
     const unroll = (current: Path, state: Expression): Formula =>
@@ -1067,7 +1118,7 @@ export const takeSpreads = (
           const spread = (current: Path, rest: readonly Expression[]): Formula =>
             rest.length === 0
               ? rejoin(current)
-              : openIterator(
+              : openLoopedIterator(
                   site,
                   rest[0],
                   current,
@@ -1105,7 +1156,7 @@ export const takeEvery = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, values: Expression) => Formula,
-  open = openIterator,
+  open = openLoopedIterator,
 ) => {
   const heap = getHeap(path.scope, site, context);
   return translateJoined(
@@ -1151,7 +1202,7 @@ export const takeEntries = (
   frame: Frame,
   continueWith: (path: Path, object: Expression) => Formula,
 ) =>
-  openIterator(
+  openLoopedIterator(
     site,
     iterable,
     path,

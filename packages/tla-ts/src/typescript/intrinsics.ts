@@ -43,6 +43,7 @@ import {
   tuple,
 } from "./tla";
 import { getCollection, getKind, isGeneratorType } from "./types";
+import { findProgramNames, getPosition, hasBit, setBit } from "./program-nodes";
 
 // Built-in constructors, besides the errors, whose prototype objects tla-ts compiles to
 // constants, which compare by identity.
@@ -52,11 +53,37 @@ const isGlobal = (name: string) => !/[.%\s]/.test(name) && Object.hasOwn(BUILT_I
 const isLibrary = (symbol: ts.Symbol) =>
   (symbol.declarations ?? []).length > 0 && (symbol.declarations ?? []).every(isAmbientDeclaration);
 
-export const getBuiltIn = (node: ts.Expression, context: Pick<Context, "checker">) => {
+export const getBuiltIn = (
+  node: ts.Expression,
+  context: Pick<Context, "checker"> & Partial<Pick<Context, "nodes" | "builtInNames">>,
+) => {
+  // A name of the program's files reads the bit that findBuiltInNames found.
+  const names = context.builtInNames;
+  const position =
+    names === undefined || context.nodes === undefined ? -1 : getPosition(context.nodes, node);
+  if (names !== undefined && position >= 0) {
+    return ts.isIdentifier(node) && hasBit(names, position) ? node.text : undefined;
+  }
   const symbol = getSymbol(node, context.checker);
   return ts.isIdentifier(node) && isGlobal(node.text) && symbol !== undefined && isLibrary(symbol)
     ? node.text
     : undefined;
+};
+
+// Finds once which names of the program's files name a global built-in, such as Math, by their
+// positions.
+export const findBuiltInNames = (context: Context) => {
+  const table = context.nodes;
+  const names = new Uint32Array((table.nodes.length + 31) >>> 5);
+  Object.keys(BUILT_INS)
+    .filter(isGlobal)
+    .forEach((text) =>
+      findProgramNames(table, text).forEach((name) => {
+        const symbol = getSymbol(name, context.checker);
+        if (symbol !== undefined && isLibrary(symbol)) setBit(names, getPosition(table, name));
+      }),
+    );
+  return names;
 };
 
 // The reads of the global object's built-ins that a statement at a script's top checks before it

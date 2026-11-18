@@ -347,6 +347,9 @@ export const callMethod = (
   frame: Frame,
   throwWith: (path: Path) => Formula,
   continueWith: (path: Path, result: Expression) => Formula,
+  // Whether the caller steps the generator that a generator method makes in a loop, which a state
+  // machine can then run.
+  isLooped = false,
 ) =>
   callValue(
     site,
@@ -392,6 +395,7 @@ export const callMethod = (
               context,
               frame,
               (after, result) => continueWith(after, result ?? getUndefined(context)),
+              isLooped,
             ),
             rest,
           ),
@@ -1728,7 +1732,8 @@ const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefin
 // read, an in, an assignment, or a delete of a key that the script writes, or a function of Object
 // or Reflect that runs an internal method.
 const getProxyOperation = (node: ts.Node, context: Context) => {
-  const operation = context.heap === undefined ? undefined : getOperation(node, context);
+  const operation =
+    context.heap === undefined || !context.isProxied ? undefined : getOperation(node, context);
   return operation !== undefined &&
     (operation.key !== undefined || !KEYED_TRAPS.has(operation.trap)) &&
     isProxyValue(operation.object, context)

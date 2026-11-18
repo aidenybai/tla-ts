@@ -20563,21 +20563,23 @@ describe("errors", () => {
     }
   });
 
-  it("stops translating a helper whose callback's paths multiply its steps", () => {
-    expect(() =>
-      compile(`
-        const holder = { count: 0 };
-        function* count() {
-          for (let index = 0; index < 8; ++index) yield index;
-        }
-        const flat = count().flatMap((value) => {
-          if (value === 0) return [0];
-          if (value === 1) return [1, 1];
-          return [];
-        });
-        for (const value of flat) holder.count += value;
-      `),
-    ).toThrow("tla-ts can't follow this many paths through an iterator helper's callback");
+  it("runs a helper whose callback's paths multiply its steps", async () => {
+    const source = `
+      const holder = { count: 0 };
+      function* count() {
+        for (let index = 0; index < 8; ++index) yield index;
+      }
+      const flat = count().flatMap((value) => {
+        if (value === 0) return [0];
+        if (value === 1) return [1, 1];
+        return [];
+      });
+      for (const value of flat) holder.count += value;
+      if (holder.count !== 2) throw new Error("count " + holder.count);
+    `;
+    expect((await checkModel(source)).failure).toBeUndefined();
+    const wrong = await checkModel(source.replace("[1, 1]", "[1, 1, 1]"));
+    expect(wrong.failure?.message).toContain("count 3");
   });
 
   it("iterates the helper that a call makes in a for-of", async () => {
@@ -55556,6 +55558,182 @@ describe("BigInts", () => {
       expect((await check(compile(source, path))).failure?.message).toContain(
         "result 6,RangeError,SyntaxError,key1|rhs|key2|key3|",
       );
+    });
+  });
+
+  describe("runs a generator's body as a state machine", () => {
+    const getLoop = (expected: string) => `
+      function* count(limit: number) {
+        let index = 0;
+        while (index < limit) {
+          if (index % 7 === 3) {
+            index += 1;
+            continue;
+          }
+          const sent: number | undefined = yield index * 2;
+          index += sent ?? 1;
+        }
+        return "done";
+      }
+      const counter = count(90);
+      // An object that the code changes in place keeps the code's objects on the heap.
+      const totals = { total: 0 };
+      const first = counter.next();
+      const skipped = counter.next(5);
+      let seen = 0;
+      for (const value of counter) {
+        totals.total += value;
+        seen += 1;
+      }
+      const last = counter.next();
+      const result = [first.value, skipped.value, totals.total, seen, last.done, last.value].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a loop that yields more than 64 values", async () => {
+      expect((await checkModel(getLoop("0,10,6816,72,true,"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the loop", async () => {
+      expect((await checkModel(getLoop("0,10,6816,71,true,"))).failure?.message).toContain(
+        "0,10,6816,72,true,",
+      );
+    });
+
+    const getClosed = (expected: string) => `
+      const trace = { log: "" };
+      function* guarded() {
+        try {
+          for (let index = 0; index < 100; index++) {
+            trace.log += index;
+            yield index;
+          }
+        } finally {
+          trace.log += "f";
+        }
+        trace.log += "x";
+      }
+      const opened = guarded();
+      opened.next();
+      opened.next();
+      const closed = opened.return(7 as never);
+      const after = opened.next();
+      for (const value of guarded()) {
+        if (value === 2) break;
+      }
+      const result = [closed.value, closed.done, after.done, trace.log].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a return that runs a finally block", async () => {
+      expect((await checkModel(getClosed("7,true,true,01f012f"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the return", async () => {
+      expect((await checkModel(getClosed("7,true,true,01f012"))).failure?.message).toContain(
+        "7,true,true,01f012f",
+      );
+    });
+
+    const getHelpers = (expected: string) => `
+      const seen = { mapped: "" };
+      function* numbers(limit: number) {
+        for (let index = 0; index < limit; index++) yield index;
+      }
+      const evens = numbers(80).filter((value) => value % 2 === 0);
+      const first = evens.next();
+      let total = 0;
+      for (const value of evens) total += value;
+      const flat = [3, 0, 2].values().flatMap((count, position) => {
+        seen.mapped += position;
+        return count === 0 ? [] : count === 2 ? [count, -count] : [count, count, count];
+      });
+      const values: number[] = [];
+      for (const value of flat) values.push(value);
+      const taken = numbers(100)
+        .map((value) => value * 3)
+        .drop(2)
+        .take(3);
+      const firstTaken = taken.next();
+      const closed = taken.return!();
+      const after = taken.next();
+      const result = [
+        first.value,
+        total,
+        values.join(" "),
+        seen.mapped,
+        firstTaken.value,
+        closed.done,
+        after.done,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on iterator helpers of a generator and an array's iterator", async () => {
+      expect(
+        (await checkModel(getHelpers("0,1560,3 3 3 2 -2,012,6,true,true"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the helpers", async () => {
+      expect(
+        (await checkModel(getHelpers("0,1560,3 3 3 -2 2,012,6,true,true"))).failure?.message,
+      ).toContain("0,1560,3 3 3 2 -2,012,6,true,true");
+    });
+
+    const getTaken = (taken: string, expected: string) => `
+      const numbers = {
+        *[Symbol.iterator]() {
+          for (let index = 0; index < 66; index++) yield index * 3;
+        },
+      };
+      const source: unknown = numbers;
+      const taken = ${taken};
+      const result = [taken.length, taken[65]].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a spread of more than 64 values of a generator method", async () => {
+      expect((await checkModel(getTaken("[...numbers]", "66|195"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the spread", async () => {
+      expect((await checkModel(getTaken("[...numbers]", "66|192"))).failure?.message).toContain(
+        "66|195",
+      );
+    });
+
+    it("agrees with Node on a typed array of more than 64 values of a generator method", async () => {
+      const typed = "new Uint8Array(source as never)";
+      expect((await checkModel(getTaken(typed, "66|195"))).failure).toBeUndefined();
+    });
+
+    const getOutside = (expected: string) => `
+      const counts = { inner: 0 };
+      function* values() {
+        yield 1;
+        yield 2;
+      }
+      const data = values();
+      const control = (function* () {
+        for (const value of data) {
+          counts.inner += value;
+          yield;
+        }
+      })();
+      control.next();
+      control.next();
+      const last = control.next();
+      const result = [counts.inner, last.done].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a body that iterates a generator from outside it", async () => {
+      expect((await checkModel(getOutside("3,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the generator from outside", async () => {
+      expect((await checkModel(getOutside("2,true"))).failure?.message).toContain("3,true");
     });
   });
 });
