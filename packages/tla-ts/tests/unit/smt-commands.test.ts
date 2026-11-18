@@ -243,6 +243,20 @@ const BV_GOAL_LINES = [
   "(assert (bvult a b))",
 ];
 
+// Three soft constraints over a satisfiable hard one, for the step limits of maxres.
+const getSoftLines = (rlimit: number) => [
+  "(declare-const p Bool)",
+  "(declare-const q Bool)",
+  "(declare-const r Bool)",
+  "(assert (not (and (or p q) (=> q r) (= p r))))",
+  "(assert-soft p)",
+  "(assert-soft q :weight 2)",
+  "(assert-soft r)",
+  `(set-option :rlimit ${rlimit})`,
+  "(check-sat)",
+  "(get-info :reason-unknown)",
+];
+
 // One more pigeon than holes, where pI_J puts pigeon I in hole J: unsatisfiable, and too hard for
 // either solver to refute within the limits of these tests.
 const getPigeonholeLines = (holeCount: number) => {
@@ -1041,30 +1055,25 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
   });
 
   it("reports a cancel that escapes optimization as an error of check-sat", () => {
-    const getLines = (rlimit: number) => [
-      "(declare-const p Bool)",
-      "(declare-const q Bool)",
-      "(declare-const r Bool)",
-      "(assert (not (and (or p q) (=> q r) (= p r))))",
-      "(assert-soft p)",
-      "(assert-soft q :weight 2)",
-      "(assert-soft r)",
-      `(set-option :rlimit ${rlimit})`,
-      "(check-sat)",
-      "(get-info :reason-unknown)",
-    ];
-    expect(run(getLines(1))).toEqual([
+    expect(run(getSoftLines(1))).toEqual([
       '(error "line 9 column 10: max. resource limit exceeded")',
       '(:reason-unknown "unknown")',
     ]);
-    expect(run(getLines(161))).toEqual([
+    expect(run(getSoftLines(161))).toEqual([
       '(error "line 9 column 10: max. resource limit exceeded")',
       '(:reason-unknown "no reason given")',
     ]);
-    expect(run(getLines(61))).toEqual([
+    expect(run(getSoftLines(61))).toEqual([
       "unknown",
       '(:reason-unknown "max. resource limit exceeded")',
     ]);
+  });
+
+  it("converts the clauses of the SAT solver when maxres counts its assertions", () => {
+    expect(run(getSoftLines(230))).toEqual(["unknown", '(:reason-unknown "no reason given")']);
+    expect(run(getSoftLines(240))).toEqual(["unknown", '(:reason-unknown "sat.canceled")']);
+    expect(run(getSoftLines(258))).toEqual(["unknown", '(:reason-unknown "no reason given")']);
+    expect(run(getSoftLines(259))).toEqual(["sat", '(:reason-unknown "no reason given")']);
   });
 
   it("prints the reason and the core of get-consequences on the finite-domain solver", () => {

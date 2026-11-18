@@ -260,6 +260,7 @@ export class OptContext {
       checkSat: (assumptions) => getSolver().check(assumptions),
       getModel: () => getSolver().getModel(),
       getUnsatCore: () => getSolver().getUnsatCore(),
+      getNumAssertions: () => getSolver().getAssertions().length,
       findMutexes: (vars) => ({ status: L_TRUE, mutexes: getSolver().findMutexes(vars) }),
     };
     return {

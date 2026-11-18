@@ -10,6 +10,7 @@ export interface MaxsatSolver {
   checkSat(assumptions: readonly number[]): number;
   getModel(): ProtoModel | null;
   getUnsatCore(): readonly number[];
+  getNumAssertions(): number;
   findMutexes(vars: readonly number[]): { status: number; mutexes: number[][] };
 }
 

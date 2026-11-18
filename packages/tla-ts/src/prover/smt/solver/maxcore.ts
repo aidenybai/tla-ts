@@ -274,10 +274,11 @@ export class Maxcore extends MaxsmtSolverBase {
     const upper = this.getCost(model);
     if (upper.compare(this.upper) > 0) return;
     if (!this.context.verifyModel(this.index, model, upper)) return;
+    const numAssertions = this.solver.getNumAssertions();
     this.model = model;
     this.context.modelUpdated(model);
     for (const soft of this.soft) soft.value = this.isTrueIn(model, soft.expr) ? L_TRUE : L_UNDEF;
-    this.upper = upper;
+    if (numAssertions === this.solver.getNumAssertions()) this.upper = upper;
   }
 
   private removeSoft(core: readonly number[]) {
