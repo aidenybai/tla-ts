@@ -61,6 +61,7 @@ import {
   collectSemanticErrors,
   getArity,
   getFunctionArity,
+  getKeyName,
   getParamArities,
   isBefore,
   isTheoremDefinition,
@@ -77,7 +78,6 @@ import {
 } from "./resolve";
 import { createRuntime } from "./runtime";
 import { getSanyStandardModules } from "./sany/modules";
-import { getSanyParseError } from "./sany/parse-error";
 import {
   CORE_OPERATORS,
   getJavaOverrides,
@@ -89,7 +89,11 @@ import {
 import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
 import { createModuleSubexpressions, resolveInstanceSubexpressions } from "./subexpressions";
 import { checkModuleLevels, createLevelAnalyzer } from "./levels";
-import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
+import {
+  createInstanceChecker,
+  type InstanceCheck,
+  type KeyedDeclaration,
+} from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
 import { createDefinitionFacts } from "./dependencies";
 import { createTlcOrder, type TlcOrder } from "./tlc/order";
@@ -146,7 +150,7 @@ const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
 
 export interface LinkedModule {
   module: Module;
-  constants: Declaration[];
+  constants: KeyedDeclaration[];
   variables: string[];
   variableLocations: SourceLocation[];
   visible: Symbols;
@@ -167,34 +171,15 @@ interface ModuleScope {
   levelChecks: ReturnType<typeof checkModuleLevels>[];
 }
 
-const getDeclarations = (linked: LinkedModule): Declaration[] => [
+const getDeclarations = (linked: LinkedModule): KeyedDeclaration[] => [
   ...linked.constants,
   ...linked.variables.map((variable, index) => ({
     name: variable,
+    key: variable,
     arity: 0,
     location: linked.variableLocations[index],
   })),
 ];
-
-const parseModuleFile = (source: string, name: string, order: TlcOrder) => {
-  try {
-    return order.parseModule(source);
-  } catch (error) {
-    if (!(error instanceof TlaSyntaxError)) throw error;
-    const parseError = getSanyParseError(source);
-    if (parseError === undefined) throw error;
-    throw createSanyError(
-      [
-        {
-          location: `In module ${name}`,
-          message: `Could not parse module ${name} from file ${name}.tla`,
-        },
-      ],
-      true,
-      parseError,
-    );
-  }
-};
 
 const createModuleRedefinedError = (module: Module) =>
   new TlaSyntaxError(
@@ -396,7 +381,7 @@ export const createEnvironment = (
       getSanyStandardModules(runtime.version).get(name) ??
       extractModule(options.source, name);
     if (source === undefined) throw createMissingModuleError(name, importer);
-    const module = parseModuleFile(source, name, order);
+    const module = order.parseFile(source, name);
     if (module.name !== name) {
       throw createSanyError(
         [
@@ -588,11 +573,16 @@ export const createEnvironment = (
     }
     const instantiation = createInstantiation({
       params,
-      substitutions: replacements,
+      substitutions: new Map(
+        declarations.flatMap((declaration): [string, Expression][] => {
+          const replacement = replacements.get(declaration.name);
+          return replacement ? [[declaration.key, replacement]] : [];
+        }),
+      ),
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
-      getOuterDefinition: (name) =>
-        module.definitions.find((definition) => definition.name === name),
+      getOuterDefinition: (key) =>
+        module.definitions.find((definition) => unit.getKey(definition) === key),
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create) => {
         const key = createName(`${name}@${module.name}`);
@@ -792,7 +782,7 @@ export const createEnvironment = (
       params: instance.params,
       substitutions: new Map(
         declarations.map((declaration): [string, Expression] => [
-          declaration.name,
+          declaration.key,
           !isParameterDependent(declaration)
             ? createLocalIdentifier(`${declaration.name}${suffix}`, location)
             : {
@@ -910,7 +900,8 @@ export const createEnvironment = (
     const facts = new Set<string>();
     const modules = new Map<string, LinkedModule>();
     const extended: LinkedModule[] = [];
-    const constants = [...parsed.constants];
+    const getKey = (item: { name: string }) => `${item.name}${KEY_SEPARATOR}${scope.id}`;
+    const constants = parsed.constants.map((constant) => ({ ...constant, key: getKey(constant) }));
     const declaredVariables = parsed.variables.filter(
       (variable, index) =>
         parsed.variables.findIndex((other) => other.name === variable.name) === index,
@@ -950,7 +941,7 @@ export const createEnvironment = (
       ...parsed.variables.map((variable) => ({ ...variable, kind: "Variable" as const })),
     ];
     const getDeclarationSymbol = (declaration: (typeof declarations)[number]): ModuleSymbol => ({
-      key: declaration.name,
+      key: declaration.kind === "Constant" ? getKey(declaration) : declaration.name,
       arity: declaration.arity,
       kind: declaration.kind,
       range: declaration.location.range,
@@ -967,8 +958,6 @@ export const createEnvironment = (
       functionArity: getFunctionArity(definition),
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
-    const getKey = (definition: Definition) =>
-      parsed === root ? definition.name : `${definition.name}${KEY_SEPARATOR}${scope.id}`;
     const instanced = new Map<Instance, Symbols>();
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
     const getLetModule = (instance: Instance) => {
@@ -1153,7 +1142,7 @@ export const createEnvironment = (
       checkModuleLevels(
         module,
         {
-          constants: new Set(constants.map((constant) => constant.name)),
+          constants: new Set(constants.map((constant) => constant.key)),
           variables: new Set(variables),
           getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
@@ -1188,22 +1177,24 @@ export const createEnvironment = (
   linkOrder.push(...linkOrder.splice(linkOrder.indexOf(linkedRoot), 1));
   if (warnings.length > 0 && !options.isSanyReported) options.print(formatSanyWarnings(warnings));
   const runtimeInvariants = options.runtimeInvariants ?? [];
+  const rootKeys = new Map<string, string>();
   runtimeInvariants.forEach((invariant) => {
     if (invariant.module === undefined) return;
     linkedModules.set(root.name, linkedRoot);
     const linked = getLinkedModule(invariant.module, root.name);
     linkOrder.splice(linkOrder.indexOf(linked), 1);
-    const definition = definitions.get(linked.visible.get(invariant.name)?.key ?? invariant.name);
-    if (definition) definitions.set(invariant.name, definition);
+    const key = linked.visible.get(invariant.name)?.key;
+    if (key !== undefined && definitions.has(key)) rootKeys.set(invariant.name, key);
   });
-  linkedRoot.visible.forEach((symbol, name) => {
-    const definition = definitions.get(symbol.key);
-    if (definition && symbol.key !== name) definitions.set(name, definition);
-  });
+  linkedRoot.visible.forEach((symbol, name) => rootKeys.set(name, symbol.key));
+  linkedRoot.constants.forEach((constant) => rootKeys.set(constant.name, constant.key));
   moduleOperators.forEach((operator) => {
-    const definition = operator.key === undefined ? undefined : definitions.get(operator.key);
-    if (operator.kind !== "postcondition" && definition) {
-      definitions.set(operator.operator, definition);
+    if (
+      operator.kind !== "postcondition" &&
+      operator.key !== undefined &&
+      definitions.has(operator.key)
+    ) {
+      rootKeys.set(operator.operator, operator.key);
     }
   });
 
@@ -1215,7 +1206,6 @@ export const createEnvironment = (
     assumptions.push(...linked.module.assumptions);
   };
   addAssumptions(linkedRoot, new Set());
-  const declaredConstants = linkedRoot.constants.map((constant) => constant.name);
   const variables = linkedRoot.variables;
 
   const applied = applyConfig(config, {
@@ -1225,6 +1215,7 @@ export const createEnvironment = (
       ...[...linkedModules].map((entry): [string, Symbols] => [entry[0], entry[1].visible]),
       [root.name, linkedRoot.visible],
     ]),
+    rootKeys,
     definitions,
     builtins,
     copySources,
@@ -1233,7 +1224,7 @@ export const createEnvironment = (
         getLinkedModule(operator.module, root.name).constants.flatMap(
           (constant): [string, Value][] => {
             const value = operator.constants?.[constant.name];
-            return value === undefined ? [] : [[constant.name, value]];
+            return value === undefined ? [] : [[constant.key, value]];
           },
         ),
       ),
@@ -1265,6 +1256,7 @@ export const createEnvironment = (
   const environment: Environment = {
     runtime,
     definitions,
+    rootKeys,
     builtins,
     constants,
     substitutions,
@@ -1297,10 +1289,10 @@ export const createEnvironment = (
       throw error;
     }
   };
-  substitutions.forEach((target, name) => {
+  substitutions.forEach((target, key) => {
     const definition = definitions.get(target);
     const error =
-      declaredConstants.includes(name) &&
+      linkedRoot.constants.some((constant) => constant.key === key) &&
       definition?.kind === "Operator" &&
       definition.params.length === 0 &&
       analyzer.analyzeDefinition(definition, new Map()).level > 0
@@ -1309,7 +1301,7 @@ export const createEnvironment = (
     if (error) {
       const addendum = isEvalException(error) ? "" : ` - specifically: ${error.message}`;
       throw new TlaConfigError(
-        `The configuration file substitutes constant ${name} with non-constant ${target}${addendum}`,
+        `The configuration file substitutes constant ${getKeyName(key)} with non-constant ${getKeyName(target)}${addendum}`,
       );
     }
   });
@@ -1330,8 +1322,9 @@ export const createEnvironment = (
       .flatMap((linked) =>
         getDefinitionOrder(linked === linkedRoot ? undefined : linked.module.name).flatMap(
           (name) => {
-            const definition = definitions.get(linked.visible.get(name)?.key ?? name);
-            return definition ? [definition] : [];
+            const key = linked.visible.get(name)?.key ?? name;
+            const definition = definitions.get(key);
+            return definition && !constants.has(key) && !substitutions.has(key) ? [definition] : [];
           },
         ),
       ),

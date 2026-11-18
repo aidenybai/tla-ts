@@ -1,6 +1,7 @@
 import {
   getChildren,
   isLocallyResolved,
+  type ApplyExpression,
   type AssumeProve,
   type Bound,
   type BoundPattern,
@@ -81,7 +82,7 @@ interface Unit {
   imported: Symbols;
   getInstance: (instance: Instance) => InstancedModule;
   definitions: Map<string, Definition>;
-  getKey: (definition: Definition) => string;
+  getKey: (item: { name: string }) => string;
   isModuleKnown: (name: string, location: SourceLocation) => boolean;
   location: SourceLocation;
   self: Definition | undefined;
@@ -146,6 +147,7 @@ export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 export const generatedArgumentCounts = new WeakMap<Expression, number>();
+export const operandApplications = new WeakMap<Expression, ApplyExpression[]>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 
@@ -170,6 +172,9 @@ const isKey = (name: string) => {
   const index = name.lastIndexOf(KEY_SEPARATOR);
   return index > 0 && index < name.length - 1;
 };
+
+export const getKeyName = (key: string) =>
+  isKey(key) ? key.slice(0, key.lastIndexOf(KEY_SEPARATOR)) : key;
 
 const CORE_SYMBOLS: Symbols = new Map([
   ...["~>", "-+->", "\\cdot", "\\X"].map((name): [string, ModuleSymbol] => [
@@ -920,6 +925,9 @@ const getSymbolArity = (
   if (symbol) {
     if (expression.kind === "Identifier") expression.name = symbol.key;
     else expression.operator = symbol.key;
+    operandApplications.get(expression)?.forEach((application) => {
+      application.operator = symbol.key;
+    });
     renamedArities.set(expression, symbol.arity);
     return symbol.arity;
   }
@@ -1269,9 +1277,10 @@ const resolveExpressionArgument = (arg: Expression, scope: LocalName | undefined
     unresolvedExpressions.add(arg);
     report("LAMBDA expression used where an expression is required.");
   } else if (arg.kind === "OperatorReference") {
-    const argArity = getSymbolArity(arg, arg.operator, scope, unit);
+    const operator = arg.operator;
+    const argArity = getSymbolArity(arg, operator, scope, unit);
     if (argArity !== undefined) {
-      report(`The operator ${resolveSynonym(arg.operator)} requires ${argArity} arguments.`);
+      report(`The operator ${resolveSynonym(operator)} requires ${argArity} arguments.`);
     }
   } else resolveExpression(arg, scope, unit);
 };
@@ -2339,7 +2348,7 @@ export interface ModuleUnit {
   getInstance: (instance: Instance) => InstancedModule;
   bound: Symbols;
   definitions: Map<string, Definition>;
-  getKey: (definition: Definition) => string;
+  getKey: (item: { name: string }) => string;
   isModuleKnown: (name: string, location: SourceLocation) => boolean;
   instanced: Map<Instance, Symbols>;
   facts: Set<string>;
@@ -2357,11 +2366,11 @@ export const isTheoremDefinition = (module: Module, definition: Definition) =>
       item.location.column === definition.location.column,
   );
 
-const createSymbols = (module: Module, imported: Symbols) => {
-  const symbols = new Map([...CORE_SYMBOLS, ...imported]);
+const createSymbols = (module: Module, unit: ModuleUnit) => {
+  const symbols = new Map([...CORE_SYMBOLS, ...unit.imported]);
   module.constants.forEach((constant) =>
     symbols.set(constant.name, {
-      key: constant.name,
+      key: unit.getKey(constant),
       arity: constant.arity,
       kind: "Constant",
       range: constant.location.range,
@@ -2451,10 +2460,11 @@ const checkSubstitutions = (
       reportArity(declaration, BUILTIN_LOCATION);
       return;
     }
-    const arity = getSymbolArity(expression, expression.name, scope, unit);
+    const name = expression.name;
+    const arity = getSymbolArity(expression, name, scope, unit);
     if (arity !== undefined && arity !== declaration.arity) {
       unit.errors.push({
-        location: formatRange(getSpelledNameRange(expression, expression.name)),
+        location: formatRange(getSpelledNameRange(expression, name)),
         message: `Expected arity ${declaration.arity} but found operator of arity ${arity}.`,
       });
     }
@@ -2546,7 +2556,7 @@ export const resolveSubstitutions = (
   module: Module,
   unit: ModuleUnit,
 ) => {
-  const imported = createSymbols(module, unit.imported);
+  const imported = createSymbols(module, unit);
   const positions = new Map(
     [...module.constants, ...module.variables].map((declaration) => [
       declaration.name,
@@ -2641,7 +2651,7 @@ export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError
 };
 
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
-  const symbols = createSymbols(module, unit.imported);
+  const symbols = createSymbols(module, unit);
   const goals = new Map(
     module.theorems.flatMap((theorem): [string, Goal][] =>
       theorem.name !== undefined && theorem.statement.kind === "AssumeProve"

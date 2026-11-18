@@ -2,6 +2,7 @@ import {
   getChildren,
   getDefinitionExpressions,
   getFunctionConstruction,
+  type ApplyExpression,
   type AssumeProve,
   type Bound,
   type Declaration,
@@ -40,6 +41,7 @@ import {
   isBefore,
   LOCAL_RESOLUTION,
   nullSelections,
+  operandApplications,
   operatorSelectionErrors,
   selectionErrors,
   selectionArguments,
@@ -218,24 +220,20 @@ const getOperatorArgument = (operand: Expression, arity: number): Expression => 
   if (operand.kind !== "Identifier" && operand.kind !== "OperatorReference") return operand;
   const operator = operand.kind === "Identifier" ? operand.name : operand.operator;
   const params = Array.from({ length: arity }, (_value, index) => `argument${index}`);
-  return {
-    kind: "Lambda",
-    params,
-    body: {
-      kind: "Apply",
-      operator,
-      args: params.map((name) => ({
-        kind: "Identifier",
-        name,
-        location: operand.location,
-        resolution: LOCAL_RESOLUTION,
-      })),
-      location: operand.location,
-      ...(operand.kind === "Identifier" && { resolution: operand.resolution }),
-    },
+  const application: ApplyExpression = {
+    kind: "Apply",
     operator,
+    args: params.map((name) => ({
+      kind: "Identifier",
+      name,
+      location: operand.location,
+      resolution: LOCAL_RESOLUTION,
+    })),
     location: operand.location,
+    ...(operand.kind === "Identifier" && { resolution: operand.resolution }),
   };
+  operandApplications.set(operand, [...(operandApplications.get(operand) ?? []), application]);
+  return { kind: "Lambda", params, body: application, operator, location: operand.location };
 };
 
 const getDefinitionBody = (definition: Definition) => {

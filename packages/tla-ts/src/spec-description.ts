@@ -18,6 +18,7 @@ import {
   evaluate,
   forEachBinding,
   getDefinition,
+  getRootKey,
   lookupScope,
   resolveGlobalOperator,
   type Closure,
@@ -191,7 +192,7 @@ const isConstantValue = (definition: Definition | undefined, environment: Enviro
   isStartupValue(definition, environment);
 
 const isConstantDefinition = (closure: Closure, environment: Environment) => {
-  const definition = getDefinition(closure.name, environment);
+  const definition = getDefinition(getRootKey(closure.name, environment), environment);
   return definition?.body === closure.body && isConstantValue(definition, environment);
 };
 
@@ -552,7 +553,7 @@ const describeProperty = (
 };
 
 const getOperatorDefinition = (name: string, environment: Environment) => {
-  const definition = getDefinition(name, environment);
+  const definition = getDefinition(getRootKey(name, environment), environment);
   return definition?.kind === "Operator" && !isConstantValue(definition, environment)
     ? definition
     : undefined;
@@ -589,10 +590,14 @@ export const getSpecDescription = (
     );
   }
   const init =
-    config.init === undefined ? undefined : resolveGlobalOperator(config.init, environment);
+    config.init === undefined
+      ? undefined
+      : resolveGlobalOperator(getRootKey(config.init, environment), environment);
   if (init?.kind === "Closure") description.inits.push(createAction(config.init ?? "", init.body));
   const nextOperator =
-    config.next === undefined ? undefined : resolveGlobalOperator(config.next, environment);
+    config.next === undefined
+      ? undefined
+      : resolveGlobalOperator(getRootKey(config.next, environment), environment);
   if (nextOperator?.kind === "Closure") {
     description.actions.push(
       ...getActions(
@@ -645,7 +650,7 @@ export const getSubscriptVariables = (
     }
     const called = resolveClosure(expression, innerScope, environment);
     if (!called || called.params.length !== getArguments(expression).length) return true;
-    const definition = getDefinition(called.name, environment);
+    const definition = getDefinition(getRootKey(called.name, environment), environment);
     if (definition?.body === called.body && isStartupValue(definition, environment)) return true;
     return collect(called.body, getCallScope(called, expression, innerScope, environment));
   };

@@ -3,7 +3,8 @@ import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import { MESSAGE_CODE } from "./tlc/messages";
-import { evaluate, type Environment } from "./evaluate";
+import { evaluate, getRootKey, type Environment } from "./evaluate";
+import { getKeyName } from "./resolve";
 import {
   compareValues,
   createFunction,
@@ -61,7 +62,7 @@ const getBoundImage = (pattern: BoundPattern, set: Expression | undefined) => {
 };
 
 const getExpressionImage = (expression: Expression): string => {
-  if (expression.kind === "Identifier") return expression.name;
+  if (expression.kind === "Identifier") return getKeyName(expression.name);
   if (expression.kind === "Number") return expression.text ?? String(expression.value);
   if (expression.kind === "SetEnumeration") {
     return `{${expression.elements.map(getExpressionImage).join(",")}}`;
@@ -83,9 +84,8 @@ const getExpressionImage = (expression: Expression): string => {
   }
   if (expression.kind !== "Apply") return "";
   const args = expression.args.map(getExpressionImage);
-  return /^[A-Za-z_]/.test(expression.operator)
-    ? `${expression.operator}(${args.join(",")})`
-    : args.join(expression.operator);
+  const operator = getKeyName(expression.operator);
+  return /^[A-Za-z_]/.test(operator) ? `${operator}(${args.join(",")})` : args.join(operator);
 };
 
 const isPermutations = (
@@ -100,8 +100,9 @@ export const getSymmetryGroup = (
   environment: Environment,
   substitutions: Substitution[],
 ): Images[] | undefined => {
-  const definition = environment.definitions.get(name);
-  if (definition === undefined && !environment.constants.has(name)) {
+  const key = getRootKey(name, environment);
+  const definition = environment.definitions.get(key);
+  if (definition === undefined && !environment.constants.has(key)) {
     throw new TlaConfigError(
       `The symmetry function ${name} specified in the configuration file\nis not defined in the specification.`,
     );
@@ -170,7 +171,9 @@ export const getSymmetryGroup = (
     permutedSets.filter((node) => {
       if (!isPermutations(node)) return false;
       const operand = node.args[0];
-      if (operand.kind !== "Identifier" || substitutedNames.has(operand.name)) return false;
+      if (operand.kind !== "Identifier" || substitutedNames.has(getKeyName(operand.name))) {
+        return false;
+      }
       const set = evaluateConstant(operand);
       return (
         typeof set === "object" &&

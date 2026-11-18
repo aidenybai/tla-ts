@@ -114,4 +114,12 @@ describe("TLCExt operators match TLC", () => {
     expect(result.status).toBe("success");
     expect([result.generatedStates, result.distinctStates, result.queuedStates]).toEqual([4, 4, 1]);
   });
+
+  it("evaluates a function definition of the root module that TLCEvalDefinition names", async () => {
+    const result = await checkModule(
+      'f[n \\in {1, 2}] == n * 2\nInit == x = TLCEvalDefinition("f")\nNext == UNCHANGED x\nInv == x = <<2, 4>>',
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(result.status).toBe("success");
+  });
 });

@@ -21,8 +21,12 @@ export interface InstanceCheck {
   location: SourceLocation;
 }
 
+export interface KeyedDeclaration extends Declaration {
+  key: string;
+}
+
 interface ModuleContext {
-  constants: Declaration[];
+  constants: KeyedDeclaration[];
   variables: string[];
   definitions: Definition[];
   assumptions: Expression[];
@@ -39,6 +43,7 @@ interface ModuleLevels {
 
 interface Substituted {
   name: string;
+  key: string;
   maximumLevel: number;
   arity: number;
   level: number;
@@ -56,7 +61,7 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     if (cached) return cached;
     const module = getModule(name);
     const analyzer = createLevelAnalyzer({
-      constants: new Set(module.constants.map((constant) => constant.name)),
+      constants: new Set(module.constants.map((constant) => constant.key)),
       variables: new Set(module.variables),
       getDefinition: module.getDefinition,
     });
@@ -81,7 +86,7 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
       argParams: new Set(),
     };
     if (!levels.isConstant) {
-      module.constants.forEach((constant) => putConstraint(levels.constraints, constant.name, 0));
+      module.constants.forEach((constant) => putConstraint(levels.constraints, constant.key, 0));
     }
     const addLevels = (
       data: Omit<ModuleLevels, "isConstant">,
@@ -104,8 +109,8 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     const addAssumedLevels = (data: ReturnType<typeof analyzeAssumeProve>) => {
       addLevels(data, () => true);
       module.constants.forEach((constant) => {
-        if (data.params.has(constant.name)) {
-          putConstraint(levels.constraints, constant.name, ACTION_LEVEL);
+        if (data.params.has(constant.key)) {
+          putConstraint(levels.constraints, constant.key, ACTION_LEVEL);
         }
       });
     };
@@ -141,7 +146,12 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     );
     const declarations = [
       ...instancee.constants.map((constant) => ({ ...constant, maximumLevel: 0 })),
-      ...instancee.variables.map((variable) => ({ name: variable, arity: 0, maximumLevel: 1 })),
+      ...instancee.variables.map((variable) => ({
+        name: variable,
+        key: variable,
+        arity: 0,
+        maximumLevel: 1,
+      })),
     ];
     const substituted = declarations.flatMap((declaration): Substituted[] => {
       const expression = check.substitutions.get(declaration.name);
@@ -174,13 +184,13 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
       }
     });
     substituted.forEach((item) => {
-      const maximum = levels.constraints.get(item.name);
+      const maximum = levels.constraints.get(item.key);
       if (maximum !== undefined && item.level > maximum)
         addMessage(getLevelMessage(item.name, maximum));
       const operator = item.operator;
       if (!operator) return;
       for (let index = 0; index < item.arity; index++) {
-        const minimum = levels.argConstraints.get(getArgumentKey(item.name, index));
+        const minimum = levels.argConstraints.get(getArgumentKey(item.key, index));
         if (minimum !== undefined && getMaxLevel(operator, index) < minimum) {
           addMessage(
             `Level error in instantiating module '${check.module}':\nThe level of the argument ${index + 1} of the operator ${operator.name} \nmust be at least ${minimum}.`,
@@ -190,13 +200,13 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     });
     levels.argParams.forEach((key) => {
       const parameter = parseArgumentParamKey(key);
-      const operator = substituted.find((item) => item.name === parameter.operator)?.operator;
-      const argument = substituted.find((item) => item.name === parameter.param);
-      if (!operator || !argument) return;
-      const maximum = getMaxLevel(operator, parameter.index);
+      const substitute = substituted.find((item) => item.key === parameter.operator);
+      const argument = substituted.find((item) => item.key === parameter.param);
+      if (!substitute?.operator || !argument) return;
+      const maximum = getMaxLevel(substitute.operator, parameter.index);
       if (argument.level > maximum) {
         addMessage(
-          `Level error when instantiating module '${check.module}':\nThe level of the argument ${parameter.index} of the operator ${parameter.operator}' \nmust be at most ${maximum}.`,
+          `Level error when instantiating module '${check.module}':\nThe level of the argument ${parameter.index} of the operator ${substitute.name}' \nmust be at most ${maximum}.`,
         );
       }
     });

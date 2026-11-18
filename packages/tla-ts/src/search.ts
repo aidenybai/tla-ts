@@ -6,6 +6,7 @@ import {
   type Expression,
   type SourceLocation,
 } from "./ast";
+import { getKeyName } from "./resolve";
 import type {
   CheckOptions,
   InitialStatesProgress,
@@ -53,6 +54,7 @@ import {
   expectBoolean,
   expectBooleanBody,
   getDefinition,
+  getRootKey,
   type Context,
   type Environment,
   type Scope,
@@ -191,16 +193,16 @@ const createIdentifier = (name: string): Expression => ({
   location: START,
 });
 
-const createNamedIdentifier = (name: string): NamedExpression => ({
+const createNamedIdentifier = (name: string, environment: Environment): NamedExpression => ({
   name,
-  expression: createIdentifier(name),
+  expression: createIdentifier(getRootKey(name, environment)),
   scope: undefined,
 });
 
 const UNNAMED_ARGUMENT_KINDS = new Set(["name", "property"]);
 
 const getConfigOperator = (kind: string, name: string, environment: Environment) => {
-  const definition = getDefinition(name, environment);
+  const definition = getDefinition(getRootKey(name, environment), environment);
   if (!definition) {
     throw new TlaConfigError(
       `The ${kind} ${name} specified in the configuration file\nis not defined in the specification.`,
@@ -219,29 +221,31 @@ const getConfigOperator = (kind: string, name: string, environment: Environment)
 const isLiteralDefinition = (definition: Definition) =>
   definition.body.kind === "Number" || definition.body.kind === "String";
 
-const getConstantValue = (name: string, definition: Definition, environment: Environment) => {
-  if (environment.constants.has(name)) return environment.constants.get(name);
+const getConstantValue = (key: string, definition: Definition, environment: Environment) => {
+  if (environment.constants.has(key)) return environment.constants.get(key);
   return isLiteralDefinition(definition) ? undefined : getStartupValue(definition, environment);
 };
 
 const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
-  if (environment.constants.has(name)) {
+  const key = getRootKey(name, environment);
+  if (environment.constants.has(key)) {
     throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
   }
   const definition = getConfigOperator(kind, name, environment);
-  if (getConstantValue(name, definition, environment) !== undefined) {
+  if (getConstantValue(key, definition, environment) !== undefined) {
     throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
   }
   return definition;
 };
 
 const getConfigPredicate = (kind: string, name: string, environment: Environment) => {
-  const definition = environment.constants.has(name)
+  const key = getRootKey(name, environment);
+  const definition = environment.constants.has(key)
     ? undefined
     : getConfigOperator(kind, name, environment);
   const value = definition
-    ? getConstantValue(name, definition, environment)
-    : environment.constants.get(name);
+    ? getConstantValue(key, definition, environment)
+    : environment.constants.get(key);
   if (value !== undefined && value !== true) {
     throw new TlaConfigError(`The ${kind} of ${name} is equal to ${formatValue(value)}`);
   }
@@ -304,7 +308,7 @@ const getInvariants = (names: string[], environment: Environment) => {
         EXIT_STATUS.safetyEvaluationFailure,
       );
     }
-    return [createNamedIdentifier(name)];
+    return [createNamedIdentifier(name, environment)];
   });
 };
 
@@ -331,12 +335,13 @@ const isConstantTrue = (item: ScopedExpression, environment: Environment, usage:
     return false;
   }
   const value = evaluate(conjunct, getContext(environment, undefined, undefined, item.scope));
+  const name = environment.instanceNames.get(conjunct.name) ?? getKeyName(conjunct.name);
   if (value === false) {
-    throw new TlaConfigError(`The spec is trivially false because ${conjunct.name} is false.`);
+    throw new TlaConfigError(`The spec is trivially false because ${name} is false.`);
   }
   if (value !== true) {
     throw new TlaConfigError(
-      `The operator ${conjunct.name}, which equals ${formatValue(value)},\ncannot be used as a ${usage}`,
+      `The operator ${name}, which equals ${formatValue(value)},\ncannot be used as a ${usage}`,
     );
   }
   return true;
@@ -353,7 +358,7 @@ const getSpecification = (
     const getOperator = (name: string | undefined, description: string) => {
       if (name === undefined) return undefined;
       getConfigDefinition(description, name, environment);
-      return createIdentifier(name);
+      return createIdentifier(getRootKey(name, environment));
     };
     return {
       init: getOperator(config.init, "initial predicate"),
@@ -371,10 +376,11 @@ const getSpecification = (
   const initConjuncts: ScopedExpression[] = [];
   const nextActions: ScopedExpression[] = [];
   const temporals: ScopedExpression[] = [];
-  const value = environment.constants.has(config.specification)
-    ? environment.constants.get(config.specification)
+  const specificationKey = getRootKey(config.specification, environment);
+  const value = environment.constants.has(specificationKey)
+    ? environment.constants.get(specificationKey)
     : getConstantValue(
-        config.specification,
+        specificationKey,
         getConfigOperator("name", config.specification, environment),
         environment,
       );
@@ -390,7 +396,7 @@ const getSpecification = (
     const conjunct = item.expression;
     // TLC takes a state-level definition of the spec whole as an initial predicate.
     const isInitial = item.path.some((name) => {
-      const expanded = getDefinition(name, environment);
+      const expanded = getDefinition(getRootKey(name, environment), environment);
       return (
         expanded?.kind === "Operator" &&
         getLevel(expanded.body, undefined, environment) === VARIABLE_LEVEL
@@ -619,7 +625,7 @@ const getNamedExpressions = (
   environment: Environment,
 ): NamedExpression[] =>
   names.flatMap((name) =>
-    getConfigPredicate(kind, name, environment) ? [createNamedIdentifier(name)] : [],
+    getConfigPredicate(kind, name, environment) ? [createNamedIdentifier(name, environment)] : [],
   );
 
 const getBodyRange = (name: string, environment: Environment) => {
@@ -633,7 +639,7 @@ const getPossiblePredicates = (names: string[], environment: Environment) =>
       throw new TlaConfigError(`_POSSIBLE lists ${name} more than once`);
     }
     getConfigDefinition("possible", name, environment);
-    const possible = createNamedIdentifier(name);
+    const possible = createNamedIdentifier(name, environment);
     if (getLevel(possible.expression, undefined, environment) === TEMPORAL_LEVEL) {
       throw new TlaConfigError(
         `The possible of ${name} is equal to a temporal formula; only state- and action-level predicates are supported`,
@@ -1078,9 +1084,11 @@ export const createSearch = (
   );
   const properties = getProperties(config, environment, onProgress);
   const live = config.properties[0];
-  const liveRange = live && getDefinition(live, environment)?.location.range;
+  const liveRange =
+    live && getDefinition(getRootKey(live, environment), environment)?.location.range;
   const specName = config.specification;
-  const specRange = specName && getDefinition(specName, environment)?.location.range;
+  const specRange =
+    specName && getDefinition(getRootKey(specName, environment), environment)?.location.range;
   if (spec.isPropertyFairness && liveRange && specRange) {
     onProgress?.({
       kind: "warning",
@@ -1113,11 +1121,11 @@ export const createSearch = (
   }
   const runtimeChecks = getStateChecks(
     runtimeInvariants.map((invariant) => {
-      const definition = getDefinition(invariant.name, environment);
+      const key = getRootKey(invariant.name, environment);
+      const definition = getDefinition(key, environment);
       return {
         name: invariant.name,
-        expression:
-          definition?.kind === "Operator" ? definition.body : createIdentifier(invariant.name),
+        expression: definition?.kind === "Operator" ? definition.body : createIdentifier(key),
         scope: undefined,
       };
     }),
@@ -1202,6 +1210,10 @@ export const createSearch = (
     return true;
   };
   if (config.rlReward !== undefined) getConfigOperator("rlreward", config.rlReward, environment);
+  const reward =
+    config.rlReward === undefined
+      ? undefined
+      : createIdentifier(getRootKey(config.rlReward, environment));
   if (config.periodic !== undefined) getConfigOperator("periodic", config.periodic, environment);
   const possible = getPossiblePredicates(config.possible, environment);
   if (environment.variables.length === 0) return undefined;
@@ -1214,7 +1226,7 @@ export const createSearch = (
       ? undefined
       : getConfigDefinition("view function", config.view, environment);
   const viewName = config.view ?? getModuleOperators("view")[0]?.name;
-  const view = viewName === undefined ? undefined : createNamedIdentifier(viewName);
+  const view = viewName === undefined ? undefined : createNamedIdentifier(viewName, environment);
   const actionProperties = properties.actionProperties.map((property) => {
     const unchanged: Expression = {
       kind: "Unchanged",
@@ -1319,7 +1331,7 @@ export const createSearch = (
   const findUnwitnessedPossible = () => {
     const unwitnessed = possible.find((item) => !runtime.possibleCounts.get(item.name));
     if (!unwitnessed) return undefined;
-    const range = getBodyRange(unwitnessed.name, environment);
+    const range = getBodyRange(getRootKey(unwitnessed.name, environment), environment);
     const location = range ? ` at ${formatRange(range)}` : "";
     return {
       name: unwitnessed.name,
@@ -1374,7 +1386,10 @@ export const createSearch = (
         toRecord(state.map((value) => value ?? createModelValue("null")));
       try {
         getConfigDefinition("alias", alias, environment);
-        const value = evaluate(createIdentifier(alias), getContext(environment, state, next));
+        const value = evaluate(
+          createIdentifier(getRootKey(alias, environment)),
+          getContext(environment, state, next),
+        );
         const record = toAliasRecord(value);
         return record === undefined ? getStateRecord() : setAliasName(record, alias);
       } catch (error) {
@@ -1588,7 +1603,7 @@ export const createSearch = (
           (constraint) => !holdsActionConstraint(constraint, state, next),
         ),
       ].map((constraint) => {
-        const range = getBodyRange(constraint.name, environment);
+        const range = getBodyRange(getRootKey(constraint.name, environment), environment);
         return range ? formatRange(range) : constraint.name;
       }),
     trackStatePossible:
@@ -1603,11 +1618,10 @@ export const createSearch = (
             trackPossible(actionPossible, runtime, getContext(environment, state, next)),
     findUnwitnessedPossible,
     getReward: (state, next, fallback) => {
-      if (config.rlReward === undefined) return fallback;
-      const expression = createIdentifier(config.rlReward);
-      const value = evaluate(expression, getContext(environment, state, next));
+      if (reward === undefined) return fallback;
+      const value = evaluate(reward, getContext(environment, state, next));
       if (typeof value !== "number") {
-        throw new TlaEvaluationError(getExpectedValue("integer", expression, environment));
+        throw new TlaEvaluationError(getExpectedValue("integer", reward, environment));
       }
       return value;
     },
@@ -1615,7 +1629,7 @@ export const createSearch = (
       const modulePostconditions = getModuleOperators("postcondition");
       const rejection = config.postconditions
         .map((name) => {
-          const definition = getDefinition(name, environment);
+          const definition = getDefinition(getRootKey(name, environment), environment);
           if (!definition) {
             return `The post condition ${name} specified in the configuration file\nis not defined in the specification.`;
           }
@@ -1662,7 +1676,7 @@ export const createSearch = (
       const unwitnessed = findUnwitnessedPossible();
       if (unwitnessed) return unwitnessed;
       for (const name of config.postconditions) {
-        const violation = findViolation(name, name);
+        const violation = findViolation(name, getRootKey(name, environment));
         if (violation) return violation;
       }
       return undefined;

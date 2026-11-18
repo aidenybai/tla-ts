@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, formatValue, parseModule, TlaSyntaxError } from "../../src";
+import { check, formatValue, parseModule, TlaConfigError, TlaSyntaxError } from "../../src";
 import { createSanyError } from "../../src/errors";
 import { checkFixture, getModuleLoader } from "./check-harness";
 
@@ -14,6 +14,22 @@ const checkInstances = (configName: string, moduleName = "Instances") =>
     source: readFileSync(join(DIRECTORY, `${moduleName}.tla`), "utf8"),
     config: readFileSync(join(DIRECTORY, configName), "utf8"),
     loadModule,
+  });
+
+const SHADOWED_MODULES = new Map([
+  [
+    "N",
+    "---- MODULE N ----\nEXTENDS Naturals, Sequences\nTwo == 2 + 2\nSmall == Nat \\cap {1}\nLength == Len(<<1, 2>>)\n====",
+  ],
+  ["Plus", "---- MODULE Plus ----\na + b == 99\n===="],
+  ["Universe", "---- MODULE Universe ----\nCONSTANT Nat\n===="],
+]);
+
+const checkShadowed = (unit: string, assumption: string, config = "") =>
+  check({
+    source: `---- MODULE M ----\n${unit}\nI == INSTANCE N\nASSUME ${assumption}\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\n====`,
+    config: `INIT Init\nNEXT Next\n${config}`,
+    loadModule: (name) => SHADOWED_MODULES.get(name),
   });
 
 describe("INSTANCE matches TLC", () => {
@@ -280,6 +296,95 @@ describe("INSTANCE matches TLC", () => {
       ),
     ).not.toThrow();
   });
+
+  it.each([
+    ["a root infix operator", "a + b == 99", "I!Two = 4", ""],
+    ["a root constant operator", "Nat == {7}", "I!Small = {1}", ""],
+    ["a root operator", "Len(s) == 42", "I!Length = 2", ""],
+    ["an operator the root extends", "EXTENDS Plus", "I!Two = 4", ""],
+    [
+      "a root operator around a LET INSTANCE",
+      "a + b == 99",
+      "LET J == INSTANCE N IN J!Two = 4",
+      "",
+    ],
+    ["a root constant", "CONSTANT Nat", "I!Small = {1} /\\ Nat = {7}", "CONSTANT Nat = {7}"],
+    ["a model value", "CONSTANT Nat", "I!Small = {1}", "CONSTANT Nat = Nat"],
+    ["a constant the root extends", "EXTENDS Universe", "I!Small = {1}", "CONSTANT Nat = {7}"],
+    [
+      "a root operator constant",
+      "CONSTANT Len(_)\nMyLen(s) == 42",
+      "I!Length = 2 /\\ Len(<<>>) = 42",
+      "CONSTANT Len <- MyLen",
+    ],
+  ])(
+    "keeps a standard operator in an instanced module apart from %s of the same name",
+    async (_title, unit, assumption, config) => {
+      expect((await checkShadowed(unit, assumption, config)).status).toBe("success");
+    },
+  );
+
+  it.each([
+    ["assigns a value", "Nat == {7}", "I!Small = {1} /\\ Nat = {9}", "CONSTANT Nat = {9}"],
+    [
+      "replaces with an operator",
+      "a + b == 99\nPlus(a, b) == 5",
+      "I!Two = 4 /\\ 1 + 1 = 5",
+      "CONSTANT + <- Plus",
+    ],
+    ["defines by a table", "Len(s) == 42", "I!Length = 2", "CONSTANT Len(s) = 3"],
+  ])(
+    "keeps a standard operator in an instanced module apart from a root definition of the same name that the configuration %s",
+    async (_title, unit, assumption, config) => {
+      expect((await checkShadowed(unit, assumption, config)).status).toBe("success");
+    },
+  );
+
+  it("checks the root definition a configuration names where an instanced module loads a Java override of the same name", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nI == INSTANCE N\nNat == x \\in {0, 1}\nInit == x = 0\nNext == x' = I!Succ(x)\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Nat",
+      loadModule: (name) =>
+        name === "N" ? "---- MODULE N ----\nEXTENDS Naturals\nSucc(v) == v + 1\n====" : undefined,
+    });
+    expect(result.violation?.name).toBe("Nat");
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "0",
+      "1",
+      "2",
+    ]);
+  });
+
+  it("names a property that applies an operator of an instance as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nI == INSTANCE N\nInit == x = 0\nNext == x' = (x + 1) % 3\nR == I!Rising(x)\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY R",
+      loadModule: (name) =>
+        name === "N"
+          ? "---- MODULE N ----\nEXTENDS Naturals\nRising(v) == [][v' >= v]_v\n===="
+          : undefined,
+    });
+    expect(result.violation?.name).toBe("I!Rising");
+  });
+
+  it.each([
+    ["F == FALSE", "I!F", "The spec is trivially false because I!F is false."],
+    ["G == 3", "I!G", "The operator I!G, which equals 3,\ncannot be used as a spec"],
+  ])(
+    "names a constant conjunct of the spec from an instance as TLC does: %s",
+    async (definition, conjunct, message) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\nI == INSTANCE N\nInit == x = 0\nNext == x' = x\nSpec == Init /\\ [][Next]_x /\\ ${conjunct}\n====`,
+          config: "SPECIFICATION Spec",
+          loadModule: (name) =>
+            name === "N" ? `---- MODULE N ----\n${definition}\n====` : undefined,
+        }),
+      ).rejects.toThrow(new TlaConfigError(message));
+    },
+  );
 });
 
 const INNER_MODULES: Record<string, string> = {

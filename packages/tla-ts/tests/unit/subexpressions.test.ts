@@ -178,6 +178,25 @@ describe("subexpression references match TLC", () => {
     ]);
   });
 
+  it("passes on a selected operator that an operator argument of an instanced module names", async () => {
+    const modules = new Map([
+      [
+        "Mid",
+        "---- MODULE Mid ----\nEXTENDS Integers\nF(G(_)) == G(0)\nAp(G(_), v) == G(v)\nFoo(a) == a + 1\nOp == F(Foo)\nOp5 == LET L(b) == b * 2 IN F(L)\n---- MODULE Inner ----\nR == Ap(Op!1, 6)\n====\nI == INSTANCE Inner\nS == <<Ap(Op!1, 4), Ap(Op5!1!1, 5), I!R>>\n====",
+      ],
+    ]);
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nJ == INSTANCE Mid\nInit == x = <<>>\nNext == x' = J!S\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) => modules.get(name),
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<5, 10, 7>>",
+    ]);
+  });
+
   it("selects into a function definition as into its constructor", async () => {
     const inner =
       "---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT c\nh[z \\in {1, 2}] == z + c\n====";

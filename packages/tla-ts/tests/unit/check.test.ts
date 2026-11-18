@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vite-plus/test";
 import {
   check,
+  type CheckOptions,
   type CheckProgress,
   formatValue,
   parseModule,
@@ -3722,5 +3723,78 @@ console.log(JSON.stringify(await tlaTs.check(${JSON.stringify(options)})));`;
       { encoding: "utf8" },
     );
     expect(JSON.parse(output)).toEqual(JSON.parse(JSON.stringify(await check(options))));
+  });
+});
+
+const getCheckText = async (options: CheckOptions) => {
+  const output: unknown[] = [];
+  const result = await check({
+    ...options,
+    onPrint: (text) => output.push(text),
+    onProgress: (progress) => output.push(progress),
+  });
+  return JSON.stringify([result, output], (key, value: unknown) =>
+    key === "callStack" || key === "liveCallStack"
+      ? undefined
+      : typeof value === "bigint"
+        ? String(value)
+        : value,
+  );
+};
+
+describe("check names definitions and constants as the spec spells them", () => {
+  const source = [
+    "---- MODULE Root ----",
+    "EXTENDS Naturals, TLC",
+    "VARIABLE x",
+    "Init == x = 0",
+    "Inc == x' = (x + 1) % 3",
+    "Next == Inc",
+    "Spec == Init /\\ [][Next]_x /\\ WF_x(Next)",
+    "Small == x < 2",
+    "Live == <>(x = 5)",
+    "Up == [][x' > x]_x",
+    "Bad == x' = CHOOSE y \\in {} : TRUE",
+    "View == x",
+    "Alias == [x |-> x]",
+    "====",
+  ].join("\n");
+
+  it.each([
+    ["an invariant", "SPECIFICATION Spec\nINVARIANT Small\nVIEW View\nALIAS Alias", "Small"],
+    ["a temporal property", "SPECIFICATION Spec\nPROPERTY Live", "Live"],
+    ["an action property", "INIT Init\nNEXT Next\nPROPERTY Up", "Up"],
+    ["an error in an action", "INIT Init\nNEXT Bad", "Init"],
+  ])("in the result and output of %s", async (_title, config, name) => {
+    const text = await getCheckText({ source, config, coverage: 1 });
+    expect(text).toContain(name);
+    expect(text).not.toContain("@Root");
+  });
+
+  it("in the error for a constant substituted with a non-constant definition", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE Root ----\nVARIABLE v\nCONSTANT c\nDef == v\nInit == v = 0\nNext == UNCHANGED v\n====",
+        config: "CONSTANT c <- Def\nINIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(/^The configuration file substitutes constant c with non-constant Def - /);
+  });
+
+  it("in the error for a constant that a second extended module declares again", async () => {
+    const modules = new Map([
+      ["P1", "---- MODULE P1 ----\nCONSTANT c\n===="],
+      ["P2", "---- MODULE P2 ----\nEXTENDS Naturals\nCONSTANT c\nD == c + 1\n===="],
+    ]);
+    const text = await getCheckText({
+      source:
+        "---- MODULE Root ----\nEXTENDS TLC, P1, P2\nVARIABLE v\nASSUME PrintT(D)\nInit == v = 0\nNext == UNCHANGED v\n====",
+      config: "CONSTANT c = 1\nINIT Init\nNEXT Next",
+      loadModule: (name) => modules.get(name),
+    });
+    expect(text).toContain(
+      "In evaluation, the identifier c is either undefined or not an operator.",
+    );
+    expect(text).not.toContain("c@");
   });
 });

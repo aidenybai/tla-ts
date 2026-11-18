@@ -16,7 +16,14 @@ import {
   type Theorem,
 } from "./ast";
 import { TlaSyntaxError } from "./errors";
-import { getArity, getBoundNames, getPatternNames, isBefore, LOCAL_RESOLUTION } from "./resolve";
+import {
+  getArity,
+  getBoundNames,
+  getKeyName,
+  getPatternNames,
+  isBefore,
+  LOCAL_RESOLUTION,
+} from "./resolve";
 
 export const contextualApplications = new WeakSet<Expression>();
 
@@ -385,7 +392,7 @@ interface Instantiation {
   substitutions: Map<string, Expression>;
   variables: Set<string>;
   getDefinition: (key: string) => Definition | undefined;
-  getOuterDefinition: (name: string) => Definition | undefined;
+  getOuterDefinition: (key: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
   addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
   createName: (name: string) => string;
@@ -847,7 +854,7 @@ const substituteExpression = (
     }
     if (replacement) {
       throw new TlaSyntaxError(
-        `The operator ${expression.operator} can only be substituted by an operator at line ${expression.location.line}, column ${expression.location.column}`,
+        `The operator ${getKeyName(expression.operator)} can only be substituted by an operator at line ${expression.location.line}, column ${expression.location.column}`,
       );
     }
     const copy = getCopy(rewrite, expression.operator);

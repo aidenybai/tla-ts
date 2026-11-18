@@ -35,8 +35,40 @@ describe("name resolution matches SANY", () => {
   });
 
   it("fails to parse an EXTENDS of a name that is not an identifier", async () => {
-    await expect(checkNames("EXTENDS)Sequences")).rejects.toBeInstanceOf(TlaSyntaxError);
-    await expect(checkNames("EXTENDS +, Sequences")).rejects.toBeInstanceOf(TlaSyntaxError);
+    await expect(checkNames("EXTENDS)Sequences")).rejects.toThrow("line 2, column 8");
+    await expect(checkNames("EXTENDS +, Sequences")).rejects.toThrow("line 2, column 9");
+  });
+
+  it("reports a parse error in an extended module before a module after it that is missing", async () => {
+    const result = check({
+      source: "---- MODULE M ----\nEXTENDS Broken, Missing\n====",
+      config: "",
+      loadModule: (name) =>
+        name === "Broken" ? "---- MODULE Broken ----\nBad == [a/b |-> 1]\n====" : undefined,
+    });
+    await expect(result).rejects.toThrow(
+      createSanyError(
+        [
+          {
+            location: "In module Broken",
+            message: "Could not parse module Broken from file Broken.tla",
+          },
+        ],
+        true,
+        [
+          "***Parse Error***",
+          'Encountered "|->" at line 2, column 13 and token "b" ',
+          "",
+          "Residual stack trace follows:",
+          "Some [] Form starting at line 2, column 8.",
+          "ExtendableExpr starting at line 2, column 8.",
+          "Expression starting at line 2, column 8.",
+          "Definition starting at line 2, column 1.",
+          "Module body starting at line 2, column 1.",
+          "",
+        ].join("\n"),
+      ),
+    );
   });
 
   it.each([
@@ -1613,6 +1645,40 @@ describe("name resolution matches SANY", () => {
             "Multiply-defined symbol 'P': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 22 of module Inner.",
           ],
         ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      },
+    });
+  });
+
+  it("names an operator of an extended module as it is spelled", async () => {
+    const modules = new Map([
+      ["Inner", "---- MODULE Inner ----\nCONSTANT Op(_)\n===="],
+      [
+        "Mid",
+        "---- MODULE Mid ----\na ++ b == a\nG(a, b) == a\nH(x) == x\nK == INSTANCE Inner WITH Op <- G\nL == H(++)\n====",
+      ],
+    ]);
+    await expect(
+      check({
+        source: "---- MODULE M ----\nEXTENDS Mid\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) => modules.get(name),
+      }),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: [
+          {
+            location: "line 5, col 32 to line 5, col 32 of module Mid",
+            message: "Expected arity 1 but found operator of arity 2.",
+          },
+          {
+            location: "In module --TLA+ BUILTINS--",
+            message: "An operator must be substituted for symbol 'Op', and it must have arity 1.",
+          },
+          {
+            location: "line 6, col 8 to line 6, col 9 of module Mid",
+            message: "The operator ++ requires 2 arguments.",
+          },
+        ],
       },
     });
   });

@@ -29,6 +29,7 @@ import {
 } from "./evaluate";
 import { letDefinitions } from "./coverage";
 import { mapChildren } from "./instances";
+import { getKeyName } from "./resolve";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { isEnabled } from "./successors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
@@ -303,7 +304,9 @@ export const expandTemporal = (
       return expand(
         operator.body,
         bindOperatorArguments(operator, expression.args, context),
-        expansion.isSubstituted && definition ? definition.name : expression.operator,
+        expansion.isSubstituted && definition
+          ? definition.name
+          : (environment.instanceNames.get(expression.operator) ?? getKeyName(expression.operator)),
         expansion.expanding,
         definition,
       );

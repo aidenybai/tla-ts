@@ -21,6 +21,7 @@ import {
   describeRange,
   evaluate,
   getDefinition,
+  getRootKey,
   type Builtin,
   type Environment,
 } from "../evaluate";
@@ -380,8 +381,9 @@ export const createTlcExtOperators = (
           `The argument of TLCEvalDefinition should be a string, but instead it is:\n${prettyPrint(formatValue(name))}`,
         );
       }
-      const definition = context ? getDefinition(name, context.environment) : undefined;
-      const builtin = definition ? undefined : context?.environment.builtins.get(name);
+      const key = context ? getRootKey(name, context.environment) : name;
+      const definition = context ? getDefinition(key, context.environment) : undefined;
+      const builtin = definition ? undefined : context?.environment.builtins.get(key);
       if (builtin?.arity === 0) return builtin.evaluate([], context);
       if (!definition || !context) {
         throw new TlaModuleError(
@@ -401,7 +403,7 @@ export const createTlcExtOperators = (
       }
       return definition.kind === "Operator"
         ? evaluate(definition.body, context)
-        : evaluate({ kind: "Identifier", name, location: definition.location }, context);
+        : evaluate({ kind: "Identifier", name: key, location: definition.location }, context);
     }),
   ];
 };
