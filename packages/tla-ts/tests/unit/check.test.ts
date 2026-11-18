@@ -1415,6 +1415,26 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
+  it("counts a CASE guard of the initial predicate at the CASE without TLC's warning that its lookup failed", async () => {
+    const warnings: CheckProgress[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == CASE 1 = 2 -> x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      coverage: 1,
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress);
+      },
+    });
+    expect([formatCoverage(result), warnings]).toEqual([
+      [
+        ["line 4, col 9 to line 4, col 27 of module M: 2"],
+        ["line 5, col 9 to line 5, col 14 of module M: 0"],
+      ],
+      [],
+    ]);
+  });
+
   it("counts the coverage of each invariant it checks in an initial state under -continue", async () => {
     const result = await check({
       source:

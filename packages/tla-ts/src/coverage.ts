@@ -708,6 +708,7 @@ export const getCoverageNode = (coverage: Coverage, node: number, expression: Ex
   const recursive = coverage.recursive[node];
   const inner = recursive === -1 ? -1 : findChild(coverage, recursive, expression);
   if (inner !== -1) return inner;
+  // Deviation from TLC: OpApplNodeWrapper#get also warns (2776) on this fallback, a lookup bug it asks users to report.
   return coverage.lets[node]?.find((item) => coverage.expressions[item] === expression) ?? node;
 };
 
