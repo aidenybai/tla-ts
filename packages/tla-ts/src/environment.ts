@@ -177,7 +177,6 @@ export interface LinkedModule {
   exported: Symbols;
   modules: Map<string, LinkedModule>;
   extended: LinkedModule[];
-  facts: Set<string>;
 }
 
 interface ModuleScope {
@@ -572,9 +571,6 @@ export const createEnvironment = (
     const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
     if (standardSymbols) return getStandardInstanceSymbols(instance, standardSymbols);
     const linked = nested ?? getLinkedModule(instance.module, module.name);
-    linked.facts.forEach((name) =>
-      unit.facts.add(instance.name === undefined ? name : `${instance.name}!${name}`),
-    );
     const declarations = getDeclarations(linked);
     const suffix = `#${copyCount++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
@@ -711,7 +707,13 @@ export const createEnvironment = (
         .filter(
           (entry) =>
             !declared.has(entry[0]) &&
-            (instance.name !== undefined || entry[1].kind !== "Instance"),
+            (instance.name !== undefined || entry[1].kind !== "Instance") &&
+            // SANY reuses a theorem that a module with parameters got from one without, but never adds its name.
+            (instance.name !== undefined ||
+              instance.isLocal ||
+              declarations.length === 0 ||
+              entry[1].kind !== "Theorem" ||
+              parameterized.get(entry[1].key) === true),
         )
         .map((entry): [string, ModuleSymbol] => {
           if (instance.name === undefined) {
@@ -985,7 +987,6 @@ export const createEnvironment = (
         });
       });
     const exported: Symbols = new Map();
-    const facts = new Set<string>();
     const modules = new Map<string, LinkedModule>();
     const extended: LinkedModule[] = [];
     const getKey = (item: { name: string }) => `${item.name}${KEY_SEPARATOR}${scope.id}`;
@@ -1019,7 +1020,6 @@ export const createEnvironment = (
         variableLocations.push(linked.variableLocations[index]);
       });
       mergeExtended(linked.exported);
-      linked.facts.forEach((name) => facts.add(name));
       linked.modules.forEach((module, moduleName) => modules.set(moduleName, module));
       extended.push(linked);
     });
@@ -1089,7 +1089,6 @@ export const createEnvironment = (
           (nested) => nested.name === name && isBefore(nested.location, location),
         ),
       instanced,
-      facts,
       reports,
       warnings: scope.warnings,
     });
@@ -1215,6 +1214,18 @@ export const createEnvironment = (
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
+    resolved.boundTheorems.forEach((theorem) => {
+      const key = getKey(theorem);
+      parameterized.set(key, !isParameterFree);
+      const symbol: ModuleSymbol = {
+        key,
+        arity: 0,
+        kind: "Theorem",
+        range: theorem.location.range,
+      };
+      visible.set(theorem.name, symbol);
+      exported.set(theorem.name, symbol);
+    });
     const linked = {
       module,
       constants,
@@ -1224,10 +1235,6 @@ export const createEnvironment = (
       exported,
       modules,
       extended,
-      facts: new Set([
-        ...facts,
-        ...[...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
-      ]),
     };
     if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
     scope.levelChecks.push(

@@ -180,6 +180,14 @@ describe("name resolution matches SANY", () => {
       "an operator substituted before a LEMMA, which SANY rejects",
       "EXTENDS Integers\n---- MODULE Inner ----\nCONSTANT G(_, _)\n====\nI == INSTANCE Inner WITH G <- -\nLEMMA TRUE",
     ],
+    [
+      "a selection into an ASSUME/PROVE theorem through a named instance",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nI == INSTANCE Base\nX == I!Foo!1",
+    ],
+    [
+      "a definition named like a theorem that an instance with substitutions reuses from a module without parameters, which SANY never imports",
+      "---- MODULE P ----\nTHEOREM Foo == TRUE\n====\n---- MODULE Base ----\nEXTENDS P\nCONSTANT c\n====\nFoo == 1\nINSTANCE Base WITH c <- 1",
+    ],
   ])("accepts %s", async (_title, source) => {
     expect((await checkNames(source)).status).toBe("success");
   });
@@ -2677,6 +2685,53 @@ describe("name resolution matches SANY", () => {
         {
           location: "line 4, col 10 to line 4, col 10 of module M",
           message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition named like an ASSUME/PROVE theorem a later INSTANCE imports",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nFoo == {1, 2, 3}\nINSTANCE Base\nX == Foo!3",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 37 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 16 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition named like an ASSUME/PROVE theorem an INSTANCE with substitutions imports",
+      "---- MODULE Base ----\nCONSTANT c\nTHEOREM Foo == ASSUME c PROVE TRUE\n====\nFoo == 1\nINSTANCE Base WITH c <- TRUE",
+      [
+        {
+          location: "line 7, col 1 to line 7, col 28 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 6, col 1 to line 6, col 8 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition named like an ASSUME/PROVE theorem an instanced module extends",
+      "---- MODULE P ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\n---- MODULE Base ----\nEXTENDS P\n====\nFoo == 1\nINSTANCE Base",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 37 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 8, col 1 to line 8, col 8 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection into a theorem an instance with substitutions reuses from a module without parameters, which SANY never imports",
+      "---- MODULE P ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\n---- MODULE Base ----\nEXTENDS P\nCONSTANT c\n====\nINSTANCE Base WITH c <- 1\nX == Foo!3",
+      [
+        {
+          location: "line 10, col 6 to line 10, col 8 of module M",
+          message: "Unknown operator: `Foo'.",
         },
       ],
       [],

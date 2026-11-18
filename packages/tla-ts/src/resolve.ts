@@ -86,7 +86,6 @@ interface Unit {
   isModuleKnown: (name: string, location: SourceLocation) => boolean;
   location: SourceLocation;
   self: Definition | undefined;
-  facts: Set<string>;
   goals: Map<string, Goal>;
   bindings: ModuleBindings;
   errors: SanyError[];
@@ -346,8 +345,7 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   return binding ? unit.imported.get(name) : undefined;
 };
 
-const isFact = (name: string, unit: Unit) =>
-  unit.facts.has(name) || unit.bindings.get(name)?.kind === "Theorem";
+const isFact = (name: string, unit: Unit) => unit.bindings.get(name)?.kind === "Theorem";
 
 const getGoal = (name: string, unit: Unit) =>
   unit.bindings.get(name)?.kind === "Theorem" ? unit.goals.get(name) : undefined;
@@ -2361,7 +2359,6 @@ export interface ModuleUnit {
   getKey: (item: { name: string }) => string;
   isModuleKnown: (name: string, location: SourceLocation) => boolean;
   instanced: Map<Instance, Symbols>;
-  facts: Set<string>;
   reports: ModuleReport[];
   warnings: SanyError[];
 }
@@ -2583,7 +2580,6 @@ export const resolveSubstitutions = (
     isModuleKnown: unit.isModuleKnown,
     location: instance.location,
     self: undefined,
-    facts: new Set(),
     goals: new Map(),
     bindings: {
       get: (name): ModuleBinding | undefined => {
@@ -2700,7 +2696,6 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         isModuleKnown: unit.isModuleKnown,
         location,
         self,
-        facts: unit.facts,
         goals,
         bindings,
         errors,
@@ -2864,6 +2859,14 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     errors: semanticErrors,
     boundDefinitions: module.definitions.filter((definition) =>
       isSameRange(bindings.get(definition.name)?.range, definition.location.range),
+    ),
+    // An ASSUME/PROVE theorem has no definition, but an INSTANCE imports its name.
+    boundTheorems: module.theorems.flatMap((theorem) =>
+      theorem.name !== undefined &&
+      theorem.statement.kind === "AssumeProve" &&
+      isSameRange(bindings.get(theorem.name)?.range, theorem.location.range)
+        ? [{ name: theorem.name, location: theorem.location }]
+        : [],
     ),
   };
 };
