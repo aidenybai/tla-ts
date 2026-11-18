@@ -14,6 +14,7 @@ import {
   getCardinality,
   isEmptySet,
   isReducibleSet,
+  type FunctionSetValue,
   type IntervalValue,
   type Value,
 } from "./values";
@@ -647,24 +648,110 @@ export const chargeSetOperation = (
   return charged;
 };
 
-// TLC's ContextEnumerator draws each bound's next element, the final null included, before it returns a binding.
+interface ChargedEnumerator {
+  next: () => boolean;
+  reset: () => void;
+}
+
+const createListEnumerator = (coverage: Coverage, node: number | undefined, size: number) => {
+  let position = 0;
+  return {
+    next: () => {
+      if (node !== undefined) coverage.secondary[node]++;
+      return position++ < size;
+    },
+    reset: () => {
+      position = 0;
+    },
+  };
+};
+
+// TLC's SetOfFcnsValue enumerator charges the domain's size per function and draws the range once per domain element, the last fastest.
+const createFunctionSetEnumerator = (
+  coverage: Coverage,
+  node: number,
+  set: FunctionSetValue,
+): ChargedEnumerator => {
+  const width = getCardinality(set.domain);
+  const rangeSize = width === 0 ? 0 : getCardinality(set.range);
+  if (width > 0 && rangeSize === 0) return { next: () => false, reset: () => undefined };
+  const ranges = Array.from({ length: width }, () =>
+    createEnumerator(coverage, set.range, rangeSize, false),
+  );
+  const advance = () => {
+    for (let index = width - 1; index > 0; index--) {
+      if (ranges[index].next()) return true;
+      ranges[index].reset();
+      ranges[index].next();
+    }
+    return width > 0 && ranges[0].next();
+  };
+  let isDone = !ranges.every((range) => range.next());
+  return {
+    next: () => {
+      if (isDone) return false;
+      coverage.secondary[node] += Math.max(width, 1);
+      isDone = !advance();
+      return true;
+    },
+    reset: () => {
+      ranges.forEach((range) => {
+        range.reset();
+        range.next();
+      });
+      isDone = false;
+    },
+  };
+};
+
+// Charges what TLC's enumerator of the set's value class charges as it draws each element, the final null included.
+// A normalized enumeration of a set of functions converts it to a SetEnumValue with the same cost model first.
+const createEnumerator = (
+  coverage: Coverage,
+  set: Value,
+  size: number,
+  isNormalized: boolean,
+): ChargedEnumerator => {
+  const node = typeof set === "object" ? coverage.values.get(set) : undefined;
+  if (node === undefined || typeof set !== "object" || set.kind !== "FunctionSet") {
+    return createListEnumerator(coverage, node, size);
+  }
+  const functions = createFunctionSetEnumerator(coverage, node, set);
+  if (!isNormalized) return functions;
+  let count = 0;
+  while (functions.next()) count++;
+  coverage.secondary[node] += count;
+  return createListEnumerator(coverage, node, count);
+};
+
+export const createChargedEnumerator = (
+  coverage: Coverage,
+  set: Value,
+  list: Value[] | IntervalValue,
+  isNormalized: boolean,
+) =>
+  createEnumerator(
+    coverage,
+    set,
+    Array.isArray(list) ? list.length : list.high - list.low + 1,
+    isNormalized,
+  );
+
+// TLC's ContextEnumerator draws each bound's next element before it returns a binding.
 export const chargeContexts = (
   coverage: Coverage,
   sets: Value[],
   lists: (Value[] | IntervalValue)[],
 ) => {
-  const sizes = lists.map((list) => (Array.isArray(list) ? list.length : list.high - list.low + 1));
-  const positions = sizes.map(() => 0);
-  for (let index = 0; index < sizes.length; index++) {
-    costCoverage(coverage, sets[index], 1);
-    if (sizes[index] === 0) break;
-  }
+  const enumerators = sets.map((set, index) =>
+    createChargedEnumerator(coverage, set, lists[index], true),
+  );
+  enumerators.every((enumerator) => enumerator.next());
   return () => {
-    for (let index = 0; index < sizes.length; index++) {
-      costCoverage(coverage, sets[index], 1);
-      if (++positions[index] < sizes[index] || index === sizes.length - 1) return;
-      positions[index] = 0;
-      costCoverage(coverage, sets[index], 1);
+    for (let index = 0; index < enumerators.length; index++) {
+      if (enumerators[index].next() || index === enumerators.length - 1) return;
+      enumerators[index].reset();
+      enumerators[index].next();
     }
   };
 };

@@ -1735,6 +1735,40 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges a set of functions per function a successor, quantifier or CHOOSE draws, as TLC's SetOfFcnsValue does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE F ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x \\in [{1, 2} -> BOOLEAN] /\\ y \\in [{1, 2} -> {0, 1}]\nNext == UNCHANGED <<x, y>>\nInv1 == \\E f \\in [{1, 2} -> {0, 1}] : f = y\nInv2 == (CHOOSE f \\in [{1, 2} -> {0, 1}] : f = y) = y\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv1\nINVARIANT Inv2",
+    );
+    expect([lines?.[0], ...(lines?.slice(2) ?? [])]).toEqual([
+      [
+        "line 4, col 15 to line 4, col 33 of module F: 1:8",
+        "|line 4, col 16 to line 4, col 21 of module F: 1",
+        "|line 4, col 26 to line 4, col 32 of module F: 1",
+        "line 4, col 38 to line 4, col 61 of module F: 16",
+        "|line 4, col 44 to line 4, col 61 of module F: 4:32",
+        "||line 4, col 45 to line 4, col 50 of module F: 4",
+        "||line 4, col 55 to line 4, col 60 of module F: 4:40",
+      ],
+      [
+        "line 6, col 9 to line 6, col 43 of module F: 16",
+        "|line 6, col 39 to line 6, col 43 of module F: 40",
+        "|line 6, col 18 to line 6, col 35 of module F: 16:248",
+        "||line 6, col 19 to line 6, col 24 of module F: 16",
+        "||line 6, col 29 to line 6, col 34 of module F: 16:160",
+      ],
+      [
+        "line 7, col 9 to line 7, col 53 of module F: 16",
+        "|line 7, col 10 to line 7, col 48 of module F: 16",
+        "||line 7, col 44 to line 7, col 48 of module F: 40",
+        "||line 7, col 23 to line 7, col 40 of module F: 16:232",
+        "|||line 7, col 24 to line 7, col 29 of module F: 16",
+        "|||line 7, col 34 to line 7, col 39 of module F: 16:160",
+        "|line 7, col 53 to line 7, col 53 of module F: 16",
+      ],
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",

@@ -27,6 +27,7 @@ import {
   chargeSetOperation,
   costCoverage,
   countCoverage,
+  createChargedEnumerator,
   getCoverageNode,
   runAtCoverageNode,
   type Coverage,
@@ -1439,7 +1440,10 @@ const countEvaluator =
       const isTagged =
         expression.kind === "SetEnumeration" ||
         ((expression.kind === "SetFilter" || expression.kind === "SetMap") &&
-          isReducibleSet(value));
+          isReducibleSet(value)) ||
+        (expression.kind === "FunctionSet" &&
+          typeof value === "object" &&
+          value.kind === "FunctionSet");
       if (typeof value === "object" && isTagged) coverage.values.set(value, node);
       return value;
     } finally {
@@ -2149,10 +2153,11 @@ const compileSetComprehension = (
   return (context) => {
     const base = evaluateSet(context);
     const elements = getChoiceElements(base, expression, set, context.environment.runtime.version);
+    const enumerator = coverage && createChargedEnumerator(coverage, base, elements, true);
     let chosen: Value | undefined;
     const pattern = expression.pattern;
     someElement(elements, (element) => {
-      if (coverage) costCoverage(coverage, base, 1);
+      enumerator?.next();
       if (
         pattern.kind === "Tuple" &&
         getSequenceElements(element)?.length !== pattern.names.length
@@ -2167,7 +2172,7 @@ const compileSetComprehension = (
       return true;
     });
     if (chosen !== undefined) return chosen;
-    if (coverage) costCoverage(coverage, base, 1);
+    enumerator?.next();
     throw createNoChoiceError(expression);
   };
 };

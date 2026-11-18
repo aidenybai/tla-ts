@@ -4,7 +4,7 @@ import { isConstantLevel } from "../dependencies";
 import {
   chargeContexts,
   countCoverage,
-  costCoverage,
+  createChargedEnumerator,
   getCoverageNode,
   runAtCoverageNode,
   type Coverage,
@@ -468,13 +468,14 @@ const visitAssignment = (
   }
   if (!isTlcEnumerable(set))
     throw new TlaEvaluationError("The right side of \\IN is not enumerable.");
-  const coverage = replay.coverage;
-  const isProduced = getStreamedElements(set).reduce<boolean>((isProduced, element) => {
-    if (coverage) costCoverage(coverage, set, 1);
+  const elements = getStreamedElements(set);
+  const enumerator =
+    replay.coverage && createChargedEnumerator(replay.coverage, set, elements, false);
+  const isProduced = elements.reduce<boolean>((isProduced, element) => {
+    enumerator?.next();
     return proceed(replay, items, assign(partial, index, element), node) || isProduced;
   }, false);
-  // TLC's enumerator charges the null that ends it too.
-  if (coverage) costCoverage(coverage, set, 1);
+  enumerator?.next();
   return isProduced;
 };
 
