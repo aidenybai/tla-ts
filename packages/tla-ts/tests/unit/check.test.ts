@@ -1328,6 +1328,54 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
+  it.each([
+    [
+      "a function",
+      "g[n \\in 0..1] == a + n\nP == g[1] + b >= 0",
+      [
+        "Line 15, column 9 to line 15, column 22 in M",
+        "Line 15, column 9 to line 15, column 13 in M",
+        "Line 15, column 18 to line 15, column 22 in M",
+        "Line 17, column 8 to line 17, column 12 in M",
+        "Line 14, column 1 to line 14, column 44 in M",
+        "Line 12, column 1 to line 12, column 39 in M",
+        "Line 8, column 6 to line 8, column 18 in M",
+        "Line 8, column 6 to line 8, column 13 in M",
+        "Line 8, column 6 to line 8, column 9 in M",
+        "Line 7, column 18 to line 7, column 22 in M",
+        "Line 7, column 18 to line 7, column 18 in M",
+        "Line 12, column 31 to line 12, column 31 in M",
+        "Line 14, column 29 to line 14, column 36 in M",
+      ],
+    ],
+    [
+      "an operator",
+      "P == a + b >= 0",
+      [
+        "Line 14, column 9 to line 14, column 22 in M",
+        "Line 14, column 9 to line 14, column 13 in M",
+        "Line 14, column 18 to line 14, column 22 in M",
+        "Line 16, column 8 to line 16, column 12 in M",
+        "Line 13, column 1 to line 13, column 44 in M",
+        "Line 11, column 1 to line 11, column 39 in M",
+        "Line 7, column 6 to line 7, column 15 in M",
+        "Line 7, column 6 to line 7, column 10 in M",
+        "Line 7, column 6 to line 7, column 6 in M",
+        "Line 11, column 31 to line 11, column 31 in M",
+        "Line 13, column 29 to line 13, column 36 in M",
+      ],
+    ],
+  ])(
+    "holds each name a replacement stands for through two instances in the call stack of %s, as TLC evaluates each LazyValue",
+    async (_title, definitions, lines) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLES a, b\n${definitions}\n====\n---- MODULE Mid ----\nVARIABLES p, q\nJ == INSTANCE Inner WITH a <- p, b <- q\n====\nI == INSTANCE Mid WITH p <- x \\div y, q <- y\nInit == x = 0 /\\ y = 0\nNext == UNCHANGED <<x, y>>\nInv == I!J!P\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+      expect(formatCallStackLines(result)?.filter((line) => line !== "")).toEqual(lines);
+    },
+  );
+
   it("applies an operator to each value @ takes in the same state", async () => {
     const result = await check({
       source:

@@ -42,6 +42,10 @@ export const withSubstitutionFrames = (expression: Expression, frames: Expressio
   return copy;
 };
 
+// TLC evaluates the LazyValue of each name a replacement stands for in turn, so its call stack holds every one.
+const withReplacedFrames = (replacement: Expression, expression: Expression) =>
+  withSubstitutionFrames(replacement, [...(substitutionFrames.get(expression) ?? []), expression]);
+
 export const renameLocals = (
   expression: Expression,
   names: Map<string, string>,
@@ -740,7 +744,7 @@ const substitute = (
     const replacement = instantiation.substitutions.get(expression.name);
     const bindings = rewrite.bindings;
     if (replacement && (bindings === undefined || !isBoundOnce(replacement, instantiation))) {
-      const copy = withSubstitutionFrames(replacement, [expression]);
+      const copy = withReplacedFrames(replacement, expression);
       const substitution = substitutedExpressions.get(replacement);
       if (substitution) substitutedExpressions.set(copy, substitution);
       return copy;
@@ -748,7 +752,10 @@ const substitute = (
     if (replacement && bindings) {
       const name = getSubstitutionName(expression.name);
       bindings.set(name, replacement);
-      return createLocalIdentifier(name, expression.location);
+      return withSubstitutionFrames(
+        createLocalIdentifier(name, expression.location),
+        substitutionFrames.get(expression) ?? [],
+      );
     }
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
@@ -843,7 +850,7 @@ const substitute = (
       replacement?.kind === "OperatorReference" ||
       replacement?.kind === "Lambda"
     ) {
-      return withSubstitutionFrames(replacement, [expression]);
+      return withReplacedFrames(replacement, expression);
     }
     const copy = getCopy(rewrite, expression.operator);
     if (copy === undefined) return expression;
