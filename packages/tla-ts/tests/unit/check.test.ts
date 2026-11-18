@@ -2267,6 +2267,25 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("takes the definition an instance with parameters copies for an action of constant arguments, as TLC's Tool#getActionsAppl binds them", async () => {
+    const lines = formatCoverage(
+      await getInstanceCoverage(
+        "I(p, q) == INSTANCE Inner WITH K <- p + q, w <- y",
+        "\\E p \\in {1, 2} : I(p, M)!A",
+        "I(1, 1)!Q /\\ I(M, 0)!G >= 0",
+      ),
+    );
+    expect(lines?.[1]).toEqual([
+      "line 5, col 1 to line 5, col 49 of module E: 30",
+      "line 5, col 37 to line 5, col 41 of module E: 42",
+      "line 5, col 49 to line 5, col 49 of module E: 6",
+      "line 6, col 24 to line 6, col 42 of module Inner: 12",
+      "line 6, col 15 to line 6, col 20 of module Inner: 6:18",
+      "line 9, col 9 to line 9, col 24 of module Inner: 6",
+      "line 10, col 9 to line 10, col 14 of module Inner: 6",
+    ]);
+  });
+
   it("orders the substitutions of an instance as SANY infers them from the instanced module's symbol table", async () => {
     const result = await check({
       source:

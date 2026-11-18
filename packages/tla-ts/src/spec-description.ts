@@ -227,20 +227,28 @@ const getInstanceActions = (
   if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
     return callAction();
   }
-  return tryCollect(
-    () => [
+  // Tool#getActionsAppl binds the constant arguments and takes the definition's SubstInNode for the action.
+  return tryCollect(() => {
+    const values = args.map((arg) => evaluate(arg, getConstantContext(environment, scope)));
+    return [
       {
         ...instanceAction,
-        parameters: args.map((arg, index): [string, Value] => [
+        parameters: values.map((value, index): [string, Value] => [
           called.params[index].name.replace(/#\d+$/, ""),
-          evaluate(arg, getConstantContext(environment, scope)),
+          value,
         ]),
-        expression,
-        scope,
+        expression: called.body,
+        scope: values.reduce<Scope | undefined>(
+          (current, value, index) => ({
+            name: called.params[index].name,
+            binding: { kind: "Value", value },
+            parent: current,
+          }),
+          called.scope,
+        ),
       },
-    ],
-    callAction,
-  );
+    ];
+  }, callAction);
 };
 
 const getActions = (
