@@ -53263,4 +53263,35 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("0,0"))).failure?.message).toContain("bytes 1,0");
     });
   });
+
+  describe("splices in place an array that a heap object's field holds", () => {
+    const getSource = (expected: string, statement = "tree.children.splice(1, 0, 7);") => `
+      class Tree {
+        children: number[];
+        constructor(children: number[]) {
+          this.children = children;
+        }
+      }
+      const tree = new Tree([5, 6]);
+      ${statement}
+      const result = [tree.children.join("-"), tree.children.length].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("5-7-6,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects other elements", async () => {
+      expect((await checkModel(getSource("7-5-6,3"))).failure?.message).toContain("result 5-7-6,3");
+    });
+
+    it("stops where a script holds the elements that the splice removes", () => {
+      expect(() =>
+        compile(getSource("5-7,2", "const removed = tree.children.splice(1, 1, 7);")),
+      ).toThrow(
+        "tla-ts can't hold the elements that a splice removes from an array that the heap holds",
+      );
+    });
+  });
 });
