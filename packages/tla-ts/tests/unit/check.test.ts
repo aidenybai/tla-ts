@@ -2066,6 +2066,20 @@ ASSUME TLCFP(a) = -887695703
       "||line 4, col 9 to line 4, col 17 of module S: 3:12",
     ]);
   });
+
+  it("takes a selection in the next-state relation as an action of its own, as TLC's Tool#getActions does with SANY's $Nop", async () => {
+    const result = await check({
+      source:
+        "---- MODULE A ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nAct == \\/ x < 2 /\\ x' = x + 1\n       \\/ x = 2 /\\ x' = 0\nNext == Act!1 \\/ Act!2\n====",
+      config: "INIT Init\nNEXT Next",
+      coverage: 1,
+    });
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 4, col 1 to line 4, col 4 of module A",
+      "Next line 7, col 1 to line 7, col 4 of module A (7 9 7 13)",
+      "Next line 7, col 1 to line 7, col 4 of module A (7 18 7 22)",
+    ]);
+  });
 });
 
 describe("formatValue matches TLC", () => {

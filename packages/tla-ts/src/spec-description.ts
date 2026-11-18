@@ -275,7 +275,10 @@ const getActions = (
     case "Label":
       return getActions(expression.body, scope, closure, environment, instanceActions);
     case "Selection":
-      return getActions(expression.expression, scope, closure, environment, instanceActions);
+      // TLC's Tool#getActions takes SANY's $Nop as an action of its own.
+      return expression.location.range === undefined
+        ? getActions(expression.expression, scope, closure, environment, instanceActions)
+        : [createSplitAction()];
     case "Or":
       return expression.operands.flatMap((operand) =>
         getActions(operand, scope, closure, environment, instanceActions),
