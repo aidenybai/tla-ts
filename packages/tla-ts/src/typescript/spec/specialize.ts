@@ -23,6 +23,17 @@ interface NamedCode {
   (state: string, context: string, name: string): string;
 }
 
+// TLA+ text of binding the value that the third expression gives to a binding's names, in the
+// environment the fourth gives, or by assignment where it's NoEnv.
+interface BindingCode {
+  (state: string, context: string, value: string, env: string): string;
+}
+
+// TLA+ text of assigning the value the third expression gives to a destructuring pattern.
+interface PatternCode {
+  (state: string, context: string, value: string): string;
+}
+
 interface FunctionLike {
   node: ts.Node;
   parameters: readonly ts.ParameterDeclaration[];
@@ -168,19 +179,25 @@ const hasUseStrict = (statements: readonly ts.Statement[]) => {
   return false;
 };
 
-const getBindingName = (name: ts.BindingName) => {
-  if (!ts.isIdentifier(name)) {
-    throw new TlaTypeScriptError(
-      "tla-ts can't compile a destructuring pattern to ESCore yet",
-      name,
-    );
-  }
-  return name.text;
-};
+// BoundNames (§8.2.1) of a binding: its name, or the names its pattern binds, in order.
+const getBoundNames = (name: ts.BindingName): string[] =>
+  ts.isIdentifier(name)
+    ? [name.text]
+    : name.elements.flatMap((element) =>
+        ts.isOmittedExpression(element) ? [] : getBoundNames(element.name),
+      );
 
 // The names a declaration list binds, in order.
 const getDeclaredNames = (list: ts.VariableDeclarationList) =>
-  list.declarations.map((declaration) => getBindingName(declaration.name));
+  list.declarations.flatMap((declaration) => getBoundNames(declaration.name));
+
+// Whether a binding holds an initializer or a computed key (ContainsExpression, §8.5.2).
+const containsExpression = (node: ts.Node): boolean =>
+  ts.isBindingElement(node) &&
+  (node.initializer !== undefined ||
+    (node.propertyName !== undefined && ts.isComputedPropertyName(node.propertyName)))
+    ? true
+    : (ts.forEachChild(node, (child) => (containsExpression(child) ? true : undefined)) ?? false);
 
 const isLexical = (list: ts.VariableDeclarationList) =>
   (list.flags & ts.NodeFlags.BlockScoped) !== 0;
@@ -521,6 +538,234 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     return (state, context) => make(state, context, name);
   };
 
+  // The value of an initializer for a binding target where the value v is undefined: named by
+  // the target when the target is a single name.
+  const initialized = (
+    initializer: ts.Expression | undefined,
+    target: ts.Node,
+    scope: Scope,
+    result: string,
+  ) => {
+    if (initializer === undefined) return result;
+    const code = ts.isIdentifier(target)
+      ? named(initializer, scope, getStr(target.text))
+      : value(initializer, scope);
+    return `IF Val(${result}) = Undefined THEN ${code(`${result}.s`, "ctx")} ELSE ${result}`;
+  };
+
+  // BindingInitialization (§8.6.2): a result once a binding's names hold the value.
+  const binding = (name: ts.BindingName, scope: Scope): BindingCode => {
+    const strict = getBool(scope.isStrict);
+    if (ts.isIdentifier(name)) {
+      words.add(name.text);
+      return (state, context, bound, env) =>
+        `InitializeBoundName(${state}, ${context}, ${getUnits(name.text)}, ${bound}, ${env}, ${strict})`;
+    }
+    const steps: string[] = [];
+    if (ts.isObjectBindingPattern(name)) {
+      steps.push("LET c == RequireObjectCoercible(s, value) IN IF IsAbrupt(c) THEN c ELSE");
+      let state = "c.s";
+      const keys: string[] = [];
+      name.elements.forEach((element, index) => {
+        const id = index + 1;
+        const push = (step: string, result: string) => {
+          steps.push(`LET ${result} == ${step} IN IF IsAbrupt(${result}) THEN ${result} ELSE`);
+          state = `${result}.s`;
+        };
+        if (element.dotDotDotToken !== undefined) {
+          // RestBindingInitialization (§14.3.3.2).
+          const units = getUnits(getBoundNames(element.name)[0]);
+          push(`ResolveBindingIn(${state}, ctx, ${units}, env, ${strict})`, `l${id}`);
+          steps.push(
+            `LET o${id} == OrdinaryObjectCreate(${state}, Intrinsic(${state}, "ObjectPrototype")) IN`,
+          );
+          push(`CopyDataProperties(o${id}.s, Val(o${id}), value, ${getSequence(keys)})`, `r${id}`);
+          push(`BindReference(${state}, Val(l${id}), Val(o${id}), env)`, `b${id}`);
+          return;
+        }
+        const key =
+          element.propertyName === undefined
+            ? (current: string) => `Ok(${current}, ${getStr(getBoundNames(element.name)[0])})`
+            : propertyKey(element.propertyName, scope);
+        push(key(state, "ctx"), `k${id}`);
+        keys.push(`Val(k${id})`);
+        // KeyedBindingInitialization (§14.3.3.3).
+        if (ts.isIdentifier(element.name)) {
+          words.add(element.name.text);
+          push(
+            `ResolveBindingIn(${state}, ctx, ${getUnits(element.name.text)}, env, ${strict})`,
+            `l${id}`,
+          );
+          push(`GetValueProperty(${state}, value, Val(k${id}))`, `v${id}`);
+          push(initialized(element.initializer, element.name, scope, `v${id}`), `w${id}`);
+          push(`BindReference(${state}, Val(l${id}), Val(w${id}), env)`, `b${id}`);
+          return;
+        }
+        const nested = binding(element.name, scope);
+        push(`GetValueProperty(${state}, value, Val(k${id}))`, `v${id}`);
+        push(initialized(element.initializer, element.name, scope, `v${id}`), `w${id}`);
+        push(nested(state, "ctx", `Val(w${id})`, "env"), `b${id}`);
+      });
+      steps.push(`Ok(${state}, Empty)`);
+    } else {
+      // IteratorBindingInitialization (§8.6.4) over the pattern's elements, which closes the
+      // iterator that the elements leave undone.
+      steps.push(
+        `LET it == GetIterator(s, value, "sync") IN IF IsAbrupt(it) THEN it ELSE`,
+        "LET e0 == [s |-> it.s, c |-> NormalCompletion(Empty), it |-> Val(it)] IN",
+      );
+      let previous = "e0";
+      name.elements.forEach((element, index) => {
+        const id = index + 1;
+        const step = (() => {
+          if (ts.isOmittedExpression(element)) {
+            return `LET n${id} == IteratorNextForBinding(${previous}.s, ${previous}.it) IN IF IsAbrupt(n${id}) THEN n${id} ELSE WithIt(Ok(n${id}.s, Empty), n${id}.it)`;
+          }
+          if (element.dotDotDotToken !== undefined) {
+            const collect = (current: string) =>
+              `LET a${id} == ArrayCreate(${current}, 0, Intrinsic(${current}, "ArrayPrototype")) rest${id} == CollectRest(a${id}.s, Val(a${id}), ${previous}.it, 0) IN IF IsAbrupt(rest${id}) THEN rest${id} ELSE`;
+            if (ts.isIdentifier(element.name)) {
+              return `LET l${id} == ResolveBindingIn(${previous}.s, ctx, ${getUnits(element.name.text)}, env, ${strict}) IN IF IsAbrupt(l${id}) THEN WithIt(l${id}, ${previous}.it) ELSE ${collect(`l${id}.s`)} WithIt(BindReference(rest${id}.s, Val(l${id}), Val(a${id}), env), rest${id}.it)`;
+            }
+            return `${collect(`${previous}.s`)} WithIt(${binding(element.name, scope)(`rest${id}.s`, "ctx", `Val(a${id})`, "env")}, rest${id}.it)`;
+          }
+          if (ts.isIdentifier(element.name)) {
+            words.add(element.name.text);
+            return `LET l${id} == ResolveBindingIn(${previous}.s, ctx, ${getUnits(element.name.text)}, env, ${strict}) IN IF IsAbrupt(l${id}) THEN WithIt(l${id}, ${previous}.it) ELSE LET n${id} == IteratorNextForBinding(l${id}.s, ${previous}.it) IN IF IsAbrupt(n${id}) THEN n${id} ELSE IteratorBindThen(Val(l${id}), env, n${id}.it, ${initialized(element.initializer, element.name, scope, `n${id}`)})`;
+          }
+          return `LET n${id} == IteratorNextForBinding(${previous}.s, ${previous}.it) IN IF IsAbrupt(n${id}) THEN n${id} ELSE LET w${id} == ${initialized(element.initializer, element.name, scope, `n${id}`)} IN IF IsAbrupt(w${id}) THEN WithIt(w${id}, n${id}.it) ELSE WithIt(${binding(element.name, scope)(`w${id}.s`, "ctx", `Val(w${id})`, "env")}, n${id}.it)`;
+        })();
+        steps.push(
+          `LET e${id} == ${step} IN IF IsAbrupt(e${id}) THEN IteratorEndThen(e${id}) ELSE`,
+        );
+        previous = `e${id}`;
+      });
+      steps.push(`IteratorEndThen(${previous})`);
+    }
+    const operator = define("Pattern", ["s", "ctx", "value", "env"], steps.join("\n  "));
+    return (state, context, bound, env) => `${operator}(${state}, ${context}, ${bound}, ${env})`;
+  };
+
+  // The target of a destructuring assignment: a pattern, or what its reference evaluates to.
+  const getTarget = (node: ts.Expression) => {
+    const target =
+      ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+        ? node.left
+        : node;
+    const initializer = target === node ? undefined : (node as ts.BinaryExpression).right;
+    const inner = ts.isParenthesizedExpression(target) ? target.expression : target;
+    return {
+      target,
+      initializer,
+      isPattern: ts.isObjectLiteralExpression(inner) || ts.isArrayLiteralExpression(inner),
+      inner,
+    };
+  };
+
+  // DestructuringAssignmentEvaluation (§13.15.5.2): a result once the pattern's targets hold
+  // the value.
+  const destructuring = (
+    node: ts.ObjectLiteralExpression | ts.ArrayLiteralExpression,
+    scope: Scope,
+  ): PatternCode => {
+    const strict = getBool(scope.isStrict);
+    const evaluateTarget = (target: ReturnType<typeof getTarget>) =>
+      target.isPattern
+        ? (current: string) => `Ok(${current}, Empty)`
+        : reference(target.target, scope);
+    // AssignTargetThen: a pattern destructures the value, and a reference gets it.
+    const assign = (
+      target: ReturnType<typeof getTarget>,
+      state: string,
+      ref: string,
+      assigned: string,
+    ) =>
+      target.isPattern
+        ? destructuring(
+            target.inner as ts.ObjectLiteralExpression | ts.ArrayLiteralExpression,
+            scope,
+          )(state, "ctx", assigned)
+        : `PutValue(${state}, ${ref}, ${assigned})`;
+    const steps: string[] = [];
+    if (ts.isObjectLiteralExpression(node)) {
+      steps.push("LET c == RequireObjectCoercible(s, value) IN IF IsAbrupt(c) THEN c ELSE");
+      let state = "c.s";
+      const keys: string[] = [];
+      node.properties.forEach((property, index) => {
+        const id = index + 1;
+        const push = (step: string, result: string) => {
+          steps.push(`LET ${result} == ${step} IN IF IsAbrupt(${result}) THEN ${result} ELSE`);
+          state = `${result}.s`;
+        };
+        if (ts.isShorthandPropertyAssignment(property)) {
+          const name = property.name.text;
+          words.add(name);
+          push(`ResolveBinding(${state}, ctx, ${getUnits(name)}, ${strict})`, `l${id}`);
+          push(`GetValueProperty(${state}, value, ${getStr(name)})`, `v${id}`);
+          push(
+            `PutValueThen(Val(l${id}), ${initialized(property.objectAssignmentInitializer, property.name, scope, `v${id}`)})`,
+            `p${id}`,
+          );
+          keys.push(getStr(name));
+          return;
+        }
+        if (ts.isSpreadAssignment(property)) {
+          const target = getTarget(property.expression);
+          push(evaluateTarget(target)(state, "ctx"), `r${id}`);
+          steps.push(
+            `LET o${id} == OrdinaryObjectCreate(${state}, Intrinsic(${state}, "ObjectPrototype")) IN`,
+          );
+          push(`CopyDataProperties(o${id}.s, Val(o${id}), value, ${getSequence(keys)})`, `y${id}`);
+          push(`PutValue(${state}, Val(r${id}), Val(o${id}))`, `p${id}`);
+          return;
+        }
+        if (!ts.isPropertyAssignment(property)) {
+          throw new TlaTypeScriptError(
+            "tla-ts can't compile this destructuring target to ESCore yet",
+            property,
+          );
+        }
+        push(propertyKey(property.name, scope)(state, "ctx"), `k${id}`);
+        keys.push(`Val(k${id})`);
+        // KeyedDestructuringAssignmentEvaluation (§13.15.5.6).
+        const target = getTarget(property.initializer);
+        push(evaluateTarget(target)(state, "ctx"), `r${id}`);
+        push(`GetValueProperty(${state}, value, Val(k${id}))`, `v${id}`);
+        push(initialized(target.initializer, target.inner, scope, `v${id}`), `w${id}`);
+        push(assign(target, state, `Val(r${id})`, `Val(w${id})`), `p${id}`);
+      });
+      steps.push(`Ok(${state}, Empty)`);
+    } else {
+      // IteratorDestructuringAssignmentEvaluation (§13.15.5.5).
+      steps.push(
+        `LET it == GetIterator(s, value, "sync") IN IF IsAbrupt(it) THEN it ELSE`,
+        "LET e0 == [s |-> it.s, c |-> NormalCompletion(Empty), it |-> Val(it)] IN",
+      );
+      let previous = "e0";
+      node.elements.forEach((element, index) => {
+        const id = index + 1;
+        const step = (() => {
+          if (ts.isOmittedExpression(element)) {
+            return `LET n${id} == IteratorNextForBinding(${previous}.s, ${previous}.it) IN IF IsAbrupt(n${id}) THEN n${id} ELSE WithIt(Ok(n${id}.s, Empty), n${id}.it)`;
+          }
+          if (ts.isSpreadElement(element)) {
+            const target = getTarget(element.expression);
+            return `LET r${id} == ${evaluateTarget(target)(`${previous}.s`, "ctx")} IN IF IsAbrupt(r${id}) THEN WithIt(r${id}, ${previous}.it) ELSE LET a${id} == ArrayCreate(r${id}.s, 0, Intrinsic(r${id}.s, "ArrayPrototype")) rest${id} == CollectRest(a${id}.s, Val(a${id}), ${previous}.it, 0) IN IF IsAbrupt(rest${id}) THEN rest${id} ELSE WithIt(${assign(target, `rest${id}.s`, `Val(r${id})`, `Val(a${id})`)}, rest${id}.it)`;
+          }
+          const target = getTarget(element);
+          return `LET r${id} == ${evaluateTarget(target)(`${previous}.s`, "ctx")} IN IF IsAbrupt(r${id}) THEN WithIt(r${id}, ${previous}.it) ELSE LET n${id} == IteratorNextForBinding(r${id}.s, ${previous}.it) IN IF IsAbrupt(n${id}) THEN n${id} ELSE LET w${id} == ${initialized(target.initializer, target.inner, scope, `n${id}`)} IN IF IsAbrupt(w${id}) THEN WithIt(w${id}, n${id}.it) ELSE WithIt(${assign(target, `w${id}.s`, `Val(r${id})`, `Val(w${id})`)}, n${id}.it)`;
+        })();
+        steps.push(
+          `LET e${id} == ${step} IN IF IsAbrupt(e${id}) THEN IteratorEndThen(e${id}) ELSE`,
+        );
+        previous = `e${id}`;
+      });
+      steps.push(`IteratorEndThen(${previous})`);
+    }
+    const operator = define("Destructure", ["s", "ctx", "value"], steps.join("\n  "));
+    return (state, context, assigned) => `${operator}(${state}, ${context}, ${assigned})`;
+  };
+
   // The value of an expression (Evaluate, then GetValue).
   const value = (node: ts.Expression, scope: Scope): Code => {
     switch (node.kind) {
@@ -702,10 +947,15 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
   const assignment = (node: ts.BinaryExpression, scope: Scope): Code => {
     const operator = node.operatorToken.kind;
     const target = node.left;
-    if (ts.isObjectLiteralExpression(target) || ts.isArrayLiteralExpression(target)) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't compile a destructuring assignment to ESCore yet",
-        node,
+    if (
+      operator === ts.SyntaxKind.EqualsToken &&
+      (ts.isObjectLiteralExpression(target) || ts.isArrayLiteralExpression(target))
+    ) {
+      // DestructuringAssignmentEvaluation, whose value is the right side's.
+      const pattern = destructuring(target, scope);
+      return defineCode(
+        "Assign",
+        `LET r == ${value(node.right, scope)("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE ResultThen(Val(r), ${pattern("r.s", "ctx", "Val(r)")})`,
       );
     }
     const left = reference(target, scope);
@@ -1012,12 +1262,17 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     const isStrict = outer.isStrict || outer.isClassBody || hasUseStrict(statements);
     const scope: Scope = { isStrict, isClassBody: false };
     const parameters = fn.parameters;
-    const parameterNames = parameters.map((parameter) => getBindingName(parameter.name));
+    const parameterNames = parameters.flatMap((parameter) => getBoundNames(parameter.name));
     const hasDuplicates = new Set(parameterNames).size < parameterNames.length;
     const isSimple = parameters.every(
-      (parameter) => parameter.initializer === undefined && parameter.dotDotDotToken === undefined,
+      (parameter) =>
+        parameter.initializer === undefined &&
+        parameter.dotDotDotToken === undefined &&
+        ts.isIdentifier(parameter.name),
     );
-    const hasExpressions = parameters.some((parameter) => parameter.initializer !== undefined);
+    const hasExpressions = parameters.some(
+      (parameter) => parameter.initializer !== undefined || containsExpression(parameter.name),
+    );
     const varScoped = getVarScoped(statements);
     const lexical = getLexicalDeclarations(statements, false);
     const lexicalNames = lexical.flatMap((declaration) => declaration.names);
@@ -1062,8 +1317,6 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     const paramContext = "[ctx EXCEPT !.lex = env]";
     let state = "s2";
     parameters.forEach((parameter, index) => {
-      const name = parameterNames[index];
-      const units = getUnits(name);
       const argument =
         parameter.dotDotDotToken !== undefined
           ? `CreateArrayFromList(${state}, IF ${index + 1} > Len(args) THEN <<>> ELSE SubSeq(args, ${index + 1}, Len(args)))`
@@ -1073,10 +1326,18 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       const bound =
         initializer === undefined
           ? `v${index + 1}`
-          : `IF Val(v${index + 1}) # Undefined THEN v${index + 1} ELSE ${named(initializer, scope, getStr(name))(`v${index + 1}.s`, paramContext)}`;
+          : `IF Val(v${index + 1}) # Undefined THEN v${index + 1} ELSE ${
+              ts.isIdentifier(parameter.name)
+                ? named(
+                    initializer,
+                    scope,
+                    getStr(parameter.name.text),
+                  )(`v${index + 1}.s`, paramContext)
+                : value(initializer, scope)(`v${index + 1}.s`, paramContext)
+            }`;
       steps.push(
         `LET w${index + 1} == ${bound} IN IF IsAbrupt(w${index + 1}) THEN w${index + 1} ELSE`,
-        `LET b${index + 1} == InitializeBoundName(w${index + 1}.s, ${paramContext}, ${units}, Val(w${index + 1}), ${hasDuplicates ? "NoEnv" : "env"}, ${getBool(isStrict)}) IN IF IsAbrupt(b${index + 1}) THEN b${index + 1} ELSE`,
+        `LET b${index + 1} == ${binding(parameter.name, scope)(`w${index + 1}.s`, paramContext, `Val(w${index + 1})`, hasDuplicates ? "NoEnv" : "env")} IN IF IsAbrupt(b${index + 1}) THEN b${index + 1} ELSE`,
       );
       state = `b${index + 1}.s`;
     });
@@ -1320,16 +1581,28 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     const steps: string[] = [];
     let state = "s";
     list.declarations.forEach((declaration, index) => {
-      const name = getBindingName(declaration.name);
+      const initializer = declaration.initializer;
+      const result = `d${index + 1}`;
+      if (!ts.isIdentifier(declaration.name)) {
+        // A pattern binds the initializer's value, in the running lexical environment for let
+        // and const, and by assignment for var (§14.3.2.1, §14.3.1.2).
+        if (initializer === undefined) return;
+        const pattern = binding(declaration.name, scope);
+        steps.push(
+          `LET v${index + 1} == ${value(initializer, scope)(state, "ctx")} IN IF IsAbrupt(v${index + 1}) THEN v${index + 1} ELSE`,
+          `LET ${result} == ${pattern(`v${index + 1}.s`, "ctx", `Val(v${index + 1})`, isLet ? "ctx.lex" : "NoEnv")} IN IF IsAbrupt(${result}) THEN ${result} ELSE`,
+        );
+        state = `${result}.s`;
+        return;
+      }
+      const name = declaration.name.text;
       words.add(name);
       const units = getUnits(name);
-      const initializer = declaration.initializer;
       if (initializer === undefined && !isLet) return;
       const lhs = `l${index + 1}`;
       steps.push(
         `LET ${lhs} == ResolveBinding(${state}, ctx, ${units}, ${getBool(scope.isStrict)}) IN IF IsAbrupt(${lhs}) THEN ${lhs} ELSE`,
       );
-      const result = `d${index + 1}`;
       const assigned =
         initializer === undefined
           ? undefined
@@ -1487,21 +1760,22 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
           node,
         );
       }
-      const name = getBindingName(declaration.name);
-      const units = getUnits(name);
+      const names = getBoundNames(declaration.name);
+      const pattern = binding(declaration.name, scope);
       if (isLexical(initializer)) {
-        tdz = [name];
-        bind = `LET env == NewDeclarativeEnvironment(value.s, ctx.lex) iterCtx == WithLex(ctx, env.e) s1 == BlockBindNames(env.s, env.e, <<${units}>>, ${getBool(isConst(initializer))}) IN ResultThen(iterCtx, InitializeBinding(s1, env.e, ${units}, Val(value)))`;
+        tdz = names;
+        bind = `LET env == NewDeclarativeEnvironment(value.s, ctx.lex) iterCtx == WithLex(ctx, env.e) s1 == BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))}) IN ResultThen(iterCtx, ${pattern("s1", "iterCtx", "Val(value)", "env.e")})`;
+      } else if (ts.isIdentifier(declaration.name)) {
+        bind = `ResultThen(ctx, AssignToThen(Val(value), ResolveBinding(value.s, ctx, ${getUnits(declaration.name.text)}, ${getBool(scope.isStrict)})))`;
       } else {
-        bind = `ResultThen(ctx, AssignToThen(Val(value), ResolveBinding(value.s, ctx, ${units}, ${getBool(scope.isStrict)})))`;
+        bind = `ResultThen(ctx, ${pattern("value.s", "ctx", "Val(value)", "NoEnv")})`;
       }
+    } else if (
+      ts.isObjectLiteralExpression(initializer) ||
+      ts.isArrayLiteralExpression(initializer)
+    ) {
+      bind = `ResultThen(ctx, ${destructuring(initializer, scope)("value.s", "ctx", "Val(value)")})`;
     } else {
-      if (ts.isObjectLiteralExpression(initializer) || ts.isArrayLiteralExpression(initializer)) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't compile a destructuring assignment to ESCore yet",
-          node,
-        );
-      }
       bind = `ResultThen(ctx, AssignToThen(Val(value), ${reference(initializer, scope)("value.s", "ctx")}))`;
     }
     loops[id - 1].body = [
@@ -1583,10 +1857,7 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
       const handler =
         parameter === undefined
           ? catchBlock("r.s", "ctx")
-          : (() => {
-              const units = getUnits(getBindingName(parameter.name));
-              return `LET env == NewCatchEnvironment(r.s, ctx.lex) cctx == WithLex(ctx, env.e) b == InitializeBinding(BlockBindNames(env.s, env.e, <<${units}>>, FALSE), env.e, ${units}, r.c.value) IN IF IsAbrupt(b) THEN b ELSE ${catchBlock("b.s", "cctx")}`;
-            })();
+          : `LET env == NewCatchEnvironment(r.s, ctx.lex) cctx == WithLex(ctx, env.e) b == ${binding(parameter.name, scope)(`BlockBindNames(env.s, env.e, ${getSequence(getBoundNames(parameter.name).map(getUnits))}, FALSE)`, "cctx", "r.c.value", "env.e")} IN IF IsAbrupt(b) THEN b ELSE ${catchBlock("b.s", "cctx")}`;
       steps.push(`LET c == IF r.c.type = "throw" THEN ${handler} ELSE r IN`);
     } else steps.push("LET c == r IN");
     if (node.finallyBlock === undefined) steps.push("UpdateEmptyThen(Undefined, c)");

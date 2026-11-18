@@ -195,4 +195,32 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource("200,0,1"))).message).toContain(THREW);
     });
   });
+
+  describe("binds and assigns through destructuring patterns", () => {
+    const getSource = (expected: string) => `
+      const { a, b: { c = 5 } = {}, ...rest } = { a: 1, x: 2, y: 3 } as { a: number; b?: { c?: number }; x: number; y: number };
+      const [p, , q = 9, ...others] = [1, 2, undefined, 4, 5];
+      let m = 1;
+      let n = 2;
+      [m, n] = [n, m];
+      let isClosed = false;
+      const iterable = {
+        [Symbol.iterator]: () => ({ next: () => ({ value: 1, done: false }), return: () => { isClosed = true; return {}; } }),
+      };
+      const [first] = iterable as unknown as number[];
+      const sum = ({ x, y = x + 1 }: { x: number; y?: number }) => x + y;
+      const result = [a, c, Object.keys(rest).join(""), p, q, others.join(""), m, n, first, isClosed, sum({ x: 1 })].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("1,5,xy,1,9,45,2,1,1,true,3"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("1,5,xy,1,9,45,2,1,1,false,3"))).message).toContain(
+        THREW,
+      );
+    });
+  });
 });
