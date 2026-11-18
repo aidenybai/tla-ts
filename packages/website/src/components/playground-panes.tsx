@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import { cn } from "cn";
 import { getLineHoveredName } from "../line-marks";
+import { usePlaygroundView } from "../playground-view";
 import { getStateNames } from "../search";
 import { useIsHydrated } from "../use-is-hydrated";
+import { useSearchPath } from "../use-search-path";
 import { CodeEditor } from "./code-editor";
 import { CodeLine } from "./code-line";
 import { Connector } from "./connector";
@@ -28,10 +30,14 @@ const Pane = (props: PaneProps) => (
 
 export const PlaygroundSource = () => {
   const playground = usePlayground();
-  const focusedNames = useMemo(
-    () => playground.trace.states.flatMap(getStateNames),
-    [playground.trace.states],
+  const hoveredName = usePlaygroundView((view) => view.hoveredName);
+  const hoverName = usePlaygroundView((view) => view.hoverName);
+  const isArrowsShown = usePlaygroundView((view) => view.isArrowsShown);
+  const steps = useSearchPath(
+    playground.result?.search,
+    usePlaygroundView((view) => view.hoveredStateId),
   );
+  const focusedNames = useMemo(() => steps.flatMap(getStateNames), [steps]);
   return (
     <Pane name="source" onFocus={playground.startCompiler}>
       <CodeEditor
@@ -40,11 +46,11 @@ export const PlaygroundSource = () => {
         tokens={playground.sourceTokens}
         onChange={playground.setSource}
         marks={playground.sourceMarks}
-        hoveredName={playground.hoveredName}
-        isHighlighted={playground.isHighlighted}
+        hoveredName={hoveredName}
+        isHighlighted={isArrowsShown && playground.isWide}
         focusedNames={focusedNames}
         colors={playground.colors}
-        onHover={playground.setHoveredName}
+        onHover={hoverName}
       />
     </Pane>
   );
@@ -53,8 +59,14 @@ export const PlaygroundSource = () => {
 export const PlaygroundOutput = () => {
   const playground = usePlayground();
   const codeRef = useRef<HTMLElement>(null);
+  const hoveredName = usePlaygroundView((view) => view.hoveredName);
+  const hoverName = usePlaygroundView((view) => view.hoverName);
+  const isArrowsShown = usePlaygroundView((view) => view.isArrowsShown);
   const search = playground.result?.search;
-  const steps = playground.trace.states;
+  const steps = useSearchPath(
+    search,
+    usePlaygroundView((view) => view.hoveredStateId),
+  );
   useEffect(() => {
     codeRef.current
       ?.querySelector(`[data-line="${search?.states.find((found) => found.isFailing)?.line}"]`)
@@ -77,11 +89,9 @@ export const PlaygroundOutput = () => {
         aria-hidden={playground.isSkeleton || undefined}
         data-skeleton={playground.isSkeleton ? "" : undefined}
         onPointerOver={(event) =>
-          playground.setHoveredName(
-            event.target instanceof HTMLElement ? event.target.dataset.region : undefined,
-          )
+          hoverName(event.target instanceof HTMLElement ? event.target.dataset.region : undefined)
         }
-        onPointerLeave={() => playground.setHoveredName(undefined)}
+        onPointerLeave={() => hoverName(undefined)}
         className={cn(
           "@container block font-mono text-[13px]/[1.7] pointer-coarse:text-[16px]/[1.7] transition-opacity duration-150 ease-out",
           playground.isSkeleton
@@ -100,9 +110,9 @@ export const PlaygroundOutput = () => {
               marks={playground.outputLineMarks[line.number - 1]}
               hoveredName={getLineHoveredName(
                 playground.outputLineMarks[line.number - 1],
-                playground.hoveredName,
+                hoveredName,
               )}
-              isHighlighted={playground.isHighlighted}
+              isHighlighted={isArrowsShown && playground.isWide}
               colors={playground.colors}
               note={playground.result?.notes.find((note) => note.line === line.number)}
               isActive={(steps.at(0)?.line ?? playground.result?.activeLine) === line.number}
@@ -118,16 +128,18 @@ export const PlaygroundOutput = () => {
 // Arrows from each piece of the source to the TLA+ it compiles to.
 export const PlaygroundArrows = () => {
   const playground = usePlayground();
+  const hoveredName = usePlaygroundView((view) => view.hoveredName);
+  const isArrowsShown = usePlaygroundView((view) => view.isArrowsShown);
   return (
     <Connector
       names={
-        playground.isArrowsShown
+        isArrowsShown
           ? Object.keys(playground.colors)
-          : playground.hoveredName === undefined
+          : hoveredName === undefined
             ? []
-            : [playground.hoveredName]
+            : [hoveredName]
       }
-      hoveredName={playground.hoveredName}
+      hoveredName={hoveredName}
       colors={playground.colors}
     />
   );

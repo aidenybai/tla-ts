@@ -2,6 +2,7 @@ import { CaretDown, GearSix } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { cn } from "cn";
 import { PLAYGROUND_EXAMPLES } from "../playground-examples";
+import { usePlaygroundView } from "../playground-view";
 import { useIsHydrated } from "../use-is-hydrated";
 import { Logo } from "./logo";
 import { usePlayground } from "./playground";
@@ -46,7 +47,7 @@ export const PlaygroundHeader = (props: HeaderProps) => (
 );
 
 export const PlaygroundSettings = () => {
-  const playground = usePlayground();
+  const view = usePlaygroundView();
   const theme = useTheme();
   return (
     <DropdownMenu>
@@ -55,10 +56,10 @@ export const PlaygroundSettings = () => {
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem
-          onClick={() => playground.setIsArrowsShown(!playground.isArrowsShown)}
+          onClick={() => view.setIsArrowsShown(!view.isArrowsShown)}
           className="max-md:hidden"
         >
-          {playground.isArrowsShown ? "Hide arrows" : "Show arrows"}
+          {view.isArrowsShown ? "Hide arrows" : "Show arrows"}
         </DropdownMenuItem>
         <DropdownMenuSeparator className="max-md:hidden" />
         <DropdownMenuGroup>

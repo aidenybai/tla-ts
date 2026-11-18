@@ -1,13 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { getPath, type Search } from "./search";
 
-// The steps from the first state to the one under the pointer.
-export const useSearchPath = (search: Search | undefined) => {
-  const [hoveredStateId, setHoveredStateId] = useState<string>();
+// The steps from the first state to the hovered one.
+export const useSearchPath = (search: Search | undefined, hoveredStateId: string | undefined) => {
   const statesById = useMemo(
     () => new Map(search?.listedStates.map((state) => [state.id, state])),
     [search],
   );
-  const states = useMemo(() => getPath(statesById, hoveredStateId), [statesById, hoveredStateId]);
-  return { states, hover: setHoveredStateId };
+  return useMemo(() => getPath(statesById, hoveredStateId), [statesById, hoveredStateId]);
 };

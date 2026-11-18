@@ -43,7 +43,8 @@ export const ExampleRoot = (props: RootProps) => {
   const [hasRun, setHasRun] = useState(false);
   const isRunning = phase !== "idle" || runner.isRunning;
   const result = isRunning || !isCompiled ? undefined : runner.result;
-  const path = useSearchPath(result?.search);
+  const [hoveredStateId, setHoveredStateId] = useState<string>();
+  const path = useSearchPath(result?.search, hoveredStateId);
   const request = {
     source: example.tla.code,
     config: example.config,
@@ -64,8 +65,8 @@ export const ExampleRoot = (props: RootProps) => {
         isRunning,
         hasRun,
         result,
-        path: path.states,
-        hoverState: path.hover,
+        path,
+        hoverState: setHoveredStateId,
         run: () => {
           setHasRun(true);
           if (isCompiled && runner.result === undefined) return runner.run(request);

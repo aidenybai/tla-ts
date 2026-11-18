@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, type ReactNode } from "react";
 import outlines from "virtual:outlines";
 import { createPartsContext } from "@/lib/utils";
 import { getHighlightColors } from "../highlight-colors";
@@ -8,8 +8,8 @@ import { useCompile } from "../use-compile";
 import { useIsHydrated } from "../use-is-hydrated";
 import { useMediaQuery } from "../use-media-query";
 import { usePlaygroundFile } from "../use-playground-file";
+import { usePlaygroundView } from "../playground-view";
 import { useRun } from "../use-run";
-import { useSearchPath } from "../use-search-path";
 
 const NO_MARKS: Mark[] = [];
 
@@ -21,9 +21,6 @@ const usePlaygroundState = () => {
   const file = usePlaygroundFile();
   const compiler = useCompile(file.source, file.fileName);
   const runner = useRun(true);
-  const [hoveredName, setHoveredName] = useState<string>();
-  const [isArrowsShown, setIsArrowsShown] = useState(true);
-  const [isResultShown, setIsResultShown] = useState(false);
   const isWide = useMediaQuery("(min-width: 48rem)");
   const workspaceRef = useRef<HTMLElement>(null);
   const runButtonRef = useRef<HTMLButtonElement>(null);
@@ -52,12 +49,11 @@ const usePlaygroundState = () => {
   );
 
   const result = compiler.isCompiling || compiler.error ? undefined : runner.result;
-  const trace = useSearchPath(result?.search);
   const canRun =
     !runner.isRunning && compilation !== undefined && !compiler.isCompiling && !compiler.error;
   const run = () => {
     if (!canRun) return;
-    setIsResultShown(true);
+    usePlaygroundView.getState().setIsResultShown(true);
     runner.run({
       source: compilation.tla,
       config: compilation.config,
@@ -74,7 +70,7 @@ const usePlaygroundState = () => {
       if (!(event.metaKey || event.ctrlKey) || (event.key !== "Enter" && event.key !== "b")) return;
       event.preventDefault();
       if (event.key === "Enter") run();
-      else setIsResultShown(!isResultShown);
+      else usePlaygroundView.setState((view) => ({ isResultShown: !view.isResultShown }));
     };
     addEventListener("keydown", handleShortcut);
     return () => removeEventListener("keydown", handleShortcut);
@@ -100,17 +96,9 @@ const usePlaygroundState = () => {
     isOutputStale: compiler.tla !== undefined && (compiler.isCompiling || Boolean(compiler.error)),
     error: compiler.error,
     colors,
-    hoveredName,
-    setHoveredName,
     isWide,
-    isHighlighted: isArrowsShown && isWide,
-    isArrowsShown,
-    setIsArrowsShown,
-    isResultShown,
-    setIsResultShown,
     isRunning: runner.isRunning,
     result,
-    trace,
     canRun,
     run,
     workspaceRef,
@@ -141,10 +129,11 @@ export const PlaygroundRoot = (props: PartProps) => {
 
 export const PlaygroundWorkspace = (props: PartProps) => {
   const playground = usePlayground();
+  const isHoveringName = usePlaygroundView((view) => view.hoveredName !== undefined);
   return (
     <main
       ref={playground.workspaceRef}
-      data-hovering-name={playground.hoveredName === undefined ? undefined : ""}
+      data-hovering-name={isHoveringName ? "" : undefined}
       className="relative min-h-0 flex-1 overflow-hidden"
     >
       {props.children}
