@@ -57812,4 +57812,42 @@ describe("runs the script's methods in a conversion inside at most one other", (
       ).toContain("32|31|f|7|true|caught boom");
     });
   });
+
+  describe("runs a generator's state machine whose body makes closures", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      function* count(factor: number) {
+        let total = 0;
+        const bump = (by: number) => {
+          total += by;
+          return total;
+        };
+        const add = function (amount: number) {
+          bump(amount);
+        };
+        const doubled = [1, 2, 3].map((value) => value * factor);
+        for (let index = 0; index < 70; index++) {
+          const sent: number | undefined = yield bump(1);
+          if (sent !== undefined) add(sent);
+        }
+        box.log += doubled.join(",");
+        return total;
+      }
+      const counter = count(2);
+      counter.next();
+      counter.next(10);
+      let last = 0;
+      for (const value of counter) last = value;
+      const result = [last, box.log].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("80|2,4,6"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("70|2,4,6"))).failure?.message).toContain("80|2,4,6");
+    });
+  });
 });

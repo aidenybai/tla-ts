@@ -163,15 +163,21 @@ const isSyncGeneratorBody = (node: ts.Node, context: Context) => {
   );
 };
 
-// Whether a sync generator's body is one that a state machine can run: one that makes no functions,
-// so that its locals are values, and doesn't read its arguments object.
+// Whether a sync generator's body is one that a state machine can run: one that makes no classes or
+// generators, and doesn't read its arguments object. Its closures read the locals that resume points
+// keep, which their calls inline.
 const isMachineBody = (callee: FunctionNode, context: Context) =>
   !isAsyncGenerator(callee) &&
   callee.body !== undefined &&
   ts.isBlock(callee.body) &&
   findNodes(
     callee.body,
-    (inner): inner is ts.Node => ts.isFunctionLike(inner) || ts.isClassLike(inner),
+    (inner): inner is ts.Node =>
+      ts.isClassLike(inner) ||
+      ((ts.isFunctionDeclaration(inner) ||
+        ts.isFunctionExpression(inner) ||
+        ts.isMethodDeclaration(inner)) &&
+        inner.asteriskToken !== undefined),
   ).length === 0 &&
   findNodes(callee, ts.isIdentifier).every(
     (identifier) => getArgumentsOwner(identifier, context.checker) !== callee,
