@@ -50,9 +50,15 @@ class CtxSimplifier {
     const manager = this.manager;
     this.depth = 0;
     const result = this.simplify(goal.forms.items[index]);
-    if (isAsserted && !manager.isTrue(result) && !manager.isFalse(result))
+    const dependency = goal.getDependency(index);
+    if (
+      isAsserted &&
+      !manager.isTrue(result) &&
+      !manager.isFalse(result) &&
+      dependency === undefined
+    )
       this.assertExpr(result, false);
-    goal.update(index, result);
+    goal.update(index, result, dependency);
     manager.decRef(result);
   }
 

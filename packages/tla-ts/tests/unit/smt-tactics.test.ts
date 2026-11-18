@@ -289,6 +289,38 @@ describe("tactics keep the dependencies Z3 keeps", () => {
     ).toEqual(["unsat", "(d1 d2)", "(:rlimit 27)"]);
   });
 
+  it("keeps the dependencies in ctx-simplify and takes no formula with one as context", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const p Bool)",
+        "(assert (! (= x 1) :named a1))",
+        "(assert (or (= x 1) p))",
+        "(assert (or (not (= x 1)) (= y 2)))",
+        "(apply ctx-simplify)",
+        "(assert (! (< y 2) :named a2))",
+        "(check-sat-using (then ctx-simplify smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (= x 1)",
+        "  (or (= x 1) p)",
+        "  (or (not (= x 1)) (= y 2))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a1 a2)",
+      "(:rlimit 325)",
+    ]);
+  });
+
   it("internalizes the assertions of the smt tactic once when it assumes the names", () => {
     expect(
       run([

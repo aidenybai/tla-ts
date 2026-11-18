@@ -719,6 +719,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_depth", PARAM_UINT, 1024, true],
         ["propagate_eq", PARAM_BOOL, false],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           ctxSimplify(
