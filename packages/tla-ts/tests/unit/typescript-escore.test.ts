@@ -273,4 +273,27 @@ describe("compiles scripts by specializing ESCore", () => {
       ).toThrow("tla-ts can't compile a function declaration in a block outside strict mode");
     });
   });
+
+  describe("stops where the host's locale or time zone data would decide", () => {
+    const getSource = (expected: string) => `
+      const result = [Date.parse("1970-01-01T00:00:00.000Z"), Temporal.PlainDate.from("2020-01-02").day].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("0,2"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("0,3"))).message).toContain(THREW);
+    });
+
+    it("stops at a locale-sensitive method and at a named time zone", async () => {
+      expect((await checkScript("(1234.5).toLocaleString();")).message).toContain("tla-ts can't");
+      expect(
+        (await checkScript('Temporal.ZonedDateTime.from("2020-01-01T00:00[America/New_York]");'))
+          .message,
+      ).toContain("tla-ts can't");
+    });
+  });
 });

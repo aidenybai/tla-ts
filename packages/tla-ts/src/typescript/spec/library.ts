@@ -280,6 +280,7 @@ export const assembleModule = (
   overrides: GeneratedDefinition[],
   words: ReadonlySet<string>,
   cut: ReadonlySet<string>,
+  stoppedMethods: readonly string[],
 ) => {
   const isIncluded = (group: string) =>
     !library.triggers.has(group) ||
@@ -296,6 +297,7 @@ export const assembleModule = (
     arity: 6,
     text: [
       "CallBuiltin(s, f, id, this, args, nt) ==",
+      `  IF id[2] \\in {${stoppedMethods.map((method) => `"${method}"`).join(", ")}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
       ...families.map(
         (family, index) =>
           `  ${index === 0 ? "CASE" : "  []"} id[1] = "${family.name}" -> ${family.name}Builtin(s, f, id[2], this, args, nt)`,

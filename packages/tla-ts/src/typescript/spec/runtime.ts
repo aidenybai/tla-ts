@@ -1,4 +1,5 @@
-import type { GeneratedDefinition } from "./library";
+import { TlaError } from "../../errors";
+import type { GeneratedDefinition, Library } from "./library";
 
 // The ESCore operators that a compiled spec defines its own way, each a port of ESCore's with
 // what the parse node gave as a parameter: a function's code is the record [id, strict, kind,
@@ -108,3 +109,54 @@ export const INTERPRETER = new Set([
   "EvaluateAsyncGeneratorBody",
   "EvaluateFieldInitializer",
 ]);
+
+// Where ESCore, which has no Intl, as engine262 has none, and a host with ICU, as Node, answer
+// differently, a compiled spec stops: at a calendar other than ISO 8601, at a named time zone
+// other than UTC, and at a date string in none of the formats that ECMA-262 defines, which a host
+// may still read. The method names CallBuiltin stops at are the locale-sensitive built-ins'.
+export const LOCALE_METHODS = [
+  "toLocaleString",
+  "toLocaleDateString",
+  "toLocaleTimeString",
+  "localeCompare",
+];
+
+const HOST_PATCHES = [
+  {
+    name: "CanonicalizeCalendar",
+    from: `ELSE ThrowError(s, "RangeError")`,
+    to: `ELSE Unsupported(s, <<>>)`,
+  },
+  {
+    name: "ToTemporalTimeZoneIdentifier",
+    from: `ELSE ThrowError(r.s, "RangeError")`,
+    to: `ELSE Unsupported(r.s, <<>>)`,
+  },
+  {
+    name: "ParseISODateTime",
+    from: `TPLower(calendar.calendar) # N("iso8601") THEN ThrowError(s, "RangeError")`,
+    to: `TPLower(calendar.calendar) # N("iso8601") THEN Unsupported(s, <<>>)`,
+  },
+  { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
+];
+
+export const getHostDefinitions = (library: Library): GeneratedDefinition[] => [
+  ...HOST_PATCHES.map((patch) => {
+    const definition = library.definitions.get(patch.name);
+    if (definition === undefined || !definition.text.includes(patch.from)) {
+      throw new TlaError(`ESCore's ${patch.name} no longer reads as the compiled spec patches it`);
+    }
+    return {
+      name: patch.name === "ParseDate" ? "ParseSpecDate" : patch.name,
+      arity: definition.arity,
+      text: definition.text.replace(patch.from, patch.to),
+    };
+  }),
+  {
+    name: "ParseDate",
+    arity: 1,
+    text: `ParseDate(u) ==
+  LET t == ParseSpecDate(u) IN
+  IF t = NaN THEN Assert(FALSE, "tla-ts can't tell whether the host reads this date string") ELSE t`,
+  },
+];

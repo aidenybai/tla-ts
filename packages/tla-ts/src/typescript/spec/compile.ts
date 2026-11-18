@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { assembleModule, type Library } from "./library";
-import { INTERPRETER, RUNTIME_DEFINITIONS } from "./runtime";
+import { getHostDefinitions, INTERPRETER, LOCALE_METHODS, RUNTIME_DEFINITIONS } from "./runtime";
 import { specialize } from "./specialize";
 
 export interface EscoreSpec {
@@ -40,6 +40,8 @@ export const compileToEscore = (source: string, fileName: string, library: Libra
     ts.ScriptKind.JS,
   );
   const program = specialize(sourceFile);
+  if (program.words.has("Intl"))
+    throw new TlaTypeScriptError("tla-ts can't run Intl, which ESCore leaves out");
   const isQueuing = program.words.has("Promise") || program.words.has("then");
   const name = "Program";
   const module = assembleModule(
@@ -66,6 +68,7 @@ export const compileToEscore = (source: string, fileName: string, library: Libra
     ],
     [
       ...RUNTIME_DEFINITIONS,
+      ...getHostDefinitions(library),
       // The realm's first objects, which the spec evaluates once, as it starts, rather than deep
       // in the realm's properties, where building them would take a deeper stack.
       {
@@ -84,6 +87,7 @@ export const compileToEscore = (source: string, fileName: string, library: Libra
     ],
     program.words,
     INTERPRETER,
+    LOCALE_METHODS,
   );
   return {
     name,
