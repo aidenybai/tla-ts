@@ -13,6 +13,8 @@ const config: NextConfig = {
   },
   // `pnpm typecheck` checks the types, with the workspace's own compiler.
   typescript: { ignoreBuildErrors: true },
+  // The styles ride in the HTML, so the first paint does not wait on a second request.
+  experimental: { inlineCss: true },
   // The workspace has its own AGENTS.md at its root.
   agentRules: false,
   allowedDevOrigins: process.env.ALLOWED_DEV_ORIGINS?.split(","),

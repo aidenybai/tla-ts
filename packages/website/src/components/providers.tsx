@@ -1,7 +1,10 @@
 "use client";
 
-import { domMax, LazyMotion, MotionConfig } from "motion/react";
+import { LazyMotion, MotionConfig } from "motion/react";
 import { StrictMode, type ReactNode } from "react";
+
+// Every animation here follows a click or a hover, so the engine loads after the page.
+const loadMotionFeatures = () => import("../motion-features").then((loaded) => loaded.domMax);
 
 interface ProvidersProps {
   children: ReactNode;
@@ -9,7 +12,7 @@ interface ProvidersProps {
 
 export const Providers = (props: ProvidersProps) => (
   <StrictMode>
-    <LazyMotion features={domMax} strict>
+    <LazyMotion features={loadMotionFeatures} strict>
       <MotionConfig reducedMotion="user">{props.children}</MotionConfig>
     </LazyMotion>
   </StrictMode>
