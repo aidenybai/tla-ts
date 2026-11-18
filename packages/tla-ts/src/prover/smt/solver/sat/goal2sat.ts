@@ -26,6 +26,12 @@ const PRINT_ENVIRONMENT = {
   isClashing: () => false,
 };
 
+interface UnhandledFun {
+  decl: number;
+  domain: number[];
+  range: number;
+}
+
 interface Frame {
   expr: number;
   isRoot: boolean;
@@ -35,7 +41,7 @@ interface Frame {
 
 export class Goal2Sat implements SatInternalizer, EufInternalizer {
   readonly atoms = new Map<number, number>();
-  readonly unhandledFuns: number[] = [];
+  readonly unhandledFuns: UnhandledFun[] = [];
   private frames: Frame[] = [];
   private results: number[] = [];
   private app2lit = new Map<number, number>();
@@ -213,7 +219,11 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     } else {
       if (!manager.isUninterpretedConst(expr)) {
         if (!manager.isApp(expr)) this.throwOpNotHandled(expr);
-        this.unhandledFuns.push(manager.decls[expr]);
+        this.unhandledFuns.push({
+          decl: manager.decls[expr],
+          domain: manager.getArgs(expr).map((arg) => manager.sorts[arg]),
+          range: manager.sorts[expr],
+        });
       }
       lit = 2 * this.mkBoolVar(expr) + (isSign ? 1 : 0);
     }

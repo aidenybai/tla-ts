@@ -6,6 +6,15 @@ import { Goal } from "../goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ProtoModel } from "../proto-model";
 import { RefVector } from "../ref-vector";
+import {
+  DEFAULT_PRINT_OPTIONS,
+  formatSort,
+  getQuotedName,
+  mkSeq1,
+  mkSeq5,
+  mkText,
+  renderFormat,
+} from "../smt2-printer";
 import type { ThSolverFactory } from "../euf/euf-solver";
 import {
   applyDefinitions,
@@ -159,8 +168,18 @@ export class IncSatSolver {
     if (this.goal2sat.unhandledFuns.length === 0) return L_TRUE;
     this.hasUninterpreted = true;
     const manager = this.manager;
-    const names = this.goal2sat.unhandledFuns.map((decl) => manager.funcDecls[decl].name);
-    this.reasonUnknown = `(sat.giveup interpreted functions sent to SAT solver (${names.join(" ")}))`;
+    const funs = this.goal2sat.unhandledFuns.map((fun) => {
+      const declaration = mkSeq1(
+        [
+          mkText(getQuotedName(manager.funcDecls[fun.decl].name)),
+          mkSeq5(fun.domain.map((sort) => formatSort(manager, sort))),
+          formatSort(manager, fun.range),
+        ],
+        "declare-fun",
+      );
+      return `${renderFormat(declaration, DEFAULT_PRINT_OPTIONS)}\n`;
+    });
+    this.reasonUnknown = `(sat.giveup interpreted functions sent to SAT solver ${funs.join("")})`;
     return L_UNDEF;
   }
 

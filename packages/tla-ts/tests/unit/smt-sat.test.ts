@@ -259,4 +259,31 @@ describe("sat solver", () => {
     expect(run(getScript("((_ at-most 1) a b c d)"))).toBe("sat\nsat\nsat");
     expect(run(getScript("((_ pbeq 1 1 1 1 1) a b c d)"))).toBe("sat\nsat\nsat");
   });
+
+  it("declares each function it gives up on in the reason", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-sort U 0)",
+        "(declare-fun a_rather_long_predicate_name_that_goes_on_and_on (U U U U (_ BitVec 8) U U U U U U U) Bool)",
+        "(declare-const u U)",
+        "(declare-const v U)",
+        "(declare-const b (_ BitVec 8))",
+        "(assert (a_rather_long_predicate_name_that_goes_on_and_on u u u u b u u u u u u u))",
+        "(assert (or (= u v) (= v u)))",
+        "(check-sat)",
+        "(get-info :reason-unknown)",
+      ]),
+    ).toBe(
+      [
+        "unknown",
+        '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun a_rather_long_predicate_name_that_goes_on_and_on',
+        "             (U U U U (_ BitVec 8) U U U U U U U)",
+        "             Bool)",
+        "(declare-fun = (U U) Bool)",
+        "(declare-fun = (U U) Bool)",
+        ')")',
+      ].join("\n"),
+    );
+  });
 });
