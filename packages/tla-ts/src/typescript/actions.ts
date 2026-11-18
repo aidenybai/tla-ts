@@ -17265,15 +17265,27 @@ const translateForOfGenerator = (
       iterated,
     );
   }
+  // An array's or a string's iterator steps on the heap, so the loop runs as one recursive
+  // operator, where its body doesn't suspend, and the path holds no generator that it may resume
+  // besides the iterators that a later step makes again from the heap.
+  const suspends = (node: ts.Node): boolean =>
+    ts.isYieldExpression(node) ||
+    ts.isAwaitExpression(node) ||
+    (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||
+    (!ts.isFunctionLike(node) && (ts.forEachChild(node, suspends) ?? false));
+  const isLooped = isBuiltIn && !suspends(loop.statement);
   const iterate = (start: Path, receiver: Expression) =>
-    iterateGenerator(
-      loop,
-      isBuiltIn ? withBuiltInIterator(loop.expression, start, receiver, context) : start,
-      receiver,
-      context,
-      frame,
-      continueWith,
-    );
+    isLooped &&
+    [...start.generators.values()].every((suspension) => suspension.isRestartable === true)
+      ? translateIterations(loop, start, context, frame, continueWith, receiver)
+      : iterateGenerator(
+          loop,
+          isBuiltIn ? withBuiltInIterator(loop.expression, start, receiver, context) : start,
+          receiver,
+          context,
+          frame,
+          continueWith,
+        );
   if (opened !== undefined) {
     return translateIteratorCall(loop.expression, opened, path, context, frame, (after, ref) =>
       iterate(after, ref ?? getUndefined(context)),
@@ -18379,9 +18391,11 @@ const translateLoop = (
   );
 };
 
+// An iterator that a for-of opened, whose next it read, or an array's or a string's iterator,
+// without next, which steps through the heap.
 interface OpenedIterator {
   iterator: Expression;
-  next: Expression;
+  next?: Expression;
 }
 
 const translateIterations = (
@@ -18390,6 +18404,8 @@ const translateIterations = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path) => Formula,
+  // The array's or the string's iterator that a for-of steps, which its caller opened.
+  builtIn?: Expression,
 ): Formula => {
   const iterated = ts.isForOfStatement(loop) || ts.isForInStatement(loop) ? loop : undefined;
   // A for-of over an array, or a set or a map that keeps its order, that the heap holds visits its
@@ -18477,6 +18493,7 @@ const translateIterations = (
     getKind(iterated.expression, context) === "string";
   if (
     iterated !== undefined &&
+    builtIn === undefined &&
     !isForIn &&
     !isListKeys &&
     !isIterator &&
@@ -18488,9 +18505,13 @@ const translateIterations = (
   }
   // A let or a const whose declaration hasn't run yet has no value to pass to the loop, which only
   // a function that stops instead of reading it before its declaration could change.
-  const changed = getChanged(loop, path, context).filter(
-    (symbol) => !path.scope.uninitialized.has(symbol),
-  );
+  // An array's or a string's iterator steps on the heap.
+  const changed = [
+    ...new Set([
+      ...getChanged(loop, path, context),
+      ...(builtIn === undefined || context.heap === undefined ? [] : [context.heap]),
+    ]),
+  ].filter((symbol) => !path.scope.uninitialized.has(symbol));
   // The iterator reads each element as the loop reaches it, which a copy of the elements matches
   // only while the body changes no object. Where it may, each step reads the array's length and
   // elements again, as an array iterator does. A set's or a map's iterator steps through its
@@ -18530,6 +18551,7 @@ const translateIterations = (
     isKeyChecked && heldSymbol !== undefined && !isAssigned(heldSymbol, loop, context);
   if (
     iterated !== undefined &&
+    builtIn === undefined &&
     !isIterator &&
     !isLive &&
     !isListChanged &&
@@ -18574,30 +18596,61 @@ const translateIterations = (
           return close(current, { ...bodyFrame, throwTo: rethrow }, rethrow);
         }),
     };
+    const runBody = (taken: Path, value: Expression) =>
+      bindIteration(
+        iterating.initializer,
+        value,
+        undefined,
+        taken,
+        context,
+        iterationFrame,
+        (bound, innerFrame) => translateStatements([loop.statement], bound, context, innerFrame),
+      );
+    const next = opened.next;
+    if (next === undefined) {
+      // An array's or a string's iterator throws the TypeError of a typed array out of bounds,
+      // and otherwise steps on the heap.
+      const heap = getHeap(path.scope, site, context);
+      return ifThenElse(
+        useJavaScript("HoldsIteratorNext", [heap, opened.iterator], context),
+        bind(
+          path,
+          "step",
+          useJavaScript("BuiltInIteratorStep", [heap, opened.iterator], context),
+          context,
+          (bound, step) => {
+            const stepped = withHeap(bound, field(step, "heap"), context);
+            return ifThenElse(
+              field(step, "isThrown"),
+              throwTypeError(bound, site, context, bodyFrame),
+              ifThenElse(
+                field(step, "isDone"),
+                done(stepped),
+                runBody(stepped, field(step, "value")),
+              ),
+            );
+          },
+        ),
+        leaf(
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't step an iterator whose next a script replaced"),
+          ]),
+        ),
+      );
+    }
     return stepIterator(
       site,
       opened.iterator,
       "next",
-      opened.next,
+      next,
       [],
       path,
       context,
       bodyFrame,
       (failed) => throwTypeError(failed, site, context, bodyFrame),
       done,
-      (stepped, result) =>
-        readValue(site, result, stepped, context, bodyFrame, (taken, value) =>
-          bindIteration(
-            iterating.initializer,
-            value,
-            undefined,
-            taken,
-            context,
-            iterationFrame,
-            (bound, innerFrame) =>
-              translateStatements([loop.statement], bound, context, innerFrame),
-          ),
-        ),
+      (stepped, result) => readValue(site, result, stepped, context, bodyFrame, runBody),
     );
   };
   const translateFrom = (path: Path, opened?: OpenedIterator): Formula => {
@@ -19011,6 +19064,7 @@ const translateIterations = (
   };
   // A for-of of an array throws the TypeError of GetIterator before its first iteration where the
   // array's Symbol.iterator, which a script may delete from Array.prototype, isn't a function.
+  if (builtIn !== undefined) return translateFrom(path, { iterator: builtIn });
   if (
     iterated !== undefined &&
     ts.isForOfStatement(iterated) &&

@@ -53124,4 +53124,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("steps a typed array's iterator in a for-of's loop", () => {
+    const getSource = (expected: string) => `
+      const numbers: number[] = [];
+      for (let index = 0; index < 30; index++) numbers.push(index * 2);
+      const iterable: Iterable<number> = new Uint8Array(numbers);
+      let total = 0;
+      let seen = 0;
+      for (const value of iterable) {
+        if (value > 50) break;
+        total += value;
+        seen += 1;
+      }
+      let all = 0;
+      for (const value of iterable) all += value;
+      const result = [total, seen, all].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("650,26,870"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("650,26,868"))).failure?.message).toContain("650,26,870");
+    });
+  });
 });
