@@ -1243,16 +1243,16 @@ const matchArgument = (
     }
     return isMatched;
   }
-  if (arg.kind === "Subexpression") {
-    resolveExpression(arg, scope, unit);
-    return false;
-  }
   if (reference !== arg) {
     const failed = findNullError(nullSelections.get(arg));
     if (failed) unit.errors.push(failed);
     if (!failed) {
       report(reference.location.range, `Expected arity ${expected} but found operator of arity 0.`);
     }
+    return false;
+  }
+  if (arg.kind === "Subexpression") {
+    resolveExpression(arg, scope, unit);
     return false;
   }
   if (arg.kind !== "Identifier" && arg.kind !== "OperatorReference") {

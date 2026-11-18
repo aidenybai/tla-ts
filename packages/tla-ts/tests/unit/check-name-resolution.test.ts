@@ -1368,6 +1368,26 @@ describe("name resolution matches SANY", () => {
         ],
       ],
     ],
+    [
+      "EXTENDS Naturals\nD == {3 + 1}\nE == {D!1, 0}\nOp0(P0(_), a1) == P0(a1)\nf == Op0(E!1, 1)",
+      [
+        ["line 6, col 10 to line 6, col 12", "Expected arity 1 but found operator of arity 0."],
+        [
+          "line 6, col 6 to line 6, col 16",
+          "Argument number 1 to operator 'Op0' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
+    [
+      "EXTENDS Naturals\nD == {3 + 1}\nOp0(P0(_), a1) == P0(a1)\nf == LET E == {D!1, 0} IN Op0(E!1, 1)",
+      [
+        ["line 5, col 31 to line 5, col 33", "Expected arity 1 but found operator of arity 0."],
+        [
+          "line 5, col 27 to line 5, col 37",
+          "Argument number 1 to operator 'Op0' \nshould be a 1-parameter operator.",
+        ],
+      ],
+    ],
   ])(
     "checks a selection without parameters as an operator argument in %j like SANY",
     async (source, errors) => {
