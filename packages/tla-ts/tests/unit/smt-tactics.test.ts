@@ -2821,4 +2821,40 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
       "(:rlimit 0)",
     ]);
   });
+
+  // The first declaration makes the solver, so an error in the default tactic drops that
+  // declaration and leaves cmd_context without a solver.
+  it("builds tactic.default_tactic as it makes the solver", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(fail-if true)")',
+        "(declare-const q Real)",
+        "(assert (> q 0.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 10: invalid probe, unknown builtin probe true")',
+      '(error "line 3 column 11: unknown constant q")',
+      "unknown",
+      "(:rlimit 0)",
+    ]);
+  });
+
+  // parse_sexpr reports its own errors, and the solver takes the logic's tactic.
+  it("reports the parse errors of tactic.default_tactic under an empty file name", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then smt")',
+        "(declare-const q Real)",
+        "(assert (> q 0.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error ": line 1 column 10: invalid s-expression, unexpected end of file")',
+      "sat",
+      "(:rlimit 69)",
+    ]);
+  });
 });

@@ -78,6 +78,7 @@ import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, getManagerSomeValue, ProtoModel } from "./proto-model";
 import {
   applyTactic,
+  buildInternalTactic,
   checkSatUsing,
   compileInternalTactic,
   compileTactic,
@@ -415,7 +416,8 @@ interface ScriptState {
   kernel: SmtKernel | undefined;
   satSolver: IncSatSolver | undefined;
   fdSolver: FdSolver | undefined;
-  strategy: string;
+  // undefined once making the solver failed, which leaves cmd_context without one.
+  strategy: string | undefined;
   tactic: Tactic | undefined;
   tacticDestructors: (() => void)[];
   tacticCleanups: (() => void)[];
@@ -495,7 +497,7 @@ export const runSmtlibScript = (
       kernel: undefined,
       satSolver: undefined,
       fdSolver: undefined,
-      strategy: "default",
+      strategy: undefined,
       tactic: undefined,
       tacticDestructors: [],
       tacticCleanups: [],
@@ -623,13 +625,13 @@ export const runSmtlibScript = (
     state.optimizer = undefined;
   };
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
-  const solveWithStrategy = () => {
+  const solveWithStrategy = (strategy: string) => {
     releaseTacticModel();
     const goal = getGoal(state.isSolverProducingModels);
     try {
       state.tactic ??= compileInternalTactic(
         getTacticEnvironment(state.tacticDestructors, state.tacticCleanups),
-        state.strategy,
+        strategy,
       );
       for (const cleanup of state.tacticCleanups) cleanup();
       const checked = checkSatUsing(state.tactic, goal);
@@ -714,6 +716,12 @@ export const runSmtlibScript = (
     // satisfiable, optsmt and maxsmt only improve the model. The unported parts of optimization
     // only get that answer.
     if (state.objectives.length > 0 && optimize(extra, end)) return;
+    const strategy = state.strategy;
+    // cmd_context answers unknown without a solver.
+    if (strategy === undefined) {
+      print("unknown");
+      return;
+    }
     state.manager.limit.push(settings.rlimit);
     const isOptimizing = state.objectives.length > 0;
     const manager = state.manager;
@@ -738,7 +746,7 @@ export const runSmtlibScript = (
         fdSolver !== undefined
           ? checkFdSolver(fdSolver, extra)
           : isFromTactic
-            ? { ...solveWithStrategy(), core: undefined }
+            ? { ...solveWithStrategy(strategy), core: undefined }
             : kernel;
       // solver::check_sat and cmd_context::check_sat each count a step for an unknown answer.
       if (fdSolver === undefined && !isOptimizing && solved.result === L_UNDEF) {
@@ -845,10 +853,30 @@ export const runSmtlibScript = (
       ...result,
     };
   };
+  // parse_sexpr reports its own errors under an empty file name and gives no tactic.
+  const readDefaultTactic = (text: string) => {
+    try {
+      return createCommandReader(text).readSExpr();
+    } catch (error) {
+      if (!(error instanceof SmtParseError)) throw error;
+      print(`(error ": line ${error.line} column ${error.column}: ${error.message}")`);
+      return undefined;
+    }
+  };
   const resetKernel = () => {
     const logic = state.logic;
     const parameters = settings.parameters;
     const isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
+    // smt_strategic_solver_factory builds the default tactic before the solvers, and its errors
+    // leave cmd_context with the solver it had.
+    const defaultTactic = parameters.get("tactic.default_tactic");
+    const sexpr = defaultTactic === undefined ? undefined : readDefaultTactic(defaultTactic);
+    const destructors: (() => void)[] = [];
+    const cleanups: (() => void)[] = [];
+    const tactic =
+      sexpr === undefined
+        ? undefined
+        : buildInternalTactic(getTacticEnvironment(destructors, cleanups), sexpr);
     const isParallel = parameters.get("parallel.enable") === "true";
     const isFdSolver =
       !isParallel &&
@@ -864,10 +892,10 @@ export const runSmtlibScript = (
     decConverterRefs(state.manager, state.tacticConverters);
     state.tacticConverters = [];
     destroyTactics(state.tacticDestructors);
-    state.tacticCleanups.length = 0;
-    state.tactic = undefined;
-    state.strategy =
-      parameters.get("tactic.default_tactic") ?? getLogicStrategy(logic, isProofsEnabled);
+    state.tacticDestructors = destructors;
+    state.tacticCleanups = cleanups;
+    state.tactic = tactic;
+    state.strategy = getLogicStrategy(logic, isProofsEnabled);
     releaseTacticModel();
     state.lastAssertions.reset();
     state.isSolverProducingModels = settings.isProducingModels;
@@ -886,7 +914,7 @@ export const runSmtlibScript = (
       (logic === "QF_FD" || logic === "SAT") &&
       !isProofsEnabled &&
       !isParallel &&
-      !parameters.has("tactic.default_tactic")
+      tactic === undefined
         ? new FdSolver(state.manager, getSatParams(parameters))
         : undefined;
     for (let index = 0; index < state.scopes.length; index++) {
@@ -900,8 +928,11 @@ export const runSmtlibScript = (
     state.isProofsEnabled = settings.parameters.get("proof") === "true";
     if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
     if (state.logic === undefined) state.reader.registerList();
-    resetKernel();
-    if (state.kernel === undefined) state.manager.dropSmtSolverZero();
+    try {
+      resetKernel();
+    } finally {
+      if (state.kernel === undefined) state.manager.dropSmtSolverZero();
+    }
   };
   // The parts of inc_sat_solver that are not ported leave its answers to the smt kernel.
   const useSatSolver = <Result>(action: (solver: IncSatSolver) => Result) => {
@@ -1599,7 +1630,10 @@ export const runSmtlibScript = (
           objectives: 0,
           softTrail: 0,
         }));
-        if (state.isProofsEnabled !== undefined) resetKernel();
+        if (state.isProofsEnabled !== undefined) {
+          state.strategy = undefined;
+          resetKernel();
+        }
         state.isIncremental = state.scopes.length > 0;
         state.hasChecked = false;
       },
