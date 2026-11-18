@@ -75,6 +75,7 @@ export interface PreparedModule {
   module: Module;
   levels: readonly (OperatorLevels | undefined)[] | undefined;
   texts?: ModuleTexts;
+  /** @internal */
   values?: ReadonlyMap<Definition, Value>;
 }
 
