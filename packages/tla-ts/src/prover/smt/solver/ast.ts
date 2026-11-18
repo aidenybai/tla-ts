@@ -1658,9 +1658,9 @@ export class AstManager {
     parameterHashes: number[],
     domain: number[],
     range: number,
-    identity: (number | string)[] = parameters,
+    z3Parameters: (number | string)[] = parameters,
   ) {
-    const key = `${op}:${name}:${identity.join(",")}:${domain.join(",")}:${range}`;
+    const key = `${op}:${name}:${z3Parameters.join(",")}:${domain.join(",")}:${range}`;
     const existing = this.datatypeDecls.get(key);
     if (existing !== undefined) return existing;
     const decl = this.addDecl(
