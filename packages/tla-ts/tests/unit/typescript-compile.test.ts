@@ -54172,4 +54172,32 @@ describe("BigInts", () => {
       expect((await checkModel(getSource(4))).failure?.message).toContain("message 1,2 3");
     });
   });
+
+  describe("splits with the regexp literal that a conditional picks, where the heap holds the result", () => {
+    const getSource = (expected: string) => `
+      export const syntaxError = (text: "a\\nb\\tc" | "ab", at: 1 | 5, isLoose: boolean): SyntaxError => {
+        const lines = text.slice(0, at).split(isLoose ? /\\r\\n|[\\n\\r\\t]/ : /\\r\\n|[\\n\\r]/);
+        return new SyntaxError(\`line \${lines.length}, column \${lines[lines.length - 1].length + 1}\`);
+      };
+      const outer: number[][] = [];
+      const inner: number[] = [];
+      outer.push(inner);
+      inner.push(1);
+      if (outer[0].length !== 1) throw new Error("inner " + outer[0].length);
+      const result = [syntaxError("a\\nb\\tc", 5, true).message, syntaxError("a\\nb\\tc", 5, false).message].join(";");
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("line 3, column 2;line 2, column 4"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the other regexp's split", async () => {
+      expect(
+        (await checkModel(getSource("line 3, column 2;line 3, column 2"))).failure?.message,
+      ).toContain("result line 3, column 2;line 2, column 4");
+    });
+  });
 });

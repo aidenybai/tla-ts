@@ -22,6 +22,7 @@ import {
 import type { Expression } from "../ast";
 import { TlaTypeScriptError } from "../errors";
 import {
+  translateCondition,
   translateElements,
   translateExpression,
   translateIteratedSequence,
@@ -2418,6 +2419,17 @@ export const getHeapRegExpCall = (node: ts.Node, context: Context) => {
   return call === undefined || getStringRegExp(call.regexp) !== undefined ? undefined : call;
 };
 
+// A regexp literal, or a conditional that gives one of two, each of which makes a new regexp.
+const isLiteralRegExp = (node: ts.Expression): boolean => {
+  const inner = skipCasts(node);
+  return (
+    ts.isRegularExpressionLiteral(inner) ||
+    (ts.isConditionalExpression(inner) &&
+      isLiteralRegExp(inner.whenTrue) &&
+      isLiteralRegExp(inner.whenFalse))
+  );
+};
+
 // A RegExp's exec or test, or a String method that calls a regexp's, as an expression, where a
 // regexp is the record of its pattern. With objects, a statement runs the call where it can, and
 // an expression only one that reads a literal and gives no object, so that no one can observe the
@@ -2429,8 +2441,7 @@ const getExpressionRegExpCall = (node: ts.Node, context: Context) => {
   const call = getRegExpCall(node, context);
   return call === undefined ||
     (context.heap !== undefined &&
-      ((!ts.isRegularExpressionLiteral(call.regexp) &&
-        getStringRegExp(call.regexp) === undefined) ||
+      ((!isLiteralRegExp(call.regexp) && getStringRegExp(call.regexp) === undefined) ||
         call.method === "exec" ||
         call.method === "match"))
     ? undefined
@@ -2460,7 +2471,24 @@ export const getStatementRegExpBuiltIns = (statement: ts.Statement, context: Con
 
 export const translateRegExpCall = (node: ts.CallExpression, scope: Scope, context: Context) => {
   const call = getExpressionRegExpCall(node, context);
-  if (call === undefined) return undefined;
+  return call === undefined ? undefined : translateRegExpCallOf(call, node, scope, context);
+};
+
+// A call of one of the regexps that a conditional gives runs the regexp that its condition picks.
+const translateRegExpCallOf = (
+  call: RegExpCall,
+  node: ts.CallExpression,
+  scope: Scope,
+  context: Context,
+): Expression => {
+  const picked = skipCasts(call.regexp);
+  if (ts.isConditionalExpression(picked)) {
+    return ifExpression(
+      translateCondition(picked.condition, scope, context),
+      translateRegExpCallOf({ ...call, regexp: picked.whenTrue }, node, scope, context),
+      translateRegExpCallOf({ ...call, regexp: picked.whenFalse }, node, scope, context),
+    );
+  }
   const translate = (value: ts.Expression) => translateExpression(value, scope, context);
   const changeable = getChangeableBuiltIns(call);
   const regexp =
