@@ -53151,4 +53151,57 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("650,26,868"))).failure?.message).toContain("650,26,870");
     });
   });
+
+  describe("takes every value of a generator that a script's @@iterator method makes", () => {
+    const getValues = (taken: string, expected: string) => `
+      const numbers = {
+        *[Symbol.iterator]() {
+          for (let index = 0; index < 12; index++) yield index * 3;
+        },
+      };
+      const source: unknown = numbers;
+      const taken = ${taken};
+      const result = [taken.length, taken[11]].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const spread = "[...numbers]";
+    const typed = "new Uint8Array(source as never)";
+
+    it("agrees with Node on a spread", async () => {
+      expect((await checkModel(getValues(spread, "12|33"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for a spread", async () => {
+      expect((await checkModel(getValues(spread, "11|30"))).failure?.message).toContain("12|33");
+    });
+
+    it("agrees with Node on a typed array", async () => {
+      expect((await checkModel(getValues(typed, "12|33"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for a typed array", async () => {
+      expect((await checkModel(getValues(typed, "11|30"))).failure?.message).toContain("12|33");
+    });
+
+    const getEntries = (expected: string) => `
+      const entries = {
+        *[Symbol.iterator](): Generator<[string, number]> {
+          for (let index = 0; index < 12; index++) yield ["k" + (index % 5), index];
+        },
+      };
+      const result = JSON.stringify(Object.fromEntries(entries));
+      if (result !== '${expected}') throw new Error(result);
+    `;
+    const made = '{"k0":10,"k1":11,"k2":7,"k3":8,"k4":9}';
+
+    it("agrees with Node on Object.fromEntries", async () => {
+      expect((await checkModel(getEntries(made))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for Object.fromEntries", async () => {
+      expect(
+        (await checkModel(getEntries(made.replace('"k2":7', '"k2":2')))).failure?.message,
+      ).toContain(":7,");
+    });
+  });
 });

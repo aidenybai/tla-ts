@@ -14502,10 +14502,6 @@ const isStatementCall = (node: ts.CallExpression, path: Path, context: Context) 
   );
 };
 
-// The values that new of a typed array takes from a generator that a script's @@iterator method
-// makes, before tla-ts stops following it.
-const TYPED_ARRAY_TAKE_LIMIT = 8;
-
 // new of a typed array of a value whose type doesn't tell whether it's an object that a script's
 // iterator iterates, which only statements can run.
 const isIteratedTypedArray = (node: ts.Expression, context: Context) => {
@@ -15045,7 +15041,6 @@ const translateNewBufferStatement = (
                         iterator,
                         next,
                         tuple([]),
-                        TYPED_ARRAY_TAKE_LIMIT,
                         opened,
                         context,
                         frame,
