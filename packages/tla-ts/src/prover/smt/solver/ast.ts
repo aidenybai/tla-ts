@@ -1660,6 +1660,8 @@ export class AstManager {
   }
 
   // The parameters are those of the port, and parameterHashes hash Z3's.
+  // mk_func_decl shares a declaration by Z3's parameters, which name a constructor and an accessor
+  // where the port keeps their indexes.
   mkDatatypeDecl(
     op: number,
     name: string,
@@ -1667,8 +1669,9 @@ export class AstManager {
     parameterHashes: number[],
     domain: number[],
     range: number,
+    identity: (number | string)[] = parameters,
   ) {
-    const key = `${op}:${name}:${parameters.join(",")}:${domain.join(",")}:${range}`;
+    const key = `${op}:${name}:${identity.join(",")}:${domain.join(",")}:${range}`;
     const existing = this.datatypeDecls.get(key);
     if (existing !== undefined) return existing;
     const decl = this.addDecl(

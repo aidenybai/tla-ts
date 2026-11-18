@@ -409,6 +409,7 @@ export const instantiateAccessor = (
     [getSymbolHash(accessor.name), getSymbolHash(constructor.name)],
     [sort],
     substituteSort(manager, accessor.range, def.parameters, manager.getSortParameters(sort)),
+    [accessor.name, constructor.name],
   );
 };
 
@@ -432,6 +433,7 @@ export const getDatatypeConstructors = (manager: AstManager, sort: number) => {
         substituteSort(manager, accessor.range, def.parameters, parameters),
       ),
       instantiateDef(manager, def, parameters),
+      [constructor.name],
     ),
   );
   manager.datatypeConstructors[sort] = constructors;

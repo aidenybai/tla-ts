@@ -642,6 +642,38 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("rejects a second constructor or accessor of a datatype that Z3 makes as the same declaration", () => {
+    expect(
+      run([
+        "(declare-datatypes ((C 0) (D 0)) (((red) (red)) ((green))))",
+        "(declare-datatypes ((E 0)) (((a (f Int) (f Int)) (b))))",
+        "(declare-datatype F ((blue) (blue)))",
+        "(declare-const d D)",
+        "(declare-const e E)",
+        "(declare-const c F)",
+        "(assert (= d green))",
+        "(assert (= e b))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "(error \"line 1 column 59: invalid declaration, constant 'red' (with the given signature) already declared\")",
+      "(error \"line 2 column 54: invalid declaration, function 'f' (with the given signature) already declared\")",
+      "(error \"line 3 column 35: invalid declaration, constant 'blue' (with the given signature) already declared\")",
+      "sat",
+      [
+        "(",
+        "  (define-fun e () E",
+        "    b)",
+        "  (define-fun d () D",
+        "    green)",
+        "  (define-fun c () F",
+        "    blue)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("names the declaration that lacks a symbol, and takes _ and as only for define-const", () => {
     expect(
       run([
