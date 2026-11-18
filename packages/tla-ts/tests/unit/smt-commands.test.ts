@@ -1364,6 +1364,22 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unsat"]);
   });
 
+  it("counts a step of the limit for each assertion of the smt kernel", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or p q))",
+        "(get-info :rlimit)",
+        "(assert (not p))",
+        "(get-info :rlimit)",
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 4)", "(:rlimit 7)", "(:rlimit 14)"]);
+  });
+
   // check_sat counts one resource unit once the model of a decided goal is converted, and answers unknown when that exceeds the limit.
   it("counts the resource units of check-sat-using as Z3 does", () => {
     expect(

@@ -52,7 +52,9 @@ export class SmtKernel {
     this.asserted.isPreprocessing = isPreprocessing;
   }
 
+  // context::assert_expr_core counts a step, and drops the formula once the limit is spent.
   assertExpr(expr: number) {
+    if (this.context.checkCanceled()) return;
     this.context.popToBaseLevel();
     this.asserted.assertExpr(expr);
   }
