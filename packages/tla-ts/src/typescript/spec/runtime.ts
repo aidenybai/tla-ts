@@ -187,9 +187,11 @@ export const LOCALE_METHODS = [
   "toLocaleDateString",
   "toLocaleTimeString",
   "localeCompare",
-  "toLocaleLowerCase",
-  "toLocaleUpperCase",
 ];
+
+// The languages whose case mappings ICU tailors, where a host's toLocaleLowerCase and
+// toLocaleUpperCase differ from toLowerCase and toUpperCase.
+const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 
 const HOST_PATCHES = [
   {
@@ -213,12 +215,20 @@ const HOST_PATCHES = [
     to: `TPLower(calendar.calendar) # N("iso8601") THEN Unsupported(s, <<>>)`,
   },
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
-  // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which
-  // CallBuiltin stops at as locale-sensitive only by their own names.
+  // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
+  // host does too in its default locale, unless that locale tailors case, and in no locale given.
   {
     name: "StringProperties",
     from: `SV("toLocaleLowerCase"), "String", "toLowerCase", 0),\n     M("StringPrototype", SV("toLocaleUpperCase"), "String", "toUpperCase", 0)`,
     to: `SV("toLocaleLowerCase"), "String", "toLocaleLowerCase", 0),\n     M("StringPrototype", SV("toLocaleUpperCase"), "String", "toLocaleUpperCase", 0)`,
+  },
+  {
+    name: "StringMethod",
+    from: `    [] m = "toLowerCase" ->`,
+    to: `    [] m \\in {"toLocaleLowerCase", "toLocaleUpperCase"} ->
+         IF Arg(args, 1) # Undefined \\/ ${TAILORED_CASING.has(new Intl.Locale(new Intl.DateTimeFormat().resolvedOptions().locale).language) ? "TRUE" : "FALSE"} THEN Unsupported(s, <<>>)
+         ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
+    [] m = "toLowerCase" ->`,
   },
   // A program's functions hold their source text as the program's code gives it, which
   // SourceUnits makes code units of when a program reads it.

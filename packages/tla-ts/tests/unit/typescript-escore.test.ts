@@ -297,16 +297,24 @@ describe("compiles scripts by specializing ESCore", () => {
 
   describe("stops where the host's locale or date parsing would decide", () => {
     const getSource = (expected: string) => `
-      const result = [Date.parse("1970-01-01T00:00:00.000Z"), new Date(0).toISOString()].join();
+      const result = [
+        Date.parse("1970-01-01T00:00:00.000Z"),
+        new Date(0).toISOString(),
+        "Ab".toLocaleLowerCase(),
+      ].join();
       if (result !== "${expected}") throw new Error(result);
     `;
 
     it("agrees with Node", async () => {
-      expect((await checkScript(getSource("0,1970-01-01T00:00:00.000Z"))).message).toBeUndefined();
+      expect(
+        (await checkScript(getSource("0,1970-01-01T00:00:00.000Z,ab"))).message,
+      ).toBeUndefined();
     });
 
     it("rejects another result", async () => {
-      expect((await checkScript(getSource("1,1970-01-01T00:00:00.000Z"))).message).toContain(THREW);
+      expect((await checkScript(getSource("0,1970-01-01T00:00:00.000Z,Ab"))).message).toContain(
+        THREW,
+      );
     });
 
     it("stops at a locale-sensitive method and at a date string outside ECMA-262's formats", async () => {
