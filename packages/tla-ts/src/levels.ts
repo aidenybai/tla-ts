@@ -1293,9 +1293,8 @@ export const checkModuleLevels = (
                   : [],
               )
           : [];
-      const levelErrors = analyzer.errors.splice(0);
       return [
-        ...levelErrors,
+        ...analyzer.errors.splice(0),
         ...checkProof(step.proof, inner),
         ...pickErrors,
         ...(step.proof?.kind === "Steps" && isTemporal ? checkTemporalGoal(step.proof) : []),
@@ -1322,43 +1321,36 @@ export const checkModuleLevels = (
   ];
   const statementBodies = new Set(statements.map((statement) => statement.statement));
   const sections = getRecursiveSections(getUnitEvents(module.units, new Map(), 0));
+  const createCheck = (location: SourceLocation, run: () => void) => ({
+    location,
+    check: (reported: SanyError[]) => {
+      run();
+      reported.push(...analyzer.errors.splice(0));
+    },
+  });
   return {
-    sections: sections.map((section) => ({
-      location: section.location,
-      check: (reported: SanyError[]) => {
-        analyzer.checkRecursiveSection(section.members);
-        reported.push(...analyzer.errors.splice(0));
-      },
-    })),
+    sections: sections.map((section) =>
+      createCheck(section.location, () => analyzer.checkRecursiveSection(section.members)),
+    ),
     check: (isInner: boolean) =>
       [
-        (isInner ? sections : []).map((section) => ({
-          location: section.location,
-          check: (reported: SanyError[]) => {
-            analyzer.checkPrimedArguments(section.members);
-            reported.push(...analyzer.errors.splice(0));
-          },
-        })),
+        (isInner ? sections : []).map((section) =>
+          createCheck(section.location, () => analyzer.checkPrimedArguments(section.members)),
+        ),
         module.definitions
           .filter(
             (definition) => !definition.name.includes("!") && !statementBodies.has(definition.body),
           )
-          .map((definition) => ({
-            location: definition.location,
-            check: (reported: SanyError[]) => {
-              analyzer.analyzeDefinition(definition, new Map());
-              reported.push(...analyzer.errors.splice(0));
-            },
-          })),
+          .map((definition) =>
+            createCheck(definition.location, () =>
+              analyzer.analyzeDefinition(definition, new Map()),
+            ),
+          ),
         statements
           .filter((statement) => statement.name !== undefined)
-          .map((statement) => ({
-            location: statement.location,
-            check: (reported: SanyError[]) => {
-              getStatementLevel(statement.statement);
-              reported.push(...analyzer.errors.splice(0));
-            },
-          })),
+          .map((statement) =>
+            createCheck(statement.location, () => getStatementLevel(statement.statement)),
+          ),
         [
           ...module.assumptions.map((assumption) => ({
             location: assumption.location,
@@ -1386,13 +1378,9 @@ export const checkModuleLevels = (
               );
             },
           })),
-          ...module.uses.map((use) => ({
-            location: use.location,
-            check: (reported: SanyError[]) => {
-              checkFacts(use.facts, new Map());
-              reported.push(...analyzer.errors.splice(0));
-            },
-          })),
+          ...module.uses.map((use) =>
+            createCheck(use.location, () => checkFacts(use.facts, new Map())),
+          ),
           ...instances,
         ],
       ].flatMap((units) => collectSemanticErrors(units, warnings)),
