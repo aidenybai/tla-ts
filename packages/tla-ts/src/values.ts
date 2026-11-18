@@ -131,11 +131,18 @@ export interface CostModel {
   node: number;
 }
 
+export interface LazyExcept {
+  function: LazyFunctionValue;
+  key: Value;
+  apply: (argument: Value) => Value;
+}
+
 export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
   apply: (argument: Value) => Value;
   costModel?: CostModel;
+  except?: LazyExcept;
   boundTupleLengths?: (number | undefined)[];
   source?: LazyFunctionSource;
   functionClass?: FunctionClass;
@@ -2352,6 +2359,10 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
       domain,
       domain.map((key) => value.apply(key)),
     );
+    // FcnLambdaValue#toFcnRcd evaluates an EXCEPT copy at the keys it replaces too.
+    for (let copy = value; copy.except; copy = copy.except.function) {
+      copy.except.apply(copy.except.key);
+    }
     if (value.costModel) value.costModel.secondary[value.costModel.node] += domain.length;
     return value.enumerated;
   }
@@ -2614,6 +2625,7 @@ export const updateFunction = (
         kind: "LazyFunction",
         domain: functionValue.domain,
         apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
+        except: { function: functionValue, key: argument, apply },
         source: functionValue.source,
         boundTupleLengths: functionValue.boundTupleLengths,
       },

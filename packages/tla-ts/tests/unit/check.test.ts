@@ -2401,6 +2401,57 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "an EXCEPT copy of it",
+      "[g EXCEPT ![1] = 7]",
+      [
+        "line 6, col 9 to line 6, col 13 of module M: 2",
+        "|line 6, col 9 to line 6, col 9 of module M: 3",
+        "line 6, col 18 to line 6, col 27 of module M: 2",
+        "line 6, col 32 to line 6, col 59 of module M: 2",
+        "|line 6, col 37 to line 6, col 59 of module M: 2",
+        "||line 6, col 39 to line 6, col 57 of module M: 2",
+        "|||line 6, col 40 to line 6, col 40 of module M: 2",
+        "||||line 4, col 1 to line 4, col 50 of module M: 2",
+        "|||||line 4, col 18 to line 4, col 50 of module M: 10",
+        "||||||line 4, col 21 to line 4, col 25 of module M: 10",
+        "||||||line 4, col 32 to line 4, col 32 of module M: 6",
+        "||||||line 4, col 39 to line 4, col 50 of module M: 4",
+        "|||||line 4, col 9 to line 4, col 12 of module M: 2",
+      ],
+    ],
+    [
+      "a copy of that copy",
+      "[[g EXCEPT ![1] = 7] EXCEPT ![2] = 8, ![1] = 9]",
+      [
+        "line 6, col 9 to line 6, col 13 of module M: 2",
+        "|line 6, col 9 to line 6, col 9 of module M: 3",
+        "line 6, col 18 to line 6, col 27 of module M: 2",
+        "line 6, col 32 to line 6, col 87 of module M: 2",
+        "|line 6, col 37 to line 6, col 87 of module M: 2",
+        "||line 6, col 39 to line 6, col 85 of module M: 2",
+        "|||line 6, col 40 to line 6, col 58 of module M: 2",
+        "||||line 6, col 41 to line 6, col 41 of module M: 2",
+        "|||||line 4, col 1 to line 4, col 50 of module M: 2",
+        "||||||line 4, col 18 to line 4, col 50 of module M: 14",
+        "|||||||line 4, col 21 to line 4, col 25 of module M: 14",
+        "|||||||line 4, col 32 to line 4, col 32 of module M: 8",
+        "|||||||line 4, col 39 to line 4, col 50 of module M: 6",
+        "||||||line 4, col 9 to line 4, col 12 of module M: 2",
+      ],
+    ],
+  ])(
+    "counts the body of a recursive function at the keys %s replaces when TLC fingerprints a state holding the copy, as FcnLambdaValue#toFcnRcd evaluates every key",
+    async (_title, copy, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\ng[n \\in 0..2] == IF n = 0 THEN x ELSE g[n - 1] + 1\nInit == x = 0 /\\ y = <<>>\nNext == x < 2 /\\ x' = x + 1 /\\ y' = <<${copy}>>\n====`,
+        "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.[1]).toEqual(expected);
+    },
+  );
+
   it("counts no node for the reference that applies a recursive function a parameterized instance copies", async () => {
     const result = await check({
       source:
