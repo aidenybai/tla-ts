@@ -1291,6 +1291,7 @@ export const forEachSuccessor = (
   scope?: Scope,
   generator?: JavaRandom,
   onUnsatisfied?: Run["onUnsatisfied"],
+  onIncomplete?: (state: State) => void,
 ) => {
   const run: Run = {
     environment,
@@ -1311,6 +1312,10 @@ export const forEachSuccessor = (
     (partial, action) => {
       if (run.isStopped) return;
       if (!isComplete(partial)) {
+        if (onIncomplete) {
+          onIncomplete(partial);
+          return;
+        }
         const missing = environment.variables.filter(
           (_name, index) => partial[index] === undefined,
         );

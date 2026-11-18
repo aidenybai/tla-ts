@@ -6,12 +6,11 @@ import {
   getUnexpectedException,
   isStackOverflow,
   TlaEvaluationError,
-  TlaIncompleteSuccessorError,
   TlaStackOverflowError,
   TlaTooManyStatesError,
   TlaUnsupportedError,
 } from "./errors";
-import { createTracingEnvironment } from "./evaluate";
+import { createTracingEnvironment, type State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
 import { createLivenessChecker } from "./liveness-checker";
 import {
@@ -19,7 +18,6 @@ import {
   getIncompleteSuccessorMessage,
   prepareSearch,
   reportAssumptionViolation,
-  walkCoveredSuccessors,
 } from "./search";
 import { forEachInitialState, forEachSuccessor, getSuccessors } from "./successors";
 import {
@@ -32,7 +30,7 @@ import {
   withUnexpectedException,
 } from "./tlc/messages";
 import { getTlcFingerprint } from "./tlc/fingerprint";
-import { replayInitialStates, replaySuccessors } from "./tlc/replay";
+import { replayInitialStates, replaySuccessors, walkSuccessors } from "./tlc/replay";
 import { getOptimisticProbability, getActualProbability } from "./tlc/summary";
 import { createModelValue, formatState, getSetBound, isSameValue, type Value } from "./values";
 
@@ -314,32 +312,48 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     return NO_ERROR;
   };
 
+  // TLC's Tool#getNextStates generates every successor of the action before DFIDWorker finds an incomplete one.
   const getActionSuccessors = (index: number, state: Value[]) => {
     const action = nextActions[index];
     const coveredAction = covered?.actions[index];
     const successors: Value[][] = [];
+    let incomplete: State | undefined;
+    let count = 0;
     const addSuccessor = (successor: Value[]) => {
+      count++;
+      if (incomplete) return false;
       if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
       successors.push(successor);
       return false;
     };
-    try {
-      if (coverage && coveredAction) {
-        walkCoveredSuccessors(coverage, coveredAction, state, environment, addSuccessor);
-      } else {
-        forEachSuccessor(
-          action.expression,
-          state,
-          environment,
-          (successor) => addSuccessor(successor.state),
-          action.scope,
-        );
-      }
-      return { successors, incomplete: undefined };
-    } catch (error) {
-      if (!(error instanceof TlaIncompleteSuccessorError)) throw error;
-      return { successors, incomplete: error };
+    const addIncomplete = (partial: State) => {
+      count++;
+      incomplete ??= [...partial];
+      return true;
+    };
+    if (coverage && coveredAction) {
+      walkSuccessors(
+        coveredAction,
+        coveredAction.node,
+        state,
+        environment,
+        addSuccessor,
+        addIncomplete,
+      );
+      coverage.primary[coveredAction.node] += count;
+    } else {
+      forEachSuccessor(
+        action.expression,
+        state,
+        environment,
+        (successor) => addSuccessor(successor.state),
+        action.scope,
+        undefined,
+        undefined,
+        addIncomplete,
+      );
     }
+    return { successors, incomplete, count };
   };
 
   const findCheckFailure = (state: Value[], successor: Value[], isNew: boolean) => {
@@ -409,9 +423,8 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         const action = nextActions[index];
         const next = getActionSuccessors(index, state);
         const incomplete = next.incomplete;
-        const count = next.successors.length + (incomplete ? 1 : 0);
-        generatedCount += count;
-        isDeadlocked &&= count === 0;
+        generatedCount += next.count;
+        isDeadlocked &&= next.count === 0;
         for (const successor of next.successors) {
           processedSuccessor = successor;
           levels.set(successor, depth + 2);
@@ -437,11 +450,13 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
           if (failure) return report(failure.code, failure.text, !failure.isViolated);
         }
         if (incomplete) {
-          processedSuccessor = incomplete.state;
+          processedSuccessor = incomplete;
           return report(
             MESSAGE_CODE.incompleteSuccessor,
             getIncompleteSuccessorMessage(
-              incomplete.variables,
+              environment.variables.filter(
+                (_variable, position) => incomplete[position] === undefined,
+              ),
               action.name,
               nextActions.length,
               options.version,
