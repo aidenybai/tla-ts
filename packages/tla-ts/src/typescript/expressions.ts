@@ -27,6 +27,7 @@ import {
   getAccessKey,
   getCalledMethod,
   getObjectGetter,
+  getAbstractCalls,
   getCallee,
   getObjectFunction,
   getElement,
@@ -1033,10 +1034,16 @@ const translateBuiltInCall = (
   }
   if (helper !== undefined) return translateHelperCall(helper, node, scope, context);
   const called = getCalledMethod(node.expression, context);
-  if (called !== undefined) {
-    return ifExpression(
-      translateHoldsMethod(called, scope, context),
-      translateLocalCall(node, scope, context, called),
+  // An abstract method that this calls runs whichever subclass's method the receiver holds.
+  const methods = called === undefined ? getAbstractCalls(node.expression, context) : [called];
+  if (methods.length > 0) {
+    return methods.reduceRight<Expression>(
+      (otherwise, method) =>
+        ifExpression(
+          translateHoldsMethod(method, scope, context),
+          translateLocalCall(node, scope, context, method),
+          otherwise,
+        ),
       apply("Assert", [boolean(false), string("tla-ts can't tell which method this call runs")]),
     );
   }

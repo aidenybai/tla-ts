@@ -53169,4 +53169,49 @@ describe("BigInts", () => {
       expect((await check(compile(wrong, path))).failure?.message).toContain("seen 10,20,30");
     });
   });
+
+  describe("runs the subclass's method that a base class's method calls through an abstract method", () => {
+    const getSource = (expected: number) => `
+      abstract class Shape {
+        abstract area(): number;
+        describe() {
+          return this.area() * 2;
+        }
+      }
+      class Square extends Shape {
+        side: number;
+        constructor(side: number) {
+          super();
+          this.side = side;
+        }
+        area() {
+          return this.side * this.side;
+        }
+      }
+      class Rectangle extends Shape {
+        width: number;
+        height: number;
+        constructor(width: number, height: number) {
+          super();
+          this.width = width;
+          this.height = height;
+        }
+        area() {
+          return this.width * this.height;
+        }
+      }
+      const square: Shape = new Square(3);
+      const rectangle: Shape = new Rectangle(2, 5);
+      const total = square.describe() + rectangle.describe();
+      if (total !== ${expected}) throw new Error("total " + total);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(38))).failure).toBeUndefined();
+    });
+
+    it("rejects another total", async () => {
+      expect((await checkModel(getSource(36))).failure?.message).toContain("total 38");
+    });
+  });
 });

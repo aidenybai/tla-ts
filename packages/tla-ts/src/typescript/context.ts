@@ -5487,6 +5487,53 @@ export const getCalledMethod = (
       };
 };
 
+// The methods that a call of an abstract method on this may run: each that a class of the
+// program's files that extends the abstract method's class defines under its name, which the call
+// checks the receiver holds.
+export const getAbstractCalls = (node: ts.Expression, context: Context): CalledMethod[] => {
+  if (
+    context.heap === undefined ||
+    !ts.isPropertyAccessExpression(node) ||
+    node.expression.kind !== ts.SyntaxKind.ThisKeyword
+  ) {
+    return [];
+  }
+  const declaration = getValueDeclaration(getSymbol(node.name, context.checker), context);
+  const owner = declaration?.parent;
+  if (
+    declaration === undefined ||
+    owner === undefined ||
+    !ts.isMethodDeclaration(declaration) ||
+    declaration.body !== undefined ||
+    !ts.isClassLike(owner)
+  ) {
+    return [];
+  }
+  const isExtending = (node: ts.ClassLikeDeclaration): boolean => {
+    const base = getBaseClass(node, context);
+    return base !== undefined && (base === owner || isExtending(base));
+  };
+  const name = node.name.text;
+  return [...context.nodes.fileStarts]
+    .flatMap((start) =>
+      findNodes(context.nodes.nodes[start], (inner): inner is ts.ClassLikeDeclaration =>
+        ts.isClassLike(inner),
+      ),
+    )
+    .filter(isExtending)
+    .flatMap((found) =>
+      found.members.filter(
+        (member): member is ts.MethodDeclaration =>
+          ts.isMethodDeclaration(member) &&
+          member.body !== undefined &&
+          ts.isIdentifier(member.name) &&
+          member.name.text === name &&
+          isPlain(member),
+      ),
+    )
+    .map((method) => ({ method, receiver: node.expression, key: name }));
+};
+
 // A value that a literal writes, which reads the same wherever it runs.
 export const isLiteral = (node: ts.Expression) =>
   ts.isLiteralExpression(node) ||
