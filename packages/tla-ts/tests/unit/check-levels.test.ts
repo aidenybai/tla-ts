@@ -109,6 +109,31 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks the levels of proof steps, their facts, and the definitions they make like SANY", async () => {
+    const setError =
+      "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.";
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nTHEOREM TRUE\n<1>1. {[]x} = 1\n  <2>1. CASE {<>x} = 1\n  <2> QED BY {[]x} = 1\n<1> DEFINE D == {<>x}\n<1>2. {D} = 1\n<1> USE {[]x} = 1\n<1> QED\nUSE {<>x} = 1\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 4, col 7 to line 4, col 11", setError],
+          ["line 5, col 14 to line 5, col 18", setError],
+          ["line 6, col 14 to line 6, col 18", setError],
+          ["line 5, col 9 to line 5, col 22", "Non-constant CASE for temporal goal."],
+          ["line 7, col 17 to line 7, col 21", setError],
+          ["line 8, col 7 to line 8, col 9", setError],
+          ["line 9, col 9 to line 9, col 13", setError],
+          ["line 11, col 5 to line 11, col 9", setError],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("rejects an ASSUME above constant level like SANY", async () => {
     await expect(
       check({

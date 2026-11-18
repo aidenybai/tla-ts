@@ -4,6 +4,7 @@ import {
   type Bound,
   type Definition,
   type Expression,
+  type Fact,
   type Module,
   type NewSymbol,
   type OperatorParam,
@@ -958,27 +959,35 @@ export const checkModuleLevels = (
   warnings: SanyError[],
 ) => {
   const analyzer = createLevelAnalyzer(context);
-  const getLevel = (expressions: Expression[]) =>
-    Math.max(0, ...expressions.map((expression) => analyzer.analyze(expression, new Map()).level));
-  const getStepLevel = (step: ProofStep) => {
+  const getLevel = (expressions: Expression[], scope: Scope) =>
+    Math.max(0, ...expressions.map((expression) => analyzer.analyze(expression, scope).level));
+  const getStepLevel = (step: ProofStep, scope: Scope) => {
     const body = step.body;
-    if (body.kind === "Have" || body.kind === "Case") return getLevel([body.expression]);
-    if (body.kind === "Witness") return getLevel(body.expressions);
-    if (body.kind === "Take") return getLevel(body.bounds.map((bound) => bound.set));
+    if (body.kind === "Have" || body.kind === "Case") return getLevel([body.expression], scope);
+    if (body.kind === "Witness") return getLevel(body.expressions, scope);
+    if (body.kind === "Take")
+      return getLevel(
+        body.bounds.map((bound) => bound.set),
+        scope,
+      );
     if (body.kind === "Pick") {
-      return getLevel([body.body, ...body.bounds.map((bound) => bound.set)]);
+      return getLevel([body.body, ...body.bounds.map((bound) => bound.set)], scope);
     }
     if (body.kind !== "Assert") return 0;
     return body.statement.kind === "AssumeProve"
-      ? analyzeAssumeProve(body.statement, new Map(), analyzer).level
-      : getLevel([body.statement]);
+      ? analyzeAssumeProve(body.statement, scope, analyzer).level
+      : getLevel([body.statement], scope);
   };
+  const checkFacts = (facts: Fact[], scope: Scope) =>
+    facts.forEach((fact) => {
+      if (fact.kind !== "ModuleFact") analyzer.analyze(fact, scope);
+    });
   const checkTemporalGoal = (proof: Proof | undefined): SanyError[] =>
     proof?.kind !== "Steps"
       ? []
       : proof.steps.flatMap((step) => {
           const location = formatRange(step.statement);
-          const isConstant = () => getStepLevel(step) === 0;
+          const isConstant = () => getStepLevel(step, new Map()) === 0;
           if (
             step.body.kind === "Have" ||
             step.body.kind === "Take" ||
@@ -998,38 +1007,48 @@ export const checkModuleLevels = (
           }
           return step.body.kind === "Qed" ? checkTemporalGoal(step.proof) : [];
         });
-  const checkProof = (proof: Proof | undefined): SanyError[] =>
-    proof?.kind !== "Steps"
-      ? []
-      : proof.steps.flatMap((step) => {
-          const body = step.body;
-          if (body.kind === "Assert" && body.statement.kind === "AssumeProve") {
-            analyzeAssumeProve(body.statement, new Map(), analyzer);
-          }
-          const isTemporal = () => getStepLevel(step) === TEMPORAL_LEVEL;
-          const pickErrors =
-            body.kind === "Pick" && body.bounds.length > 0 && isTemporal()
-              ? body.bounds
-                  .filter((bound) => getLevel([bound.set]) !== 0)
-                  .flatMap((bound) =>
-                    bound.set.location.range
-                      ? [
-                          {
-                            location: formatRange(bound.set.location.range),
-                            message: "Non-constant bound of temporal PICK.",
-                          },
-                        ]
-                      : [],
-                  )
-              : [];
-          const levelErrors = analyzer.errors.splice(0);
-          return [
-            ...levelErrors,
-            ...checkProof(step.proof),
-            ...pickErrors,
-            ...(step.proof?.kind === "Steps" && isTemporal() ? checkTemporalGoal(step.proof) : []),
-          ];
+  const checkProof = (proof: Proof | undefined, scope: Scope): SanyError[] => {
+    if (proof?.kind === "By") {
+      checkFacts(proof.facts, scope);
+      return analyzer.errors.splice(0);
+    }
+    if (proof?.kind !== "Steps") return [];
+    const inner = new Map(scope);
+    return proof.steps.flatMap((step) => {
+      const body = step.body;
+      if (body.kind === "Use" || body.kind === "Hide") checkFacts(body.facts, inner);
+      if (body.kind === "Define") {
+        body.definitions.forEach((definition) => {
+          if (definition.kind === "Instance") return;
+          inner.set(definition.name, { kind: "Let", definition, scope: inner });
+          analyzer.analyzeDefinition(definition, inner);
         });
+      }
+      const isTemporal = getStepLevel(step, inner) === TEMPORAL_LEVEL;
+      const pickErrors =
+        body.kind === "Pick" && body.bounds.length > 0 && isTemporal
+          ? body.bounds
+              .filter((bound) => getLevel([bound.set], inner) !== 0)
+              .flatMap((bound) =>
+                bound.set.location.range
+                  ? [
+                      {
+                        location: formatRange(bound.set.location.range),
+                        message: "Non-constant bound of temporal PICK.",
+                      },
+                    ]
+                  : [],
+              )
+          : [];
+      const levelErrors = analyzer.errors.splice(0);
+      return [
+        ...levelErrors,
+        ...checkProof(step.proof, inner),
+        ...pickErrors,
+        ...(step.proof?.kind === "Steps" && isTemporal ? checkTemporalGoal(step.proof) : []),
+      ];
+    });
+  };
   const errors = collectSemanticErrors(
     [
       ...module.definitions
@@ -1064,10 +1083,17 @@ export const checkModuleLevels = (
               : analyzer.analyze(theorem.statement, new Map());
           reported.push(
             ...analyzer.errors.splice(0),
-            ...checkProof(theorem.proof),
+            ...checkProof(theorem.proof, new Map()),
             ...(data.level === TEMPORAL_LEVEL ? checkTemporalGoal(theorem.proof) : []),
             ...analyzer.errors.splice(0),
           );
+        },
+      })),
+      ...module.uses.map((use) => ({
+        location: use.location,
+        check: (reported: SanyError[]) => {
+          checkFacts(use.facts, new Map());
+          reported.push(...analyzer.errors.splice(0));
         },
       })),
       ...instances,
