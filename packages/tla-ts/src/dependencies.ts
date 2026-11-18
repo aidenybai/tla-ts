@@ -261,12 +261,19 @@ export const getPreparedFacts = (
   };
 };
 
-// The local facts of a prepared definition in a check, with the definitions that its names
-// resolve to there and its LET definitions numbered after those already in lets.
+// The local row of a prepared definition in a check, whose edges go to addEdge with the
+// definitions that its names resolve to there, and whose LET definitions are numbered after those
+// already in lets.
 const readPreparedFacts = (
   prepared: PreparedFacts,
   environment: DefinitionNames,
   lets: LetColumns,
+  addEdge: (
+    callee: Definition,
+    isOverridden: boolean,
+    isLevelCounted: boolean,
+    owner: number,
+  ) => void,
 ) => {
   const base = lets.parents.length;
   prepared.lets.forEach((definition, index) => {
@@ -274,24 +281,30 @@ const readPreparedFacts = (
     lets.parents.push(prepared.letParents[index] === -1 ? -1 : base + prepared.letParents[index]);
     lets.effects.push(prepared.letEffects[index]);
   });
-  const edges: Edge[] = [];
   prepared.names.forEach((name, index) => {
     const callee = environment.definitions.get(environment.substitutions.get(name) ?? name);
     if (callee === undefined) return;
     const owner = prepared.owners[index];
-    edges.push({
-      name,
+    addEdge(
       callee,
-      isOverridden: environment.constants.has(name),
-      isLevelCounted: prepared.isLevelCounted[index] === 1,
-      owner: owner === -1 ? -1 : base + owner,
-    });
+      environment.constants.has(name),
+      prepared.isLevelCounted[index] === 1,
+      owner === -1 ? -1 : base + owner,
+    );
   });
-  return { row: prepared.row, edges };
+  return prepared.row;
 };
 
-const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask: number) => {
-  const count = edges.length;
+// The edges of each node, those of node n from targets[starts[n]] up to targets[starts[n + 1]].
+interface EdgeLists {
+  starts: Int32Array;
+  targets: Int32Array;
+}
+
+const closeRows = (local: Uint32Array, words: number, edges: EdgeLists, mask: number) => {
+  const count = edges.starts.length - 1;
+  const starts = edges.starts;
+  const targets = edges.targets;
   const closed = local.slice();
   const index = new Int32Array(count).fill(-1);
   const lowLink = new Int32Array(count);
@@ -317,10 +330,9 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
     while (frames.length > 0) {
       const node = frames[frames.length - 2];
       const position = frames[frames.length - 1];
-      const nodeEdges = edges[node];
-      if (position < nodeEdges.length) {
+      if (starts[node] + position < starts[node + 1]) {
         frames[frames.length - 1] = position + 1;
-        const callee = nodeEdges[position];
+        const callee = targets[starts[node] + position];
         if (index[callee] === -1) {
           enter(callee);
         } else if (component[callee] === -1) {
@@ -345,9 +357,9 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
       const first = members[0];
       members.forEach((member) => {
         if (member !== first) orRow(first, member);
-        edges[member].forEach((callee) => {
-          if (component[callee] !== component[first]) orRow(first, callee);
-        });
+        for (let edge = starts[member]; edge < starts[member + 1]; edge++) {
+          if (component[targets[edge]] !== component[first]) orRow(first, targets[edge]);
+        }
       });
       members.forEach((member) => {
         if (member !== first) orRow(member, first);
@@ -358,6 +370,29 @@ const closeRows = (local: Uint32Array, words: number, edges: Int32Array[], mask:
 };
 
 const PURITY_MASK = IMPURE | REPEATED_EFFECT | STREAMED | RANDOM;
+
+const OVERRIDDEN_EDGE = 1;
+const LEVEL_EDGE = 2;
+
+// The local row of a definition, whose edges go to addEdge.
+const collectEdges = (
+  definition: Definition,
+  environment: DefinitionNames,
+  words: number,
+  lets: LetColumns,
+  addEdge: (
+    callee: Definition,
+    isOverridden: boolean,
+    isLevelCounted: boolean,
+    owner: number,
+  ) => void,
+) => {
+  const facts = collectLocalFacts(getDefinitionExpressions(definition), environment, words, lets);
+  facts.edges.forEach((edge) =>
+    addEdge(edge.callee, edge.isOverridden, edge.isLevelCounted, edge.owner),
+  );
+  return facts.row;
+};
 const READ_MASK = NONCONSTANT | READS_IMPURE;
 
 const isEvaluatedOnce = (definition: Definition, flags: number) =>
@@ -373,35 +408,66 @@ export const createDefinitionFacts = (
   const local = new Uint32Array(definitions.length * words);
   const localImpurity = new Uint32Array(definitions.length * words);
   const lets: LetColumns = { numbers: new Map(), parents: [], effects: [] };
-  const edges = definitions.map((definition, id) => {
+  // Each reference from a definition, from edgeStarts[id] on: the callee's id, whether a constant
+  // overrides it and it counts toward the level, and the LET definition around it.
+  const edgeStarts = new Int32Array(definitions.length + 1);
+  const callees: number[] = [];
+  const edgeFlags: number[] = [];
+  const owners: number[] = [];
+  const addEdge = (
+    callee: Definition,
+    isOverridden: boolean,
+    isLevelCounted: boolean,
+    owner: number,
+  ) => {
+    callees.push(ids.get(callee) ?? -1);
+    edgeFlags.push((isOverridden ? OVERRIDDEN_EDGE : 0) | (isLevelCounted ? LEVEL_EDGE : 0));
+    owners.push(owner);
+  };
+  definitions.forEach((definition, id) => {
+    edgeStarts[id] = callees.length;
     const preparedFacts = prepared.get(definition);
-    const facts =
+    const row =
       preparedFacts !== undefined && preparedFacts.row.length === words
-        ? readPreparedFacts(preparedFacts, environment, lets)
-        : collectLocalFacts(getDefinitionExpressions(definition), environment, words, lets);
-    local.set(facts.row, id * words);
-    localImpurity[id * words] = facts.row[0] & PURITY_MASK;
-    return facts.edges;
+        ? readPreparedFacts(preparedFacts, environment, lets, addEdge)
+        : collectEdges(definition, environment, words, lets, addEdge);
+    local.set(row, id * words);
+    localImpurity[id * words] = row[0] & PURITY_MASK;
   });
-  const getId = (edge: Edge) => ids.get(edge.callee) ?? -1;
-  const readEdges = edges.map(
-    (own) => new Int32Array(own.filter((edge) => !edge.isOverridden).map(getId)),
+  edgeStarts[definitions.length] = callees.length;
+  // The edges for which isIncluded holds, as lists for each definition.
+  const getEdgeLists = (isIncluded: (edge: number) => boolean): EdgeLists => {
+    const starts = new Int32Array(definitions.length + 1);
+    const targets: number[] = [];
+    for (let id = 0; id < definitions.length; id++) {
+      starts[id] = targets.length;
+      for (let edge = edgeStarts[id]; edge < edgeStarts[id + 1]; edge++) {
+        if (isIncluded(edge)) targets.push(callees[edge]);
+      }
+    }
+    starts[definitions.length] = targets.length;
+    return { starts, targets: Int32Array.from(targets) };
+  };
+  const reads = closeRows(
+    local,
+    words,
+    getEdgeLists((edge) => (edgeFlags[edge] & OVERRIDDEN_EDGE) === 0),
+    READ_MASK,
   );
-  const reads = closeRows(local, words, readEdges, READ_MASK);
-  const levelEdges = edges.map(
-    (own) =>
-      new Int32Array(own.filter((edge) => !edge.isOverridden && edge.isLevelCounted).map(getId)),
+  const levels = closeRows(
+    local,
+    words,
+    getEdgeLists((edge) => edgeFlags[edge] === LEVEL_EDGE),
+    TEMPORAL_LEVEL_FLAGS,
   );
-  const levels = closeRows(local, words, levelEdges, TEMPORAL_LEVEL_FLAGS);
-  const purityEdges = edges.map(
-    (own) =>
-      new Int32Array(
-        own
-          .map(getId)
-          .filter((callee) => !isEvaluatedOnce(definitions[callee], reads[callee * words])),
-      ),
+  const purity = closeRows(
+    localImpurity,
+    words,
+    getEdgeLists(
+      (edge) => !isEvaluatedOnce(definitions[callees[edge]], reads[callees[edge] * words]),
+    ),
+    PURITY_MASK,
   );
-  const purity = closeRows(localImpurity, words, purityEdges, PURITY_MASK);
   const rows = reads.map((word, position) =>
     position % words === 0
       ? (word & READ_MASK) |
@@ -411,13 +477,13 @@ export const createDefinitionFacts = (
   );
   // A LET definition's effects are those of its builtins and of the definitions it calls, and with
   // them those of the LET definitions in it, which come after it in the numbering.
-  edges.forEach((own) =>
-    own.forEach((edge) => {
-      if (edge.owner === -1) return;
-      const callee = rows[(ids.get(edge.callee) ?? 0) * words];
-      if (!isEvaluatedOnce(edge.callee, callee)) lets.effects[edge.owner] |= callee & PURITY_MASK;
-    }),
-  );
+  for (let edge = 0; edge < callees.length; edge++) {
+    if (owners[edge] === -1) continue;
+    const callee = rows[callees[edge] * words];
+    if (!isEvaluatedOnce(definitions[callees[edge]], callee)) {
+      lets.effects[owners[edge]] |= callee & PURITY_MASK;
+    }
+  }
   for (let number = lets.parents.length - 1; number >= 0; number--) {
     const parent = lets.parents[number];
     if (parent !== -1) lets.effects[parent] |= lets.effects[number];
