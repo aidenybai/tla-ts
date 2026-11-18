@@ -56151,4 +56151,31 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("none"))).failure?.message).toContain("seen type");
     });
   });
+
+  describe("destructures a generator that a variable holds and a call steps", () => {
+    const getSource = (expected: string) => `
+      const box = { first: 0, taken: 0 };
+      const iter = (function* () {
+        box.first += 1;
+        yield 1;
+        yield 2;
+      })();
+      function take() {
+        const [taken] = iter;
+        box.taken = taken ?? 0;
+      }
+      take();
+      const after = iter.next();
+      const result = [box.first, box.taken, after.done].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,1,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("1,1,false"))).failure?.message).toContain("1,1,true");
+    });
+  });
 });
