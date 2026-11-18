@@ -746,24 +746,46 @@ const resolveSubexpressions = (
         }
       : mapped;
   }
-  const calleeParams =
-    expression.kind === "Apply"
-      ? getCalleeParams(expression, lookup(expression.operator))
+  const resolveArguments = (args: Expression[], params: OperatorParam[] | undefined) =>
+    args.map((arg, index) =>
+      resolveSubexpressions(
+        arg,
+        lookup,
+        isGoal,
+        params !== undefined && params[index]?.arity !== 0,
+      ),
+    );
+  const getSelectorParams = (selectors: Selector[]) => {
+    const callee = selectors.every((selector) => selector.kind === "Name")
+      ? lookup(selectors.map(getSelectorName).join("!"))
       : undefined;
+    return callee?.kind === "Operator" ? callee.params : undefined;
+  };
   const rebuilt =
     expression.kind === "Apply"
       ? {
           ...expression,
-          args: expression.args.map((arg, index) =>
-            resolveSubexpressions(
-              arg,
-              lookup,
-              isGoal,
-              calleeParams !== undefined && calleeParams[index]?.arity !== 0,
-            ),
+          args: resolveArguments(
+            expression.args,
+            getCalleeParams(expression, lookup(expression.operator)),
           ),
         }
-      : mapChildren(expression, (child) => resolveSubexpressions(child, lookup, isGoal));
+      : expression.kind === "Subexpression"
+        ? {
+            ...expression,
+            selectors: expression.selectors.map((selector, index) =>
+              "args" in selector
+                ? {
+                    ...selector,
+                    args: resolveArguments(
+                      selector.args,
+                      getSelectorParams(expression.selectors.slice(0, index + 1)),
+                    ),
+                  }
+                : selector,
+            ),
+          }
+        : mapChildren(expression, (child) => resolveSubexpressions(child, lookup, isGoal));
   const children = getChildren(expression);
   const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
     ? expression

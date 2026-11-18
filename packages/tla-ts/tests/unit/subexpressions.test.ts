@@ -259,6 +259,11 @@ describe("subexpression references match TLC", () => {
     expect(result.failure?.message).toContain("<<0, 1, 1, <<5, 6>>, 3>>");
   });
 
+  it("takes a selection passed to an operator parameter in a selection's arguments for an operator, like TLC", async () => {
+    const result = await checkRecursive("Ap(r!@)!1");
+    expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 1 }]);
+  });
+
   it("selects a label through an instance whose operators the instancing module does not extend", async () => {
     const result = await check({
       source:
