@@ -54205,4 +54205,29 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("formats a Temporal object in English through the patterns that Node's output follows", () => {
+    const getSource = (expected: string) => `
+      const date = new Temporal.PlainDate(2024, 12, 26);
+      const seen = [date.toLocaleString(), date.toLocaleString("en", { weekday: "long" })].join(" ");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("12/26/2024 Thursday"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order of the fields", async () => {
+      expect((await checkModel(getSource("26/12/2024 Thursday"))).failure?.message).toContain(
+        "seen 12/26/2024 Thursday",
+      );
+    });
+
+    it("stops in another locale", async () => {
+      const source = 'const text = new Temporal.PlainDate(2024, 12, 26).toLocaleString("de");';
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't format a date in a locale other than English",
+      );
+    });
+  });
 });

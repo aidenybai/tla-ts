@@ -64,7 +64,7 @@ EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Undefined, Null, Ref, Big, Limbs, Wide, Double, BuiltIns, ConstantFunctions, Symbols, Fractions,
           Doubles, SourceTexts,
-          Characters, Searches, Cases, Normals, TimeZones, NaN, Infinity, NegativeInfinity, NegativeZero
+          Characters, Searches, Cases, Normals, TimeZones, DateFormats, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
