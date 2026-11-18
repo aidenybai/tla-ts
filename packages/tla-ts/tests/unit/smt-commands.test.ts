@@ -676,6 +676,29 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unsat", "(:rlimit 27949)"]);
   });
 
+  // context::push_eq drops an equality whose sides share a root, so propagate_eqs never reads the
+  // cancel flag for it.
+  it("queues no equality between nodes of one class", () => {
+    expect(
+      run([
+        "(declare-datatypes ((C 0)) (((r) (g) (b))))",
+        "(declare-datatypes ((D 0)) (((u) (v) (w) (z))))",
+        "(declare-fun f (C) Int)",
+        "(declare-fun h (C C) Int)",
+        "(declare-const x C)",
+        "(declare-const y C)",
+        "(declare-const d D)",
+        "(declare-const q Real)",
+        "(assert (= (^ 2.0 q) 3.0))",
+        "(assert (not (= d u)))",
+        "(assert (> (h x y) 0))",
+        "(assert (or (= x b) (= (f x) 3)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 870)"]);
+  });
+
   it("counts the steps of an unknown answer", () => {
     expect(
       run([

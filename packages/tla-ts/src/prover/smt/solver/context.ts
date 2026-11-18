@@ -783,8 +783,7 @@ export class Context extends Internalizer {
       }
       parent.cg = congruent;
       this.mergeCgcGenerations(parent, parentGeneration, congruent);
-      if (congruent.root !== parent.root)
-        this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
+      this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
     }
     this.r1ParentGenerations.clear();
   }

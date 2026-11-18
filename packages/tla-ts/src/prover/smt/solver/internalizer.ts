@@ -222,7 +222,7 @@ export abstract class Internalizer {
   }
 
   pushEq(lhs: Enode, rhs: Enode, justification: EqJustification) {
-    this.eqPropagationQueue.push({ lhs, rhs, justification });
+    if (lhs.root !== rhs.root) this.eqPropagationQueue.push({ lhs, rhs, justification });
   }
 
   getRandomValue() {
@@ -667,9 +667,9 @@ export abstract class Internalizer {
     }
     node.isMergeTf = true;
     const value = this.assignment[mkLiteral(boolVar)];
-    if (value === L_TRUE && node.root !== this.trueEnode.root)
+    if (value === L_TRUE)
       this.pushEq(node, this.trueEnode, { kind: "equation", literal: mkLiteral(boolVar) });
-    else if (value === L_FALSE && node.root !== this.falseEnode.root)
+    else if (value === L_FALSE)
       this.pushEq(node, this.falseEnode, { kind: "equation", literal: mkLiteral(boolVar, true) });
   }
 
