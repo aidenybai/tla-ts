@@ -92,8 +92,13 @@ describe("check dumps the state graph like TLC's -dump", () => {
       options,
     );
     expect(dot.written.get("Picks174.dot")).toBe(readTlcDump("Picks174.dot"));
-    const plain = await dumpFixture("state-graph", "Picks", { path: "Picks174.dump" }, options);
-    expect(plain.written.get("Picks174.dump")).toBe(readTlcDump("Picks174.dump"));
+    const plain = await dumpFixture("state-graph", "Picks", { path: "Picks.dump" }, options);
+    expect(plain.written.get("Picks.dump")).toBe(readTlcDump("Picks.dump"));
+  });
+
+  it("writes each state again as the stuttering step of a liveness check without dot", async () => {
+    const dump = await dumpFixture("state-graph", "Picks", { path: "Picks.dump" });
+    expect(dump.written.get("Picks.dump")).toBe(readTlcDump("Picks.dump"));
   });
 
   it("writes the graph of a single TLC worker when several are asked for", async () => {

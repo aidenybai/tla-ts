@@ -1567,9 +1567,7 @@ const searchStates = (
     liveSuccessors: LiveSuccessor[],
     source: GraphState | undefined,
   ) => {
-    if (liveness && source && (is174 || options.dump?.stuttering)) {
-      stateWriter?.writeStuttering(source);
-    }
+    if (liveness && source) stateWriter?.writeStuttering(source);
     const accepted = liveness?.addState(index, states[index], liveSuccessors);
     if (!liveness || !accepted) return undefined;
     // Deviation from TLC: under -continue, TLC's LiveCheck throws an InvariantViolatedException after it reports the property, which its Worker reports as unexpected.
