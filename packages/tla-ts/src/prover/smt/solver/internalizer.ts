@@ -866,8 +866,7 @@ export abstract class Internalizer {
     const op = manager.getOp(expr);
     if (op === OP_EQ && !manager.isBool(manager.getArg(expr, 0)))
       this.internalizeEq(expr, isGateContext);
-    else if (op === OP_DISTINCT && manager.kinds[expr] === KIND_APP)
-      this.internalizeDistinct(expr, isGateContext);
+    else if (op === OP_DISTINCT) this.internalizeDistinct(expr, isGateContext);
     else if (manager.kinds[expr] === KIND_APP && this.internalizeTheoryAtom(expr, isGateContext))
       return;
     else if (manager.kinds[expr] === KIND_QUANTIFIER) this.internalizeQuantifier(expr);
@@ -889,19 +888,18 @@ export abstract class Internalizer {
     const manager = this.manager;
     const boolVar = this.mkBoolVar(expr);
     const literal = mkLiteral(boolVar);
-    const args = manager.getArgs(expr);
+    const numArgs = manager.getNumArgs(expr);
     const disequalities: number[] = [];
-    for (let left = 0; left < args.length - 1; left++)
-      for (let right = left + 1; right < args.length; right++)
+    for (let left = 0; left < numArgs - 1; left++)
+      for (let right = left + 1; right < numArgs; right++)
         disequalities.push(
-          manager.mkApp(OP_NOT, [manager.mkEq(args[left], args[right])], SORT_BOOL),
+          manager.mkApp(
+            OP_NOT,
+            [manager.mkEq(manager.getArg(expr, left), manager.getArg(expr, right))],
+            SORT_BOOL,
+          ),
         );
-    const definition =
-      disequalities.length === 0
-        ? manager.trueExpr
-        : disequalities.length === 1
-          ? disequalities[0]
-          : manager.mkApp(OP_AND, disequalities, SORT_BOOL);
+    const definition = manager.mkAnd(disequalities);
     this.internalizeRec(definition, true);
     const definitionLiteral = this.getLiteral(definition);
     this.mkGateClause(negate(literal), definitionLiteral);
