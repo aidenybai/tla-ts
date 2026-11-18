@@ -1038,6 +1038,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["add_bound_lower", PARAM_NUMERAL, "-2", true],
         ["add_bound_upper", PARAM_NUMERAL, "2", true],
       ]),
+      isTrackingDependencies: true,
       build: (environment, params) =>
         inPlace((goal) =>
           addBounds(

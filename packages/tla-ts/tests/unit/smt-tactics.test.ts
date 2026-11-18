@@ -750,6 +750,51 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       "(:rlimit 148)",
     ]);
   });
+
+  it("add-bounds keeps the dependencies, so qflia keeps them too", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (! (>= x 3) :named a1))",
+        "(assert (! (<= (+ x y) 1) :named a2))",
+        "(assert (! (>= y 0) :named a3))",
+        "(apply (using-params add-bounds :add_bound_lower -4 :add_bound_upper 4) :print_dependencies true)",
+        "(check-sat-using (then (using-params add-bounds :add_bound_lower -4 :add_bound_upper 4) smt))",
+        "(get-info :rlimit)",
+        "(check-sat-using qflia)",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  (>= x 3)",
+        "  |- a2",
+        "  (<= (+ x y) 1)",
+        "  |- a3",
+        "  (>= y 0)",
+        "  |-",
+        "  (<= x 4)",
+        "  |-",
+        "  (>= x (- 4))",
+        "  |-",
+        "  (<= y 4)",
+        "  |-",
+        "  (>= y (- 4))",
+        "  :precision under :depth 1)",
+        ")",
+      ].join("\n"),
+      "unknown",
+      "(:rlimit 277)",
+      "unsat",
+      "(a3 a1 a2)",
+      "(:rlimit 535)",
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {
