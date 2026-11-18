@@ -31024,8 +31024,12 @@ describe("errors", () => {
             if (isNaN(x)) throw new Error("NaN");
           `)
         ).failure?.message;
-      expect(await getStop("[5]")).toContain("tla-ts can't convert this object to a number");
-      expect(await getStop("() => 1")).toContain("tla-ts can't convert this function to a number");
+      expect(await getStop("[5]")).toContain(
+        "tla-ts can't tell what this method gives where it converts an object",
+      );
+      expect(await getStop("() => 1")).toContain(
+        "tla-ts can't tell what this method gives where it converts an object",
+      );
     });
   });
 
