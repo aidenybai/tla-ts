@@ -482,6 +482,39 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       ].join("\n"),
     ]);
   });
+
+  it("der keeps the dependency of the quantifier it eliminates", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (! (forall ((x Int)) (or (not (= x a)) (> (f x) 0))) :named a1))",
+        "(assert (! (< (f a) 0) :named a2))",
+        "(assert (! (> a 3) :named a3))",
+        "(apply der :print_dependencies true)",
+        "(check-sat-using (then der smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  (> (f a) 0)",
+        "  |- a2",
+        "  (< (f a) 0)",
+        "  |- a3",
+        "  (> a 3)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a1 a2)",
+      "(:rlimit 306)",
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {

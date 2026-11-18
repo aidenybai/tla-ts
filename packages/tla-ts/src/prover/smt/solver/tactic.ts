@@ -1105,7 +1105,14 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ),
     },
   ],
-  ["der", { descrs: new Map(), build: (environment) => runDer(environment.manager) }],
+  [
+    "der",
+    {
+      isTrackingDependencies: true,
+      descrs: new Map(),
+      build: (environment) => runDer(environment.manager),
+    },
+  ],
   [
     "blast-term-ite",
     {
