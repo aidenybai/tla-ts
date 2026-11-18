@@ -30,7 +30,13 @@ const worker = new Worker(
     const loaded = await loading;
     try {
       const compiled = loaded.compileToEscore(spec.source, "spec.ts", loaded.runtime);
-      const result = await loaded.check({ ...compiled, workers: 1, onPrint: () => {} });
+      const code = compiled.loadModule("ProgramCode").replace("\\n====", "\\n" + spec.appended + "\\n====");
+      const result = await loaded.check({
+        ...compiled,
+        loadModule: (name) => (name === "ProgramCode" ? code : undefined),
+        workers: 1,
+        onPrint: () => {},
+      });
       parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message });
     } catch (error) {
       parentPort.postMessage({ id: spec.id, status: "stopped", message: error.message });
@@ -57,11 +63,13 @@ const ready = new Promise((resolve) => {
 // The worker prepares the runtime before the first check, which takes longer than a check.
 beforeAll(() => ready, 60_000);
 
-const checkScript = (source: string, isStrict = true) =>
+// Checks a script, with the definitions in appended added to the module of its code.
+const checkScript = (source: string, isStrict = true, appended = "") =>
   new Promise<ScriptResult>((resolve) => {
     worker.postMessage({
       id: pending.length,
       source: `${isStrict ? '"use strict";' : ""}\n${source}`,
+      appended,
     });
     pending.push(resolve);
   });
@@ -471,6 +479,26 @@ describe("compiles scripts by specializing ESCore", () => {
         (await checkScript('function unused() { return 1; } (globalThis as any)["un" + "used"]();'))
           .message,
       ).toContain("tla-ts can't call a function that its script names nowhere else");
+    });
+  });
+
+  describe("checks the names and levels of a program's code", () => {
+    it("rejects a definition that names an unknown operator", async () => {
+      expect(
+        (await checkScript("const x = 1;", true, "Broken(s) == NoSuchOperator(s)")).message,
+      ).toContain("Unknown operator: `NoSuchOperator'");
+    });
+
+    it("rejects a definition whose argument exceeds an operator's level", async () => {
+      expect(
+        (await checkScript("const x = 1;", true, "Broken(s) == {[](s = 1)}")).message,
+      ).toContain("Level error in applying operator $Set");
+    });
+
+    it("accepts a definition of constant level", async () => {
+      expect(
+        (await checkScript("const x = 1;", true, "Fine(s) == {s = 1}")).message,
+      ).toBeUndefined();
     });
   });
 });

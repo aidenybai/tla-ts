@@ -78,7 +78,13 @@ import {
 } from "./standard-modules";
 import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
-import { checkModuleLevels, createLevelAnalyzer, type OperatorLevels } from "./levels";
+import {
+  checkModuleLevels,
+  createLevelAnalyzer,
+  getSignatureLevels,
+  type OperatorLevels,
+} from "./levels";
+import { checkPlainModule } from "./plain-module";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
 import { createDefinitionFacts, type PreparedFacts } from "./dependencies";
@@ -105,6 +111,9 @@ interface EnvironmentOptions {
   moduleOperators?: ModuleOperator[];
 }
 
+// The operators that the analysis of a whole spec's levels takes as variables, which no plain module
+// reads.
+const RUNTIME_VARIABLES = ["TLCGet", "Trace", "CounterExample"];
 export interface ResolvedModuleOperator extends ModuleOperator {
   key: string | undefined;
 }
@@ -973,7 +982,21 @@ export const createEnvironment = (
     // SANY's checks found nothing in a module they accepted to instantiate or resolve, nor in a view
     // of it.
     const isAccepted = acceptedModules.has(unlinked) && parsed === unlinked;
-    const module = isAccepted
+    // A plain module, whose names and levels SANY's checks find in one pass, links as it is.
+    const plainLevels =
+      isAccepted || runtime.version !== "master"
+        ? undefined
+        : checkPlainModule(parsed, {
+            imported: visible,
+            getLevels: (name) => {
+              if (RUNTIME_VARIABLES.includes(name)) return undefined;
+              const key = visible.get(name)?.key ?? name;
+              if (definitions.has(key)) return preparedLevels.get(key);
+              return getSignatureLevels(name) ?? "declared";
+            },
+          });
+    const isLinkedAsIs = isAccepted || plainLevels !== undefined;
+    const module = isLinkedAsIs
       ? parsed
       : resolveModuleSubexpressions(
           withLetInstances(parsed, (instance, lets) =>
@@ -981,9 +1004,9 @@ export const createEnvironment = (
           ),
           getAvailableDefinitions(visible),
         );
-    if (!isAccepted) scope.errors.push(...resolveModule(module, getUnit(module)));
+    if (!isLinkedAsIs) scope.errors.push(...resolveModule(module, getUnit(module)));
     const accepted = isAccepted ? order.getPreparedModule(parsed.name) : undefined;
-    const acceptedLevels = accepted?.levels;
+    const acceptedLevels = accepted?.levels ?? plainLevels;
     if (accepted) preparedTexts.push(accepted.texts?.parsed);
     if (accepted?.values) preparedValues.push(accepted.values);
     const acceptedFacts = accepted?.facts;
@@ -1029,7 +1052,8 @@ export const createEnvironment = (
     const checks = instanceChecks
       .splice(firstCheck)
       .map((check) => ({ location: check.location, check: () => checkInstance(check) }));
-    if (isAccepted && checks.length === 0) {
+    if (isLinkedAsIs && checks.length === 0) {
+      if (plainLevels) options.onModuleLevels?.(module, plainLevels);
       linkOrder.push(linked);
       return linked;
     }
@@ -1168,9 +1192,7 @@ export const createEnvironment = (
       if (id !== undefined) environment.startupValues[id] = value;
     }),
   );
-  const runtimeVariables = ["TLCGet", "Trace", "CounterExample"].filter((name) =>
-    builtins.has(name),
-  );
+  const runtimeVariables = RUNTIME_VARIABLES.filter((name) => builtins.has(name));
   // A prepared module's levels hold here where it reads none of the operators that this analysis
   // takes as variables.
   const isPreparedLevelsLinked = preparedTexts.every(
