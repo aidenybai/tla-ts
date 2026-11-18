@@ -591,6 +591,46 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       "(:rlimit 1400)",
     ]);
   });
+
+  it("propagate-ineqs takes no bound that has dependencies and keeps those it rewrites", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (>= x 3))",
+        "(assert (<= y 0))",
+        "(assert (! (or (<= x 2) (> z 7)) :named a1))",
+        "(assert (! (<= z 4) :named a2))",
+        "(assert (! (>= x 1) :named a3))",
+        "(apply propagate-ineqs :print_dependencies true)",
+        "(check-sat-using (then propagate-ineqs smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  (or false (> z 7))",
+        "  |- a2",
+        "  (<= z 4)",
+        "  |- a3",
+        "  (>= x 1)",
+        "  |-",
+        "  (>= x 3)",
+        "  |-",
+        "  (<= y 0)",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a1 a2)",
+      "(:rlimit 397)",
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {

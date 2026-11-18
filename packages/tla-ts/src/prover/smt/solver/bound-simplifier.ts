@@ -381,18 +381,21 @@ class BoundSimplifier {
       let isBoundFound = false;
       this.reset();
       state.forEachIndex((index) => {
-        if (!this.insertBound(goal.forms.items[index])) return;
+        if (goal.getDependency(index) !== undefined || !this.insertBound(goal.forms.items[index]))
+          return;
         goal.update(index, this.manager.trueExpr);
         isBoundFound = true;
       });
       if (!isBoundFound) break;
-      state.forEachIndex((index) => this.tightenBound(goal.forms.items[index]));
+      state.forEachIndex((index) => {
+        if (goal.getDependency(index) === undefined) this.tightenBound(goal.forms.items[index]);
+      });
       const rewriter = new BoundRewriter(this.manager, this);
       state.forEachIndex((index) => {
         const form = goal.forms.items[index];
         const result = rewriter.rewrite(form);
         if (result !== form) {
-          goal.update(index, result);
+          goal.update(index, result, goal.getDependency(index));
           isUpdated = true;
         }
         this.manager.decRef(result);

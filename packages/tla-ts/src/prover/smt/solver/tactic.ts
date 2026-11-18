@@ -933,6 +933,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "propagate-ineqs",
     {
+      isTrackingDependencies: true,
       descrs: getDescrs("", [["bound_max_refinements", PARAM_UINT, 16, true]]),
       build: (environment) => inPlace((goal) => propagateIneqs(environment.manager, goal)),
     },
