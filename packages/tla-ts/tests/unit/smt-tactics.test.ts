@@ -1621,6 +1621,25 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     ]);
   });
 
+  it("keeps the preprocessed goal of the SAT solver and the terms it cached until its next check", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const p1 Bool)",
+        "(declare-const b0 (_ BitVec 4))",
+        "(declare-const b1 (_ BitVec 4))",
+        "(declare-const b2 (_ BitVec 4))",
+        "(assert (bvult (bvsub b1 (bvadd b1 (_ bv4 4))) b2))",
+        "(assert (or (=> (bvule b1 b0) (bvult (bvadd b0 (bvadd b2 b0)) b2)) (not (= (bvand b2 b2) b1))))",
+        "(assert (distinct (bvor (bvsub b0 (_ bv5 4)) b0) (bvsub b1 (_ bv4 4))))",
+        "(check-sat)",
+        "(check-sat-assuming (p1 (bvule b2 (bvmul (_ bv6 4) b0))))",
+        "(check-sat-assuming ((bvule b2 (bvmul (_ bv6 4) b1))))",
+        "(get-value (b1))",
+      ]),
+    ).toEqual(["sat", "sat", "sat", "((b1 #x5))"]);
+  });
+
   // Deviation from Z3: Z3 5.3.2 crashes at the second check.
   it("raises once for a datatype whose declaration failed and keeps the reason of its SAT solver", () => {
     expect(

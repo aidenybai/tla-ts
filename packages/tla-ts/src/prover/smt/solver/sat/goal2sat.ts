@@ -117,6 +117,8 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
       this.app2lit.delete(expr);
       this.lit2app.delete(lit);
     }
+    for (let index = cacheLim; index < this.cacheTrail.length; index++)
+      manager.decRef(this.cacheTrail[index]);
     this.cacheTrail.length = cacheLim;
     this.cacheLim.length -= remaining;
   }
@@ -512,6 +514,7 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     this.forcePush();
     this.app2lit.set(expr, lit);
     this.lit2app.set(lit, expr);
+    this.manager.incRef(expr);
     this.cacheTrail.push(expr);
   }
 
@@ -576,5 +579,11 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     this.results = [];
     this.app2lit = new Map();
     this.lit2app = new Map();
+  }
+
+  release() {
+    for (let index = 0; index < this.cacheTrail.length; index++)
+      this.manager.decRef(this.cacheTrail[index]);
+    this.cacheTrail = [];
   }
 }

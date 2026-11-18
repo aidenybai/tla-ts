@@ -61,6 +61,7 @@ export class IncSatSolver {
   private readonly internalized: RefVector;
   private hasUninterpreted = false;
   private models: ProtoModel[] = [];
+  private subgoals: Goal[] = [];
   private scopes: Scope[] = [];
   reasonUnknown = "no reason given";
   wasUnknown = false;
@@ -193,6 +194,7 @@ export class IncSatSolver {
   private internalizeGoal(goal: Goal) {
     this.solver.popToBaseLevel();
     if (this.solver.isInconsistent) return L_FALSE;
+    this.resetSubgoals();
     const bitBlaster = this.getBitBlaster();
     const subgoals = (() => {
       if (this.isCnf) return [goal];
@@ -213,6 +215,8 @@ export class IncSatSolver {
         return undefined;
       }
     })();
+    this.subgoals = subgoals ?? [];
+    if (!this.subgoals.includes(goal)) goal.reset();
     if (subgoals?.length !== 1) return L_UNDEF;
     const subgoal = subgoals[0];
     this.converters.converters = [...this.converters.converters, ...subgoal.converters];
@@ -450,15 +454,22 @@ export class IncSatSolver {
       : [];
   }
 
+  private resetSubgoals() {
+    for (const subgoal of this.subgoals) subgoal.reset();
+    this.subgoals = [];
+  }
+
   release() {
     for (const model of this.models) model.decRef();
     this.models = [];
+    this.resetSubgoals();
     this.fmls.reset();
     this.names.reset();
     this.core.reset();
     this.internalized.reset();
     this.satConverter.release();
     this.releaseBitBlaster();
+    this.goal2sat.release();
   }
 
   private releaseBitBlaster() {
