@@ -1430,14 +1430,19 @@ export const specialize = (sourceFile: ts.SourceFile): SpecializedProgram => {
     );
   };
 
-  const hasBlockFunction = (node: ts.Node): boolean => {
-    if (isFunctionNode(node) || ts.isClassLike(node)) return false;
-    if (
-      (ts.isBlock(node) || ts.isCaseClause(node) || ts.isDefaultClause(node)) &&
-      node.statements.some(ts.isFunctionDeclaration)
-    )
-      return true;
-    return ts.forEachChild(node, (child) => (hasBlockFunction(child) ? true : undefined)) ?? false;
+  // Whether a statement of a function body or script holds a function declaration anywhere but
+  // as the statement itself, such as in a block or an if statement's clause, which Annex B
+  // (§B.3.2, §B.3.3) hoists outside strict mode.
+  const hasBlockFunction = (statement: ts.Statement): boolean => {
+    const inner = ts.isLabeledStatement(statement) ? statement.statement : statement;
+    if (ts.isFunctionDeclaration(inner)) return false;
+    if (ts.isLabeledStatement(inner)) return hasBlockFunction(inner);
+    const visit = (node: ts.Node): boolean =>
+      ts.isFunctionDeclaration(node) ||
+      (!isFunctionNode(node) &&
+        !ts.isClassLike(node) &&
+        (ts.forEachChild(node, (child) => (visit(child) ? true : undefined)) ?? false));
+    return visit(inner);
   };
 
   // ClassDefinitionEvaluation (§15.7.14) of a class whose elements are methods, accessors,

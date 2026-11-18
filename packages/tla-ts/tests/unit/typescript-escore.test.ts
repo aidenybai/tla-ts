@@ -245,4 +245,32 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource("a|b\\\\n#1,false,true"))).message).toContain(THREW);
     });
   });
+
+  describe("scopes a block's function declaration to the block in strict mode", () => {
+    const getSource = (expected: string) => `
+      let inner = "";
+      {
+        function scoped() {
+          return 1;
+        }
+        inner = typeof scoped;
+      }
+      const result = [inner, typeof (globalThis as Record<string, unknown>).scoped].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("function,undefined"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("function,function"))).message).toContain(THREW);
+    });
+
+    it("stops where Annex B would hoist it outside strict mode", () => {
+      expect(() =>
+        compileToEscore("(function () { if (true) function hoisted() {} })();", "spec.ts", library),
+      ).toThrow("tla-ts can't compile a function declaration in a block outside strict mode");
+    });
+  });
 });
