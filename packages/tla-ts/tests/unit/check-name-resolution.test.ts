@@ -2196,6 +2196,29 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "labels inside the arguments of a rejected application",
+      "H(a) == a\nOp(P(_)) == P(1, lab:: 2)\nG == H(1, lab:: 2) /\\ Undef(other:: 3) /\\ H(kept:: 1)!Nope\nA == G!lab\nB == G!other\nC == Op(Op(Op))!lab\nD == G!kept\nTHEOREM TRUE\n<1>1. H(1, lab:: 2) /\\ H(kept:: 1)!Nope /\\ H(lost:: 1, 2)!1\n  <2> QED BY <1>1!lab, <1>1!kept, <1>1!lost\n<1> QED",
+      [
+        ["line 3, col 14 to line 3, col 25", "The operator P requires 1 arguments."],
+        ["line 4, col 7 to line 4, col 18", "The operator H requires 1 arguments."],
+        ["line 4, col 23 to line 4, col 27", "Unknown operator: `Undef'."],
+        ["line 4, col 55 to line 4, col 58", "Cannot find label `Nope'."],
+        ["line 5, col 8 to line 5, col 10", "Cannot find label `lab'."],
+        ["line 6, col 8 to line 6, col 12", "Cannot find label `other'."],
+        [
+          "line 7, col 9 to line 7, col 14",
+          "An expression appears as argument number 1 (counting from 1) to operator 'Op', in a position an operator is required.",
+        ],
+        ["line 7, col 17 to line 7, col 19", "Cannot find label `lab'."],
+        ["line 10, col 8 to line 10, col 19", "The operator H requires 1 arguments."],
+        ["line 10, col 36 to line 10, col 39", "Cannot find label `Nope'."],
+        ["line 10, col 45 to line 10, col 57", "The operator H requires 1 arguments."],
+        ["line 11, col 19 to line 11, col 21", "Cannot find label `lab'."],
+        ["line 11, col 40 to line 11, col 43", "Cannot find label `lost'."],
+      ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      [],
+    ],
+    [
       "declarations, assumptions, theorems, and USE between a RECURSIVE declaration and its definition",
       "RECURSIVE f(_)\nVARIABLES y,\n  z\nCONSTANT C\nASSUME TRUE\nTHEOREM T == TRUE\nUSE T\nf(n) == n\nVARIABLE w",
       [

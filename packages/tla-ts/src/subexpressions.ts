@@ -37,6 +37,7 @@ import {
   selections,
   SELECTION_NAME,
   factReferences,
+  generatedArgumentCounts,
   type NullSelection,
   type SelectionArguments,
 } from "./resolve";
@@ -46,6 +47,7 @@ type Lookup = (name: string) => Definition | undefined;
 interface FoundLabel {
   label: Expression & { kind: "Label" };
   lets: Definition[][];
+  applications: Expression[];
 }
 
 interface Selection {
@@ -62,7 +64,6 @@ interface SelectingName {
 }
 
 const declaredArities = new WeakMap<Definition, number>();
-const generatedArgumentCounts = new WeakMap<Expression, number>();
 
 const resolveDefinition = (
   definition: Definition,
@@ -112,15 +113,21 @@ const findLabel = (
   expression: Expression,
   name: string,
   lets: Definition[][],
+  applications: Expression[],
 ): FoundLabel | undefined => {
   if (expression.kind === "Label") {
-    return expression.name === name ? { label: expression, lets } : undefined;
+    return expression.name === name ? { label: expression, lets, applications } : undefined;
   }
   if (expression.kind === "Let")
-    return findLabel(expression.body, name, [...lets, expression.definitions]);
+    return findLabel(expression.body, name, [...lets, expression.definitions], applications);
   if (expression.kind === "Lambda" || expression.kind === "Selection") return undefined;
-  for (const child of getChildren(expression).slice(0, generatedArgumentCounts.get(expression))) {
-    const found = findLabel(child, name, lets);
+  const generated = generatedArgumentCounts.get(expression);
+  const enclosing =
+    expression.kind === "Apply" && generated === undefined
+      ? [...applications, expression]
+      : applications;
+  for (const child of getChildren(expression).slice(0, generated)) {
+    const found = findLabel(child, name, lets, enclosing);
     if (found) return found;
   }
   return undefined;
@@ -240,7 +247,12 @@ const selectSubexpression = (
   const checkNull = (node: Expression | undefined, message: string, isEmpty = false) => {
     const range = reference.selectorRanges?.[selectorIndex];
     if (node && range) {
-      nulls.push({ node, error: { location: formatRange(range), message }, isEmpty });
+      nulls.push({
+        node,
+        error: { location: formatRange(range), message },
+        isEmpty,
+        applications: [...applications],
+      });
     }
   };
 
@@ -348,8 +360,11 @@ const selectSubexpression = (
       const selector = selectors[selectorIndex];
       if (selector.kind !== "Name") return;
       const range = reference.selectorRanges?.[selectorIndex];
-      const found = current && findLabel(current, selector.name, []);
-      if (!found) return report(range, `Cannot find label \`${selector.name}'.`);
+      const found = current && findLabel(current, selector.name, [], []);
+      const missing = `Cannot find label \`${selector.name}'.`;
+      if (!found) return report(range, missing);
+      // SANY generates no arguments of an application it rejects, so it never makes a label inside them.
+      found.applications.forEach((application) => checkNull(application, missing, true));
       const params = found.label.params;
       if (selector.args.length !== params.length) {
         const message = `Label \`${selector.name}' used with wrong number of arguments.`;

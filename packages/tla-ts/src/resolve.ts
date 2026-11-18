@@ -119,6 +119,7 @@ export interface NullSelection {
   node: Expression;
   error: SanyError;
   isEmpty: boolean;
+  applications: SelectionArguments[];
 }
 
 interface SelectionArgument {
@@ -133,6 +134,8 @@ export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
+// SANY generates a failed selection's arguments only up to the selector it rejects.
+export const generatedArgumentCounts = new WeakMap<Expression, number>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 
@@ -140,12 +143,14 @@ const emptyExpressions = new WeakSet<Expression>();
 const isEmptyExpression = (expression: Expression): boolean =>
   emptyExpressions.has(expression) || findNullError(nullSelections.get(expression)) !== undefined;
 
-const findNullError = (nulls: NullSelection[] | undefined) =>
+const findNullSelection = (nulls: NullSelection[] | undefined) =>
   nulls?.find((selection) =>
     selection.isEmpty
       ? isEmptyExpression(selection.node)
       : unresolvedExpressions.has(selection.node),
-  )?.error;
+  );
+
+const findNullError = (nulls: NullSelection[] | undefined) => findNullSelection(nulls)?.error;
 
 const renamedArities = new WeakMap<Expression, number>();
 
@@ -496,10 +501,15 @@ const findLabel = (expression: Expression, name: string): LabelExpression | unde
   if (expression.kind === "Label") return expression.name === name ? expression : undefined;
   if (expression.kind === "Lambda" || expression.kind === "Selection") return undefined;
   if (expression.kind === "Let") return findLabel(expression.body, name);
-  return getChildren(expression).reduce<LabelExpression | undefined>(
-    (found, child) => found ?? findLabel(child, name),
-    undefined,
-  );
+  const generated = generatedArgumentCounts.get(expression);
+  if (expression.kind === "Apply" && generated === undefined && isEmptyExpression(expression))
+    return undefined;
+  return getChildren(expression)
+    .slice(0, generated)
+    .reduce<LabelExpression | undefined>(
+      (found, child) => found ?? findLabel(child, name),
+      undefined,
+    );
 };
 
 const findClauseLabel = (
@@ -1357,10 +1367,12 @@ const resolveArgument = (arg: Expression, scope: LocalName | undefined, unit: Un
   else resolveExpression(arg, scope, unit);
 };
 
-const isSelectionReported = (expression: Expression, scope: LocalName | undefined, unit: Unit) => {
-  const failed = selectionErrors.get(expression);
-  if (!failed) return false;
-  failed.applications.forEach((application) =>
+const matchApplications = (
+  applications: SelectionArguments[],
+  scope: LocalName | undefined,
+  unit: Unit,
+) =>
+  applications.forEach((application) =>
     application.args
       .slice(0, application.params.length)
       .forEach((arg, index) =>
@@ -1375,6 +1387,11 @@ const isSelectionReported = (expression: Expression, scope: LocalName | undefine
         ),
       ),
   );
+
+const isSelectionReported = (expression: Expression, scope: LocalName | undefined, unit: Unit) => {
+  const failed = selectionErrors.get(expression);
+  if (!failed) return false;
+  matchApplications(failed.applications, scope, unit);
   unit.errors.push(findNullError(failed.nulls) ?? failed.error);
   return true;
 };
@@ -1399,9 +1416,10 @@ const resolveExpression = (
   unit: Unit,
 ): void => {
   if (selections.has(expression) && !unit.isGenerated) {
-    const failed = findNullError(nullSelections.get(expression));
+    const failed = findNullSelection(nullSelections.get(expression));
     if (failed) {
-      unit.errors.push(failed);
+      matchApplications(failed.applications, scope, unit);
+      unit.errors.push(failed.error);
       return;
     }
     resolveExpression(expression, scope, { ...unit, isGenerated: true });
