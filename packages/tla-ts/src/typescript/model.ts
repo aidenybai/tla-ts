@@ -106,6 +106,25 @@ const isExported = (node: HelperDeclaration) =>
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export) !== 0 &&
   ts.isSourceFile(ts.isVariableDeclaration(node) ? node.parent.parent.parent : node.parent);
 
+// The local bindings that a file's exports of names export, as export { local as name } does.
+const getExportedLocals = (sourceFile: ts.SourceFile, checker: ts.TypeChecker) =>
+  new Set(
+    sourceFile.statements.flatMap((statement) =>
+      ts.isExportDeclaration(statement) &&
+      !statement.isTypeOnly &&
+      statement.moduleSpecifier === undefined &&
+      statement.exportClause !== undefined &&
+      ts.isNamedExports(statement.exportClause)
+        ? statement.exportClause.elements.flatMap((element) => {
+            const local = element.isTypeOnly
+              ? undefined
+              : checker.getExportSpecifierLocalTargetSymbol(element);
+            return local === undefined ? [] : [local];
+          })
+        : [],
+    ),
+  );
+
 // A let is a state variable, and so is a const in a script with a heap that makes an object, as
 // only statements can make objects, and a script's const whose value the script changes in place.
 const isLet = (declared: Declared, changed: ReadonlySet<ts.Symbol>, context: Context) => {
@@ -165,12 +184,9 @@ export const isDeclaration = (statement: ts.Statement) =>
   ts.isTypeAliasDeclaration(statement) ||
   ts.isInterfaceDeclaration(statement) ||
   ts.isEnumDeclaration(statement) ||
-  // A re-export, like an import, only loads the module it names, and a script's export only names
-  // bindings.
-  (ts.isExportDeclaration(statement) &&
-    (statement.isTypeOnly ||
-      statement.moduleSpecifier !== undefined ||
-      isScript(statement.getSourceFile()))) ||
+  // A re-export, like an import, only loads the module it names, and an export of names only names
+  // bindings, which the model takes as their declarations' exports.
+  ts.isExportDeclaration(statement) ||
   (ts.isFunctionDeclaration(statement) && statement.body !== undefined);
 
 // The variables that a var, let, or const declares.
@@ -322,10 +338,13 @@ export const readModel = (
     return [{ name, symbol, declaration: statement }];
   });
   const helpers = declarations.filter((declared) => !isLet(declared, changed, context));
+  const exportedLocals = getExportedLocals(sourceFile, context.checker);
   const exported = helpers.flatMap((declared) => {
     const declaration = declared.declaration;
     const node = getFunction(declaration);
-    if (!isExported(declaration) || node?.body === undefined) return [];
+    const symbol = getSymbol(declared.identifier, context.checker);
+    const isListed = symbol !== undefined && exportedLocals.has(symbol);
+    if (!(isExported(declaration) || isListed) || node?.body === undefined) return [];
     const statement = ts.isVariableDeclaration(declaration)
       ? declaration.parent.parent
       : declaration;

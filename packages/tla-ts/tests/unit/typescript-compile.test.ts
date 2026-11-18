@@ -56078,6 +56078,154 @@ describe("BigInts", () => {
     });
   });
 
+  describe("runs the function that a read-only object literal holds under a property or a const key", () => {
+    const getSource = (expected: string, write = "") => `
+      const width = Uint8Array.BYTES_PER_ELEMENT;
+      const pick = () => {
+        const Key = "~probe";
+        const standard = {
+          [Key]: (body: () => number) => body() + width,
+          plain: (body: () => number) => body() * 2,
+        };
+        ${write}
+        const first = standard[Key](() => 1);
+        const second = standard.plain(() => 3);
+        return first * 10 + second;
+      };
+      const result = [pick(), pick()].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("26,26"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("16,26"))).failure?.message).toContain("result 26,26");
+    });
+
+    it("runs no function of the literal where the script writes its property", () => {
+      expect(() =>
+        compile(getSource("29,29", "standard.plain = (body: () => number) => body() * 3;")),
+      ).toThrow("Unsupported expression: (body: () => number) => body() * 3");
+    });
+  });
+
+  describe("runs each argument's call that only statements run, in order, with the typed array it calls a method of", () => {
+    const getSource = (expected: string) => `
+      const log: number[] = [];
+      const record = (value: number) => {
+        log.push(value);
+        return new Uint8Array(2).fill(value);
+      };
+      const sum = (head: Uint8Array, bytes: Uint8Array, count: number) =>
+        head[0] * 10 + bytes[count - 1] + bytes.length;
+      const total = sum(record(7), new Uint8Array(4).fill(5), 4);
+      const second = sum(record(1), record(2), 2);
+      const result = [total, second, log.join("-")].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("79,14,7-1-2"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect((await checkModel(getSource("79,14,7-2-1"))).failure?.message).toContain(
+        "result 79,14,7-1-2",
+      );
+    });
+  });
+
+  describe("checks the functions that a module exports by name in an export list", () => {
+    const getSource = (bound: number) => `
+      export let count = 0;
+      const bump = (by: 1 | 2) => {
+        if (count < 3) count += by;
+      };
+      const isSmall = () => count <= ${bound};
+      count += 1;
+      if (count !== 1) throw new Error("count " + count);
+      export { bump as step, isSmall };
+    `;
+
+    it("agrees with Node, and runs the listed action", async () => {
+      const result = await checkModel(getSource(4));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        4,
+      ]);
+    });
+
+    it("rejects a smaller bound in the listed invariant", async () => {
+      expect((await checkModel(getSource(3))).status).toBe("invariant-violation");
+    });
+  });
+
+  describe("runs an argument's call that only statements run after names that nothing assigns", () => {
+    const getSource = (expected: string) => `
+      const sum = (head: Uint8Array, bytes: Uint8Array, count: number) =>
+        head[0] * 10 + bytes[count - 1] + bytes.length;
+      const head = new Uint8Array(1).fill(3);
+      const total = sum(head, new Uint8Array(4).fill(5), 4);
+      let current = new Uint8Array(1).fill(2);
+      const swap = () => {
+        current = new Uint8Array(1).fill(9);
+        return new Uint8Array(2).fill(1);
+      };
+      const swapped = sum(current, swap(), 2);
+      if ([total, swapped].join() !== "${expected}") throw new Error("result " + [total, swapped].join());
+    `;
+
+    it("agrees with Node, reading an assigned name before the call that assigns it", async () => {
+      expect((await checkModel(getSource("39,23"))).failure).toBeUndefined();
+    });
+
+    it("rejects the value that the call assigns", async () => {
+      expect((await checkModel(getSource("39,93"))).failure?.message).toContain("result 39,23");
+    });
+  });
+
+  describe("calls the function that a const another module's function initializes", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/calling-alias.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const wrong = source.replace('"true,false"', '"true,true"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("results true,false");
+    });
+  });
+
+  describe("calls a bigint's method on a type parameter that typeof narrows", () => {
+    const getSource = (expected: string) => `
+      const show = <A>(self: A): string => {
+        switch (typeof self) {
+          case "bigint":
+            return self.toString(16);
+          case "number":
+            return "n" + self;
+          default:
+            return "other";
+        }
+      };
+      const result = [show(255n), show(3), show("x")].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ff,n3,other"))).failure).toBeUndefined();
+    });
+
+    it("rejects another radix", async () => {
+      await expect(checkModel(getSource("255,n3,other"))).rejects.toThrow("result ff,n3,other");
+    });
+  });
+
   describe("carries a time zone's table only into a script that reaches Temporal", () => {
     const getModule = (zone: string) =>
       printModule(

@@ -174,6 +174,7 @@ import {
   getClassStop,
   getValueDeclaration,
   getRunMembers,
+  getObjectFunction,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
 import { UNSETTLED_AWAIT_WARNING } from "../exit-codes";
@@ -2318,6 +2319,82 @@ const getUpdate = (expression: ts.BinaryExpression, path: Path, context: Context
 const getRootCall = (node: ts.Expression | undefined): ts.Expression | undefined =>
   node !== undefined && ts.isPropertyAccessExpression(node) ? getRootCall(node.expression) : node;
 
+// Runs a call that an argument makes before the call that takes it, with the objects that its own
+// expressions make, such as the typed array whose method it calls.
+const runArgumentCall = (
+  call: ts.CallExpression,
+  path: Path,
+  context: Context,
+  frame: Frame,
+  continueWith: (path: Path, value?: Expression) => Formula,
+): Formula =>
+  allocateAll(
+    getAllocated(call, context).filter((inner) => !path.scope.allocated.has(inner)),
+    path,
+    context,
+    (allocated) => translateCallStatement(call, allocated, context, frame, continueWith),
+  );
+
+// The node that a call's arguments evaluate next, after the literals, the functions, the reads of
+// names that nothing assigns, and what already ran, which evaluate the same before or after it: the
+// root call of an argument, or of a property's value or an element in an object or an array
+// literal that an argument makes, as those evaluate in order before the literal.
+const getNextArgument = (node: ts.CallExpression, path: Path, context: Context) => {
+  const results = path.scope.results;
+  const isSettled = (inner: ts.Expression) => {
+    const symbol = ts.isIdentifier(inner) ? getSymbol(inner, context.checker) : undefined;
+    const declaration = getValueDeclaration(symbol, context);
+    return (
+      isLiteralValue(inner) ||
+      ts.isFunctionExpression(inner) ||
+      ts.isArrowFunction(inner) ||
+      results.has(inner) ||
+      (symbol !== undefined &&
+        declaration !== undefined &&
+        !declaration.getSourceFile().isDeclarationFile &&
+        !isAssigned(symbol, declaration.getSourceFile(), context))
+    );
+  };
+  // The first node that a value evaluates which isn't settled, or undefined where it all is.
+  const visit = (value: ts.Expression): ts.Expression | undefined => {
+    const inner = skipCasts(value);
+    if (isSettled(inner)) return undefined;
+    const root = getRootCall(inner);
+    if (root !== undefined && root !== inner && results.has(root)) return undefined;
+    if (ts.isObjectLiteralExpression(inner)) {
+      for (const property of inner.properties) {
+        if (
+          ts.isSpreadAssignment(property) ||
+          (property.name !== undefined && ts.isComputedPropertyName(property.name))
+        ) {
+          return inner;
+        }
+        const next = ts.isPropertyAssignment(property)
+          ? visit(property.initializer)
+          : ts.isShorthandPropertyAssignment(property)
+            ? visit(property.name)
+            : undefined;
+        if (next !== undefined) return next;
+      }
+      return undefined;
+    }
+    if (ts.isArrayLiteralExpression(inner)) {
+      for (const element of inner.elements) {
+        if (ts.isSpreadElement(element)) return element;
+        const next = visit(element);
+        if (next !== undefined) return next;
+      }
+      return undefined;
+    }
+    return root;
+  };
+  for (const argument of node.arguments) {
+    const next = visit(argument);
+    if (next !== undefined) return next;
+  }
+  return undefined;
+};
+
 // The typed array constructors by their element types, through which a typed array's method makes a
 // typed array.
 const translateTypedConstructors = (site: ts.Node, context: Context) =>
@@ -2867,7 +2944,7 @@ const translateCallStatementBody = (
       ),
     );
   }
-  const first = getRootCall(expression.arguments.at(0));
+  const first = getNextArgument(expression, path, context);
   if (
     first !== undefined &&
     ts.isCallExpression(first) &&
@@ -2875,7 +2952,7 @@ const translateCallStatementBody = (
     !isGeneratorType(first, context) &&
     isStatementCall(first, path, context)
   ) {
-    return translateCallStatement(first, path, context, frame, (after, value) =>
+    return runArgumentCall(first, path, context, frame, (after, value) =>
       translateCallStatement(
         expression,
         {
@@ -14496,7 +14573,8 @@ const isHeapCall = (
       visited.add(callee);
       return isMaking(callee.body, visited);
     });
-  // A function that a namespace object holds is no method, so its call runs as a function's.
+  // A function that a namespace object holds is no method, so its call runs as a function's, as
+  // does one that a read-only object literal holds.
   const method = isMethodCall(node) ? getCalledMethod(node.expression, context)?.method : undefined;
   if (method !== undefined) {
     return method.body !== undefined && isMaking(method.body, new Set([method]));
@@ -14507,7 +14585,8 @@ const isHeapCall = (
       ts.isIdentifier(node.expression.expression) &&
       getNamespaceModule(node.expression.expression, context.checker) !== undefined &&
       isBindingRead(node.expression, context.checker)
-    )
+    ) &&
+    getObjectFunction(node.expression, context) === undefined
   ) {
     return false;
   }
@@ -16148,7 +16227,7 @@ const translateCheckedDeclarations = (
   const outer = initializer && getReadCall(initializer);
   const first =
     outer !== undefined && ts.isCallExpression(outer)
-      ? getRootCall(outer.arguments.at(0))
+      ? getNextArgument(outer, path, context)
       : undefined;
   if (
     outer !== undefined &&
@@ -16163,7 +16242,7 @@ const translateCheckedDeclarations = (
       getBuiltIn(outer.expression.expression, context) !== undefined) ||
       getEarlyReads([first], [outer.expression], path, context).length === 0)
   ) {
-    return translateCallStatement(first, path, context, frame, (after, value) =>
+    return runArgumentCall(first, path, context, frame, (after, value) =>
       translateDeclarations(
         declarations,
         {
