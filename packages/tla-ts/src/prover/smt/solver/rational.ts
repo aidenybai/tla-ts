@@ -95,6 +95,11 @@ export class Rational {
     return new Rational((sign * num) / divisor, (sign * den) / divisor);
   }
 
+  static fromDecimal(text: string) {
+    const [whole, fraction = ""] = text.split(".");
+    return Rational.of(BigInt(whole + fraction), 10n ** BigInt(fraction.length));
+  }
+
   static fromNumber(value: number) {
     return new Rational(BigInt(value), 1n);
   }

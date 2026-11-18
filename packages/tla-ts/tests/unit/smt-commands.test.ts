@@ -1579,6 +1579,62 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     expect(run(["(set-option :produce-models false)", ...lines])).toEqual(["sat", "(:rlimit 49)"]);
   });
 
+  it("reads the model parameter as produce-models, which the solver takes only when it is made", () => {
+    const lines = [
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(assert (= x (+ y 1)))",
+      "(assert (> (* 2 y) 7))",
+    ];
+    expect(
+      run([
+        "(set-option :model false)",
+        ...lines,
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-option :produce-models)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 152)",
+      '(error "line 8 column 10: model is not available")',
+      "false",
+    ]);
+    expect(
+      run([
+        ...lines,
+        "(set-option :model false)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 165)", '(error "line 8 column 10: model is not available")']);
+    expect(
+      run([
+        "(set-option :model false)",
+        "(set-option :produce-models true)",
+        "(get-option :produce-models)",
+        "(set-option :smt.random_seed 3)",
+        "(get-option :produce-models)",
+      ]),
+    ).toEqual(["true", "false"]);
+  });
+
+  it("reads the unsat_core parameter as produce-unsat-cores", () => {
+    expect(
+      run([
+        "(set-option :unsat_core true)",
+        "(get-option :produce-unsat-cores)",
+        "(declare-const p Bool)",
+        "(assert (! p :named a))",
+        "(assert (! (not p) :named b))",
+        "(check-sat)",
+        "(get-unsat-core)",
+      ]),
+    ).toEqual(["true", "unsat", "(a b)"]);
+  });
+
   it("charges each pivot of the simplex the cells it touches", () => {
     expect(
       run([
@@ -1720,6 +1776,45 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "unknown",
       "(objectives",
       " (x  (interval (/ 3339217363285192246361.0 2361183241434822606848.0) (/ 6678434726570484986977.0 4722366482869645213696.0)))",
+      ")",
+    ]);
+  });
+
+  it("gets the objectives of the last check-sat that optimized, and none before the first", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const x Int)",
+        "(get-objectives)",
+        "(assert-soft p)",
+        "(get-objectives  )",
+        "(check-sat)",
+        "(get-objectives)",
+        "(push)",
+        "(minimize x)",
+        "(get-objectives)",
+        "(reset-assertions)",
+        "(get-objectives)",
+        "(assert-soft p)",
+        "(get-objectives)",
+        "(check-sat)",
+        "(get-objectives)",
+      ]),
+    ).toEqual([
+      "(objectives",
+      ")",
+      '(error "line 5 column 17: check-sat has not been called with latest objectives")',
+      "sat",
+      "(objectives",
+      " ( 0)",
+      ")",
+      '(error "line 10 column 15: check-sat has not been called with latest objectives")',
+      "(objectives",
+      ")",
+      '(error "line 14 column 15: check-sat has not been called with latest objectives")',
+      "sat",
+      "(objectives",
+      " ( 0)",
       ")",
     ]);
   });
@@ -1999,5 +2094,35 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
         "(get-unsat-core)",
       ]),
     ).toEqual(["sat", "57", "unsat", "(s t v u)"]);
+  });
+
+  it("frees the terms of get-value after it prints them, in their order, as parse_get_value does", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_UFBV)",
+        "(declare-const v0 (_ BitVec 4))",
+        "(declare-const v1 (_ BitVec 8))",
+        "(declare-fun fb ((_ BitVec 4)) (_ BitVec 4))",
+        "(assert (=> (bvule (concat (_ bv2 3) #b1) v0) (bvsge ((_ repeat 1) v0) (bvneg v0))))",
+        "(check-sat)",
+        "(get-value ( (bvadd v1 #x11) (bvadd v1 #x10)))",
+        "(check-sat-using smt)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(((bvadd v1 #x11) #x11)",
+      " ((bvadd v1 #x10) #x10))",
+      "sat",
+      "(",
+      "  (define-fun v0 () (_ BitVec 4)",
+      "    #x1)",
+      "  (define-fun v1 () (_ BitVec 8)",
+      "    #x00)",
+      "  (define-fun fb ((x!0 (_ BitVec 4))) (_ BitVec 4)",
+      "    #x0)",
+      ")",
+    ]);
   });
 });

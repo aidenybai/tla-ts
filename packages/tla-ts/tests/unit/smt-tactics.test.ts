@@ -1666,17 +1666,18 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ).toEqual(["unsat", "(:rlimit 4414)", "unsat", "(:rlimit 7199)"]);
   });
 
-  it("rejects the other options of lp, and a hammer period that is not an unsigned numeral", () => {
+  it("rejects the other options of lp, and a hammer period that is not a numeral", () => {
     const lines = ["(declare-const x Int)", "(assert (>= (* 3 x) 101))", "(check-sat)"];
     expect(() => run(["(set-option :lp.random_hammers false)", ...lines])).toThrow(
       new SmtUnsupportedError("the option :lp.random_hammers"),
     );
-    expect(() => run(["(set-option :lp.int_hammer_period foo)", ...lines])).toThrow(
+    expect(() => run(["(set-option :lp.int_hammer_period 2.0)", ...lines])).toThrow(
       new SmtUnsupportedError("the option :lp.int_hammer_period"),
     );
-    expect(() => run(["(set-option :lp.int_hammer_period 4294967296)", ...lines])).toThrow(
-      new SmtUnsupportedError("the option :lp.int_hammer_period"),
-    );
+    expect(run(["(set-option :lp.int_hammer_period 4294967296)", ...lines])).toEqual([
+      "(error \"line 1 column 35: invalid value '4294967296' for unsigned int parameter 'int_hammer_period'\")",
+      "sat",
+    ]);
   });
 
   it("runs the smt tactics of qflia that skip cuts without auto_config", () => {
@@ -2578,5 +2579,56 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["(:rlimit 0)", "sat", "sat", "(:rlimit 610)"]);
+  });
+
+  it("frees the model of the last check before the next check starts, as cmd_context does", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const v0 (_ BitVec 8))",
+        "(declare-const v1 (_ BitVec 8))",
+        "(declare-const p0 Bool)",
+        "(assert (bvsge v1 (bvor v0 v0)))",
+        "(assert (=> (not p0) (bvule (bvxor (bvlshr v1 (_ bv160 8)) (bvsub (_ bv157 8) v1)) v0)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1412)", "sat", "(:rlimit 2838)"]);
+  });
+
+  it("keeps the formulas of the goal of an unknown check until the next one, as tactic2solver does", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then simplify tseitin-cnf)")',
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(assert (or (and a b) (and (not a) c) (and b (not c))))",
+        "(check-sat)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or (and p q) (and (not p) r) (and q (not r))))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "unknown",
+      [
+        "(goals",
+        "(goal",
+        "  (or b (not a) (not c))",
+        "  (or b (not a))",
+        "  (or a b c)",
+        "  (or b c)",
+        "  (or q (not p) (not r))",
+        "  (or q (not p))",
+        "  (or p q r)",
+        "  (or q r)",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
   });
 });

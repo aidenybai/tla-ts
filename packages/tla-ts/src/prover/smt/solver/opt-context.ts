@@ -143,6 +143,7 @@ export class OptContext {
   private hiddenDecls: number[] = [];
   private optSolver: OptSolver | null = null;
   private satSolver: IncSatSolver | null = null;
+  private satModels: ProtoModel[] = [];
   private optsmt: Optsmt | null = null;
   private rawModel: ProtoModel | null = null;
   private fixedModels = new Map<ProtoModel, ProtoModel>();
@@ -258,7 +259,8 @@ export class OptContext {
     const solver: MaxsatSolver = {
       assertExpr: (expr) => getSolver().assertExpr(expr),
       checkSat: (assumptions) => getSolver().check(assumptions),
-      getModel: () => getSolver().getModel(),
+      getModel: () =>
+        this.satSolver === null ? optSolver.getModel() : this.getSatModel(this.satSolver),
       getUnsatCore: () => getSolver().getUnsatCore(),
       getNumAssertions: () => getSolver().getAssertions().length,
       findMutexes: (vars) => ({ status: L_TRUE, mutexes: getSolver().findMutexes(vars) }),
@@ -355,7 +357,12 @@ export class OptContext {
     const checkSolver = this.satSolver ?? solver;
     for (const form of hard) checkSolver.assertExpr(form);
     const checked = checkSolver.check();
-    this.rawModel = checked === L_FALSE ? null : checkSolver.getModel();
+    this.rawModel =
+      checked === L_FALSE
+        ? null
+        : this.satSolver === null
+          ? solver.getModel()
+          : this.getSatModel(this.satSolver);
     const status = checked !== L_FALSE && this.rawModel === null ? L_UNDEF : checked;
     if (status !== L_TRUE) {
       this.setModel(this.rawModel);
@@ -795,7 +802,15 @@ export class OptContext {
     this.normalized = [];
     this.optSolver?.release();
     this.optSolver = null;
+    for (const model of this.satModels) model.decRef();
+    this.satModels = [];
     this.satSolver?.release();
     this.satSolver = null;
+  }
+
+  private getSatModel(solver: IncSatSolver) {
+    const model = solver.getModel();
+    if (model !== null) this.satModels.push(model);
+    return model;
   }
 }
