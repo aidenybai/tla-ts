@@ -47,6 +47,7 @@ interface Binding {
   goal?: Goal;
   // The definition's own range, when SANY locates its binding elsewhere, as at a LOCAL INSTANCE.
   source?: SourceRange;
+  nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
 }
 
 export interface ModuleSymbol extends Binding {
@@ -67,7 +68,6 @@ interface LocalName extends Binding {
   isSelf?: boolean;
   parent: LocalName | undefined;
   isPending?: boolean;
-  nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
 }
 
 interface ModuleBinding extends Binding {
@@ -241,7 +241,9 @@ const isBindable = (name: string, current: Binding | undefined, added: Binding, 
   } else if (
     added.kind === "Parameter" ||
     current.kind !== added.kind ||
-    current.arity !== added.arity
+    current.arity !== added.arity ||
+    // SANY's DEFINE, USE, HIDE and INSTANCE steps are a kind of their own.
+    (current.nonFactStep === undefined) !== (added.nonFactStep === undefined)
   ) {
     unit.errors.push({
       location,
@@ -2237,43 +2239,54 @@ const resolveStep = (
       ? unit
       : { ...unit, hasLabelScope: true, labelParams: [], labels: new Set<string>() };
   const goal = getStepGoal(body, step.location);
-  const bindStep = (parent: LocalName | undefined): LocalName | undefined =>
-    step.name === undefined ? parent : { name: step.name, arity: 0, kind: "Theorem", parent, goal };
-  const bindNonFactStep = (
-    parent: LocalName | undefined,
-    nonFactStep: LocalName["nonFactStep"],
-  ): LocalName | undefined =>
+  const start = step.head.start;
+  // SANY binds a step's name after its body and before its proof, and keeps an earlier binding of
+  // the name. It locates the name at the step number, or at a non-fact step's whole step.
+  const bindStep = (parent: LocalName | undefined, stepGoal = goal) =>
     step.name === undefined
       ? parent
-      : { name: step.name, arity: 0, kind: "Theorem", parent, nonFactStep };
+      : bindName(
+          parent,
+          step.name,
+          {
+            kind: "Theorem",
+            arity: 0,
+            range: {
+              ...step.head,
+              end: { ...start, column: start.column + step.token.length - 1 },
+            },
+            goal: stepGoal,
+          },
+          unit,
+        );
+  const bindNonFactStep = (parent: LocalName | undefined, nonFactStep: Binding["nonFactStep"]) =>
+    step.name === undefined
+      ? parent
+      : bindName(
+          parent,
+          step.name,
+          { kind: "Theorem", arity: 0, range: step.head, nonFactStep },
+          unit,
+        );
+  // The step's one binding, moved onto the scope its proof or the next step sees.
+  const moveStep = (
+    named: LocalName | undefined,
+    from: LocalName | undefined,
+    parent: LocalName | undefined,
+  ) => (named && named !== from ? { ...named, parent } : parent);
   switch (body.kind) {
     case "Assert": {
       const assumed = resolveStatement(body.statement, scope, stepUnit);
-      const proofScope = body.isSuffices ? scope : assumed;
-      const name = step.name;
-      if (name === undefined) {
-        resolveProof(step.proof, proofScope, unit);
-        return body.isSuffices ? assumed : scope;
-      }
       const assertion = {
         statement: body.statement,
         isSuffices: body.isSuffices,
         isInProof: true,
         keyword: body.isSuffices && body.statement.kind !== "AssumeProve" ? "SUFFICES" : undefined,
       };
-      resolveProof(
-        step.proof,
-        { name, arity: 0, kind: "Theorem", parent: proofScope, goal: assertion },
-        unit,
-      );
+      const named = bindStep(scope, assertion);
+      resolveProof(step.proof, moveStep(named, scope, body.isSuffices ? scope : assumed), unit);
       assertion.isInProof = false;
-      return {
-        name,
-        arity: 0,
-        kind: "Theorem",
-        parent: body.isSuffices ? assumed : scope,
-        goal: assertion,
-      };
+      return moveStep(named, scope, body.isSuffices ? assumed : scope);
     }
     case "Use":
     case "Hide":
@@ -2293,10 +2306,12 @@ const resolveStep = (
         body.kind,
       );
     case "Have":
-    case "Case":
+    case "Case": {
       resolveExpression(body.expression, scope, stepUnit);
-      resolveProof(step.proof, bindStep(scope), unit);
-      return bindStep(scope);
+      const named = bindStep(scope);
+      resolveProof(step.proof, named, unit);
+      return named;
+    }
     case "Witness":
       body.expressions.forEach((expression) => resolveExpression(expression, scope, stepUnit));
       return bindStep(scope);
@@ -2320,12 +2335,15 @@ const resolveStep = (
         ...stepUnit,
         labelParams: [...stepUnit.labelParams, ...getBoundNames(body.bounds), ...body.names],
       });
-      resolveProof(step.proof, bindStep(scope), unit);
-      return bindStep(picked);
+      const named = bindStep(scope);
+      resolveProof(step.proof, named, unit);
+      return moveStep(named, scope, picked);
     }
-    default:
-      resolveProof(step.proof, bindStep(scope), unit);
-      return bindStep(scope);
+    default: {
+      const named = bindStep(scope);
+      resolveProof(step.proof, named, unit);
+      return named;
+    }
   }
 };
 

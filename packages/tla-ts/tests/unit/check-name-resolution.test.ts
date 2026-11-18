@@ -2882,6 +2882,75 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "an assertion numbered like an earlier USE step, which keeps the number",
+      "Op == 1\nTHEOREM TRUE\n<1>3. USE DEF Op\n<1>3. TRUE\n  <2>1. <1>3\n  <2> QED\n<1> QED",
+      [
+        {
+          location: "line 5, col 1 to line 5, col 5 of module M",
+          message:
+            "Multiply-defined symbol '<1>3': this definition or declaration conflicts \nwith the one at line 4, col 1 to line 4, col 16 of module M.",
+        },
+        {
+          location: "line 6, col 9 to line 6, col 12 of module M",
+          message: "Step number of non-expression step used as an expression.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a DEFINE step numbered like an earlier assertion, which keeps the number",
+      "THEOREM TRUE\n<1>3. TRUE\n<1>3. DEFINE D == 1\n<1>4. TRUE\n  BY DEF <1>3\n<1> QED",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 19 of module M",
+          message:
+            "Multiply-defined symbol '<1>3': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 5 of module M.",
+        },
+        {
+          location: "line 6, col 10 to line 6, col 13 of module M",
+          message: "DEF clause entry should describe a defined operator.",
+        },
+        { location: "line 6, col 3 to line 6, col 13 of module M", message: "Empty BY" },
+      ],
+      [],
+    ],
+    [
+      "a DEFINE step numbered like an earlier PICK step",
+      "THEOREM TRUE\n<1>3. PICK y \\in {1} : TRUE\n  OBVIOUS\n<1>3. DEFINE D == y\n<1> QED",
+      [
+        {
+          location: "line 5, col 1 to line 5, col 19 of module M",
+          message:
+            "Multiply-defined symbol '<1>3': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 5 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a HIDE step numbered like an earlier SUFFICES step, after the errors in its body",
+      "THEOREM TRUE\n<1>3. SUFFICES ASSUME NEW c PROVE TRUE\n  OBVIOUS\n<1>3. HIDE DEF Init\n<1> QED",
+      [
+        {
+          location: "line 5, col 16 to line 5, col 19 of module M",
+          message: "Unknown operator: `Init'.",
+        },
+        {
+          location: "line 5, col 16 to line 5, col 19 of module M",
+          message: "DEF clause entry should describe a defined operator.",
+        },
+        {
+          location: "line 5, col 7 to line 5, col 19 of module M",
+          message: "Empty USE or HIDE statement.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 19 of module M",
+          message:
+            "Multiply-defined symbol '<1>3': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 5 of module M.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
@@ -2916,6 +2985,11 @@ describe("name resolution matches SANY", () => {
       "two NEW symbols with one name",
       "THEOREM ASSUME NEW a, NEW a PROVE TRUE",
       "*** Warnings: 1\n\nline 2, col 27 to line 2, col 27 of module M\n\nMultiple declarations or definitions for symbol a.  \nThis duplicates the one at line 2, col 20 to line 2, col 20 of module M.\n\n\n",
+    ],
+    [
+      "two assertions with one step number",
+      "THEOREM TRUE\n<1>3. TRUE\n<1>3. CASE TRUE\n<1> QED",
+      "*** Warnings: 1\n\nline 4, col 1 to line 4, col 5 of module M\n\nMultiple declarations or definitions for symbol <1>3.  \nThis duplicates the one at line 3, col 1 to line 3, col 5 of module M.\n\n\n",
     ],
     [
       "a variable and a constant of two extended modules",
