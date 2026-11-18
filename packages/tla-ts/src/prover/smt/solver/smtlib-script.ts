@@ -407,6 +407,8 @@ interface ScriptState {
   satSolver: IncSatSolver | undefined;
   fdSolver: FdSolver | undefined;
   tacticConverters: Goal["converters"];
+  // tactic2solver's model, which it frees at its next check, assert, push or pop.
+  tacticModel: ProtoModel | undefined;
 }
 
 // Z3 fixes the proof mode at the first command that needs terms.
@@ -478,6 +480,7 @@ export const runSmtlibScript = (
       satSolver: undefined,
       fdSolver: undefined,
       tacticConverters: [],
+      tacticModel: undefined,
     };
   };
   let state = createState();
@@ -541,7 +544,6 @@ export const runSmtlibScript = (
       objectives,
     );
     const optimizer = state.optimizer;
-    clearCheck();
     state.manager.limit.push(settings.rlimit);
     try {
       const hasAssumptions = extra.length > 0 || hasNames();
@@ -597,6 +599,7 @@ export const runSmtlibScript = (
   };
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
   const solveWithStrategy = () => {
+    releaseTacticModel();
     const goal = getGoal();
     try {
       const strategy =
@@ -608,6 +611,8 @@ export const runSmtlibScript = (
       state.tacticConverters = goal.converters;
       goal.converters = [];
       goal.reset();
+      checked.model?.incRef();
+      state.tacticModel = checked.model;
       return {
         result: checked.status,
         context: undefined,
@@ -670,7 +675,9 @@ export const runSmtlibScript = (
       reasonUnknown: fdSolver.reasonUnknown,
     };
   };
+  // cmd_context::check_sat drops the result of the last check before it starts.
   const checkSat = (extra: number[], end: SmtToken) => {
+    clearCheck();
     const deadline = Date.now() + options.timeLimitMs;
     state.manager.limit.restart(deadline);
     // opt::context::optimize answers as the search of the hard constraints does: once they are
@@ -767,6 +774,10 @@ export const runSmtlibScript = (
     state.check?.model?.decRef();
     state.check = undefined;
   };
+  const releaseTacticModel = () => {
+    state.tacticModel?.decRef();
+    state.tacticModel = undefined;
+  };
   // cmd_context::validate_check_sat_result runs after the answer is printed.
   const validateCheck = (end: SmtToken) => {
     const status = state.check?.status ?? L_UNDEF;
@@ -805,6 +816,7 @@ export const runSmtlibScript = (
     state.satSolver?.release();
     decConverterRefs(state.manager, state.tacticConverters);
     state.tacticConverters = [];
+    releaseTacticModel();
     state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
     state.satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
@@ -1181,6 +1193,7 @@ export const runSmtlibScript = (
           state.manager.decRef(assertion.formula);
           throw new SmtParseError(logicError, follower);
         }
+        clearCheck();
         state.assertions.push(assertion.formula);
         state.assertionTexts.push(
           text.slice(term.offset, (term.kind === "list" ? term.end : term).endOffset).trim(),
@@ -1198,8 +1211,8 @@ export const runSmtlibScript = (
           manager.incRef(answer);
           state.names.push(answer);
         }
+        releaseTacticModel();
         assertInKernel(assertion.formula, state.names[state.names.length - 1]);
-        clearCheck();
         if (follower !== list.end)
           throw new SmtParseError("invalid assert command, ')' expected", follower);
       },
@@ -1448,6 +1461,7 @@ export const runSmtlibScript = (
           const limit = state.manager.limit;
           limit.push(settings.rlimit);
           try {
+            releaseTacticModel();
             state.kernel?.push();
             useSatSolver((solver) => solver.push());
             state.fdSolver?.push();
@@ -1476,6 +1490,7 @@ export const runSmtlibScript = (
         if (count > 0) {
           state.isIncremental = true;
           const scope = state.scopes[state.scopes.length - count];
+          releaseTacticModel();
           state.kernel?.pop(count);
           useSatSolver((solver) => solver.pop(count));
           state.fdSolver?.pop(count);

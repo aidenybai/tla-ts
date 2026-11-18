@@ -2579,4 +2579,21 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ]),
     ).toEqual(["(:rlimit 0)", "sat", "sat", "(:rlimit 610)"]);
   });
+
+  it("frees the model of the last check before the next check starts, as cmd_context does", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const v0 (_ BitVec 8))",
+        "(declare-const v1 (_ BitVec 8))",
+        "(declare-const p0 Bool)",
+        "(assert (bvsge v1 (bvor v0 v0)))",
+        "(assert (=> (not p0) (bvule (bvxor (bvlshr v1 (_ bv160 8)) (bvsub (_ bv157 8) v1)) v0)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1412)", "sat", "(:rlimit 2838)"]);
+  });
 });
