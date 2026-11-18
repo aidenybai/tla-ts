@@ -7,6 +7,7 @@ import {
   FAMILY_FPA,
   FAMILY_MODEL_VALUE,
 } from "../ast";
+import { getHammerPeriod } from "../lp/lp-settings";
 import { ArithSolver } from "./arith-solver";
 import { ArraySolver } from "./array-solver";
 import { BvSolver } from "./bv-solver";
@@ -20,11 +21,11 @@ import type { ThSolver } from "./th-solver";
 // values have none. A goal that needs a theory the port lacks goes back to the smt kernel. The
 // arithmetic solver reads lp.int_hammer_period, as arith::solver does through lp_settings.
 export const mkThSolver =
-  (hammerPeriod: number) =>
+  (parameters: ReadonlyMap<string, string>) =>
   (ctx: EufSolver, family: number): ThSolver | null => {
     if (family === -1) return new QSolver(ctx);
     if (family === FAMILY_MODEL_VALUE) return null;
-    if (family === FAMILY_ARITH) return new ArithSolver(ctx, family, hammerPeriod);
+    if (family === FAMILY_ARITH) return new ArithSolver(ctx, family, getHammerPeriod(parameters));
     if (family === FAMILY_ARRAY) return new ArraySolver(ctx, family);
     if (family === FAMILY_BV) return new BvSolver(ctx, family);
     if (family === FAMILY_DATATYPE) return new DtSolver(ctx, family);

@@ -64,6 +64,7 @@ import { SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
 import { mkThSolver } from "./euf/th-solvers";
+import { getHammerPeriod } from "./lp/lp-settings";
 import { isAstLess } from "./ast-lt";
 import { InvVarShifter } from "./rewriter-tpl";
 import { elimUnusedVars, getFreeVarSorts, VarSubst } from "./var-subst";
@@ -80,7 +81,6 @@ import {
   compileInternalTactic,
   compileTactic,
   getRewriterOptions,
-  getHammerPeriod,
   getSatParams,
   getSmtTacticFailure,
   type TacticParam,
@@ -813,7 +813,7 @@ export const runSmtlibScript = (
             state.manager,
             getSatParams(parameters),
             true,
-            isEuf ? mkThSolver(getHammerPeriod(parameters)) : null,
+            isEuf ? mkThSolver(parameters) : null,
           )
         : undefined;
     state.fdSolver?.release();

@@ -1654,6 +1654,16 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
       "unsat",
       "(:rlimit 14390)",
     ]);
+    expect(
+      run([
+        "(set-option :sat.euf true)",
+        ...lines,
+        "(set-option :lp.int_hammer_period 1)",
+        "(assert (> x0 -41))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 4414)", "unsat", "(:rlimit 7199)"]);
   });
 
   it("rejects the other options of lp, and a hammer period that is not a numeral", () => {

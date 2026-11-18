@@ -36,7 +36,7 @@ import { runBv1Blast } from "./bv1-blast";
 import { runReduceBvSize } from "./reduce-bv-size";
 import { createSatTactic } from "./sat/sat-tactic";
 import { mkThSolver } from "./euf/th-solvers";
-import { DEFAULT_HAMMER_PERIOD } from "./lp/lp-settings";
+import { getHammerPeriod } from "./lp/lp-settings";
 import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
 import { runElimTermIte } from "./elim-term-ite-tactic";
@@ -356,10 +356,6 @@ export const getSatParams = (parameters: ReadonlyMap<string, string>) =>
       }),
   );
 
-// lp_params_helper reads lp.int_hammer_period from the lp module's global parameters.
-export const getHammerPeriod = (parameters: ReadonlyMap<string, string>) =>
-  Number(parameters.get("lp.int_hammer_period") ?? DEFAULT_HAMMER_PERIOD);
-
 export const getSmtTacticFailure = (context: Context) =>
   context.checkCanceled()
     ? "canceled"
@@ -376,7 +372,7 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
     return createSatTactic(
       manager,
       getSatParams(environment.parameters),
-      mkThSolver(getHammerPeriod(environment.parameters)),
+      mkThSolver(environment.parameters),
     )(goal);
   const kernelParams = getKernelParams(environment, params, goal);
   const extracted = extractClauses(manager, goal);

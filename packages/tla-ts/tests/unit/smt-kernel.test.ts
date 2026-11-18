@@ -6,7 +6,6 @@ import { Context } from "../../src/prover/smt/solver/context";
 import { Enode, NO_ENODES } from "../../src/prover/smt/solver/enode";
 import { DtSolver } from "../../src/prover/smt/solver/euf/dt-solver";
 import { mkThSolver } from "../../src/prover/smt/solver/euf/th-solvers";
-import { DEFAULT_HAMMER_PERIOD } from "../../src/prover/smt/solver/lp/lp-settings";
 import { NULL_LITERAL } from "../../src/prover/smt/solver/sat/clause";
 import { ResourceLimit } from "../../src/prover/smt/solver/rlimit";
 import { Goal2Sat } from "../../src/prover/smt/solver/sat/goal2sat";
@@ -106,7 +105,7 @@ describe("a theory explanation of sat.euf", () => {
   it("explains each equality from the node with the smaller id, as th_explain stores it", () => {
     const manager = new AstManager(new ResourceLimit(Infinity));
     const sat = new Solver(new Map(), manager.limit);
-    const euf = new Goal2Sat(manager, sat, false, mkThSolver(DEFAULT_HAMMER_PERIOD)).ensureEuf();
+    const euf = new Goal2Sat(manager, sat, false, mkThSolver(new Map())).ensureEuf();
     const sort = manager.mkUninterpretedSort("U", []);
     const nodes = [0, 1, 2, 3].map(() => euf.egraph.mk(manager.mkFreshConst(null, sort), 0, []));
     const firstLit = 2 * sat.mkVar(true);

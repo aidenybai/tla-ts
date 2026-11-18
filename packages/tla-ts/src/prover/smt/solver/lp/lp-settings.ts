@@ -28,6 +28,9 @@ export interface LpStats {
 
 export const DEFAULT_HAMMER_PERIOD = 4;
 
+export const getHammerPeriod = (parameters: ReadonlyMap<string, string>) =>
+  Number(parameters.get("lp.int_hammer_period") ?? DEFAULT_HAMMER_PERIOD);
+
 export class LpSettings {
   private random = new RandomGen(0);
   readonly stats: LpStats = {
