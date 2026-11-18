@@ -1726,11 +1726,17 @@ const runRepeat = (tactic: Tactic, maxDepth: number) => {
   const run = (depth: number, goal: Goal): Goal[] => {
     if (depth > maxDepth) return [goal];
     const original = goal.copy();
-    const goals = tactic(goal);
-    const isEqual = goals.length === 1 && isEqualGoal(original, goals[0]);
-    original.reset();
-    original.releaseConverters();
-    if (isEqual) return goals;
+    const step = (() => {
+      try {
+        const results = tactic(goal);
+        return { results, isEqual: results.length === 1 && isEqualGoal(original, results[0]) };
+      } finally {
+        original.reset();
+        original.releaseConverters();
+      }
+    })();
+    const goals = step.results;
+    if (step.isEqual) return goals;
     if (goals.length === 1) return goals[0].isDecided() ? goals : run(depth + 1, goals[0]);
     const results: Goal[] = [];
     const unsatGoals: Goal[] = [];

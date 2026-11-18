@@ -2502,6 +2502,34 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
     ]);
   });
 
+  it("frees the goal that repeat copies when its tactic fails", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const v0 (_ BitVec 2))",
+        "(declare-const v1 (_ BitVec 2))",
+        "(assert (bvult (bvmul v0 v1) #b10))",
+        "(assert (bvuge (bvadd v1 #b01) v0))",
+        "(apply (then bit-blast (or-else (repeat fail) skip)) :print false)",
+        "(apply (then simplify bit-blast))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (let ((a!1 (ite k!4",
+        "                  (ite k!5 (not (= k!7 k!6)) k!7)",
+        "                  (not (or (not k!5) (not k!6))))))",
+        "    (not a!1))",
+        "  (let ((a!1 (or k!5 (not (or (not k!4) (not k!6)))))",
+        "        (a!2 (or (not (or (not k!4) (not k!6))) (= k!7 k!6))))",
+        "    (or (not (or k!5 (= k!7 k!6))) (not a!1) (not a!2)))",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("frees the atoms of the sat tactic, so a second check of QF_BV does Z3's work", () => {
     expect(
       run([
