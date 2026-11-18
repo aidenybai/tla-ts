@@ -563,6 +563,10 @@ const selectSubexpression = (
   }
   if (isFailed) return reference;
   if (!current) throw createError("Subexpression selection failed", location);
+  if (current.kind === "Lambda" && !isOperator) {
+    report(location.range, "Selected operator argument when expression expected.");
+    return reference;
+  }
   const params = selection.params.length;
   const args = selection.args.length;
   if (params !== args) {

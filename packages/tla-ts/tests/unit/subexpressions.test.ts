@@ -581,6 +581,18 @@ describe("subexpression references into theorems match SANY", () => {
       ],
     ],
     [
+      "a selected LAMBDA where an expression is expected",
+      "F(G(_)) == G(0)\nOp == F(LAMBDA z : z = 1)\nOp2(a) == F(LAMBDA z : z = a)\nQ == Op!1\nR == {Op!1, Op2(1)!1}",
+      [
+        ["line 6, col 6 to line 6, col 9", "Selected operator argument when expression expected."],
+        ["line 7, col 7 to line 7, col 10", "Selected operator argument when expression expected."],
+        [
+          "line 7, col 13 to line 7, col 20",
+          "Selected operator argument when expression expected.",
+        ],
+      ],
+    ],
+    [
       "@ and !(...) selectors of steps and theorems",
       "THEOREM T == ASSUME NEW n PROVE n = n\nTHEOREM U == \\A y \\in {1} : y = 1\nTHEOREM TRUE\n<1>1. SUFFICES TRUE\n<1>2. TRUE # 0\n  <2>1. <1>1!@ /\\ <1>2!@ /\\ <1>2!(1) /\\ T!@ /\\ T!2!@ /\\ U!@ /\\ U!(1)\n  <2>2. QED\n<1>3. QED",
       [
