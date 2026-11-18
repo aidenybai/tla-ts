@@ -796,4 +796,52 @@ describe("level checking matches SANY", () => {
       }),
     );
   });
+
+  const checkLetInstance = (inner: string, definitions: string) =>
+    check({
+      source: `---- MODULE M ----\nVARIABLE x\nF(b) == b'\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Inner" ? `---- MODULE Inner ----\n${inner}\n====` : undefined,
+    });
+
+  it.each([
+    [
+      "CONSTANT C(_), k\nASSUME C(k)",
+      "D(Op(_), a) == LET I == INSTANCE Inner WITH C <- Op, k <- a IN TRUE\nE == D(F, x')",
+      13,
+    ],
+    [
+      "CONSTANT C(_), k\nX == C(k)",
+      "D(C(_), k) == LET I == INSTANCE Inner IN TRUE\nE == D(F, x')",
+      13,
+    ],
+    [
+      "CONSTANT C(_, _), k, j\nASSUME C(k, j)",
+      "G(p, q) == p' /\\ q\nD(Op(_, _), a, b) == LET I == INSTANCE Inner WITH C <- Op, k <- a, j <- b IN TRUE\nE == D(G, x', x)",
+      16,
+    ],
+  ])(
+    "rejects an argument above the level a LET instance of %j allows in %j, like SANY",
+    async (inner, definitions, end) => {
+      const line = definitions.split("\n").length + 3;
+      await expect(checkLetInstance(inner, definitions)).rejects.toThrow(
+        createSanyError([
+          {
+            location: `line ${line}, col 6 to line ${line}, col ${end} of module M`,
+            message:
+              "Level error in applying operator D:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+          },
+        ]),
+      );
+    },
+  );
+
+  it.each([
+    "D(Op(_), a) == LET I == INSTANCE Inner WITH C <- Op, k <- a IN TRUE\nE == D(F, x)",
+    "D(Op(_), a) == LET I(p) == INSTANCE Inner WITH C <- Op, k <- p IN TRUE\nE == D(F, x')",
+  ])("accepts %j, like SANY", async (definitions) => {
+    const result = await checkLetInstance("CONSTANT C(_), k\nX == C(k)", definitions);
+    expect(result.status).toBe("success");
+  });
 });

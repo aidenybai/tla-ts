@@ -59,8 +59,10 @@ export interface InstancedDefinition {
   isConstant: boolean;
 }
 
-export interface LetInstance {
+// The substitutions are by declaration key, with a declaration's own name where the instance implies it.
+export interface LetInstance extends InstanceSubstitutes {
   copies: Map<string, InstanceCopy>;
+  getArgParams: () => Set<string>;
   check: () => SanyError[];
 }
 
@@ -871,6 +873,31 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const letCopies = new WeakMap<Definition, InstanceCopy>();
 
+  // SANY's InstanceNode maps the instanced module's argument level params through the substitutes
+  // (Subst.getSubALPSet), keeping only those whose operator becomes a parameter.
+  const getInstanceArgParams = (instance: LetInstance, scope: Scope) => {
+    const operands = getSubstitutes(instance, scope);
+    const getParams = (param: string) => operands.get(param)?.data.params ?? [param];
+    return [
+      ...[...instance.getArgParams()].flatMap((key) => {
+        const parameter = parseArgumentParamKey(key);
+        const operator = operands.get(parameter.operator);
+        if (!operator) return [key];
+        return operator.kind === "Declared"
+          ? [...getParams(parameter.param)].map((param) =>
+              getArgumentParamKey(operator.declared.name, parameter.index, param),
+            )
+          : [];
+      }),
+      ...[...operands.values()].flatMap((operand) => [...operand.data.argParams]),
+    ].filter((key) => {
+      const parameter = parseArgumentParamKey(key);
+      return instance.params.every(
+        (param) => param.name !== parameter.operator && param.name !== parameter.param,
+      );
+    });
+  };
+
   const analyzeLet = (expression: LetExpression, scope: Scope) => {
     const instances = expression.instances?.flatMap(
       (instance) => context.instances.getLetInstance(instance) ?? [],
@@ -902,7 +929,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       params: new Set(body.params),
       constraints: new Map(body.constraints),
       argConstraints: new Map(body.argConstraints),
-      argParams: new Set(body.argParams),
+      argParams: new Set([
+        ...body.argParams,
+        ...(instances?.flatMap((instance) => getInstanceArgParams(instance, inner)) ?? []),
+      ]),
     };
     definitions.forEach((levels) => mergeConstraints(data, levels));
     return data;

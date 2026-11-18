@@ -255,5 +255,9 @@ export const createInstanceChecker = (
     return [...errors.values()];
   };
 
-  return { checkInstance, instances };
+  return {
+    checkInstance,
+    instances,
+    getArgParams: (name: string) => getModuleLevels(name).argParams,
+  };
 };

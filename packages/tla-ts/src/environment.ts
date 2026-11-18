@@ -939,6 +939,11 @@ export const createEnvironment = (
     if (instance.location.range) {
       letInstances.set(formatRange(instance.location.range), {
         copies: localCopies,
+        params: instance.params,
+        substitutions: new Map(
+          declarations.map((declaration) => [declaration.key, getReplacement(declaration)]),
+        ),
+        getArgParams: () => instanceLevels.getArgParams(instance.module),
         check: () => instanceLevels.checkInstance(instanceCheck),
       });
     }
