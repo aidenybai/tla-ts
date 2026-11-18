@@ -1137,20 +1137,6 @@ export class AstManager {
     return expr;
   }
 
-  mkSort(name: SmtSymbol) {
-    const sort = this.addSort(
-      getSymbolName(name),
-      FAMILY_USER,
-      [],
-      combineHash(
-        getSymbolHash(name),
-        getInfoHash(Z3_USER_SORT_FAMILY, this.getUserSortKind(name), []),
-      ),
-    );
-    this.mkSmallId();
-    return sort;
-  }
-
   mkBvSort(width: number) {
     const existing = this.bvSorts.get(width);
     if (existing !== undefined) return existing;

@@ -3377,13 +3377,11 @@ export const createSmtlibReader = (
           "invalid sort declaration, arity (<numeral>) or ')' expected",
           arity,
         );
-      declare(
-        sortDecls,
-        symbol.text,
-        arity === undefined || arity.text === "0"
-          ? { kind: "sort", sort: manager.mkSort(symbol.text) }
-          : { kind: "user", name: symbol.text, arity: Number(arity.text) },
-      );
+      declare(sortDecls, symbol.text, {
+        kind: "user",
+        name: symbol.text,
+        arity: arity === undefined ? 0 : Number(arity.text),
+      });
       expectEnd(list.items[3], "invalid sort declaration, ')' expected");
       return;
     }

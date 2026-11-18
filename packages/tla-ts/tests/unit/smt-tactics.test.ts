@@ -2362,6 +2362,37 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
       getExpected("k1", "d5"),
     );
   });
+
+  it("makes a declared sort at its first use, as psort_user_decl does", () => {
+    const getModel = (before: string[], between: string[]) =>
+      run([
+        "(set-logic QF_FD)",
+        "(declare-sort U 0)",
+        ...before,
+        "(declare-datatypes ((C 0)) (((k0) (k1) (k2) (k3) (k4) (k5) (k6))))",
+        ...between,
+        "(declare-datatypes ((D 0)) (((d0) (d1) (d2) (d3) (d4) (d5) (d6) (d7) (d8))))",
+        "(declare-const e0 C)",
+        "(declare-const e1 D)",
+        "(check-sat)",
+        "(get-model)",
+      ]);
+    const getExpected = (first: string, second: string, isUsed: boolean) => [
+      "sat",
+      [
+        "(",
+        ...(isUsed ? ["  (define-fun u () U", "    U!val!0)"] : []),
+        "  (define-fun e0 () C",
+        `    ${first})`,
+        "  (define-fun e1 () D",
+        `    ${second})`,
+        ")",
+      ].join("\n"),
+    ];
+    expect(getModel([], [])).toEqual(getExpected("k5", "d2", false));
+    expect(getModel(["(declare-const u U)"], [])).toEqual(getExpected("k4", "d8", true));
+    expect(getModel([], ["(declare-const u U)"])).toEqual(getExpected("k5", "d8", true));
+  });
 });
 
 describe("eq2bv, as Z3 5.3.2 encodes the bounded integers", () => {
