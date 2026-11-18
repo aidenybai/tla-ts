@@ -1718,6 +1718,16 @@ const resolveExpression = (
     case "Subexpression":
       if (isSubexpressionReported(expression, scope, unit)) emptyExpressions.add(expression);
       return;
+    case "Bracket": {
+      const range = expression.location.range;
+      if (range) {
+        unit.errors.push({
+          location: formatRange({ ...range, end: range.start }),
+          message: "Unsupported expression type `['.",
+        });
+      }
+      return;
+    }
     case "Selection":
       return;
   }

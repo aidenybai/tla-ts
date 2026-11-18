@@ -1483,6 +1483,17 @@ describe("name resolution matches SANY", () => {
     },
   );
 
+  it.each([
+    ["F == LET G == 1 IN [TRUE]", "line 2, col 20 to line 2, col 20"],
+    ["F(a) == a\nG == F([TRUE])", "line 3, col 8 to line 3, col 8"],
+  ])("rejects a bracket without a subscript in %j", async (source, location) => {
+    await expect(checkNames(source)).rejects.toThrow(
+      createSanyError([
+        { location: `${location} of module M`, message: "Unsupported expression type `['." },
+      ]),
+    );
+  });
+
   it("passes an operator argument through an operator a LET instantiates", async () => {
     const result = await check({
       source:
