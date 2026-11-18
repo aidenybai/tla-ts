@@ -432,7 +432,13 @@ const visitFramed = (
                 streamed: new Set(),
               }),
             )
-          : bindDefinitions(definitions, context);
+          : bindDefinitions(
+              definitions,
+              context,
+              replay.isEnabled
+                ? undefined
+                : { impure: new Set(), streamed: new Set(), isFunctionRebuilt: true },
+            );
         return visit(replay, expression.body, items, bound, partial, node);
       }
       case "Label":
