@@ -2480,4 +2480,20 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ].join("\n"),
     ]);
   });
+
+  it("frees the atoms of the sat tactic, so a second check of QF_BV does Z3's work", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const v0 (_ BitVec 8))",
+        "(declare-const v1 (_ BitVec 8))",
+        "(assert (bvsge v1 (bvor v0 v0)))",
+        "(assert (= (bvor (bvurem v1 (_ bv159 8)) (bvurem v1 v1)) (bvadd (_ bv94 8) v0)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 7583)", "sat", "(:rlimit 14970)"]);
+  });
 });

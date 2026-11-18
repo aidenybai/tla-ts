@@ -581,7 +581,10 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     this.lit2app = new Map();
   }
 
+  // The atom2bool_var map, which frees its atoms in the order they came, goes before goal2sat's cache.
   release() {
+    for (const expr of this.atoms.keys()) this.manager.decRef(expr);
+    this.atoms.clear();
     for (let index = 0; index < this.cacheTrail.length; index++)
       this.manager.decRef(this.cacheTrail[index]);
     this.cacheTrail = [];
