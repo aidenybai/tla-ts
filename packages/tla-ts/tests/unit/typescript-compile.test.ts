@@ -53016,4 +53016,33 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads and writes the keys of the object that Object.fromEntries makes", () => {
+    const getSource = (expected: string) => `
+      const pairs: [string, number][] = [
+        ["a", 1],
+        ["b", 2],
+      ];
+      const made = Object.fromEntries(pairs);
+      made.c = 3;
+      made["d"] = made.a + made.b;
+      delete made.b;
+      const keys: string[] = [];
+      for (const key in made) keys.push(key);
+      const result = [keys.join(""), "b" in made, made.d, JSON.stringify(made)].join("|");
+      if (result !== '${expected}') throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource('acd|false|3|{"a":1,"c":3,"d":3}'))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource('acd|false|4|{"a":1,"c":3,"d":4}'))).failure?.message,
+      ).toContain("acd|false|3|");
+    });
+  });
 });

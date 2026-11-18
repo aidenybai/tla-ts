@@ -290,8 +290,9 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
         (LIBRARY_OBJECTS.has(symbol.name) ||
           // A mapped type, such as Record or Partial, whose declaration the library writes.
           ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Mapped) !== 0 ||
-          // The objects that Proxy.revocable, Object.getOwnPropertyDescriptors, and
-          // Atomics.waitAsync give, whose types their declarations write in place.
+          // The objects that Proxy.revocable, Object.getOwnPropertyDescriptors,
+          // Object.fromEntries, and Atomics.waitAsync give, whose types their declarations write
+          // in place.
           (symbol.declarations ?? []).some((declaration) => {
             if (!ts.isTypeLiteralNode(declaration)) return false;
             const signature =
@@ -301,7 +302,7 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
                 : declaration.parent;
             return (
               ts.isMethodSignature(signature) &&
-              ["revocable", "getOwnPropertyDescriptors", "waitAsync"].includes(
+              ["revocable", "getOwnPropertyDescriptors", "fromEntries", "waitAsync"].includes(
                 signature.name.getText(),
               )
             );
