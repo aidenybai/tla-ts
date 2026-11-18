@@ -2322,6 +2322,27 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts the substitution of a declaration that ENABLED keeps unchanged, as TLC's Tool#enabledUnchanged evaluates it", async () => {
+    const lines = formatCoverage(
+      await getInstanceCoverage(
+        "J == INSTANCE Inner WITH K <- M, w <- y",
+        "J!B \\/ (x = 2 /\\ UNCHANGED <<x, y>>)",
+        "(ENABLED J!B) \\/ x = 2",
+      ),
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 8, col 8 to line 8, col 29 of module E: 3",
+      "|line 8, col 9 to line 8, col 19 of module E: 3",
+      "||line 5, col 1 to line 5, col 39 of module E: 5",
+      "||line 5, col 39 to line 5, col 39 of module E: 2",
+      "||line 11, col 6 to line 11, col 10 of module Inner: 3",
+      "||line 11, col 15 to line 11, col 24 of module Inner: 0",
+      "|||line 11, col 20 to line 11, col 24 of module Inner: 2",
+      "||line 11, col 29 to line 11, col 39 of module Inner: 2",
+      "|line 8, col 25 to line 8, col 29 of module E: 1",
+    ]);
+  });
+
   it("orders the substitutions of an instance as SANY infers them from the instanced module's symbol table", async () => {
     const result = await check({
       source:

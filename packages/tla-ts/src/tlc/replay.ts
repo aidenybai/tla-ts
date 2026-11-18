@@ -10,6 +10,7 @@ import {
   exitFrames,
   getCoverageNode,
   getEnteredFrames,
+  getSubstitutionNode,
   runAtCoverageNode,
   type Coverage,
 } from "../coverage";
@@ -845,7 +846,14 @@ const visitUnchanged = (
     if (index !== undefined) {
       const value = replay.current?.[index];
       if (value === undefined) return false;
-      if (replay.isEnabled && replay.coverage) countCoverage(replay.coverage, node);
+      if (replay.isEnabled && replay.coverage) {
+        countCoverage(replay.coverage, node);
+        // Tool#enabledUnchanged evaluates a declaration of an instance through its substitution.
+        const substitution = substitutedExpressions.get(expression);
+        if (substitution && substitution.replacement !== expression) {
+          countCoverage(replay.coverage, getSubstitutionNode(replay.coverage, substitution, node));
+        }
+      }
       const assigned = partial[index];
       if (assigned !== undefined && !isEqualLikeTlc(assigned, value)) {
         warnChangedUnchanged(replay.environment, index, expression);
