@@ -1778,6 +1778,16 @@ export const runSmtlibScript = (
         const optionName = `:${getParameterName(keyword)}`;
         const value = list.items[2];
         const isTrue = isSymbol(value, "true");
+        if (
+          (keyword === ":produce-proofs" ||
+            keyword === ":produce-unsat-cores" ||
+            keyword === ":produce-unsat-assumptions") &&
+          state.assertions.length > 0
+        )
+          throw new SmtParseError(
+            `error setting '${keyword}', option value cannot be modified after assertions have been added`,
+            value ?? list.end,
+          );
         if (keyword === ":produce-models") settings.isProducingModels = isTrue;
         if (keyword === ":produce-unsat-cores") settings.isProducingUnsatCores = isTrue;
         if (keyword === ":produce-proofs") settings.isProducingProofs = isTrue;

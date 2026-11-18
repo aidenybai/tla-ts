@@ -1486,4 +1486,34 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ]),
     ).toEqual(["unknown", '(:reason-unknown "no reason given")']);
   });
+
+  it("keeps the options of proofs and cores while there are assertions", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const p Bool)",
+        "(assert (! (> x 3) :named n))",
+        "(set-option :produce-unsat-cores true)",
+        "(set-option :produce-proofs true)",
+        "(set-option :produce-unsat-assumptions true)",
+        "(check-sat-assuming ((< x 2) p))",
+        "(get-unsat-core)",
+        "(get-option :produce-unsat-cores)",
+        "(push)",
+        "(assert p)",
+        "(pop)",
+        "(reset-assertions)",
+        "(set-option :produce-unsat-cores true)",
+        "(get-option :produce-unsat-cores)",
+      ]),
+    ).toEqual([
+      "(error \"line 4 column 33: error setting ':produce-unsat-cores', option value cannot be modified after assertions have been added\")",
+      "(error \"line 5 column 28: error setting ':produce-proofs', option value cannot be modified after assertions have been added\")",
+      "(error \"line 6 column 39: error setting ':produce-unsat-assumptions', option value cannot be modified after assertions have been added\")",
+      "unsat",
+      '(error "line 8 column 15: unsat core construction is not enabled, use command (set-option :produce-unsat-cores true)")',
+      "false",
+      "true",
+    ]);
+  });
 });
