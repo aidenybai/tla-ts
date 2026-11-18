@@ -276,21 +276,22 @@ const createPlaceholder = (definition: Definition, maxLevel: number, weight: num
 };
 
 // Generator makes a definition's node after its body's, and a RECURSIVE operator's at its declaration.
-const getUnitEvents = (units: ModuleUnit[], scope: Scope, depth: number): SectionEvent[] =>
-  units.flatMap((unit): SectionEvent[] => {
+const getUnitEvents = (units: ModuleUnit[], scope: Scope, depth: number): SectionEvent[] => {
+  const recursiveDefinitions = new Map<string, Definition[]>();
+  units.forEach((unit) => {
+    if (unit.kind !== "Definition" || !unit.definition.isRecursive) return;
+    const named = recursiveDefinitions.get(unit.definition.name);
+    if (named) named.push(unit.definition);
+    else recursiveDefinitions.set(unit.definition.name, [unit.definition]);
+  });
+  return units.flatMap((unit): SectionEvent[] => {
     if (unit.kind === "Recursive") {
       return [
         {
           kind: "Recursive",
           location: unit.location,
-          definitions: unit.declarations.flatMap((declaration) =>
-            units.flatMap((other) =>
-              other.kind === "Definition" &&
-              other.definition.isRecursive &&
-              other.definition.name === declaration.name
-                ? [other.definition]
-                : [],
-            ),
+          definitions: unit.declarations.flatMap(
+            (declaration) => recursiveDefinitions.get(declaration.name) ?? [],
           ),
           scope,
           depth,
@@ -313,6 +314,7 @@ const getUnitEvents = (units: ModuleUnit[], scope: Scope, depth: number): Sectio
       { kind: "Definition", definition, scope, depth },
     ];
   });
+};
 
 const getExpressionEvents = (
   expression: Expression,
