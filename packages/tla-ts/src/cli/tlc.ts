@@ -377,7 +377,6 @@ const checkSpec = async (
         undefined,
       );
     }
-    const userFile = args.userFile;
     const standardModules = getSanyStandardModules(version);
     const runtimeInvariants = getRuntimeInvariants(
       source,
@@ -410,7 +409,7 @@ const checkSpec = async (
       errorCodes: args.errorCodes,
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
-      onPrint: userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
+      onPrint: printer.printOutput,
       source,
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
@@ -581,6 +580,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
       : (java.libraries.map((directory) => join(directory, path)).find(existsSync) ?? path);
   const paths = [...new Set(specPaths.map(findSpec))];
   const exitCodes: number[] = [];
+  const userFile = parsed.userFile;
   for (const [index, path] of paths.entries()) {
     if (index > 0) console.log("");
     const printer = createMessagePrinter({
@@ -590,6 +590,8 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
       version,
       suppressedCodes: parsed.suppressedCodes,
       errorCodes: parsed.errorCodes,
+      onOutput:
+        userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
     });
     exitCodes.push(
       await reportErrors(async () => {
