@@ -2235,6 +2235,64 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
     ]);
   });
 
+  // The tactic2solver of a combined solver keeps its own copy of the assertions, which it frees
+  // after the smt kernel or the sat solver.
+  it("frees the assertions of the solver that the last check-sat holds after the solver", () => {
+    expect(run([...ARITH, "(check-sat)", "(reset-assertions)", ...CLAUSES])).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or p q r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+    expect(
+      run([
+        ...ARITH,
+        "(push)",
+        "(assert (> x 0))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or q (not p) (not r))",
+      "  (or p q r)",
+      "  (or q r)",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult a b))",
+        "(assert (= (bvadd a b) #x9))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or (not p) q)",
+      "  (or r p q)",
+      "  (or r q)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
   // cmd_context's m_check_sat_result keeps the finite-domain solver that answered past
   // reset-assertions, and the next assert frees it.
   it("keeps the solver of the last check-sat until the next assert", () => {

@@ -399,6 +399,7 @@ interface SolverParts {
   tacticConverters: Goal["converters"];
   tacticModel: ProtoModel | undefined;
   lastAssertions: RefVector;
+  assertions: RefVector;
 }
 
 interface SolverAnswer {
@@ -951,6 +952,11 @@ export const runSmtlibScript = (
   };
   // cmd_context keeps no solver until it makes the next one.
   const detachSolver = (): SolverParts => {
+    // The finite-domain solver of QF_FD stands alone. Any other solver is combined with a
+    // tactic2solver, which keeps its own copy of the assertions.
+    const assertions = new RefVector(state.manager);
+    if (state.fdSolver === undefined)
+      for (const assertion of state.assertions) assertions.push(assertion);
     const parts = {
       kernel: state.kernel,
       satSolver: state.satSolver,
@@ -959,6 +965,7 @@ export const runSmtlibScript = (
       tacticConverters: state.tacticConverters,
       tacticModel: state.tacticModel,
       lastAssertions: state.lastAssertions,
+      assertions,
     };
     state.strategy = undefined;
     state.tactic = undefined;
@@ -979,7 +986,7 @@ export const runSmtlibScript = (
     check.heldSolver = parts;
   };
   // ~combined_solver frees its smt or sat solver, then tactic2solver its model converter, tactic,
-  // result and last assertions.
+  // result, last assertions and assertions.
   const releaseSolver = (parts: SolverParts) => {
     parts.kernel?.release();
     parts.satSolver?.release();
@@ -988,6 +995,7 @@ export const runSmtlibScript = (
     destroyTactics(parts.tacticDestructors);
     parts.tacticModel?.decRef();
     parts.lastAssertions.reset();
+    parts.assertions.reset();
   };
   const initManager = () => {
     if (state.isProofsEnabled !== undefined) return;
