@@ -1,7 +1,7 @@
-// Records how Temporal's toLocaleString formats each kind of object in English into
-// src/typescript/date-formats.ts: for each option bag of a set it enumerates, the error that Node
-// throws, or the pattern of parts that its output follows, where the pattern gives Node's output
-// for every sample date and time that it checks.
+// Records how Temporal's toLocaleString, and an Intl.DateTimeFormat's format of a Date in UTC,
+// format each kind of object in English into src/typescript/date-formats.ts: for each option bag of
+// a set it enumerates, the error that Node throws, or the pattern of parts that its output follows,
+// where the pattern gives Node's output for every sample date and time that it checks.
 // Usage: bun scripts/run.ts record-date-formats (with a Node that has Temporal)
 
 import { writeFileSync } from "node:fs";
@@ -23,6 +23,7 @@ const KEYS = [
   "fractionalSecondDigits",
   "dateStyle",
   "timeStyle",
+  "dayPeriod",
 ];
 
 const STYLES = ["full", "long", "medium", "short"];
@@ -58,6 +59,22 @@ const BAGS: Record<string, Value>[] = [
   ]),
 ];
 
+// The bags that a DateTimeFormat takes beyond those: its flexible day periods, and the minutes and
+// seconds of a time with their fraction.
+const FORMAT_BAGS: Record<string, Value>[] = [
+  ...["long", "short", "narrow"].flatMap((dayPeriod) => [
+    { dayPeriod },
+    { hour: "numeric", dayPeriod },
+  ]),
+  { hour: "numeric", minute: "numeric", second: "numeric" },
+  { minute: "numeric", second: "numeric" },
+  ...[1, 2, 3].map((fractionalSecondDigits) => ({
+    minute: "numeric",
+    second: "numeric",
+    fractionalSecondDigits,
+  })),
+];
+
 const KINDS = [
   "PlainDate",
   "PlainTime",
@@ -65,6 +82,7 @@ const KINDS = [
   "PlainYearMonth",
   "PlainMonthDay",
   "Instant",
+  "DateTimeFormat",
 ];
 const CALENDARS = ["iso8601", "gregory"];
 
@@ -96,6 +114,18 @@ const make = (kind: string, calendar: string, sample: Sample) => {
 
 const format = (kind: string, calendar: string, sample: Sample, bag: Record<string, Value>) => {
   try {
+    if (kind === "DateTimeFormat") {
+      const time = Date.UTC(
+        sample.year,
+        sample.month - 1,
+        sample.day,
+        sample.hour,
+        sample.minute,
+        sample.second,
+        sample.millisecond,
+      );
+      return { text: new Intl.DateTimeFormat("en", { timeZone: "UTC", ...bag }).format(time) };
+    }
     return { text: make(kind, calendar, sample).toLocaleString("en", bag) };
   } catch (error) {
     return { error: error instanceof Error ? error.name : "Error" };
@@ -140,7 +170,21 @@ const render = (field: string, style: string, sample: Sample) => {
     case "era":
       return style === "long" ? "Anno Domini" : style === "short" ? "AD" : "A";
     case "dayPeriod":
-      return hour < 12 ? "AM" : "PM";
+      return !style.startsWith("flexible")
+        ? hour < 12
+          ? "AM"
+          : "PM"
+        : hour < 12
+          ? "in the morning"
+          : hour === 12
+            ? style === "flexible narrow"
+              ? "n"
+              : "noon"
+            : hour < 18
+              ? "in the afternoon"
+              : hour < 21
+                ? "in the evening"
+                : "at night";
     case "minute":
       return pad(sample.minute);
     case "second":
@@ -202,6 +246,12 @@ const getCandidates = (text: string): Part[][] => {
   if (text.startsWith("AM") || text.startsWith("PM")) {
     options.push({ part: { field: "dayPeriod", style: "short" }, length: 2 });
   }
+  for (const style of ["flexible long", "flexible narrow"]) {
+    const value = render("dayPeriod", style, FIRST);
+    if (text.startsWith(value)) {
+      options.push({ part: { field: "dayPeriod", style }, length: value.length });
+    }
+  }
   const digits = /^\d+/.exec(text)?.[0];
   if (digits !== undefined) {
     const numeric: Part[] = [
@@ -224,10 +274,17 @@ const getCandidates = (text: string): Part[][] => {
     );
   }
   const literal = /^[^\dA-Z]+|^[A-Za-z]+/.exec(text)?.[0] ?? text.charAt(0);
-  return getCandidates(text.slice(literal.length)).map((rest) => [
-    { field: "literal", style: literal },
-    ...rest,
-  ]);
+  // A literal ends where a flexible day period starts, which it would otherwise take in.
+  const periodStart = ["in the", "noon", "at night", "n"]
+    .map((word) => literal.indexOf(` ${word}`))
+    .filter((position) => position >= 0)
+    .map((position) => position + 1);
+  return [...new Set([literal.length, ...periodStart])].flatMap((length) =>
+    getCandidates(text.slice(length)).map((rest) => [
+      { field: "literal", style: literal.slice(0, length) },
+      ...rest,
+    ]),
+  );
 };
 
 // A deterministic generator of samples, from 1583, as Node writes an earlier date in the Julian
@@ -271,8 +328,8 @@ const getKey = (kind: string, calendar: string, bag: Record<string, Value>) =>
 
 const entries: string[] = [];
 for (const kind of KINDS) {
-  for (const calendar of CALENDARS) {
-    for (const bag of BAGS) {
+  for (const calendar of kind === "DateTimeFormat" ? ["gregory"] : CALENDARS) {
+    for (const bag of kind === "DateTimeFormat" ? [...BAGS, ...FORMAT_BAGS] : BAGS) {
       const first = format(kind, calendar, FIRST, bag);
       const key = getKey(kind, calendar, bag);
       if (first.error !== undefined) {

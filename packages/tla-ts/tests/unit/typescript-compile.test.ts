@@ -56230,4 +56230,59 @@ describe("BigInts", () => {
       await expect(checkModel(getSource("c,y,,"))).rejects.toThrow("seen c,x,,");
     });
   });
+
+  describe("formats a Date or a number with an English Intl.DateTimeFormat", () => {
+    const getSource = (expected: string) => `
+      const dtf = new Intl.DateTimeFormat("en");
+      const fractional = new Intl.DateTimeFormat("en", {
+        minute: "numeric",
+        second: "numeric",
+        fractionalSecondDigits: 2,
+      });
+      const timed = new Intl.DateTimeFormat(undefined, {
+        hour: "numeric",
+        minute: "numeric",
+        second: "numeric",
+      });
+      const period = new Intl.DateTimeFormat("en", { dayPeriod: "narrow" });
+      const inputs = [
+        new Date(2019, 7, 10, 1, 2, 3, 234),
+        new Date(2017, 11, 12, 12, 30),
+        new Date(2017, 11, 12, 22),
+      ];
+      let thrown = "none";
+      try {
+        timed.format(NaN);
+      } catch (error) {
+        thrown = error instanceof RangeError ? "range" : "other";
+      }
+      const seen = [
+        dtf.format(0),
+        fractional.format(inputs[0]),
+        timed.format(-0.9),
+        timed.format(13 * 3600000 + 5),
+        period.format(inputs[1]),
+        period.format(inputs[2]),
+        thrown,
+      ].join("|");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1/1/1970|02:03.23|12:00:00 AM|1:00:00 PM|n|at night|range")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects noon's long day period where the narrow one is n", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("1/1/1970|02:03.23|12:00:00 AM|1:00:00 PM|noon|at night|range"),
+          )
+        ).failure?.message,
+      ).toContain("seen 1/1/1970|02:03.23|12:00:00 AM|1:00:00 PM|n|at night|range");
+    });
+  });
 });

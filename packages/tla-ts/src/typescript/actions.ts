@@ -300,6 +300,7 @@ import {
   getViewCall,
   getGetterCall,
   getIntlMethodCall,
+  getDateTimeFormatCall,
   getResolvedOptionsCall,
   getNewIntl,
   getThisSymbolCall,
@@ -4566,6 +4567,32 @@ const translateCallStatementBody = (
             string(`tla-ts can't call ${methodPath} where a script replaced it`),
           ]),
         ),
+      ),
+    );
+  }
+  const dateTimeFormatCall = getDateTimeFormatCall(expression, context);
+  if (dateTimeFormatCall !== undefined) {
+    const resultName = context.names.getFresh("formatted");
+    const result = identifier(resultName);
+    return bindOnce(
+      path,
+      resultName,
+      useJavaScript(
+        "DateTimeFormatOf",
+        [
+          getHeap(path.scope, expression, context),
+          translateExpression(dateTimeFormatCall.receiver, path.scope, context),
+          dateTimeFormatCall.argument === undefined
+            ? getUndefined(context)
+            : translateExpression(dateTimeFormatCall.argument, path.scope, context),
+          string(dateTimeFormatCall.method),
+        ],
+        context,
+      ),
+      ifThenElse(
+        apply("=", [field(result, "error"), string("")]),
+        continueWith(path, field(result, "value")),
+        throwError("RangeError", path, expression, context, frame),
       ),
     );
   }
@@ -14856,6 +14883,7 @@ const isStatementResult = (node: ts.CallExpression, path: Path, context: Context
     getTemporalCall(node, context) !== undefined ||
     getGetterCall(node, context) !== undefined ||
     getIntlMethodCall(node, context) !== undefined ||
+    getDateTimeFormatCall(node, context) !== undefined ||
     getResolvedOptionsCall(node, context) !== undefined ||
     getThisSymbolCall(node, context) !== undefined ||
     getCalledThrough(node, context) !== undefined ||

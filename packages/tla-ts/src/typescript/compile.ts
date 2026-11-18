@@ -1435,17 +1435,21 @@ export const compile = (
         [],
         tuple(
           /\btoLocaleString\b/.test(sourceFile.text) && /\bTemporal\b/.test(sourceFile.text)
-            ? Object.entries(DATE_FORMATS).map(([key, format]) =>
-                record("Record", [
-                  { name: "key", value: string(key) },
-                  ...(format.error === undefined
-                    ? [
-                        { name: "fields", value: tuple((format.fields ?? []).map(string)) },
-                        { name: "styles", value: tuple((format.styles ?? []).map(string)) },
-                        { name: "isZoned", value: boolean(format.isZoned === true) },
-                      ]
-                    : [{ name: "error", value: string(format.error) }]),
-                ]),
+            ? Object.entries(DATE_FORMATS).flatMap(([key, format]) =>
+                key.startsWith("DateTimeFormat|")
+                  ? []
+                  : [
+                      record("Record", [
+                        { name: "key", value: string(key) },
+                        ...(format.error === undefined
+                          ? [
+                              { name: "fields", value: tuple((format.fields ?? []).map(string)) },
+                              { name: "styles", value: tuple((format.styles ?? []).map(string)) },
+                              { name: "isZoned", value: boolean(format.isZoned === true) },
+                            ]
+                          : [{ name: "error", value: string(format.error) }]),
+                      ]),
+                    ],
               )
             : [],
         ),
