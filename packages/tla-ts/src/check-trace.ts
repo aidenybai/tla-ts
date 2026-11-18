@@ -95,7 +95,9 @@ export const createTraceBuilder = (context: TraceContext) => {
     runtime.getLevel = () => level;
     runtime.getBehavior = getBehavior;
     try {
-      return search.evaluateAlias(alias, state, successor, options.isTool ?? false);
+      return captureOutput(() =>
+        search.evaluateAlias(alias, state, successor, options.isTool ?? false),
+      );
     } finally {
       runtime.getLevel = searchLevel;
       runtime.getBehavior = searchBehavior;
@@ -192,7 +194,26 @@ export const createTraceBuilder = (context: TraceContext) => {
       findPositionAction(position, known === 2 && position === last && last === 1 && !is174),
     );
     const outputs = stepActions.map((step) => step.lines);
-    const traceOutput = isRebuiltAgain
+    const failed = stepActions[last].result.error;
+    const traceFailure = failed && getTraceFailure(failed, outputs[last]);
+    const printed = traceFailure ? steps.slice(0, last) : steps;
+    const getAliases = () =>
+      alias === undefined
+        ? []
+        : printed.map((step, position) =>
+            getAliasState(
+              alias,
+              step.state,
+              steps[position + 1]?.state ??
+                traceOptions.incomplete ??
+                steps[loopStart ?? position].state,
+              position + 1,
+              () => steps.slice(0, position + 1).map((inner) => inner.state),
+            ),
+          );
+    const aliases = getAliases();
+    const getAliasOutput = (position: number) => aliases[position]?.lines ?? [];
+    const rebuiltOutput = isRebuiltAgain
       ? [
           ...runtime.runWithNewRandom(() => [
             captureOutput(() => rebuildInitialState(path[0])).lines,
@@ -203,35 +224,45 @@ export const createTraceBuilder = (context: TraceContext) => {
           findPositionAction(last, known === 2).lines,
         ].flat()
       : [];
-    const prefixOutput = rebuilt > 0 ? [initialOutput, ...outputs.slice(1, rebuilt)].flat() : [];
-    const failed = stepActions[last].result.error;
-    const traceFailure = failed && getTraceFailure(failed, outputs[last]);
+    // TLC's Worker#doPostCondition evaluates the alias of each state again after it rebuilds the trace.
+    const postconditionAliases = isRebuiltAgain && !traceFailure ? getAliases() : [];
+    const loopPosition = loopStart ?? 0;
+    // TLC's LiveWorker and LiveCheck evaluate the alias of a state in the loop as they rebuild the next one.
+    const prefixOutput =
+      known === 0 && !is174
+        ? [
+            initialOutput,
+            ...outputs.slice(1, loopPosition + 1),
+            ...aliases.slice(0, loopPosition).map((aliased) => aliased.lines),
+            ...outputs
+              .slice(loopPosition + 1)
+              .flatMap((lines, offset) => [lines, getAliasOutput(loopPosition + offset)]),
+            getAliasOutput(last),
+          ].flat()
+        : rebuilt > 0
+          ? [initialOutput, ...outputs.slice(1, rebuilt)].flat()
+          : [];
     return {
-      trace: (traceFailure ? steps.slice(0, last) : steps).map((step, position) => {
+      trace: printed.map((step, position) => {
         const action = stepActions[position].result.action;
+        const aliasOutput = known === 0 ? [] : getAliasOutput(position);
         const traceStep: TraceStep = {
           action: step.action,
           label: action && getActionLabel(action, options.version),
-          state:
-            alias === undefined
-              ? toRecord(step.state)
-              : getAliasState(
-                  alias,
-                  step.state,
-                  steps[position + 1]?.state ??
-                    traceOptions.incomplete ??
-                    steps[loopStart ?? position].state,
-                  position + 1,
-                  () => steps.slice(0, position + 1).map((inner) => inner.state),
-                ),
+          state: alias === undefined ? toRecord(step.state) : aliases[position].result,
           output: position === 0 ? prefixOutput : position < rebuilt ? [] : outputs[position],
+          ...(aliasOutput.length > 0 && { aliasOutput }),
         };
         if (alias !== undefined || action) {
-          context.tracedSteps.set(traceStep, { state: toRecord(step.state), action });
+          context.tracedSteps.set(traceStep, {
+            state: toRecord(step.state),
+            action,
+            alias: postconditionAliases[position]?.result,
+          });
         }
         return traceStep;
       }),
-      traceOutput,
+      traceOutput: [...rebuiltOutput, ...postconditionAliases.flatMap((aliased) => aliased.lines)],
       ...(traceFailure && { traceFailure }),
     };
   };
@@ -305,14 +336,11 @@ export const createTraceBuilder = (context: TraceContext) => {
     }
     const step = { action: undefined, label: undefined, state: toRecord(state) };
     const alias = config.alias;
-    if (alias !== undefined) {
-      context.tracedSteps.set(step, {
-        state: step.state,
-        action: undefined,
-        alias: getAliasState(alias, state, state, 1, () => [state]),
-      });
-    }
-    return { trace: [step], traceOutput };
+    if (alias === undefined || traceOptions.isPrintedOnly) return { trace: [step], traceOutput };
+    // TLC's Worker#doPostCondition evaluates the alias of the state after it rebuilds it.
+    const aliased = getAliasState(alias, state, state, 1, () => [state]);
+    context.tracedSteps.set(step, { state: step.state, action: undefined, alias: aliased.result });
+    return { trace: [step], traceOutput: [...traceOutput, ...aliased.lines] };
   };
   const getIncompleteStep = (
     incomplete: State,
@@ -322,10 +350,14 @@ export const createTraceBuilder = (context: TraceContext) => {
   ): TraceStep => {
     const state = toRecord(incomplete.map((value) => value ?? createModelValue("null")));
     const alias = config.alias;
+    const aliased =
+      alias === undefined
+        ? undefined
+        : getAliasState(alias, incomplete, incomplete, level, () => []);
     const traceStep = {
       ...step,
-      state:
-        alias === undefined ? state : getAliasState(alias, incomplete, incomplete, level, () => []),
+      state: aliased?.result ?? state,
+      ...(aliased && aliased.lines.length > 0 && { aliasOutput: aliased.lines }),
     };
     context.tracedSteps.set(traceStep, { state, action });
     return traceStep;

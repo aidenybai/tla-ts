@@ -1308,6 +1308,76 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     ]);
   });
 
+  it("prints what the ALIAS prints right before each state, and again as TLC's Worker#doPostCondition evaluates it", () => {
+    const result = runTool("AliasSteps");
+    expect(result.status).toBe(12);
+    const [getStep, getAlias] = ["step", "alias"].map(
+      (name) => (count: number) => `<<"${name}", ${count}>>`,
+    );
+    expect(getToolSequence(result.stdout)).toEqual([
+      "2262",
+      "2187",
+      "2220",
+      "2219",
+      "2185",
+      "2189",
+      "2190",
+      getStep(0),
+      getStep(1),
+      "2110",
+      "2121",
+      getAlias(0),
+      "2217",
+      getStep(0),
+      getAlias(1),
+      "2217",
+      getStep(1),
+      getAlias(2),
+      "2217",
+      getStep(0),
+      getStep(1),
+      getAlias(0),
+      getAlias(1),
+      getAlias(2),
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+  });
+
+  it("prints what the ALIAS prints as TLC's LiveWorker evaluates it on the loop of a counterexample", () => {
+    const result = runTool("AliasLoop");
+    expect(result.status).toBe(13);
+    const [getStep, getAlias] = ["step", "alias"].map(
+      (name) => (count: number) => `<<"${name}", ${count}>>`,
+    );
+    expect(getToolSequence(result.stdout).slice(24)).toEqual([
+      "2200",
+      "2192",
+      getStep(0),
+      getStep(1),
+      getAlias(0),
+      getAlias(1),
+      getStep(2),
+      getAlias(2),
+      getAlias(3),
+      "2116",
+      "2264",
+      "2217",
+      "2217",
+      "2217",
+      "2217",
+      getStep(3),
+      "2122",
+      "2267",
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+  });
+
   it("reports an invariant its replay of the initial states finds violated", () => {
     const result = runTool("Replayed");
     expect(result.status).toBe(255);

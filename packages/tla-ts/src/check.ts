@@ -249,6 +249,8 @@ export interface TraceStep {
   state: Record<string, Value>;
   /** What the spec prints before this step as TLC rebuilds the trace, and before it for the first. */
   output?: OutputLine[];
+  /** What the ALIAS prints as TLC evaluates it right before it prints this step. */
+  aliasOutput?: OutputLine[];
 }
 
 export interface Violation {
@@ -662,11 +664,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             liveness?.addInitialState(states.length, state, tracing);
           };
           search.checkReplayedInitialState(state, tracing, addFingerprint, (violation) => {
-            const traced = traces.toTrace([{ action: undefined, state }], []).trace[0].state;
-            capturedLines?.push({
+            const traced = traces.toTrace([{ action: undefined, state }], []).trace[0];
+            capturedLines?.push(...(traced.aliasOutput ?? []), {
               kind: "initial-state-violation",
               ...violation,
-              state: traced,
+              state: traced.state,
             });
             if (!options.isContinued || violation.status !== "invariant-violation") {
               throw STOP_REPLAY;
