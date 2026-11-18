@@ -403,7 +403,7 @@ export const createTlcExtOperators = (
       }
       return definition.kind === "Operator"
         ? evaluate(definition.body, context)
-        : evaluate({ kind: "Identifier", name, location: definition.location }, context);
+        : evaluate({ kind: "Identifier", name: key, location: definition.location }, context);
     }),
   ];
 };
