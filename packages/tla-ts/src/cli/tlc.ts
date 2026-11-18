@@ -440,6 +440,7 @@ const checkSpec = async (
         aril: args.aril,
         isGenerating: args.mode === "generate",
         scheduler: args.scheduler,
+        isDiffTrace: args.isDiffTrace,
         onSimulation: (output) => printSimulation(printer, output, timing.startTime),
       });
       printFinished();
