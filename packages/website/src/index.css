@@ -1,8 +1,8 @@
 @import "tailwindcss";
 @import "allo-font/friendly";
-@import "./generated/allo.css";
 @import "@fontsource-variable/geist-mono";
 @import "@fontsource/caveat/600.css";
+@import "./generated/fonts.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
@@ -151,6 +151,9 @@
   }
   [data-skeleton] [data-token] {
     background: linear-gradient(var(--border), var(--border)) center / 100% 0.85em no-repeat;
+  }
+  [data-shared] :is([data-pane] > *, [data-file-name]) {
+    visibility: hidden;
   }
   code {
     @apply font-mono;

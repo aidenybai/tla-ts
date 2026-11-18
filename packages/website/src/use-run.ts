@@ -1,8 +1,11 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getErrorResult } from "./run-error";
 import type { RunRequest, RunResult } from "./run-worker";
 
-export const useRun = () => {
+const createWorker = () =>
+  new Worker(new URL("./run-worker.ts", import.meta.url), { type: "module" });
+
+export const useRun = (isWarm = false) => {
   const [result, setResult] = useState<RunResult | undefined>(undefined);
   const [isRunning, setIsRunning] = useState(false);
   const workerRef = useRef<Worker | undefined>(undefined);
@@ -13,9 +16,16 @@ export const useRun = () => {
     setIsRunning(false);
   };
 
+  // A warm runner loads the checker ahead of the first run, which then starts at once.
+  useEffect(() => {
+    if (isWarm) workerRef.current = createWorker();
+    return () => workerRef.current?.terminate();
+  }, [isWarm]);
+
   const run = (request: RunRequest) => {
-    stop();
-    const worker = new Worker(new URL("./run-worker.ts", import.meta.url), { type: "module" });
+    const idle = isRunning ? undefined : workerRef.current;
+    if (idle === undefined) stop();
+    const worker = idle ?? createWorker();
     const finish = (nextResult: RunResult) => {
       setResult(nextResult);
       stop();

@@ -8,7 +8,7 @@
     "build": "pnpm font && vp build",
     "preview": "vp preview",
     "typecheck": "tsc --noEmit",
-    "font": "bun scripts/subset-allo.ts"
+    "font": "bun scripts/subset-fonts.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

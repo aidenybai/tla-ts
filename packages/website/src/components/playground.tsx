@@ -1,9 +1,17 @@
 import { CaretDown, GearSix } from "@phosphor-icons/react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { cn } from "cn";
 import outlines from "virtual:outlines";
 import { createPartsContext } from "@/lib/utils";
-import type { Compilation } from "../compile-worker";
+import type { Compilation } from "../compilation";
 import { getHighlightColors } from "../highlight-colors";
 import { getLineHoveredName, getLineMarks } from "../line-marks";
 import { createHighlighter } from "../highlighter";
@@ -46,6 +54,7 @@ interface PlaygroundState {
   setSource: (source: string) => void;
   selectExample: (fileName: string) => void;
   compilation: Compilation | undefined;
+  startCompiler: () => void;
   tla: Source | undefined;
   outline: Token[][];
   sourceMarks: Mark[];
@@ -69,6 +78,11 @@ interface PlaygroundState {
 const NO_MARKS: Mark[] = [];
 const subscribeToNothing = () => () => undefined;
 
+// These run as the page is parsed, before React loads. The page is built with one file and the
+// Mac shortcut, so a link to another file hides the built one, and other systems get their key.
+const SHARED_SCRIPT = `if (/[#&](file|code)=/.test(location.hash)) document.documentElement.dataset.shared = "";`;
+const SHORTCUT_SCRIPT = `if (!/Mac|iPhone|iPad/.test(navigator.platform)) document.currentScript.previousElementSibling.textContent = "Ctrl ↵";`;
+
 const playgroundContext = createPartsContext<PlaygroundState>("Playground.Root");
 
 interface PartProps {
@@ -78,7 +92,7 @@ interface PartProps {
 export const PlaygroundRoot = (props: PartProps) => {
   const [file, setFile] = useState(PLAYGROUND_EXAMPLES[0]);
   const compiler = useCompile(file.source, file.fileName);
-  const runner = useRun();
+  const runner = useRun(true);
   const [highlight, setHighlight] = useState<Awaited<ReturnType<typeof createHighlighter>>>();
   useEffect(() => {
     void createHighlighter().then((nextHighlight) => setHighlight(() => nextHighlight));
@@ -93,8 +107,8 @@ export const PlaygroundRoot = (props: PartProps) => {
     [outlineText],
   );
   const tla = useMemo(
-    () => (tlaText === undefined ? undefined : highlight?.(tlaText, "tlaplus")),
-    [highlight, tlaText],
+    () => compiler.tla ?? (tlaText === undefined ? undefined : highlight?.(tlaText, "tlaplus")),
+    [compiler.tla, highlight, tlaText],
   );
   const [hoveredName, setHoveredName] = useState<string | undefined>(undefined);
   const [isArrowsShown, setIsArrowsShown] = useState(true);
@@ -115,13 +129,15 @@ export const PlaygroundRoot = (props: PartProps) => {
     runner.reset();
     setFile(nextFile);
   };
-  useEffect(() => {
+  // Before the first paint after hydration, so the file a link names replaces the built one unseen.
+  useLayoutEffect(() => {
     const shared = new URLSearchParams(location.hash.slice(1));
     const fileName = shared.get("file") ?? "example.ts";
     const source =
       shared.get("code") ??
       PLAYGROUND_EXAMPLES.find((example) => example.fileName === fileName)?.source;
     if (source !== undefined) setFile({ fileName, source });
+    delete document.documentElement.dataset.shared;
   }, []);
   const compilation = compiler.compilation;
   const canRun =
@@ -157,6 +173,7 @@ export const PlaygroundRoot = (props: PartProps) => {
           edit(PLAYGROUND_EXAMPLES.find((example) => example.fileName === fileName) ?? file);
         },
         compilation: compiler.compilation,
+        startCompiler: compiler.start,
         tla,
         outline,
         sourceMarks,
@@ -177,7 +194,10 @@ export const PlaygroundRoot = (props: PartProps) => {
         run,
       }}
     >
-      <div className="flex h-dvh flex-col text-prose">{props.children}</div>
+      <div className="flex h-dvh flex-col text-prose">
+        <script dangerouslySetInnerHTML={{ __html: SHARED_SCRIPT }} />
+        {props.children}
+      </div>
     </playgroundContext.PartsContext>
   );
 };
@@ -225,7 +245,9 @@ export const PlaygroundHeader = () => {
         </DropdownMenu>
         <DropdownMenu>
           <DropdownMenuTrigger className={cn(buttonVariants(), "min-w-0 shrink text-foreground")}>
-            <span className="truncate">{state.fileName}</span>
+            <span data-file-name className="truncate">
+              {state.fileName}
+            </span>
             <CaretDown className="size-3.5 text-faint" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
@@ -250,7 +272,13 @@ export const PlaygroundHeader = () => {
         >
           <RunIcon isRunning={state.isRunning} isDone={false} />
           Run
-          <kbd className="font-sans opacity-65 max-sm:hidden pointer-coarse:hidden">{shortcut}</kbd>
+          <kbd
+            suppressHydrationWarning
+            className="font-sans opacity-65 max-sm:hidden pointer-coarse:hidden"
+          >
+            {shortcut}
+          </kbd>
+          <script dangerouslySetInnerHTML={{ __html: SHORTCUT_SCRIPT }} />
         </Button>
       </div>
     </header>
@@ -259,12 +287,14 @@ export const PlaygroundHeader = () => {
 
 interface PaneProps {
   name: string;
+  onFocus?: () => void;
   children: ReactNode;
 }
 
 const Pane = (props: PaneProps) => (
   <section
     data-pane={props.name}
+    onFocus={props.onFocus}
     translate="no"
     className="size-full overflow-auto overscroll-contain p-4"
   >
@@ -288,7 +318,7 @@ export const PlaygroundPanes = () => {
   // Until the first compilation lands, the pane shows the outline of what it will hold.
   const isSkeleton = state.tla === undefined && state.error === undefined;
   const source = (
-    <Pane name="source">
+    <Pane name="source" onFocus={state.startCompiler}>
       <CodeEditor
         label="TypeScript source"
         value={state.source}

@@ -8,6 +8,7 @@ import { createServer, defineConfig, type Plugin } from "vite-plus";
 import { printModule } from "../tla-ts/src/printer";
 import { compile } from "../tla-ts/src/typescript/compile";
 import { printRegions } from "../tla-ts/src/typescript/regions";
+import { getCompilation, type Precompiled } from "./src/compilation";
 import { createHighlighter } from "./src/highlighter";
 import { LOGO_PATH } from "./src/logo";
 import type { Benchmark, CompiledExample, ReferenceBlock, ReferenceSection } from "./src/site-data";
@@ -168,6 +169,50 @@ const outlines = (): Plugin => ({
   },
 });
 
+const COMPILATIONS = "virtual:compilations";
+const COMPILATION = "virtual:compilation/";
+const INITIAL_FILE_NAME = "counter.ts";
+
+// Every example compiled ahead of time. The playground's first file ships with the page, and
+// each other file is a chunk of its own, fetched when it is opened.
+const compilations = (): Plugin => ({
+  name: "compilations",
+  resolveId: (id) => (id === COMPILATIONS || id.startsWith(COMPILATION) ? `\0${id}` : undefined),
+  async load(id) {
+    if (!id.startsWith("\0virtual:compilation")) return undefined;
+    const paths = globSync([...EXAMPLE_PATHS, ...PLAYGROUND_PATHS], {
+      cwd: fileURLToPath(new URL(".", import.meta.url)),
+    }).map((path) => fileURLToPath(new URL(path, import.meta.url)));
+    const getFileName = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+    if (id === `\0${COMPILATIONS}`) {
+      return [
+        `import initial from ${JSON.stringify(COMPILATION + INITIAL_FILE_NAME)};`,
+        "export { initial };",
+        `export const compilations = {${paths
+          .map(getFileName)
+          .map((fileName) =>
+            fileName === INITIAL_FILE_NAME
+              ? `${JSON.stringify(fileName)}: () => Promise.resolve(initial)`
+              : `${JSON.stringify(fileName)}: () => import(${JSON.stringify(COMPILATION + fileName)}).then((loaded) => loaded.default)`,
+          )
+          .join(",")}};`,
+      ].join("\n");
+    }
+    const path = paths.find((found) => getFileName(found) === id.slice(COMPILATION.length + 1));
+    if (path === undefined) return undefined;
+    this.addWatchFile(path);
+    const highlight = await createHighlighter();
+    const source = readFileSync(path, "utf8").trim();
+    const compilation = getCompilation(source, getFileName(path));
+    return `export default ${JSON.stringify({
+      fileName: getFileName(path),
+      source,
+      compilation,
+      tla: highlight(compilation.tla, "tlaplus"),
+    } satisfies Precompiled)};`;
+  },
+});
+
 const TYPESCRIPT_LIBRARIES = "virtual:typescript-libraries";
 
 const getLibraries = (directory: string, fileName: string, libraries: Map<string, string>) => {
@@ -231,24 +276,13 @@ const pages = (): Plugin => ({
       const content = context.filename.endsWith("/playground.html")
         ? prerender.getPlaygroundHtml()
         : prerender.getAppHtml();
-      // The playground cannot compile until its worker loads, so the page asks for it at once
-      // and not after the main script has run.
-      const worker = Object.keys(context.bundle ?? {}).find((fileName) =>
-        /compile-worker-.*\.js$/.test(fileName),
-      );
       return html
         .replace(STYLESHEET, (link, fileName) => {
           const styles = context.bundle?.[fileName];
           // The styles ride in the HTML, so the first paint does not wait on a second request.
           return styles?.type === "asset" ? `<style>${styles.source}</style>` : link;
         })
-        .replace(EMPTY_ROOT, `<div id="root">${content}</div>`)
-        .replace(
-          "</head>",
-          worker && context.filename.endsWith("/playground.html")
-            ? `<link rel="modulepreload" href="/${worker}" /></head>`
-            : "</head>",
-        );
+        .replace(EMPTY_ROOT, `<div id="root">${content}</div>`);
     },
   },
 });
@@ -259,6 +293,7 @@ export default defineConfig({
     tailwindcss(),
     siteData(),
     outlines(),
+    compilations(),
     typescriptLibraries(),
     logoFiles(),
     pages(),
