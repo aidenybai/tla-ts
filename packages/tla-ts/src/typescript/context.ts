@@ -141,7 +141,8 @@ export interface Context {
   fileSetters: readonly (readonly AccessorFunction[])[];
   fileSetAccessors: readonly (readonly ts.SetAccessorDeclaration[])[];
   fileReturned: readonly (readonly HeapFunction[])[];
-  fileWritten: readonly ReadonlyMap<string, readonly FunctionNode[]>[];
+  // The functions that the program's files write under each key, as methods, getters, or values.
+  written: ReadonlyMap<string, readonly FunctionNode[]>;
   // The variables of each of the program's files that the script assigns an executor's resolve or
   // reject, by the file's index.
   resolverHolders: readonly ReadonlySet<ts.Symbol>[];
@@ -673,7 +674,7 @@ export const createContext = (
     fileSetters: [],
     fileSetAccessors: [],
     fileReturned: [],
-    fileWritten: [],
+    written: new Map(),
     resolverHolders: [],
     keptReads: reads.keptReads,
     names: createNames(JAVASCRIPT_OPERATORS),
@@ -4543,7 +4544,15 @@ export const findFileAccessors = (context: Context) => {
   context.fileSetters = accessors.map((found) => found.get("set") ?? []);
   context.fileSetAccessors = files.map((file) => findSetAccessors(file, context));
   context.fileReturned = files.map((file) => findReturnedFunctions(file, context));
-  context.fileWritten = files.map((file) => findWrittenFunctions(file, context));
+  // A protocol may read a function that another module writes, as a harness's object literal.
+  context.written = files
+    .map((file) => findWrittenFunctions(file, context))
+    .reduce((merged, found) => {
+      found.forEach((functions, key) =>
+        merged.set(key, [...new Set([...(merged.get(key) ?? []), ...functions])]),
+      );
+      return merged;
+    }, new Map<string, FunctionNode[]>());
 };
 
 // Whether a value of one type may be used as another, which any may not where the other is a type

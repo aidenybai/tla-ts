@@ -52576,4 +52576,18 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("98,NaN,2"))).failure?.message).toContain("read 97,98,2");
     });
   });
+
+  describe("iterates an object whose Symbol.iterator method another module writes", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/iterated-elsewhere.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects other values", async () => {
+      const wrong = source.replace('"10,20,30"', '"10,20"');
+      expect((await check(compile(wrong, path))).failure?.message).toContain("seen 10,20,30");
+    });
+  });
 });
