@@ -892,6 +892,20 @@ export const createCommandReader = (text: string) => {
     const open = readOpen();
     return open === undefined ? undefined : readList(open);
   };
+  // parse_sexpr reads one s-expression, which may be an atom.
+  const readSExpr = (): SExpr => {
+    const token = take();
+    if (token === undefined)
+      throw new SmtParseError(
+        "invalid s-expression, unexpected end of file",
+        scanner.getPosition(),
+      );
+    if (token.kind !== "(") return token;
+    state.depth = 1;
+    const list = readList(token);
+    expectClosed(list);
+    return list;
+  };
   // parse_cmd checks the head of a command before it reads the rest.
   const readCommand = () => {
     const open = readOpen();
@@ -921,7 +935,7 @@ export const createCommandReader = (text: string) => {
       }
     }
   };
-  return { read, readCommand, skip };
+  return { read, readCommand, readSExpr, skip };
 };
 
 export const expectClosed = (sexpr: SExpr) => {

@@ -2807,4 +2807,18 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
       ]),
     ).toEqual(["unsat", "unknown", '(:reason-unknown "no reason given")', "(:rlimit 87)"]);
   });
+
+  // The parser numbers the first line's columns from 1.
+  it("reads tactic.default_tactic as one s-expression", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(fail-if true)")',
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 10: invalid probe, unknown builtin probe true")',
+      "(:rlimit 0)",
+    ]);
+  });
 });
