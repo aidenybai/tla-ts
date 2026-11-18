@@ -2093,6 +2093,18 @@ ASSUME TLCFP(a) = -887695703
       "LAMBDA(2) line 5, col 22 to line 5, col 31 of module L",
     ]);
   });
+
+  it("counts the operand a selection with parameters selects only where it applies it, as SANY's LAMBDA is no LET definition", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE G ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA(k) == /\\ x < 2\n        /\\ x' = x + k\nNext == A(1)!1 /\\ A(1)!2\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 5, col 12 to line 5, col 16 of module G: 6",
+      "|line 5, col 12 to line 5, col 12 of module G: 7",
+      "line 7, col 19 to line 7, col 24 of module G: 6",
+    ]);
+  });
 });
 
 describe("formatValue matches TLC", () => {

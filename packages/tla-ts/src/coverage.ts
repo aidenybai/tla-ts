@@ -7,6 +7,7 @@ import {
   type SourceRange,
 } from "./ast";
 import { formatRange } from "./errors";
+import { SELECTION_NAME } from "./resolve";
 import type { Environment, Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
@@ -420,9 +421,10 @@ export const buildCoverage = (
         expression.definitions.forEach((definition) => {
           if (definition.kind === "Operator") letBodies.set(definition.body, expression.body);
         });
-        getHashtableOrder(expression.definitions).forEach((definition) =>
-          walkDefinition({ definition, scope: inner }),
-        );
+        // SANY makes a selection with parameters the LAMBDA it applies, not a LET.
+        getHashtableOrder(expression.definitions).forEach((definition) => {
+          if (definition.name !== SELECTION_NAME) walkDefinition({ definition, scope: inner });
+        });
         walk(expression.body, inner);
         return;
       }
