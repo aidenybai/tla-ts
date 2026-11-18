@@ -99,6 +99,7 @@ export const KERNEL_REWRITER_OPTIONS: RewriterOptions = {
   isEliminatingAnd: false,
   arith: KERNEL_ARITH_OPTIONS,
   isRewritingPatterns: true,
+  isKeepingDistinct: true,
 };
 
 export const TACTIC_REWRITER_OPTIONS: RewriterOptions = {
@@ -1057,7 +1058,8 @@ export class Rewriter extends RewriterTpl {
     return undefined;
   }
 
-  // Z3 keeps a distinct of more than two arguments, which tlapm does not send, where this expands it into disequalities.
+  // As in Z3, a distinct of more than two arguments stays unless blast_distinct is set, but the
+  // rewriters that leave isKeepingDistinct unset still expand it.
   private mkDistinct(args: number[]): number | Rewrite {
     const manager = this.manager;
     if (args.length <= 1) return manager.trueExpr;

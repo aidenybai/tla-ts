@@ -261,6 +261,62 @@ describe("the setup of the smt kernel", () => {
   });
 });
 
+describe("a distinct of more than two arguments", () => {
+  const declareConsts = (sort: string, names: string[]) =>
+    names.map((name) => `(declare-const ${name} ${sort})`);
+
+  it("stays a distinct when the kernel asserts it", () => {
+    expect(
+      run([
+        "(declare-sort U 0)",
+        ...declareConsts("U", ["a0", "a1", "a2", "a3", "a4"]),
+        "(assert (not (distinct a2 a3 a0 a4)))",
+        "(get-info :rlimit)",
+        "(assert (distinct a1 a2 a3))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 6)", "(:rlimit 9)"]);
+  });
+
+  it("is defined in the kernel by its disequalities, as internalize_distinct does", () => {
+    const check = (lines: string[]) => run([...lines, "(check-sat)", "(get-info :rlimit)"]);
+    const names = Array.from({ length: 32 }, (_value, index) => `a${index}`);
+    expect(
+      check([
+        "(declare-sort U 0)",
+        ...declareConsts("U", ["a", "b", "c"]),
+        "(assert (distinct a b c))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 77)"]);
+    expect(
+      check([
+        "(declare-sort U 0)",
+        ...declareConsts("U", ["a", "b", "c", "d"]),
+        "(assert (distinct a b c d))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 85)"]);
+    expect(check(["(declare-fun f (Int) Int)", "(assert (distinct (f 1) (f 2) (f 3)))"])).toEqual([
+      "sat",
+      "(:rlimit 122)",
+    ]);
+    expect(
+      check([
+        "(declare-sort U 0)",
+        ...declareConsts("U", ["a", "b", "c"]),
+        "(declare-fun f (U) Int)",
+        "(assert (distinct (f a) (f b) (f c)))",
+      ]),
+    ).toEqual(["sat", "(:rlimit 161)"]);
+    expect(
+      check([
+        "(declare-sort U 0)",
+        ...declareConsts("U", names),
+        `(assert (distinct ${names.join(" ")}))`,
+      ]),
+    ).toEqual(["sat", "(:rlimit 1121)"]);
+  });
+});
+
 describe("regular expressions", () => {
   it("collapses a character class given by re.of.pred as Z3 does", () => {
     const below = "(re.of.pred (lambda ((c Unicode)) (char.<= c (_ Char 98))))";
