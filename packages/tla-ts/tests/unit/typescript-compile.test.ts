@@ -55944,4 +55944,30 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("checks the functions that a module exports by name in an export list", () => {
+    const getSource = (bound: number) => `
+      export let count = 0;
+      const bump = (by: 1 | 2) => {
+        if (count < 3) count += by;
+      };
+      const isSmall = () => count <= ${bound};
+      count += 1;
+      if (count !== 1) throw new Error("count " + count);
+      export { bump as step, isSmall };
+    `;
+
+    it("agrees with Node, and runs the listed action", async () => {
+      const result = await checkModel(getSource(4));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        4,
+      ]);
+    });
+
+    it("rejects a smaller bound in the listed invariant", async () => {
+      expect((await checkModel(getSource(3))).status).toBe("invariant-violation");
+    });
+  });
 });
