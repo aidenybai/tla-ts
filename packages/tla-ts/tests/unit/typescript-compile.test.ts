@@ -53172,13 +53172,26 @@ describe("BigInts", () => {
     });
   });
 
-  it("stops at NaN where a script holds no objects, rather than read it as undefined", () => {
-    expect(() =>
-      compile(`
-        const same = (left: any, right: any) => left === right;
-        if (same(NaN, NaN)) throw new Error("same");
-      `),
-    ).toThrow("tla-ts can't tell what NaN holds here");
+  describe("reads NaN and the infinities where a script holds no objects", () => {
+    const getSource = (expected: string) => `
+      const same = (left: any, right: any) => left === right;
+      const less = (left: any, right: any) => left < right;
+      const seen = [
+        same(NaN, NaN), less(1, Infinity), less(-Infinity, -1), String(NaN), String(-Infinity),
+        Number.isNaN(NaN), 1 / 0, Object.is(-0, 0), (2 ** 60) === 2 ** 60,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "false,true,true,NaN,-Infinity,true,Infinity,false,true";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace(/^false/, "true");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
   });
 
   describe("orders values of type any as IsLessThan does, converting objects first", () => {
