@@ -219,4 +219,23 @@ describe("sat solver", () => {
     expect(solver.value(second)).toBe(1);
     expect(limit.isSuspended).toBe(false);
   });
+
+  it("drops the cardinality constraints over the variables of a popped scope", () => {
+    expect(
+      run([
+        "(set-option :tactic.default_tactic sat)",
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(declare-const d Bool)",
+        "(assert ((_ at-least 1) a b))",
+        "(push 1)",
+        "(assert ((_ pbeq 2 1 1 1) a c d))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (not a))",
+        "(check-sat)",
+      ]),
+    ).toBe("sat\nsat");
+  });
 });
