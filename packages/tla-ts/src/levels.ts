@@ -751,10 +751,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return data;
   };
 
-  const reportAt = (range: SourceRange | undefined, getData: () => LevelData): LevelData => {
-    const start = messages.length;
-    const data = getData();
-    const isReported = messages.length > start;
+  const reportSince = (start: number, range: SourceRange | undefined, data: LevelData) => {
+    if (messages.length === start) return data;
     if (range) {
       messages
         .splice(start)
@@ -762,11 +760,18 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           errors.push({ location: formatRange(range), message: `${message}.` }),
         );
     }
-    return isReported ? { ...data, isCorrect: false } : data;
+    return { ...data, isCorrect: false };
   };
 
-  const analyze = (expression: Expression, scope: Scope) =>
-    reportAt(expression.location.range, () => analyzeNode(expression, scope));
+  const reportAt = (range: SourceRange | undefined, getData: () => LevelData) => {
+    const start = messages.length;
+    return reportSince(start, range, getData());
+  };
+
+  const analyze = (expression: Expression, scope: Scope) => {
+    const start = messages.length;
+    return reportSince(start, expression.location.range, analyzeNode(expression, scope));
+  };
 
   const analyzeNode = (expression: Expression, scope: Scope): LevelData => {
     switch (expression.kind) {
