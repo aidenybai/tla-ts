@@ -127,7 +127,7 @@ describe("subexpression references match TLC", () => {
       check({
         source: `---- MODULE M ----\nEXTENDS Naturals\nD0 == {1}\n${Array.from(
           { length },
-          (_, index) => `D${index + 1} == {D${index}!1 + D${index}!1}`,
+          (_value, index) => `D${index + 1} == {D${index}!1 + D${index}!1}`,
         ).join("\n")}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
         config: "INIT Init\nNEXT Next",
       });
