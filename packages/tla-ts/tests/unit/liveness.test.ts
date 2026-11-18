@@ -245,6 +245,17 @@ describe("liveness matches TLC", () => {
     ]);
   });
 
+  it("evaluates a constant part of a definition a temporal property calls at startup, as TLC expands the call", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nS(v) == v < 0 /\\ PrintT("s")\nInit == x = 0\nNext == x < 4 /\\ x\' = x + 1\nProp == <>[]~S(x)\n====',
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(String(text)),
+    });
+    expect([result.status, printed]).toEqual(["success", ['"s"']]);
+  });
+
   it("finds the level of a spec whose initial predicate calls a recursive LET operator", async () => {
     const result = await check({
       source:

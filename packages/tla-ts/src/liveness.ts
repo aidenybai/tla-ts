@@ -433,9 +433,13 @@ export const toLiveExpression = (
         ? lookupScope(scope, name)
         : undefined;
     if (binding?.kind === "Thunk" && !binding.isReleased && definitionThunks.has(binding)) {
-      return expandCall(expression, () =>
+      return expandCall(expression, scope, () =>
         expand(binding.expression, binding.scope, expression, scope),
       );
+    }
+    const definition = binding ? undefined : getDefinition(name, environment);
+    if (definition && getStartupValue(definition, environment) !== undefined) {
+      return toCallAtom(expression, scope);
     }
     const operator =
       binding?.kind === "Operator"
@@ -452,11 +456,18 @@ export const toLiveExpression = (
       const operands = args.map((arg) => convert(arg, scope));
       return toWhole(expression, scope, createJunction(junction, operands));
     }
-    if (operator?.kind !== "Closure") throw createCannotHandleError(expression);
-    const isRecursive =
-      !isLocallyResolved(expression) && getDefinition(name, environment)?.isRecursive === true;
+    if (operator?.kind !== "Closure") return toCallAtom(expression, scope);
+    const isRecursive = !isLocallyResolved(expression) && definition?.isRecursive === true;
+    if (
+      isRecursive &&
+      !is174 &&
+      getLevel(expression, scope, environment, new Set(), new Set(), true) <= ACTION_LEVEL
+    ) {
+      return toCallAtom(expression, scope);
+    }
     return expandCall(
       expression,
+      scope,
       () => {
         // TLC 1.7.4 evaluates the arguments of an operator it expands.
         if (is174) {
@@ -475,8 +486,15 @@ export const toLiveExpression = (
     );
   };
 
+  const toCallAtom = (expression: Expression, scope: Scope | undefined) => {
+    const level = getLevel(expression, scope, environment);
+    if (level > ACTION_LEVEL) throw createCannotHandleError(expression);
+    return toAtom(expression, scope, level);
+  };
+
   const expandCall = (
     expression: Expression,
+    scope: Scope | undefined,
     expandBody: () => LiveExpression,
     isRecursive = false,
   ) => {
@@ -485,7 +503,7 @@ export const toLiveExpression = (
     } catch (error) {
       const isRethrown = error instanceof TlaStackOverflowError || (isRecursive && !is174);
       if (!(error instanceof TlaEvaluationError) || isRethrown) throw error;
-      throw createCannotHandleError(expression);
+      return toCallAtom(expression, scope);
     }
   };
 
@@ -559,7 +577,7 @@ export const toLiveExpression = (
     );
   };
 
-  // These forms are translated part by part at every level; any other form below the temporal level is an atom.
+  // These forms and calls are translated part by part at every level, so TLC evaluates a constant part of a called definition at startup; any other form below the temporal level is an atom.
   const convert = (expression: Expression, scope: Scope | undefined): LiveExpression => {
     const level = getLevel(expression, scope, environment);
     switch (expression.kind) {
@@ -612,7 +630,11 @@ export const toLiveExpression = (
         );
       }
     }
-    if (level <= ACTION_LEVEL) return toAtom(expression, scope, level);
+    if (level <= ACTION_LEVEL) {
+      return expression.kind === "Identifier" || expression.kind === "Apply"
+        ? convertCall(expression, scope)
+        : toAtom(expression, scope, level);
+    }
     switch (expression.kind) {
       case "Identifier":
         return convertCall(expression, scope);
