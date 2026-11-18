@@ -1023,7 +1023,6 @@ const generateBoundsWithRanges = (
   };
 };
 
-// Generator#generateLabel returns its nullLabelNode, a LabelNode around nullOAN, for a label it rejects.
 const createNullLabel = (generation: ModuleGeneration): LabelNode => {
   const body = createNullNode(generation);
   return {

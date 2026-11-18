@@ -136,7 +136,6 @@ export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
-// SANY generates a failed selection's arguments only up to the selector it rejects.
 export const generatedArgumentCounts = new WeakMap<Expression, number>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
@@ -1961,7 +1960,6 @@ const isDefinitionSelected = (
     unit.errors.push(error);
     return false;
   }
-  // Generator#selectorToNode accepts a selection only when it ends on a LET definition's name.
   return selectors.at(-1)?.kind === "Name" && selectors.at(-2)?.kind !== "Name";
 };
 

@@ -365,7 +365,6 @@ const selectSubexpression = (
       const found = current && findLabel(current, selector.name, [], []);
       const missing = `Cannot find label \`${selector.name}'.`;
       if (!found) return report(range, missing);
-      // SANY generates no arguments of an application it rejects, so it never makes a label inside them.
       found.applications.forEach((application) => checkNull(application, missing, true));
       const params = found.label.params;
       if (selector.args.length !== params.length) {

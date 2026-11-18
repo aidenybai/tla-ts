@@ -275,7 +275,6 @@ const createPlaceholder = (definition: Definition, maxLevel: number, weight: num
   };
 };
 
-// Generator makes a definition's node after its body's, and a RECURSIVE operator's at its declaration.
 const getUnitEvents = (units: ModuleUnit[], scope: Scope, depth: number): SectionEvent[] => {
   const recursiveDefinitions = new Map<string, Definition[]>();
   units.forEach((unit) => {
@@ -335,8 +334,6 @@ const getExpressionEvents = (
   return events;
 };
 
-// Generator#processRecursive opens a recursive section unless one is open, and every definition
-// made before each declared operator is defined joins it.
 const getRecursiveSections = (events: SectionEvent[]) => {
   const sections: RecursiveSection[] = [];
   const pending = new Map<number, Set<string>>();
@@ -452,7 +449,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         ? [{ operand, index }]
         : [],
     );
-    // OpApplNode#levelCheck reports a level error only for an argument without one of its own.
     exceeding
       .filter((entry) => operator.isCorrect && entry.operand.data.isCorrect)
       .forEach((entry) =>
@@ -1088,7 +1084,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return levels;
   };
 
-  // OpDefNode#levelCheck reruns in a recursive section without lowering a level or raising a maximum.
   const staleDefinitions = new Set<Definition>();
 
   const analyzeDefinition = (definition: Definition, scope: Scope): OperatorLevels => {
@@ -1128,8 +1123,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       });
     });
 
-  // ModuleNode#levelCheck checks a recursive section twice, first with each recursive operator at the
-  // constant level and taking action-level arguments, then with the highest level the first pass found.
   const checkRecursiveSection = (members: SectionMember[]) => {
     if (members.length === 0 || definitionLevels.has(members[0].definition)) return;
     const recursive = members.filter((member) => member.definition.isRecursive);
@@ -1329,8 +1322,6 @@ export const checkModuleLevels = (
   ];
   const statementBodies = new Set(statements.map((statement) => statement.statement));
   const sections = getRecursiveSections(getUnitEvents(module.units, new Map(), 0));
-  // ModuleNode#levelCheck checks its recursive sections, then every definition, then named theorems
-  // and assumptions, then the rest in order.
   return {
     sections: sections.map((section) => ({
       location: section.location,
@@ -1341,8 +1332,6 @@ export const checkModuleLevels = (
     })),
     check: (isInner: boolean) =>
       [
-        // An inner module's ModuleNode#levelCheck reruns the first pass over its recursive sections,
-        // which checks their arguments for primes against what the second pass found.
         (isInner ? sections : []).map((section) => ({
           location: section.location,
           check: (reported: SanyError[]) => {

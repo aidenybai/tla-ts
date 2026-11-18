@@ -176,7 +176,6 @@ const getDefEntryParts = (
         ? getSecondHeir(getMatchingIndex(file, span.start + 1), "N_IdentifierTuple")
         : undefined;
     case "Decimal": {
-      // A decimal's N_Real node has the integer part, the point, and the fraction as heirs.
       const token = file.tokens[span.start];
       const point = token.column + token.text.indexOf(".");
       return {
@@ -192,7 +191,6 @@ const getDefEntryParts = (
     case "And":
     case "Or": {
       if (expression.operands.length === 1) return undefined;
-      // A chain of infix junctions nests its first operand, as N_InfixExpr does.
       if (!expression.isBulleted && expression.operands.length > 2) {
         return {
           hasChildlessFirstChild: undefined,

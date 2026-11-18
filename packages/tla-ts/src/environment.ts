@@ -426,7 +426,6 @@ export const createEnvironment = (
     const redefinition = loaded && getModuleRedefinition(duplicate, loaded.module);
     if (redefinition) throw createSanyError([redefinition], false, undefined, warnings);
     if (duplicate) throw createModuleRedefinedError(duplicate);
-    // ModuleNode#levelCheck checks the recursive sections of a file's inner modules with its own, first.
     // SANY's Errors#addMessage drops a message it already has, such as an instantiated body's.
     const levelErrors = [
       ...collectSemanticErrors(

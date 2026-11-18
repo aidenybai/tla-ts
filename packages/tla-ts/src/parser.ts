@@ -482,10 +482,8 @@ const getOperatorApplication = (
 
 export const parenthesizedRanges = new WeakMap<Expression, SourceRange>();
 
-// Generator#genIdToSelector rejects a DEF entry that isn't a name by the shape of its syntax tree.
 export const defEntryErrors = new WeakMap<Expression, DefEntryError[]>();
 
-// Generator#genIdToSelector looks up the name a binder declares as the name of the DEF entry.
 export const getDefEntryBinder = (expression: Expression): Expression | undefined => {
   if (parenthesizedRanges.has(expression)) return undefined;
   const binder =
