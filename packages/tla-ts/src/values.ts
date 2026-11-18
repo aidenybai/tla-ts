@@ -130,6 +130,7 @@ export interface LazyFunctionValue {
   kind: "LazyFunction";
   domain: Value;
   apply: (argument: Value) => Value;
+  applyUnrecorded?: (argument: Value) => Value;
   boundTupleLengths?: (number | undefined)[];
   source?: LazyFunctionSource;
   functionClass?: FunctionClass;
@@ -2600,11 +2601,13 @@ export const updateFunction = (
     }
     if (!isElementOf(argument, functionValue.domain)) return functionValue;
     const updated = update(functionValue.apply(argument));
+    // FcnLambdaValue#takeExcept copies the function without its cost model.
+    const apply = functionValue.applyUnrecorded ?? functionValue.apply;
     return setFunctionClass<LazyFunctionValue>(
       {
         kind: "LazyFunction",
         domain: functionValue.domain,
-        apply: (key) => (isEqualLikeTlc(argument, key) ? updated : functionValue.apply(key)),
+        apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
         source: functionValue.source,
         boundTupleLengths: functionValue.boundTupleLengths,
       },

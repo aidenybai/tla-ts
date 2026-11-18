@@ -2073,6 +2073,10 @@ export const getFunctionBuilder = (
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,
     );
+    if (coverage) {
+      value.applyUnrecorded = (argument) =>
+        runAtCoverageNode(coverage, -1, () => compute(argument));
+    }
     // Tool#eval binds a $RecursiveFcnSpec's name to the FcnLambdaValue it builds, which the body applies.
     if (selfName !== undefined) scope = bindValue(outer, selfName, value);
     const functionValue = keepLambda({ value, bounds, body: expression.body, scope });

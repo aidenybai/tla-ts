@@ -2201,6 +2201,14 @@ ASSUME TLCFP(a) = -887695703
     expect(result.failure?.fingerprint?.reason).toBe("The second argument of \\div is 0.");
   });
 
+  it("counts no application of the copy EXCEPT makes of a lazy function, as FcnLambdaValue#takeExcept drops the cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == LET f[n \\in 0..2] == 10 \\div (n + 1) IN x = [f EXCEPT ![2] = 0][1]\nNext == UNCHANGED x\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[0]).toEqual(["line 4, col 49 to line 4, col 74 of module M: 1"]);
+  });
+
   it("counts no node for the reference that applies a recursive function a parameterized instance copies", async () => {
     const result = await check({
       source:
