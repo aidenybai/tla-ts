@@ -795,6 +795,41 @@ describe("tactics keep the dependencies Z3 keeps", () => {
       "(:rlimit 535)",
     ]);
   });
+
+  it("bv-divrem-bounds keeps the dependencies and gives its lemmas none", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const a (_ BitVec 8))",
+        "(declare-const b (_ BitVec 8))",
+        "(assert (! (= (bvurem a b) #x05) :named a1))",
+        "(assert (! (bvult b #x03) :named a2))",
+        "(assert (! (not (= b #x00)) :named a3))",
+        "(apply bv-divrem-bounds :print_dependencies true)",
+        "(check-sat-using (then bv-divrem-bounds smt))",
+        "(get-unsat-core)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  |- a1",
+        "  (= (bvurem a b) #x05)",
+        "  |- a2",
+        "  (bvult b #x03)",
+        "  |- a3",
+        "  (not (= b #x00))",
+        "  |-",
+        "  (or (= b #x00) (not (bvule b (bvurem a b))))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+      "unsat",
+      "(a3 a1 a2)",
+      "(:rlimit 398)",
+    ]);
+  });
 });
 
 describe("tactics where Z3 5.3.2 fails", () => {

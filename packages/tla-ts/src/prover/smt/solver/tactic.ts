@@ -1287,7 +1287,11 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   ],
   [
     "bv-divrem-bounds",
-    { descrs: new Map(), build: (environment) => runBvDivremBounds(environment.manager) },
+    {
+      descrs: new Map(),
+      isTrackingDependencies: true,
+      build: (environment) => runBvDivremBounds(environment.manager),
+    },
   ],
   [
     "reduce-bv-size",
