@@ -1,11 +1,9 @@
 import type { Expression } from "./ast";
 import { parseConfig, type ModelConfig } from "./config";
 import {
-  addCoverageRelation,
-  buildCoverage,
   countCoverageVariables,
   createCoverage,
-  getCoverageLabel,
+  createCoverageEnvironment,
   getCoverageReport,
   type CoverageReport,
 } from "./coverage";
@@ -21,13 +19,7 @@ import {
   UNEXPECTED_EXCEPTION,
   formatRange,
 } from "./errors";
-import {
-  describeRange,
-  getDefinition,
-  type CallStack,
-  type Environment,
-  type FingerprintFailure,
-} from "./evaluate";
+import { describeRange, getDefinition, type CallStack, type FingerprintFailure } from "./evaluate";
 import { EXIT_STATUS, setExitCode, withLivenessExitCode } from "./exit-codes";
 import {
   fingerprintReplayed,
@@ -58,6 +50,7 @@ import {
   type LiveSuccessor,
 } from "./liveness-checker";
 import {
+  addActionCoverage,
   createCheckEnvironment,
   createMissingOperatorError,
   createSearch,
@@ -65,7 +58,10 @@ import {
   findAssumptionViolation,
   reportInitialStatesProgress,
   reportStartup,
+  STOP_WALK,
+  walkCoveredSuccessors,
   withNextStateExitCode,
+  type CoveredAction,
 } from "./search";
 import {
   getActionLabel,
@@ -102,12 +98,7 @@ import {
 import { createTautologyError } from "./liveness";
 import { KEY_SEPARATOR } from "./resolve";
 import { writeTraceSpec } from "./tlc/trace-spec";
-import {
-  getPrimedRanges,
-  replayInitialStates,
-  replaySuccessors,
-  walkSuccessors,
-} from "./tlc/replay";
+import { replayInitialStates, replaySuccessors, walkSuccessors } from "./tlc/replay";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import {
   createActionRecord,
@@ -329,10 +320,6 @@ export interface CheckResult {
   coverage?: CoverageReport;
 }
 
-interface CoveredAction extends SpecAction {
-  node: number;
-}
-
 interface ReportedViolation extends Omit<Violation, "loopStart"> {
   loopStart?: number;
 }
@@ -362,7 +349,6 @@ const getTraceFailure = (error: TlaEvaluationError, output: OutputLine[]): Trace
 });
 
 const STOP_REPLAY = new Error("The replay stopped");
-const STOP_WALK = new Error("The walk stopped");
 
 export const checkSequentially = (options: CheckOptions): CheckResult => {
   const stateWriter =
@@ -409,14 +395,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     options.coverage === undefined
       ? undefined
       : createCoverage(specification.environment.variables.length);
-  const environment: Environment = coverage
-    ? {
-        ...specification.environment,
-        evaluators: new WeakMap(),
-        entryEvaluators: new WeakMap(),
-        definitionEvaluators: new WeakMap(),
-        coverage,
-      }
+  const environment = coverage
+    ? createCoverageEnvironment(specification.environment, coverage)
     : specification.environment;
   const runtime = environment.runtime;
   const is174 = runtime.version === "1.7.4";
@@ -599,49 +579,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const getFingerprintState = search.getFingerprintState;
   // Tool's constructor splits the next-state relation into actions before TLC checks anything.
   const nextActions = getDescription().actions;
-  const addCoverageRelations = (kind: "init" | "next", actions: SpecAction[]) =>
-    actions.map((action): CoveredAction => ({
-      ...action,
-      node: coverage
-        ? addCoverageRelation(
-            coverage,
-            kind,
-            getCoverageLabel(action.name, action.expression, environment),
-            action.expression,
-            action.scope,
-          )
-        : -1,
-    }));
-  const coverageInits = addCoverageRelations("init", coverage ? getDescription().inits : []);
-  const coverageActions = addCoverageRelations("next", coverage ? nextActions : []);
-  if (coverage) buildCoverage(coverage, environment, getPrimedRanges(coverageActions, environment));
-  const walkCoveredSuccessors = (
-    action: CoveredAction,
-    state: Value[],
-    onState: (successor: Value[]) => void,
-  ) =>
-    walkSuccessors(
-      action,
-      action.node,
-      state,
-      environment,
-      (successor) => {
-        if (coverage) coverage.primary[action.node]++;
-        onState(successor);
-      },
-      (partial) => {
-        if (coverage) coverage.primary[action.node]++;
-        const missing = environment.variables.filter(
-          (_variable, index) => partial[index] === undefined,
-        );
-        throw new TlaIncompleteSuccessorError(
-          `Successor state is not completely specified by action ${action.name}. The following variables are not assigned: ${missing.join(", ")}`,
-          partial,
-          action.name,
-          missing,
-        );
-      },
-    );
+  const covered = coverage && addActionCoverage(coverage, environment, getDescription());
+  const coverageInits = covered?.inits ?? [];
+  const coverageActions = covered?.actions ?? [];
   const hasCoveredIncompleteSuccessor = (action: CoveredAction, state: Value[]) => {
     let complete = 0;
     let incomplete = 0;
@@ -659,17 +599,16 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     if (coverage) coverage.primary[action.node] += complete + incomplete;
     return incomplete > 0;
   };
-  const getCoveredSuccessors = (action: CoveredAction, state: Value[]) => {
-    const successors: Successor[] = [];
-    walkCoveredSuccessors(action, state, (successor) =>
-      successors.push({ state: successor, action: action.name }),
-    );
-    return successors;
-  };
   // TLC generates the successors of each action again, which its coverage counts.
   const findSuccessorAction = (state: Value[], isMatch: (successor: Successor) => boolean) =>
     coverage
-      ? coverageActions.find((item) => getCoveredSuccessors(item, state).some(isMatch))
+      ? coverageActions.find((item) => {
+          const successors: Successor[] = [];
+          walkCoveredSuccessors(coverage, item, state, environment, (successor) =>
+            successors.push({ state: successor, action: item.name }),
+          );
+          return successors.some(isMatch);
+        })
       : nextActions.find((item) =>
           getSuccessors(item.expression, state, environment, item.scope).some(isMatch),
         );
@@ -809,7 +748,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             try {
               // TLC's coverage counts the successors of each action the graph generates again.
               if (coverage) {
-                walkCoveredSuccessors(coverageActions[position], state, addSuccessor);
+                walkCoveredSuccessors(
+                  coverage,
+                  coverageActions[position],
+                  state,
+                  environment,
+                  addSuccessor,
+                );
               } else {
                 const action = nextActions[position];
                 forEachSuccessor(
@@ -1447,7 +1392,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       try {
         coverageActions.forEach((action) => {
           coveredNode = action.node;
-          walkCoveredSuccessors(action, state, (successor) => {
+          walkCoveredSuccessors(coverage, action, state, environment, (successor) => {
             successorCount++;
             if (onSuccessor({ state: successor, action: action.name }, action)) throw STOP_WALK;
           });

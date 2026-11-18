@@ -17,7 +17,11 @@ import type {
 import { parseConfig, type ConfigValue, type ModelConfig } from "./config";
 import {
   addCoverageRelation,
+  buildCoverage,
+  createCoverage,
+  createCoverageEnvironment,
   getCoverageLabel,
+  getCoverageReport,
   runAtCoverageNode,
   type Coverage,
   type CoverageKind,
@@ -36,6 +40,7 @@ import {
 import {
   TlaConfigError,
   TlaEvaluationError,
+  TlaIncompleteSuccessorError,
   TlaModuleError,
   UNEXPECTED_EXCEPTION,
   formatRange,
@@ -71,6 +76,7 @@ import {
   getSpecDescription,
   getSpecificationValue,
   getSubscriptVariables,
+  type SpecAction,
   type SpecDescription,
 } from "./spec-description";
 import { getRepresentative, getSymmetryGroup, type Images } from "./symmetry";
@@ -83,6 +89,7 @@ import {
   withHeadline,
 } from "./tlc/messages";
 import { createTlcOrder } from "./tlc/order";
+import { getPrimedRanges, walkSuccessors } from "./tlc/replay";
 import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
 import {
@@ -916,7 +923,13 @@ export const prepareSearch = (options: CheckOptions) => {
   const created = createCheckEnvironment(config, options, options.onPrint ?? console.log);
   const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
-  const environment = specification.environment;
+  const coverage =
+    options.coverage === undefined
+      ? undefined
+      : createCoverage(specification.environment.variables.length);
+  const environment = coverage
+    ? createCoverageEnvironment(specification.environment, coverage)
+    : specification.environment;
   let description: SpecDescription | undefined;
   const getDescription = () =>
     (description ??= getSpecDescription(config, environment, specification.instanceActions));
@@ -931,8 +944,74 @@ export const prepareSearch = (options: CheckOptions) => {
     specification.moduleOperators,
     specification.runtimeInvariants,
   );
-  return { config, specification, environment, search, getDescription };
+  const getCoverage = () =>
+    coverage &&
+    getCoverageReport(
+      coverage,
+      environment,
+      specification.variableLocations,
+      search?.getTlcOrder() ?? [],
+    );
+  return { config, specification, environment, search, getDescription, coverage, getCoverage };
 };
+
+export interface CoveredAction extends SpecAction {
+  node: number;
+}
+
+export const STOP_WALK = new Error("The walk stopped");
+
+export const addActionCoverage = (
+  coverage: Coverage,
+  environment: Environment,
+  description: SpecDescription,
+) => {
+  const addRelations = (kind: "init" | "next", actions: SpecAction[]) =>
+    actions.map((action): CoveredAction => ({
+      ...action,
+      node: addCoverageRelation(
+        coverage,
+        kind,
+        getCoverageLabel(action.name, action.expression, environment),
+        action.expression,
+        action.scope,
+      ),
+    }));
+  const inits = addRelations("init", description.inits);
+  const actions = addRelations("next", description.actions);
+  buildCoverage(coverage, environment, getPrimedRanges(actions, environment));
+  return { inits, actions };
+};
+
+export const walkCoveredSuccessors = (
+  coverage: Coverage,
+  action: CoveredAction,
+  state: Value[],
+  environment: Environment,
+  onState: (successor: Value[]) => void,
+) =>
+  walkSuccessors(
+    action,
+    action.node,
+    state,
+    environment,
+    (successor) => {
+      coverage.primary[action.node]++;
+      onState(successor);
+    },
+    (partial) => {
+      coverage.primary[action.node]++;
+      const missing = environment.variables.filter(
+        (_variable, index) => partial[index] === undefined,
+      );
+      throw new TlaIncompleteSuccessorError(
+        `Successor state is not completely specified by action ${action.name}. The following variables are not assigned: ${missing.join(", ")}`,
+        partial,
+        action.name,
+        missing,
+      );
+    },
+  );
 
 export const reportAssumptionViolation = (
   assumptions: Assumption[],

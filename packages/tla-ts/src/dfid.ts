@@ -1,5 +1,6 @@
 import type { Expression } from "./ast";
 import type { CheckOptions } from "./check";
+import type { CoverageReport } from "./coverage";
 import {
   getErrorExitCode,
   getUnexpectedException,
@@ -13,8 +14,13 @@ import {
 import { createTracingEnvironment } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
 import { createLivenessChecker } from "./liveness-checker";
-import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
-import type { SpecAction } from "./spec-description";
+import {
+  addActionCoverage,
+  getIncompleteSuccessorMessage,
+  prepareSearch,
+  reportAssumptionViolation,
+  walkCoveredSuccessors,
+} from "./search";
 import { forEachInitialState, forEachSuccessor, getSuccessors } from "./successors";
 import {
   formatNestedMessage,
@@ -26,7 +32,7 @@ import {
   withUnexpectedException,
 } from "./tlc/messages";
 import { getTlcFingerprint } from "./tlc/fingerprint";
-import { replaySuccessors } from "./tlc/replay";
+import { replayInitialStates, replaySuccessors } from "./tlc/replay";
 import { getOptimisticProbability, getActualProbability } from "./tlc/summary";
 import { createModelValue, formatState, getSetBound, isSameValue, type Value } from "./values";
 
@@ -39,6 +45,7 @@ export type DepthFirstOutput =
   | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
   | { kind: "behavior"; states: Record<string, Value>[]; isInvariant: boolean }
   | { kind: "nested-expressions"; callStack: Expression[] }
+  | { kind: "coverage"; coverage: CoverageReport }
   | { kind: "success"; optimistic: number; actual: number };
 
 interface StateEntry {
@@ -164,7 +171,10 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   );
   if (assumptionStatus !== undefined) return assumptionStatus;
 
-  const nextActions = prepared.getDescription().actions;
+  const description = prepared.getDescription();
+  const nextActions = description.actions;
+  const coverage = prepared.coverage;
+  const covered = coverage && addActionCoverage(coverage, environment, description);
   // Deviation from TLC: TLCExt#pickSuccessor casts the DFID checker to ModelChecker and fails, so tla-ts asks as model checking does.
   runtime.getSuccessorAction = (state, next) =>
     nextActions.find((action) =>
@@ -211,6 +221,8 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const toRecord = (state: (Value | undefined)[]) =>
     search.toRecord(state.map((value) => value ?? createModelValue("null")));
   const printSummary = () => {
+    const report = nextActions.length > 0 ? prepared.getCoverage() : undefined;
+    if (report) output({ kind: "coverage", coverage: report });
     const counts = `${generatedCount} states generated, ${statuses.size} distinct states found`;
     if (isTool) {
       message(
@@ -247,7 +259,13 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       return false;
     };
     const init = search.spec.init;
-    if (init) forEachInitialState(init, environment, addGenerated, search.spec.scope, addGenerated);
+    if (covered) {
+      replayInitialStates(covered.inits, environment, addGenerated, (partial) =>
+        addGenerated([...partial]),
+      );
+    } else if (init) {
+      forEachInitialState(init, environment, addGenerated, search.spec.scope, addGenerated);
+    }
     generatedCount = generated.length;
     for (const state of generated) {
       if (!state.every((value) => value !== undefined)) {
@@ -296,20 +314,27 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     return NO_ERROR;
   };
 
-  const getActionSuccessors = (action: SpecAction, state: Value[]) => {
+  const getActionSuccessors = (index: number, state: Value[]) => {
+    const action = nextActions[index];
+    const coveredAction = covered?.actions[index];
     const successors: Value[][] = [];
+    const addSuccessor = (successor: Value[]) => {
+      if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
+      successors.push(successor);
+      return false;
+    };
     try {
-      forEachSuccessor(
-        action.expression,
-        state,
-        environment,
-        (successor) => {
-          if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
-          successors.push(successor.state);
-          return false;
-        },
-        action.scope,
-      );
+      if (coverage && coveredAction) {
+        walkCoveredSuccessors(coverage, coveredAction, state, environment, addSuccessor);
+      } else {
+        forEachSuccessor(
+          action.expression,
+          state,
+          environment,
+          (successor) => addSuccessor(successor.state),
+          action.scope,
+        );
+      }
       return { successors, incomplete: undefined };
     } catch (error) {
       if (!(error instanceof TlaIncompleteSuccessorError)) throw error;
@@ -380,8 +405,9 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     };
     currentState = state;
     try {
-      for (const action of nextActions) {
-        const next = getActionSuccessors(action, state);
+      for (let index = 0; index < nextActions.length; index++) {
+        const action = nextActions[index];
+        const next = getActionSuccessors(index, state);
         const incomplete = next.incomplete;
         const count = next.successors.length + (incomplete ? 1 : 0);
         generatedCount += count;

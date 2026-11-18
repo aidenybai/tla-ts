@@ -1,4 +1,5 @@
 import type { CheckOptions, TraceStep, Violation } from "./check";
+import type { CoverageReport } from "./coverage";
 import {
   isStackOverflow,
   TlaEvaluationError,
@@ -14,7 +15,14 @@ import type { State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessChecksExitCode } from "./exit-codes";
 import { getHashMapOrder } from "./java-hash";
 import { createLivenessChecks } from "./liveness-checker";
-import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
+import {
+  addActionCoverage,
+  getIncompleteSuccessorMessage,
+  prepareSearch,
+  reportAssumptionViolation,
+  STOP_WALK,
+  walkCoveredSuccessors,
+} from "./search";
 import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor } from "./successors";
 import {
@@ -29,6 +37,7 @@ import {
   withUnexpectedException,
 } from "./tlc/messages";
 import { createJavaRandom, nextPrime, type JavaRandom } from "./tlc/random";
+import { replayInitialStates } from "./tlc/replay";
 import {
   createActionRecord,
   createCounterExample,
@@ -67,6 +76,7 @@ export interface SimulationStatistics {
 export type SimulationOutput =
   | { kind: "message"; code: number; isError: boolean; message: string; toolMessage: string }
   | { kind: "behavior"; trace: TraceStep[]; isLastStateOnly: boolean }
+  | { kind: "coverage"; coverage: CoverageReport }
   | { kind: "progress"; statistics: SimulationStatistics }
   | { kind: "summary"; statistics: SimulationStatistics };
 
@@ -213,11 +223,20 @@ export const simulate = (options: SimulationOptions): number => {
   };
   const reportMessage = (code: number, text: string, toolText = text, isError = true) =>
     output({ kind: "message", code, isError, message: text, toolMessage: toolText });
-  const printSummary = () => output({ kind: "summary", statistics: { ...statistics } });
+  const reportCoverage = () => {
+    const report = prepared.getCoverage();
+    if (report) output({ kind: "coverage", coverage: report });
+  };
+  const printSummary = () => {
+    reportCoverage();
+    output({ kind: "summary", statistics: { ...statistics } });
+  };
   const nodes = new WeakMap<(Value | undefined)[], TraceNode>();
   const description = prepared.getDescription();
   const initActions = description.inits;
   const nextActions = description.actions;
+  const coverage = prepared.coverage;
+  const covered = coverage && addActionCoverage(coverage, environment, description);
   let traceCount = 0;
   let currentTrace = 0;
   let evaluatedAction: SpecAction | undefined;
@@ -382,7 +401,13 @@ export const simulate = (options: SimulationOptions): number => {
     return false;
   };
   try {
-    if (init) forEachInitialState(init, environment, addGenerated, search.spec.scope, addGenerated);
+    if (covered) {
+      replayInitialStates(covered.inits, environment, addGenerated, (partial) =>
+        addGenerated([...partial]),
+      );
+    } else if (init) {
+      forEachInitialState(init, environment, addGenerated, search.spec.scope, addGenerated);
+    }
   } catch (error) {
     return reportInitialException(error, undefined);
   }
@@ -473,61 +498,75 @@ export const simulate = (options: SimulationOptions): number => {
     isException: false,
     isSummarized: true,
   });
-  const getSuccessors = (current: TraceNode, action: SpecAction) => {
+  const getSuccessors = (current: TraceNode, index: number) => {
+    const action = nextActions[index];
+    const coveredAction = covered?.actions[index];
     const successors: TraceNode[] = [];
     let failure: WorkerError | undefined;
     runtime.deferred = undefined;
     evaluatedAction = action;
+    const visit = (state: Value[]) => {
+      const node = toNode(state, action, current);
+      node.deferred = runtime.deferred;
+      runtime.deferred = undefined;
+      statistics.generatedStates++;
+      try {
+        const violated = search.findViolatedInvariant(node.state, current.state);
+        if (violated) {
+          failure = toWorkerError(
+            MESSAGE_CODE.invariantViolatedBehavior,
+            `Invariant ${violated.name} is violated.`,
+            node,
+          );
+          return true;
+        }
+        const property = search.findViolatedActionProperty(current.state, node.state);
+        if (property) {
+          failure = toWorkerError(
+            MESSAGE_CODE.actionPropertyViolatedBehavior,
+            `Action property ${property.name} is violated.`,
+            node,
+          );
+          return true;
+        }
+      } catch (error) {
+        if (!(error instanceof TlaEvaluationError) || !isHeadedError(error)) throw error;
+        const text = getFailureMessage(error, true);
+        failure = {
+          ...toWorkerError(text.code, text.message, node),
+          toolMessage: text.toolMessage,
+        };
+        return true;
+      }
+      if (!search.satisfiesConstraints(node.state, current.state)) return false;
+      search.trackStatePossible(node.state);
+      if (!search.satisfiesActionConstraints(current.state, node.state)) return false;
+      search.trackActionPossible(current.state, node.state);
+      if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
+      if (coverage && coveredAction) coverage.secondary[coveredAction.node]++;
+      successors.push(node);
+      return false;
+    };
     try {
-      forEachSuccessor(
-        action.expression,
-        current.state,
-        environment,
-        (successor) => {
-          const node = toNode(successor.state, action, current);
-          node.deferred = runtime.deferred;
-          runtime.deferred = undefined;
-          statistics.generatedStates++;
-          try {
-            const violated = search.findViolatedInvariant(node.state, current.state);
-            if (violated) {
-              failure = toWorkerError(
-                MESSAGE_CODE.invariantViolatedBehavior,
-                `Invariant ${violated.name} is violated.`,
-                node,
-              );
-              return true;
-            }
-            const property = search.findViolatedActionProperty(current.state, node.state);
-            if (property) {
-              failure = toWorkerError(
-                MESSAGE_CODE.actionPropertyViolatedBehavior,
-                `Action property ${property.name} is violated.`,
-                node,
-              );
-              return true;
-            }
-          } catch (error) {
-            if (!(error instanceof TlaEvaluationError) || !isHeadedError(error)) throw error;
-            const text = getFailureMessage(error, true);
-            failure = {
-              ...toWorkerError(text.code, text.message, node),
-              toolMessage: text.toolMessage,
-            };
-            return true;
-          }
-          if (!search.satisfiesConstraints(node.state, current.state)) return false;
-          search.trackStatePossible(node.state);
-          if (!search.satisfiesActionConstraints(current.state, node.state)) return false;
-          search.trackActionPossible(current.state, node.state);
-          if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
-          successors.push(node);
-          return false;
-        },
-        action.scope,
-        options.isGenerating ? workerRandom : undefined,
-      );
+      if (coverage && coveredAction && !options.isGenerating) {
+        walkCoveredSuccessors(coverage, coveredAction, current.state, environment, (state) => {
+          if (visit(state)) throw STOP_WALK;
+        });
+      } else {
+        forEachSuccessor(
+          action.expression,
+          current.state,
+          environment,
+          (successor) => {
+            if (coverage && coveredAction) coverage.primary[coveredAction.node]++;
+            return visit(successor.state);
+          },
+          action.scope,
+          options.isGenerating ? workerRandom : undefined,
+        );
+      }
     } catch (error) {
+      if (error === STOP_WALK) return { successors, error: failure };
       if (!(error instanceof TlaIncompleteSuccessorError)) throw error;
       const node = toNode(
         error.state.map((value) => value ?? createModelValue("null")),
@@ -591,7 +630,7 @@ export const simulate = (options: SimulationOptions): number => {
       const prime = nextPrime(workerRandom);
       let successors: TraceNode[] = [];
       for (let attempt = 0; attempt < nextActions.length; attempt++) {
-        const result = getSuccessors(currentNode, nextActions[actionIndex]);
+        const result = getSuccessors(currentNode, actionIndex);
         // Deviation from TLC: TLCSet("exit") interrupts TLC's SimulationWorker, whose BlockingQueue#put then drops a violation found in the same step.
         if (result.error) return result.error;
         successors = result.successors;
@@ -702,6 +741,8 @@ export const simulate = (options: SimulationOptions): number => {
     : EXIT_STATUS.success;
   const status = Math.max(errorStatus, postconditionStatus);
   output({ kind: "progress", statistics: { ...statistics } });
+  // TLC's ProgressReport prints the coverage again with its last progress unless -coverage spans more progress reports.
+  if (options.coverage !== undefined && options.coverage <= 1) reportCoverage();
   if (status === EXIT_STATUS.success) printSummary();
   return status;
 };

@@ -118,6 +118,17 @@ export const createCoverage = (variableCount: number): Coverage => ({
   relations: [],
 });
 
+export const createCoverageEnvironment = (
+  environment: Environment,
+  coverage: Coverage,
+): Environment => ({
+  ...environment,
+  evaluators: new WeakMap(),
+  entryEvaluators: new WeakMap(),
+  definitionEvaluators: new WeakMap(),
+  coverage,
+});
+
 const addNode = (
   coverage: Coverage,
   expression: Expression | undefined,
