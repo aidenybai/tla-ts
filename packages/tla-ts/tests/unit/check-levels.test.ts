@@ -471,6 +471,17 @@ describe("level checking matches SANY", () => {
       "---- MODULE M ----\nVARIABLE x\nCONSTANT k\nRECURSIVE R(_), S(_)\nR(p) == k \\cup (LET L == {x'} IN L)\nS(p) == []x\n====",
       [["line 5, col 9 to line 5, col 35", "union"]],
     ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nAp(F(_), a) == F(a)\nRECURSIVE R(_)\nR(n) == IF n THEN TRUE ELSE Ap(LAMBDA v : R(v), n')\nX == Ap(LAMBDA v : R(v), x')\n====",
+      [
+        ["line 5, col 1 to line 5, col 51", "Argument 1 of recursive operator R is primed"],
+        ["line 6, col 6 to line 6, col 28", "argument 2"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nAp(F(_), a) == F(a)\nRECURSIVE R(_), S(_)\nR(n) == IF n THEN TRUE ELSE S(n)\nS(n) == Ap(LAMBDA v : R(v), n')\n====",
+      [["line 6, col 1 to line 6, col 31", "Argument 1 of recursive operator S is primed"]],
+    ],
   ])("checks recursive sections first and twice like SANY: %j", async (source, errors) => {
     const messages: Record<string, string> = {
       set: "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
@@ -480,6 +491,8 @@ describe("level checking matches SANY", () => {
         "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.",
       "assume 3":
         "Level error: assumptions must be level 0 (Constant), \nbut this one has level 3.",
+      "argument 2":
+        "Level error in applying operator Ap:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
     };
     await expect(check({ source, config: "" })).rejects.toThrow(
       createSanyError(

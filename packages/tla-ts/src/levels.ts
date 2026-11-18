@@ -527,6 +527,8 @@ const getExceedingError = (operator: OperatorLevels, index: number) =>
 
 export const createLevelAnalyzer = (context: LevelContext) => {
   const definitionLevels = new Map<Definition, OperatorLevels>();
+  // SANY level-checks a LAMBDA once, so a recursive section's second pass keeps its first levels.
+  const lambdaLevels = new Map<Expression, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
   const errors: CodedSanyError[] = [];
   const messages: LevelMessage[] = [];
@@ -773,12 +775,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const toOperand = (expression: Expression, scope: Scope): Operand => {
     if (expression.kind === "Lambda") {
-      const operator = analyzeOperator(
-        "LAMBDA",
-        toFormals(expression.params),
-        expression.body,
-        scope,
-      );
+      const operator =
+        lambdaLevels.get(expression) ??
+        analyzeOperator("LAMBDA", toFormals(expression.params), expression.body, scope);
+      lambdaLevels.set(expression, operator);
       return { kind: "Operator", data: operator };
     }
     const name =
