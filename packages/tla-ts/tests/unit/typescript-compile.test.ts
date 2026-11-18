@@ -52571,8 +52571,8 @@ describe("BigInts", () => {
     );
   });
 
-  it("stops at a JavaScript key of a value that is only null", async () => {
-    const source = `
+  describe("throws the TypeError of a JavaScript key's null base before it converts the key", () => {
+    const getSource = (expected: string) => `
       var box = { seen: "" };
       function attempt() {
         var base = null;
@@ -52588,10 +52588,22 @@ describe("BigInts", () => {
       } catch (error) {
         box.seen = error instanceof TypeError ? "type" : "other";
       }
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
     `;
-    expect(
-      (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
-    ).toContain("tla-ts can't throw the TypeError of reading a property of undefined or null");
+
+    it("agrees with Node", async () => {
+      const source = getSource("type");
+      expect(
+        (await check(compile(source, join(import.meta.dirname, "model.js")))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the key's error", async () => {
+      const source = getSource("other");
+      expect(
+        (await check(compile(source, join(import.meta.dirname, "model.js")))).failure?.message,
+      ).toContain("seen type");
+    });
   });
 
   it("stops at the pattern parameter of a JavaScript function whose calls TypeScript doesn't check", () => {
@@ -56536,5 +56548,330 @@ describe("BigInts", () => {
         (await checkModel(getSource("Success,1,Failure,boom,true,true,false"))).failure?.message,
       ).toContain("seen Success,1,Failure,boom,true,false,false");
     });
+  });
+
+  describe("runs a compound assignment's key call and throws for an undefined or null base", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      function DummyError() {}
+      var first = "ok";
+      var nullBase = null;
+      var throwingProp = function () {
+        log += "prop|";
+        throw new DummyError();
+      };
+      var expr = function () {
+        log += "expr|";
+        return 1;
+      };
+      try {
+        nullBase[throwingProp()] /= expr();
+      } catch (error) {
+        first = error instanceof DummyError ? "dummy" : error.constructor.name;
+      }
+      var second = "ok";
+      var undefinedBase = undefined;
+      var keyObject = { toString: function () { log += "key|"; return "p"; } };
+      try {
+        undefinedBase[keyObject] /= expr();
+      } catch (error) {
+        second = error.constructor.name;
+      }
+      var base = { p: 6 };
+      var makeKey = function () {
+        log += "call|";
+        return keyObject;
+      };
+      base[makeKey()] -= 2;
+      var result = [first, second, base.p, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("dummy,TypeError,4,prop|call|key|key|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("dummy,TypeError,4,prop|key|call|key|key|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result dummy,TypeError,4,prop|call|key|key|",
+      );
+    });
+  });
+
+  describe("reads and calls through an object key of a base that may be undefined or null", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var key = { toString: function () { log += "key|"; return "p"; } };
+      var note = function () {
+        log += "arg|";
+        return 1;
+      };
+      var nothing = null;
+      var outcomes = "";
+      try {
+        var read = nothing[key];
+      } catch (error) {
+        outcomes += "read:" + error.constructor.name + "|";
+      }
+      try {
+        nothing[key](note());
+      } catch (error) {
+        outcomes += "call:" + error.constructor.name + "|";
+      }
+      var holder = { p: function (step) { return step + 1; } };
+      var maybe = /** @type {any} */ (holder);
+      var called = maybe[key](note());
+      var result = [outcomes, called, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("read:TypeError|call:TypeError|,2,key|arg|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("read:TypeError|call:TypeError|,2,arg|key|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result read:TypeError|call:TypeError|,2,key|arg|",
+      );
+    });
+  });
+
+  describe("converts the object that BigInt takes to a primitive with the number hint", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var o = {
+        valueOf: function () {
+          log += "valueOf|";
+          return 44;
+        },
+        toString: function () {
+          throw new RangeError("unreachable");
+        },
+      };
+      var first = true;
+      var v = {
+        [Symbol.toPrimitive]: function (hint) {
+          log += hint + "|";
+          return "42";
+        },
+      };
+      var bad = { valueOf: function () { return Symbol(); } };
+      var thrown = "none";
+      try {
+        var never = BigInt(bad);
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [BigInt(o), BigInt(v), thrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("44,42,TypeError,valueOf|number|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("44,42,TypeError,valueOf|string|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 44,42,TypeError,valueOf|number|",
+      );
+    });
+  });
+
+  describe("converts an object value that a definition of a typed array's index takes", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var value = { valueOf() { log += "value|"; return 7; } };
+      var sample = new Int8Array(2);
+      Object.defineProperty(sample, "0", { value: value });
+      var defined = Reflect.defineProperty(sample, 1, { value: value, writable: true });
+      var past = Reflect.defineProperty(sample, 5, { value: value });
+      var frozen = Reflect.defineProperty(sample, 0, { value: value, writable: false });
+      var bad = { valueOf() { throw new RangeError("x"); } };
+      var thrown = "none";
+      try {
+        Object.defineProperty(sample, "1", { value: bad });
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var plain = {};
+      Object.defineProperty(plain, "0", { value: value });
+      var ta = new Int8Array([17]);
+      var desc = { value: { valueOf() { log += "detach|"; ta.buffer.transfer(); return 42; } } };
+      var detached = Reflect.defineProperty(ta, 0, desc);
+      var result = [sample[0], sample[1], defined, past, frozen, thrown, plain[0] === value, detached, ta[0], log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("7,7,true,false,false,RangeError,true,true,,value|value|detach|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("7,7,true,false,false,RangeError,true,false,,value|value|detach|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 7,7,true,false,false,RangeError,true,true,,value|value|detach|",
+      );
+    });
+  });
+
+  describe("converts an object that Reflect.set writes to a typed array's index", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var value = { valueOf() { log += "value|"; return 7; } };
+      var sample = new Int8Array(2);
+      var first = Reflect.set(sample, 0, value);
+      var past = Reflect.set(sample, 5, value);
+      var plain = {};
+      var plainSet = Reflect.set(plain, "a", value);
+      var ta = new BigInt64Array(1);
+      var detached = Reflect.set(ta, 0, { valueOf() { log += "detach|"; ta.buffer.transfer(); return 42n; } });
+      var bad = { valueOf() { throw new RangeError("x"); } };
+      var thrown = "none";
+      try {
+        Reflect.set(sample, 1, bad);
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var result = [first, sample[0], past, plainSet, plain.a === value, detached, ta[0], thrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("true,7,true,true,true,true,,RangeError,value|value|detach|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("true,7,false,true,true,true,,RangeError,value|value|detach|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result true,7,true,true,true,true,,RangeError,value|value|detach|",
+      );
+    });
+  });
+});
+
+describe("instanceof on a value that holds an instance of a class that extends an error", () => {
+  const getSource = (expected: string) => `
+    class Failure extends Error {
+      getKind() {
+        return "failure";
+      }
+    }
+    class Timeout extends Failure {}
+    class BadInput extends TypeError {
+      getKind() {
+        return "bad input";
+      }
+    }
+    const failure: Error = new Failure("failure");
+    const timeout: Error = new Timeout("timeout");
+    const badInput: TypeError = new BadInput("bad input");
+    const unknownValue: unknown = new Timeout("unknown");
+    const anyValue: any = new BadInput("any");
+    const getCaught = () => {
+      try {
+        throw new Timeout("thrown");
+      } catch (error) {
+        const typed = error as Error;
+        return [error instanceof Error, error instanceof Failure, typed instanceof TypeError].join();
+      }
+    };
+    const seen = [
+      failure instanceof Error,
+      failure instanceof Failure,
+      failure instanceof Timeout,
+      failure instanceof TypeError,
+      timeout instanceof Error,
+      timeout instanceof Failure,
+      badInput instanceof TypeError,
+      badInput instanceof Error,
+      badInput instanceof RangeError,
+      badInput instanceof BadInput,
+      unknownValue instanceof Failure,
+      unknownValue instanceof TypeError,
+      anyValue instanceof TypeError,
+      anyValue instanceof Failure,
+      getCaught(),
+    ].join();
+    if (seen !== "${expected}") throw new Error("seen " + seen);
+  `;
+  const expected =
+    "true,true,false,false,true,true,true,true,false,true,true,false,true,false,true,true,false";
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (await checkModel(getSource(expected.replace("true,true,false", "true,true,true")))).failure
+        ?.message,
+    ).toContain(`seen ${expected}`);
+  });
+});
+
+describe("converts a value of type never to a string as JavaScript converts what it holds", () => {
+  // A closure that outlives its call puts the script's objects on the heap.
+  const HEAP = `
+    const getCounter = () => {
+      let count = 0;
+      return () => ++count;
+    };
+    getCounter()();
+  `;
+  const getSource = (expected: string, prefix = "") => `${prefix}
+    type Shape = "circle" | "square";
+    const box = { seen: "" };
+    const sideCounts: Record<string, number> = { circle: 0, square: 4, triangle: 3 };
+    const describeShape = (shape: Shape) => {
+      if (shape === "circle" || shape === "square") return shape;
+      return [String(shape), \`\${shape}\`, "" + shape, sideCounts[shape]].join();
+    };
+    box.seen = describeShape("triangle" as string as Shape);
+    if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+  `;
+  const getErrorSource = (conversion: string) => `
+    class Failure extends Error {
+      getKind() {
+        return "failure";
+      }
+    }
+    const error: Error = new Failure("x");
+    if (error.constructor !== Failure) throw new Error("constructor");
+    const text = ${conversion};
+    if (text !== "Error: x") throw new Error("text " + text);
+  `;
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource("triangle,triangle,triangle,3"))).failure).toBeUndefined();
+    expect(
+      (await checkModel(getSource("triangle,triangle,triangle,3", HEAP))).failure,
+    ).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (await checkModel(getSource("triangle,triangle,triangle,4", HEAP))).failure?.message,
+    ).toContain("seen triangle,triangle,triangle,3");
+  });
+
+  it("stops where it holds an error on the heap", async () => {
+    for (const conversion of ["String(error)", "`${error}`", '"" + error']) {
+      expect((await checkModel(getErrorSource(conversion))).failure?.message).toContain(
+        "tla-ts can't convert objects to strings",
+      );
+    }
   });
 });

@@ -374,6 +374,7 @@ import {
   translateThrow,
 } from "./functions";
 import {
+  mayBeTypedArray,
   bind,
   callMethod,
   getDescriptorGetters,
@@ -1944,7 +1945,11 @@ const translateReflectSet = (
       : getKind(receiver, context) === "object"
         ? translateObjectValue(receiver, path.scope, context)
         : translateExpression(receiver, path.scope, context);
-  const set = (current: Path, next: (path: Path, value?: Expression) => Formula) => {
+  const set = (
+    current: Path,
+    next: (path: Path, value?: Expression) => Formula,
+    written = value,
+  ) => {
     const name = context.names.getFresh("change");
     const after = withHeap(current, field(identifier(name), "heap"), context);
     return bindOnce(
@@ -1952,7 +1957,7 @@ const translateReflectSet = (
       name,
       useJavaScript(
         "ReflectSet",
-        [getHeap(current.scope, expression, context), object, property, value, receiverValue],
+        [getHeap(current.scope, expression, context), object, property, written, receiverValue],
         context,
       ),
       ifThenElse(
@@ -1967,34 +1972,68 @@ const translateReflectSet = (
     );
   };
   const setters = getSetters(expression, context).filter((setter) => !frame.inlining.has(setter));
-  if (setters.length === 0) return set(path, continueWith);
   // A setter gives Reflect.set true whatever it returns.
-  return bind(
-    path,
-    "setter",
-    useJavaScript(
-      "ReflectSetter",
-      [getHeap(path.scope, expression, context), object, property],
-      context,
-    ),
-    context,
-    (bound, setter) =>
-      ifThenElse(
-        apply("=", [setter, getUndefined(context)]),
-        set(bound, continueWith),
-        callValue(
-          expression,
-          setters,
-          setter,
-          receiverValue,
-          [value],
-          bound,
+  const setThrough = (start: Path): Formula =>
+    setters.length === 0
+      ? set(start, continueWith)
+      : bind(
+          start,
+          "setter",
+          useJavaScript(
+            "ReflectSetter",
+            [getHeap(start.scope, expression, context), object, property],
+            context,
+          ),
           context,
-          frame,
-          (next) => set(bound, next),
-          (after) => continueWith(after, boolean(true)),
-        ),
+          (bound, setter) =>
+            ifThenElse(
+              apply("=", [setter, getUndefined(context)]),
+              set(bound, continueWith),
+              callValue(
+                expression,
+                setters,
+                setter,
+                receiverValue,
+                [value],
+                bound,
+                context,
+                frame,
+                (next) => set(bound, next),
+                (after) => continueWith(after, boolean(true)),
+              ),
+            ),
+        );
+  // A typed array's index converts an object that it takes to a number or a BigInt, before it
+  // checks the index.
+  if (isTypedReflectSet(expression, context)) {
+    return ifThenElse(
+      useJavaScript(
+        "IsTypedElementWrite",
+        [getHeap(path.scope, expression, context), object, property],
+        context,
       ),
+      runToPrimitive(expression, value, "number", path, context, frame, (converted, primitive) =>
+        set(converted, continueWith, primitive),
+      ),
+      setThrough(path),
+    );
+  }
+  return setThrough(path);
+};
+
+// Reflect.set of an object or a value of type any, without a receiver, on a target that may be a
+// typed array, whose index converts the value.
+const isTypedReflectSet = (node: ts.Node, context: Context) => {
+  if (!isMethodCall(node) || node.expression.name.text !== "set") return false;
+  const [target, , assigned] = node.arguments;
+  return (
+    getBuiltIn(node.expression.expression, context) === "Reflect" &&
+    node.arguments.length === 3 &&
+    target !== undefined &&
+    assigned !== undefined &&
+    !ts.isSpreadElement(assigned) &&
+    (isObjectOperand(assigned, context) || isAnyOperand(assigned, context)) &&
+    mayBeTypedArray(context.checker.getTypeAtLocation(skipCasts(target)))
   );
 };
 
@@ -16687,7 +16726,9 @@ const getEffects = (
     getConvertedBufferValues(node, context) !== undefined ||
     getConvertedArrayValues(node, context) !== undefined ||
     (ts.isExpression(node) && getKeyUpdate(node, context) !== undefined) ||
-    getTypedObjectWrite(node, context) !== undefined
+    getTypedObjectWrite(node, context) !== undefined ||
+    isTypedDefine(node, context) ||
+    isTypedReflectSet(node, context)
       ? getConversionFunctions(node, context)
       : temporalCall !== undefined && isConvertingTemporalCall(temporalCall, node, context)
         ? getKeyedConversionFunctions(node, context)
@@ -21819,6 +21860,15 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
   return { node, conversion };
 };
 
+// Object.defineProperty or Reflect.defineProperty of a target that may be a typed array, which
+// converts an object value that the descriptor gives where it defines an index.
+const isTypedDefine = (node: ts.Node, context: Context) =>
+  isMethodCall(node) &&
+  node.expression.name.text === "defineProperty" &&
+  ["Object", "Reflect"].includes(getBuiltIn(node.expression.expression, context) ?? "") &&
+  node.arguments[0] !== undefined &&
+  mayBeTypedArray(context.checker.getTypeAtLocation(skipCasts(node.arguments[0])));
+
 // A plain assignment of an object that a name holds to a primitive key of an object that a name
 // holds, which may be a typed array, which converts the object where it is one.
 const getTypedObjectWrite = (node: ts.Node, context: Context) => {
@@ -21843,22 +21893,16 @@ const getTypedObjectWrite = (node: ts.Node, context: Context) => {
   }
   const key = skipCasts(access.argumentExpression);
   const keyNames = getTypeNames(context.checker.getTypeAtLocation(key), context.checker);
-  const objectType = context.checker.getTypeAtLocation(skipCasts(access.expression));
-  const isTypedType = (type: ts.Type): boolean =>
-    (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
-    TYPED_ARRAYS.has(type.getSymbol()?.getName() ?? "") ||
-    (type.isUnion() && type.types.some(isTypedType));
   return (ts.isNumericLiteral(key) ||
     ts.isStringLiteral(key) ||
     (keyNames?.every((name) => name === "number" || name === "string") ?? false)) &&
-    isTypedType(objectType)
+    mayBeTypedArray(context.checker.getTypeAtLocation(skipCasts(access.expression)))
     ? { node, access }
     : undefined;
 };
 
-// A compound assignment to a key that is an object that a name holds, of an object that a name
-// holds which can't be undefined or null, other than super's, and how it combines what it reads
-// with its value.
+// A compound assignment to a key that is an object that a name holds, or that a call gives, of an
+// object that a name holds, other than super's, and how it combines what it reads with its value.
 const getKeyUpdate = (node: ts.Expression, context: Context) => {
   if (context.heap === undefined || !ts.isBinaryExpression(node)) return undefined;
   const update = getPrimitiveUpdate(node.operatorToken.kind, context);
@@ -21867,13 +21911,14 @@ const getKeyUpdate = (node: ts.Expression, context: Context) => {
     update === undefined ||
     !ts.isElementAccessExpression(access) ||
     access.questionDotToken !== undefined ||
-    !ts.isIdentifier(skipCasts(access.expression)) ||
-    isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression)))
+    !ts.isIdentifier(skipCasts(access.expression))
   ) {
     return undefined;
   }
   const key = skipCasts(access.argumentExpression);
-  return ts.isIdentifier(key) && isObjectOperand(key, context)
+  const isNullish = isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression)));
+  return (ts.isIdentifier(key) && isObjectOperand(key, context)) ||
+    (ts.isCallExpression(key) && (isNullish || isObjectOperand(key, context)))
     ? { node, access, key, update }
     : undefined;
 };
@@ -23226,16 +23271,9 @@ export const translateStatements = (
   if (keyUpdate !== undefined && isPlainUpdateValue(keyUpdate.node.right, path, context)) {
     const site = keyUpdate.node;
     const object = translateExpression(keyUpdate.access.expression, path.scope, context);
-    const keyValue = translateExpression(keyUpdate.key, path.scope, context);
     const stop = (message: string) => leaf(apply("Assert", [boolean(false), string(message)]));
-    return runToPrimitive(
-      site,
-      keyValue,
-      "string",
-      path,
-      context,
-      statementFrame,
-      (read, first) => {
+    const update = (keyed: Path, keyValue: Expression) =>
+      runToPrimitive(site, keyValue, "string", keyed, context, statementFrame, (read, first) => {
         const readHeap = getHeap(read.scope, site, context);
         const readKey = useJavaScript("PropertyKey", [first], context);
         return ifThenElse(
@@ -23314,8 +23352,21 @@ export const translateStatements = (
           ),
           stop("tla-ts can't read this key of this object here"),
         );
-      },
-    );
+      });
+    // A base that is undefined or null throws the TypeError of ToObject before the key converts,
+    // once the assignment evaluates the key.
+    const guarded = (keyed: Path, keyValue: Expression) =>
+      ifThenElse(
+        apply("\\in", [object, set([getUndefined(context), identifier("Null")])]),
+        throwTypeError(keyed, site, context, statementFrame),
+        update(keyed, keyValue),
+      );
+    const key = keyUpdate.key;
+    return ts.isCallExpression(key) && !path.scope.results.has(key)
+      ? translateCallStatement(key, path, context, statementFrame, (after, value) =>
+          guarded(after, value ?? getUndefined(context)),
+        )
+      : guarded(path, translateExpression(key, path.scope, context));
   }
   // A write of an object to a typed array's numeric key converts it to a number or a BigInt, once
   // the assignment evaluates it, before it checks the index.
@@ -23488,7 +23539,12 @@ export const translateStatements = (
   const converted = getHoistedConversion(statement, path, context);
   if (converted !== undefined) {
     const node = converted.node;
-    return runConversion(
+    // An element access's base that is undefined or null throws the TypeError of ToObject before
+    // its key converts.
+    const access = isConvertedElementKey(node, context)
+      ? ts.findAncestor(node.parent, ts.isElementAccessExpression)
+      : undefined;
+    const run = runConversion(
       node,
       converted.conversion,
       path,
@@ -23516,6 +23572,17 @@ export const translateStatements = (
         );
       },
     );
+    return access !== undefined &&
+      isMaybeNullish(context.checker.getTypeAtLocation(skipCasts(access.expression)))
+      ? ifThenElse(
+          apply("\\in", [
+            translateExpression(access.expression, path.scope, context),
+            set([getUndefined(context), identifier("Null")]),
+          ]),
+          throwTypeError(path, access, context, statementFrame),
+          run,
+        )
+      : run;
   }
 
   // An enum that code reads as an object binds its name to the object that the heap holds.

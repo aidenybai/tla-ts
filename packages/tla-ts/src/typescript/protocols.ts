@@ -39,6 +39,7 @@ import {
 import { getFileIndex } from "./program-nodes";
 import { TlaTypeScriptError } from "../errors";
 import { readsUninitialized } from "./aliasing";
+import { isAnyOperand, isObjectOperand, runToPrimitive } from "./conversions";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
@@ -57,7 +58,7 @@ import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { mayThrow } from "./functions";
 import { getThrownMessage } from "./shared-calls";
-import { getKind, isHeapPattern } from "./types";
+import { getKind, isHeapPattern, TYPED_ARRAYS } from "./types";
 import {
   apply,
   boolean,
@@ -785,8 +786,39 @@ export const isDescriptorRead = (node: ts.Node, context: Context): node is ts.Ca
   ["Object", "Reflect"].includes(node.expression.expression.getText()) &&
   node.expression.name.text === "defineProperty" &&
   node.arguments.length >= 3 &&
-  DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node, context).has(key)) &&
+  (isTypedValueDefine(node, context) ||
+    DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node, context).has(key))) &&
   getFieldGetters(node, context).every((getter) => isRunnableGetter(getter, context));
+
+// A definition of a target that may be a typed array, whose descriptor may give an object value,
+// which a typed array's index converts.
+const isTypedValueDefine = (node: ts.CallExpression, context: Context) => {
+  const target = node.arguments[0];
+  const descriptor = node.arguments[2];
+  if (target === undefined || descriptor === undefined) return false;
+  const literal = skipCasts(descriptor);
+  const value = ts.isObjectLiteralExpression(literal)
+    ? literal.properties.find(
+        (property) =>
+          ts.isPropertyAssignment(property) &&
+          ts.isIdentifier(property.name) &&
+          property.name.text === "value",
+      )
+    : undefined;
+  return (
+    mayBeTypedArray(context.checker.getTypeAtLocation(skipCasts(target))) &&
+    (!ts.isObjectLiteralExpression(literal) ||
+      (value !== undefined &&
+        ts.isPropertyAssignment(value) &&
+        (isObjectOperand(value.initializer, context) || isAnyOperand(value.initializer, context))))
+  );
+};
+
+// Whether a value of a type may be a typed array: one of type any or unknown, or a typed array's.
+export const mayBeTypedArray = (type: ts.Type): boolean =>
+  (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+  TYPED_ARRAYS.has(type.getSymbol()?.getName() ?? "") ||
+  (type.isUnion() && type.types.some(mayBeTypedArray));
 
 // The getters that reading a descriptor's fields may run.
 const getFieldGetters = (node: ts.Node, context: Context) => [
@@ -987,47 +1019,85 @@ export const readDescriptor = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value: Expression) => Formula,
-): Formula =>
-  ifThenElse(
+): Formula => {
+  const isReflect =
+    ts.isPropertyAccessExpression(site.expression) &&
+    site.expression.expression.getText() === "Reflect";
+  const define = (after: Path, descriptor: Expression) =>
+    isReflect
+      ? bind(
+          after,
+          "change",
+          useJavaScript(
+            "ReflectDefineConverted",
+            [getHeap(after.scope, site, context), values[0], values[1], descriptor],
+            context,
+          ),
+          context,
+          (bound, change) => {
+            const defined = withHeap(bound, field(change, "heap"), context);
+            return ifThenElse(
+              field(change, "isDone"),
+              continueWith(defined, field(change, "value")),
+              ifThenElse(
+                field(change, "isRangeError"),
+                throwError("RangeError", defined, site, context, frame),
+                throwTypeError(defined, site, context, frame),
+              ),
+            );
+          },
+        )
+      : defineAll(
+          site,
+          values[0],
+          tuple([values[1]]),
+          tuple([descriptor]),
+          after,
+          context,
+          frame,
+          (defined) => continueWith(defined, values[0]),
+        );
+  // A typed array's index converts an object value that its definition takes, once it checks the
+  // index and the descriptor, and writes it only where the index is still in bounds.
+  const key = useJavaScript("PropertyKey", [values[1]], context);
+  return ifThenElse(
     isObjectArgument(values[0], context),
     readFields(site, values[2], path, context, frame, (after, descriptor) =>
-      ts.isPropertyAccessExpression(site.expression) &&
-      site.expression.expression.getText() === "Reflect"
-        ? bind(
-            after,
-            "change",
+      !isTypedValueDefine(site, context)
+        ? define(after, descriptor)
+        : ifThenElse(
             useJavaScript(
-              "ReflectDefineConverted",
-              [getHeap(after.scope, site, context), values[0], values[1], descriptor],
+              "TypedDefineConverts",
+              [getHeap(after.scope, site, context), values[0], key, descriptor],
               context,
             ),
-            context,
-            (bound, change) => {
-              const defined = withHeap(bound, field(change, "heap"), context);
-              return ifThenElse(
-                field(change, "isDone"),
-                continueWith(defined, field(change, "value")),
+            runToPrimitive(
+              site,
+              field(descriptor, "value"),
+              "number",
+              after,
+              context,
+              frame,
+              (converted, primitive) =>
                 ifThenElse(
-                  field(change, "isRangeError"),
-                  throwError("RangeError", defined, site, context, frame),
-                  throwTypeError(defined, site, context, frame),
+                  useJavaScript(
+                    "HasTypedElement",
+                    [getHeap(converted.scope, site, context), values[0], key],
+                    context,
+                  ),
+                  define(
+                    converted,
+                    useJavaScript("WithDescriptorValue", [descriptor, primitive], context),
+                  ),
+                  continueWith(converted, isReflect ? boolean(true) : values[0]),
                 ),
-              );
-            },
-          )
-        : defineAll(
-            site,
-            values[0],
-            tuple([values[1]]),
-            tuple([descriptor]),
-            after,
-            context,
-            frame,
-            (defined) => continueWith(defined, values[0]),
+            ),
+            define(after, descriptor),
           ),
     ),
     throwTypeError(path, site, context, frame),
   );
+};
 
 // The keys of an object literal that a definition takes, in the order that JavaScript lists them,
 // where each is a name that isn't an index.

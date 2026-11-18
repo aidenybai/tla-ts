@@ -409,12 +409,13 @@ const runStackMethod = (
                 isAsync: true,
                 isWrapped: false,
                 isCallback: false,
+                isUsed: true,
               }),
               value,
             )
           : finish(current, value),
         readResource(node, value, stack.isAsync, current, context, currentFrame, (got, resource) =>
-          finish(add(got, resource), value),
+          finish(add(got, { ...resource, isUsed: true }), value),
         ),
       );
     }
@@ -435,6 +436,7 @@ const runStackMethod = (
           isAsync: stack.isAsync,
           isWrapped: false,
           isCallback: true,
+          isUsed: false,
         }),
         isAdopt ? value : getUndefined(context),
       ),

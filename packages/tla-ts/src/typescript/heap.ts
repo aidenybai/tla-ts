@@ -308,8 +308,12 @@ export const translatePropertyKey = (node: ts.Expression, scope: Scope, context:
   if (ts.isNumericLiteral(node)) return getNumericKey(node);
   const value = translateExpression(node, scope, context);
   if (getKind(node, context) === "string") return value;
-  if (isNumberLike(node, context)) return translateNumberString(value, context);
-  const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
+  const type = context.checker.getTypeAtLocation(node);
+  // A value of type never may hold anything, as translateToString says.
+  if (isNumberLike(node, context) && (type.flags & ts.TypeFlags.Never) === 0) {
+    return translateNumberString(value, context);
+  }
+  const names = getTypeNames(type, context.checker);
   if (names?.length === 1 && names[0] === "symbol") return value;
   // Any other key converts as ToPropertyKey converts a primitive, as a type parameter's or a
   // JavaScript var's type may not tell what it holds, and stops as an object, whose conversion runs

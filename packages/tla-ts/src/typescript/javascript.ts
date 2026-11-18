@@ -5269,6 +5269,13 @@ LOCAL StringToBigInt(value) ==
             Undefined
        [] OTHER -> BigIntOf(Prefix(text, 1) = "-", NatOfDigits(unsigned, radix, <<>>))
 
+\\* BigInt(value) of the primitive that ToPrimitive gives: a string's integer, or ToBigInt of another.
+BigIntOfPrimitive(value) ==
+  CASE TypeOf(value) = "string" /\\ StringToBigInt(value) # Undefined -> StringToBigInt(value)
+    [] TypeOf(value) = "string" ->
+         Assert(FALSE, "tla-ts can't throw the SyntaxError of converting this string to a BigInt")
+    [] OTHER -> ToBigInt(value)
+
 \\* ToNumeric of a primitive: a BigInt as it is, and ToNumber of another.
 ToNumeric(value) == IF IsBigInt(value) THEN value ELSE ToNumber(value)
 
@@ -8027,6 +8034,23 @@ LOCAL TypedDefine(heap, ref, key, descriptor) ==
                 /\\ \\A field \\in {"writable", "enumerable", "configurable"} : has(field) => descriptor[field]
   IN [heap |-> IF isDone /\\ has("value") THEN TypedSet(heap, ref, key, descriptor.value) ELSE heap,
       isDone |-> isDone, isRangeError |-> FALSE]
+
+\\* Whether a typed array's definition of an index converts the object value that its descriptor
+\\* gives: the index is in bounds and the descriptor is of a writable, enumerable, configurable data
+\\* property.
+TypedDefineConverts(heap, ref, key, descriptor) ==
+  /\\ IsTypedElementWrite(heap, ref, key)
+  /\\ HasElement(heap, ref, key)
+  /\\ ~descriptor.isAccessor
+  /\\ "value" \\in descriptor.fields
+  /\\ IsObjectIn(heap, descriptor.value)
+  /\\ \\A field \\in {"writable", "enumerable", "configurable"} :
+        field \\in descriptor.fields => descriptor[field]
+
+WithDescriptorValue(descriptor, value) == [descriptor EXCEPT !.value = value]
+
+\\* Whether a typed array still has an element at an index, which a conversion may have detached.
+HasTypedElement(heap, ref, key) == HasElement(heap, ref, key)
 
 \\* Defines each key with the descriptor that ToPropertyDescriptor gave it, in order.
 LOCAL DefineConvertedAllOf(heap, ref, keys, descriptors) ==
