@@ -26408,18 +26408,19 @@ describe("errors", () => {
     ).toContain(expected);
   });
 
-  it("stops where a script reads the time of a Date's subclass", async () => {
+  it("stops where a script reads the time of a Date's subclass, and converts one as a Date", async () => {
     expect(() =>
       compile(
         `class Day extends Date {}\nconst day = new Day(5);\nif (day.getTime() !== 5) throw new Error("x");`,
       ),
     ).toThrow("Unsupported");
-    const result = await checkModel(`
+    const getSource = (expected: number) => `
       class Day extends Date {}
       const day = new Day(5);
-      if (+day !== 5) throw new Error("x");
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't call this Symbol.toPrimitive method");
+      if (+day !== ${expected}) throw new Error("seen " + String(+day));
+    `;
+    expect((await checkModel(getSource(5))).failure).toBeUndefined();
+    expect((await checkModel(getSource(6))).failure?.message).toContain("seen 5");
   });
 
   it("stops where a script constructs a Date's subclass other than with new", () => {
@@ -57874,6 +57875,38 @@ describe("runs the script's methods in a conversion inside at most one other", (
       `;
       expect((await checkModel(getPlain("10,24"))).failure).toBeUndefined();
       await expect(checkModel(getPlain("10,25"))).rejects.toThrow("found 10,24");
+    });
+  });
+
+  describe("converts a Date through its Symbol.toPrimitive method", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const early = new Date(5);
+      const late = new Date(86400000 * 400 + 7);
+      box.seen.push(String(early < late), String(late <= early), \`\${late}\`);
+      const own = new Date(0);
+      own.toString = () => "own";
+      box.seen.push(own + "!", String(+own));
+      const valued = new Date(0);
+      valued.valueOf = () => 42;
+      box.seen.push(String(+valued), valued + "?");
+      const invalid = new Date(NaN);
+      box.seen.push(invalid + "", String(+invalid));
+      const seen = box.seen.join("|");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = [
+      "true|false|Fri Feb 05 1971 00:00:00 GMT+0000 (Coordinated Universal Time)|own!|0|42",
+      "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)?|Invalid Date|NaN",
+    ].join("|");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace("own!|0|42", "own!|0|0");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
     });
   });
 });

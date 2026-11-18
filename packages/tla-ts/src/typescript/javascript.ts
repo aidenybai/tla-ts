@@ -5849,6 +5849,15 @@ Clock == [clock |-> TRUE]
 
 LOCAL Known(time) == IF time = Clock THEN Assert(FALSE, "tla-ts can't read the clock") ELSE time
 
+\\* What a Date's built-in valueOf or toString gives where a conversion calls it, or else what
+\\* ConvertWith gives.
+ConvertDateWith(heap, ref, method) ==
+  CASE IsDate(heap, ref) /\\ IsDateMethod(method, "valueOf") ->
+         TimeNumber(Known(Lookup(heap, ref).time))
+    [] IsDate(heap, ref) /\\ IsDateMethod(method, "toString") ->
+         DateText(Known(Lookup(heap, ref).time), "toString")
+    [] OTHER -> ConvertWith(heap, ref, method)
+
 \\* The object that new Date makes, which holds its time value.
 \\* An error that the heap holds, which has the slot that marks it as one.
 ErrorObject(prototype) == [EmptyObject EXCEPT !.prototype = prototype] @@ [isError |-> TRUE]

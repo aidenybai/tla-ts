@@ -867,6 +867,7 @@ export const translateBuiltInValue = (
     | "Date"
     | Collection
     | "Date.prototype"
+    | "Date.prototype.@@toPrimitive"
     | "DisposableStack.prototype"
     | "AsyncDisposableStack.prototype"
     | "DisposableStack.prototype.dispose"

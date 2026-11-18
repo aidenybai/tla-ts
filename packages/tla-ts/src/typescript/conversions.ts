@@ -24,8 +24,9 @@ import {
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
 import { isNativeErrorName } from "./exceptions";
-import { getBuiltIn } from "./intrinsics";
+import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
 import { translateNumberOf, useJavaScript } from "./javascript";
+import { findProgramNames } from "./program-nodes";
 import {
   bind,
   callValue,
@@ -861,6 +862,11 @@ const toPrimitive = (
       readFrame,
       next,
     );
+  // A script that names Date may make a date, whose Symbol.toPrimitive method converts as the
+  // others do, but for a hint other than number, which runs toString first.
+  const isDated = findProgramNames(context.nodes, "Date").some(
+    (name) => getBuiltIn(name, context) === "Date",
+  );
   const isObject = (current: Path, inner: Expression) =>
     useJavaScript("IsObjectIn", [getHeap(current.scope, site, context), inner], context);
   // A conversion inside the methods of two conversions that run one inside the other calls none of
@@ -895,7 +901,7 @@ const toPrimitive = (
             next(
               found,
               useJavaScript(
-                "ConvertWith",
+                isDated ? "ConvertDateWith" : "ConvertWith",
                 [getHeap(found.scope, site, context), value, method],
                 context,
               ),
@@ -909,6 +915,17 @@ const toPrimitive = (
       ),
     );
   };
+  const callExotic = (found: Path, exotic: Expression, called: Formula) =>
+    isDated
+      ? ifThenElse(
+          apply("=", [
+            exotic,
+            translateBuiltInValue("Date.prototype.@@toPrimitive", site, context),
+          ]),
+          ordinary(found, hint === "number" ? ["valueOf", "toString"] : ["toString", "valueOf"]),
+          called,
+        )
+      : called;
   return ifThenElse(
     isObject(path, value),
     readKey(site, value, "@@toPrimitive", path, context, frame, (found, exotic) =>
@@ -920,26 +937,30 @@ const toPrimitive = (
             useJavaScript("TypeOfIn", [getHeap(found.scope, site, context), exotic], context),
             string("function"),
           ]),
-          callValue(
-            site,
-            getCandidates(getExoticMethods(site, context)),
-            exotic,
-            value,
-            [string(hint)],
+          callExotic(
             found,
-            context,
-            frame,
-            () =>
-              leaf(
-                apply("Assert", [
-                  boolean(false),
-                  string("tla-ts can't call this Symbol.toPrimitive method"),
-                ]),
-              ),
-            (after, result) =>
-              bind(after, "converted", result, context, (bound, held) =>
-                ifThenElse(isObject(bound, held), throwWith(bound), continueWith(bound, held)),
-              ),
+            exotic,
+            callValue(
+              site,
+              getCandidates(getExoticMethods(site, context)),
+              exotic,
+              value,
+              [string(hint)],
+              found,
+              context,
+              frame,
+              () =>
+                leaf(
+                  apply("Assert", [
+                    boolean(false),
+                    string("tla-ts can't call this Symbol.toPrimitive method"),
+                  ]),
+                ),
+              (after, result) =>
+                bind(after, "converted", result, context, (bound, held) =>
+                  ifThenElse(isObject(bound, held), throwWith(bound), continueWith(bound, held)),
+                ),
+            ),
           ),
           throwWith(found),
         ),
