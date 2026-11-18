@@ -6,6 +6,8 @@ import {
   chargeRandomOrder,
   countCoverage,
   createChargedEnumerator,
+  enterFrames,
+  exitFrames,
   getCoverageNode,
   runAtCoverageNode,
   type Coverage,
@@ -40,7 +42,7 @@ import {
   setTrace,
   type Value,
 } from "../values";
-import { substitutionFrames } from "../instances";
+import { isSubstitutionDefinition, substitutionFrames } from "../instances";
 import type { SuccessorGenerator } from "../successors";
 import { MESSAGE_CODE } from "./messages";
 import { getRandomSubset, nextPrime } from "./random";
@@ -308,19 +310,40 @@ const visitAt = (
   scope: Scope | undefined,
   partial: State,
   node: number,
+): boolean => {
+  const coverage = replay.coverage;
+  const frames = coverage && substitutionFrames.get(expression);
+  const entered = coverage && frames ? enterFrames(coverage, frames, node, false) : 0;
+  if (!coverage || entered === 0)
+    return visitFramed(replay, expression, items, scope, partial, node);
+  try {
+    return visitFramed(replay, expression, items, scope, partial, node);
+  } finally {
+    exitFrames(coverage, entered);
+  }
+};
+
+const visitFramed = (
+  replay: Replay,
+  expression: Expression,
+  items: ActionItem | undefined,
+  scope: Scope | undefined,
+  partial: State,
+  node: number,
 ): boolean =>
   withFrame(replay, expression, () => {
     switch (expression.kind) {
       case "Let": {
         const context = getContext(replay, scope, partial);
         const definitions = expression.definitions;
-        const bound =
-          replay.coverage && !replay.isEnabled
-            ? bindDefinitions(definitions, context, {
-                impure: new Set(definitions),
-                streamed: new Set(),
-              })
-            : bindDefinitions(definitions, context);
+        const bound = replay.coverage
+          ? bindDefinitions(definitions, context, {
+              impure: new Set(
+                replay.isEnabled ? definitions.filter(isSubstitutionDefinition) : definitions,
+              ),
+              streamed: new Set(),
+            })
+          : bindDefinitions(definitions, context);
         return visit(replay, expression.body, items, bound, partial, node);
       }
       case "Label":

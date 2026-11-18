@@ -21,6 +21,21 @@ export const contextualApplications = new WeakSet<Expression>();
 
 export const substitutionFrames = new WeakMap<Expression, Expression[]>();
 
+// TLC's Subst: the frame stands for the SubstInNode an instance puts around each definition it copies.
+export interface Substitution {
+  frame: Expression;
+  replacement: Expression;
+}
+
+// The substitutions of each frame's SubstInNode in SANY's order, which only coverage reads.
+export const frameSubstitutions = new WeakMap<Expression, () => Substitution[]>();
+
+// The substitution of a replacement, and of each copy that inlines it where the declaration occurs.
+export const substitutedExpressions = new WeakMap<Expression, Substitution>();
+
+export const isSubstitutionDefinition = (definition: Definition) =>
+  substitutedExpressions.get(definition.body)?.replacement === definition.body;
+
 export const withSubstitutionFrames = (expression: Expression, frames: Expression[]) => {
   if (frames.length === 0) return expression;
   const copy = { ...expression };
@@ -708,7 +723,10 @@ const substitute = (
     const replacement = instantiation.substitutions.get(expression.name);
     const bindings = rewrite.bindings;
     if (replacement && (bindings === undefined || !isBoundOnce(replacement, instantiation))) {
-      return withSubstitutionFrames(replacement, [expression]);
+      const copy = withSubstitutionFrames(replacement, [expression]);
+      const substitution = substitutedExpressions.get(replacement);
+      if (substitution) substitutedExpressions.set(copy, substitution);
+      return copy;
     }
     if (replacement && bindings) {
       const name = getSubstitutionName(expression.name);

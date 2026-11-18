@@ -31,7 +31,10 @@ import {
   countCoverage,
   createChargedEnumerator,
   createProductSetEnumerator,
+  enterFrames,
+  exitFrames,
   getCoverageNode,
+  getSubstitutionNode,
   runAtCoverageNode,
   tagSubset,
   type Coverage,
@@ -46,7 +49,14 @@ import {
   isTlcEvalReached,
   type DefinitionFacts,
 } from "./dependencies";
-import { contextualApplications, substitutionFrames } from "./instances";
+import {
+  contextualApplications,
+  frameSubstitutions,
+  isSubstitutionDefinition,
+  substitutedExpressions,
+  substitutionFrames,
+  type Substitution,
+} from "./instances";
 import { prettyPrint } from "./pretty-print";
 import { isEnabled } from "./successors";
 import {
@@ -1503,6 +1513,56 @@ const countEvaluator =
     }
   };
 
+const countSubstitution =
+  (substitution: Substitution, evaluator: Evaluator, coverage: Coverage): Evaluator =>
+  (context) => {
+    const outer = coverage.current;
+    coverage.current = outer === -1 ? -1 : getSubstitutionNode(coverage, substitution, outer);
+    try {
+      return evaluator(context);
+    } finally {
+      coverage.current = outer;
+    }
+  };
+
+const enterEvaluator =
+  (frames: Expression[], evaluator: Evaluator, coverage: Coverage): Evaluator =>
+  (context) => {
+    const entered = enterFrames(coverage, frames, coverage.current, true);
+    if (entered === 0) return evaluator(context);
+    try {
+      return evaluator(context);
+    } finally {
+      exitFrames(coverage, entered);
+    }
+  };
+
+const getCoverageEvaluator = (expression: Expression, evaluator: Evaluator, coverage: Coverage) => {
+  const frames = substitutionFrames.get(expression);
+  if (frames?.some((frame) => frameSubstitutions.has(frame))) {
+    return enterEvaluator(frames, countEvaluator(expression, evaluator, coverage), coverage);
+  }
+  const substitution = substitutedExpressions.get(expression);
+  if (!substitution) return countEvaluator(expression, evaluator, coverage);
+  if (substitution.replacement === expression) {
+    return countSubstitution(
+      substitution,
+      countEvaluator(expression, evaluator, coverage),
+      coverage,
+    );
+  }
+  // A replacement inlined where the declaration occurs counts as the occurrence and as the substitution.
+  return countEvaluator(
+    expression,
+    countSubstitution(
+      substitution,
+      countEvaluator(substitution.replacement, evaluator, coverage),
+      coverage,
+    ),
+    coverage,
+  );
+};
+
 export const getEvaluator = (expression: Expression, environment: Environment): Evaluator => {
   const cached = environment.evaluators.get(expression);
   if (cached) return cached;
@@ -1514,7 +1574,7 @@ export const getEvaluator = (expression: Expression, environment: Environment): 
     : compiled;
   const framed = callStack && frames ? traceFrames(expression, frames, traced, callStack) : traced;
   const coverage = environment.coverage;
-  const evaluator = coverage ? countEvaluator(expression, framed, coverage) : framed;
+  const evaluator = coverage ? getCoverageEvaluator(expression, framed, coverage) : framed;
   environment.evaluators.set(expression, evaluator);
   return evaluator;
 };
@@ -2435,8 +2495,16 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
     }
     case "Let": {
       const body = getChildEvaluator(expression.body);
+      const substituted = environment.coverage
+        ? expression.definitions.filter(isSubstitutionDefinition)
+        : [];
+      // Each reference evaluates a substitution, and getSubstitutionNode decides whether TLC counts it.
+      const reevaluated =
+        substituted.length > 0
+          ? { impure: new Set(substituted), streamed: new Set<Definition>() }
+          : undefined;
       return (context) =>
-        body(withScope(context, bindDefinitions(expression.definitions, context)));
+        body(withScope(context, bindDefinitions(expression.definitions, context, reevaluated)));
     }
     case "Forall":
     case "Exists":

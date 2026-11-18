@@ -45,12 +45,15 @@ import {
   createLocalAlias,
   createLocalArguments,
   createLocalIdentifier,
+  frameSubstitutions,
   getEnabledVariableName,
   getFunctionBody,
   renameLocals,
+  substitutedExpressions,
   withInstanceParams,
   withLetInstances,
   withSubstitutionFrames,
+  type Substitution,
 } from "./instances";
 import { overrideDefinitions, type JavaOverride } from "./java-overrides";
 import { extractModule } from "./parser";
@@ -528,6 +531,7 @@ export const createEnvironment = (
     unit: ModuleUnit,
     isParameterFree: boolean,
     nested: LinkedModule | undefined,
+    resolved: Symbols,
   ): Symbols => {
     const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
     if (standardSymbols) return getStandardInstanceSymbols(instance, standardSymbols);
@@ -553,11 +557,38 @@ export const createEnvironment = (
     });
     const params = instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` }));
     params.forEach((param) => instanceParams.add(param));
+    const replacements = new Map(
+      [...substitutions].map((entry) => [entry[0], renameLocals(entry[1], renamed)]),
+    );
+    const frame = declarations.length > 0 ? getSubstitutionFrame(instance) : undefined;
+    if (frame) {
+      const byName = new Map(
+        [...replacements].map((entry): [string, Substitution] => [
+          entry[0],
+          { frame, replacement: entry[1] },
+        ]),
+      );
+      byName.forEach((substitution) =>
+        substitutedExpressions.set(substitution.replacement, substitution),
+      );
+      // SANY infers a substitution for each declaration the instancing module resolves, in the order of the instanced module's symbol table, and appends the others.
+      const isInferred = (name: string) =>
+        substitutions.get(name)?.location === instance.location ||
+        instance.params.some((param) => param.name === name) ||
+        resolved.has(name);
+      frameSubstitutions.set(frame, () => {
+        const inferred = order
+          .getInstanceDeclarations(instance.module)
+          .filter((name) => byName.has(name) && isInferred(name));
+        return [
+          ...inferred.flatMap((name) => byName.get(name) ?? []),
+          ...[...byName].flatMap((entry) => (inferred.includes(entry[0]) ? [] : [entry[1]])),
+        ];
+      });
+    }
     const instantiation = createInstantiation({
       params,
-      substitutions: new Map(
-        [...substitutions].map((entry) => [entry[0], renameLocals(entry[1], renamed)]),
-      ),
+      substitutions: replacements,
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
       getOuterDefinition: (name) =>
@@ -576,7 +607,7 @@ export const createEnvironment = (
         return key;
       },
       createName,
-      ...(declarations.length > 0 && { frame: getSubstitutionFrame(instance) }),
+      frame,
     });
     const head = getInstanceHead(instance);
     return getInstanceSymbols(instance, linked.exported, declarations, (key, name) => {
@@ -1015,6 +1046,7 @@ export const createEnvironment = (
             getUnit(parsed),
             isParameterFree,
             getVisibleModules().get(instance.module),
+            getSymbolsBefore(instance.location),
           );
           instanced.set(instance, symbols);
           symbols.forEach((symbol, name) => {

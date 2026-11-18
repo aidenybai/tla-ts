@@ -8,6 +8,13 @@ import {
   type SourceRange,
 } from "./ast";
 import { formatRange } from "./errors";
+import {
+  frameSubstitutions,
+  isSubstitutionDefinition,
+  substitutedExpressions,
+  substitutionFrames,
+  type Substitution,
+} from "./instances";
 import { SELECTION_NAME } from "./resolve";
 import type { Environment, Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
@@ -50,6 +57,12 @@ export interface Coverage {
   values: WeakMap<object, number>;
   registers: Uint8Array;
   relations: CoverageRelation[];
+  substitutionNodes: Map<number, Map<Substitution, number>>;
+  frames: Expression[];
+  frameRoots: number[];
+  frameEntries: number[];
+  entryCount: number;
+  counted: Map<Substitution, number>;
 }
 
 export interface CoverageReport {
@@ -131,6 +144,12 @@ export const createCoverage = (variableCount: number): Coverage => ({
   values: new WeakMap(),
   registers: new Uint8Array(variableCount * REGISTERS),
   relations: [],
+  substitutionNodes: new Map(),
+  frames: [],
+  frameRoots: [],
+  frameEntries: [],
+  entryCount: 0,
+  counted: new Map(),
 });
 
 export const createCoverageEnvironment = (
@@ -286,6 +305,7 @@ export const buildCoverage = (
 ) => {
   const primed = new Set(primedRanges.map(getRangeKey));
   const stack: number[] = [];
+  const frames: Expression[] = [];
   const definitions: (Definition | undefined)[] = [];
   const walking: Definition[] = [];
   const letBodies = new Map<Expression, Expression>();
@@ -407,10 +427,43 @@ export const buildCoverage = (
       count < expression.operands.length,
     );
 
+  // SubstInNode#walkGraph visits the substitutions before the body, each as a child of the node that reaches the body.
+  const walkSubstitutions = (expression: Expression, locals: Local | undefined) => {
+    const entered = (substitutionFrames.get(expression) ?? []).filter(
+      (frame) => frameSubstitutions.has(frame) && !frames.includes(frame),
+    );
+    const parent = stack.at(-1) ?? -1;
+    entered.forEach((frame) => {
+      frameSubstitutions
+        .get(frame)?.()
+        .forEach((substitution) => {
+          walk(substitution.replacement, locals);
+          const node = parent === -1 ? -1 : coverage.lastChild[parent];
+          if (node === -1 || coverage.expressions[node] !== substitution.replacement) return;
+          const root = coverage.roots[node];
+          const nodes = coverage.substitutionNodes.get(root) ?? new Map<Substitution, number>();
+          coverage.substitutionNodes.set(root, nodes.set(substitution, node));
+        });
+      frames.push(frame);
+    });
+    return entered.length;
+  };
+
   const walk = (expression: Expression, locals: Local | undefined): void => {
+    const entered = walkSubstitutions(expression, locals);
+    walkExpression(expression, locals);
+    frames.length -= entered;
+  };
+
+  const walkExpression = (expression: Expression, locals: Local | undefined): void => {
     const range = expression.location.range;
     const walkAll = (expressions: Expression[]) =>
       expressions.forEach((item) => walk(item, locals));
+    const substitution = substitutedExpressions.get(expression);
+    if (substitution && substitution.replacement !== expression) {
+      enter(expression, substitutionFrames.get(expression)?.[0]?.location.range, () => undefined);
+      return;
+    }
     switch (expression.kind) {
       case "Number":
       case "Decimal":
@@ -434,7 +487,8 @@ export const buildCoverage = (
           if (definition.kind === "Operator") letBodies.set(definition.body, expression.body);
         });
         getHashtableOrder(expression.definitions).forEach((definition) => {
-          if (definition.name !== SELECTION_NAME) walkDefinition({ definition, scope: inner });
+          if (definition.name === SELECTION_NAME || isSubstitutionDefinition(definition)) return;
+          walkDefinition({ definition, scope: inner });
         });
         walk(expression.body, inner);
         return;
@@ -445,7 +499,9 @@ export const buildCoverage = (
           expression,
           range,
           () => {
-            if (resolved) walkDefinition(resolved);
+            if (resolved && !isSubstitutionDefinition(resolved.definition)) {
+              walkDefinition(resolved);
+            }
           },
           false,
           resolved?.definition,
@@ -646,6 +702,53 @@ export const runAtCoverageNode = <Result>(
   } finally {
     coverage.current = outer;
   }
+};
+
+// Tool evaluates a substitution once per SubstInNode in eval, and at each reference in getInitStates, getNextStates and enabled.
+export const enterFrames = (
+  coverage: Coverage,
+  frames: Expression[],
+  node: number,
+  isCached: boolean,
+) => {
+  const root = node === -1 ? -1 : coverage.roots[node];
+  let entered = 0;
+  for (const frame of frames) {
+    if (!frameSubstitutions.has(frame) || findFrame(coverage, frame, root) !== -1) continue;
+    coverage.frames.push(frame);
+    coverage.frameRoots.push(root);
+    coverage.frameEntries.push(isCached ? coverage.entryCount++ : -1);
+    entered++;
+  }
+  return entered;
+};
+
+// A successor's invariants are checked while the action that generated it is still being evaluated.
+const findFrame = (coverage: Coverage, frame: Expression, root: number) => {
+  for (let index = coverage.frames.length - 1; index >= 0; index--) {
+    if (coverage.frames[index] === frame && coverage.frameRoots[index] === root) return index;
+  }
+  return -1;
+};
+
+export const exitFrames = (coverage: Coverage, entered: number) => {
+  coverage.frames.length -= entered;
+  coverage.frameRoots.length -= entered;
+  coverage.frameEntries.length -= entered;
+};
+
+// ActionWrapper#getSubst: the last node the root walked for the substitution, or none when evaluated before.
+export const getSubstitutionNode = (
+  coverage: Coverage,
+  substitution: Substitution,
+  node: number,
+) => {
+  const index = findFrame(coverage, substitution.frame, coverage.roots[node]);
+  if (index === -1) return -1;
+  const entry = coverage.frameEntries[index];
+  if (entry !== -1 && coverage.counted.get(substitution) === entry) return -1;
+  if (entry !== -1) coverage.counted.set(substitution, entry);
+  return coverage.substitutionNodes.get(coverage.frameRoots[index])?.get(substitution) ?? -1;
 };
 
 export const costCoverage = (coverage: Coverage, value: Value, cost: number) => {
