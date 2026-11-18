@@ -1,4 +1,10 @@
-import { isLocallyResolved, type Bound, type Definition, type Expression } from "./ast";
+import {
+  getDefinitionExpressions,
+  isLocallyResolved,
+  type Bound,
+  type Definition,
+  type Expression,
+} from "./ast";
 import { getDefinitionLevel } from "./dependencies";
 import {
   createStackOverflowError,
@@ -97,18 +103,21 @@ const createCannotHandleError = (expression: Expression, inner?: string) =>
     `TLC cannot handle the temporal formula ${describeRange(expression)}${inner === undefined ? "" : `:\n${inner}`}`,
   );
 
+// With isBound, this is TLC's getLevelBound: it counts every argument, where SANY counts only those the definition's level depends on.
+// A bound is the highest level anywhere below, so it visits each definition once.
 export const getLevel = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
   shadowed = new Set<string>(),
   visiting = new Set<object>(),
+  isBound = false,
 ): number => {
   const getBodyLevel = (binding: object, body: Expression, bodyScope: Scope | undefined) => {
     if (visiting.has(binding)) return CONSTANT_LEVEL;
     visiting.add(binding);
-    const level = getLevel(body, bodyScope, environment, new Set(), visiting);
-    visiting.delete(binding);
+    const level = getLevel(body, bodyScope, environment, new Set(), visiting, isBound);
+    if (!isBound) visiting.delete(binding);
     return level;
   };
   const getBindingLevel = (name: string) => {
@@ -129,6 +138,11 @@ export const getLevel = (
     if (environment.variableIndex.has(name)) return VARIABLE_LEVEL;
     if (environment.constants.has(name)) return CONSTANT_LEVEL;
     const definition = getDefinition(name, environment);
+    if (definition && isBound) {
+      return Math.max(
+        ...getDefinitionExpressions(definition).map((item) => getBodyLevel(item, item, undefined)),
+      );
+    }
     if (definition) return getDefinitionLevel(definition, environment);
     const builtin = environment.builtins.get(environment.substitutions.get(name) ?? name);
     if (!builtin) return undefined;
@@ -153,6 +167,7 @@ export const getLevel = (
           environment,
           bound.length === 0 ? shadowed : new Set([...shadowed, ...bound]),
           visiting,
+          isBound,
         ),
       );
       return child;
@@ -187,6 +202,7 @@ export const getLevel = (
         ? undefined
         : resolveGlobalOperator(expression.operator, environment);
       if (
+        isBound ||
         level === operatorLevel ||
         operator?.kind !== "Closure" ||
         operator.params.length !== expression.args.length
@@ -361,7 +377,9 @@ export const toLiveExpression = (
     level: number,
   ): LiveExpression => {
     const atomLevel =
-      level === CONSTANT_LEVEL && !is174 ? getLevel(expression, scope, environment) : level;
+      level === CONSTANT_LEVEL && !is174
+        ? getLevel(expression, scope, environment, new Set(), new Set(), true)
+        : level;
     if (atomLevel === CONSTANT_LEVEL) {
       const value = evaluate(expression, getConstantContext(environment, scope));
       if (typeof value !== "boolean") {

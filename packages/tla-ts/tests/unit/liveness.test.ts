@@ -221,6 +221,30 @@ describe("liveness matches TLC", () => {
     },
   );
 
+  it("evaluates in each state a call whose definition ignores its variable argument, as TLC's level bound counts the argument", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nG(v) == Head(<<>>) = 1\nInit == x = 0\nNext == x < 4 /\\ x' = x + 1\nProp == <>(x = 3 /\\ G(x))\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+    });
+    expect([
+      result.status,
+      result.failure?.message,
+      result.failure?.trace?.map((step) => step.state.x),
+      result.failure?.callStack
+        ?.filter((expression, index, stack) => expression !== stack[index - 1])
+        .map((expression) => {
+          const range = expression.location.range;
+          return `${range?.start.line}.${range?.start.column}-${range?.end.line}.${range?.end.column}`;
+        }),
+    ]).toEqual([
+      "error",
+      "Attempted to apply Head to the empty sequence.",
+      [0, 1, 2],
+      ["7.12-7.24", "7.21-7.24", "4.9-4.22", "4.9-4.18"],
+    ]);
+  });
+
   it("finds the level of a spec whose initial predicate calls a recursive LET operator", async () => {
     const result = await check({
       source:
