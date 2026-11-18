@@ -16,7 +16,7 @@ import {
   type SourceLocation,
   type SourceRange,
 } from "./ast";
-import { formatRange, type SanyError } from "./errors";
+import { formatRange, type CodedSanyError, type SanyError } from "./errors";
 import { forEachChild } from "./instances";
 import { parenthesizedRanges } from "./parser";
 import { collectSemanticErrors, getBoundNames, getPatternNames, isBefore } from "./resolve";
@@ -488,6 +488,11 @@ const getLetUnits = (expression: LetExpression) =>
     .toSorted((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
     .map((entry) => entry.unit);
 
+interface LevelMessage {
+  message: string;
+  code?: string;
+}
+
 const LOGICAL_OPERATORS = new Set(["/\\", "\\/", "=>", "<=>"]);
 
 const isMixed = (levels: number[]) =>
@@ -511,8 +516,8 @@ const getExceedingError = (operator: OperatorLevels, index: number) =>
 export const createLevelAnalyzer = (context: LevelContext) => {
   const definitionLevels = new Map<Definition, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
-  const errors: SanyError[] = [];
-  const messages: string[] = [];
+  const errors: CodedSanyError[] = [];
+  const messages: LevelMessage[] = [];
 
   const resolve = (name: string, scope: Scope): Resolved => {
     const entry = scope.get(name);
@@ -571,7 +576,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       const operand = operands[index];
       if (operand.data.level > getMaxLevel(operator, index)) {
         if (operator.isCorrect && operand.data.isCorrect) {
-          messages.push(getExceedingError(operator, index));
+          messages.push({ message: getExceedingError(operator, index) });
         }
         isLevelCorrect = false;
       }
@@ -582,12 +587,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         const minimum = operator.minMaxLevels[index]?.[position] ?? 0;
         if (getMaxLevel(argument, position) >= minimum) continue;
         if (operator.isCorrect && argument.isCorrect) {
-          messages.push(
-            getApplicationError(
+          messages.push({
+            message: getApplicationError(
               operator,
               `The permitted level of argument ${position + 1} of the operator argument ${index + 1} \nmust be at least ${minimum}`,
             ),
-          );
+          });
         }
         isLevelCorrect = false;
       }
@@ -601,7 +606,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             continue;
           }
           if (argument.isCorrect && other.data.isCorrect) {
-            messages.push(getExceedingError(operator, otherIndex));
+            messages.push({
+              message: getExceedingError(operator, otherIndex),
+              code: "HIGHER_ORDER_OPERATOR_COPARAMETER_LEVEL_CONSTRAINTS_EXCEEDED",
+            });
           }
           isLevelCorrect = false;
         }
@@ -804,9 +812,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       if (!range.isCorrect) return;
       const pattern = groups[index].pattern;
       const symbol = pattern.ranges?.[0];
-      messages.push(
-        `Level error in applying operator ${operator.name}:\nThe level of the range for the bounded variable ${symbol ? formatRange(symbol) : getPatternNames(pattern)[0]} \nexceeds the maximum level allowed by the operator`,
-      );
+      messages.push({
+        message: `Level error in applying operator ${operator.name}:\nThe level of the range for the bounded variable ${symbol ? formatRange(symbol) : getPatternNames(pattern)[0]} \nexceeds the maximum level allowed by the operator`,
+      });
     });
     return data;
   };
@@ -817,13 +825,17 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       : applyDefined(resolved.levels, operands);
 
   const checkJunction = (levels: number[], name: string) => {
-    if (isMixed(levels)) messages.push(`${name} has both temporal formula and action as arguments`);
+    if (isMixed(levels)) {
+      messages.push({ message: `${name} has both temporal formula and action as arguments` });
+    }
   };
 
   const checkApply = (expression: Expression & { kind: "Apply" }, operands: Operand[]) => {
     const isLeadsTo = expression.operator === "~>" || expression.operator === "-+->";
     if (isLeadsTo && operands.some((operand) => operand.data.level === ACTION_LEVEL)) {
-      messages.push("Action used where only temporal formula or state predicate allowed");
+      messages.push({
+        message: "Action used where only temporal formula or state predicate allowed",
+      });
     }
     if (LOGICAL_OPERATORS.has(expression.operator)) {
       checkJunction(
@@ -840,11 +852,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const operand = expression.expression;
     const form = expression.kind === "Always" ? "BoxAction" : "AngleAction";
     if (level !== ACTION_LEVEL || !isOperatorApplication(operand) || operand.kind === form) return;
-    messages.push(
-      expression.kind === "Always"
-        ? "[] followed by action not of form [A]_v"
-        : "<> followed by action not of form <<A>>_v",
-    );
+    messages.push({
+      message:
+        expression.kind === "Always"
+          ? "[] followed by action not of form [A]_v"
+          : "<> followed by action not of form <<A>>_v",
+    });
   };
 
   const letCopies = new WeakMap<Definition, InstanceCopy>();
@@ -882,11 +895,13 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const reportSince = (start: number, range: SourceRange | undefined, data: LevelData) => {
     if (messages.length === start) return data;
     if (range) {
-      messages
-        .splice(start)
-        .forEach((message) =>
-          errors.push({ location: formatRange(range), message: `${message}.` }),
-        );
+      messages.splice(start).forEach((item) =>
+        errors.push({
+          location: formatRange(range),
+          message: `${item.message}.`,
+          code: item.code,
+        }),
+      );
     }
     return { ...data, isCorrect: false };
   };

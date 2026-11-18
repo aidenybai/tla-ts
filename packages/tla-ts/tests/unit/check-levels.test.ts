@@ -686,6 +686,23 @@ describe("level checking matches SANY", () => {
         ["line 5, col 6 to line 5, col 15", "<> followed by action not of form <<A>>_v."],
       ],
     ],
+    [
+      "Pr(p) == p'\nPrime(F(_), a) == F(a)'\nD == Prime(Pr, []x)",
+      [
+        [
+          "line 5, col 6 to line 5, col 19",
+          "Level error in applying operator Prime:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+        [
+          "line 5, col 6 to line 5, col 19",
+          "Level error in applying operator Prime:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+        ],
+        [
+          "line 5, col 6 to line 5, col 19",
+          "Level error in applying operator Prime:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+        ],
+      ],
+    ],
   ])("reports every error SANY reports in %j", async (definitions, errors) => {
     await expect(
       check({

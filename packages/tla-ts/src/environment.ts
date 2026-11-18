@@ -64,6 +64,7 @@ import {
   getKeyName,
   getParamArities,
   isBefore,
+  isSameSanyError,
   isTheoremDefinition,
   isUnresolved,
   KEY_SEPARATOR,
@@ -472,12 +473,16 @@ export const createEnvironment = (
       ),
       ...levelChecks.flatMap((check) => check.check(check !== levelChecks.at(-1))),
     ].filter(
-      (error, index, all) =>
-        all.findIndex(
-          (other) => other.location === error.location && other.message === error.message,
-        ) === index,
+      (error, index, all) => all.findIndex((other) => isSameSanyError(other, error)) === index,
     );
-    if (levelErrors.length > 0) throw createSanyError(levelErrors, false, undefined, warnings);
+    if (levelErrors.length > 0) {
+      throw createSanyError(
+        levelErrors.map((error) => ({ location: error.location, message: error.message })),
+        false,
+        undefined,
+        warnings,
+      );
+    }
     return { linked, closure };
   };
 

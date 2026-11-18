@@ -36,6 +36,11 @@ export interface SanyError {
   message: string;
 }
 
+// SANY drops an error it already has only when the codes match too, so two errors can share text.
+export interface CodedSanyError extends SanyError {
+  code?: string;
+}
+
 interface SanyReport {
   errors: SanyError[];
   warnings: SanyError[];
