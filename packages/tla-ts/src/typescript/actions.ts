@@ -19746,6 +19746,31 @@ const translateIterations = (
           ),
         );
       }
+      // An operation that converts an object runs its conversion the same way.
+      const converted =
+        condition === undefined ? undefined : getLeadingConversion(condition, current, context);
+      if (converted !== undefined) {
+        return runConversion(
+          converted.node,
+          converted.conversion,
+          current,
+          context,
+          bodyFrame,
+          (after, value) =>
+            test(
+              {
+                ...after,
+                scope: {
+                  ...after.scope,
+                  results: new Map([...after.scope.results, [converted.node, value]]),
+                },
+              },
+              whenTrue,
+              whenFalse,
+              tested,
+            ),
+        );
+      }
       // A short-circuit whose operand runs such a call runs it only where the operand runs.
       const branch = getBranch(condition, current, context);
       if (branch !== undefined) {
@@ -21404,7 +21429,8 @@ const findLeadingCall = (
         isAssignment(run) &&
         ts.isIdentifier(run.left) &&
         isPlainOperand(run.right)) ||
-      found.branch !== undefined
+      found.branch !== undefined ||
+      found.conversion !== undefined
     );
   };
   // An operand that runs nothing, which the operation evaluates as a value.
@@ -21419,9 +21445,14 @@ const findLeadingCall = (
   };
   // A condition or a short-circuit's left operand always runs first, so a read that it runs first
   // runs before the operand that runs only sometimes.
+  const isRunFirst = (found: LeadingCall) =>
+    found.call !== undefined ||
+    found.read !== undefined ||
+    found.branch !== undefined ||
+    found.conversion !== undefined;
   if (ts.isConditionalExpression(node)) {
     const found = findLeadingCall(node.condition, before, path, context);
-    return found.call !== undefined || found.read !== undefined || found.branch !== undefined
+    return isRunFirst(found)
       ? found
       : found.isBlocked
         ? blocked
@@ -21439,7 +21470,7 @@ const findLeadingCall = (
       kind === ts.SyntaxKind.QuestionQuestionToken
     ) {
       const found = findLeadingCall(node.left, before, path, context);
-      return found.call !== undefined || found.read !== undefined || found.branch !== undefined
+      return isRunFirst(found)
         ? found
         : found.isBlocked
           ? blocked
@@ -21906,6 +21937,30 @@ const runBranch = (
       );
     }
     const leading = getLeadingCall(operand, () => true, next, context);
+    // An operation that converts an object runs its conversion first, as a call does.
+    const converted =
+      leading === undefined ? getLeadingConversion(operand, next, context) : undefined;
+    if (converted !== undefined) {
+      return runConversion(
+        converted.node,
+        converted.conversion,
+        next,
+        context,
+        frame,
+        (after, value) =>
+          evaluate(
+            operand,
+            {
+              ...after,
+              scope: {
+                ...after.scope,
+                results: new Map([...after.scope.results, [converted.node, value]]),
+              },
+            },
+            withOperand,
+          ),
+      );
+    }
     // An operand makes the objects in it only where its branch runs.
     return leading === undefined
       ? allocate(operand, next, context, (allocated) =>
@@ -22007,7 +22062,20 @@ const getBranch = (evaluated: ts.Expression | undefined, path: Path, context: Co
 // read what the conversion's methods change.
 const getHoistedConversion = (statement: ts.Statement, path: Path, context: Context) => {
   const evaluated = getEvaluated(statement);
-  if (evaluated === undefined) return undefined;
+  const leading =
+    evaluated === undefined ? undefined : getLeadingConversion(evaluated, path, context);
+  // A compound assignment assigns where it's all that the statement evaluates.
+  return leading !== undefined &&
+    isCompoundAssignment(leading.node) &&
+    !(ts.isExpressionStatement(statement) && skipCasts(statement.expression) === leading.node)
+    ? undefined
+    : leading;
+};
+
+// The operation that an expression evaluates first that converts an object to a primitive, which
+// runs as its own statement. Nothing that the expression evaluates before it may read what the
+// conversion's methods change.
+const getLeadingConversion = (evaluated: ts.Expression, path: Path, context: Context) => {
   const before: ts.Node[] = [];
   const node = findLeadingCall(evaluated, before, path, context).conversion;
   const conversion = node === undefined ? undefined : getConversion(node, context);
@@ -22015,13 +22083,6 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
     node === undefined ||
     conversion === undefined ||
     getImmutableWrite(node, context) !== undefined
-  ) {
-    return undefined;
-  }
-  // A compound assignment assigns where it's all that the statement evaluates.
-  if (
-    isCompoundAssignment(node) &&
-    !(ts.isExpressionStatement(statement) && skipCasts(statement.expression) === node)
   ) {
     return undefined;
   }

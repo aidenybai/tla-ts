@@ -54985,10 +54985,10 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("1", "a,b,c"))).failure?.message).toContain("seen b,c");
     });
 
-    it("stops where the value is an object", async () => {
+    it("stops where the value is an object that keys arguments", async () => {
       expect(
-        (await checkModel(getSource("{ valueOf: () => 1 }", "b,c"))).failure?.message,
-      ).toContain("tla-ts can't convert this object to a primitive here");
+        (await checkModel(getSource("{ valueOf: () => 1 }", "undefined,c"))).failure?.message,
+      ).toContain("tla-ts can't convert objects to strings");
     });
   });
 
@@ -57935,6 +57935,43 @@ describe("runs the script's methods in a conversion inside at most one other", (
       expect((await check(compile(getSource(wrong), path))).failure?.message).toContain(
         `seen ${expected}`,
       );
+    });
+  });
+
+  describe("converts an object in a condition, a branch, or a loop's test before what reads it", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const make = (name: string, value: number): any => ({
+        valueOf() {
+          box.seen.push(name);
+          return value;
+        },
+      });
+      const low = make("low", 1);
+      const high = make("high", 5);
+      const flag = box.seen.length === 0;
+      const picked = flag ? high - 1 : low - 1;
+      const other = !flag ? high * 2 : low * 2;
+      if (flag && high > low) box.seen.push("ordered");
+      const joined = flag || low < high ? "yes" : "no";
+      const nested = (low > 0 && high < 10) || low > high;
+      box.seen.push(String(picked), String(other), joined, String(nested));
+      let count = 0;
+      do count++;
+      while (count < 3 && (count === 1 ? low : high) > count);
+      box.seen.push(String(count));
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "high,low,high,low,ordered,low,high,4,2,yes,true,low,1";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace("ordered,low,high", "ordered,low,high,low");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
     });
   });
 });
