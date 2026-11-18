@@ -260,7 +260,6 @@ const getInstanceActions = (
   if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
     return callAction();
   }
-  // Tool#getActionsAppl binds the constant arguments and takes the definition's SubstInNode for the action.
   return tryCollect(() => {
     const values = args.map((arg) => evaluate(arg, getConstantContext(environment, scope)));
     return [
@@ -368,7 +367,6 @@ const getActions = (
   const called = resolveClosure(expression, scope, environment);
   if (instanceAction)
     return getInstanceActions(instanceAction, expression, scope, called, environment);
-  // Tool#getActionsAppl finds a LET definition by its OpDefNode and names the actions of its body by it.
   const letDefinition = getLetDefinition(expression, scope);
   const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
   if (letDefinition && thunk) {

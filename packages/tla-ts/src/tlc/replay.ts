@@ -423,7 +423,6 @@ const visitFramed = (
       case "Let": {
         const context = getContext(replay, scope, partial);
         const definitions = expression.definitions;
-        // Tool's LazyValue for a LET definition keeps the cost model of the node that reaches the LET.
         const bound = replay.coverage
           ? runAtCoverageNode(replay.coverage, node, () =>
               bindDefinitions(definitions, context, {
@@ -925,7 +924,6 @@ const visitUnchanged = (
       if (value === undefined) return false;
       if (replay.isEnabled && replay.coverage) {
         countCoverage(replay.coverage, node);
-        // Tool#enabledUnchanged evaluates a declaration of an instance through its substitution.
         const substitution = substitutedExpressions.get(expression);
         if (substitution && substitution.replacement !== expression) {
           countCoverage(replay.coverage, getSubstitutionNode(replay.coverage, substitution, node));

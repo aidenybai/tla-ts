@@ -1569,7 +1569,6 @@ const getCoverageEvaluator = (expression: Expression, evaluator: Evaluator, cove
       coverage,
     );
   }
-  // A replacement inlined where the declaration occurs counts as the occurrence and as the substitution.
   return countEvaluator(
     expression,
     countSubstitution(
@@ -2514,7 +2513,6 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
       const substituted = environment.coverage
         ? expression.definitions.filter(isSubstitutionDefinition)
         : [];
-      // Each reference evaluates a substitution, and getSubstitutionNode decides whether TLC counts it.
       const reevaluated =
         substituted.length > 0
           ? { impure: new Set(substituted), streamed: new Set<Definition>() }

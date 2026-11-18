@@ -190,7 +190,6 @@ export const createTraceBuilder = (context: TraceContext) => {
         ].flat()
       : [];
     const prefixOutput = rebuilt > 0 ? [initialOutput, ...outputs.slice(1, rebuilt)].flat() : [];
-    // TLC's ModelChecker#printTraceAndStop prints the behavior to the predecessor, then the error that rebuilding the last step throws.
     const failed = stepActions[last].result.error;
     const traceFailure = failed && getTraceFailure(failed, outputs[last]);
     return {

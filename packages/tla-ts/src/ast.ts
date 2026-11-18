@@ -545,9 +545,6 @@ export const getFunctionConstruction = (definition: FunctionDefinition) => {
   return construction;
 };
 
-// SANY makes a function definition that names itself a $RecursiveFcnSpec, which TLC never builds
-// before it applies it. A selection makes the constructor before the resolver finds the self
-// reference, so this reads the definition when the constructor compiles.
 export const isRecursiveConstruction = (expression: FunctionConstructionExpression) =>
   expression.isRecursive || expression.definition?.isSelfReferential === true;
 

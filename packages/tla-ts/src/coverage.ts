@@ -68,7 +68,6 @@ export interface Coverage {
   nextState: NextStateMode;
 }
 
-// Tool evaluates with the next state, with TLCState.Empty in place of it, or with TLCState.Null inside a prime.
 export type NextStateMode = "given" | "empty" | "primed";
 
 export interface CoverageReport {
@@ -239,7 +238,6 @@ const getPredicateRange = (expression: Expression) =>
   (substitutionFrames.get(expression) ?? []).find((frame) => frameSubstitutions.has(frame))
     ?.location.range ?? expression.location.range;
 
-// ActionWrapper#printLocation adds the location of the predicate when it is not the body of the action's definition.
 export const getCoverageLabel = (
   name: string | undefined,
   expression: Expression,
@@ -317,7 +315,6 @@ const getBoundNames = (bounds: Bound[]) =>
     bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
   );
 
-// The SubstInNodes an expression enters, which are those of the instances it is not inside yet.
 export const getEnteredFrames = (expression: Expression, frames: Expression[]) =>
   (substitutionFrames.get(expression) ?? []).filter(
     (frame) => frameSubstitutions.has(frame) && !frames.includes(frame),
@@ -451,7 +448,6 @@ export const buildCoverage = (
       count < expression.operands.length,
     );
 
-  // SubstInNode#walkGraph visits the substitutions before the body, each as a child of the node that reaches the body.
   const walkSubstitutions = (expression: Expression, locals: Local | undefined) => {
     const entered = getEnteredFrames(expression, frames);
     const parent = stack.at(-1) ?? -1;
@@ -729,7 +725,6 @@ export const runAtCoverageNode = <Result>(
   }
 };
 
-// Tool evaluates a substitution once per SubstInNode in eval, and at each reference in getInitStates, getNextStates and enabled.
 export const enterFrames = (
   coverage: Coverage,
   frames: Expression[],
@@ -748,7 +743,6 @@ export const enterFrames = (
   return entered;
 };
 
-// A successor's invariants are checked while the action that generated it is still being evaluated.
 const findFrame = (coverage: Coverage, frame: Expression, root: number) => {
   for (let index = coverage.frames.length - 1; index >= 0; index--) {
     if (coverage.frames[index] === frame && coverage.frameRoots[index] === root) return index;
@@ -762,7 +756,6 @@ export const exitFrames = (coverage: Coverage, entered: number) => {
   coverage.frameEntries.length -= entered;
 };
 
-// ActionWrapper#getSubst: the last node the root walked for the substitution, or none when evaluated before.
 export const getSubstitutionNode = (
   coverage: Coverage,
   substitution: Substitution,

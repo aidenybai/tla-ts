@@ -658,7 +658,6 @@ const selectSubexpression = (
     }
     deferToExpression(location.range, message);
   }
-  // SANY puts the SubstInNode of each instance the selection goes through around the selected expression.
   const frames = enteredBody === undefined ? undefined : substitutionFrames.get(enteredBody);
   const getFramed = (expression: Expression) =>
     frames && current !== enteredBody ? withSubstitutionFrames(expression, frames) : expression;
