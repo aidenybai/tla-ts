@@ -9,6 +9,8 @@ import {
   putArgConstraint,
   putConstraint,
   TEMPORAL_LEVEL,
+  type InstanceLevels,
+  type InstanceSubstitutes,
   type OperatorLevels,
   type Scope,
 } from "./levels";
@@ -19,6 +21,7 @@ export interface InstanceCheck {
   lets: Definition[];
   substitutions: Map<string, Expression>;
   location: SourceLocation;
+  substitutes?: InstanceSubstitutes;
 }
 
 export interface KeyedDeclaration extends Declaration {
@@ -41,12 +44,19 @@ interface ModuleLevels {
   argParams: Set<string>;
 }
 
+interface ModuleAnalyzer {
+  constants: Set<string>;
+  variables: Set<string>;
+  analyzer: ReturnType<typeof createLevelAnalyzer>;
+}
+
 interface Substituted {
   name: string;
   key: string;
   maximumLevel: number;
   arity: number;
   level: number;
+  isCorrect: boolean;
   operator: OperatorLevels | undefined;
   isLeibniz: boolean;
 }
@@ -54,19 +64,43 @@ interface Substituted {
 const getMaxLevel = (operator: OperatorLevels, index: number) =>
   operator.maxLevels[index] ?? TEMPORAL_LEVEL;
 
-export const createInstanceChecker = (getModule: (name: string) => ModuleContext) => {
-  const analyzers = new Map<string, ReturnType<typeof createLevelAnalyzer>>();
-  const getAnalyzer = (name: string) => {
+export const createInstanceChecker = (
+  getModule: (name: string) => ModuleContext,
+  copies: Omit<InstanceLevels, "getInstanced">,
+) => {
+  const analyzers = new Map<string, ModuleAnalyzer>();
+  const getModuleAnalyzer = (name: string) => {
     const cached = analyzers.get(name);
     if (cached) return cached;
     const module = getModule(name);
-    const analyzer = createLevelAnalyzer({
-      constants: new Set(module.constants.map((constant) => constant.key)),
-      variables: new Set(module.variables),
-      getDefinition: module.getDefinition,
-    });
+    const constants = new Set(module.constants.map((constant) => constant.key));
+    const variables = new Set(module.variables);
+    const analyzer: ModuleAnalyzer = {
+      constants,
+      variables,
+      analyzer: createLevelAnalyzer({
+        constants,
+        variables,
+        getDefinition: module.getDefinition,
+        instances,
+      }),
+    };
     analyzers.set(name, analyzer);
     return analyzer;
+  };
+  const getAnalyzer = (name: string) => getModuleAnalyzer(name).analyzer;
+
+  const instances: InstanceLevels = {
+    ...copies,
+    getInstanced: (copy) => {
+      const module = getModuleAnalyzer(copy.module);
+      return {
+        source: module.analyzer.analyzeDefinition(copy.source, new Map()),
+        constants: module.constants,
+        variables: module.variables,
+        isConstant: getModuleLevels(copy.module).isConstant,
+      };
+    },
   };
 
   const moduleLevels = new Map<string, ModuleLevels>();
@@ -126,7 +160,7 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     return levels;
   };
 
-  return (check: InstanceCheck) => {
+  const checkInstance = (check: InstanceCheck) => {
     const errors = new Map<string, SanyError>();
     const location = formatRange(
       check.location.range ?? {
@@ -158,7 +192,15 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
       if (!expression) return [];
       if (declaration.arity === 0) {
         const data = analyzer.analyze(expression, scope);
-        return [{ ...declaration, level: data.level, operator: undefined, isLeibniz: true }];
+        return [
+          {
+            ...declaration,
+            level: data.level,
+            isCorrect: data.isCorrect,
+            operator: undefined,
+            isLeibniz: true,
+          },
+        ];
       }
       const operand = analyzer.toOperand(expression, scope);
       const operator = operand.kind === "Operator" ? operand.data : undefined;
@@ -166,6 +208,7 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
         {
           ...declaration,
           level: operand.data.level,
+          isCorrect: operand.data.isCorrect,
           operator,
           isLeibniz: operator === undefined || operator.nonLeibniz.size === 0,
         },
@@ -173,8 +216,9 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     });
     const getLevelMessage = (name: string, level: number) =>
       `Level error in instantiating module '${check.module}':\nThe level of the expression or operator substituted for '${name}' \nmust be at most ${level}.`;
+    // SANY reports a level error of a substitute only when the substitute itself is level-correct.
     substituted.forEach((item) => {
-      if (!levels.isConstant && item.level > item.maximumLevel) {
+      if (!levels.isConstant && item.level > item.maximumLevel && item.isCorrect) {
         addMessage(getLevelMessage(item.name, item.maximumLevel));
       }
       if (!item.isLeibniz) {
@@ -185,10 +229,10 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     });
     substituted.forEach((item) => {
       const maximum = levels.constraints.get(item.key);
-      if (maximum !== undefined && item.level > maximum)
+      if (maximum !== undefined && item.level > maximum && item.isCorrect)
         addMessage(getLevelMessage(item.name, maximum));
       const operator = item.operator;
-      if (!operator) return;
+      if (!operator?.isCorrect) return;
       for (let index = 0; index < item.arity; index++) {
         const minimum = levels.argConstraints.get(getArgumentKey(item.key, index));
         if (minimum !== undefined && getMaxLevel(operator, index) < minimum) {
@@ -204,7 +248,7 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
       const argument = substituted.find((item) => item.key === parameter.param);
       if (!substitute?.operator || !argument) return;
       const maximum = getMaxLevel(substitute.operator, parameter.index);
-      if (argument.level > maximum) {
+      if (argument.level > maximum && substitute.operator.isCorrect && argument.isCorrect) {
         addMessage(
           `Level error when instantiating module '${check.module}':\nThe level of the argument ${parameter.index} of the operator ${substitute.name}' \nmust be at most ${maximum}.`,
         );
@@ -212,4 +256,6 @@ export const createInstanceChecker = (getModule: (name: string) => ModuleContext
     });
     if (errors.size > 0) throw createSanyError([...errors.values()]);
   };
+
+  return { checkInstance, instances };
 };

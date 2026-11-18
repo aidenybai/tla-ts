@@ -5,6 +5,7 @@ import {
   type Definition,
   type Expression,
   type Fact,
+  type Instance,
   type LetExpression,
   type Module,
   type ModuleUnit,
@@ -41,11 +42,37 @@ export interface OperatorLevels extends LevelData {
   nonLeibniz: Set<number>;
 }
 
+export interface InstanceSubstitutes {
+  params: OperatorParam[];
+  substitutions: Map<string, Expression>;
+}
+
+// The definition an instance copies, and the module it comes from.
+export interface InstanceCopy extends InstanceSubstitutes {
+  source: Definition;
+  module: string;
+}
+
+export interface InstancedDefinition {
+  source: OperatorLevels;
+  constants: Set<string>;
+  variables: Set<string>;
+  isConstant: boolean;
+}
+
+export interface InstanceLevels {
+  getCopy: (definition: Definition) => InstanceCopy | undefined;
+  // Resolution rebuilds LET definitions, so a LET instance's copies are found by name.
+  getLetCopies: (instance: Instance) => Map<string, InstanceCopy> | undefined;
+  getInstanced: (copy: InstanceCopy) => InstancedDefinition;
+}
+
 interface LevelContext {
   constants: Set<string>;
   variables: Set<string>;
   getDefinition: (name: string) => Definition | undefined;
   getQualifiedName?: (name: string) => string | undefined;
+  instances?: InstanceLevels;
 }
 
 type ScopeEntry =
@@ -249,6 +276,59 @@ const getDefinitionBody = (definition: Definition): Expression =>
         location: definition.location,
       }
     : definition.body;
+
+const toOperatorLevels = (
+  name: string,
+  formals: OperatorParam[],
+  data: LevelData,
+  nonLeibnizNames: Set<string>,
+) => {
+  const isFormal = (param: string) => formals.some((formal) => formal.name === param);
+  const levels: OperatorLevels = {
+    ...createData(data.level),
+    isCorrect: data.isCorrect,
+    name,
+    formals,
+    nonLeibniz: new Set(
+      formals.flatMap((formal, index) => (nonLeibnizNames.has(formal.name) ? [index] : [])),
+    ),
+    maxLevels: formals.map((formal) =>
+      Math.min(TEMPORAL_LEVEL, data.constraints.get(formal.name) ?? TEMPORAL_LEVEL),
+    ),
+    weights: formals.map((formal) => (data.params.has(formal.name) ? 1 : 0)),
+    minMaxLevels: formals.map((formal) =>
+      Array.from(
+        { length: formal.arity },
+        (_value, index) => data.argConstraints.get(getArgumentKey(formal.name, index)) ?? 0,
+      ),
+    ),
+    conditions: new Set(
+      formals.flatMap((operator, operatorIndex) =>
+        formals.flatMap((param, paramIndex) =>
+          Array.from({ length: operator.arity }, (_value, argumentIndex) => argumentIndex)
+            .filter((argumentIndex) =>
+              data.argParams.has(getArgumentParamKey(operator.name, argumentIndex, param.name)),
+            )
+            .map((argumentIndex) => getConditionKey(operatorIndex, paramIndex, argumentIndex)),
+        ),
+      ),
+    ),
+  };
+  data.params.forEach((param) => {
+    if (!isFormal(param)) levels.params.add(param);
+  });
+  data.constraints.forEach((value, key) => {
+    if (!isFormal(key)) levels.constraints.set(key, value);
+  });
+  data.argConstraints.forEach((value, key) => {
+    if (!isFormal(parseArgumentParamKey(key).operator)) levels.argConstraints.set(key, value);
+  });
+  data.argParams.forEach((key) => {
+    const parameter = parseArgumentParamKey(key);
+    if (!isFormal(parameter.operator) || !isFormal(parameter.param)) levels.argParams.add(key);
+  });
+  return levels;
+};
 
 const createLetScope = (expression: LetExpression, scope: Scope) => {
   const inner: Scope = new Map(scope);
@@ -767,7 +847,16 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     );
   };
 
+  const letCopies = new WeakMap<Definition, InstanceCopy>();
+
   const analyzeLet = (expression: LetExpression, scope: Scope) => {
+    expression.instances?.forEach((instance) => {
+      const copies = context.instances?.getLetCopies(instance);
+      expression.definitions.forEach((definition) => {
+        const copy = copies?.get(definition.name);
+        if (copy) letCopies.set(definition, copy);
+      });
+    });
     const inner = createLetScope(expression, scope);
     if (expression.recursive) {
       getRecursiveSections(scope, expression).forEach((section) =>
@@ -1103,56 +1192,144 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     scope: Scope,
   ) => {
     const inner = bindFormals(scope, formals);
-    const data = analyze(body, inner);
-    const isFormal = (param: string) => formals.some((formal) => formal.name === param);
-    const nonLeibnizNames = getNonLeibnizNames(
-      body.kind === "Selection" ? body.expression : body,
-      inner,
-    );
-    const levels: OperatorLevels = {
-      ...createData(data.level),
-      isCorrect: data.isCorrect,
+    return toOperatorLevels(
       name,
       formals,
-      nonLeibniz: new Set(
-        formals.flatMap((formal, index) => (nonLeibnizNames.has(formal.name) ? [index] : [])),
-      ),
-      maxLevels: formals.map((formal) =>
-        Math.min(TEMPORAL_LEVEL, data.constraints.get(formal.name) ?? TEMPORAL_LEVEL),
-      ),
-      weights: formals.map((formal) => (data.params.has(formal.name) ? 1 : 0)),
-      minMaxLevels: formals.map((formal) =>
-        Array.from(
-          { length: formal.arity },
-          (_value, index) => data.argConstraints.get(getArgumentKey(formal.name, index)) ?? 0,
+      analyze(body, inner),
+      getNonLeibnizNames(body.kind === "Selection" ? body.expression : body, inner),
+    );
+  };
+
+  const substitutes = new WeakMap<Map<string, Expression>, Map<string, Operand>>();
+
+  const getSubstitutes = (instance: InstanceSubstitutes, scope: Scope) => {
+    const cached = substitutes.get(instance.substitutions);
+    if (cached) return cached;
+    const inner = bindFormals(scope, instance.params);
+    const operands = new Map(
+      [...instance.substitutions].map((entry): [string, Operand] => [
+        entry[0],
+        toOperand(entry[1], inner),
+      ]),
+    );
+    substitutes.set(instance.substitutions, operands);
+    return operands;
+  };
+
+  // SANY wraps the body of an instanced definition in a SubstInNode. It keeps the levels of the
+  // original body and maps each declaration of the instanced module to its substitute.
+  const analyzeInstanced = (
+    definition: Definition,
+    copy: InstanceCopy,
+    instanced: InstancedDefinition,
+    scope: Scope,
+  ) => {
+    const source = instanced.source;
+    const formals = getFormals(definition);
+    const prefix = formals.length - source.formals.length;
+    const names = source.formals.map((_formal, index) => formals[prefix + index].name);
+    const renamed = new Map(source.formals.map((formal, index) => [formal.name, names[index]]));
+    const rename = (name: string) => renamed.get(name) ?? name;
+    const operands = getSubstitutes(copy, scope);
+    const getParams = (param: string) => operands.get(param)?.data.params ?? [param];
+    const params = [
+      ...source.params,
+      ...names.filter((_name, index) => source.weights[index] === 1),
+    ];
+    const argParams = [
+      ...[...source.argParams].map((key) => {
+        const parameter = parseArgumentParamKey(key);
+        return {
+          operator: rename(parameter.operator),
+          index: parameter.index,
+          param: rename(parameter.param),
+        };
+      }),
+      ...names.flatMap((operator, operatorIndex) =>
+        names.flatMap((param, paramIndex) =>
+          Array.from({ length: source.formals[operatorIndex].arity }, (_value, index) => index)
+            .filter((index) =>
+              source.conditions.has(getConditionKey(operatorIndex, paramIndex, index)),
+            )
+            .map((index) => ({ operator, index, param })),
         ),
       ),
-      conditions: new Set(
-        formals.flatMap((operator, operatorIndex) =>
-          formals.flatMap((param, paramIndex) =>
-            Array.from({ length: operator.arity }, (_value, argumentIndex) => argumentIndex)
-              .filter((argumentIndex) =>
-                data.argParams.has(getArgumentParamKey(operator.name, argumentIndex, param.name)),
-              )
-              .map((argumentIndex) => getConditionKey(operatorIndex, paramIndex, argumentIndex)),
-          ),
-        ),
+    ];
+    const data = createData(
+      Math.max(source.level, ...params.map((param) => operands.get(param)?.data.level ?? 0)),
+    );
+    data.isCorrect =
+      source.isCorrect && [...operands.values()].every((operand) => operand.data.isCorrect);
+    params.forEach((param) => getParams(param).forEach((name) => data.params.add(name)));
+    [
+      ...source.constraints,
+      ...names.map((name, index): [string, number] => [name, source.maxLevels[index]]),
+    ].forEach((entry) => {
+      const level = instanced.isConstant
+        ? entry[1]
+        : instanced.constants.has(entry[0])
+          ? CONSTANT_LEVEL
+          : instanced.variables.has(entry[0])
+            ? VARIABLE_LEVEL
+            : entry[1];
+      getParams(entry[0]).forEach((name) => putConstraint(data.constraints, name, level));
+    });
+    [
+      ...source.argConstraints,
+      ...names.flatMap((name, index) =>
+        source.minMaxLevels[index].map((level, position): [string, number] => [
+          getArgumentKey(name, position),
+          level,
+        ]),
       ),
-    };
-    data.params.forEach((param) => {
-      if (!isFormal(param)) levels.params.add(param);
+    ].forEach((entry) => {
+      const parameter = parseArgumentParamKey(entry[0]);
+      const operator = operands.get(parameter.operator);
+      if (!operator) putArgConstraint(data.argConstraints, entry[0], entry[1]);
+      else if (operator.kind === "Declared") {
+        putArgConstraint(
+          data.argConstraints,
+          getArgumentKey(operator.declared.name, parameter.index),
+          entry[1],
+        );
+      }
     });
-    data.constraints.forEach((value, key) => {
-      if (!isFormal(key)) levels.constraints.set(key, value);
+    argParams.forEach((parameter) => {
+      const operator = operands.get(parameter.operator);
+      if (operator?.kind === "Operator") {
+        getParams(parameter.param).forEach((name) =>
+          putConstraint(data.constraints, name, getMaxLevel(operator.data, parameter.index)),
+        );
+      }
+      const target =
+        operator === undefined
+          ? parameter.operator
+          : operator.kind === "Declared"
+            ? operator.declared.name
+            : undefined;
+      if (target === undefined) return;
+      const value = operands.get(parameter.param);
+      if (value) {
+        putArgConstraint(
+          data.argConstraints,
+          getArgumentKey(target, parameter.index),
+          value.data.level,
+        );
+      }
+      (operator === undefined ? [parameter.param] : getParams(parameter.param)).forEach((name) =>
+        data.argParams.add(getArgumentParamKey(target, parameter.index, name)),
+      );
     });
-    data.argConstraints.forEach((value, key) => {
-      if (!isFormal(parseArgumentParamKey(key).operator)) levels.argConstraints.set(key, value);
-    });
-    data.argParams.forEach((key) => {
-      const parameter = parseArgumentParamKey(key);
-      if (!isFormal(parameter.operator) || !isFormal(parameter.param)) levels.argParams.add(key);
-    });
-    return levels;
+    const nonLeibniz = new Set(names.filter((_name, index) => source.nonLeibniz.has(index)));
+    if (prefix > 0) {
+      const instanceParams = new Set(formals.slice(0, prefix).map((formal) => formal.name));
+      getNonLeibnizNames(getDefinitionBody(definition), bindFormals(scope, formals)).forEach(
+        (name) => {
+          if (instanceParams.has(name)) nonLeibniz.add(name);
+        },
+      );
+    }
+    return toOperatorLevels(definition.name, formals, data, nonLeibniz);
   };
 
   const staleDefinitions = new Set<Definition>();
@@ -1162,12 +1339,17 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     if (cached && !staleDefinitions.delete(definition)) return cached;
     const prior = cached ?? createPlaceholder(definition, TEMPORAL_LEVEL, 0);
     definitionLevels.set(definition, prior);
-    const levels = analyzeOperator(
-      definition.name,
-      getFormals(definition),
-      getDefinitionBody(definition),
-      scope,
-    );
+    const copy = letCopies.get(definition) ?? context.instances?.getCopy(definition);
+    const instanced = copy && context.instances?.getInstanced(copy);
+    const levels =
+      copy && instanced
+        ? analyzeInstanced(definition, copy, instanced, scope)
+        : analyzeOperator(
+            definition.name,
+            getFormals(definition),
+            getDefinitionBody(definition),
+            scope,
+          );
     const merged = {
       ...levels,
       level: Math.max(prior.level, levels.level),
@@ -1233,6 +1415,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     analyzeDefinition,
     checkPrimedArguments,
     checkRecursiveSection,
+    getSubstitutes,
     toOperand,
     errors,
   };
@@ -1279,7 +1462,7 @@ export const analyzeAssumeProve = (
 export const checkModuleLevels = (
   module: Module,
   context: LevelContext,
-  instances: { location: SourceLocation; check: () => void }[],
+  instances: { location: SourceLocation; check: () => void; substitutes?: InstanceSubstitutes }[],
   warnings: SanyError[],
 ) => {
   const analyzer = createLevelAnalyzer(context);
@@ -1408,15 +1591,29 @@ export const checkModuleLevels = (
         (isInner ? sections : []).map((section) =>
           createCheck(section.location, () => analyzer.checkPrimedArguments(section.members)),
         ),
-        module.definitions
-          .filter(
-            (definition) => !definition.name.includes("!") && !statementBodies.has(definition.body),
-          )
-          .map((definition) =>
-            createCheck(definition.location, () =>
-              analyzer.analyzeDefinition(definition, new Map()),
+        [
+          ...module.definitions
+            .filter(
+              (definition) =>
+                !definition.name.includes("!") && !statementBodies.has(definition.body),
+            )
+            .map((definition) =>
+              createCheck(definition.location, () =>
+                analyzer.analyzeDefinition(definition, new Map()),
+              ),
             ),
-          ),
+          // SANY checks an instance's substitutes with the first definition it instances.
+          ...instances.flatMap((instance) => {
+            const substitutes = instance.substitutes;
+            return substitutes
+              ? [
+                  createCheck(instance.location, () =>
+                    analyzer.getSubstitutes(substitutes, new Map()),
+                  ),
+                ]
+              : [];
+          }),
+        ],
         statements
           .filter((statement) => statement.name !== undefined)
           .map((statement) =>

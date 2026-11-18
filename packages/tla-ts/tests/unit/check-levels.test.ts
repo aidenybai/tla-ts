@@ -135,6 +135,55 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    [
+      "a constant module",
+      "CONSTANT Op(_), k\nK == Op(k)",
+      "I == INSTANCE Inner WITH Op <- LAMBDA p : 1, k <- x'\nU == [](I!K)\nW == LET L == INSTANCE Inner WITH Op <- LAMBDA p : 1, k <- x' IN [](L!K)\nJ == INSTANCE Inner WITH Op <- LAMBDA p : 1, k <- (x')'",
+      [
+        ["line 8, col 6 to line 8, col 12", "[] followed by action not of form [A]_v."],
+        ["line 9, col 66 to line 9, col 72", "[] followed by action not of form [A]_v."],
+        [
+          "line 10, col 51 to line 10, col 55",
+          "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+      ],
+    ],
+    [
+      "a module with variables",
+      "CONSTANT Op(_), k\nVARIABLE z\nK == Op(k)",
+      "Eq(p) == p = 1\nI == INSTANCE Inner WITH Op <- Eq, k <- [](x = 1), z <- x\nU == I!K\nJ == INSTANCE Inner WITH Op <- Eq, k <- (x')', z <- x",
+      [
+        [
+          "line 11, col 41 to line 11, col 45",
+          "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+        [
+          "line 9, col 1 to line 9, col 57",
+          "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+        ],
+        [
+          "line 9, col 1 to line 9, col 57",
+          "Level error when instantiating module 'Inner':\nThe level of the argument 0 of the operator Op' \nmust be at most 2.",
+        ],
+      ],
+    ],
+  ])(
+    "levels the definitions of an instance of %s through its substitutes like SANY",
+    async (_, inner, definitions, errors) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\n${inner}\n====\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({
