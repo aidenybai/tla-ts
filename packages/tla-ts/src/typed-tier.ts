@@ -3261,6 +3261,8 @@ const compileBuiltin = (
 
 const compileValue = (program: Program, expression: Expression, frame: Frame): Compiled => {
   switch (expression.kind) {
+    case "Selection":
+      return compileValue(program, expression.expression, frame);
     case "Number":
       return expression.value <= MAXIMUM_INTEGER
         ? { type: createInt(), emit: () => String(expression.value) }
@@ -3944,6 +3946,8 @@ const compileWays = (program: Program, expression: Expression, frame: Frame): Co
     compileWays(program, inner, { ...frame, scope });
   const counted = (emit: () => string): Compiled => ({ type: createInt(), emit });
   switch (expression.kind) {
+    case "Selection":
+      return getWays(expression.expression, frame.scope);
     case "Or": {
       const operands = expression.operands.map((operand) => getWays(operand, frame.scope));
       return counted(() => `(${operands.map((operand) => operand.emit()).join(" + ")})`);
@@ -4103,6 +4107,8 @@ const compileStep = (
       ? unsupported()
       : continueWith(scope, [body], [...first.inlining, definition]);
   switch (expression.kind) {
+    case "Selection":
+      return continueWith(first.scope, [expression.expression]);
     case "And":
       return continueWith(first.scope, expression.operands);
     case "Or": {

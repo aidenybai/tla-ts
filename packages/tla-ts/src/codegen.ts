@@ -158,10 +158,13 @@ const addReference = (generator: Generator, value: unknown) => {
 
 const createLocal = (generator: Generator) => `local${generator.counter++}`;
 
+// A selection's node names only what the selection binds around it, never a local of the code.
 const getFreeNames = (expression: Expression, names = new Set<string>()) => {
   const name = getReferencedName(expression);
   if (name !== undefined) names.add(name);
-  getChildren(expression).forEach((child) => getFreeNames(child, names));
+  if (expression.kind !== "Selection") {
+    getChildren(expression).forEach((child) => getFreeNames(child, names));
+  }
   return names;
 };
 

@@ -274,6 +274,7 @@ const getUnchangedVariables = (
 
 const ACTION_KINDS = new Set([
   "Label",
+  "Selection",
   "And",
   "Or",
   "Exists",
@@ -1140,6 +1141,8 @@ const compileAction = (
       );
     case "Label":
       return getChildRunner(expression.body);
+    case "Selection":
+      return getChildRunner(expression.expression);
     case "Identifier":
       return compileIdentifier(expression, environment, isInit);
     case "FunctionApplication":

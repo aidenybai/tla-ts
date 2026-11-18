@@ -133,7 +133,6 @@ export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
-export const selectionSources = new WeakMap<Expression, Expression>();
 const unresolvedExpressions = new WeakSet<Expression>();
 const emptyExpressions = new WeakSet<Expression>();
 
@@ -168,7 +167,7 @@ const CORE_SYMBOLS: Symbols = new Map([
 export const isBefore = (left: SourceLocation, right: SourceLocation) =>
   left.line < right.line || (left.line === right.line && left.column < right.column);
 
-const compareLocations = (left: SourceLocation, right: SourceLocation) =>
+export const compareLocations = (left: SourceLocation, right: SourceLocation) =>
   isBefore(left, right) ? -1 : isBefore(right, left) ? 1 : 0;
 
 export const getArity = (definition: Definition) =>
@@ -466,6 +465,7 @@ export const getOperands = (expression: Expression): Expression[] | undefined =>
     case "Enabled":
     case "Always":
     case "Eventually":
+    case "Selection":
       return [expression.expression];
     case "BoxAction":
     case "AngleAction":
@@ -494,7 +494,7 @@ const isInScopeOfDeclaration = (assumeProve: AssumeProve, clause: number) =>
 
 const findLabel = (expression: Expression, name: string): LabelExpression | undefined => {
   if (expression.kind === "Label") return expression.name === name ? expression : undefined;
-  if (expression.kind === "Lambda") return undefined;
+  if (expression.kind === "Lambda" || expression.kind === "Selection") return undefined;
   if (expression.kind === "Let") return findLabel(expression.body, name);
   return getChildren(expression).reduce<LabelExpression | undefined>(
     (found, child) => found ?? findLabel(child, name),
@@ -1399,12 +1399,6 @@ const resolveExpression = (
     resolveExpression(expression, scope, { ...unit, isGenerated: true });
     return;
   }
-  const source = selectionSources.get(expression);
-  if (source) {
-    Object.assign(expression, source);
-    const arity = renamedArities.get(source);
-    if (arity !== undefined) renamedArities.set(expression, arity);
-  }
   const resolveAll = (expressions: Expression[]) =>
     expressions.forEach((child) => resolveExpression(child, scope, unit));
   const bindLabelParams = (names: string[]) => ({
@@ -1589,6 +1583,9 @@ const resolveExpression = (
       return;
     case "Subexpression":
       if (isSubexpressionReported(expression, scope, unit)) emptyExpressions.add(expression);
+      return;
+    // A selection's node is resolved in the definition it comes from.
+    case "Selection":
       return;
   }
 };

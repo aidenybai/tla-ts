@@ -145,6 +145,9 @@ const getVariable = (
   scope: Scope | undefined,
 ): number | undefined => {
   if (expression.kind === "Label") return getVariable(environment, expression.body, scope);
+  if (expression.kind === "Selection") {
+    return getVariable(environment, expression.expression, scope);
+  }
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
@@ -165,6 +168,9 @@ const getPrimedVariable = (
 ): number | undefined => {
   if (expression.kind === "Prime") return getVariable(environment, expression.expression, scope);
   if (expression.kind === "Label") return getPrimedVariable(environment, expression.body, scope);
+  if (expression.kind === "Selection") {
+    return getPrimedVariable(environment, expression.expression, scope);
+  }
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
@@ -319,6 +325,8 @@ const visitAt = (
       }
       case "Label":
         return visit(replay, expression.body, items, scope, partial, node);
+      case "Selection":
+        return visit(replay, expression.expression, items, scope, partial, node);
       default:
         if (LITERAL_KINDS.has(expression.kind))
           throw new TlaEvaluationError("The state relation is not a boolean expression.");
@@ -907,6 +915,9 @@ export const getPrimedRanges = (actions: ReplayAction[], environment: Environmen
         return;
       case "Label":
         collect(expression.body, scope, visited);
+        return;
+      case "Selection":
+        collect(expression.expression, scope, visited);
         return;
       case "FunctionApplication":
         collect(expression.function, scope, visited);

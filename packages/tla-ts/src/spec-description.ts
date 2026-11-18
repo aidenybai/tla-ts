@@ -274,6 +274,8 @@ const getActions = (
       );
     case "Label":
       return getActions(expression.body, scope, closure, environment, instanceActions);
+    case "Selection":
+      return getActions(expression.expression, scope, closure, environment, instanceActions);
     case "Or":
       return expression.operands.flatMap((operand) =>
         getActions(operand, scope, closure, environment, instanceActions),
@@ -525,6 +527,7 @@ export const getSubscriptVariables = (
       return expression.elements.every((element) => collect(element, innerScope));
     }
     if (expression.kind === "Label") return collect(expression.body, innerScope);
+    if (expression.kind === "Selection") return collect(expression.expression, innerScope);
     const unwrapped = unwrapBinding(expression, innerScope, environment);
     if (unwrapped) return collect(unwrapped.expression, unwrapped.scope);
     const argument =

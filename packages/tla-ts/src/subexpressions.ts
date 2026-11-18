@@ -21,6 +21,7 @@ import { parenthesizedRanges } from "./parser";
 import { STANDARD_LEVELS } from "./standard-definitions";
 import { resolveSynonym } from "./tlc/jar-data";
 import {
+  compareLocations,
   getArity,
   getBinder,
   getNameSelectors,
@@ -34,7 +35,6 @@ import {
   selectionErrors,
   selectionArguments,
   selections,
-  selectionSources,
   SELECTION_NAME,
   factReferences,
   type NullSelection,
@@ -63,7 +63,16 @@ interface SelectingName {
 
 const declaredArities = new WeakMap<Definition, number>();
 const generatedArgumentCounts = new WeakMap<Expression, number>();
-const resolvedNodes = new WeakMap<Expression, Expression>();
+
+const resolveDefinition = (
+  definition: Definition,
+  resolve: (expression: Expression) => Expression,
+) => {
+  const resolved = mapDefinition(definition, resolve);
+  const arity = declaredArities.get(definition);
+  if (arity !== undefined) declaredArities.set(resolved, arity);
+  return resolved;
+};
 
 const setDeclaredArities = (declarations: Declaration[], definitions: Definition[]) =>
   declarations.forEach((declaration) => {
@@ -109,7 +118,7 @@ const findLabel = (
   }
   if (expression.kind === "Let")
     return findLabel(expression.body, name, [...lets, expression.definitions]);
-  if (expression.kind === "Lambda") return undefined;
+  if (expression.kind === "Lambda" || expression.kind === "Selection") return undefined;
   for (const child of getChildren(expression).slice(0, generatedArgumentCounts.get(expression))) {
     const found = findLabel(child, name, lets);
     if (found) return found;
@@ -125,13 +134,7 @@ const wrapLets = (body: Expression, lets: Definition[][], location: SourceLocati
 
 const createApplication = (selection: Selection, body: Expression): Expression => {
   const location = selection.location;
-  const wrapped = wrapLets(body, selection.lets, location);
-  if (selection.params.length === 0 && wrapped !== body) return wrapped;
-  if (selection.params.length === 0) {
-    const copy = { ...body };
-    selectionSources.set(copy, selectionSources.get(body) ?? body);
-    return copy;
-  }
+  if (selection.params.length === 0) return body;
   if (selection.args.length === 0) {
     if (selection.params.some((param) => param.arity > 0)) {
       throw createError("Selected an operator with operator parameters as an argument", location);
@@ -139,7 +142,7 @@ const createApplication = (selection: Selection, body: Expression): Expression =
     return {
       kind: "Lambda",
       params: selection.params.map((param) => param.name),
-      body: wrapped,
+      body,
       location,
     };
   }
@@ -156,7 +159,7 @@ const createApplication = (selection: Selection, body: Expression): Expression =
         kind: "Operator",
         name: SELECTION_NAME,
         params: selection.params,
-        body: wrapped,
+        body,
         isLocal: true,
         isRecursive: false,
         location,
@@ -198,13 +201,15 @@ const applyDefinition = (definition: Definition, selection: Selection) => {
           location,
           resolution: LOCAL_RESOLUTION,
         };
-  return createApplication({ ...selection, params: [...selection.params, ...params] }, reference);
+  return createApplication(
+    { ...selection, params: [...selection.params, ...params] },
+    wrapLets(reference, selection.lets, location),
+  );
 };
 
 const selectSubexpression = (
   selectors: Selector[],
   lookup: Lookup,
-  isGoal: (name: string) => boolean,
   reference: Expression & SelectingName,
   isOperator: boolean,
 ): Expression => {
@@ -225,18 +230,9 @@ const selectSubexpression = (
   const checkNull = (node: Expression | undefined, message: string, isEmpty = false) => {
     const range = reference.selectorRanges?.[selectorIndex];
     if (node && range) {
-      nulls.push({
-        node: resolvedNodes.get(node) ?? node,
-        error: { location: formatRange(range), message },
-        isEmpty,
-      });
+      nulls.push({ node, error: { location: formatRange(range), message }, isEmpty });
     }
   };
-
-  const isWrittenBefore = (node: Expression) =>
-    node.location.range?.module !== location.range?.module || isBefore(node.location, location);
-  const lookupWritten: Lookup = (name) =>
-    selection.lets.flat().find((definition) => definition.name === name) ?? lookup(name);
 
   const report = (range: SourceRange | undefined, message: string) => {
     if (!range) throw createError(message, location);
@@ -357,31 +353,23 @@ const selectSubexpression = (
     if (!current) throw createError("Subexpression selection failed", location);
     if (selector.kind === "Colon") return;
     const range = reference.selectorRanges?.[selectorIndex];
-    const isReference =
-      (current.kind === "Subexpression" ||
-        (current.kind === "Identifier" && current.name.includes("!")) ||
-        (current.kind === "Apply" && current.operator.includes("!"))) &&
-      isWrittenBefore(current);
-    if (isReference || (selections.has(current) && current !== unwrappedSelection)) {
-      const selected =
-        !isReference || selectionErrors.has(current)
-          ? current
-          : resolveSubexpressions(current, lookupWritten, isGoal);
-      const noOperands = `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`;
-      if (selectionErrors.has(selected)) {
-        report(range, noOperands);
-        return;
-      }
-      if (selections.has(selected) && selected.kind !== "Lambda") {
-        checkNull(selected, noOperands, true);
-        unwrappedSelection = selected;
-        current =
-          selected.kind === "Let" &&
-          selected.body.kind === "Apply" &&
-          selected.body.operator === SELECTION_NAME
-            ? selected.body
-            : // SANY wraps a selection without parameters in $Nop, whose only operand is the selection.
-              { kind: "Tuple", elements: [selected], location: selected.location };
+    const noOperands = `Choosing operand \`${getSelectorName(selector)}' of subexpression with no operands.`;
+    if (selectionErrors.has(current)) {
+      report(range, noOperands);
+      return;
+    }
+    if (selections.has(current) && current.kind !== "Lambda" && current !== unwrappedSelection) {
+      checkNull(current, noOperands, true);
+      unwrappedSelection = current;
+      if (
+        current.kind === "Let" &&
+        current.body.kind === "Apply" &&
+        current.body.operator === SELECTION_NAME
+      ) {
+        current = current.body;
+      } else if (current.kind !== "Selection") {
+        // SANY wraps a selection without parameters in $Nop, whose only operand is the selection.
+        current = { kind: "Tuple", elements: [current], location: current.location };
       }
     }
     if (current.kind === "Label") {
@@ -553,14 +541,12 @@ const selectSubexpression = (
     }
     deferToExpression(location.range, message);
   }
-  const resolved = isWrittenBefore(current)
-    ? resolveSubexpressions(current, lookupWritten, isGoal)
-    : current;
-  const isCopied = selection.params.length === 0 && selection.lets.length === 0;
-  const selected = createApplication(selection, isCopied ? current : resolved);
-  if (isCopied && resolved !== current) {
-    selectionSources.set(selected, selectionSources.get(resolved) ?? resolved);
-  }
+  const body = wrapLets(current, selection.lets, location);
+  const selected = createApplication(selection, {
+    kind: "Selection",
+    expression: body,
+    location: body.location,
+  });
   nullSelections.set(selected, nulls);
   if (expressionError) operatorSelectionErrors.set(selected, expressionError);
   return selected;
@@ -593,14 +579,24 @@ const resolveSubexpressions = (
   if (!containsReference(expression)) return expression;
   if (expression.kind === "Let") {
     if (expression.recursive) setDeclaredArities(expression.recursive, expression.definitions);
+    const resolved: Definition[] = [];
     const local: Lookup = (name) =>
-      expression.definitions.find((definition) => definition.name === name) ?? lookup(name);
+      resolved.find((definition) => definition.name === name) ??
+      expression.definitions.find((definition) => definition.name === name) ??
+      lookup(name);
     const isLocalGoal = (name: string) =>
       !expression.definitions.some((definition) => definition.name === name) && isGoal(name);
-    const mapped = mapChildren(expression, (child) =>
-      resolveSubexpressions(child, local, isLocalGoal),
+    expression.definitions.forEach((definition) =>
+      resolved.push(
+        resolveDefinition(definition, (child) => resolveSubexpressions(child, local, isLocalGoal)),
+      ),
     );
-    return mapped.kind === "Let" && mapped.instances
+    const mapped = {
+      ...expression,
+      definitions: resolved,
+      body: resolveSubexpressions(expression.body, local, isLocalGoal),
+    };
+    return mapped.instances
       ? {
           ...mapped,
           instances: mapped.instances.map((instance) =>
@@ -636,8 +632,6 @@ const resolveSubexpressions = (
   const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
     ? expression
     : rebuilt;
-  if (mapped !== expression && !resolvedNodes.has(expression))
-    resolvedNodes.set(expression, mapped);
   const selectors =
     mapped.kind === "Subexpression"
       ? mapped.selectors
@@ -674,7 +668,7 @@ const resolveSubexpressions = (
     setGeneratedArguments(0);
     return mapped;
   }
-  const selected = selectSubexpression(selectors, lookup, isGoal, mapped, isOperator);
+  const selected = selectSubexpression(selectors, lookup, mapped, isOperator);
   const generated = generatedArgumentCounts.get(mapped);
   if (generated !== undefined) setGeneratedArguments(generated);
   const parenthesized = parenthesizedRanges.get(expression);
@@ -751,13 +745,15 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       (definition.isRecursive && declared !== undefined && isBefore(declared, location))
     );
   };
+  const resolvedDefinitions = new Map<Definition, Definition>();
   const getVisibleLookup =
     (lookup: Lookup, location: SourceLocation): Lookup =>
     (name) => {
       const definition = lookup(name);
-      return definition && (!own.has(definition) || isDeclaredBefore(definition, location))
-        ? definition
-        : undefined;
+      if (!definition || (own.has(definition) && !isDeclaredBefore(definition, location))) {
+        return undefined;
+      }
+      return resolvedDefinitions.get(definition) ?? definition;
     };
   const proofLookup = createLookup([...available, ...module.definitions]);
   const isGoal = (name: string) => goals.has(name);
@@ -806,7 +802,7 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
             definitions: body.definitions.map((definition) =>
               definition.kind === "Instance"
                 ? resolveInstance(definition, lookup, isProofGoal)
-                : mapDefinition(definition, resolveInProof),
+                : resolveDefinition(definition, resolveInProof),
             ),
           };
         case "Have":
@@ -836,8 +832,8 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
             body: resolver.resolveStep(step.body),
             proof: resolver.resolveProof(step.proof),
           };
-          if (step.body.kind === "Define") {
-            const definitions = step.body.definitions.flatMap((definition) =>
+          if (resolved.body.kind === "Define") {
+            const definitions = resolved.body.definitions.flatMap((definition) =>
               definition.kind === "Instance" ? [] : [definition],
             );
             const outer = resolver.lookup;
@@ -851,6 +847,20 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
     };
     return { lookup, resolveFacts, resolveStatement, resolveStep, resolveProof };
   };
+  const hasReferences =
+    module.definitions.some((definition) => containsReference(definition.body)) ||
+    module.assumptions.some((assumption) => containsReference(assumption.expression));
+  if (hasReferences) {
+    // A selection shares the nodes it selects, so each definition is resolved before any that selects from it.
+    [...module.definitions, ...clauses]
+      .toSorted((left, right) => compareLocations(left.location, right.location))
+      .forEach((definition) =>
+        resolvedDefinitions.set(
+          definition,
+          resolveDefinition(definition, (expression) => resolve(expression, definition.location)),
+        ),
+      );
+  }
   const resolved = {
     ...module,
     theorems: module.theorems.map((theorem) => {
@@ -875,14 +885,11 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       ),
     })),
   };
-  const hasReferences =
-    module.definitions.some((definition) => containsReference(definition.body)) ||
-    module.assumptions.some((assumption) => containsReference(assumption.expression));
   if (!hasReferences) return resolved;
   return {
     ...resolved,
-    definitions: module.definitions.map((definition) =>
-      mapDefinition(definition, (expression) => resolve(expression, definition.location)),
+    definitions: module.definitions.map(
+      (definition) => resolvedDefinitions.get(definition) ?? definition,
     ),
     assumptions: module.assumptions.map((assumption) => ({
       ...assumption,

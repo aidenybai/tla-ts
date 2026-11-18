@@ -84,6 +84,22 @@ describe("subexpression references match TLC", () => {
     });
     expect(result.violation?.trace.map((step) => step.state)).toEqual([{ x: 0 }, { x: 5 }]);
   });
+
+  it("resolves a chain of selections from definitions that select twice in linear time", async () => {
+    const checkChain = (length: number) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nD0 == {1}\n${Array.from(
+          { length },
+          (_, index) => `D${index + 1} == {D${index}!1 + D${index}!1}`,
+        ).join("\n")}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+    await checkChain(1);
+    const started = performance.now();
+    const result = await checkChain(20);
+    expect(result.status).toBe("success");
+    expect(performance.now() - started).toBeLessThan(500);
+  });
 });
 
 describe("subexpression references into theorems match SANY", () => {

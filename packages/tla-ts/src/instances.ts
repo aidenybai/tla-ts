@@ -219,6 +219,8 @@ export const mapChildren = (
       };
     case "Label":
       return { ...expression, body: mapUnbound(expression.body) };
+    case "Selection":
+      return { ...expression, expression: mapUnbound(expression.expression) };
     case "Subexpression":
       return {
         ...expression,
@@ -262,6 +264,7 @@ interface Rewrite {
   mode: RewriteMode;
   modes: Map<RewriteMode, Rewrite>;
   bindings?: Map<string, Expression>;
+  selections: Map<Expression, Expression>;
 }
 
 const getSubstitutionName = (name: string) => `${name}@SUBSTITUTION`;
@@ -548,6 +551,13 @@ const substitute = (
   bound: Map<string, string>,
 ): Expression => {
   const recurse = (node: Expression) => substitute(node, rewrite, bound);
+  // Selections share the nodes they select, which keep their sharing unless a bound name is renamed.
+  if (expression.kind === "Selection" && [...bound].every((entry) => entry[0] === entry[1])) {
+    const selected = expression.expression;
+    const substituted = rewrite.selections.get(selected) ?? recurse(selected);
+    rewrite.selections.set(selected, substituted);
+    return { ...expression, expression: substituted };
+  }
   const instantiation = rewrite.instantiation;
   const params = instantiation.params;
   const isFree = (name: string) => !bound.has(name) && !isLocallyResolved(expression);
@@ -731,7 +741,7 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
     const bindings = new Map<string, Expression>();
     const bodyRewrite =
       definition.kind === "Operator" && rewrite.mode === "Normal"
-        ? { ...rewrite, bindings }
+        ? { ...rewrite, bindings, selections: new Map<Expression, Expression>() }
         : rewrite;
     const mapped = renameParams(
       mapDefinition(definition, (child, bound) =>
@@ -777,6 +787,7 @@ export const createInstantiation = (instantiation: Instantiation) => {
       copies: new Map<string, string>(),
       mode,
       modes,
+      selections: new Map<Expression, Expression>(),
     };
     modes.set(mode, created);
     return created;

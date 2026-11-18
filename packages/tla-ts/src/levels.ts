@@ -237,6 +237,7 @@ const isOperatorApplication = (expression: Expression) =>
 
 export const createLevelAnalyzer = (context: LevelContext) => {
   const definitionLevels = new Map<Definition, OperatorLevels>();
+  const selectionLevels = new Map<Expression, LevelData>();
 
   const resolve = (name: string, scope: Scope): Resolved => {
     const entry = scope.get(name);
@@ -748,6 +749,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         );
       case "Label":
         return analyze(expression.body, scope);
+      case "Selection": {
+        const selected = expression.expression;
+        const known = selectionLevels.get(selected);
+        if (known) return known;
+        const data = analyze(selected, scope);
+        selectionLevels.set(selected, data);
+        return data;
+      }
       case "Subexpression":
         return createData();
     }
@@ -781,6 +790,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         return names;
       case "Lambda":
       case "Let":
+      case "Selection":
         return names;
       case "Prime":
       case "Unchanged":
@@ -817,7 +827,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     const inner = bindFormals(scope, formals);
     const data = analyze(body, inner);
     const isFormal = (param: string) => formals.some((formal) => formal.name === param);
-    const nonLeibnizNames = getNonLeibnizNames(body, inner);
+    const nonLeibnizNames = getNonLeibnizNames(
+      body.kind === "Selection" ? body.expression : body,
+      inner,
+    );
     const levels: OperatorLevels = {
       ...createData(data.level),
       name,

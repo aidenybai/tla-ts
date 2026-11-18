@@ -217,6 +217,13 @@ describe("level checking matches SANY", () => {
       "THEOREM ASSUME NEW TEMPORAL F, NEW k \\in F PROVE TRUE\nTHEOREM ASSUME NEW ACTION A, NEW j \\in A PROVE TRUE",
       [["line 3, col 32 to line 3, col 42", "Level error:\nTemporal formula used as set."]],
     ],
+    [
+      "Spec == x = 0 /\\ [][x' = x]_x\nL == []Spec!2!1\nE == <>Spec!2!1",
+      [
+        ["line 4, col 6 to line 4, col 15", "[] followed by action not of form [A]_v."],
+        ["line 5, col 6 to line 5, col 15", "<> followed by action not of form <<A>>_v."],
+      ],
+    ],
   ])("reports every error SANY reports in %j", async (definitions, errors) => {
     await expect(
       check({

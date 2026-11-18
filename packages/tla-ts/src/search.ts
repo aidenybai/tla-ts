@@ -698,23 +698,35 @@ const isWideConfigValue = (value: ConfigValue): boolean =>
     ? WIDE_CHARACTER.test(value.value)
     : value.kind === "Set" && value.elements.some(isWideConfigValue);
 
-const isWideExpression = (expression: Expression): boolean =>
-  (expression.kind === "String" && WIDE_CHARACTER.test(expression.value)) ||
-  (expression.kind === "Apply" && DESERIALIZERS.has(expression.operator)) ||
-  getChildren(expression).some(isWideExpression);
+// Selections share the nodes they select, so the scan checks each once.
+const isWideExpression = (expression: Expression, checked: Set<Expression>): boolean => {
+  if (expression.kind === "Selection") {
+    if (checked.has(expression.expression)) return false;
+    checked.add(expression.expression);
+  }
+  return (
+    (expression.kind === "String" && WIDE_CHARACTER.test(expression.value)) ||
+    (expression.kind === "Apply" && DESERIALIZERS.has(expression.operator)) ||
+    getChildren(expression).some((child) => isWideExpression(child, checked))
+  );
+};
 
 // TLC fingerprints a string by the low byte of each character, so it merges states whose strings differ only above U+00FF.
-const hasWideString = (config: ModelConfig, environment: Environment) =>
-  config.constants.some(
-    (constant) =>
-      isWideConfigValue(constant.value) || (constant.args ?? []).some(isWideConfigValue),
-  ) ||
-  [...environment.definitions.values()].some(
-    (definition) =>
-      isWideExpression(definition.body) ||
-      (definition.kind === "Function" &&
-        definition.bounds.some((bound) => isWideExpression(bound.set))),
+const hasWideString = (config: ModelConfig, environment: Environment) => {
+  const checked = new Set<Expression>();
+  return (
+    config.constants.some(
+      (constant) =>
+        isWideConfigValue(constant.value) || (constant.args ?? []).some(isWideConfigValue),
+    ) ||
+    [...environment.definitions.values()].some(
+      (definition) =>
+        isWideExpression(definition.body, checked) ||
+        (definition.kind === "Function" &&
+          definition.bounds.some((bound) => isWideExpression(bound.set, checked))),
+    )
   );
+};
 
 export interface Search {
   properties: Properties;
