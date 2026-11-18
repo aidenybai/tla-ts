@@ -14,6 +14,10 @@ export default defineConfig({
       "packages/tla-ts/tests/conformance/proofs.json",
       "packages/conformance/test",
       "packages/conformance/baselines",
+      "packages/website/.next",
+      "packages/website/.scripts",
+      "packages/website/src/generated",
+      "packages/website/next-env.d.ts",
     ],
   },
   lint: {
@@ -43,6 +47,14 @@ export default defineConfig({
         rules: { "no-unassigned-vars": "off", "no-constant-binary-expression": "off" },
       },
     ],
-    ignorePatterns: ["node_modules", "dist", "coverage", "pnpm-lock.yaml"],
+    ignorePatterns: [
+      "node_modules",
+      "dist",
+      "coverage",
+      "pnpm-lock.yaml",
+      "packages/website/.next",
+      "packages/website/.scripts",
+      "packages/website/src/generated",
+    ],
   },
 });

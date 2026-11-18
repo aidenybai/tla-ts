@@ -1,13 +1,13 @@
 import { CaretDown, GearSix } from "@phosphor-icons/react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { cn } from "cn";
-import outlines from "virtual:outlines";
+import { outlines } from "../generated/outlines";
 import { createPartsContext } from "@/lib/utils";
 import type { Compilation } from "../compile-worker";
 import { getHighlightColors } from "../highlight-colors";
 import { getLineHoveredName, getLineMarks } from "../line-marks";
 import { createHighlighter } from "../highlighter";
-import { PLAYGROUND_EXAMPLES } from "../playground-examples";
+import { PLAYGROUND_EXAMPLES } from "../generated/playground-examples";
 import type { RunResult } from "../run-worker";
 import type { Mark, Source, Token } from "../site-data";
 import { useCompile } from "../use-compile";

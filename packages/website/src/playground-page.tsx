@@ -1,3 +1,5 @@
+"use client";
+
 import { PlaygroundHeader, PlaygroundPanes, PlaygroundRoot } from "./components/playground";
 
 export const PlaygroundPage = () => (

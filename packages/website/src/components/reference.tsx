@@ -1,4 +1,4 @@
-import { reference } from "virtual:site-data";
+import { reference } from "../generated/site-data";
 import type { ReferenceBlock } from "../site-data";
 import { CodeActions, CodeContent, CodeCopy, CodeRoot } from "./code";
 import { SectionRoot, SectionTitle } from "./section";

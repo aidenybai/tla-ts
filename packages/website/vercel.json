@@ -1,6 +1,5 @@
 {
   "buildCommand": "pnpm build",
-  "outputDirectory": "dist",
   "rewrites": [
     {
       "source": "/",
@@ -16,10 +15,6 @@
     {
       "source": "/(index.md|llms.txt)",
       "destination": "https://raw.githubusercontent.com/aidenybai/tla-ts/main/README.md"
-    },
-    {
-      "source": "/playground",
-      "destination": "/playground.html"
     }
   ],
   "headers": [
@@ -57,5 +52,6 @@
         }
       ]
     }
-  ]
+  ],
+  "framework": "nextjs"
 }

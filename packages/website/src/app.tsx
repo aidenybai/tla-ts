@@ -1,3 +1,5 @@
+"use client";
+
 import { Play } from "@phosphor-icons/react";
 import { BenchmarkChart } from "./components/benchmark-chart";
 import { GitHubIcon } from "./components/github-icon";
@@ -10,7 +12,7 @@ import { InlineCode } from "./components/ui/inline-code";
 import { buttonVariants } from "./components/ui/button-variants";
 import { Link } from "./components/ui/link";
 import { cn } from "cn";
-import { install, prompt } from "virtual:site-data";
+import { install, prompt } from "./generated/site-data";
 import { getTest262Percent, TEST262_RUNS } from "./test262";
 
 export const App = () => (

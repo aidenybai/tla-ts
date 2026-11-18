@@ -1,5 +1,5 @@
 import { TlaError } from "tla-ts";
-import libraries from "virtual:typescript-libraries";
+import { libraries } from "./generated/typescript-libraries";
 import { compile } from "../../tla-ts/src/typescript/compile";
 import { createLibrary } from "../../tla-ts/src/typescript/program";
 import { printRegions } from "../../tla-ts/src/typescript/regions";

@@ -1,4 +1,4 @@
-import { examples } from "virtual:site-data";
+import { examples } from "./generated/site-data";
 import { getHighlightColors } from "./highlight-colors";
 
 const LABELS: Record<string, { article: string; label: string }> = {

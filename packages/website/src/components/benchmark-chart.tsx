@@ -1,7 +1,7 @@
 import { useInView } from "motion/react";
 import { Fragment, useRef } from "react";
 import { cn } from "cn";
-import { benchmarks } from "virtual:site-data";
+import { benchmarks } from "../generated/site-data";
 
 const RACE_MS = 3000;
 
