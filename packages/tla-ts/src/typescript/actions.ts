@@ -7470,11 +7470,20 @@ const getEnvironment = (closure: Closure, context: Context) => {
     return declaration === undefined ? [] : [{ symbol, declaration }];
   });
   const isShared = (symbol: ts.Symbol) => shared.some((entry) => entry.symbol === symbol);
+  // The const that holds the closure, which its body reads as the closure that runs.
+  const declaration = closure.parent;
   return {
     captures: read.filter((symbol) => !isShared(symbol)),
     shared,
     isShared,
     argumentsBody: getCapturedArguments(closure, context)?.body,
+    held:
+      ts.isVariableDeclaration(declaration) &&
+      declaration.initializer === closure &&
+      ts.isIdentifier(declaration.name) &&
+      (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0
+        ? getSymbol(declaration.name, context.checker)
+        : undefined,
   };
 };
 
@@ -7489,6 +7498,7 @@ export const enterScope = (
 ): Scope => {
   const environment = getEnvironment(closure, context);
   const argumentsBody = environment.argumentsBody;
+  const held = environment.held;
   return {
     ...scope,
     allocated:
@@ -7505,6 +7515,7 @@ export const enterScope = (
         symbol,
         useJavaScript("Captured", [heap, value, string(symbol.name)], context),
       ]),
+      ...(held === undefined ? [] : [[held, value] satisfies [ts.Symbol, Expression]]),
     ]),
     activations: new Map([
       ...(scope.activations ?? []),
@@ -7534,9 +7545,12 @@ export const enterClosure = (
   const isShared = environment.isShared;
   const isSharedKey = (key: ts.Node) =>
     environment.shared.some((entry) => entry.declaration === key);
-  const captures = environment.captures;
   const argumentsBody = environment.argumentsBody;
-  const written = captures.filter((symbol) => isAssigned(symbol, closure, context));
+  const captures =
+    environment.held === undefined
+      ? environment.captures
+      : [...environment.captures, environment.held];
+  const written = environment.captures.filter((symbol) => isAssigned(symbol, closure, context));
   const heapSymbol = context.heap;
   const leave = (after: Path): Path => ({
     ...after,

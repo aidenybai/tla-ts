@@ -54049,4 +54049,31 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("12,12"))).failure?.message).toContain("seen 12,210");
     });
   });
+
+  describe("reads the const that holds a closure, inside the closure, as the closure that runs", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: "" };
+      const make = (offset: number) => {
+        const doubled = offset * 2;
+        const self = (): unknown => (doubled > 0 ? self : undefined);
+        return self;
+      };
+      const first = make(1);
+      const second = make(2);
+      const firstSelf = first();
+      const secondSelf = second();
+      box.seen = [firstSelf === first, secondSelf === second, firstSelf === second].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("true,true,false"))).failure).toBeUndefined();
+    });
+
+    it("rejects one closure for both", async () => {
+      expect((await checkModel(getSource("true,true,true"))).failure?.message).toContain(
+        "seen true,true,false",
+      );
+    });
+  });
 });
