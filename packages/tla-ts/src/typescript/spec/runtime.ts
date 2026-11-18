@@ -95,7 +95,36 @@ const DEFINITIONS = [
   `Unsupported(s, what) == Assert(FALSE, "tla-ts can't run a part of ECMAScript that ESCore leaves out")`,
 ];
 
-export const RUNTIME_DEFINITIONS: GeneratedDefinition[] = DEFINITIONS.map((text) => {
+// The characters that a TLA+ string can hold, as a string spells each, by code unit.
+const CHARACTERS = new Map([
+  [9, "\\t"],
+  [10, "\\n"],
+  [12, "\\f"],
+  [13, "\\r"],
+  ...Array.from(
+    { length: 95 },
+    (_, index) =>
+      [
+        index + 32,
+        index + 32 === 34 ? '\\"' : index + 32 === 92 ? "\\\\" : String.fromCharCode(index + 32),
+      ] as const,
+  ),
+]);
+
+// A text as a TLA+ string, if a string can hold each of its characters.
+export const getTlaString = (text: string) =>
+  [...text].every((character) => CHARACTERS.has(character.charCodeAt(0)))
+    ? `"${[...text].map((character) => CHARACTERS.get(character.charCodeAt(0))).join("")}"`
+    : undefined;
+
+export const RUNTIME_DEFINITIONS: GeneratedDefinition[] = [
+  ...DEFINITIONS,
+  // The code unit of each character that a TLA+ string can hold.
+  `CharacterUnits ==
+  LET characters == <<${[...CHARACTERS.values()].map((character) => `"${character}"`).join(", ")}>>
+      units == <<${[...CHARACTERS.keys()].join(", ")}>>
+  IN [c \\in {characters[i] : i \\in 1..Len(characters)} |-> units[CHOOSE i \\in 1..Len(characters) : characters[i] = c]]`,
+].map((text) => {
   const header = /^([A-Z][A-Za-z0-9_]*)(?:\((.*?)\))?\s*==/.exec(text);
   return {
     name: header?.[1] ?? "",
@@ -163,6 +192,13 @@ const HOST_PATCHES = [
     to: `TPLower(calendar.calendar) # N("iso8601") THEN Unsupported(s, <<>>)`,
   },
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
+  // A program's functions hold their source text as the program's code gives it, which
+  // SourceUnits makes code units of when a program reads it.
+  {
+    name: "FunctionBuiltin",
+    from: "Ok(s, Str(slots.sourceText))",
+    to: "Ok(s, Str(SourceUnits(slots.sourceText)))",
+  },
 ];
 
 export const getHostDefinitions = (library: Library): GeneratedDefinition[] => [

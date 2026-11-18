@@ -3,7 +3,7 @@ import { TlaTypeScriptError } from "../../errors";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
-import { LOCALE_METHODS } from "./runtime";
+import { getTlaString, LOCALE_METHODS } from "./runtime";
 import { specialize } from "./specialize";
 
 export interface EscoreSpec {
@@ -113,9 +113,24 @@ export const compileToEscore = (
   const leftOut = new Set(
     runtime.gates.filter((gate) => !isIncluded(gate)).map((gate) => gate.group),
   );
+  // A program's source text is a string where a TLA+ string can hold it, which a check reads as
+  // one token rather than one for each code unit.
+  const sourceString = getTlaString(sourceFile.text);
   const definitions = compact(
     [
-      ...program.definitions,
+      ...program.definitions.map((definition) =>
+        definition.name === "SourceText" && sourceString !== undefined
+          ? { ...definition, text: `SourceText == ${sourceString}` }
+          : definition,
+      ),
+      {
+        name: "SourceUnits",
+        arity: 1,
+        text:
+          sourceString === undefined
+            ? "SourceUnits(t) == t"
+            : "SourceUnits(t) == [i \\in 1..Len(t) |-> CharacterUnits[SubSeq(t, i, i)]]",
+      },
       {
         name: "RunProgram",
         arity: 1,

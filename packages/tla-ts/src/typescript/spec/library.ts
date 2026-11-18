@@ -229,6 +229,7 @@ export const HOOKS = new Map([
   ["CallCode", "s, f, ctx, args, id"],
   ["LoopIteration", "s, ctx, loop, v"],
   ["CallBuiltin", "s, f, id, this, args, nt"],
+  ["SourceUnits", "t"],
 ]);
 
 // The module ESRuntime: every ESCore definition, with the overrides in place of ESCore's and a

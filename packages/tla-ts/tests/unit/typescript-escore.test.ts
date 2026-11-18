@@ -429,6 +429,25 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("gives a function's source text, of a script a TLA+ string can hold or not", () => {
+    const getSource = (text: string, expected: string) => `
+      const f = (a: number) => a + 1;
+      const g = () => "${text}";
+      const result = [String(f), String(g)].join("|");
+      if (result !== '(a) => a + 1|() => "${text}"' + "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("e", ""))).message).toBeUndefined();
+      expect((await checkScript(getSource("\u00e9", ""))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("e", "!"))).message).toContain(THREW);
+      expect((await checkScript(getSource("\u00e9", "!"))).message).toContain(THREW);
+    });
+  });
+
   describe("stops at a call to a function that its script names nowhere else", () => {
     it("runs a script that never calls it", async () => {
       expect(
