@@ -833,21 +833,21 @@ export class PbSolver implements SatExtension, ConstraintHost {
   }
 
   gcVars(numVars: number) {
-    for (const list of [this.constraints, this.learned]) {
-      let next = 0;
-      for (const constraint of list) {
-        const maxVar = Math.max(
-          constraint.lit === NULL_LITERAL ? 0 : constraint.lit >> 1,
-          ...constraint.lits.map((lit) => lit >> 1),
-        );
-        if (maxVar >= numVars) {
-          constraint.clearWatch(this);
-          constraint.nullifyTrackingLiteral(this);
-          this.deallocate(constraint);
-        } else list[next++] = constraint;
-      }
-      list.length = next;
+    this.gcConstraintVars(numVars, this.constraints);
+    this.gcConstraintVars(numVars, this.learned);
+  }
+
+  private gcConstraintVars(numVars: number, constraints: Constraint[]) {
+    let next = 0;
+    for (let index = 0; index < constraints.length; index++) {
+      const constraint = constraints[index];
+      if (constraint.getMaxVar() >= numVars) {
+        constraint.clearWatch(this);
+        constraint.nullifyTrackingLiteral(this);
+        this.deallocate(constraint);
+      } else constraints[next++] = constraint;
     }
+    constraints.length = next;
   }
 
   popReinit() {

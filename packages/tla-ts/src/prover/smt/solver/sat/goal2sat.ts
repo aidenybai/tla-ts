@@ -550,8 +550,13 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     try {
       forms: for (let index = 0; index < goal.forms.size; index++) {
         const form = goal.forms.items[index];
+        const dependency = goal.getDependency(index);
+        if (dependency === undefined) {
+          this.process(form, true);
+          continue;
+        }
         const clause = [form];
-        for (const dep of getDependencyValues(goal.getDependency(index))) {
+        for (const dep of getDependencyValues(dependency)) {
           this.insertDep(dep, dep2asm);
           if (dep === form) continue forms;
           clause.push(manager.isNot(dep) ? manager.getArg(dep, 0) : manager.mkNot(dep));

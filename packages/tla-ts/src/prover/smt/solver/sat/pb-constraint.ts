@@ -33,6 +33,13 @@ export abstract class Constraint {
     return this.lits.length;
   }
 
+  getMaxVar() {
+    let maxVar = this.lit === NULL_LITERAL ? 0 : this.lit >> 1;
+    for (let index = 0; index < this.lits.length; index++)
+      maxVar = Math.max(maxVar, this.lits[index] >> 1);
+    return maxVar;
+  }
+
   getCoeff(_index: number) {
     return 1;
   }
