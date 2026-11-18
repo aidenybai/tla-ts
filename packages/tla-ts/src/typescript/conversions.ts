@@ -5,7 +5,6 @@ import {
   type Context,
   findNodes,
   getAccessorFunctions,
-  getParameters,
   getSymbol,
   getUndefined,
   isInertValue,
@@ -707,10 +706,8 @@ export const getKeyedConversionFunctions = (node: ts.Node, context: Context) =>
 
 // The Symbol.toPrimitive methods that tla-ts calls, which can't see the hint that it doesn't pass.
 const getExoticMethods = (node: ts.Node, context: Context) =>
-  getMethods(node, "@@toPrimitive", context).filter(
-    (method) =>
-      getParameters(method).length === 0 &&
-      findNodes(method, ts.isIdentifier).every((name) => name.text !== "arguments"),
+  getMethods(node, "@@toPrimitive", context).filter((method) =>
+    findNodes(method, ts.isIdentifier).every((name) => name.text !== "arguments"),
   );
 
 // ToPrimitive of an object, which calls its Symbol.toPrimitive method where it has one, and
@@ -809,7 +806,7 @@ const toPrimitive = (
             getExoticMethods(site, context),
             exotic,
             value,
-            [],
+            [string(hint)],
             found,
             context,
             frame,

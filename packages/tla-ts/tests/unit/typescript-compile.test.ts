@@ -53574,4 +53574,31 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("passes the hint to a Symbol.toPrimitive method, which may write a variable", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var calls = "";
+      var value = { [Symbol.toPrimitive]: function (hint) { calls += hint + "|"; return hint === "number" ? 2 : "s"; } };
+      var sum = value + 1;
+      var product = value * 3;
+      var text = \`\${value}\`;
+      var loose = value == "s";
+      var lesser = value < 5;
+      var result = [sum, product, text, loose, lesser, calls].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("s1,6,s,true,true,default|number|string|default|number|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("s1,6,s,true,true,default|default|default|default|default|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result s1,6,s,true,true,default|number|string|default|number|",
+      );
+    });
+  });
 });
