@@ -32,6 +32,31 @@ it("stops generating successors at the first violation", async () => {
   expect([result.generatedStates, result.distinctStates]).toEqual([3, 3]);
 });
 
+it('reads TLCGet("level") as 0 in the initial predicate as it rebuilds an initial state for a trace, as TLC does', async () => {
+  const printed: string[] = [];
+  const result = await check({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x \\in {0, 1} /\\ PrintT(<<"init", x, TLCGet("level")>>)\nNext == x\' = x + 1\nInv == x < 3\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    onPrint: (text) => printed.push(text),
+  });
+  const initial = ['<<"init", 0, 0>>', '<<"init", 1, 0>>'];
+  expect([
+    printed,
+    result.violation?.trace.map((step) => step.output ?? []),
+    result.violation?.traceOutput,
+  ]).toEqual([initial, [initial, [], []], initial]);
+});
+
+it('reads TLCGet("level") as 1 in the VIEW of an initial state it rebuilds for a trace, as TLC does', async () => {
+  const result = await check({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x \\in {0, 1}\nNext == x\' = x + 1\nInv == x < 3\nView == <<x, TLCGet("level")>>\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+  });
+  expect(result.violation?.trace.map((step) => step.state.x)).toEqual([1, 2, 3]);
+});
+
 it.each([
   [
     "the postcondition",
