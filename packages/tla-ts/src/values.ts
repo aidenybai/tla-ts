@@ -1126,9 +1126,10 @@ export const normalizeShallowly = (value: Value): void => {
 export const isEqualLikeTlc = (left: Value, right: Value) =>
   computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right);
 
+// TLC's ValueVec#sort compares each element with the ones before it, which orders what lazy elements evaluate.
 const isStrictlySorted = (elements: Value[]) => {
   for (let index = 1; index < elements.length; index++) {
-    if (compareValues(elements[index - 1], elements[index]) >= 0) return false;
+    if (compareValues(elements[index], elements[index - 1]) <= 0) return false;
   }
   return true;
 };

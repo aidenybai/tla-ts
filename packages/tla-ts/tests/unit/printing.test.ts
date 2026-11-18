@@ -175,6 +175,21 @@ describe("line breaking matches TLC's pretty printer", () => {
       `The first argument of Assert evaluated to FALSE; the second argument was:\n<< ${NESTED_TUPLE_LINES.join(",\n   ")} >>`,
     );
   });
+
+  it.each([
+    ["{F(1), F(2), F(3)}", ["2  0", "1  0", "3  0"]],
+    ["{F(4), F(2), F(1), F(3), F(5)}", ["2  0", "4  0", "1  0", "3  0", "5  0"]],
+    ["{F(k) : k \\in {5, 3, 1, 4, 2}}", ["2  0", "1  0", "3  0", "4  0", "5  0"]],
+  ])(
+    "evaluates the recursive functions of %s in the order TLC's sort compares them",
+    async (set, expected) => {
+      const run = await checkPrinting(
+        `VARIABLE x\nF(c) == LET r[n \\in 0..0] == IF n = 0 THEN Print(c, n) ELSE r[n - 1] IN r\nInit == x \\in ${set}\nNext == UNCHANGED x`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(run.printed).toEqual(expected);
+    },
+  );
 });
 
 describe("functions over infinite domains print like TLC", () => {
