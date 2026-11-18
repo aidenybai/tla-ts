@@ -152,6 +152,11 @@ export class Goal {
     this.converters = [];
   }
 
+  release() {
+    this.reset();
+    this.releaseConverters();
+  }
+
   updatePrecision(precision: number) {
     this.precision = getPrecisionUnion(this.precision, precision);
   }

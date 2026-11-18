@@ -615,8 +615,7 @@ export const runSmtlibScript = (
         reasonUnknown: checked.reasonUnknown,
       };
     } catch (error) {
-      goal.reset();
-      goal.releaseConverters();
+      goal.release();
       if (!(error instanceof SmtUnsupportedError)) throw error;
       const hasQuantifiers = state.assertions.some(
         (assertion) => state.manager.hasQuantifierFlags[assertion],
@@ -1323,8 +1322,7 @@ export const runSmtlibScript = (
               : getVerdict(checked.status),
           );
         } finally {
-          goal.reset();
-          goal.releaseConverters();
+          goal.release();
           state.manager.limit.pop();
         }
         validateCheck(list.end);
@@ -1611,8 +1609,7 @@ export const runSmtlibScript = (
         })();
         // apply_tactic_cmd releases the result goals and then the input goal.
         if (goals === undefined) {
-          input.reset();
-          input.releaseConverters();
+          input.release();
           return;
         }
         try {
@@ -1700,11 +1697,9 @@ export const runSmtlibScript = (
         } finally {
           for (const goal of goals)
             if (goal !== input) {
-              goal.reset();
-              goal.releaseConverters();
+              goal.release();
             }
-          input.reset();
-          input.releaseConverters();
+          input.release();
         }
       },
     ],

@@ -1703,8 +1703,7 @@ const runOrElse = (tactics: Tactic[]) => (goal: Goal) => {
     }
     return tactics[tactics.length - 1](goal);
   } finally {
-    original.reset();
-    original.releaseConverters();
+    original.release();
   }
 };
 
@@ -1726,8 +1725,7 @@ const runRepeat = (tactic: Tactic, maxDepth: number) => {
         const results = tactic(goal);
         return { results, isEqual: results.length === 1 && isEqualGoal(original, results[0]) };
       } finally {
-        original.reset();
-        original.releaseConverters();
+        original.release();
       }
     })();
     const goals = step.results;
@@ -2230,8 +2228,7 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal) => {
     if (Array.isArray(goals))
       for (const result of goals)
         if (result !== goal) {
-          result.reset();
-          result.releaseConverters();
+          result.release();
         }
   }
 };

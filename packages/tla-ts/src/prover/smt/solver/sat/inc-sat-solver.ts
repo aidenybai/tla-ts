@@ -219,8 +219,7 @@ export class IncSatSolver {
     })();
     this.subgoals = subgoals ?? [];
     if (!this.subgoals.includes(goal)) {
-      goal.reset();
-      goal.releaseConverters();
+      goal.release();
     }
     if (subgoals?.length !== 1) return L_UNDEF;
     const subgoal = subgoals[0];
@@ -465,8 +464,7 @@ export class IncSatSolver {
 
   private resetSubgoals() {
     for (const subgoal of this.subgoals) {
-      subgoal.reset();
-      subgoal.releaseConverters();
+      subgoal.release();
     }
     this.subgoals = [];
   }

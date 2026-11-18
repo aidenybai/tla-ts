@@ -24,8 +24,7 @@ export const runAckermannizeBv =
     const lackr = new Lackr(manager, [...goal.forms.items], rewriterOptions, true);
     const result = getEmptyCopy(goal);
     if (!lackr.mkAckermann(result, lemmaLimit)) {
-      result.reset();
-      result.releaseConverters();
+      result.release();
       lackr.release(false);
       return [goal];
     }
