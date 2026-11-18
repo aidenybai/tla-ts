@@ -4,6 +4,7 @@ import {
   type Construction,
   type HeapClass,
   type CalledMethod,
+  type Closure,
   type Context,
   isSteady,
   share,
@@ -1479,6 +1480,88 @@ export const isNewError = (node: ts.Node, context: Context) =>
     getErrorClass(getSymbol(node.expression, context.checker), context) !== undefined) ||
   getCalledError(node, context) !== undefined;
 
+// Allocates a function that the script makes each time it runs, after the objects that its
+// environment needs, if any: the function's object, which holds the model value of its code and the
+// environment of the call that made it, where it reads that call's locals. The object has a
+// function's own properties, its length and its name, and a constructor's prototype, a new object
+// whose constructor is the function. A sloppy function also has its own arguments and caller, and
+// tla-ts may not tell a name, so such a function's object is one whose properties a read stops at.
+const allocateMadeFunction = (
+  heap: Expression,
+  node: Closure,
+  before: Expression[],
+  environment: Expression | undefined,
+  context: Context,
+) => {
+  const getRef = (offset: number) => useJavaScript("NextRef", [heap, number(offset)], context);
+  const functionPrototype = translateBuiltInValue("Function.prototype", node, context);
+  const code =
+    ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+      ? translateFunctionValue(node, context)
+      : ts.isMethodDeclaration(node)
+        ? getMethodValue(node, context)
+        : getAccessorValue(node, context);
+  // An arrow, a method, or an async function can't construct.
+  const isConstructor = ts.isFunctionExpression(node) && isPlain(node);
+  const name = ts.isMethodDeclaration(node)
+    ? getKeyName(node.name, context)
+    : ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+      ? (getAnonymousName(node, context) ??
+        (ts.isReturnStatement(node.parent) ||
+        (ts.isArrowFunction(node.parent) && node.parent.body === node)
+          ? ""
+          : undefined))
+      : undefined;
+  const isOwned = name !== undefined && !(isConstructor && !isStrictCode(node));
+  const length = number(getFunctionLength(getParameters(node)));
+  const prototype =
+    isOwned && isConstructor
+      ? [
+          useJavaScript(
+            "Define",
+            [
+              identifier("EmptyObject"),
+              string("constructor"),
+              getRef(before.length + 2),
+              ...[true, false, true].map(boolean),
+            ],
+            context,
+          ),
+        ]
+      : [];
+  const made = !isOwned
+    ? useJavaScript(
+        isConstructor ? "FunctionObject" : "MethodObject",
+        [functionPrototype, code],
+        context,
+      )
+    : isConstructor
+      ? useJavaScript(
+          "MadeConstructorObject",
+          [functionPrototype, code, string(name), length, getRef(before.length + 1)],
+          context,
+        )
+      : useJavaScript(
+          "MadeFunctionObject",
+          [functionPrototype, code, string(name), length],
+          context,
+        );
+  return useJavaScript(
+    "AllocateEach",
+    [
+      heap,
+      tuple([
+        ...before,
+        ...prototype,
+        environment === undefined
+          ? made
+          : useJavaScript("ClosureObject", [made, environment], context),
+      ]),
+    ],
+    context,
+  );
+};
+
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
   if (isNewError(node, context) && !isHeldError(node, context)) {
@@ -1554,43 +1637,15 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         ? []
         : [[string("arguments"), argumentsObject] satisfies [Expression, Expression]]),
     ];
-    return useJavaScript(
-      "Allocate",
-      [
-        useJavaScript(
-          "Allocate",
-          [heap, useJavaScript("EnvironmentObject", [functionFrom(bindings)], context)],
-          context,
-        ),
-        useJavaScript(
-          "ClosureObject",
-          [
-            // An arrow, a method, or an async function can't construct.
-            useJavaScript(
-              ts.isFunctionExpression(node) &&
-                (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0
-                ? "FunctionObject"
-                : "MethodObject",
-              [
-                translateBuiltInValue("Function.prototype", node, context),
-                ts.isFunctionExpression(node) || ts.isArrowFunction(node)
-                  ? translateFunctionValue(node, context)
-                  : ts.isMethodDeclaration(node)
-                    ? getMethodValue(node, context)
-                    : getAccessorValue(node, context),
-              ],
-              context,
-            ),
-            useJavaScript("NextRef", [heap, number(1)], context),
-          ],
-          context,
-        ),
-      ],
+    return allocateMadeFunction(
+      heap,
+      node,
+      [useJavaScript("EnvironmentObject", [functionFrom(bindings)], context)],
+      useJavaScript("NextRef", [heap, number(1)], context),
       context,
     );
   }
   if (isNestedFunction(node, context)) {
-    const isFunction = ts.isFunctionExpression(node);
     const maker = getLiveMaker(node, context);
     const environment = maker === undefined ? undefined : scope.activations?.get(maker);
     if (maker !== undefined && environment === undefined) {
@@ -1599,28 +1654,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         node,
       );
     }
-    const made = useJavaScript(
-      isFunction ? "FunctionObject" : "MethodObject",
-      [
-        translateBuiltInValue("Function.prototype", node, context),
-        isFunction || ts.isArrowFunction(node)
-          ? translateFunctionValue(node, context)
-          : ts.isMethodDeclaration(node)
-            ? getMethodValue(node, context)
-            : getAccessorValue(node, context),
-      ],
-      context,
-    );
-    return useJavaScript(
-      "Allocate",
-      [
-        heap,
-        environment === undefined
-          ? made
-          : useJavaScript("ClosureObject", [made, environment], context),
-      ],
-      context,
-    );
+    return allocateMadeFunction(heap, node, [], environment, context);
   }
 
   const builtInBinding = getBuiltInBinding(node, context);

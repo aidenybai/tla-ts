@@ -1866,6 +1866,11 @@ WithCode(object, code) == [code |-> code] @@ object
 MethodObject(functionPrototype, code) ==
   [FunctionObject(functionPrototype, code) EXCEPT !.isConstructor = FALSE]
 
+\\* A function that a function makes each time it runs, which holds the model value of its code and
+\\* its own properties, as the function that the model value stands for would.
+MadeFunctionObject(functionPrototype, code, name, length) ==
+  WithCode(ArrowObject(functionPrototype, name, length), code)
+
 \\* A function object that reads the locals of the call that made it, with the environment of that
 \\* call, which holds the locals that it reads once it outlives the call, by key.
 ClosureObject(function, environment) == [environment |-> environment] @@ function
@@ -1983,6 +1988,11 @@ GeneratorObjectFrom(heap, function, generatorPrototype) ==
 \\* A plain function, whose prototype property holds what the objects its new makes inherit from.
 PlainFunctionObject(functionPrototype, name, length, prototype) ==
   [GeneratorFunctionObject(functionPrototype, name, length, prototype) EXCEPT !.isConstructor = TRUE]
+
+\\* A function that a function makes each time it runs and that new may construct, with the prototype
+\\* object that it makes with it.
+MadeConstructorObject(functionPrototype, code, name, length, prototype) ==
+  WithCode(PlainFunctionObject(functionPrototype, name, length, prototype), code)
 
 \\* Whether one string of digits is below another of the same length.
 RECURSIVE DigitsBelow(_, _)

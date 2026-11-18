@@ -53804,4 +53804,58 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("gives a function that a call makes each time its own length, name, and prototype", () => {
+    const getSource = (expected: string) => `
+      const make = (k: number) => {
+        const doubled = k * 2;
+        const read = () => doubled;
+        return read;
+      };
+      const build = (k: number) => {
+        const base = k + 1;
+        return function (a: number, b: number) {
+          return base + a + b;
+        };
+      };
+      const made = make(1);
+      const built = build(2);
+      const prototype = built.prototype;
+      const got = made();
+      const sum = built(3, 4);
+      const seen = [
+        made.name,
+        made.length,
+        Object.getOwnPropertyNames(made).join("/"),
+        built.name === "",
+        built.length,
+        Object.getOwnPropertyNames(built).join("/"),
+        prototype.constructor === built,
+        Object.getOwnPropertyNames(prototype).join("/"),
+        got + sum,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("read,0,length/name,true,2,length/name/prototype,true,constructor,12"),
+          )
+        ).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another length", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("read,1,length/name,true,2,length/name/prototype,true,constructor,12"),
+          )
+        ).failure?.message,
+      ).toContain("seen read,0,length/name,true,2,length/name/prototype,true,constructor,12");
+    });
+  });
 });

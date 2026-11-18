@@ -3467,7 +3467,7 @@ const translatePropertyAccess = (
     context.checker.getTypeAtLocation(receiver).getCallSignatures().length > 0 &&
     (name === "length" ||
       name === "name" ||
-      (held === undefined ? getFunctionCandidates(receiver, context).some(isHeld) : isHeld(held)))
+      (held === undefined ? context.heap !== undefined : isHeld(held)))
   ) {
     const getProperty = (candidate: FunctionNode) => {
       const candidateValue = getCandidateValue(candidate, context);
