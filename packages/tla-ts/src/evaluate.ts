@@ -1972,30 +1972,25 @@ export const getFunctionBuilder = (
   const coverage = environment.coverage;
   const name = expression.name;
   const createLazy = (domain: Value, context: Context) => {
-    const scope = trimScope(context.scope, bodyNames);
-    const lambdaContext = withScope(context, scope);
-    const getScope = (self: LazyFunctionValue) =>
-      name === undefined ? scope : bindSelf(scope, name, self);
-    const compute = (argument: Value, self: LazyFunctionValue) =>
-      body(withScope(lambdaContext, bindArgument(bounds, getScope(self), argument)));
+    const outer = trimScope(context.scope, bodyNames);
+    const lambdaContext = withScope(context, outer);
+    let scope = outer;
+    const compute = (argument: Value) =>
+      body(withScope(lambdaContext, bindArgument(bounds, scope, argument)));
     const node = coverage && !environment.callStack ? coverage.current : -1;
     const value = createLazyFunction(
       domain,
       coverage
-        ? (argument, self) =>
+        ? (argument) =>
             coverage.current === -1
-              ? compute(argument, self)
-              : runAtCoverageNode(coverage, node, () => compute(argument, self))
+              ? compute(argument)
+              : runAtCoverageNode(coverage, node, () => compute(argument))
         : compute,
       getLazyFunctionSource(template, bounds, domain),
       boundTupleLengths,
     );
-    const functionValue = keepLambda({
-      value,
-      bounds,
-      body: expression.body,
-      scope: getScope(value),
-    });
+    if (name !== undefined) scope = bindSelf(outer, name, value);
+    const functionValue = keepLambda({ value, bounds, body: expression.body, scope });
     return bounds.length === 1 ? markLambdaFunction(functionValue) : functionValue;
   };
   const callStack = environment.callStack;
