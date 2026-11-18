@@ -1720,13 +1720,10 @@ export class Context extends Internalizer {
     this.isSearching = true;
     const currentLevel = this.scopeLevel;
     let result: number | undefined;
-    while (result === undefined) {
-      const status = this.boundedSearch();
-      result =
-        status !== L_FALSE && this.checkCanceled() ? L_UNDEF : this.restart(status, currentLevel);
-    }
+    while (result === undefined) result = this.restart(this.boundedSearch(), currentLevel);
     this.isSearching = false;
-    return result;
+    // check_finalize reads the cancel flag once the search finds a model.
+    return result === L_TRUE && this.checkCanceled() ? L_UNDEF : result;
   }
 
   getNumConflicts() {

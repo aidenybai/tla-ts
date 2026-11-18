@@ -742,6 +742,12 @@ export const runSmtlibScript = (
           : isFromTactic
             ? { ...solveWithStrategy(), core: undefined }
             : kernel;
+      // solver::check_sat and cmd_context::check_sat each count a step to see whether the limit
+      // stopped a search that gave up. checkFdSolver counts both itself.
+      if (fdSolver === undefined && !isOptimizing && solved.result === L_UNDEF) {
+        manager.limit.inc();
+        manager.limit.inc();
+      }
       setCheck(solved.result, {
         context: solved.context,
         isOptimizing,
