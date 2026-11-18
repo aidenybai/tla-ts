@@ -249,15 +249,7 @@ export const createTraceBuilder = (context: TraceContext) => {
             action: context.actions[position],
           }));
     if (!lastSuccessor) return toTrace(steps, path, traceOptions);
-    const action = isReducing
-      ? findTraceSuccessor(states[index], (successor) =>
-          isSameState(successor.state, lastSuccessor.state),
-        )?.action
-      : lastSuccessor.action;
-    return toTrace([...steps, { state: lastSuccessor.state, action }], path, {
-      ...traceOptions,
-      known: 2,
-    });
+    return toTrace([...steps, lastSuccessor], path, { ...traceOptions, known: 2 });
   };
   // TLCTrace#printTrace applies the alias to every state but an initial one it prints without a successor.
   const getStateTrace = (index: number, traceOptions: TraceOptions = {}): Behavior => {
