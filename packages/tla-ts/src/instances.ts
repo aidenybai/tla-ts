@@ -232,14 +232,127 @@ export const mapChildren = (
   }
 };
 
+const NO_NAMES: string[] = [];
+
+const visitAll = (children: Expression[], visit: (child: Expression, bound: string[]) => void) => {
+  for (let index = 0; index < children.length; index++) visit(children[index], NO_NAMES);
+};
+
+const visitBoundSets = (bounds: Bound[], visit: (child: Expression, bound: string[]) => void) => {
+  for (let index = 0; index < bounds.length; index++) visit(bounds[index].set, NO_NAMES);
+};
+
 export const forEachChild = (
   expression: Expression,
   visit: (child: Expression, bound: string[]) => void,
 ): void => {
-  mapChildren(expression, (child, bound) => {
-    visit(child, bound);
-    return child;
-  });
+  switch (expression.kind) {
+    case "Number":
+    case "Decimal":
+    case "String":
+    case "Identifier":
+    case "OperatorReference":
+    case "ExceptAt":
+      return;
+    case "Apply":
+    case "Bracket":
+      return visitAll(expression.args, visit);
+    case "Lambda":
+      return visit(expression.body, expression.params);
+    case "And":
+    case "Or":
+      return visitAll(expression.operands, visit);
+    case "Prime":
+    case "Unchanged":
+    case "Enabled":
+    case "Always":
+    case "Eventually":
+    case "Selection":
+      return visit(expression.expression, NO_NAMES);
+    case "If":
+      visit(expression.condition, NO_NAMES);
+      visit(expression.consequent, NO_NAMES);
+      return visit(expression.alternative, NO_NAMES);
+    case "Case":
+      for (let index = 0; index < expression.arms.length; index++) {
+        visit(expression.arms[index].condition, NO_NAMES);
+        visit(expression.arms[index].body, NO_NAMES);
+      }
+      if (expression.other) visit(expression.other, NO_NAMES);
+      return;
+    case "Let": {
+      const names = expression.definitions.map((definition) => definition.name);
+      expression.definitions.forEach((definition) => {
+        if (definition.kind === "Function") {
+          visitBoundSets(definition.bounds, (child) => visit(child, names));
+          visit(definition.body, [...names, ...getBoundNames(definition.bounds)]);
+        } else {
+          visit(definition.body, [...names, ...definition.params.map((param) => param.name)]);
+        }
+      });
+      return visit(expression.body, names);
+    }
+    case "Forall":
+    case "Exists":
+    case "FunctionConstruction":
+      visitBoundSets(expression.bounds, visit);
+      return visit(expression.body, getBoundNames(expression.bounds));
+    case "UnboundedQuantifier":
+      return visit(expression.body, expression.names);
+    case "Choose":
+      if (expression.set) visit(expression.set, NO_NAMES);
+      return visit(expression.body, getPatternNames(expression.pattern));
+    case "SetEnumeration":
+    case "Tuple":
+      return visitAll(expression.elements, visit);
+    case "SetFilter":
+      visit(expression.bound.set, NO_NAMES);
+      return visit(expression.predicate, getPatternNames(expression.bound.pattern));
+    case "SetMap":
+      visitBoundSets(expression.bounds, visit);
+      return visit(expression.expression, getBoundNames(expression.bounds));
+    case "FunctionSet":
+      visit(expression.domain, NO_NAMES);
+      return visit(expression.range, NO_NAMES);
+    case "Record":
+    case "RecordSet":
+      for (let index = 0; index < expression.fields.length; index++) {
+        visit(expression.fields[index].value, NO_NAMES);
+      }
+      return;
+    case "Except":
+      visit(expression.function, NO_NAMES);
+      for (let index = 0; index < expression.updates.length; index++) {
+        const update = expression.updates[index];
+        for (let step = 0; step < update.path.length; step++) {
+          const component = update.path[step];
+          if (component.kind === "Index") visitAll(component.args, visit);
+        }
+        visit(update.value, NO_NAMES);
+      }
+      return;
+    case "FunctionApplication":
+      visit(expression.function, NO_NAMES);
+      return visitAll(expression.args, visit);
+    case "FieldAccess":
+      return visit(expression.record, NO_NAMES);
+    case "Product":
+      return visitAll(expression.factors, visit);
+    case "BoxAction":
+    case "AngleAction":
+      visit(expression.action, NO_NAMES);
+      return visit(expression.subscript, NO_NAMES);
+    case "WeakFairness":
+    case "StrongFairness":
+      visit(expression.subscript, NO_NAMES);
+      return visit(expression.action, NO_NAMES);
+    case "Label":
+      return visit(expression.body, NO_NAMES);
+    case "Subexpression":
+      expression.selectors.forEach((selector) => {
+        if ("args" in selector) visitAll(selector.args, visit);
+      });
+  }
 };
 
 interface Instantiation {
