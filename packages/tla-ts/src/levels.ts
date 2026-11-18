@@ -60,10 +60,15 @@ export interface InstancedDefinition {
   isConstant: boolean;
 }
 
+export interface LetInstance {
+  // Resolution rebuilds LET definitions, so a LET instance's copies are found by name.
+  copies: Map<string, InstanceCopy>;
+  check: () => SanyError[];
+}
+
 export interface InstanceLevels {
   getCopy: (definition: Definition) => InstanceCopy | undefined;
-  // Resolution rebuilds LET definitions, so a LET instance's copies are found by name.
-  getLetCopies: (instance: Instance) => Map<string, InstanceCopy> | undefined;
+  getLetInstance: (instance: Instance) => LetInstance | undefined;
   getInstanced: (copy: InstanceCopy) => InstancedDefinition;
 }
 
@@ -863,13 +868,15 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const letCopies = new WeakMap<Definition, InstanceCopy>();
 
   const analyzeLet = (expression: LetExpression, scope: Scope) => {
-    expression.instances?.forEach((instance) => {
-      const copies = context.instances?.getLetCopies(instance);
+    const instances = expression.instances?.flatMap(
+      (instance) => context.instances?.getLetInstance(instance) ?? [],
+    );
+    instances?.forEach((instance) =>
       expression.definitions.forEach((definition) => {
-        const copy = copies?.get(definition.name);
+        const copy = instance.copies.get(definition.name);
         if (copy) letCopies.set(definition, copy);
-      });
-    });
+      }),
+    );
     const inner = createLetScope(expression, scope);
     if (expression.recursive) {
       getRecursiveSections(scope, expression).forEach((section) =>
@@ -880,9 +887,15 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       analyzeDefinition(definition, inner),
     );
     const body = analyze(expression.body, inner);
+    // SANY checks a LET's instances after its definitions and body.
+    const instanceErrors = instances?.flatMap((instance) => instance.check());
+    instanceErrors?.forEach((error) => errors.push(error));
     const data = {
       level: body.level,
-      isCorrect: body.isCorrect && definitions.every((levels) => levels.isCorrect),
+      isCorrect:
+        body.isCorrect &&
+        definitions.every((levels) => levels.isCorrect) &&
+        (instanceErrors?.length ?? 0) === 0,
       params: new Set(body.params),
       constraints: new Map(body.constraints),
       argConstraints: new Map(body.argConstraints),
@@ -1477,7 +1490,11 @@ export const analyzeAssumeProve = (
 export const checkModuleLevels = (
   module: Module,
   context: LevelContext,
-  instances: { location: SourceLocation; check: () => void; substitutes?: InstanceSubstitutes }[],
+  instances: {
+    location: SourceLocation;
+    check: () => SanyError[];
+    substitutes?: InstanceSubstitutes;
+  }[],
   warnings: SanyError[],
 ) => {
   const analyzer = createLevelAnalyzer(context);
@@ -1664,7 +1681,10 @@ export const checkModuleLevels = (
           ...module.uses.map((use) =>
             createCheck(use.location, () => checkFacts(use.facts, new Map())),
           ),
-          ...instances,
+          ...instances.map((instance) => ({
+            location: instance.location,
+            check: (reported: SanyError[]) => reported.push(...instance.check()),
+          })),
         ],
       ].flatMap((units) => collectSemanticErrors(units, warnings)),
   };

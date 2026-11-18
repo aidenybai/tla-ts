@@ -95,6 +95,7 @@ import {
   createLevelAnalyzer,
   type InstanceCopy,
   type InstanceSubstitutes,
+  type LetInstance,
 } from "./levels";
 import {
   createInstanceChecker,
@@ -324,7 +325,7 @@ export const createEnvironment = (
   const instanceChecks: InstanceCheck[] = [];
   const warnings: SanyError[] = [];
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
-  const letCopies = new Map<string, Map<string, InstanceCopy>>();
+  const letInstances = new Map<string, LetInstance>();
   const createInstanceCopy = (
     sourceKey: string,
     module: string,
@@ -351,8 +352,8 @@ export const createEnvironment = (
     },
     {
       getCopy: (definition) => instanceCopies.get(definition),
-      getLetCopies: (instance) =>
-        instance.location.range && letCopies.get(formatRange(instance.location.range)),
+      getLetInstance: (instance) =>
+        instance.location.range && letInstances.get(formatRange(instance.location.range)),
     },
   );
   const instanceActions = new Map<string, InstanceAction>();
@@ -814,7 +815,7 @@ export const createEnvironment = (
         name: declaration.name,
         location,
       };
-    instanceChecks.push({
+    const instanceCheck = {
       module: instance.module,
       instancer,
       lets,
@@ -822,7 +823,7 @@ export const createEnvironment = (
         declarations.map((declaration) => [declaration.name, getReplacement(declaration)]),
       ),
       location,
-    });
+    };
     const instanceParamNames = new Set(instance.params.map((param) => param.name));
     const isParameterDependent = (declaration: OperatorParam) =>
       mentionsName(getReplacement(declaration), instanceParamNames);
@@ -921,7 +922,10 @@ export const createEnvironment = (
         return createLocalAlias(name, key, [...instance.params, ...ownParams], ownParams, location);
       });
     if (instance.location.range) {
-      letCopies.set(formatRange(instance.location.range), localCopies);
+      letInstances.set(formatRange(instance.location.range), {
+        copies: localCopies,
+        check: () => instanceLevels.checkInstance(instanceCheck),
+      });
     }
     return [...substitutionDefinitions, ...copies, ...exported];
   };

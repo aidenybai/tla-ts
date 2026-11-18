@@ -1,5 +1,5 @@
 import type { Declaration, Definition, Expression, SourceLocation, Theorem } from "./ast";
-import { createSanyError, formatRange, type SanyError } from "./errors";
+import { formatRange, type SanyError } from "./errors";
 import {
   ACTION_LEVEL,
   analyzeAssumeProve,
@@ -254,7 +254,7 @@ export const createInstanceChecker = (
         );
       }
     });
-    if (errors.size > 0) throw createSanyError([...errors.values()]);
+    return [...errors.values()];
   };
 
   return { checkInstance, instances };

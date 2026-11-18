@@ -184,6 +184,31 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it("checks a LET instance with the LET, after its body, like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT k\nVARIABLE z\nK == k\n====\nI == INSTANCE Inner WITH k <- x, z <- x\nD == LET L == INSTANCE Inner WITH k <- x, z <- x IN [](x')\nE == [](x')\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 9, col 53 to line 9, col 58", "[] followed by action not of form [A]_v."],
+          [
+            "line 9, col 10 to line 9, col 48",
+            "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+          ],
+          ["line 10, col 6 to line 10, col 11", "[] followed by action not of form [A]_v."],
+          [
+            "line 8, col 1 to line 8, col 39",
+            "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+          ],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({
