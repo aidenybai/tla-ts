@@ -845,7 +845,7 @@ const substitute = (
   return renameNames(mapped, bound, rename);
 };
 
-export const getFunctionBody = (definition: FunctionDefinition): Expression =>
+const getFunctionBody = (definition: FunctionDefinition): Expression =>
   definition.isSelfReferential
     ? {
         kind: "Let",
