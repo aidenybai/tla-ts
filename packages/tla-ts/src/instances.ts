@@ -367,6 +367,8 @@ interface Instantiation {
   addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
   createName: (name: string) => string;
   frame?: Expression;
+  // A LET INSTANCE's copies are LET definitions, which a reference finds in scope.
+  isLocal?: boolean;
 }
 
 const LAMBDA_NAME = "LAMBDA";
@@ -640,6 +642,7 @@ const getInstanceOperator = (
   params: OperatorParam[],
   arity: number,
   location: SourceLocation,
+  resolution: typeof LOCAL_RESOLUTION | undefined,
 ): Expression => {
   const names = Array.from({ length: arity }, (_value, index) => `argument${index}`);
   return {
@@ -653,6 +656,7 @@ const getInstanceOperator = (
         ...names.map((name) => createLocalIdentifier(name, location)),
       ],
       location,
+      resolution,
     },
     location,
   };
@@ -675,6 +679,7 @@ const substitute = (
   }
   const instantiation = rewrite.instantiation;
   const params = instantiation.params;
+  const resolution = instantiation.isLocal ? LOCAL_RESOLUTION : undefined;
   const isFree = (name: string) => !bound.has(name) && !isLocallyResolved(expression);
   if (expression.kind === "Enabled" && rewrite.mode === "Normal") {
     return {
@@ -717,16 +722,23 @@ const substitute = (
     }
     const copy = getCopy(rewrite, expression.name);
     if (copy === undefined) return expression;
-    if (params.length === 0) return { ...expression, name: copy };
+    if (params.length === 0) return { ...expression, name: copy, resolution };
     const definition = instantiation.getDefinition(expression.name);
     if (definition && getArity(definition) > 0) {
-      return getInstanceOperator(copy, params, getArity(definition), expression.location);
+      return getInstanceOperator(
+        copy,
+        params,
+        getArity(definition),
+        expression.location,
+        resolution,
+      );
     }
     return {
       kind: "Apply",
       operator: copy,
       args: createLocalArguments(params, expression.location),
       location: expression.location,
+      resolution,
     };
   }
   if (expression.kind === "Apply" && isFree(expression.operator)) {
@@ -791,6 +803,7 @@ const substitute = (
       ...expression,
       operator: copy,
       args: [...createLocalArguments(params, expression.location), ...args],
+      resolution,
     };
   }
   if (expression.kind === "OperatorReference" && isFree(expression.operator)) {
@@ -806,7 +819,13 @@ const substitute = (
     if (copy === undefined) return expression;
     const definition = instantiation.getDefinition(expression.operator);
     if (params.length > 0 && definition) {
-      return getInstanceOperator(copy, params, getArity(definition), expression.location);
+      return getInstanceOperator(
+        copy,
+        params,
+        getArity(definition),
+        expression.location,
+        resolution,
+      );
     }
     return { ...expression, operator: copy };
   }

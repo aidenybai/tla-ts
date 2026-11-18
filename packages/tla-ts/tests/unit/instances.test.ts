@@ -221,6 +221,22 @@ describe("INSTANCE matches TLC", () => {
     expect(result.violation?.trace.map((step) => step.state.x)).toEqual([0, 102]);
   });
 
+  it("resolves the definitions a LET INSTANCE copies in the instanced module, not the instancing one", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x = <<>>\nNext == x' = <<LET L == INSTANCE Call WITH c <- 2 IN L!G(1), LET L(p) == INSTANCE Call WITH c <- p IN L(3)!G(1), LET a + b == 99 IN LET L == INSTANCE Call WITH c <- 2 IN L!G(1)>>\nInv == x = <<>>\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      loadModule: (name) =>
+        name === "Call"
+          ? "---- MODULE Call ----\nEXTENDS Naturals\nCONSTANT c\nF(a) == a + c\nG(a) == F(a) + 1\n===="
+          : undefined,
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "<<>>",
+      "<<4, 5, 4>>",
+    ]);
+  });
+
   it("parses a prefix operator followed by an operand as an expression", () => {
     const module = parseModule(
       "---- MODULE M ----\nI == INSTANCE N WITH a <- - b, c <- SUBSET d, e <- -\n====",

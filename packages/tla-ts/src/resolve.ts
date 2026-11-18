@@ -1151,8 +1151,10 @@ const resolveDefinitions = (
         functionArity: lookupLocal(current, definition.name)?.functionArity,
       };
     }
+    // A LET INSTANCE's copy of a definition is resolved in the instanced module.
+    if (isKey(definition.name)) return { ...local, params: getParamArities(definition) };
     const isInstanced = instances.some((instance) => instance.location === definition.location);
-    const isGenerated = unit.isGenerated || definition.isLocal || isKey(definition.name);
+    const isGenerated = unit.isGenerated || definition.isLocal;
     const inner = isInstanced
       ? { ...unit, isGenerated: true, errors: [], warnings: [] }
       : isGenerated

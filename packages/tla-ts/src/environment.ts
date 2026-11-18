@@ -766,6 +766,7 @@ export const createEnvironment = (
         return key;
       },
       createName,
+      isLocal: true,
     });
     const frames = declarations.length > 0 ? [getSubstitutionFrame(instance)] : [];
     const declared = new Set(declarations.map((declaration) => declaration.name));
