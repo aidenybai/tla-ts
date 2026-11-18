@@ -150,7 +150,7 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
 
   const mkClause = (literals: number[]) => {
     clauses.push(pin(rewriter.mkOr(literals)));
-    clauseDependencies.push(dependency);
+    if (goal.isCoresEnabled) clauseDependencies.push(dependency);
   };
 
   const mkFresh = () => {
@@ -469,9 +469,9 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
   };
 
   try {
-    for (const [index, form] of goal.forms.items.entries()) {
+    for (let index = 0; index < goal.forms.size; index++) {
       dependency = goal.getDependency(index);
-      process(form);
+      process(goal.forms.items[index]);
     }
   } catch (error) {
     pinned.reset();
@@ -481,7 +481,8 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
   }
   goal.reset();
   const added = new Set<number>();
-  for (const [index, clause] of clauses.items.entries()) {
+  for (let index = 0; index < clauses.size; index++) {
+    const clause = clauses.items[index];
     if (added.has(clause)) continue;
     added.add(clause);
     goal.assert(clause, clauseDependencies[index]);
