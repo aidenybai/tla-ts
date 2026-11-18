@@ -54136,4 +54136,21 @@ describe("BigInts", () => {
       ).toContain(`seen ${expected}`);
     });
   });
+
+  describe("spreads a value that is a string or an array by what it holds as it runs", () => {
+    const getSource = (expected: string) => `
+      const mixed = ["ab", ["c", "d"]];
+      const seen: string[] = [];
+      for (const item of mixed) seen.push([...item].join("+"));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a+b,c+d"))).failure).toBeUndefined();
+    });
+
+    it("rejects a string spread as one element", async () => {
+      expect((await checkModel(getSource("ab,c+d"))).failure?.message).toContain("seen a+b,c+d");
+    });
+  });
 });

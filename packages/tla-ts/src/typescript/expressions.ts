@@ -9,6 +9,7 @@ import {
   translateFunctionConstructor,
   translateHeapElements,
   translateArrayIteration,
+  getHeapElements,
   translateMethod,
   translateArrayConstruction,
   translateNew,
@@ -479,6 +480,34 @@ export const translateIterated = (
     !isArrayIteration(iterated, context)
   ) {
     throw new TlaTypeScriptError("tla-ts can't step an iterator in this spread", node);
+  }
+  // A value that is a string or an array, as an untyped array's element may be, gives a string's
+  // code points or an array's elements, whichever it holds as it runs.
+  const type = context.checker.getTypeAtLocation(iterated);
+  if (
+    type.isUnion() &&
+    type.types.some((member) => isEvery(member, ts.TypeFlags.StringLike)) &&
+    type.types.every(
+      (member) =>
+        isEvery(member, ts.TypeFlags.StringLike) ||
+        context.checker.isArrayType(member) ||
+        context.checker.isTupleType(member),
+    )
+  ) {
+    return share(translateExpression(iterated, scope, context), "iterated", context, (value) => {
+      const heap = context.heap === undefined ? undefined : getHeap(scope, node, context);
+      return ifExpression(
+        apply("=", [useJavaScript("TypeOf", [value], context), string("string")]),
+        useJavaScript("StringCharacters", [value], context),
+        heap === undefined
+          ? value
+          : ifExpression(
+              useJavaScript("IsRef", [value], context),
+              getHeapElements(heap, value, node, context),
+              translateArrayIteration(value, heap, node, context),
+            ),
+      );
+    });
   }
   if (getKind(iterated, context) !== "sequence" && !isArrayIteration(iterated, context)) {
     throw new TlaTypeScriptError(
