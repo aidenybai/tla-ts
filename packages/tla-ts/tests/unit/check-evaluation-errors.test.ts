@@ -1645,6 +1645,33 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it.each([
+    [
+      "an instance with parameters",
+      "VARIABLES x, y\nI == INSTANCE Mid",
+      "(\\E i \\in {1} : I!A(i))",
+      "I!A",
+      "y",
+    ],
+    ["an instance", "VARIABLES x, y\nI == INSTANCE Mid", "I!B", "I!B", "x"],
+    ["EXTENDS", "EXTENDS Mid", "(\\E i \\in {1} : A(i))", "A", "y"],
+  ])(
+    "names an incomplete action from %s as TLC does",
+    async (_title, head, action, name, missing) => {
+      const result = await check({
+        source: `---- MODULE M ----\n${head}\nC == x' = 2 /\\ y' = 2\nInit == x = 0 /\\ y = 0\nNext == ${action} \\/ C\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (module) =>
+          module === "Mid"
+            ? "---- MODULE Mid ----\nVARIABLES x, y\nA(i) == x' = i\nB == y' = 1\n===="
+            : undefined,
+      });
+      expect(result.failure?.message).toBe(
+        `Successor state is not completely specified by action ${name} of the next-state relation. The following variable is not defined: ${missing}.\n`,
+      );
+    },
+  );
+
   it("stops at a successor the next-state relation leaves incomplete under -continue", async () => {
     const result = await check({
       source: "---- MODULE M ----\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1\n====",

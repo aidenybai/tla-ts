@@ -621,6 +621,7 @@ const compileCall = (
   if (global?.kind === "Builtin") return guard;
   if (global?.kind === "Closure") {
     const bindArguments = compileArgumentScope(global, expression.args, environment);
+    const actionName = environment.instanceNames.get(name) ?? global.name;
     let bodyRunner: Runner | undefined;
     return (run, scope, partial, action, isFixed, onComplete) => {
       bodyRunner ??= getRunner(global.body, environment, isInit);
@@ -628,7 +629,7 @@ const compileCall = (
         run,
         bindArguments(getContext(run, scope, partial)),
         partial,
-        isFixed ? action : name,
+        isFixed ? action : actionName,
         isFixed,
         onComplete,
       );
@@ -661,6 +662,8 @@ const compileIdentifier = (
   const definition = isLocallyResolved(expression)
     ? undefined
     : getZeroArityBody(expression.name, environment);
+  const actionName =
+    definition && (environment.instanceNames.get(expression.name) ?? definition.name);
   let bodyRunner: Runner | undefined;
   return (run, scope, partial, action, isFixed, onComplete) => {
     const binding = lookupScope(scope, expression.name);
@@ -685,7 +688,7 @@ const compileIdentifier = (
       return;
     }
     bodyRunner ??= getRunner(definition.body, environment, isInit);
-    bodyRunner(run, undefined, partial, isFixed ? action : definition.name, isFixed, onComplete);
+    bodyRunner(run, undefined, partial, isFixed ? action : actionName, isFixed, onComplete);
   };
 };
 
