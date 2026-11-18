@@ -1159,6 +1159,31 @@ const getLetFunctionConstruction = (definition: FunctionDefinition): Expression 
   return construction;
 };
 
+const isRecursiveOperator = (definition: Definition) =>
+  definition.kind === "Operator" && definition.isRecursive && definition.params.length > 0;
+
+// TLC finds a RECURSIVE operator with parameters by its definition, not in its context, so every definition reaches it.
+const chainRecursiveOperatorsFirst = (
+  definitions: Definition[],
+  nodes: Scope[],
+  outer: Scope | undefined,
+) => {
+  let scope = outer;
+  for (let index = 0; index < definitions.length; index++) {
+    if (isRecursiveOperator(definitions[index])) {
+      nodes[index].parent = scope;
+      scope = nodes[index];
+    }
+  }
+  for (let index = 0; index < definitions.length; index++) {
+    if (!isRecursiveOperator(definitions[index])) {
+      nodes[index].parent = scope;
+      scope = nodes[index];
+    }
+  }
+  return scope;
+};
+
 export const bindDefinitions = (
   definitions: Definition[],
   context: Context,
@@ -1169,17 +1194,22 @@ export const bindDefinitions = (
     binding: { kind: "Value", value: false },
     parent: undefined,
   }));
-  const scope = nodes.reduce<Scope | undefined>((parent, node) => {
-    node.parent = parent;
-    return node;
-  }, context.scope);
-  let isRecursiveAtOrAfter = false;
+  let scope = context.scope;
+  let hasRecursive = false;
+  for (let index = 0; index < nodes.length; index++) {
+    nodes[index].parent = scope;
+    scope = nodes[index];
+    hasRecursive ||= definitions[index].isRecursive;
+  }
+  if (hasRecursive) scope = chainRecursiveOperatorsFirst(definitions, nodes, context.scope);
+  let isRecursiveValueAtOrAfter = false;
   for (let index = definitions.length - 1; index >= 0; index--) {
     const definition = definitions[index];
-    isRecursiveAtOrAfter ||= definition.isRecursive;
+    isRecursiveValueAtOrAfter ||=
+      definition.isRecursive && definition.kind === "Operator" && definition.params.length === 0;
     // TLC's LET evaluates an operator without parameters in the context before it, which TLCEval#tlcEval tells from an empty one.
     const ownScope =
-      definition.kind === "Operator" && definition.params.length === 0 && !isRecursiveAtOrAfter
+      definition.kind === "Operator" && definition.params.length === 0 && !isRecursiveValueAtOrAfter
         ? nodes[index].parent
         : scope;
     nodes[index].binding =
