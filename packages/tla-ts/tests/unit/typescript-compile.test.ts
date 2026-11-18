@@ -55454,4 +55454,54 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("runs the call that a compound assignment to an object key takes between its conversions", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var log = "";
+      var n = 0;
+      var key = { toString: function () { n += 1; log += "key" + n + "|"; return "a"; } };
+      var obj = { a: 1 };
+      var step = function () {
+        log += "rhs|";
+        obj.a = 100;
+        return 5;
+      };
+      obj[key] += step();
+      var bad = { toString: function () { throw new RangeError("x"); } };
+      var never = function () {
+        log += "never|";
+        return 1;
+      };
+      var thrown = "none";
+      try {
+        obj[bad] -= never();
+      } catch (error) {
+        thrown = error.constructor.name;
+      }
+      var boom = function () {
+        throw new SyntaxError("y");
+      };
+      var rhsThrown = "none";
+      try {
+        obj[key] *= boom();
+      } catch (error) {
+        rhsThrown = error.constructor.name;
+      }
+      var result = [obj.a, thrown, rhsThrown, log].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("6,RangeError,SyntaxError,key1|rhs|key2|key3|");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("105,RangeError,SyntaxError,key1|rhs|key2|key3|");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result 6,RangeError,SyntaxError,key1|rhs|key2|key3|",
+      );
+    });
+  });
 });

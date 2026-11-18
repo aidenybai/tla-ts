@@ -21294,12 +21294,12 @@ const getKeyUpdate = (node: ts.Expression, context: Context) => {
     : undefined;
 };
 
-// A value that a compound assignment evaluates that runs nothing, so that it reads what it reads
-// whether it evaluates before or after the key's conversions, but for what they change.
+// A value that a compound assignment evaluates that runs nothing, or that is a call that only a
+// statement runs, which runs once the assignment reads the key.
 const isPlainUpdateValue = (node: ts.Expression, path: Path, context: Context) => {
   const found = findLeadingCall(node, [], path, context);
   return (
-    found.call === undefined &&
+    (found.call === undefined || found.call === skipCasts(node)) &&
     !found.isBlocked &&
     findNodes(node, (inner): inner is ts.Expression => isAssignment(inner)).length === 0
   );
@@ -22661,56 +22661,72 @@ export const translateStatements = (
             "current",
             useJavaScript("Get", [readHeap, object, readKey], context),
             context,
-            (current, held) =>
-              bind(
-                current,
-                "operand",
-                translateExpression(keyUpdate.node.right, current.scope, context),
-                context,
-                (operated, operand) =>
-                  ifThenElse(
-                    apply("\\/", [
-                      useJavaScript("IsObjectIn", [readHeap, held], context),
-                      useJavaScript("IsObjectIn", [readHeap, operand], context),
-                    ]),
-                    stop(
-                      "tla-ts can't convert the objects that a compound assignment combines here",
-                    ),
-                    runToPrimitive(
-                      site,
-                      keyValue,
-                      "string",
-                      operated,
+            (current, held) => {
+              const right = skipCasts(keyUpdate.node.right);
+              const evaluate = (next: (operated: Path, operand: Expression) => Formula) =>
+                ts.isCallExpression(right) && !current.scope.results.has(right)
+                  ? translateCallStatement(
+                      right,
+                      current,
                       context,
                       statementFrame,
-                      (written, second) => {
-                        const writeHeap = getHeap(written.scope, site, context);
-                        const writeKey = useJavaScript("PropertyKey", [second], context);
-                        return ifThenElse(
-                          useJavaScript("IsPlainKeyAccess", [writeHeap, object, writeKey], context),
-                          ifThenElse(
-                            useJavaScript("CanPut", [writeHeap, object, writeKey], context),
-                            continueWith(
-                              withHeap(
-                                written,
-                                useJavaScript(
-                                  "SetProperty",
-                                  [writeHeap, object, writeKey, keyUpdate.update(held, operand)],
-                                  context,
-                                ),
+                      (after, value) =>
+                        bind(after, "operand", value ?? getUndefined(context), context, next),
+                    )
+                  : bind(
+                      current,
+                      "operand",
+                      translateExpression(keyUpdate.node.right, current.scope, context),
+                      context,
+                      next,
+                    );
+              return evaluate((operated, operand) =>
+                ifThenElse(
+                  apply("\\/", [
+                    useJavaScript("IsObjectIn", [readHeap, held], context),
+                    useJavaScript(
+                      "IsObjectIn",
+                      [getHeap(operated.scope, site, context), operand],
+                      context,
+                    ),
+                  ]),
+                  stop("tla-ts can't convert the objects that a compound assignment combines here"),
+                  runToPrimitive(
+                    site,
+                    keyValue,
+                    "string",
+                    operated,
+                    context,
+                    statementFrame,
+                    (written, second) => {
+                      const writeHeap = getHeap(written.scope, site, context);
+                      const writeKey = useJavaScript("PropertyKey", [second], context);
+                      return ifThenElse(
+                        useJavaScript("IsPlainKeyAccess", [writeHeap, object, writeKey], context),
+                        ifThenElse(
+                          useJavaScript("CanPut", [writeHeap, object, writeKey], context),
+                          continueWith(
+                            withHeap(
+                              written,
+                              useJavaScript(
+                                "SetProperty",
+                                [writeHeap, object, writeKey, keyUpdate.update(held, operand)],
                                 context,
                               ),
+                              context,
                             ),
-                            isStrictCode(site)
-                              ? throwTypeError(written, site, context, statementFrame)
-                              : stop("tla-ts can't ignore a failed write outside strict mode"),
                           ),
-                          stop("tla-ts can't write this key of this object here"),
-                        );
-                      },
-                    ),
+                          isStrictCode(site)
+                            ? throwTypeError(written, site, context, statementFrame)
+                            : stop("tla-ts can't ignore a failed write outside strict mode"),
+                        ),
+                        stop("tla-ts can't write this key of this object here"),
+                      );
+                    },
                   ),
-              ),
+                ),
+              );
+            },
           ),
           stop("tla-ts can't read this key of this object here"),
         );
