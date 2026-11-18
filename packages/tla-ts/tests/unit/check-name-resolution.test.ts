@@ -2774,6 +2774,51 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "a definition named like one a LOCAL INSTANCE imports, at the instance",
+      "---- MODULE Base ----\nFoo == 1\n====\nLOCAL INSTANCE Base\nFoo == 2",
+      [
+        {
+          location: "line 6, col 1 to line 6, col 8 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 6, col 1 to line 6, col 8 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Foo.  \nThis duplicates the one at line 5, col 1 to line 5, col 19 of module M.",
+        },
+      ],
+    ],
+    [
+      "a definition named like an ASSUME/PROVE theorem a LOCAL INSTANCE imports, at the instance",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nLOCAL INSTANCE Base\nFoo == 1",
+      [
+        {
+          location: "line 6, col 1 to line 6, col 8 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 8 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 19 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an ASSUME/PROVE theorem a LOCAL INSTANCE imports after a definition of its name, at the instance",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nFoo == 1\nLOCAL INSTANCE Base",
+      [
+        {
+          location: "line 6, col 1 to line 6, col 19 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 8 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
       "a selection into an ASSUME/PROVE theorem an INSTANCE imports",
       "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nINSTANCE Base\nX == Foo!3",
       [
@@ -2856,6 +2901,16 @@ describe("name resolution matches SANY", () => {
       "a variable and a constant of two extended modules",
       "---- MODULE A ----\nVARIABLE Baz\n====\n---- MODULE B ----\nCONSTANT Baz\n====\n---- MODULE C ----\nEXTENDS A, B\nF == Baz\n====",
       "*** Warnings: 1\n\nline 6, col 10 to line 6, col 12 of module M\n\nWarning: the declaration of 'Baz' conflicts with \nits declaration at line 3, col 10 to line 3, col 12 of module M.\n\n\n",
+    ],
+    [
+      "a definition a later LOCAL INSTANCE imports, at the instance",
+      "---- MODULE Base ----\nFoo == 1\n====\nFoo == 2\nLOCAL INSTANCE Base",
+      "*** Warnings: 1\n\nline 6, col 1 to line 6, col 19 of module M\n\nMultiple declarations or definitions for symbol Foo.  \nThis duplicates the one at line 5, col 1 to line 5, col 8 of module M.\n\n\n",
+    ],
+    [
+      "a definition imported by two LOCAL INSTANCEs as one definition",
+      "---- MODULE Base ----\nFoo == 1\n====\nLOCAL INSTANCE Base\nLOCAL INSTANCE Base\nINSTANCE Base",
+      undefined,
     ],
   ])("warns of %s like SANY", async (_title, source, warnings) => {
     const printed: string[] = [];

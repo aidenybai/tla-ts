@@ -45,6 +45,8 @@ interface Binding {
   range?: SourceRange;
   functionArity?: number;
   goal?: Goal;
+  // The definition's own range, when SANY locates its binding elsewhere, as at a LOCAL INSTANCE.
+  source?: SourceRange;
 }
 
 export interface ModuleSymbol extends Binding {
@@ -224,7 +226,7 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
 
 const isBindable = (name: string, current: Binding | undefined, added: Binding, unit: Unit) => {
   if (current === undefined) return true;
-  if (isSameRange(current.range, added.range)) return false;
+  if (isSameRange(current.source ?? current.range, added.source ?? added.range)) return false;
   const range = added.range;
   if (range === undefined || unit.isGenerated || (current.kind !== "Builtin" && !current.range)) {
     return true;

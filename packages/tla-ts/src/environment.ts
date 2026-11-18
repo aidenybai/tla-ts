@@ -725,9 +725,14 @@ export const createEnvironment = (
                 params: entry[1].params,
                 kind: entry[1].kind,
                 range:
-                  parameterized.get(entry[1].key) === true
+                  instance.isLocal || parameterized.get(entry[1].key) === true
                     ? instance.location.range
                     : entry[1].range,
+                // SANY copies what a LOCAL INSTANCE imports to the instance, but a copy from a module without parameters stays the same definition.
+                source:
+                  instance.isLocal && parameterized.get(entry[1].key) !== true
+                    ? (entry[1].source ?? entry[1].range)
+                    : undefined,
                 functionArity:
                   parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,
                 goal: entry[1].goal,
