@@ -1,7 +1,7 @@
 import { LOGO_PARTS } from "../logo";
 
-// Hovering a `group/logo` ancestor makes the mark dance: its arms seesaw and it hops, one whole
-// pixel at a time.
+// Hovering a `group/logo` ancestor makes the mark dance: twice its arms seesaw while it hops and
+// taps its toe, then it flips. Every move is a whole pixel or a quarter turn.
 export const Logo = () => (
   <svg
     aria-hidden
@@ -10,7 +10,7 @@ export const Logo = () => (
     shapeRendering="crispEdges"
     className="size-[18px] overflow-visible"
   >
-    <g className="group-hover/logo:animate-logo-hop motion-reduce:animate-none">
+    <g className="origin-[4.5px_4.5px] group-hover/logo:animate-logo-body motion-reduce:animate-none">
       <path d={LOGO_PARTS.body} />
       <path
         d={LOGO_PARTS.leftArm}
@@ -19,6 +19,10 @@ export const Logo = () => (
       <path
         d={LOGO_PARTS.rightArm}
         className="group-hover/logo:animate-logo-right-arm motion-reduce:animate-none"
+      />
+      <path
+        d={LOGO_PARTS.toe}
+        className="group-hover/logo:animate-logo-toe motion-reduce:animate-none"
       />
     </g>
   </svg>

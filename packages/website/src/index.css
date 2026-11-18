@@ -103,37 +103,93 @@
     0 0 0 1px var(--shadow-edge), 0 1px 2px -1px var(--shadow-edge), 0 2px 4px 0 var(--shadow-soft);
   --animate-line-fade: line-fade 1s linear infinite;
   --animate-chip-in: chip-in 200ms ease-out backwards;
-  --animate-logo-hop: logo-hop 600ms steps(1) infinite;
-  --animate-logo-left-arm: logo-left-arm 600ms steps(1) infinite;
-  --animate-logo-right-arm: logo-right-arm 600ms steps(1) infinite;
+  --animate-logo-body: logo-body 1800ms steps(1) infinite;
+  --animate-logo-left-arm: logo-left-arm 1800ms steps(1) infinite;
+  --animate-logo-right-arm: logo-right-arm 1800ms steps(1) infinite;
+  --animate-logo-toe: logo-toe 1800ms steps(1) infinite;
 
-  @keyframes logo-hop {
-    25%,
-    75% {
-      translate: 0 -1px;
-    }
-    50% {
+  /* Twelve steps: two dances of four steps, then a rest and a three-step flip. */
+  @keyframes logo-body {
+    0%,
+    16.667%,
+    33.333%,
+    50%,
+    66.667% {
       translate: 0 0;
+      rotate: 0deg;
+    }
+    8.333%,
+    25%,
+    41.667%,
+    58.333% {
+      translate: 0 -1px;
+      rotate: 0deg;
+    }
+    75% {
+      translate: 0 -2px;
+      rotate: 90deg;
+    }
+    83.333% {
+      translate: 0 -4px;
+      rotate: 180deg;
+    }
+    91.667% {
+      translate: 0 -2px;
+      rotate: 270deg;
     }
   }
 
   @keyframes logo-left-arm {
+    0%,
+    33.333%,
+    66.667% {
+      translate: 0 0;
+    }
+    8.333%,
     25%,
+    41.667%,
+    58.333%,
     75% {
       translate: 0 -1px;
     }
+    16.667%,
     50% {
       translate: 0 -2px;
     }
   }
 
   @keyframes logo-right-arm {
+    0%,
+    33.333%,
+    66.667% {
+      translate: 0 0;
+    }
+    8.333%,
     25%,
+    41.667%,
+    58.333%,
     75% {
       translate: 0 1px;
     }
+    16.667%,
     50% {
       translate: 0 2px;
+    }
+  }
+
+  @keyframes logo-toe {
+    0%,
+    16.667%,
+    33.333%,
+    50%,
+    66.667% {
+      translate: 0 0;
+    }
+    8.333%,
+    25%,
+    41.667%,
+    58.333% {
+      translate: 0 1px;
     }
   }
 
