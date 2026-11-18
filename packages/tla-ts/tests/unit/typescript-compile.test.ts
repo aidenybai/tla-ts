@@ -15177,11 +15177,39 @@ describe("errors", () => {
     );
   });
 
-  it("stops where the script's name hides a built-in that the global object holds", () => {
+  describe("reads a built-in that the global object holds where the script's let hides it", () => {
+    const getSource = (expected: string) => `
+      let Array = 1;
+      const holder = { global: globalThis as unknown, value: Array };
+      const global = holder.global as { Array: unknown; Math: unknown };
+      const seen = [
+        holder.value,
+        typeof global.Array,
+        global.Array === globalThis.Array,
+        global.Math === Math,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,function,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("1,function,false,true"))).failure?.message).toContain(
+        "seen 1,function,true,true",
+      );
+    });
+  });
+
+  it("stops where the script's var replaces a built-in that the global object holds", () => {
     expect(() =>
       compile(`
-        let Array = 1;
+        var Array = 1;
         const holder = { global: globalThis as unknown, value: Array };
+        const global = holder.global as { Array: unknown };
+        const seen = [holder.value, global.Array].join();
+        if (seen !== "1,1") throw new Error("seen " + seen);
       `),
     ).toThrow("tla-ts can't name the built-in Array, which Array hides");
   });
@@ -50878,11 +50906,11 @@ describe("BigInts", () => {
     it("stops at a built-in read as a value", () => {
       expect(() =>
         compile(`
-          export const Pattern = globalThis.RegExp;
-          export const isSame = (value: 1 | 2): boolean => Pattern === Pattern && value === value;
+          export const Global = globalThis;
+          export const isSame = (value: 1 | 2): boolean => Global === Global && value === value;
         `),
       ).toThrow(
-        "spec.ts:2:34 tla-ts can't use the built-in globalThis as a value where no heap holds objects",
+        "spec.ts:2:33 tla-ts can't use the built-in globalThis as a value where no heap holds objects",
       );
     });
 
@@ -56873,5 +56901,92 @@ describe("converts a value of type never to a string as JavaScript converts what
         "tla-ts can't convert objects to strings",
       );
     }
+  });
+});
+
+describe("reads a built-in through globalThis as the built-in", () => {
+  const getSource = (expected: string) => `
+    const box = { seen: "" };
+    class Failure extends globalThis.Error {
+      getKind() {
+        return "failure";
+      }
+    }
+    class BadInput extends globalThis.TypeError {}
+    const failure = new Failure("boom");
+    const badInput = new BadInput("bad");
+    const range = new globalThis.RangeError("range");
+    box.seen = [
+      failure.message,
+      failure.getKind(),
+      failure instanceof Error,
+      failure instanceof Failure,
+      failure instanceof TypeError,
+      badInput instanceof TypeError,
+      badInput instanceof BadInput,
+      range instanceof RangeError,
+      range.message,
+      globalThis.Error === Error,
+    ].join();
+    if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+  `;
+  const expected = "boom,failure,true,true,false,true,true,true,range,true";
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (await checkModel(getSource(expected.replace("true,true,false", "true,true,true")))).failure
+        ?.message,
+    ).toContain(`seen ${expected}`);
+  });
+
+  describe("where a module's own name hides the built-in", () => {
+    const getModule = (expected: string) => `
+      const getCounter = () => {
+        let count = 0;
+        return () => ++count;
+      };
+      export const counter = getCounter();
+      const box = { seen: "" };
+      export const YieldableError = (function () {
+        class YieldableError extends globalThis.Error {}
+        Object.assign(YieldableError.prototype, { op: "YieldableError" });
+        return YieldableError as any;
+      })() as new (message?: string) => globalThis.Error;
+      export const Error = (message: string) => new YieldableError(message);
+      const error = new YieldableError("boom");
+      box.seen = [
+        error.message,
+        error instanceof globalThis.Error,
+        error instanceof YieldableError,
+        Object.hasOwn(YieldableError.prototype, "op"),
+      ].join();
+      if (box.seen !== "${expected}") throw new globalThis.Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getModule("boom,true,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getModule("boom,true,false,true"))).failure?.message).toContain(
+        "seen boom,true,true,true",
+      );
+    });
+  });
+
+  it("stops where the script replaces the built-in on the global object", async () => {
+    const result = await checkModel(`
+      const box = { seen: "" };
+      const original = globalThis.Error;
+      (globalThis as { Error: unknown }).Error = function Replaced() {};
+      box.seen = [globalThis.Error === original, typeof globalThis.Error].join();
+      (globalThis as { Error: unknown }).Error = original;
+      if (box.seen !== "false,function") throw new Error("seen " + box.seen);
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't");
   });
 });
