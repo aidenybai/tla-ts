@@ -27,6 +27,7 @@ import { MESSAGE_CODE } from "./tlc/messages";
 import type { CheckerRuntime } from "./runtime";
 import {
   isEvaluatedAtStartup,
+  isExpressionImpure,
   isImpureDefinition,
   isNonconstant,
   type DefinitionFacts,
@@ -321,15 +322,14 @@ export const getDomainOperator = (expression: Expression) => (value: Value) => {
 };
 
 export const getSubsetOperator =
-  (expression: Expression, builtin: Builtin) => (left: Value, right: Value) => {
+  (expression: Expression, subset: (left: Value, right: Value) => Value) =>
+  (left: Value, right: Value) => {
     if (!isSetValue(left) || isOverriddenSet(left)) {
       throw new TlaEvaluationError(
         `Attempted to evaluate an expression of form S \\subseteq T, but S was not enumerable.\n${describeRange(expression)}`,
       );
     }
-    return builtin.evaluateBinary
-      ? builtin.evaluateBinary(left, right)
-      : builtin.evaluate([left, right]);
+    return subset(left, right);
   };
 
 export const createRealNumberError = (expression: DecimalExpression) =>
@@ -1327,7 +1327,6 @@ const headFingerprint = (callStack: CallStack, source: Expression, error: unknow
 
 export const createTracingEnvironment = (environment: Environment): Environment => ({
   ...environment,
-  coverage: undefined,
   evaluators: new WeakMap(),
   entryEvaluators: new WeakMap(),
   definitionEvaluators: new WeakMap(),
@@ -1608,10 +1607,15 @@ const compileApply = (
       return value;
     };
   }
-  if (global?.kind === "Builtin" && global.name === "\\subseteq" && args.length === 2) {
+  if (
+    global?.kind === "Builtin" &&
+    global.name === "\\subseteq" &&
+    global.evaluateBinary &&
+    args.length === 2
+  ) {
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);
-    const subset = getSubsetOperator(expression, global);
+    const subset = getSubsetOperator(expression, global.evaluateBinary);
     return (context) => subset(left(context), right(context));
   }
   if (global?.kind === "Builtin") return compileBuiltinCall(global, args, environment);
@@ -1976,6 +1980,20 @@ export const getLazyFilter = (
     createFiltered(base, context, predicate, node);
 };
 
+const hasLocalName = (expression: Expression): boolean =>
+  isLocallyResolved(expression) ||
+  expression.kind === "OperatorReference" ||
+  getChildren(expression).some(hasLocalName);
+
+export const isUniformPredicate = (
+  expression: Expression & { kind: "SetFilter" },
+  environment: Environment,
+) =>
+  expression.bound.pattern.kind === "Name" &&
+  !environment.coverage &&
+  !hasLocalName(expression.predicate) &&
+  !isExpressionImpure([expression.predicate], environment, "varying");
+
 export const expectFilterPredicate = (
   value: Value,
   expression: Expression & { kind: "SetFilter" },
@@ -2018,20 +2036,21 @@ const compileSetComprehension = (
     const filterLazily = getLazyFilter(expression, environment);
     const pattern = expression.bound.pattern;
     const coverage = environment.coverage;
+    const isUniform = isUniformPredicate(expression, environment);
     return (context) => {
       const base = set(context);
       if (!isReducibleSet(base)) return filterLazily(base, context, coverage?.current);
       const kept: Value[] = [];
-      const visit = (element: Value) => {
+      const elements = base.kind === "Interval" ? base : toFiniteSet(base).elements;
+      const size = Array.isArray(elements) ? elements.length : elements.high - elements.low + 1;
+      for (let position = 0; position < size; position++) {
+        const element = Array.isArray(elements) ? elements[position] : elements.low + position;
         const value = predicate(withScope(context, bindPattern(context.scope, pattern, element)));
         if (expectFilterPredicate(value, expression)) addBoundedElement(kept, element);
-      };
-      const elements = base.kind === "Interval" ? base : toFiniteSet(base).elements;
-      forEachElement(elements, visit);
+        else if (isUniform) break;
+      }
       if (coverage && coverage.current !== -1) {
-        coverage.secondary[coverage.current] +=
-          (Array.isArray(elements) ? elements.length : elements.high - elements.low + 1) +
-          kept.length;
+        coverage.secondary[coverage.current] += size + kept.length;
       }
       return createNormalizedSet(kept);
     };

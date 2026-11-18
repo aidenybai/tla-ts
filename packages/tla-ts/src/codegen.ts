@@ -14,6 +14,7 @@ import {
   getFunctionBuilder,
   getLazyFilter,
   isKeptLazy,
+  isUniformPredicate,
   getDomainOperator,
   getSubsetOperator,
   getEvaluator,
@@ -279,7 +280,8 @@ const generateSetFilter = (
     const lazy = `if (!isReducible(${base})) return ${filterLazily}(${base}, ${getDelegateContext(generator, expression, bodyFrame)});`;
     const set = generateExpression(generator, expression.bound.set, bodyFrame);
     bodyFrame.locals.set(name, element);
-    const test = `if (filterPredicate(${generateExpression(generator, expression.predicate, bodyFrame)}, ${node})) addBounded(${kept}, ${element});`;
+    const stop = isUniformPredicate(expression, generator.environment) ? " else break;" : "";
+    const test = `if (filterPredicate(${generateExpression(generator, expression.predicate, bodyFrame)}, ${node})) addBounded(${kept}, ${element});${stop}`;
     return `const ${base} = ${set}; ${lazy} const ${list} = ${base}.kind === "Interval" ? ${base} : finiteElements(${base}); const ${kept} = []; ${generateLoop(generator, list, element, test)} return normalizedSet(${kept});`;
   });
 
@@ -332,8 +334,8 @@ const generateApply = (
   }
   // TLC caches a constant TLCEval only where no name is bound, so the delegate sees every local.
   if (builtin.name === "TLCEval") return generateDelegate(generator, expression, frame, true);
-  if (builtin.name === "\\subseteq" && args.length === 2) {
-    const subset = addReference(generator, getSubsetOperator(expression, builtin));
+  if (builtin.name === "\\subseteq" && builtin.evaluateBinary && args.length === 2) {
+    const subset = addReference(generator, getSubsetOperator(expression, builtin.evaluateBinary));
     return `${subset}(${generateExpression(generator, args[0], frame)}, ${generateExpression(generator, args[1], frame)})`;
   }
   const environment = generator.environment;

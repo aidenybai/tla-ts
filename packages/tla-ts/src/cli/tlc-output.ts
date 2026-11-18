@@ -548,6 +548,7 @@ export const printResult = (result: CheckResult, printer: MessagePrinter, timing
     printTrace(printer, failure.trace, "error-trace");
     const traceFailure = failure.traceFailure;
     if (traceFailure) {
+      printTraceOutput(printer, traceFailure.output);
       print(
         traceFailure.code,
         MESSAGE_LEVEL.error,

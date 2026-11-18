@@ -8,6 +8,7 @@ import {
 } from "../../src";
 import { STACK_OVERFLOW_MESSAGE, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import { getExitCode } from "../../src/exit-codes";
+import { getOutDegreeSummary } from "../../src/tlc/summary";
 import type { TlcVersion } from "../../src/tlc/version";
 import { checkModule, checkSteps } from "./check-harness";
 
@@ -613,6 +614,79 @@ describe("evaluation errors match TLC", () => {
       );
     },
   );
+
+  it.each([
+    ["x /\\ TRUE", 255],
+    ['Assert(FALSE, "a")', 14],
+  ])(
+    "reports a success to the summary and exits with the status of %s when the replay of the next state doesn't fail again",
+    async (failing, exitCode) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ TLCSet(1, 0)\nNext == TLCSet(1, TLCGet(1) + 1) /\\ x' = IF TLCGet(1) = 1 THEN ${failing} ELSE x\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      });
+      expect([
+        result.failure?.callStack,
+        result.outDegrees && getOutDegreeSummary(result.outDegrees),
+        result.failure?.exitCode,
+      ]).toEqual([
+        undefined,
+        "The average outdegree of the complete state graph is 0 (minimum is 0, the maximum 0 and the 95th percentile is 0).",
+        exitCode,
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "checks the postconditions of a deadlocked failed state",
+      'Init == x = 0 /\\ TLCSet(1, 0) /\\ PrintT(<<"i", TLCGet(1)>>)\nNext == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<"n", TLCGet(1)>>) /\\ x\' = IF TLCGet(1) = 1 THEN (x /\\ TRUE) ELSE x\nPost == PrintT(<<"post", TLCGet(1)>>)',
+      "INIT Init\nNEXT Next\nPOSTCONDITION Post",
+      ['<<"i", 0>>', '<<"post", 0>>', '<<"n", 1>>'],
+      75,
+    ],
+    [
+      "rebuilds the trace to a successor that fails a constraint",
+      'Init == x = 0 /\\ TLCSet(1, 0)\nNext == x < 3 /\\ \\E b \\in {1, 2} : TLCSet(1, TLCGet(1) + 1) /\\ x\' = x + b\nC == PrintT(<<"c", x, TLCGet(1)>>) /\\ IF x = 3 /\\ TLCGet(1) \\in {5, 6} THEN 1 \\in 2 ELSE TRUE',
+      "INIT Init\nNEXT Next\nCONSTRAINT C\nCHECK_DEADLOCK FALSE",
+      ['<<"c", 3, 6>>'],
+      75,
+    ],
+    [
+      "rebuilds the trace to a successor that fails an invariant",
+      'Init == x = 0 /\\ TLCSet(1, 0)\nNext == x < 3 /\\ \\E b \\in {1, 2} : TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<"n", x, TLCGet(1)>>) /\\ x\' = IF TLCGet(1) = 8 THEN (x /\\ TRUE) ELSE x + b\nInv == IF x = 4 /\\ TLCGet(1) = 6 THEN 1 \\in 2 ELSE TRUE',
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      ['<<"n", 2, 5>>', '<<"n", 2, 6>>'],
+      76,
+    ],
+  ])(
+    "%s before TLC's ModelChecker replays the next state",
+    async (_title, definitions, config, traceOutput, exitCode) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\n${definitions}\n====`,
+        config,
+        onPrint: () => {},
+      });
+      expect([result.failure?.traceOutput, result.failure?.exitCode]).toEqual([
+        traceOutput,
+        exitCode,
+      ]);
+    },
+  );
+
+  it("keeps the initial state of a failed step as it is, as TLC's TLCTrace prints it without generating the initial states again", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ TLCSet(1, 0)\nNext == \\E b \\in {1, 2} : TLCSet(1, TLCGet(1) + 1) /\\ PrintT(<<"n", b, TLCGet(1)>>) /\\ x\' = x + b\nC == IF x = 2 /\\ TLCGet(1) \\in {2, 6} THEN 1 \\in 2 ELSE TRUE\n====',
+      config: "INIT Init\nNEXT Next\nCONSTRAINT C",
+      onPrint: () => {},
+    });
+    expect([
+      result.failure?.trace.map((step) => step.output),
+      result.failure?.traceOutput,
+      result.failure?.exitCode,
+    ]).toEqual([[[], ['<<"n", 1, 3>>', '<<"n", 2, 4>>']], ['<<"n", 1, 5>>', '<<"n", 2, 6>>'], 75]);
+  });
 
   it("prints what the replay of a failed constraint prints after the trace", async () => {
     const result = await checkSteps(
@@ -1525,6 +1599,28 @@ describe("evaluation errors match TLC", () => {
       75,
     ]);
   });
+
+  it.each([
+    [
+      "a successor it can't fingerprint",
+      'VARIABLE x\nInit == x = 0\nA == PrintT(<<"a", x>>) /\\ x \\in 0..1 /\\ x\' = x + 5\nB == PrintT(<<"b", x>>) /\\ x\' = IF x = 1 THEN [k \\in SUBSET {1} |-> 1 \\div 0] ELSE x + 1\nNext == A \\/ B',
+      ['<<"a", 1>>'],
+    ],
+    [
+      "an incomplete successor",
+      'VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == PrintT(<<"n", x>>) /\\ x\' = 1 /\\ (x = 0 \\/ <<x>>[2] = 0)',
+      ['<<"n", 0>>'],
+    ],
+  ])(
+    "keeps what the spec prints as TLC fails to print %s, like TLC",
+    async (_name, definitions, expected) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\n${definitions}\n====`,
+        config: "INIT Init\nNEXT Next",
+      });
+      expect(result.failure?.traceFailure?.output).toEqual(expected);
+    },
+  );
 
   it("records where the liveness check of a state fails after a successor of it is left incomplete, like TLC", async () => {
     const result = await check({

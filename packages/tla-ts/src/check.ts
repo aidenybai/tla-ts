@@ -272,6 +272,11 @@ export interface Postcondition {
   counts?: string;
 }
 
+export interface TraceFailure extends FailureMessage {
+  /** What the spec prints as TLC rebuilds the step it then fails to print. */
+  output: OutputLine[];
+}
+
 /** An evaluation that failed during the search, with the behavior up to the state TLC was working on. */
 export interface EvaluationFailure {
   code: number;
@@ -288,7 +293,7 @@ export interface EvaluationFailure {
   /** The FingerprintException the replay raises, which TLC reports in place of the call stack. */
   fingerprint?: FingerprintFailure;
   /** How TLC reports failing again as it prints the trace, since it can't fingerprint the state. */
-  traceFailure?: FailureMessage;
+  traceFailure?: TraceFailure;
   /** A POSTCONDITION that is false or fails after the trace, which TLC checks as it prints one. */
   postcondition?: Postcondition;
   /** Whether TLC stops before it prints the statistics, as it does for an illegal initial state. */
@@ -346,13 +351,15 @@ const toUnexpectedError = (error: TlaEvaluationError) =>
     `${isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION}${error.message}`,
   );
 
-const getTraceFailure = (error: TlaEvaluationError) =>
-  getFailureMessage(
+const getTraceFailure = (error: TlaEvaluationError, output: OutputLine[]): TraceFailure => ({
+  ...getFailureMessage(
     isEvalException(error)
       ? new TlaEvaluationError(`${UNEXPECTED_EVAL_EXCEPTION}${error.message}`)
       : error,
     true,
-  );
+  ),
+  output,
+});
 
 const STOP_REPLAY = new Error("The replay stopped");
 const STOP_WALK = new Error("The walk stopped");
@@ -623,6 +630,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         onState(successor);
       },
       (partial) => {
+        if (coverage) coverage.primary[action.node]++;
         const missing = environment.variables.filter(
           (_variable, index) => partial[index] === undefined,
         );
@@ -634,6 +642,23 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         );
       },
     );
+  const hasCoveredIncompleteSuccessor = (action: CoveredAction, state: Value[]) => {
+    let complete = 0;
+    let incomplete = 0;
+    walkSuccessors(
+      action,
+      action.node,
+      state,
+      environment,
+      () => complete++,
+      () => {
+        incomplete++;
+        return true;
+      },
+    );
+    if (coverage) coverage.primary[action.node] += complete + incomplete;
+    return incomplete > 0;
+  };
   const getCoveredSuccessors = (action: CoveredAction, state: Value[]) => {
     const successors: Successor[] = [];
     walkCoveredSuccessors(action, state, (successor) =>
@@ -686,7 +711,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const deferred: unknown[] = [];
     const addReplayed = createReplayedStates();
     return getReplayFailure(environment, (tracing) => {
-      replayInitialStates(getDescription().inits, tracing, (state) => {
+      replayInitialStates(coverage ? coverageInits : getDescription().inits, tracing, (state) => {
         reportInitialStatesProgress(replayedCount, (progress) => capturedLines?.push(progress));
         replayedCount++;
         runtime.generatedStates = replayedCount;
@@ -723,7 +748,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const state = states[index];
       const source = stateWriter && getGraphState(state, depths[index]);
       const addReplayed = createReplayedStates();
-      replaySuccessors(nextActions, state, tracing, (next, action) => {
+      replaySuccessors(coverage ? coverageActions : nextActions, state, tracing, (next, action) => {
         const addFingerprint = () => {
           const isUnseen = addReplayed(next, tracing.callStack);
           if (source) {
@@ -834,10 +859,10 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const canonicalizeState = createCanonicalizer();
 
   const toRecord = search.toRecord;
-  const getSpecInitialStates = () => {
-    if (coverage) return getCoveredInitialStates();
-    return spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
-  };
+  const getUncoveredInitialStates = () =>
+    spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
+  const getSpecInitialStates = () =>
+    coverage ? getCoveredInitialStates() : getUncoveredInitialStates();
   const isUnfingerprintable = (state: Value[]) => {
     try {
       return getFingerprintState(state).some((value) => getFingerprintError(value) !== undefined);
@@ -846,19 +871,27 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return true;
     }
   };
+  const checkFailedTrace = (behavior: Behavior, counterExample?: CounterExampleOptions) => {
+    if (!counterExample) return { behavior, postcondition: undefined };
+    const checked = checkTracePostconditions(
+      behavior.trace,
+      undefined,
+      getStepAlias,
+      counterExample.isConsole,
+    );
+    return {
+      behavior: appendTraceOutput(behavior, checked.lines),
+      postcondition: checked.unwitnessed ?? checked.postcondition,
+    };
+  };
   const createFailureResult = (
     failed: unknown,
     behavior: Behavior,
     failureOptions: FailureOptions = {},
-    counterExample?: CounterExampleOptions,
+    postcondition?: Postcondition,
   ) => {
     const error = isStackOverflow(failed) ? new TlaStackOverflowError() : failed;
     if (!(error instanceof TlaEvaluationError)) throw error;
-    const checked =
-      counterExample &&
-      checkTracePostconditions(behavior.trace, undefined, getStepAlias, counterExample.isConsole);
-    const postcondition = checked?.unwitnessed ?? checked?.postcondition;
-    const traceOutput = [...(behavior.traceOutput ?? []), ...(checked?.lines ?? [])];
     return {
       ...createResult("error", undefined, {
         ...getFailureMessage(
@@ -866,7 +899,6 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           failureOptions.phase !== undefined && failureOptions.phase !== "initial",
         ),
         ...behavior,
-        ...(traceOutput.length > 0 && { traceOutput }),
         ...(postcondition && { postcondition }),
         initialState:
           failureOptions.initialState && !(error instanceof TlaModuleError)
@@ -891,18 +923,20 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const found = captureOutput(() => {
       try {
         return {
-          action: nextActions.find((item) =>
-            hasIncompleteSuccessor(item.expression, states[index], environment, item.scope),
-          ),
-          traceFailure: undefined,
+          action: coverage
+            ? coverageActions.find((item) => hasCoveredIncompleteSuccessor(item, states[index]))
+            : nextActions.find((item) =>
+                hasIncompleteSuccessor(item.expression, states[index], environment, item.scope),
+              ),
+          failed: undefined,
         };
       } catch (failed) {
         if (!(failed instanceof TlaEvaluationError)) throw failed;
-        return { action: undefined, traceFailure: getTraceFailure(failed) };
+        return { action: undefined, failed };
       }
     });
     const action = found.result.action;
-    const traceFailure = found.result.traceFailure;
+    const traceFailure = found.result.failed && getTraceFailure(found.result.failed, found.lines);
     const message = getIncompleteSuccessorMessage(
       error.variables,
       error.action,
@@ -910,9 +944,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       options.version,
     );
     const live = captureOutput(() => addFailedLiveState(index, liveSuccessors));
-    const trace = traces.getStateTrace(index, error.state).trace;
-    const failure = createFailureResult(
-      error,
+    const trace = traces.getStateTrace(index, { incomplete: error.state, isFailed: true }).trace;
+    const checked = checkFailedTrace(
       appendTraceOutput(
         {
           trace: traceFailure
@@ -933,8 +966,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         },
         live.lines,
       ),
-      { callStack: live.result, traceFailure },
       { isConsole: true },
+    );
+    const failure = createFailureResult(
+      error,
+      checked.behavior,
+      { callStack: live.result, traceFailure },
+      checked.postcondition,
     );
     return withOutDegrees({
       ...failure,
@@ -996,6 +1034,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     tracedSteps,
     captureOutput,
     getInitialStates: getSpecInitialStates,
+    getUncoveredInitialStates,
     findSuccessorAction,
   });
   const getPath = (index: number): Value[][] =>
@@ -1059,14 +1098,15 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   });
 
   const visitInitialState = (state: Value[]) => {
-    canonicalizeState(state);
     runtime.generatedStates++;
     runtime.initialStates++;
     current.candidate = state;
     current.candidateLevel = 1;
-    const fingerprintState = getFingerprintState(state);
-    const hash = getStateHash(fingerprintState);
     const isInModel = search.satisfiesConstraints(state);
+    // TLC fingerprints only a state in the model, which sorts its records in place.
+    if (isInModel) canonicalizeState(state);
+    const fingerprintState = isInModel ? getFingerprintState(state) : state;
+    const hash = isInModel ? getStateHash(fingerprintState) : 0;
     if (isInModel) {
       search.trackStatePossible(state);
       fingerprintModelState(fingerprintState);
@@ -1113,18 +1153,17 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   // Looks a successor up, where the constraints keep it in the model, as the search does before it
   // checks the successor.
   const lookUpSuccessor = (state: Value[], successor: Successor) => {
-    const fingerprintState = getFingerprintState(successor.state);
-    const hash = getStateHash(fingerprintState);
-    const foundIndex = findStateIndex(seenStates, hash, fingerprintState);
     const isStateInModel = search.satisfiesConstraints(successor.state, state);
     if (isStateInModel) search.trackStatePossible(successor.state);
     const isInModel = isStateInModel && search.satisfiesActionConstraints(state, successor.state);
+    const fingerprintState = isInModel ? getFingerprintState(successor.state) : successor.state;
+    const hash = isInModel ? getStateHash(fingerprintState) : 0;
     if (isInModel) {
       search.trackActionPossible(state, successor.state);
       fingerprintModelState(fingerprintState);
       successor.state.forEach(markFingerprinted);
     }
-    const existing = isInModel ? foundIndex : -1;
+    const existing = isInModel ? findStateIndex(seenStates, hash, fingerprintState) : -1;
     return {
       fingerprintState,
       hash,
@@ -1196,10 +1235,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         if (violation) reportContinuedViolation("invariant-violation", violation);
       } catch (error) {
         if (isStackOverflow(error)) throw error;
+        const behavior = traces.getTrace(index, successor, { isFailed: true });
         const replay = captureOutput(() => replayNext(index));
         return createFailureResult(
           error,
-          appendTraceOutput(traces.getFailedTrace(index, successor), replay.lines),
+          appendTraceOutput(behavior, replay.lines),
           replay.result ?? { outDegrees: getFailureOutDegrees() },
         );
       }
@@ -1464,19 +1504,21 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       return { result, lines: live.lines };
     }
     const replay = captureOutput(() => replayNext(index));
-    return { result: replay.result, lines: [...live.lines, ...replay.lines] };
+    const result: FailureOptions =
+      replay.result ?? (is174 ? {} : { outDegrees: getFailureOutDegrees() });
+    return { result, lines: [...live.lines, ...replay.lines] };
   };
-  const getNextFailureTrace = (index: number, counterExample?: CounterExampleOptions) => {
-    const behavior = traces.getStateTrace(index);
-    return counterExample ? behavior : { trace: behavior.trace };
-  };
-  const reportNextStateOverflow = (index: number, counterExample?: CounterExampleOptions) =>
-    createFailureResult(
+  const getNextFailureTrace = (index: number, counterExample?: CounterExampleOptions) =>
+    checkFailedTrace(traces.getStateTrace(index, { isFailed: !counterExample }), counterExample);
+  const reportNextStateOverflow = (index: number, counterExample?: CounterExampleOptions) => {
+    const checked = getNextFailureTrace(index, counterExample);
+    return createFailureResult(
       createStackOverflowError(),
-      getNextFailureTrace(index, counterExample),
+      checked.behavior,
       { phase: "next" },
-      counterExample,
+      checked.postcondition,
     );
+  };
   // Deviation from TLC: under -continue, TLC's Worker reports a state whose next-state relation failed as deadlocked, or else reports the failure twice as its replay fails again.
   const reportNextStateFailure = (
     error: unknown,
@@ -1490,12 +1532,13 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
         ? { isConsole: false }
         : undefined;
     if (isStackOverflow(error)) return reportNextStateOverflow(index, counterExample);
+    const checked = getNextFailureTrace(index, counterExample);
     const replay = replayFailedNext(index, liveSuccessors);
     return createFailureResult(
       withNextStateExitCode(error),
-      appendTraceOutput(getNextFailureTrace(index, counterExample), replay.lines),
+      appendTraceOutput(checked.behavior, replay.lines),
       { phase: "next", ...replay.result },
-      counterExample,
+      checked.postcondition,
     );
   };
   const addLiveState = (
@@ -1563,10 +1606,8 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           outcome = reportNextStateOverflow(index);
           return true;
         }
-        const replay = is174
-          ? captureOutput(() => replayNext(index))
-          : replayFailedNext(index, liveSuccessors);
         if (is174 && error instanceof TlaEvaluationError && !isHeadedError(error)) {
+          const replay = captureOutput(() => replayNext(index));
           outcome = createFailureResult(
             new TlaEvaluationError(`${getWrappedException(error)}${error.message}`, error),
             appendTraceOutput({ trace: [] }, replay.lines),
@@ -1574,17 +1615,33 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
           );
           return true;
         }
-        const isTraceFailed = isUnfingerprintable(successor.state);
+        const traceError =
+          error instanceof TlaEvaluationError && isUnfingerprintable(successor.state)
+            ? error
+            : undefined;
+        const behavior = traceError
+          ? traces.getStateTrace(index, { isFailed: true })
+          : traces.getTrace(index, successor, { isFailed: true });
         const traceFailure =
-          isTraceFailed && error instanceof TlaEvaluationError ? getTraceFailure(error) : undefined;
-        outcome = createFailureResult(
-          error,
-          appendTraceOutput(
-            traceFailure ? traces.getStateTrace(index) : traces.getFailedTrace(index, successor),
-            replay.lines,
-          ),
-          { phase: "next", ...replay.result, traceFailure },
-        );
+          traceError &&
+          getTraceFailure(
+            traceError,
+            captureOutput(() => {
+              try {
+                traces.findStepAction(index, state, successor.state, true);
+              } catch (failed) {
+                if (!(failed instanceof TlaEvaluationError)) throw failed;
+              }
+            }).lines,
+          );
+        const replay = is174
+          ? captureOutput(() => replayNext(index))
+          : replayFailedNext(index, liveSuccessors);
+        outcome = createFailureResult(error, appendTraceOutput(behavior, replay.lines), {
+          phase: "next",
+          ...replay.result,
+          traceFailure,
+        });
       }
       return outcome !== undefined;
     });
@@ -1632,7 +1689,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const replay = getReplayFailure(environment, (tracing) =>
         liveness?.addState(index, state, liveSuccessors, tracing),
       );
-      return createFailureResult(error, traces.getStateTrace(index), {
+      const behavior = traces.getStateTrace(index, { isFailed: true });
+      const replayed = captureOutput(() => replayNext(index));
+      return createFailureResult(error, appendTraceOutput(behavior, replayed.lines), {
         outDegrees: getFailureOutDegrees(),
         callStack: replay?.callStack.length ? replay.callStack : undefined,
         phase: "liveness",

@@ -11,9 +11,9 @@ import {
   UNEXPECTED_EXCEPTION,
 } from "./errors";
 import type { State } from "./evaluate";
-import { EXIT_STATUS, getMessageExitStatus, withLivenessExitCode } from "./exit-codes";
+import { EXIT_STATUS, getMessageExitStatus, withLivenessChecksExitCode } from "./exit-codes";
 import { getHashMapOrder } from "./java-hash";
-import { createLivenessChecker, type LivenessChecker } from "./liveness-checker";
+import { createLivenessChecks, type LivenessChecks, type SearchGraph } from "./liveness-checker";
 import { getIncompleteSuccessorMessage, prepareSearch, reportAssumptionViolation } from "./search";
 import { getActionLabel, toActionValue, type SpecAction } from "./spec-description";
 import { forEachInitialState, forEachSuccessor } from "./successors";
@@ -134,16 +134,18 @@ const getTrace = (last: TraceNode, order: number[]) => {
 const findTemporalViolation = (
   trace: TraceNode[],
   getFingerprint: (state: Value[]) => bigint,
-  createChecker: (successors: number[][], states: Value[][]) => LivenessChecker | undefined,
+  checks: LivenessChecks,
 ) => {
   const fingerprints = trace.map((node) => getFingerprint(node.state));
   const indices = new Map<bigint, number>();
   const states: Value[][] = [];
   const successors: number[][] = [];
+  const stateFingerprints: number[] = [];
   fingerprints.forEach((fingerprint, position) => {
     if (!indices.has(fingerprint)) {
       indices.set(fingerprint, states.length);
       states.push(trace[position].state);
+      stateFingerprints.push(Number(BigInt.asIntN(32, fingerprint)));
       successors.push([]);
     }
     if (position === 0) return;
@@ -153,34 +155,38 @@ const findTemporalViolation = (
       successors[source].push(target);
     }
   });
-  const checker = createChecker(successors, states);
-  if (!checker) return undefined;
-  checker.addInitialState(0, states[0]);
-  states.forEach((state, index) =>
-    checker.addState(
-      index,
-      state,
-      successors[index].map((successor) => ({ index: successor, state: states[successor] })),
-    ),
+  const stateSuccessors = successors.map((targets) =>
+    targets.map((target) => ({ index: target, state: states[target] })),
   );
-  const lasso = checker.findViolation();
-  if (!lasso) return undefined;
-  const getLength = (path: number[]) =>
-    path.filter((index, position) => position === 0 || index !== path[position - 1]).length;
-  const path = [...lasso.prefix, ...lasso.cycle];
-  const length = getLength(path);
-  const cyclePosition = getLength(path.slice(0, lasso.prefix.length + 1));
-  const isStuttering =
-    fingerprints[length - 1] === getFingerprint(states[path[lasso.prefix.length]]);
-  return {
-    length,
-    isStuttering,
-    loopStart: isStuttering ? length - 1 : cyclePosition - 1,
-    properties: checker.getViolatedProperties(
-      trace.slice(0, length).map((node) => node.state),
-      cyclePosition - 1,
-    ),
+  const search: SearchGraph<Value[]> = {
+    getFingerprint: (successor) => stateFingerprints[successor.index],
+    forEachActionSuccessors: (index, _state, onSuccessors) => onSuccessors(stateSuccessors[index]),
   };
+  // TLC's LiveCheck1 checks the behavior against one solution after another, up to the first it violates.
+  for (let position = 0; position < checks.solutions.length; position++) {
+    const checker = checks.createChecker(search, [checks.solutions[position]]);
+    checker.addInitialState(0, states[0]);
+    states.forEach((state, index) => checker.addState(index, state, stateSuccessors[index]));
+    const lasso = checker.findViolation();
+    if (!lasso) continue;
+    const getLength = (path: number[]) =>
+      path.filter((index, position) => position === 0 || index !== path[position - 1]).length;
+    const path = [...lasso.prefix, ...lasso.cycle];
+    const length = getLength(path);
+    const cyclePosition = getLength(path.slice(0, lasso.prefix.length + 1));
+    const isStuttering =
+      fingerprints[length - 1] === getFingerprint(states[path[lasso.prefix.length]]);
+    return {
+      length,
+      isStuttering,
+      loopStart: isStuttering ? length - 1 : cyclePosition - 1,
+      properties: checker.getViolatedProperties(
+        trace.slice(0, length).map((node) => node.state),
+        cyclePosition - 1,
+      ),
+    };
+  }
+  return undefined;
 };
 
 const createScheduler = (
@@ -351,24 +357,12 @@ export const simulate = (options: SimulationOptions): number => {
     );
     return postcondition;
   };
-  const temporalProperties = search.properties.liveness;
-  const createTemporalChecker = (successors: number[][], states: Value[][]) =>
-    withLivenessExitCode(() =>
-      withUnexpectedException(() =>
-        createLivenessChecker(temporalProperties, search.spec.temporals, environment, {
-          getFingerprint: (successor) =>
-            Number(BigInt.asIntN(32, runtime.getFingerprint(successor.state))),
-          forEachActionSuccessors: (index, _state, onSuccessors) =>
-            onSuccessors(
-              successors[index].map((successor) => ({
-                index: successor,
-                state: states[successor],
-              })),
-            ),
-        }),
-      ),
-    );
-  const branches = createTemporalChecker([], [])?.branches;
+  const livenessChecks = withLivenessChecksExitCode(() =>
+    withUnexpectedException(() =>
+      createLivenessChecks(search.properties.liveness, search.spec.temporals, environment),
+    ),
+  );
+  const branches = livenessChecks?.solutions.length;
   if (branches) options.onProgress?.({ kind: "liveness-prepared", branches });
   const assumptionStatus = reportAssumptionViolation(
     specification.assumptions,
@@ -458,6 +452,7 @@ export const simulate = (options: SimulationOptions): number => {
     undefined,
     false,
   );
+  const generatedNodes: TraceNode[] = [];
   for (const state of generated) {
     if (!isComplete(state)) {
       reportMessage(
@@ -479,18 +474,7 @@ export const simulate = (options: SimulationOptions): number => {
         reportPostcondition(true);
         return EXIT_STATUS.safetyViolation;
       }
-      // Deviation from TLC: its simulator checks no implied init, tla-ts checks them after invariants.
-      const predicate = search.findFailedInitialPredicate(state);
-      if (predicate) {
-        const alias = toTraceSteps([node])[0].state;
-        reportMessage(
-          MESSAGE_CODE.propertyViolatedInitial,
-          `Property ${predicate.name} is violated by the initial state:\n${formatState(alias)}`,
-        );
-        runtime.counterExample = getInitialCounterExample(node);
-        reportPostcondition(true);
-        return EXIT_STATUS.livenessViolation;
-      }
+      generatedNodes.push(node);
       if (search.satisfiesConstraints(state)) {
         search.trackStatePossible(state);
         initialStates.push(node);
@@ -512,6 +496,24 @@ export const simulate = (options: SimulationOptions): number => {
       "There is no state satisfying the initial state predicate and the state-constraint(s).",
     );
     return EXIT_STATUS.error;
+  }
+  // Deviation from TLC: its simulator checks no implied init, tla-ts checks them after TLC's own checks of the initial states.
+  for (const node of generatedNodes) {
+    try {
+      const predicate = search.findFailedInitialPredicate(node.state);
+      if (predicate) {
+        const alias = toTraceSteps([node])[0].state;
+        reportMessage(
+          MESSAGE_CODE.propertyViolatedInitial,
+          `Property ${predicate.name} is violated by the initial state:\n${formatState(alias)}`,
+        );
+        runtime.counterExample = getInitialCounterExample(node);
+        reportPostcondition(true);
+        return EXIT_STATUS.livenessViolation;
+      }
+    } catch (error) {
+      return reportInitialException(error, node.state);
+    }
   }
   reportMessage(
     MESSAGE_CODE.initGenerated1,
@@ -611,13 +613,13 @@ export const simulate = (options: SimulationOptions): number => {
     search.getReward,
   );
   const getTemporalViolation = (last: TraceNode): WorkerError | undefined => {
-    if (temporalProperties.length === 0) return undefined;
+    if (!livenessChecks) return undefined;
     const trace = getTrace(last, search.getTlcOrder());
     // TLC's LiveCheck#checkTrace fingerprints each state, which sorts its records.
     for (let position = 0; position < trace.length; position++) {
       trace[position].state.forEach(markNormalized);
     }
-    const found = findTemporalViolation(trace, runtime.getFingerprint, createTemporalChecker);
+    const found = findTemporalViolation(trace, runtime.getFingerprint, livenessChecks);
     if (!found) return undefined;
     const back = trace[found.length];
     const lasso = trace.slice(0, found.length);
@@ -649,6 +651,7 @@ export const simulate = (options: SimulationOptions): number => {
       let successors: TraceNode[] = [];
       for (let attempt = 0; attempt < nextActions.length; attempt++) {
         const result = getSuccessors(currentNode, nextActions[actionIndex]);
+        // Deviation from TLC: TLCSet("exit") interrupts TLC's SimulationWorker, whose BlockingQueue#put then drops a violation found in the same step.
         if (result.error) return result.error;
         successors = result.successors;
         if (successors.length > 0) break;

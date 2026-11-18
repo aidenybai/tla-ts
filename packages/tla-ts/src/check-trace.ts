@@ -6,7 +6,7 @@ import { getStateHash, isSameState } from "./fingerprints";
 import type { Search } from "./search";
 import { getActionLabel, type SpecAction } from "./spec-description";
 import { getSuccessors, type Successor } from "./successors";
-import { createModelValue, type Value } from "./values";
+import { createModelValue, getFingerprintError, isSameValue, type Value } from "./values";
 
 export interface Behavior {
   trace: TraceStep[];
@@ -17,6 +17,7 @@ interface TraceOptions {
   loopStart?: number;
   known?: number;
   incomplete?: State;
+  isFailed?: boolean;
 }
 
 interface RebuiltState {
@@ -54,6 +55,7 @@ interface TraceContext {
   tracedSteps: WeakMap<TraceStep, TracedStep>;
   captureOutput: <Result>(rebuild: () => Result) => { result: Result; lines: OutputLine[] };
   getInitialStates: () => Value[][];
+  getUncoveredInitialStates: () => Value[][];
   findSuccessorAction: (
     state: Value[],
     isMatch: (successor: Successor) => boolean,
@@ -101,15 +103,23 @@ export const createTraceBuilder = (context: TraceContext) => {
     current.rebuilt = { state, level };
     runtime.reseedRandom();
   };
+  // TLC's TLCStateMut#equals compares the variables in turn, and a lazy value fails as it reaches it.
+  const isEqualState = (state: Value[], successor: Value[]) =>
+    state.every((value, position) => {
+      const error = getFingerprintError(value);
+      if (error) throw error;
+      return isSameValue(value, successor[position]);
+    });
   const findStepAction = (index: number, previous: Value[], state: Value[], isHeld: boolean) => {
     const expanding = { ...current };
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
     rebuildFrom(previous, depths[index]);
-    const getKey = isHeld ? (values: Value[]) => values : getFingerprintState;
-    const key = getKey(state);
+    const key = isHeld ? state : getFingerprintState(state);
     try {
       return context.findSuccessorAction(previous, (successor) =>
-        isSameState(getKey(successor.state), key),
+        isHeld
+          ? isEqualState(key, successor.state)
+          : isSameState(getFingerprintState(successor.state), key),
       );
     } finally {
       Object.assign(current, expanding);
@@ -122,7 +132,13 @@ export const createTraceBuilder = (context: TraceContext) => {
   ): Behavior => {
     const alias = config.alias;
     const known = traceOptions.known ?? 1;
-    const initialOutput = steps.length > 1 ? captureOutput(context.getInitialStates).lines : [];
+    const loopStart = traceOptions.loopStart;
+    const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
+    const isRebuiltAgain = known > 0 && !is174 && !traceOptions.isFailed;
+    const initialOutput =
+      known === 0 || (steps.length > 1 && (rebuilt > 0 || isRebuiltAgain || is174))
+        ? captureOutput(context.getInitialStates).lines
+        : [];
     const stepActions = steps.map((step, position) =>
       position === 0 || step.action === "Stuttering"
         ? { result: undefined, lines: [] }
@@ -136,10 +152,7 @@ export const createTraceBuilder = (context: TraceContext) => {
           ),
     );
     const outputs = stepActions.map((step) => step.lines);
-    const loopStart = traceOptions.loopStart;
-    const rebuilt = is174 && loopStart !== undefined ? loopStart + 1 : steps.length - known;
     if (environment.coverage && steps.length > 1) {
-      const isRebuiltAgain = known > 0 && !is174;
       if (rebuilt > 0 && isRebuiltAgain) captureOutput(context.getInitialStates);
       if (isRebuiltAgain) {
         steps.slice(1).forEach((step, position) => {
@@ -181,7 +194,7 @@ export const createTraceBuilder = (context: TraceContext) => {
         }
         return traceStep;
       }),
-      traceOutput: known > 0 && !is174 ? [initialOutput, ...outputs].flat() : [],
+      traceOutput: isRebuiltAgain ? [initialOutput, ...outputs].flat() : [],
     };
   };
   const findTraceSuccessor = (state: Value[], isMatch: (successor: Successor) => boolean) =>
@@ -215,7 +228,7 @@ export const createTraceBuilder = (context: TraceContext) => {
   const getPathStates = (path: number[], nextFailure: string) => {
     const initial = captureOutput(() =>
       isReducing || isImpure(environment)
-        ? context.getInitialStates().find((state) => hasFingerprint(state, path[0]))
+        ? context.getUncoveredInitialStates().find((state) => hasFingerprint(state, path[0]))
         : states[path[0]],
     ).result;
     if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
@@ -232,7 +245,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     }
     return steps;
   };
-  const getTrace = (index: number, lastSuccessor?: Successor, incomplete?: State) => {
+  const getTrace = (index: number, lastSuccessor?: Successor, traceOptions: TraceOptions = {}) => {
     const path: number[] = [];
     for (let position = index; position !== -1; position = context.parents[position]) {
       path.unshift(position);
@@ -244,22 +257,26 @@ export const createTraceBuilder = (context: TraceContext) => {
             state: states[position],
             action: context.actions[position],
           }));
-    if (!lastSuccessor) return toTrace(steps, path, { incomplete });
+    if (!lastSuccessor) return toTrace(steps, path, traceOptions);
     const action = isReducing
       ? findTraceSuccessor(states[index], (successor) =>
           isSameState(successor.state, lastSuccessor.state),
         )?.action
       : lastSuccessor.action;
-    return toTrace([...steps, { state: lastSuccessor.state, action }], path, { known: 2 });
+    return toTrace([...steps, { state: lastSuccessor.state, action }], path, {
+      ...traceOptions,
+      known: 2,
+    });
   };
   // TLCTrace#printTrace applies the alias to every state but an initial one it prints without a successor.
-  const getStateTrace = (index: number, incomplete?: State): Behavior => {
-    if (context.parents[index] !== -1) return getTrace(index, undefined, incomplete);
-    const traceOutput = is174 ? [] : captureOutput(context.getInitialStates).lines;
+  const getStateTrace = (index: number, traceOptions: TraceOptions = {}): Behavior => {
+    if (context.parents[index] !== -1) return getTrace(index, undefined, traceOptions);
+    const traceOutput =
+      is174 || traceOptions.isFailed ? [] : captureOutput(context.getInitialStates).lines;
     const state = states[index];
-    if (incomplete !== undefined) {
+    if (traceOptions.incomplete !== undefined) {
       return {
-        trace: toTrace([{ state, action: undefined }], [index], { incomplete }).trace,
+        trace: toTrace([{ state, action: undefined }], [index], traceOptions).trace,
         traceOutput,
       };
     }
@@ -290,9 +307,6 @@ export const createTraceBuilder = (context: TraceContext) => {
     context.tracedSteps.set(traceStep, { state, action });
     return traceStep;
   };
-  const getFailedTrace = (index: number, successor: Successor): Behavior => ({
-    trace: getTrace(index, successor).trace,
-  });
   const getPathSteps = (path: number[]) => getPathStates(path, NEXT_RECOVERY_FAILURE);
   return {
     toTrace,
@@ -301,7 +315,6 @@ export const createTraceBuilder = (context: TraceContext) => {
     getTrace,
     getStateTrace,
     getIncompleteStep,
-    getFailedTrace,
     getPathSteps,
   };
 };

@@ -139,6 +139,7 @@ export const getSymmetryGroup = (
       `The set${isPlural ? "s" : ""} ${names.join(", and ")} ${isPlural ? "have" : "has"} been defined to be a symmetry set but contain${isPlural ? "" : "s"} less than two elements.`,
     );
   };
+  // Deviation from TLC: MVPerms#permutationSubgroup sizes a util.Set one below the number of permutations, which throws for fewer than two.
   if (permutedSets.length >= elements.length) {
     warnSmallSets(permutedSets);
     return undefined;

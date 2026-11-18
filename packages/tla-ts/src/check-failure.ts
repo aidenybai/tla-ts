@@ -7,7 +7,8 @@ import {
   type FingerprintFailure,
 } from "./evaluate";
 import { EXIT_STATUS, getExitCode, getMessageExitStatus } from "./exit-codes";
-import { getCodedMessage, type FailureMessage } from "./tlc/messages";
+import type { TraceFailure } from "./check";
+import { getCodedMessage } from "./tlc/messages";
 import { getFingerprintError, getHeldValues, markFingerprinted, type Value } from "./values";
 
 export interface ReplayFailure {
@@ -24,7 +25,7 @@ export interface FailureOptions {
   callStack?: Expression[];
   fingerprint?: FingerprintFailure;
   replayError?: TlaEvaluationError;
-  traceFailure?: FailureMessage;
+  traceFailure?: TraceFailure;
 }
 
 const getInitialExitCode = (error: TlaEvaluationError) => {
@@ -42,6 +43,9 @@ const getReplayExitCode = (error: TlaEvaluationError): number => {
   return error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.specEvaluationFailure;
 };
 
+const getCodeExitCode = (error: TlaEvaluationError) =>
+  getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error);
+
 export const getFailureExitCode = (
   error: TlaEvaluationError,
   failureOptions: FailureOptions,
@@ -53,12 +57,11 @@ export const getFailureExitCode = (
       if (isReplayed) return EXIT_STATUS.specEvaluationFailure;
       return is174 ? EXIT_STATUS.success : getInitialExitCode(error);
     case "behavior-graph":
-      return (
-        getExitCode(error) ?? (error instanceof TlaModuleError ? error.exitCode : EXIT_STATUS.error)
-      );
+      return getCodeExitCode(error);
     case "liveness":
       return error instanceof TlaModuleError ? error.exitCode : getErrorExitCode(error);
     default:
+      if (!isReplayed && failureOptions.phase === "next" && !is174) return getCodeExitCode(error);
       if (!isReplayed) return getErrorExitCode(error);
       return failureOptions.fingerprint
         ? EXIT_STATUS.specEvaluationFailure

@@ -19,6 +19,20 @@ import { checkFixture, checkModule, checkSteps, FIXTURES } from "./check-harness
 
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 
+const getCoverageCounts = async (definitions: string, config: string) => {
+  const result = await check({
+    source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n${definitions}\n====`,
+    config,
+    coverage: 1,
+  });
+  return result.coverage?.relations.map((relation) => {
+    const counts = relation.expressions.map((expression) => expression.count).join(" ");
+    return relation.kind === "invariant" || relation.kind === "implied"
+      ? counts
+      : `${relation.distinct}:${relation.generated} ${counts}`;
+  });
+};
+
 describe("check matches TLC", () => {
   it("evaluates every assumption in the semantics fixture", async () => {
     const result = await checkFixture("semantics", "Semantics");
@@ -489,6 +503,64 @@ describe("check matches TLC", () => {
     expect(prints).toEqual(["<<{{}, 0..1, 2..3, 1..3}, TRUE, TRUE, FALSE, 1, TRUE>>"]);
   });
 
+  it("checks whether an interval is a subset of a set like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT m\nVARIABLE x\nASSUME PrintT(<<1..3 \\subseteq {1, 2}, 1..2 \\subseteq {0, 1, 2, 5}, 2..1 \\subseteq {}, 1..3 \\subseteq {1, 2, 3}, 3..4 \\subseteq {1, 2, 3}, 1..2 \\subseteq 0..5, 1..2 \\subseteq {m, 1, 2}, 1..3 \\subseteq {m, 1, 2}, 0..1 \\subseteq {m, 1, 2}>>)\nInit == x = 0\nNext == UNCHANGED x\n====",
+      config: "CONSTANT m = m\nINIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(["<<FALSE, TRUE, TRUE, TRUE, FALSE, TRUE, TRUE, FALSE, FALSE>>"]);
+  });
+
+  it("filters a set by a predicate that ignores the element like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME PrintT(<<{e \\in 1..2147483647 : 1..3 \\subseteq {1, 2}}, {e \\in 1..3 : 2 > 1}, {e \\in 1..3 : PrintT("p")}, {e \\in {} : 1}>>)\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"p"', '"p"', '"p"', "<<{}, {1, 2, 3}, {1, 2, 3}, {}>>"]);
+  });
+
+  it("filters a set by a predicate that calls an operator from outside it for every element like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nApply(F(_), v) == F(v)\nCall(F(_)) == {e \\in 1..3 : ~F("c")}\nPass(F(_)) == {e \\in 1..3 : ~Apply(F, "p")}\nInfix(_ \\prec _) == {e \\in 1..3 : ~(1 \\prec 2)}\nBin(a, b) == PrintT(<<a, b>>)\nASSUME PrintT(<<Call(PrintT), Pass(PrintT), Infix(Bin), LET P(a) == PrintT(a) IN {e \\in 1..3 : ~P("l")}>>)\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual([
+      '"c"',
+      '"c"',
+      '"c"',
+      '"p"',
+      '"p"',
+      '"p"',
+      "<<1, 2>>",
+      "<<1, 2>>",
+      "<<1, 2>>",
+      '"l"',
+      '"l"',
+      '"l"',
+      "<<{}, {}, {}, {}>>",
+    ]);
+  });
+
+  it("filters a set by a predicate that calls a constant substituted with PrintT for every element like TLC", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT G(_)\nVARIABLE x\nASSUME PrintT({e \\in 1..3 : ~G("g")})\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "CONSTANT G <- PrintT\nINIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(['"g"', '"g"', '"g"', "{}"]);
+  });
+
   it("bundles the Reals module, whose Real is not a set TLC can check", async () => {
     const result = await check({
       source:
@@ -530,6 +602,30 @@ describe("check matches TLC", () => {
       "[a |-> 1, b |-> TRUE]",
       "[a |-> 0, b |-> FALSE]",
       "[a |-> 1, b |-> FALSE]",
+    ]);
+  });
+
+  it("evaluates the VIEW only of a state the constraints keep in the model, as TLC fingerprints it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in 0..2\nNext == x < 3 /\\ x' = x + 1\nC == x < 2\nView == IF x < 2 THEN x ELSE <<x>>[5]\n====",
+      config: "INIT Init\nNEXT Next\nCONSTRAINT C\nVIEW View",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      5,
+      2,
+    ]);
+  });
+
+  it("prints the records of an initial state outside the model as written, as TLC doesn't fingerprint it", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nRecord == [a |-> 0, b |-> 0]\nInit == x = [b |-> TRUE, a |-> 1]\nNext == UNCHANGED x\nC == x.a > 5\nInv == x.a = 0\n====",
+      config: "INIT Init\nNEXT Next\nCONSTRAINT C\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => formatValue(step.state.x))).toEqual([
+      "[b |-> TRUE, a |-> 1]",
     ]);
   });
 
@@ -959,6 +1055,20 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    ["no permutation", "{}", 2],
+    ["one permutation it names by a definition", "Swap", 1],
+  ])(
+    "checks a symmetry of %s, where TLC throws an IllegalArgumentException",
+    async (_title, symmetry, distinctStates) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSwap == {(a :> b @@ b :> a)}\nSym == ${symmetry}\n====`,
+        config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", distinctStates]);
+    },
+  );
+
   it("rejects substituting a constant with a state-level definition", async () => {
     await expect(checkModule("CONSTANT C\nFoo == x", "CONSTANT C <- Foo")).rejects.toThrow(
       TlaConfigError,
@@ -1258,6 +1368,172 @@ ASSUME TLCFP(a) = -887695703
         ?.expressions.map((expression) => [expression.location, expression.count]),
     ).toEqual([["line 5, col 8 to line 5, col 9 of module M", 1]]);
   });
+
+  it("counts the coverage of an action under ENABLED in an invariant", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, z\nInit == x \\in BOOLEAN /\\ z = 0\nA1 == (~x => z = 1) /\\ x' \\in BOOLEAN /\\ UNCHANGED z\nA2 == z < 2 /\\ z' = z + 1 /\\ UNCHANGED x\nNext == A1 \\/ A2\nInv == ENABLED A1 \\/ z < 5\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      coverage: 1,
+    });
+    expect(
+      result.coverage?.relations
+        .find((relation) => relation.kind === "invariant")
+        ?.expressions.map((expression) => [
+          `${"|".repeat(expression.depth)}${expression.location}`,
+          expression.count,
+        ]),
+    ).toEqual([
+      ["line 8, col 8 to line 8, col 26 of module M", 6],
+      ["|line 8, col 8 to line 8, col 17 of module M", 6],
+      ["||line 5, col 8 to line 5, col 9 of module M", 6],
+      ["||line 5, col 14 to line 5, col 18 of module M", 3],
+      ["||line 5, col 24 to line 5, col 37 of module M", 0],
+      ["|||line 5, col 31 to line 5, col 37 of module M", 4],
+      ["||line 5, col 42 to line 5, col 52 of module M", 4],
+      ["|line 8, col 22 to line 8, col 26 of module M", 2],
+    ]);
+  });
+
+  it.each([
+    [
+      "a next-state failure",
+      "Init == x = 0\nNext == x < 3 /\\ x' = <<1>>[x + 1]",
+      "INIT Init\nNEXT Next",
+      ["3:3 3", "1:3 3 5 3 5"],
+    ],
+    [
+      "an initial-state failure",
+      "Init == x \\in 0..1 /\\ <<1>>[x + 1] = 1\nNext == UNCHANGED x",
+      "INIT Init\nNEXT Next",
+      ["2:2 2 4", "0:0 0"],
+    ],
+    [
+      "an initial-state failure after states that hold the invariant",
+      "Init == x \\in 0..2 /\\ <<1, 2>>[x + 1] > 0\nNext == UNCHANGED x\nInv == x >= 0",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ["4:4 4 2 6", "0:0 0", "4"],
+    ],
+    [
+      "an invariant that fails in an initial state",
+      "Init == x \\in 0..2\nNext == UNCHANGED x\nInv == <<1, 2>>[x + 1] > 0",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ["6:6 6 2", "0:0 0", "6"],
+    ],
+  ])("counts the coverage of TLC's replay of %s", async (_name, definitions, config, expected) => {
+    expect(await getCoverageCounts(definitions, config)).toEqual(expected);
+  });
+
+  it("rebuilds the initial state of a counterexample that stutters there, as TLC's LiveWorker does", async () => {
+    const config = "SPECIFICATION Spec\nPROPERTY P\nCHECK_DEADLOCK FALSE";
+    const definitions =
+      "A0 == 1 \\in x /\\ x' = x \\cup {1}\nA1 == x = {} /\\ x' = x\nNext == A0 \\/ A1\nSpec == Init /\\ [][Next]_x\nP == <>(ENABLED A0)";
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nInit == x = {} /\\ PrintT("i")\n${definitions}\n====`,
+      config,
+    });
+    expect(result.violation?.trace[0].output).toEqual(['"i"']);
+    expect(await getCoverageCounts(`Init == x = {}\n${definitions}`, config)).toEqual([
+      "2:2 2",
+      "0:0 1 0",
+      "0:1 2 1 1 1",
+    ]);
+  });
+
+  it("replays the next-state relation after a liveness check fails to evaluate, as TLC does", async () => {
+    const config = "INIT Init\nNEXT Next\nPROPERTY P";
+    const property = "P == <>((CHOOSE n \\in {1, 2} : n > x) = 1)";
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 4 /\\ PrintT(<<"n", x>>)\n${property}\n====`,
+      config,
+    });
+    expect(result.failure?.traceOutput).toEqual(['<<"n", 1>>']);
+    expect(
+      await getCoverageCounts(`Init == x = 0\nNext == x' = (x + 1) % 4\n${property}`, config),
+    ).toEqual(["2:2 2", "2:4 4"]);
+  });
+
+  it.each([
+    [
+      "as TLC prints the trace",
+      "VARIABLE y\nInit == x = 0 /\\ y = 0\nNext == x' = x + 1 /\\ (x < 1 => y' = y)",
+      ["2:2 2", "1:4 3 4 1 4 2"],
+    ],
+    [
+      "as another branch of its action fails to print the trace",
+      "VARIABLE y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 /\\ (x = 0 \\/ <<x>>[2] = 0)",
+      ["1:1 1", "0:1 0 3 2 1"],
+    ],
+  ])("counts the coverage of an incomplete successor %s", async (_name, definitions, expected) => {
+    expect(await getCoverageCounts(definitions, "INIT Init\nNEXT Next")).toEqual(expected);
+  });
+
+  it.each([
+    [
+      "an invariant violation",
+      "VARIABLE y\nInit == x = 0 /\\ y \\in 0..1\nNext == x < 3 /\\ x' = x + 1 /\\ UNCHANGED y\nInv == x < 2\nView == <<x, y>>",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+      ["6:6 6 3", "3:7 6 7 6 7 6", "5"],
+    ],
+    [
+      "a liveness counterexample",
+      "VARIABLE y\nvars == <<x, y>>\nInit == x = 0 /\\ y \\in 0..1\nNext == x' = (x + 1) % 3 /\\ UNCHANGED y\nSpec == Init /\\ [][Next]_vars /\\ WF_vars(Next)\nP == <>(x = 5)\nView == <<x, y>>",
+      "SPECIFICATION Spec\nPROPERTY P\nVIEW View",
+      ["4:4 4 2", "4:9 9 9"],
+    ],
+  ])(
+    "counts the coverage of the trace of %s under a VIEW once per rebuild",
+    async (_name, definitions, config, expected) => {
+      expect(await getCoverageCounts(definitions, config)).toEqual(expected);
+    },
+  );
+
+  it("counts the coverage of the step TLC fails to rebuild as it can't fingerprint the successor", async () => {
+    expect(
+      await getCoverageCounts(
+        "Init == x = 0\nNext == x' = IF x = 1 THEN [k \\in SUBSET {1} |-> 1 \\div 0] ELSE x + 1",
+        "INIT Init\nNEXT Next",
+      ),
+    ).toEqual(["2:2 2", "1:5 4 5 5 3 2 3 2"]);
+  });
+
+  it.each([
+    [
+      "an invariant",
+      "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == <<1, 2>>[x + 1] > 0",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      ["2:2 2", "2:5 4 5 4 5", "3"],
+    ],
+    [
+      "an action property",
+      "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nP == [][<<1, 2>>[x' + 1] > 0]_x",
+      "SPECIFICATION Spec\nPROPERTY P",
+      ["2:2 2", "2:5 4 5 4 5", "3"],
+    ],
+    [
+      "a constraint",
+      "Init == x = 0\nNext == x < 3 /\\ x' = x + 1\nC == <<1, 2>>[x + 1] > 0\nInv == x >= 0",
+      "INIT Init\nNEXT Next\nCONSTRAINT C\nINVARIANT Inv",
+      ["2:2 2", "1:5 4 5 4 5", "2", "2:2 4"],
+    ],
+    [
+      "the next-state relation without a deadlock check",
+      "Init == x = 0\nNext == x < 3 /\\ x' = <<1>>[x + 1]",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      ["2:2 2", "1:2 2 4 2 4"],
+    ],
+    [
+      "the next-state relation of an initial state without a deadlock check",
+      "Init == x \\in 1..2\nNext == x' = <<1>>[x + 1]",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      ["2:2 2 1", "0:0 0 2"],
+    ],
+  ])(
+    "does not rebuild the trace again for the coverage after %s fails to evaluate",
+    async (_name, definitions, config, expected) => {
+      expect(await getCoverageCounts(definitions, config)).toEqual(expected);
+    },
+  );
 
   it.each([
     [
@@ -1730,10 +2006,18 @@ describe("initial predicate and next-state relation match TLC", () => {
 });
 
 describe("check without code generation from strings", () => {
-  it("checks a spec like it does with code generation", async () => {
+  it.each([
+    [
+      "a spec",
+      "VARIABLE present\nInit == present = FALSE\nNext == UNCHANGED present\nInv == ~present \\/ present",
+    ],
+    [
+      "a set filter whose predicate ignores the element",
+      "EXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == UNCHANGED x\nInv == {e \\in 1..2147483647 : 1..3 \\subseteq {1, 2}} = {} /\\ {e \\in 1..3 : x = 0} = 1..3",
+    ],
+  ])("checks %s like it does with code generation", async (_title, body) => {
     const options = {
-      source:
-        "---- MODULE M ----\nVARIABLE present\nInit == present = FALSE\nNext == UNCHANGED present\nInv == ~present \\/ present\n====",
+      source: `---- MODULE M ----\n${body}\n====`,
       config: "INIT Init\nNEXT Next\nINVARIANT Inv",
     };
     const script = `const tlaTs = await import(${JSON.stringify(pathToFileURL(DIST).href)});

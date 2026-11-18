@@ -1204,7 +1204,9 @@ export const isEnabled = (expression: Expression, context: Context): boolean => 
     );
   }
   const environment = context.environment;
-  if (environment.callStack) return replayEnabled(expression, context.scope, state, environment);
+  if (environment.callStack || (environment.coverage && environment.coverage.current !== -1)) {
+    return replayEnabled(expression, context.scope, state, environment);
+  }
   const run: Run = {
     environment,
     isInit: false,

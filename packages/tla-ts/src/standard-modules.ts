@@ -125,6 +125,43 @@ const combineReducible = (
   return createEnumeratedSet(union);
 };
 
+const isIntervalInSortedSet = (interval: IntervalValue, set: SetValue) => {
+  const elements = set.elements;
+  let low = 0;
+  let high = elements.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    const probe = elements[middle];
+    if (typeof probe !== "number") return undefined;
+    if (probe < interval.low) low = middle + 1;
+    else high = middle;
+  }
+  for (let element = interval.low; element <= interval.high; element++, low++) {
+    if (low === elements.length) return false;
+    const probe = elements[low];
+    if (probe !== element) return typeof probe === "number" ? false : undefined;
+  }
+  return true;
+};
+
+const isIntervalSubset = (left: IntervalValue, right: Value) => {
+  const isWithin =
+    typeof right === "object" &&
+    right.kind === "Interval" &&
+    right.low <= left.low &&
+    right.high >= left.high;
+  if (isWithin) return true;
+  const isContained =
+    typeof right === "object" && right.kind === "Set"
+      ? isIntervalInSortedSet(left, right)
+      : undefined;
+  if (isContained !== undefined) return isContained;
+  for (let element = left.low; element <= left.high; element++) {
+    if (!isElementOf(element, right)) return false;
+  }
+  return true;
+};
+
 const defineShortCircuit = (
   name: string,
   compute: (left: boolean, right: () => boolean) => boolean,
@@ -159,6 +196,7 @@ export const CORE_OPERATORS: Builtin[] = [
     (args) => !isElementOf(getValue(args, 0, "\\notin"), getValue(args, 1, "\\notin")),
   ),
   defineBinary("\\subseteq", (left, right) => {
+    if (typeof left === "object" && left.kind === "Interval") return isIntervalSubset(left, right);
     if (!isSetValue(left)) {
       throw new TlaEvaluationError(`\\subseteq expects a set but received ${formatValue(left)}`);
     }
@@ -169,18 +207,6 @@ export const CORE_OPERATORS: Builtin[] = [
       right.kind === "Subset" &&
       isEnumerable(left.base);
     if (isPowerSets) return isSubsetOf(toFiniteSet(left.base).elements, right.base);
-    if (typeof left === "object" && left.kind === "Interval") {
-      const isWithin =
-        typeof right === "object" &&
-        right.kind === "Interval" &&
-        right.low <= left.low &&
-        right.high >= left.high;
-      if (isWithin) return true;
-      for (let element = left.low; element <= left.high; element++) {
-        if (!isElementOf(element, right)) return false;
-      }
-      return true;
-    }
     return !someStreamedElement(left, (element) => !isElementOf(element, right));
   }),
   ...SET_OPERATORS.map((operator) =>
@@ -315,11 +341,10 @@ const createArithmeticOperators = (module: string) => {
       }
       return ((left % right) + right) % right;
     }),
-    defineOperator("..", 2, (args) => {
-      const low = getValue(args, 0, "..");
+    defineBinary("..", (low, high) => {
       // TLC's MethodHandle casts the last argument first.
-      const high = getJavaInteger(getValue(args, 1, ".."), dotDotSignature);
-      return { kind: "Interval", low: getJavaInteger(low, dotDotSignature), high };
+      const highNumber = getJavaInteger(high, dotDotSignature);
+      return { kind: "Interval", low: getJavaInteger(low, dotDotSignature), high: highNumber };
     }),
   ];
 };

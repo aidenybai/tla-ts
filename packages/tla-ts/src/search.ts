@@ -1070,6 +1070,12 @@ export const createSearch = (
   );
   const coveredActionConstraints = getCoveredChecks("constraint", actionConstraints);
   const coveredConstraints = getCoveredChecks("constraint", namedConstraints);
+  const coveredConstraintChecks = new Map(
+    coveredConstraints.map((check) => [check.expression, check]),
+  );
+  const constraintPredicates = [
+    ...new Map(constraints.map((constraint) => [constraint.predicate, constraint])).values(),
+  ];
   const coveredInitialPredicates = getCoveredChecks("implied", properties.initialPredicates, false);
   const coveredActionProperties = getCoveredChecks(
     "implied",
@@ -1090,6 +1096,14 @@ export const createSearch = (
       return undefined;
     }
   };
+  const holdsReplayed = (
+    covered: CoveredCheck | undefined,
+    expression: Expression,
+    context: Context,
+  ) =>
+    coverage && covered
+      ? runAtCoverageNode(coverage, covered.node, () => holdsLikeTlc(covered.expression, context))
+      : holdsLikeTlc(expression, context);
   const satisfiesCovered = (checks: CoveredCheck[], state: Value[], next?: Value[]) => {
     if (!coverage) return undefined;
     for (const check of checks) {
@@ -1376,43 +1390,62 @@ export const createSearch = (
       }
     },
     checkReplayedInitialState: (state, tracing, addFingerprint, onViolated) => {
-      const holdsIn = (expression: Expression, scope: Scope | undefined) =>
-        holdsLikeTlc(expression, getContext(tracing, state, undefined, scope));
-      if (constraints.every((constraint) => holdsIn(constraint.predicate, constraint.scope))) {
-        addFingerprint();
-      }
+      const holdsIn = (
+        covered: CoveredCheck | undefined,
+        expression: Expression,
+        scope: Scope | undefined,
+      ) => holdsReplayed(covered, expression, getContext(tracing, state, undefined, scope));
+      const isInModel = constraintPredicates.every((constraint) =>
+        holdsIn(
+          coveredConstraintChecks.get(constraint.predicate),
+          constraint.predicate,
+          constraint.scope,
+        ),
+      );
+      if (isInModel) addFingerprint();
       for (const invariant of invariantPredicates) {
-        if (holdsIn(invariant.predicate, invariant.scope)) continue;
+        const covered = coveredInvariantChecks.get(invariant.predicate);
+        if (holdsIn(covered, invariant.predicate, invariant.scope)) continue;
         onViolated({ status: "invariant-violation", name: invariant.name });
       }
       const predicate = properties.initialPredicates.find(
-        (check) => !holdsIn(check.expression, check.scope),
+        (check, index) => !holdsIn(coveredInitialPredicates[index], check.expression, check.scope),
       );
       if (predicate) onViolated({ status: "liveness-violation", name: predicate.name });
     },
     checkReplayedSuccessor: (state, next, tracing, addFingerprint) => {
       const isInModel =
-        constraints.every((constraint) =>
-          holdsLikeTlc(
+        constraintPredicates.every((constraint) =>
+          holdsReplayed(
+            coveredConstraintChecks.get(constraint.predicate),
             constraint.predicate,
             getContext(tracing, next, undefined, constraint.scope),
           ),
         ) &&
-        actionConstraints.every((constraint) =>
-          holdsLikeTlc(constraint.expression, getContext(tracing, state, next, constraint.scope)),
+        actionConstraints.every((constraint, index) =>
+          holdsReplayed(
+            coveredActionConstraints[index],
+            constraint.expression,
+            getContext(tracing, state, next, constraint.scope),
+          ),
         );
       // TLC checks the invariants of a successor it has not seen, even outside the model.
       const isUnseen = isInModel ? addFingerprint() : true;
       return (
         (!isUnseen ||
           invariantPredicates.every((invariant) =>
-            holdsLikeTlc(
+            holdsReplayed(
+              coveredInvariantChecks.get(invariant.predicate),
               invariant.predicate,
               getContext(tracing, next, undefined, invariant.scope),
             ),
           )) &&
-        actionProperties.every((property) =>
-          holdsLikeTlc(property.box, getContext(tracing, state, next, property.scope)),
+        actionProperties.every((property, index) =>
+          holdsReplayed(
+            coveredActionProperties[index],
+            property.box,
+            getContext(tracing, state, next, property.scope),
+          ),
         )
       );
     },

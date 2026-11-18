@@ -61,7 +61,7 @@ interface Replay {
   isEnabled: boolean;
   current: Value[] | undefined;
   onState: (state: Value[]) => void;
-  onIncomplete: ((state: State) => void) | undefined;
+  onIncomplete: ((state: State) => boolean) | undefined;
 }
 
 const withFrame = <Result>(replay: Replay, expression: Expression, run: () => Result): Result => {
@@ -216,8 +216,7 @@ const proceedItems = (
 ): boolean => {
   if (items === undefined) {
     if (isComplete(partial)) return addState(replay, partial, node);
-    replay.onIncomplete?.(partial);
-    return false;
+    return replay.onIncomplete?.(partial) ?? false;
   }
   if (isComplete(partial) && isAssignedShortcut(replay)) {
     return proceedAssigned(replay, items, partial, node);
@@ -715,6 +714,7 @@ const visitUnchanged = (
     if (index !== undefined) {
       const value = replay.current?.[index];
       if (value === undefined) return false;
+      if (replay.isEnabled && replay.coverage) countCoverage(replay.coverage, node);
       const assigned = partial[index];
       if (assigned !== undefined && !isEqualLikeTlc(assigned, value)) {
         warnChangedUnchanged(replay.environment, index, expression);
@@ -779,11 +779,12 @@ const createReplay = (
   kind: "init" | "next" | "enabled",
   current: Value[] | undefined,
   onState: (state: Value[]) => void,
-  onIncomplete?: (state: State) => void,
+  onIncomplete?: (state: State) => boolean,
 ): Replay => ({
   environment,
   callStack: environment.callStack,
-  coverage: environment.coverage,
+  coverage:
+    kind === "enabled" && environment.coverage?.current === -1 ? undefined : environment.coverage,
   isInit: kind === "init",
   isEnabled: kind === "enabled",
   current,
@@ -802,15 +803,16 @@ export const replayEnabled = (
   const found = () => {
     throw ENABLED_FOUND;
   };
+  const node = environment.coverage?.current ?? -1;
   const replay = createReplay(environment, "enabled", state, found, found);
   const callStack = replay.callStack;
   const depth = callStack?.expressions.length ?? 0;
   try {
     if (expression.kind === "AngleAction" && expression.location === expression.action.location) {
-      const changed = createItem("Changed", expression.subscript, scope, -1, undefined);
-      visit(replay, expression.action, changed, scope, getEmptyState(environment), -1);
+      const changed = createItem("Changed", expression.subscript, scope, node, undefined);
+      visit(replay, expression.action, changed, scope, getEmptyState(environment), node);
     } else {
-      visit(replay, expression, undefined, scope, getEmptyState(environment), -1);
+      visit(replay, expression, undefined, scope, getEmptyState(environment), node);
     }
     return false;
   } catch (error) {
@@ -827,7 +829,7 @@ export const replayInitialStates = (
   inits: (ReplayAction & { node?: number })[],
   environment: Environment,
   onState: (state: Value[]) => void,
-  onIncomplete?: (state: State) => void,
+  onIncomplete?: (state: State) => boolean,
 ) => {
   const [first, ...others] = inits;
   if (first === undefined) return;
@@ -839,16 +841,21 @@ export const replayInitialStates = (
   visit(replay, first.expression, rest, first.scope, getEmptyState(environment), first.node ?? -1);
 };
 
-export const replaySuccessors = <Action extends ReplayAction>(
+export const replaySuccessors = <Action extends ReplayAction & { node?: number }>(
   actions: Action[],
   state: Value[],
   environment: Environment,
   onState: (state: Value[], action: Action) => void,
 ) => {
   if (actions.some((action) => LITERAL_KINDS.has(action.expression.kind))) return;
+  const coverage = environment.coverage;
   actions.forEach((action) => {
     const successors: Value[][] = [];
-    walkSuccessors(action, -1, state, environment, (next) => successors.push(next));
+    const node = action.node ?? -1;
+    walkSuccessors(action, node, state, environment, (next) => {
+      if (coverage && node !== -1) coverage.primary[node]++;
+      successors.push(next);
+    });
     successors.forEach((successor) => onState(successor, action));
   });
 };
@@ -859,7 +866,7 @@ export const walkSuccessors = (
   state: Value[],
   environment: Environment,
   onState: (state: Value[]) => void,
-  onIncomplete?: (state: State) => void,
+  onIncomplete?: (state: State) => boolean,
 ) => {
   const replay = createReplay(environment, "next", state, onState, onIncomplete);
   visit(replay, action.expression, undefined, action.scope, getEmptyState(environment), node);

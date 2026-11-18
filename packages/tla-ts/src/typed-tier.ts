@@ -28,6 +28,7 @@ import {
   findGlobalName,
   getDefinition,
   getStartupValue,
+  isUniformPredicate,
   type Environment,
   type Scope,
 } from "./evaluate";
@@ -3406,13 +3407,16 @@ const compileValue = (program: Program, expression: Expression, frame: Frame): C
         compileValue(program, expression.predicate, { ...frame, scope: bounds.scope }),
       );
       const result = getName(program, "r");
+      const stop = isUniformPredicate(expression, program.environment)
+        ? ` else return ${result};`
+        : "";
       const type: SetType = { kind: "Set", element: loop.element };
       return {
         type,
         emit: () =>
           isMask(type, program.plains)
-            ? `(() => { let ${result} = 0; ${bounds.getHeaders()} { if (${predicate.emit()}) ${result} |= H.bit(${loop.name}); } return ${result}; })()`
-            : `(() => { const ${result} = []; ${bounds.getHeaders()} { if (${predicate.emit()}) ${result}.push(${loop.name}); } return ${result}; })()`,
+            ? `(() => { let ${result} = 0; ${bounds.getHeaders()} { if (${predicate.emit()}) ${result} |= H.bit(${loop.name});${stop} } return ${result}; })()`
+            : `(() => { const ${result} = []; ${bounds.getHeaders()} { if (${predicate.emit()}) ${result}.push(${loop.name});${stop} } return ${result}; })()`,
       };
     }
     case "SetMap": {

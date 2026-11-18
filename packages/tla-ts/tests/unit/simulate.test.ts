@@ -36,6 +36,12 @@ it("sorts the records of the initial states, which TLC's simulator normalizes", 
   ]);
 });
 
+it('reports a violation in the step that sets TLCSet("exit"), which TLC\'s simulator drops', () => {
+  const body =
+    'Init == p = 0 /\\ q = 0\nNext == TLCSet("exit", TLCGet("level") > 3) /\\ p\' = p + 1 /\\ q\' = p + 1\nInv == q < 4';
+  expect(getPrintedRecords(body, SAFETY_CONFIG)).toEqual([["0", "1", "2", "3", "4"]]);
+});
+
 it("sorts the records that TLC compares with the previous state as it drops stuttering steps", () => {
   const body =
     "Init == p = 0 /\\ q = [b |-> 0, a |-> 0]\nNext == p' = p /\\ q' = [b |-> q.b + 1, a |-> 6]\nInv == q.b < 2";
@@ -82,6 +88,90 @@ it("reports a behavior that stutters at its initial state, which TLC's LiveCheck
     },
   });
   expect([status, violations]).toEqual([13, [{ states: ["0"], loopStart: 0 }]]);
+});
+
+it.each([
+  [
+    "an invariant that a later initial state violates",
+    "INVARIANT Inv",
+    12,
+    2107,
+    "Invariant Inv is violated by the initial state:\nx = 1\n",
+  ],
+  [
+    "that the constraints keep no initial state",
+    "CONSTRAINT Constraint",
+    255,
+    2256,
+    "There is no state satisfying the initial state predicate and the state-constraint(s).",
+  ],
+])(
+  "reports %s before an implied initial predicate, which TLC's simulator never checks",
+  (_title, config, status, code, message) => {
+    const messages: [number, string][] = [];
+    const result = simulate({
+      source:
+        "---- MODULE M ----\nVARIABLE x\nInit == x \\in {0, 1}\nNext == x' = x\nInv == x = 0\nConstraint == x = 2\nProp == x = 1\n====",
+      config: `INIT Init\nNEXT Next\nPROPERTY Prop\n${config}`,
+      seed: 4n,
+      traceDepth: 2,
+      traceCount: 1n,
+      aril: 0n,
+      isGenerating: false,
+      scheduler: "random",
+      onSimulation: (output) => {
+        if (output.kind === "message" && output.isError) {
+          messages.push([output.code, output.message]);
+        }
+      },
+    });
+    expect([result, messages]).toEqual([status, [[code, message]]]);
+  },
+);
+
+it("reports an implied initial predicate that an initial state violates, which TLC's simulator never checks", () => {
+  const messages: [number, string][] = [];
+  const result = simulate({
+    source:
+      "---- MODULE M ----\nVARIABLE x\nInit == x \\in {0, 1}\nNext == x' = x\nProp == x = 1\n====",
+    config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+    seed: 4n,
+    traceDepth: 2,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "message" && output.isError) {
+        messages.push([output.code, output.message]);
+      }
+    },
+  });
+  expect([result, messages]).toEqual([
+    13,
+    [[2108, "Property Prop is violated by the initial state:\nx = 0\n"]],
+  ]);
+});
+
+it("checks a behavior against one solution after another up to the first it violates, as TLC's LiveCheck1 does", () => {
+  const printed: string[] = [];
+  const status = simulate({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(<<"a", x>>) /\\ x < 1 /\\ x\' = x + 1\nSpec == Init /\\ [][A]_x /\\ WF_x(A)\nProp0 == <>(x = 2)\nProp1 == <>(x = 3)\n====',
+    config: "SPECIFICATION Spec\nPROPERTY Prop0\nPROPERTY Prop1\nCHECK_DEADLOCK FALSE",
+    seed: 4n,
+    traceDepth: 3,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: () => {},
+    onPrint: (text) => printed.push(text),
+  });
+  expect([status, printed]).toEqual([
+    13,
+    ['<<"a", 0>>', '<<"a", 1>>', '<<"a", 0>>', '<<"a", 0>>', '<<"a", 0>>', '<<"a", 1>>'],
+  ]);
 });
 
 const getCounterExample = (body: string, config: string) => {

@@ -1,4 +1,4 @@
-import type { LivenessChecker } from "./liveness-checker";
+import type { LivenessChecker, LivenessChecks } from "./liveness-checker";
 
 export const EXIT_STATUS = {
   success: 0,
@@ -70,23 +70,36 @@ const withErrorExitCode = <Result>(run: () => Result) => {
   }
 };
 
+const withCheckerExitCode = (checker: LivenessChecker): LivenessChecker => ({
+  branches: checker.branches,
+  solutions: checker.solutions,
+  addInitialState: (index, state, tracing) =>
+    withErrorExitCode(() => checker.addInitialState(index, state, tracing)),
+  addState: (index, state, successors, tracing) =>
+    withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
+  storeState: checker.storeState,
+  getStateCounts: checker.getStateCounts,
+  findViolation: () => withErrorExitCode(() => checker.findViolation()),
+  getViolatedProperties: (path, cycleStart) =>
+    withErrorExitCode(() => checker.getViolatedProperties(path, cycleStart)),
+});
+
 export const withLivenessExitCode = (
   create: () => LivenessChecker | undefined,
 ): LivenessChecker | undefined => {
   const checker = withErrorExitCode(create);
+  return checker && withCheckerExitCode(checker);
+};
+
+export const withLivenessChecksExitCode = (
+  create: () => LivenessChecks | undefined,
+): LivenessChecks | undefined => {
+  const checks = withErrorExitCode(create);
   return (
-    checker && {
-      branches: checker.branches,
-      solutions: checker.solutions,
-      addInitialState: (index, state, tracing) =>
-        withErrorExitCode(() => checker.addInitialState(index, state, tracing)),
-      addState: (index, state, successors, tracing) =>
-        withErrorExitCode(() => checker.addState(index, state, successors, tracing)),
-      storeState: checker.storeState,
-      getStateCounts: checker.getStateCounts,
-      findViolation: () => withErrorExitCode(() => checker.findViolation()),
-      getViolatedProperties: (path, cycleStart) =>
-        withErrorExitCode(() => checker.getViolatedProperties(path, cycleStart)),
+    checks && {
+      solutions: checks.solutions,
+      createChecker: (search, solutions) =>
+        withCheckerExitCode(checks.createChecker(search, solutions)),
     }
   );
 };
