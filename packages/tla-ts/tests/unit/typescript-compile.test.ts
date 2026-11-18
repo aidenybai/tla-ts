@@ -52753,14 +52753,6 @@ describe("BigInts", () => {
           .failure?.message,
       ).toContain(`seen ${expected}`);
     });
-
-    it("stops past the end of a table that isn't final", async () => {
-      const source =
-        'const zoned = Temporal.ZonedDateTime.from("2040-01-01T00:00[America/Los_Angeles]");';
-      expect((await checkModel(source)).failure?.message).toContain(
-        "tla-ts can't tell the offsets of the time zone America/Los_Angeles after 2037",
-      );
-    });
   });
 
   describe("makes hold the types of JavaScript's for-in keys and of a property's array", () => {
@@ -54204,6 +54196,42 @@ describe("BigInts", () => {
     });
   });
 
+  describe("runs Temporal in a named time zone past its table through its tzdata rule", () => {
+    const getSource = (expected: string) => `
+      const zoned = Temporal.ZonedDateTime.from("2100-01-15T12:00[Antarctica/South_Pole]");
+      const seen = zoned.offset + " " + String(zoned.getTimeZoneTransition("next"));
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "+13:00 2100-04-04T02:00:00+12:00[Antarctica/South_Pole]";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the northern hemisphere's daylight time", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("+13:00 ", "+12:00 ")))).failure?.message,
+      ).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("spreads a value that is a string or an array by what it holds as it runs", () => {
+    const getSource = (expected: string) => `
+      const mixed = ["ab", ["c", "d"]];
+      const seen: string[] = [];
+      for (const item of mixed) seen.push([...item].join("+"));
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("a+b,c+d"))).failure).toBeUndefined();
+    });
+
+    it("rejects a string spread as one element", async () => {
+      expect((await checkModel(getSource("ab,c+d"))).failure?.message).toContain("seen a+b,c+d");
+    });
+  });
+
   describe("makes a zoned date-time whose date is past the limits where its instant isn't", () => {
     const getSource = (expected: string) => `
       let seen: string;
@@ -55086,6 +55114,59 @@ describe("BigInts", () => {
       const source = getSource("TypeError|TypeError|TypeError|ok|TypeError|TypeError|,7,0");
       expect((await check(compile(source, path))).failure?.message).toContain(
         "result TypeError|SyntaxError|TypeError|ok|TypeError|TypeError|,7,0",
+      );
+    });
+  });
+
+  describe("converts a value that is a string or an array to a string where it holds a string", () => {
+    const getSource = (expected: string) => `
+      const tests = [[["c"], "ab"]];
+      const seen: string[] = [];
+      for (const [args, label] of tests) seen.push(\`\${label}!\`);
+      if (seen.join() !== "${expected}") throw new Error("seen " + seen.join());
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("ab!"))).failure).toBeUndefined();
+    });
+
+    it("rejects another text", async () => {
+      expect((await checkModel(getSource("c!"))).failure?.message).toContain("seen ab!");
+    });
+
+    it("stops where it holds an array", async () => {
+      const source = `
+        const tests = [[["c"], "ab"]];
+        const seen: string[] = [];
+        for (const [args, label] of tests) seen.push(\`\${args}\`);
+      `;
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't convert an array to a string here",
+      );
+    });
+  });
+
+  describe("formats a Temporal object in English through the patterns that Node's output follows", () => {
+    const getSource = (expected: string) => `
+      const date = new Temporal.PlainDate(2024, 12, 26);
+      const seen = [date.toLocaleString(), date.toLocaleString("en", { weekday: "long" })].join(" ");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("12/26/2024 Thursday"))).failure).toBeUndefined();
+    });
+
+    it("rejects another order of the fields", async () => {
+      expect((await checkModel(getSource("26/12/2024 Thursday"))).failure?.message).toContain(
+        "seen 12/26/2024 Thursday",
+      );
+    });
+
+    it("stops in another locale", async () => {
+      const source = 'const text = new Temporal.PlainDate(2024, 12, 26).toLocaleString("de");';
+      expect((await checkModel(source)).failure?.message).toContain(
+        "tla-ts can't format a date in a locale other than English",
       );
     });
   });
