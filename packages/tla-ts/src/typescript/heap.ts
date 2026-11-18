@@ -497,7 +497,16 @@ const getKeyName = (key: ts.PropertyName, context: Context) => {
 // initializes gives, and which is empty where it's an argument, an element, an operand of in or of
 // a comma, or what an assignment to anything else assigns.
 export const getAnonymousName = (node: ts.ArrowFunction | HeapClass, context: Context) => {
-  const named = ts.findAncestor(node.parent, (parent) => !ts.isParenthesizedExpression(parent));
+  // A cast runs nothing, so the name passes through it as through parentheses.
+  const named = ts.findAncestor(
+    node.parent,
+    (parent) =>
+      !ts.isParenthesizedExpression(parent) &&
+      !ts.isAsExpression(parent) &&
+      !ts.isTypeAssertionExpression(parent) &&
+      !ts.isSatisfiesExpression(parent) &&
+      !ts.isNonNullExpression(parent),
+  );
   if (named === undefined) return undefined;
   if (ts.isVariableDeclaration(named)) {
     return ts.isIdentifier(named.name) ? named.name.text : undefined;

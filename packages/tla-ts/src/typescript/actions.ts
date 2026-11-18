@@ -11916,53 +11916,71 @@ const translateConstruction = (
     translateElements(fields, instance, path, context, frame, (defined) =>
       ts.isClassLike(constructor)
         ? giveInstance(defined)
-        : inlineBody(
-            expression,
-            constructor,
-            getConstruction(expression, context)?.arguments ?? [],
-            {
-              value: instance,
-              method: constructor,
-              newTarget:
-                newTarget === undefined
-                  ? undefined
-                  : translateExpression(newTarget, defined.scope, context),
-            },
-            deferred === undefined
-              ? defined
-              : { ...defined, unboundThis: new Set([...(defined.unboundThis ?? []), deferred]) },
-            context,
-            bodyFrame,
-            (after, value) => {
-              if (value === undefined || (isEscaping && isUnbound(after))) {
-                return giveInstance(after);
-              }
-              const name = context.names.getFresh("returned");
-              const returned = identifier(name);
-              context.prelude.add("Null");
-              const type = useJavaScript("TypeOf", [returned], context);
-              return letIn(
-                [define(name, [], value)],
-                ifThenElse(
-                  apply("=", [returned, getUndefined(context)]),
-                  giveInstance(after),
-                  ifThenElse(
-                    apply("\\/", [
-                      apply("/\\", [
-                        apply("=", [type, string("object")]),
-                        apply("#", [returned, identifier("Null")]),
-                      ]),
-                      apply("=", [type, string("function")]),
-                    ]),
-                    continueWith(leave(after), returned),
-                    isDerived
-                      ? throwTypeError(leave(after), expression, context, frame)
-                      : continueWith(after, instance),
-                  ),
-                ),
+        : // A function that a call makes each time it runs runs its body in the environment of that call.
+          (() => {
+            const runBody = (start: Path, startFrame: Frame, leaveBody: (after: Path) => Path) =>
+              inlineBody(
+                expression,
+                constructor,
+                getConstruction(expression, context)?.arguments ?? [],
+                {
+                  value: instance,
+                  method: constructor,
+                  newTarget:
+                    newTarget === undefined
+                      ? undefined
+                      : translateExpression(newTarget, start.scope, context),
+                },
+                deferred === undefined
+                  ? start
+                  : { ...start, unboundThis: new Set([...(start.unboundThis ?? []), deferred]) },
+                context,
+                startFrame,
+                (reached, value) => {
+                  const after = leaveBody(reached);
+                  if (value === undefined || (isEscaping && isUnbound(after))) {
+                    return giveInstance(after);
+                  }
+                  const name = context.names.getFresh("returned");
+                  const returned = identifier(name);
+                  context.prelude.add("Null");
+                  const type = useJavaScript("TypeOf", [returned], context);
+                  return letIn(
+                    [define(name, [], value)],
+                    ifThenElse(
+                      apply("=", [returned, getUndefined(context)]),
+                      giveInstance(after),
+                      ifThenElse(
+                        apply("\\/", [
+                          apply("/\\", [
+                            apply("=", [type, string("object")]),
+                            apply("#", [returned, identifier("Null")]),
+                          ]),
+                          apply("=", [type, string("function")]),
+                        ]),
+                        continueWith(leave(after), returned),
+                        isDerived
+                          ? throwTypeError(leave(after), expression, context, frame)
+                          : continueWith(after, instance),
+                      ),
+                    ),
+                  );
+                },
               );
-            },
-          ),
+            const callee = getConstruction(expression, context)?.callee;
+            return ts.isFunctionExpression(constructor) &&
+              isClosure(constructor, context) &&
+              callee !== undefined
+              ? enterClosure(
+                  constructor,
+                  translateExpression(callee, defined.scope, context),
+                  defined,
+                  context,
+                  bodyFrame,
+                  (inner, innerFrame, leaveClosure) => runBody(inner, innerFrame, leaveClosure),
+                )
+              : runBody(defined, bodyFrame, (after) => after);
+          })(),
     );
   // A derived class without a constructor calls super with its arguments, as each such class that
   // it extends does.

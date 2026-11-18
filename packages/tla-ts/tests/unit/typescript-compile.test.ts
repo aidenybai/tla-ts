@@ -54155,8 +54155,8 @@ describe("BigInts", () => {
     });
   });
 
-  it("stops at a function that a new constructs, made in code that may run more than once", () => {
-    const source = `
+  it("constructs a function that a new constructs, made in code that may run more than once", async () => {
+    const getSource = (expected: string) => `
       interface Primitive {
         readonly value: unknown;
       }
@@ -54172,10 +54172,14 @@ describe("BigInts", () => {
       };
       export const succeed = makeExit("Success");
       export const fail = makeExit("Failure");
-      if (succeed(1).value !== "Success1") throw new Error("value " + succeed(1).value);
+      const made = succeed(1);
+      const failed = fail(2);
+      const seen = [made.value, failed.value].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
     `;
-    expect(() => compile(source)).toThrow(
-      "tla-ts can't make a function that a new constructs, or whose property the script writes, in code that may run more than once",
+    expect((await checkModel(getSource("Success1,Failure2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("Success1,Success2"))).failure?.message).toContain(
+      "seen Success1,Failure2",
     );
   });
 
@@ -56484,6 +56488,53 @@ describe("BigInts", () => {
       expect((await check(compile(getSource("key,none,key"), path))).failure?.message).toContain(
         "seen key,none,warning",
       );
+    });
+  });
+
+  describe("constructs a function that a call makes each time it runs, with the prototype it holds", () => {
+    const getSource = (expected: string) => `
+      interface Made {
+        value: unknown;
+        readonly op: string;
+      }
+      const makeExit = (options: { op: string }) => {
+        const Proto = { op: options.op };
+        const ExitPrimitive = function (this: Made, value: unknown) {
+          this.value = value;
+        } as unknown as new (value: unknown) => Made;
+        ExitPrimitive.prototype = Proto;
+        return function (value: unknown) {
+          return new ExitPrimitive(value);
+        };
+      };
+      const succeed = makeExit({ op: "Success" });
+      const fail = makeExit({ op: "Failure" });
+      const first = succeed(1);
+      const second = fail("boom");
+      const third = succeed(2);
+      const seen = [
+        first.op,
+        String(first.value),
+        second.op,
+        String(second.value),
+        Object.getPrototypeOf(first) === Object.getPrototypeOf(third),
+        Object.getPrototypeOf(first) === Object.getPrototypeOf(second),
+        Object.hasOwn(first, "op"),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("Success,1,Failure,boom,true,false,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects one prototype for both calls", async () => {
+      expect(
+        (await checkModel(getSource("Success,1,Failure,boom,true,true,false"))).failure?.message,
+      ).toContain("seen Success,1,Failure,boom,true,false,false");
     });
   });
 });
