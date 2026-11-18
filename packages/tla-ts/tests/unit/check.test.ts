@@ -2105,6 +2105,22 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts a function a LET of the initial predicate defines at each reference, as TLC evaluates its LazyValue there", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Naturals, FiniteSets\nVARIABLE x\nInit == LET f[n \\in 0..2] == n + 1 IN x = Cardinality(DOMAIN f)\nNext == UNCHANGED x\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[0]).toEqual([
+      "line 4, col 39 to line 4, col 63 of module M: 1",
+      "|line 4, col 43 to line 4, col 63 of module M: 1",
+      "||line 4, col 55 to line 4, col 62 of module M: 1",
+      "|||line 4, col 62 to line 4, col 62 of module M: 1",
+      "||||line 4, col 13 to line 4, col 34 of module M: 1:3",
+      "|||||line 4, col 30 to line 4, col 34 of module M: 3",
+      "|||||line 4, col 21 to line 4, col 24 of module M: 1",
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",

@@ -1184,6 +1184,8 @@ const chainRecursiveOperatorsFirst = (
   return scope;
 };
 
+const NO_PARAMS: OperatorParam[] = [];
+
 export const bindDefinitions = (
   definitions: Definition[],
   context: Context,
@@ -1212,37 +1214,34 @@ export const bindDefinitions = (
       definition.kind === "Operator" && definition.params.length === 0 && !isRecursiveValueAtOrAfter
         ? nodes[index].parent
         : scope;
-    nodes[index].binding =
+    // A recursive function keeps one value, since its body applies that value as TLC's FcnLambdaValue applies itself.
+    const isReevaluated =
       definition.kind === "Function"
-        ? {
-            kind: "Thunk",
-            expression: getFunctionConstruction(definition),
-            scope,
-            state: context.state,
-            next: context.next,
-            cache: undefined,
-            isStreamed: false,
-          }
-        : definition.params.length > 0 || reevaluated?.impure.has(definition)
-          ? {
-              kind: "Operator",
-              operator: {
-                kind: "Closure",
-                name: definition.name,
-                params: definition.params,
-                body: definition.body,
-                scope: ownScope,
-              },
-            }
-          : {
-              kind: "Thunk",
-              expression: definition.body,
-              scope: ownScope,
-              state: context.state,
-              next: context.next,
-              cache: undefined,
-              isStreamed: reevaluated?.streamed.has(definition) ?? false,
-            };
+        ? !definition.isSelfReferential && reevaluated?.impure.has(definition)
+        : definition.params.length > 0 || reevaluated?.impure.has(definition);
+    const body =
+      definition.kind === "Function" ? getFunctionConstruction(definition) : definition.body;
+    nodes[index].binding = isReevaluated
+      ? {
+          kind: "Operator",
+          operator: {
+            kind: "Closure",
+            name: definition.name,
+            params: definition.kind === "Operator" ? definition.params : NO_PARAMS,
+            body,
+            scope: ownScope,
+          },
+        }
+      : {
+          kind: "Thunk",
+          expression: body,
+          scope: ownScope,
+          state: context.state,
+          next: context.next,
+          cache: undefined,
+          isStreamed:
+            definition.kind === "Operator" && (reevaluated?.streamed.has(definition) ?? false),
+        };
   }
   const coverage = context.environment.coverage;
   if (coverage && coverage.current !== -1) {
