@@ -1792,10 +1792,11 @@ const isScriptDeclared = (node: ts.Expression, context: Context) => {
 };
 
 export const isDeletedGlobal = (node: ts.Identifier, context: Context) =>
-  node.text === DELETED_GLOBAL && isScriptDeclared(node, context);
+  node.text === DELETED_GLOBAL &&
+  (isScriptDeclared(node, context) || isJavaScriptDeclared(node, context));
 
-// A with statement's stop in JavaScript, which declares it as a var that nothing assigns.
-const isJavaScriptStop = (node: ts.Identifier, context: Context) => {
+// A name that a rewrite declares in JavaScript, as a var that nothing assigns.
+const isJavaScriptDeclared = (node: ts.Identifier, context: Context) => {
   const declarations = getSymbol(node, context.checker)?.declarations ?? [];
   return (
     declarations.length > 0 &&
@@ -1815,7 +1816,7 @@ export const getWithStop = (node: ts.CallExpression, context: Context) => {
     node.expression.text === WITH_STOP &&
     reason !== undefined &&
     ts.isStringLiteral(reason) &&
-    (isScriptDeclared(node.expression, context) || isJavaScriptStop(node.expression, context))
+    (isScriptDeclared(node.expression, context) || isJavaScriptDeclared(node.expression, context))
     ? reason.text
     : undefined;
 };

@@ -55089,6 +55089,26 @@ describe("BigInts", () => {
       );
     });
 
+    it.each([
+      ["false,true,undefined,1", "false,true,undefined,1"],
+      ["true,true,undefined,1", "false,true,undefined,1"],
+    ])("deletes a script's names, expecting %s", async (expected, seen) => {
+      const result = await check(
+        compileScript(`
+          var box = { seen: "" };
+          var kept = 1;
+          made = 2;
+          var first = delete kept;
+          var second = delete made;
+          box.seen = [first, second, typeof made, kept].join();
+          if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+        `),
+      );
+      expect(result.failure?.message).toEqual(
+        expected === seen ? undefined : expect.stringContaining(`seen ${seen}`),
+      );
+    });
+
     it("stops at a script's write to a global that only a write to this declares", () => {
       expect(() =>
         compileScript(`
