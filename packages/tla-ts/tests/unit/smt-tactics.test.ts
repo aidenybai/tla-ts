@@ -1135,4 +1135,26 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
       ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
     ]);
   });
+
+  it("keeps the formulas of QF_FD as asserted and flattens them after each simplifier", () => {
+    expect(
+      [255, 256].map((rlimit) =>
+        run([
+          "(set-logic QF_FD)",
+          "(declare-const x Int)",
+          "(declare-const y Int)",
+          "(assert (<= 0 x 5))",
+          "(assert (<= 1 y 6))",
+          "(assert (= (+ x y) 7))",
+          "(assert (distinct x y))",
+          `(set-option :rlimit ${rlimit})`,
+          "(check-sat)",
+          "(get-info :reason-unknown)",
+        ]),
+      ),
+    ).toEqual([
+      ["unknown", '(:reason-unknown "sat.canceled")'],
+      ["unknown", '(:reason-unknown "max. resource limit exceeded")'],
+    ]);
+  });
 });

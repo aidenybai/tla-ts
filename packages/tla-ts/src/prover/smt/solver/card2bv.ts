@@ -17,7 +17,7 @@ import {
 import type { Goal } from "./goal";
 import { Rational } from "./rational";
 import { Rewriter, type RewriterOptions } from "./rewriter";
-import { runSimplifier } from "./dependent-expr-state";
+import { type DependentExprState, runSimplifier } from "./dependent-expr-state";
 import { RewriterTpl } from "./rewriter-tpl";
 
 interface Bound {
@@ -99,8 +99,9 @@ class CardPbRewriter extends RewriterTpl {
   }
 }
 
-export const card2bv = (manager: AstManager, goal: Goal, options: RewriterOptions) =>
-  runSimplifier(goal, false, (state) => {
+// The finite-domain solver runs the simplifier itself, without the goal of the tactic.
+export const createCard2Bv =
+  (manager: AstManager, options: RewriterOptions) => (state: DependentExprState) => {
     const rewriter = new Rewriter(manager, options);
     const pbRewriter = new CardPbRewriter(manager);
     let simplified = -1;
@@ -121,4 +122,7 @@ export const card2bv = (manager: AstManager, goal: Goal, options: RewriterOption
         pbRewriter.release();
       },
     };
-  });
+  };
+
+export const card2bv = (manager: AstManager, goal: Goal, options: RewriterOptions) =>
+  runSimplifier(goal, false, createCard2Bv(manager, options));

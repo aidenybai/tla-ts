@@ -7,15 +7,17 @@ import {
   OP_AND,
   OP_EQ,
   OP_IMPLIES,
+  OP_OR,
   OP_UBV2INT,
   OP_ULEQ,
   SORT_BOOL,
   SORT_INT,
 } from "./ast";
+import { mkNot } from "./ast-util";
 import { BoundManager } from "./bound-manager";
 import { mkBvApp } from "./bv-decl-plugin";
 import { Bv2IntContext, Bv2IntRewriter } from "./bv2int-rewriter";
-import { card2bv } from "./card2bv";
+import { createCard2Bv } from "./card2bv";
 import { DependentExprState } from "./dependent-expr-state";
 import { runEnum2Bv } from "./dt2bv-tactic";
 import { release } from "./expr-ref";
@@ -121,28 +123,82 @@ const runBoundedInt2Bv = (manager: AstManager, goal: Goal) => {
   }
 };
 
+// The formulas of simplifier_solver. Unlike a goal, it keeps a formula as it comes, and
+// flatten_suffix moves the conjuncts of a formula to the end after each simplifier.
+class SolverFormulas extends Goal {
+  override assert(form: number) {
+    if (this.manager.isFalse(form)) this.isInconsistent = true;
+    this.forms.push(form);
+  }
+
+  override update(index: number, form: number) {
+    if (this.manager.isFalse(form)) this.isInconsistent = true;
+    this.forms.set(index, form);
+  }
+
+  flattenSuffix() {
+    const manager = this.manager;
+    const forms = this.forms;
+    const seen = new Set<number>();
+    const pinned = new RefVector(manager);
+    let kept = 0;
+    for (let index = 0; index < forms.size; index++) {
+      const form = forms.items[index];
+      pinned.push(form);
+      if (seen.has(form)) continue;
+      seen.add(form);
+      if (manager.isTrue(form)) continue;
+      if (manager.getOp(form) === OP_AND) {
+        for (const arg of manager.getArgs(form)) this.assert(arg);
+        continue;
+      }
+      if (manager.isNot(form) && manager.getOp(manager.getArg(form, 0)) === OP_OR) {
+        for (const arg of manager.getArgs(manager.getArg(form, 0)))
+          this.assert(mkNot(manager, arg));
+        continue;
+      }
+      if (index !== kept) forms.set(kept, form);
+      kept++;
+    }
+    while (forms.size > kept) forms.pop();
+    pinned.reset();
+  }
+}
+
 // simplifier_solver runs mk_fd_simplifier, a then_simplifier, as the one simplifier of its own
 // then_simplifier. Each checks the limit before a simplifier and stops at one that the limit
 // stopped, and simplifier_solver::flush then leaves the formulas out of the solver.
 const runFdSimplifier = (manager: AstManager, forms: readonly number[]) => {
-  const fmls = new Goal(manager);
+  const fmls = new SolverFormulas(manager);
   for (const form of forms) fmls.assert(form);
   const state = new DependentExprState(manager, fmls);
   const simplifiers = [
     () => runBoundedInt2Bv(manager, fmls),
-    () => card2bv(manager, fmls, getRewriterOptions(manager, new Map())),
+    () => {
+      const simplifier = createCard2Bv(manager, getRewriterOptions(manager, new Map()))(state);
+      try {
+        simplifier.reduce();
+      } finally {
+        simplifier.release();
+      }
+    },
     () => runEnum2Bv(manager, fmls, (visit) => state.forEachIndex(visit)),
   ];
-  if (!fmls.isInconsistent && manager.limit.inc())
-    for (const simplify of simplifiers) {
-      if (fmls.isInconsistent || !manager.limit.inc()) break;
-      try {
-        simplify();
-      } catch (error) {
-        if (!(error instanceof SmtCanceledError)) throw error;
-        break;
+  try {
+    if (!fmls.isInconsistent && manager.limit.inc())
+      for (const simplify of simplifiers) {
+        if (fmls.isInconsistent || !manager.limit.inc()) break;
+        try {
+          simplify();
+        } catch (error) {
+          if (!(error instanceof SmtCanceledError)) throw error;
+          break;
+        }
+        fmls.flattenSuffix();
       }
-    }
+  } finally {
+    state.release();
+  }
   if (!manager.limit.inc()) fmls.reset();
   return fmls;
 };
@@ -204,7 +260,6 @@ export const getFdConsequences = (
   const solver = new IncSatSolver(manager, params);
   try {
     for (const form of fmls.forms.items) solver.assertExpr(form);
-    if (fmls.isInconsistent) solver.assertExpr(manager.falseExpr);
     const found = solver.getConsequences(asms1, queryVars);
     const coreReplace = new ExprSafeReplace(manager);
     asms1.forEach((assumption, index) => coreReplace.insert(assumption, assumptions[index]));
@@ -272,7 +327,7 @@ export const createFdTactic = (manager: AstManager, params: SatParams) => (goal:
   const solver = new IncSatSolver(manager, params, false);
   try {
     for (const form of fmls.forms.items) solver.assertExpr(form);
-    const result = fmls.isInconsistent ? L_FALSE : solver.check();
+    const result = solver.check();
     goal.reset();
     if (result === L_TRUE) {
       const model = solver.getModel();
@@ -303,7 +358,6 @@ export const checkFdSolver = (manager: AstManager, params: SatParams, forms: rea
   try {
     for (const form of fmls.forms.items) solver.assertExpr(form);
     const result = (() => {
-      if (fmls.isInconsistent) return L_FALSE;
       try {
         return solver.check();
       } catch (error) {
