@@ -70,6 +70,10 @@ export class ModelEvaluator extends RewriterTpl {
     this.rewriter.releaseResult = () => this.setLastResult(-1);
   }
 
+  getModelCompletion() {
+    return this.isModelCompletion;
+  }
+
   setModelCompletion(isModelCompletion: boolean) {
     if (this.isModelCompletion === isModelCompletion) return;
     this.reset();

@@ -434,6 +434,14 @@ export class ProtoModel {
     this.evaluator.reset();
   }
 
+  getModelCompletion() {
+    return this.evaluator.getModelCompletion();
+  }
+
+  setModelCompletion(isModelCompletion: boolean) {
+    this.evaluator.setModelCompletion(isModelCompletion);
+  }
+
   // model::unfold_as_array: the array an as-array denotes, from its function's interpretation.
   unfoldAsArray(expr: number) {
     const manager = this.manager;

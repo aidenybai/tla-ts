@@ -2000,4 +2000,34 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       ]),
     ).toEqual(["sat", "57", "unsat", "(s t v u)"]);
   });
+
+  it("frees the terms of get-value after it prints them, in their order, as parse_get_value does", () => {
+    expect(
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(set-logic QF_UFBV)",
+        "(declare-const v0 (_ BitVec 4))",
+        "(declare-const v1 (_ BitVec 8))",
+        "(declare-fun fb ((_ BitVec 4)) (_ BitVec 4))",
+        "(assert (=> (bvule (concat (_ bv2 3) #b1) v0) (bvsge ((_ repeat 1) v0) (bvneg v0))))",
+        "(check-sat)",
+        "(get-value ( (bvadd v1 #x11) (bvadd v1 #x10)))",
+        "(check-sat-using smt)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(((bvadd v1 #x11) #x11)",
+      " ((bvadd v1 #x10) #x10))",
+      "sat",
+      "(",
+      "  (define-fun v0 () (_ BitVec 4)",
+      "    #x1)",
+      "  (define-fun v1 () (_ BitVec 8)",
+      "    #x00)",
+      "  (define-fun fb ((x!0 (_ BitVec 4))) (_ BitVec 4)",
+      "    #x0)",
+      ")",
+    ]);
+  });
 });

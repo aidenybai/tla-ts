@@ -3567,6 +3567,12 @@ export const createSmtlibReader = (
     getFuncs: (name: string) => funcs.get(name) ?? [],
     hasDefinitions,
     parseTerm,
+    // The command's terms leave the expression stack, as parse_get_value shrinks it.
+    releaseTerms: () => {
+      protect(floating);
+      protect(unrooted);
+      releasePending();
+    },
     parseSort: (sexpr: SExpr, context: string) => parseSort(sexpr, context),
     parseFormula,
     parseAssertion,

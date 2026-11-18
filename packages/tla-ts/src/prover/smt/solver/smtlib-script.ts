@@ -1791,32 +1791,42 @@ export const runSmtlibScript = (
           );
         const manager = state.manager;
         const exprs = terms.items.map((item) => state.reader.parseTerm(item));
-        if (exprs.length === 0)
-          throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
-        const extra = list.items[2];
-        if (
-          extra?.kind === "keyword" &&
-          (extra.text === ":model-index" || extra.text === ":model_index")
-        )
-          throw new SmtUnsupportedError("the model index of get-value");
-        if (extra !== undefined)
-          throw new SmtParseError("invalid get-value command, ')' expected", extra);
-        const model = getModel(list);
-        pendingText += "(";
-        model.compact();
-        // Z3 prints each term as the script spells it, from the end of the term before.
-        const offsets = [
-          terms.offset + 1,
-          ...terms.items.map((item) => (item.kind === "list" ? item.end : item).endOffset),
-        ];
-        exprs.forEach((expr, index) => {
-          manager.incRef(expr);
-          const value = model.eval(expr, true);
-          pendingText += `${index > 0 ? "\n " : ""}(${text.slice(offsets[index], offsets[index + 1]).trim()} ${format(value)})`;
-          manager.decRef(value);
-          manager.decRef(expr);
-        });
-        print(")");
+        // parse_get_value keeps the terms on its expression stack until it has printed them, and
+        // then frees them in their order.
+        for (const expr of exprs) manager.incRef(expr);
+        try {
+          if (exprs.length === 0)
+            throw new SmtParseError("invalid get-value command, empty list of terms", terms.end);
+          const extra = list.items[2];
+          if (
+            extra?.kind === "keyword" &&
+            (extra.text === ":model-index" || extra.text === ":model_index")
+          )
+            throw new SmtUnsupportedError("the model index of get-value");
+          if (extra !== undefined)
+            throw new SmtParseError("invalid get-value command, ')' expected", extra);
+          const model = getModel(list);
+          pendingText += "(";
+          model.compact();
+          // Z3 prints each term as the script spells it, from the end of the term before.
+          const offsets = [
+            terms.offset + 1,
+            ...terms.items.map((item) => (item.kind === "list" ? item.end : item).endOffset),
+          ];
+          exprs.forEach((expr, index) => {
+            const isCompleting = model.getModelCompletion();
+            const value = model.eval(expr, true);
+            pendingText += `${index > 0 ? "\n " : ""}(${text.slice(offsets[index], offsets[index + 1]).trim()} ${format(value)})`;
+            manager.decRef(value);
+            // scoped_model_completion restores the completion once the value is gone, which
+            // resets the model's cache.
+            model.setModelCompletion(isCompleting);
+          });
+          print(")");
+        } finally {
+          state.reader.releaseTerms();
+          for (const expr of exprs) manager.decRef(expr);
+        }
       },
     ],
     [
@@ -1827,10 +1837,12 @@ export const runSmtlibScript = (
         const model = getModel(list);
         const assignments = state.reader.getConstantMacros().flatMap((macro) => {
           if (manager.sorts[macro.body] !== SORT_BOOL) return [];
+          const isCompleting = model.getModelCompletion();
           const value = model.eval(macro.body, true);
           const assignment = `(${getQuotedName(macro.name)} ${manager.isTrue(value)})`;
           const isDecided = manager.isTrue(value) || manager.isFalse(value);
           manager.decRef(value);
+          model.setModelCompletion(isCompleting);
           return isDecided ? [assignment] : [];
         });
         print(`(${assignments.join(" ")})`);
