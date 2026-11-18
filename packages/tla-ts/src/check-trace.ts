@@ -228,7 +228,6 @@ export const createTraceBuilder = (context: TraceContext) => {
     // TLC's Worker#doPostCondition evaluates the alias of each state again after it rebuilds the trace.
     const postconditionAliases = isRebuiltAgain && !traceFailure ? getAliases() : [];
     const loopPosition = loopStart ?? 0;
-    // TLC's LiveWorker and LiveCheck evaluate the alias of a state in the loop as they rebuild the next one.
     const prefixOutput =
       known === 0 && !is174
         ? [
@@ -338,7 +337,6 @@ export const createTraceBuilder = (context: TraceContext) => {
     const step = { action: undefined, label: undefined, state: toRecord(state) };
     const alias = config.alias;
     if (alias === undefined || traceOptions.isPrintedOnly) return { trace: [step], traceOutput };
-    // TLC's Worker#doPostCondition evaluates the alias of the state after it rebuilds it.
     const aliased = getAliasState(alias, state, state, 1, () => [state]);
     context.tracedSteps.set(step, { state: step.state, action: undefined, alias: aliased.result });
     return { trace: [step], traceOutput: [...traceOutput, ...aliased.lines] };

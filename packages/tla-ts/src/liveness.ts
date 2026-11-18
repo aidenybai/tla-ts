@@ -205,7 +205,6 @@ export const getLevel = (
       const operator = isLocallyResolved(expression)
         ? undefined
         : resolveGlobalOperator(expression.operator, environment);
-      // A recursive call binds a new argument each time, so a RECURSIVE operator counts every argument.
       if (
         isBound ||
         level === operatorLevel ||
@@ -372,7 +371,6 @@ export const bindLetDefinitions = (
   return bound;
 };
 
-// TLC asks the definition a call resolves to whether it is RECURSIVE, so a call through an operator argument counts.
 const isRecursiveClosure = (operator: Closure, environment: Environment) => {
   if (recursiveLetBodies.has(operator.body)) return true;
   const definition = getDefinition(getRootKey(operator.name, environment), environment);

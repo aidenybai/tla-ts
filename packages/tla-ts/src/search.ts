@@ -939,7 +939,6 @@ export const createCheckEnvironment = (
   return { order, specification };
 };
 
-/** Holds back what the spec prints and warns while it evaluates something whose output TLC prints elsewhere. */
 export const createOutputCapture = (onPrint: (text: string) => void) => {
   let capturedLines: OutputLine[] | undefined;
   return {

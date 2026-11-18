@@ -780,7 +780,7 @@ export const simulate = (options: SimulationOptions): number => {
         : { positions: trace.map((_node, index) => index), failure: undefined };
     output({
       kind: "behavior",
-      // TLC's Simulator evaluates the alias of each state right before it prints the state, and prints the error state alone as TLCState#toString does, without the alias.
+      // TLC prints the error state of an unbounded behavior alone, as TLCState#toString does, without the alias.
       trace: shown.positions.map((position) => {
         const captured = capture.captureOutput(
           () => toTraceSteps(trace, [position], !isLastStateOnly)[0],

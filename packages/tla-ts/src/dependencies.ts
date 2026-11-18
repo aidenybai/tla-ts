@@ -164,7 +164,6 @@ const collectLocalFacts = (
         }
         const builtin = environment.builtins.get(target);
         if (STREAMED_BUILTINS.has(target)) row[0] |= STREAMED;
-        // A module linked from its source, such as Randomization, keys its builtins by scope.
         if (builtin && RANDOM_BUILTINS.has(builtin.name)) row[0] |= RANDOM;
         if (target === "TLCEval") row[0] |= TLC_EVAL;
         if (!isOverridden && isImpureBuiltin(target, environment)) row[0] |= READS_IMPURE;

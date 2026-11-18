@@ -205,7 +205,6 @@ export const createTlcExtOperators = (
         getThunk(args, 1, "AssertError")();
       } catch (error) {
         if (!(error instanceof TlaEvaluationError)) throw error;
-        // TLC evaluates the message only once the expression fails, so it follows the failure in a call stack.
         return (
           formatNestedMessage(error.message, runtime.isTool) === getThunk(args, 0, "AssertError")()
         );
