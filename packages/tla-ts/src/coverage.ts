@@ -1,4 +1,5 @@
 import {
+  getFunctionConstruction,
   isLocallyResolved,
   type Bound,
   type Definition,
@@ -7,6 +8,7 @@ import {
   type SourceRange,
 } from "./ast";
 import { formatRange } from "./errors";
+import { SELECTION_NAME } from "./resolve";
 import type { Environment, Scope } from "./evaluate";
 import { getJavaHashCode } from "./java-hash";
 import { getTlcFingerprint } from "./tlc/fingerprint";
@@ -92,6 +94,8 @@ interface Resolved {
   scope: Local | undefined;
 }
 
+export const letDefinitions = new WeakMap<Scope, Definition>();
+
 const STANDARD_MODULES = new Set([
   "FiniteSets",
   "Sequences",
@@ -176,6 +180,10 @@ const findCoverageRelation = (coverage: Coverage, kind: CoverageKind, expression
     (relation) => relation.kind === kind && relation.expression === expression,
   )?.node;
 
+const getRelationRange = (expression: Expression) =>
+  expression.location.range ??
+  (expression.kind === "Let" ? expression.body.location.range : undefined);
+
 export const addCoverageRelation = (
   coverage: Coverage,
   kind: CoverageKind,
@@ -185,7 +193,7 @@ export const addCoverageRelation = (
 ) => {
   const shared = kind === "next" ? findCoverageRelation(coverage, kind, expression) : undefined;
   if (shared !== undefined) return shared;
-  const node = addNode(coverage, undefined, expression.location.range, -1, false);
+  const node = addNode(coverage, undefined, getRelationRange(expression), -1, false);
   coverage.relations.push({ kind, label, expression, scope, node });
   return node;
 };
@@ -206,9 +214,9 @@ export const getCoverageLabel = (
 ) => {
   const definition = name === undefined ? undefined : environment.definitions.get(name);
   const head = definition?.kind === "Operator" ? definition.head : undefined;
-  const range = expression.location.range;
+  const range = getRelationRange(expression);
   if (!definition || !head) return `Action ${range ? formatRange(range) : "Unknown location"}`;
-  if (isSameRange(definition.body.location.range, range) || !range) {
+  if (isSameRange(getRelationRange(definition.body), range) || !range) {
     return `${definition.name} ${formatRange(head)}`;
   }
   return `${definition.name} ${formatRange(head)} (${range.start.line} ${range.start.column} ${range.end.line} ${range.end.column})`;
@@ -254,6 +262,15 @@ const bindNames = (names: string[], locals: Local | undefined) =>
     (parent, name) => ({ name, definition: undefined, scope: undefined, parent }),
     locals,
   );
+
+const bindLocalDefinitions = (definitions: Definition[], locals: Local | undefined) => {
+  const inner = definitions.reduce<Local | undefined>(
+    (parent, definition) => ({ name: definition.name, definition, scope: undefined, parent }),
+    locals,
+  );
+  for (let local = inner; local !== locals && local; local = local.parent) local.scope = inner;
+  return inner;
+};
 
 const getBoundNames = (bounds: Bound[]) =>
   bounds.flatMap((bound) =>
@@ -324,10 +341,13 @@ export const buildCoverage = (
       definition.kind === "Function"
         ? getBoundNames(definition.bounds)
         : definition.params.map((param) => param.name);
-    walk(definition.body, bindNames(names, resolved.scope));
     if (definition.kind === "Function") {
-      getBoundSets(definition.bounds).forEach((set) => walk(set, resolved.scope));
-    }
+      const isLet = resolved.scope !== undefined;
+      enter(getFunctionConstruction(definition, isLet), definition.location.range, () => {
+        walk(definition.body, bindNames(names, resolved.scope));
+        getBoundSets(definition.bounds).forEach((set) => walk(set, resolved.scope));
+      });
+    } else walk(definition.body, bindNames(names, resolved.scope));
     walking.pop();
   };
 
@@ -403,22 +423,17 @@ export const buildCoverage = (
         walk(expression.body, bindNames(expression.params, locals));
         return;
       case "Selection":
-        walk(expression.expression, locals);
+        if (range === undefined) walk(expression.expression, locals);
+        else enter(expression, range, () => walk(expression.expression, locals));
         return;
       case "Let": {
-        const inner = expression.definitions.reduce<Local | undefined>(
-          (parent, definition) => ({ name: definition.name, definition, scope: undefined, parent }),
-          locals,
-        );
-        for (let local = inner; local !== locals && local; local = local.parent) {
-          local.scope = inner;
-        }
+        const inner = bindLocalDefinitions(expression.definitions, locals);
         expression.definitions.forEach((definition) => {
           if (definition.kind === "Operator") letBodies.set(definition.body, expression.body);
         });
-        getHashtableOrder(expression.definitions).forEach((definition) =>
-          walkDefinition({ definition, scope: inner }),
-        );
+        getHashtableOrder(expression.definitions).forEach((definition) => {
+          if (definition.name !== SELECTION_NAME) walkDefinition({ definition, scope: inner });
+        });
         walk(expression.body, inner);
         return;
       }
@@ -576,9 +591,18 @@ export const buildCoverage = (
     }
   };
 
+  const getScopeLocals = (scope: Scope | undefined) => {
+    const scoped: Definition[] = [];
+    for (let node = scope; node; node = node.parent) {
+      const definition = letDefinitions.get(node);
+      if (definition) scoped.unshift(definition);
+    }
+    return bindLocalDefinitions(scoped, undefined);
+  };
+
   coverage.relations.forEach((relation) => {
     stack.push(relation.node);
-    walk(relation.expression, undefined);
+    walk(relation.expression, getScopeLocals(relation.scope));
     stack.pop();
   });
 };
@@ -745,6 +769,30 @@ export const tagSubset = (coverage: Coverage, set: Value, subset: Value) => {
   const node =
     typeof set === "object" && set.kind === "Subset" ? coverage.values.get(set) : undefined;
   if (node !== undefined && typeof subset === "object") coverage.values.set(subset, node);
+};
+
+const RANDOMLY_INDEXED_KINDS = new Set<string>([
+  "Set",
+  "MixedSet",
+  "Interval",
+  "FunctionSet",
+  "RecordSet",
+  "ProductSet",
+]);
+
+// TLC's EnumerableValue#elements(Ordering.RANDOMIZED) draws indices, but a value class without its own k-out-of-n enumerator draws the whole set first, and SubsetValue converts itself to a SetEnumValue.
+export const chargeRandomOrder = (coverage: Coverage, set: Value, size: number, order: Value[]) => {
+  if (typeof set !== "object" || RANDOMLY_INDEXED_KINDS.has(set.kind)) return;
+  if (set.kind !== "Subset") {
+    const enumerator = createEnumerator(coverage, set, size, false);
+    for (let position = 0; position <= size; position++) enumerator.next();
+    return;
+  }
+  const node = coverage.values.get(set);
+  if (node !== undefined) coverage.secondary[node] += size;
+  for (let position = 0; position < order.length; position++) {
+    tagSubset(coverage, set, order[position]);
+  }
 };
 
 export const createChargedEnumerator = (

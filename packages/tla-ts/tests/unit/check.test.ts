@@ -1442,6 +1442,32 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it("rebuilds the behavior once more for the postcondition after printing it, as TLC's Worker#doPostCondition does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME TLCSet(1, 0)\nInit == x = 0\nA == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(TLCGet(1)) /\\ x' = 1\nNext == A\nInv == x = 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: () => {},
+    });
+    expect([
+      result.violation?.trace.map((step) => step.output ?? []),
+      result.violation?.traceOutput,
+    ]).toEqual([[[], ["2"]], ["3"]]);
+  });
+
+  it("rebuilds the step to a successor under a VIEW once, as TLC's TLCTrace#printTrace does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nASSUME TLCSet(1, 0)\nInit == x = 0\nA == TLCSet(1, TLCGet(1) + 1) /\\ PrintT(TLCGet(1)) /\\ x' = 1\nNext == A\nInv == x = 0\nView == x\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+      onPrint: () => {},
+    });
+    expect([
+      result.violation?.trace.map((step) => step.output ?? []),
+      result.violation?.traceOutput,
+    ]).toEqual([[[], ["2"]], ["3"]]);
+  });
+
   it("counts the coverage of an action under ENABLED in an invariant", async () => {
     const result = await check({
       source:
@@ -1964,6 +1990,75 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("charges each state's set to the expression that built it, as TLC's states keep their own values", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES x, n\nInit == x = {1, 2} /\\ n = 0\nNext == n < 3 /\\ \\A e \\in x : e > 0 /\\ x' = {1, 2} /\\ n' = n + 1\n====",
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    );
+    expect([
+      lines?.[0]?.[0],
+      lines?.[1]?.find((line) => line.includes("col 45 to line 5")),
+    ]).toEqual([
+      "line 4, col 9 to line 4, col 18 of module E: 1:3",
+      "|||line 5, col 45 to line 5, col 50 of module E: 6:6",
+    ]);
+  });
+
+  it("charges x' \\subseteq S for each element drawn from a subset it assigns, as TLC's Tool#getNextStates gives the SUBSET its cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = {}\nNext == x' \\subseteq {1, 2} /\\ \\A e \\in x' : e > 1\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 5, col 9 to line 5, col 27 of module E: 4:14",
+      "|line 5, col 22 to line 5, col 27 of module E: 2",
+      "line 5, col 32 to line 5, col 50 of module E: 8",
+      "|line 5, col 46 to line 5, col 50 of module E: 6",
+      "|line 5, col 41 to line 5, col 42 of module E: 8",
+    ]);
+  });
+
+  it("counts a LET definition that an action taken out of the LET refers to, as TLC's cost model follows the reference", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE E ----\nEXTENDS Naturals\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == \\/ x < 2 /\\ x' = x + 1 /\\ y' = y\n        \\/ LET D == \\E e \\in {0, 1} : x' = e IN D /\\ y' = y\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[2]).toEqual([
+      "line 6, col 39 to line 6, col 44 of module E: 6",
+      "line 6, col 30 to line 6, col 35 of module E: 3:9",
+      "line 6, col 54 to line 6, col 59 of module E: 6",
+    ]);
+  });
+
+  it("counts a function definition as a node over its body and domain, as SANY's $RecursiveFcnSpec and $NonRecursiveFcnSpec are in TLC's cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\ng[n \\in 0..x] == IF n = 0 THEN 0 ELSE g[n - 1]\nh[n \\in 0..x] == n + x\nL == LET f[n \\in 0..2] == IF n = 0 THEN 0 ELSE f[n - 1]\n         k[n \\in 0..2] == n + x\n     IN f[2] = 0 /\\ k[1] >= 0 /\\ g[x] = 0 /\\ h[0] = x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\nInv == L\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines?.[2]).toEqual([
+      "line 11, col 8 to line 11, col 8 of module M: 3",
+      "|line 7, col 10 to line 7, col 31 of module M: 3",
+      "|line 6, col 10 to line 6, col 55 of module M: 3",
+      "||line 6, col 27 to line 6, col 55 of module M: 9",
+      "|||line 6, col 30 to line 6, col 34 of module M: 9",
+      "|||line 6, col 48 to line 6, col 55 of module M: 6",
+      "||line 6, col 18 to line 6, col 21 of module M: 3",
+      "|line 8, col 9 to line 8, col 53 of module M: 3",
+      "||line 8, col 9 to line 8, col 41 of module M: 3",
+      "|||line 8, col 9 to line 8, col 29 of module M: 3",
+      "|||line 8, col 34 to line 8, col 41 of module M: 3",
+      "||||line 8, col 34 to line 8, col 37 of module M: 3",
+      "|||||line 8, col 34 to line 8, col 34 of module M: 3",
+      "||||||line 4, col 1 to line 4, col 46 of module M: 3",
+      "|||||||line 4, col 18 to line 4, col 46 of module M: 6",
+      "||||||||line 4, col 21 to line 4, col 25 of module M: 6",
+      "||||||||line 4, col 39 to line 4, col 46 of module M: 3",
+      "|||||||line 4, col 9 to line 4, col 12 of module M: 3",
+      "|||||line 8, col 36 to line 8, col 36 of module M: 3",
+      "||line 8, col 46 to line 8, col 53 of module M: 3",
+    ]);
+  });
+
   it.each([
     [
       "the invariants of an initial state",
@@ -2002,6 +2097,74 @@ ASSUME TLCFP(a) = -887695703
       expect(printed).toEqual(expected);
     },
   );
+
+  it("counts a selection in the initial predicate as a node of its own, as SANY's $Nop is in TLC's cost model", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE S ----\nEXTENDS Integers\nVARIABLE x, y\nSets == {1, 2, 3} \\cup {4}\nInit == x \\in Sets!<< /\\ y \\in Sets!1\nNext == UNCHANGED <<x, y>>\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[0]).toEqual([
+      "line 5, col 15 to line 5, col 21 of module S: 1",
+      "|line 4, col 9 to line 4, col 17 of module S: 1:4",
+      "line 5, col 26 to line 5, col 37 of module S: 9",
+      "|line 5, col 32 to line 5, col 37 of module S: 3",
+      "||line 4, col 9 to line 4, col 17 of module S: 3:12",
+    ]);
+  });
+
+  it("takes a selection in the next-state relation as an action of its own, as TLC's Tool#getActions does with SANY's $Nop", async () => {
+    const result = await check({
+      source:
+        "---- MODULE A ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nAct == \\/ x < 2 /\\ x' = x + 1\n       \\/ x = 2 /\\ x' = 0\nNext == Act!1 \\/ Act!2\n====",
+      config: "INIT Init\nNEXT Next",
+      coverage: 1,
+    });
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 4, col 1 to line 4, col 4 of module A",
+      "Next line 7, col 1 to line 7, col 4 of module A (7 9 7 13)",
+      "Next line 7, col 1 to line 7, col 4 of module A (7 18 7 22)",
+    ]);
+  });
+
+  it("names the action a selection with parameters gives LAMBDA, as SANY selects it as a LAMBDA it applies", async () => {
+    const result = await check({
+      source:
+        "---- MODULE L ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nH == \\E k \\in 1..2 : x' = x + k\nNext == H!(1) \\/ H!(2)\nInv == x < 3\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([
+      undefined,
+      "LAMBDA(1) line 5, col 22 to line 5, col 31 of module L",
+      "LAMBDA(2) line 5, col 22 to line 5, col 31 of module L",
+    ]);
+  });
+
+  it("counts the operand a selection with parameters selects only where it applies it, as SANY's LAMBDA is no LET definition", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE G ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nA(k) == /\\ x < 2\n        /\\ x' = x + k\nNext == A(1)!1 /\\ A(1)!2\n====",
+      "INIT Init\nNEXT Next",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 5, col 12 to line 5, col 16 of module G: 6",
+      "|line 5, col 12 to line 5, col 12 of module G: 7",
+      "line 7, col 19 to line 7, col 24 of module G: 6",
+    ]);
+  });
+
+  it("locates the relation of a selection with parameters where SANY applies its LAMBDA", async () => {
+    const result = await check({
+      source:
+        "---- MODULE P ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nP == \\A e \\in 0..2 : e # x + 3\nInv == P!(1)\nProp == [](P!(0))\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nPROPERTY Prop",
+      coverage: 1,
+    });
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 4, col 1 to line 4, col 4 of module P",
+      "Next line 5, col 1 to line 5, col 4 of module P",
+      "Inv line 7, col 1 to line 7, col 3 of module P",
+      "Action line 8, col 12 to line 8, col 16 of module P",
+    ]);
+  });
 });
 
 describe("formatValue matches TLC", () => {

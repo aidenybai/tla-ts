@@ -537,7 +537,7 @@ export class FdSolver {
 
   getModel() {
     if (this.model !== undefined) return this.model;
-    const model = this.solver.getModel();
+    const model = this.solver.mkModel();
     if (model === null) return undefined;
     const converted = this.converter.length > 0 ? applyDefinitions(this.converter, model) : model;
     converted.incRef();

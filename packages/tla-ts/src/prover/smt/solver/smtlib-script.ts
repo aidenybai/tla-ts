@@ -714,7 +714,7 @@ export const runSmtlibScript = (
         isFromTactic: !isKernelChecking,
         reasonUnknown:
           error instanceof SmtDefaultError
-            ? error.message
+            ? ((isKernelChecking ? undefined : reasonUnknown) ?? error.message)
             : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown }, deadline),
       });
       print("unknown");
@@ -741,6 +741,7 @@ export const runSmtlibScript = (
           ? new ProtoModel(state.manager)
           : context.getModel();
     if (model === undefined) throw new SmtParseError("model is not available", list.end);
+    if (check.fdSolver !== undefined) return model;
     model.incRef();
     check.model = model;
     return model;
@@ -1986,9 +1987,10 @@ export const runSmtlibScript = (
         const booleanOption = BOOLEAN_PRINT_OPTIONS.get(optionName);
         if (booleanOption !== undefined) settings.printOptions[booleanOption] = isTrue;
         if (
-          optionName.startsWith(":pp.") &&
-          numericOption === undefined &&
-          booleanOption === undefined
+          (optionName.startsWith(":pp.") &&
+            numericOption === undefined &&
+            booleanOption === undefined) ||
+          optionName.startsWith(":lp.")
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
       },

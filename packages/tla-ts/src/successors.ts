@@ -68,13 +68,18 @@ export interface Successor {
   action: string | undefined;
 }
 
+export interface SuccessorGenerator {
+  random: JavaRandom;
+  kept: number;
+}
+
 interface Run {
   environment: Environment;
   isInit: boolean;
   isEnabled: boolean;
   current: Value[] | undefined;
   isStopped: boolean;
-  generator: JavaRandom | undefined;
+  generator: SuccessorGenerator | undefined;
   successors: number;
   onUnsatisfied?: (state: Value[], conjunct: Expression) => void;
 }
@@ -526,7 +531,7 @@ const compileMembership = (
         run.environment.runtime.version,
       )) {
         onComplete(assign(partial, index, element), action);
-        if (run.successors > 0 || run.isStopped) return;
+        if (run.generator.kept > 0 || run.isStopped) return;
       }
     }
     for (let position = 0; position < elements.length && !run.isStopped; position++) {
@@ -882,8 +887,8 @@ const compileRandomChoice =
   (run, scope, partial, action, isFixed, onComplete) => {
     const generator = run.generator;
     if (!generator) throw new Error("A random choice needs the run's generator");
-    const start = Math.floor(generator.nextDouble() * choices.length);
-    const prime = nextPrime(generator);
+    const start = Math.floor(generator.random.nextDouble() * choices.length);
+    const prime = nextPrime(generator.random);
     for (let attempt = 0; attempt < choices.length; attempt++) {
       choices[(start + attempt * prime) % choices.length](
         run,
@@ -893,7 +898,7 @@ const compileRandomChoice =
         isFixed,
         onComplete,
       );
-      if (run.successors > 0 || run.isStopped) return;
+      if (generator.kept > 0 || run.isStopped) return;
     }
   };
 
@@ -917,7 +922,7 @@ const compileRandomExists = (
     const visit = (position: number, boundScope: Scope | undefined): boolean => {
       if (position < 0) {
         body(run, boundScope, partial, action, isFixed, onComplete);
-        return run.successors > 0 || run.isStopped;
+        return (run.generator?.kept ?? 0) > 0 || run.isStopped;
       }
       const pattern = expression.bounds[position].pattern;
       return orders[position].some((element) =>
@@ -928,6 +933,7 @@ const compileRandomExists = (
   };
 };
 
+// Deviation from TLC: Tool#getNextStates in -generate throws an UnsupportedOperationException at a CASE, which tla-ts takes as the model checker does.
 const compileRandomAction = (expression: Expression, environment: Environment) => {
   if (expression.kind === "Exists") return compileRandomExists(expression, environment);
   if (expression.kind !== "Or") return undefined;
@@ -1312,7 +1318,7 @@ export const forEachSuccessor = (
   environment: Environment,
   onSuccessor: (successor: Successor) => boolean,
   scope?: Scope,
-  generator?: JavaRandom,
+  generator?: SuccessorGenerator,
   onUnsatisfied?: Run["onUnsatisfied"],
   onIncomplete?: (state: State, action: string | undefined) => void,
 ) => {

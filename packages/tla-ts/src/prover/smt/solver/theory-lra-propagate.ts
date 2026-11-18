@@ -315,6 +315,7 @@ export abstract class TheoryLraPropagate extends TheoryLraBounds {
       return;
     }
     for (const implied of this.bp.ibounds) {
+      this.manager.limit.inc();
       if (this.context.isInconsistent()) break;
       this.propagateLpSolverBound(implied);
     }

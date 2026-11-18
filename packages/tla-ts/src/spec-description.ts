@@ -27,6 +27,7 @@ import {
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { bindLetDefinitions, getLevel } from "./liveness";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
+import { SELECTION_NAME } from "./resolve";
 import { LITERAL_KINDS } from "./tlc/replay";
 import type { TlcVersion } from "./tlc/version";
 
@@ -275,7 +276,10 @@ const getActions = (
     case "Label":
       return getActions(expression.body, scope, closure, environment, instanceActions);
     case "Selection":
-      return getActions(expression.expression, scope, closure, environment, instanceActions);
+      // TLC's Tool#getActions takes SANY's $Nop as an action of its own.
+      return expression.location.range === undefined
+        ? getActions(expression.expression, scope, closure, environment, instanceActions)
+        : [createSplitAction()];
     case "Or":
       return expression.operands.flatMap((operand) =>
         getActions(operand, scope, closure, environment, instanceActions),
@@ -308,7 +312,9 @@ const getActions = (
   if (!called) return [createSplitAction()];
   const args = getArguments(expression);
   const calledName = isLocallyResolved(expression)
-    ? called.name
+    ? called.name === SELECTION_NAME
+      ? "LAMBDA"
+      : called.name
     : (environment.instanceNames.get(getOperatorName(expression) ?? "") ?? called.name);
   const callAction = (): SpecAction[] => [
     { name: calledName, location: expression.location, parameters: [], expression, scope },

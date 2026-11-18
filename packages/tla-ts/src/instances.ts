@@ -1,5 +1,6 @@
 import {
   getChildren,
+  getFunctionConstruction,
   getReferencedName,
   isLocallyResolved,
   type Bound,
@@ -818,13 +819,6 @@ const substitute = (
   return renameNames(mapped, bound, rename);
 };
 
-export const getFunctionConstruction = (definition: FunctionDefinition): Expression => ({
-  kind: "FunctionConstruction",
-  bounds: definition.bounds,
-  body: definition.body,
-  location: definition.location,
-});
-
 export const getFunctionBody = (definition: FunctionDefinition): Expression =>
   definition.isSelfReferential
     ? {
@@ -833,7 +827,7 @@ export const getFunctionBody = (definition: FunctionDefinition): Expression =>
         body: createLocalIdentifier(definition.name, definition.location),
         location: { line: definition.location.line, column: definition.location.column },
       }
-    : getFunctionConstruction(definition);
+    : getFunctionConstruction(definition, true);
 
 export const withInstanceParams = (definition: Definition, params: OperatorParam[]): Definition => {
   if (params.length === 0) return definition;

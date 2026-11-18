@@ -18,7 +18,6 @@ import { mkBvApp } from "./bv-decl-plugin";
 import {
   getConstructorIndex,
   getDatatypeConstructors,
-  getDatatypeDef,
   getNumConstructors,
   getRecognizerConstructor,
 } from "./datatype-decl-plugin";
@@ -28,12 +27,15 @@ import { ObjMap } from "./hashtable";
 import { RefVector } from "./ref-vector";
 import { RewriterTpl } from "./rewriter-tpl";
 
-const isEnumSort = (manager: AstManager, sort: number) =>
-  manager.isDatatypeSort(sort) &&
-  (getDatatypeDef(manager, sort)?.constructors.every(
-    (constructor) => constructor.accessors.length === 0,
-  ) ??
-    false);
+// Deviation from Z3: Z3 5.3.2 takes a failed datatype for an empty enumeration and crashes.
+const isEnumSort = (manager: AstManager, sort: number) => {
+  if (!manager.isDatatypeSort(sort)) return false;
+  const constructors = getDatatypeConstructors(manager, sort);
+  return (
+    constructors.length > 0 &&
+    constructors.every((constructor) => manager.funcDecls[constructor].domain.length === 0)
+  );
+};
 
 const getEnumBvSize = (manager: AstManager, sort: number) => {
   const numConstructors = getNumConstructors(manager, sort);
@@ -276,7 +278,7 @@ export const runEnum2Bv = (
       const next = rewriter.rewrite(goal.forms.items[index]);
       release(manager, rewritten);
       rewritten = next;
-      goal.update(index, rewritten);
+      goal.update(index, rewritten, goal.getDependency(index));
     });
     const bounds = new RefVector(manager);
     for (const bound of rewriter.bounds.items) bounds.push(bound);

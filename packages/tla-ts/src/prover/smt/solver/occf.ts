@@ -90,7 +90,7 @@ export const occf = (manager: AstManager, goal: Goal) => {
       else literals.push(mkAuxLit(literal));
     }
     if (keep !== undefined) literals.push(keep);
-    goal.update(index, pin(manager.mkOr(literals)));
+    goal.update(index, pin(manager.mkOr(literals)), goal.getDependency(index));
   }
   pinned.reset();
   goal.depth++;

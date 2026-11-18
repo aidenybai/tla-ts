@@ -334,3 +334,81 @@ it("reports each property it fails to evaluate on the lasso before the propertie
     "Prop0",
   ]);
 });
+
+it("draws another element when a constraint drops the successor it drew, as TLC's Tool#getNextStates checks the states its INextStateFunctor keeps", () => {
+  const traces: string[][] = [];
+  const status = simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nNext == n' = n + 1 /\\ x' \\in 1..6\nCon == x % 2 = 0\nInv == n < 5\n====",
+    config: "INIT Init\nNEXT Next\nCONSTRAINT Con\nINVARIANT Inv",
+    seed: 4n,
+    traceDepth: 8,
+    traceCount: 4n,
+    aril: 0n,
+    isGenerating: true,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "behavior")
+        traces.push(output.trace.map((step) => formatValue(step.state.x)));
+    },
+  });
+  expect([status, traces]).toEqual([12, [["0", "4", "6", "6", "6", "5"]]]);
+});
+
+it("counts the expressions of an action in -generate, as TLC's Tool#getNextStates charges its cost models as it draws", () => {
+  const reports: string[][] = [];
+  simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, n\nInit == x = 0 /\\ n = 0\nNext == n < 4 /\\ n' = n + 1 /\\ (x' \\in {x, x + 1} \\/ \\E e \\in 1..3 : x' = x * e)\n====",
+    config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    seed: 4n,
+    traceDepth: 5,
+    traceCount: 3n,
+    aril: 0n,
+    isGenerating: true,
+    scheduler: "random",
+    coverage: 1,
+    onSimulation: (output) => {
+      if (output.kind !== "coverage") return;
+      reports.push(
+        output.coverage.relations
+          .filter((relation) => relation.label.startsWith("Next "))
+          .flatMap((relation) =>
+            relation.expressions.map(
+              (expression) =>
+                `${"|".repeat(expression.depth)}${expression.location}: ${expression.count}`,
+            ),
+          ),
+      );
+    },
+  });
+  expect(reports[0]).toEqual([
+    "line 5, col 9 to line 5, col 13 of module M: 12",
+    "|line 5, col 9 to line 5, col 9 of module M: 15",
+    "line 5, col 18 to line 5, col 27 of module M: 12",
+    "line 5, col 33 to line 5, col 49 of module M: 4",
+    "line 5, col 54 to line 5, col 79 of module M: 8",
+  ]);
+});
+
+// Deviation from TLC: Tool#getNextStates in -generate throws an UnsupportedOperationException at a CASE.
+it("takes the arm of a CASE in -generate as the model checker does", () => {
+  const traces: string[][] = [];
+  const status = simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == CASE x < 3 -> x' = x + 1 [] OTHER -> x' = 0\nInv == x < 3\n====",
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    seed: 4n,
+    traceDepth: 5,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: true,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "behavior") {
+        traces.push(output.trace.map((step) => formatValue(step.state.x)));
+      }
+    },
+  });
+  expect([status, traces]).toEqual([12, [["0", "1", "2", "3"]]]);
+});

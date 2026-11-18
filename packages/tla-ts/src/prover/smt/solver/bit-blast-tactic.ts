@@ -585,7 +585,7 @@ export const runBitBlast =
       isChanged = true;
       goal.update(index, rewritten, goal.getDependency(index));
     }
-    if (isChanged && rewriter.keys.length > keyPos) {
+    if (isChanged && goal.isModelsEnabled && rewriter.keys.length > keyPos) {
       const const2bits = new ObjMap<number>((decl) => manager.getDeclHash(decl));
       for (let index = keyPos; index < rewriter.keys.length; index++)
         const2bits.set(rewriter.keys[index], rewriter.values.items[index]);

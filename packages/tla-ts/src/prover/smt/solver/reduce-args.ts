@@ -207,8 +207,8 @@ const reduce = (manager: AstManager, goal: Goal) => {
     goal.update(index, rewritten);
     manager.decRef(rewritten);
   }
-  const definitions = getDefinitions(manager, declToArgs, rewriter.declToArgFuncs);
-  goal.addDefinitions(definitions);
+  if (goal.isModelsEnabled)
+    goal.addDefinitions(getDefinitions(manager, declToArgs, rewriter.declToArgFuncs));
   rewriter.release();
   for (const argFuncs of rewriter.declToArgFuncs.entries())
     for (const [app, newDecl] of argFuncs[1].funcs.entries()) {
