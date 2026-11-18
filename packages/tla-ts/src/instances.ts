@@ -31,7 +31,6 @@ export const frameSubstitutions = new WeakMap<Expression, () => Substitution[]>(
 
 export const substitutedExpressions = new WeakMap<Expression, Substitution>();
 
-// A replacement has no frames, unlike each copy that stands for a name.
 export const isSubstitutionDefinition = (definition: Definition) =>
   substitutedExpressions.has(definition.body) && !substitutionFrames.has(definition.body);
 
@@ -43,7 +42,6 @@ export const withSubstitutionFrames = (expression: Expression, frames: Expressio
   return copy;
 };
 
-// TLC evaluates the LazyValue of each name a replacement stands for in turn, so its call stack holds every one.
 const withReplacedFrames = (replacement: Expression, expression: Expression) =>
   withSubstitutionFrames(replacement, [...(substitutionFrames.get(expression) ?? []), expression]);
 
@@ -697,7 +695,6 @@ const getInstanceOperator = (
 const getCopy = (rewrite: Rewrite, key: string) =>
   rewrite.instantiation.isParameterized(key) ? copyDefinition(rewrite, key) : undefined;
 
-// The copy of a name or replacement an inner instance substitutes still stands for that substitution.
 const substitute = (
   expression: Expression,
   rewrite: Rewrite,
@@ -933,12 +930,11 @@ const copyDefinition = (rewrite: Rewrite, key: string): string => {
     rewrite.copies.set(key, copyKey);
     const rename = createRenamer(rewrite);
     const bindings = new Map<string, Expression>();
-    // The definition that refers to this one may bind substitutions in a LET, which this copy is outside.
-    const base = getMode(rewrite, rewrite.mode);
+    const unboundRewrite = getMode(rewrite, rewrite.mode);
     const bodyRewrite =
       definition.kind === "Operator" && rewrite.mode === "Normal"
-        ? { ...base, bindings, selections: new Map<Expression, Expression>() }
-        : base;
+        ? { ...unboundRewrite, bindings, selections: new Map<Expression, Expression>() }
+        : unboundRewrite;
     const mapped = renameParams(
       mapDefinition(definition, (child, bound) =>
         substitute(child, bodyRewrite, bindNames(new Map(), bound, rename)),

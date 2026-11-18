@@ -802,7 +802,6 @@ const getBoundTupleLengths = (bounds: Bound[]) =>
         bound.pattern.kind === "Tuple" ? bound.pattern.names.length : undefined,
       );
 
-// TLC keeps a $RecursiveFcnSpec's FcnLambdaValue lazy, so FcnLambdaValue#toFcnRcd charges its cost model when it fingerprints a state holding it.
 const getRecursiveCostModel = (coverage: Coverage | undefined, node: number) =>
   coverage && node >= 0 ? { secondary: coverage.secondary, node } : undefined;
 
@@ -1629,7 +1628,6 @@ const getCoverageEvaluator = (expression: Expression, evaluator: Evaluator, cove
       coverage,
     );
   }
-  // TLC evaluates the LazyValue of each name the replacement stands for in turn, through an instance of an instance.
   const replaced = (frames ?? []).flatMap((frame) => {
     const outer = substitutedExpressions.get(frame);
     return outer && outer.replacement !== frame ? [outer] : [];

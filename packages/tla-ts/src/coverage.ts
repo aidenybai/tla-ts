@@ -63,7 +63,6 @@ export interface Coverage {
   nextState: NextStateMode;
 }
 
-// One evaluation of a SubstInNode, whose cachable LazyValues count each substitution once.
 export interface CoverageFrame {
   frame: Expression;
   root: number;
@@ -317,7 +316,6 @@ const getBoundNames = (bounds: Bound[]) =>
     bound.pattern.kind === "Name" ? [bound.pattern.name] : bound.pattern.names,
   );
 
-// SANY locates the OpApplNode of a substituted name at the name in the instanced module.
 const getSubstitutedRange = (expression: Expression) =>
   substitutionFrames.get(expression)?.find((frame) => !frameSubstitutions.has(frame))?.location
     .range;
@@ -777,7 +775,6 @@ export const exitFrames = (coverage: Coverage, entered: number) => {
   coverage.frames.length -= entered;
 };
 
-// FcnLambdaValue#apply evaluates the body in the context it was built in, which holds the LazyValues of the substitutions around it.
 export const getCoverageFrames = (coverage: Coverage) =>
   coverage.frames.length === 0 ? undefined : coverage.frames.slice();
 
@@ -797,7 +794,6 @@ export const runInCoverageFrames = <Result>(
   }
 };
 
-// A LazyValue counts under the cost model of the SubstInNode that made it, whatever evaluates it.
 export const getSubstitutionNode = (coverage: Coverage, substitution: Substitution) => {
   const entry = findFrame(coverage, substitution.frame, undefined);
   if (!entry) return -1;
