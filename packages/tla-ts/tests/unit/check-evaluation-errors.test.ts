@@ -1799,6 +1799,29 @@ describe("evaluation errors match TLC", () => {
     expect([...new Set(ranges)]).toEqual(["6:7-43", "6:7-33", "6:7-12", "6:18-32", "6:18-24"]);
   });
 
+  it("records AssertError's message after the expression it catches the failure of, as TLC evaluates it then", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x\' = x /\\ AssertError("m", 1 \\div 0) = 0\n====',
+      config: "INIT Init\nNEXT Next",
+    });
+    const ranges = result.failure?.callStack?.flatMap((expression) => {
+      const range = expression.location.range;
+      return range
+        ? [`${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`]
+        : [];
+    });
+    expect(ranges?.filter((range, index) => range !== ranges[index - 1])).toEqual([
+      "5:9-5:48",
+      "5:9-5:14",
+      "5:19-5:48",
+      "5:19-5:44",
+      "5:36-5:43",
+      "5:31-5:33",
+      "5:48-5:48",
+    ]);
+  });
+
   it("records the frames in Bags of an error in SubBag, which TLC evaluates from its definition", async () => {
     const result = await check({
       source:
