@@ -53020,4 +53020,43 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("converts the object message of a native error to a string once it evaluates its arguments", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var stringified = false;
+      var message = { toString() { stringified = true; return "m"; } };
+      var error = {};
+      var suppressed = {};
+      var e = new SuppressedError(error, suppressed, message);
+      var f = new TypeError({ valueOf: function () { return 1; }, toString: function () { return undefined; } });
+      var thrown = "none";
+      try {
+        var g = new RangeError({ toString: function () { throw new SyntaxError("x"); } });
+      } catch (caught) {
+        thrown = caught.constructor.name;
+      }
+      var symbolThrown = "none";
+      try {
+        var h = new Error({ toString: function () { return Symbol(); } });
+      } catch (caught) {
+        symbolThrown = caught.constructor.name;
+      }
+      var described = Symbol({ toString: function () { return undefined; } });
+      var result = [stringified, e.message, e.error === error, f.message, thrown, symbolThrown, described.description].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      const source = getSource("true,m,true,undefined,SyntaxError,TypeError,undefined");
+      expect((await check(compile(source, path))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource("true,m,true,1,SyntaxError,TypeError,undefined");
+      expect((await check(compile(source, path))).failure?.message).toContain(
+        "result true,m,true,undefined,SyntaxError,TypeError,undefined",
+      );
+    });
+  });
 });

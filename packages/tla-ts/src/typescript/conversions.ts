@@ -21,6 +21,7 @@ import {
 } from "./expressions";
 import { type Formula, ifThenElse, leaf } from "./formula";
 import { getHeap } from "./heap";
+import { isNativeErrorName } from "./exceptions";
 import { getBuiltIn } from "./intrinsics";
 import { translateNumberOf, useJavaScript } from "./javascript";
 import {
@@ -207,9 +208,10 @@ const isConvertedPrimitive = (node: ts.Expression, context: Context) =>
     context,
   ) && !hasFlags(node, ts.TypeFlags.NumberLike, context);
 
-// An object that Symbol takes for its description or Symbol.for for its key, which it converts to
-// a string first: a name's, or one that a literal of methods and literals makes, inside any casts.
-export const isConvertedSymbolArgument = (
+// An object that Symbol takes for its description, Symbol.for for its key, or new of a native
+// error for its message, which it converts to a string first: a name's, or one that a literal of
+// methods and literals makes, inside any casts.
+export const isConvertedStringArgument = (
   node: ts.Node,
   context: Context,
 ): node is ts.Expression => {
@@ -219,17 +221,24 @@ export const isConvertedSymbolArgument = (
     (ancestor) => !(ts.isExpression(ancestor.parent) && skipCasts(ancestor.parent) === node),
   );
   const call = argument?.parent;
+  const construction = call !== undefined && ts.isNewExpression(call) ? call : undefined;
+  const error = construction && getBuiltIn(construction.expression, context);
+  const position = error === "SuppressedError" ? 2 : error === "AggregateError" ? 1 : 0;
   return (
     context.heap !== undefined &&
     call !== undefined &&
-    ts.isCallExpression(call) &&
-    call.arguments.length === 1 &&
-    call.arguments[0] === argument &&
-    (getBuiltIn(call.expression, context) === "Symbol" ||
-      (ts.isPropertyAccessExpression(call.expression) &&
-        call.expression.name.text === "for" &&
-        getBuiltIn(call.expression.expression, context) === "Symbol")) &&
-    (isObjectOperand(node, context) || isAnyOperand(node, context)) &&
+    ((ts.isCallExpression(call) &&
+      call.arguments.length === 1 &&
+      call.arguments[0] === argument &&
+      (getBuiltIn(call.expression, context) === "Symbol" ||
+        (ts.isPropertyAccessExpression(call.expression) &&
+          call.expression.name.text === "for" &&
+          getBuiltIn(call.expression.expression, context) === "Symbol"))) ||
+      (error !== undefined &&
+        isNativeErrorName(error) &&
+        construction?.arguments?.length === position + 1 &&
+        construction.arguments[position] === argument)) &&
+    isObjectOperand(node, context) &&
     (ts.isIdentifier(node) ||
       (ts.isObjectLiteralExpression(node) &&
         node.properties.every(
@@ -287,8 +296,12 @@ export const isConvertedPropertyKey = (node: ts.Node, context: Context): node is
 export const getConversion = (node: ts.Node, context: Context): Conversion | undefined => {
   if (context.heap === undefined) return undefined;
   // A property key converts to a primitive, which the call converts as ToPropertyKey does.
-  if (isConvertedSymbolArgument(node, context)) {
-    return { operands: [node], hints: ["string"], combine: (primitives) => primitives[0] };
+  if (isConvertedStringArgument(node, context)) {
+    return {
+      operands: [node],
+      hints: ["string"],
+      combine: (primitives) => useJavaScript("StringOf", [primitives[0]], context),
+    };
   }
   if (isConvertedPropertyKey(node, context)) {
     return {
