@@ -34,6 +34,11 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("fails to parse an EXTENDS of a name that is not an identifier", async () => {
+    await expect(checkNames("EXTENDS)Sequences")).rejects.toBeInstanceOf(TlaSyntaxError);
+    await expect(checkNames("EXTENDS +, Sequences")).rejects.toBeInstanceOf(TlaSyntaxError);
+  });
+
   it.each([
     ["an operator from a module that is not extended", "EXTENDS Naturals\nf == 1 :> 2"],
     ["an operator that a standard module only instantiates locally", "EXTENDS TLC\nf == 1 + 1"],

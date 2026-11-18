@@ -501,9 +501,10 @@ export const getDefEntryBinder = (expression: Expression): Expression | undefine
 };
 
 export const extractModule = (source: string, name: string) => {
-  const header = new RegExp(`^-{4,}\\s*MODULE\\s+${name}\\s*-{3,}$`);
   const lines = source.replace(/\r?\n$/, "").split(/\r?\n/);
-  const start = lines.findIndex((line) => header.test(line));
+  const start = lines.findIndex(
+    (line) => /^-{4,}\s*MODULE\s+(\w+)\s*-{3,}$/.exec(line)?.[1] === name,
+  );
   if (start === -1) return undefined;
   const end = lines.findIndex((line, index) => index > start && line.startsWith("===="));
   return `${lines.slice(start, end === -1 ? undefined : end + 1).join("\n")}\n`;
