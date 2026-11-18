@@ -2166,6 +2166,29 @@ describe("initial predicate and next-state relation match TLC", () => {
     expect(result.generatedStates).toBe(21);
   });
 
+  it.each([
+    ["", undefined],
+    [" with coverage", 1],
+  ])(
+    "evaluates a LET definition again at each reference in an action, but once under ENABLED%s, as TLC's Tool does",
+    async (_title, coverage) => {
+      const prints: string[] = [];
+      await check({
+        coverage,
+        source:
+          '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 1 /\\ LET r == PrintT(<<"next", x>>) IN x\' = IF r /\\ r THEN x + 1 ELSE x\nInv == ENABLED (LET r == PrintT(<<"enabled", x>>) IN x\' = IF r /\\ r THEN x ELSE x)\n====',
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual([
+        '<<"enabled", 0>>',
+        '<<"next", 0>>',
+        '<<"next", 0>>',
+        '<<"enabled", 1>>',
+      ]);
+    },
+  );
+
   it("reports initial states without a next-state action", async () => {
     await expect(checkBody("VARIABLE x\nInit == x \\in {1, 2}", "INIT Init")).rejects.toThrow(
       /No next state actions defined to generate successor states from/,

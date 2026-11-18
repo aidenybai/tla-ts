@@ -309,12 +309,13 @@ const visitAt = (
       case "Let": {
         const context = getContext(replay, scope, partial);
         const definitions = expression.definitions;
-        const bound = replay.coverage
-          ? bindDefinitions(definitions, context, {
-              impure: new Set(definitions),
-              streamed: new Set(),
-            })
-          : bindDefinitions(definitions, context);
+        const bound =
+          replay.coverage && !replay.isEnabled
+            ? bindDefinitions(definitions, context, {
+                impure: new Set(definitions),
+                streamed: new Set(),
+              })
+            : bindDefinitions(definitions, context);
         return visit(replay, expression.body, items, bound, partial, node);
       }
       case "Label":

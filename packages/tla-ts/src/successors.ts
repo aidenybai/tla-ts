@@ -1092,10 +1092,16 @@ const compileAction = (
     case "Let": {
       const body = getChildRunner(expression.body);
       const reevaluated = getReevaluatedDefinitions(expression.definitions, environment);
+      // TLC's Tool#enabled binds a LET's definitions to lazy values it caches, where Tool#getNextStates evaluates them at every use.
+      const cached = { impure: new Set<Definition>(), streamed: reevaluated.streamed };
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(
           run,
-          bindDefinitions(expression.definitions, getContext(run, scope, partial), reevaluated),
+          bindDefinitions(
+            expression.definitions,
+            getContext(run, scope, partial),
+            run.isEnabled ? cached : reevaluated,
+          ),
           partial,
           action,
           isFixed,
