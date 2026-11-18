@@ -2509,6 +2509,34 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("accepts a selection as a DEF entry only when it ends on a LET definition, like SANY", async () => {
+    const message = "DEF clause entry should describe a defined operator.";
+    await expect(
+      checkNames(
+        "CONSTANT c\nOp == lab:: {LET L == 1 IN L, 2}\nTHEOREM TRUE\n<1>1. USE TRUE\n<1> USE DEF c!G, Op!G, Op!lab!3, Op!lab, Unk!1, <1>1!G, Op!lab!1!L\n<1> QED",
+      ),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 6, col 13 to line 6, col 13", "Cannot take subexpression of `c'."],
+          ["line 6, col 13 to line 6, col 15", message],
+          ["line 6, col 21 to line 6, col 21", "Cannot find label `G'."],
+          ["line 6, col 18 to line 6, col 21", message],
+          [
+            "line 6, col 31 to line 6, col 31",
+            "Nonexistent operand specified by `argument selector 3'.",
+          ],
+          ["line 6, col 24 to line 6, col 31", message],
+          ["line 6, col 34 to line 6, col 39", message],
+          ["line 6, col 42 to line 6, col 44", "Unknown operator: `Unk'."],
+          ["line 6, col 42 to line 6, col 46", message],
+          ["line 6, col 49 to line 6, col 52", "Cannot take subexpression of `<1>1'."],
+          ["line 6, col 49 to line 6, col 54", message],
+        ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+      ),
+    );
+  });
+
   it("accepts only a definition step as a DEF entry like SANY", async () => {
     const message = "DEF clause entry should describe a defined operator.";
     await expect(

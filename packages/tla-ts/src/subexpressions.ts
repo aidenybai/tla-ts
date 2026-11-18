@@ -805,6 +805,10 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       factReferences.set(resolved, facts);
       return resolved;
     };
+    const resolveDefs = (defs: Fact[]) =>
+      defs.map((def) =>
+        def.kind === "ModuleFact" ? def : resolveSubexpressions(def, lookup, isProofGoal, true),
+      );
     const resolveBounds = (bounds: Bound[]) =>
       bounds.map((bound) => ({ ...bound, set: resolveInProof(bound.set) }));
     const resolveStatement = (statement: Expression | AssumeProve): Expression | AssumeProve =>
@@ -823,7 +827,7 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       switch (body.kind) {
         case "Use":
         case "Hide":
-          return { ...body, facts: resolveFacts(body.facts) };
+          return { ...body, facts: resolveFacts(body.facts), defs: resolveDefs(body.defs) };
         case "Instance":
           return resolveInstance(body, lookup, isProofGoal);
         case "Define":
@@ -851,7 +855,9 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
       }
     };
     const resolveProof = (proof: Proof | undefined): Proof | undefined => {
-      if (proof?.kind === "By") return { ...proof, facts: resolveFacts(proof.facts) };
+      if (proof?.kind === "By") {
+        return { ...proof, facts: resolveFacts(proof.facts), defs: resolveDefs(proof.defs) };
+      }
       if (proof?.kind !== "Steps") return proof;
       let resolver = { lookup, resolveStep, resolveProof };
       return {
@@ -875,7 +881,7 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
         }),
       };
     };
-    return { lookup, resolveFacts, resolveStatement, resolveStep, resolveProof };
+    return { lookup, resolveFacts, resolveDefs, resolveStatement, resolveStep, resolveProof };
   };
   const hasReferences =
     module.definitions.some((definition) => containsReference(definition.body)) ||
@@ -907,12 +913,14 @@ export const resolveModuleSubexpressions = (module: Module, available: Definitio
           ),
       };
     }),
-    uses: module.uses.map((use) => ({
-      ...use,
-      facts: createProofResolver(getVisibleLookup(proofLookup, use.location)).resolveFacts(
-        use.facts,
-      ),
-    })),
+    uses: module.uses.map((use) => {
+      const resolver = createProofResolver(getVisibleLookup(proofLookup, use.location));
+      return {
+        ...use,
+        facts: resolver.resolveFacts(use.facts),
+        defs: resolver.resolveDefs(use.defs),
+      };
+    }),
   };
   if (!hasReferences) return resolved;
   return {

@@ -1181,6 +1181,23 @@ const resolveExpressionArgument = (arg: Expression, scope: LocalName | undefined
   } else resolveExpression(arg, scope, unit);
 };
 
+const getSelectorArgumentError = (reference: Expression) => {
+  // SANY reads a reference that ends in arguments as an application, not as a selector's arguments.
+  const selectors =
+    reference.kind === "Subexpression" ||
+    (reference.kind === "Apply" && reference.argumentCounts?.at(-1) === 0)
+      ? getSelectors(reference)
+      : [];
+  const index = selectors.findIndex((selector) => "args" in selector && selector.args.length > 0);
+  if (index === -1 || !isReference(reference)) return undefined;
+  const selector = selectors[index];
+  return {
+    index,
+    range: reference.selectorRanges?.[index],
+    message: `Selector \`${selector.kind === "Name" ? selector.name : "!(...)"}' should not have argument(s).`,
+  };
+};
+
 const matchArgument = (
   arg: Expression,
   expected: number,
@@ -1216,21 +1233,9 @@ const matchArgument = (
     return false;
   }
   const reference = selections.get(arg) ?? arg;
-  // SANY reads a reference that ends in arguments as an application, not as a selector's arguments.
-  const selectors =
-    reference.kind === "Subexpression" ||
-    (reference.kind === "Apply" && reference.argumentCounts?.at(-1) === 0)
-      ? getSelectors(reference)
-      : [];
-  const selectorIndex = selectors.findIndex(
-    (selector) => "args" in selector && selector.args.length > 0,
-  );
-  if (selectorIndex !== -1 && isReference(reference)) {
-    const selector = selectors[selectorIndex];
-    report(
-      reference.selectorRanges?.[selectorIndex],
-      `Selector \`${selector.kind === "Name" ? selector.name : "!(...)"}' should not have argument(s).`,
-    );
+  const argumentError = getSelectorArgumentError(reference);
+  if (argumentError) {
+    report(argumentError.range, argumentError.message);
     return false;
   }
   if (arg.kind === "Lambda") {
@@ -1761,13 +1766,39 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
     reportUnknownModule(def, unit);
     return unit.isModuleKnown(def.name, def.location);
   }
-  const range = def.location.range;
+  const reference = selections.get(def) ?? def;
+  const range = reference.location.range;
+  if (!range) return true;
   const name =
-    def.kind === "Identifier" ? def.name : def.kind === "OperatorReference" ? def.operator : "";
-  if (name === "" || !range) return true;
+    reference.kind === "Identifier"
+      ? reference.name
+      : reference.kind === "Apply" || reference.kind === "OperatorReference"
+        ? reference.operator
+        : "";
   const local = lookupLocal(scope, name);
   const binding = local ?? findSymbol(name, unit) ?? getModuleBinding(name, unit, range);
   if (binding === undefined && isFact(name, unit)) return true;
+  const isDefined =
+    isReference(reference) &&
+    getSelectors(reference).length > 1 &&
+    (binding === undefined || getSelectorArgumentError(reference))
+      ? isDefinitionSelected(def, reference, scope, unit)
+      : name === "" || isDefinitionName(name, local, binding, range, unit);
+  if (isDefined) return true;
+  unit.errors.push({
+    location: formatRange(range),
+    message: "DEF clause entry should describe a defined operator.",
+  });
+  return false;
+};
+
+const isDefinitionName = (
+  name: string,
+  local: LocalName | undefined,
+  binding: Binding | undefined,
+  range: SourceRange,
+  unit: Unit,
+) => {
   if (binding === undefined) {
     unit.errors.push({
       location: formatRange(range),
@@ -1781,12 +1812,55 @@ const isDefinitionEntry = (def: Fact, scope: LocalName | undefined, unit: Unit) 
       message: "DEF clause entry refers to a non-definition step.",
     });
   }
-  if (binding && SELECTABLE_KINDS.has(binding.kind) && !isStepName(name)) return true;
-  unit.errors.push({
-    location: formatRange(range),
-    message: "DEF clause entry should describe a defined operator.",
-  });
-  return false;
+  return binding !== undefined && SELECTABLE_KINDS.has(binding.kind) && !isStepName(name);
+};
+
+const isDefinitionSelected = (
+  def: Expression,
+  reference: Reference,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
+  const report = (range: SourceRange | undefined, message: string) => {
+    if (range) unit.errors.push({ location: formatRange(range), message });
+    return false;
+  };
+  const argumentError = getSelectorArgumentError(reference);
+  if (argumentError?.index === 0) return report(argumentError.range, argumentError.message);
+  const selectors = getSelectors(reference);
+  const ranges = reference.selectorRanges;
+  const failed = selectionErrors.get(def);
+  if (!failed && !selections.has(def)) {
+    const head = selectors[0];
+    const name = head.kind === "Name" ? head.name : "";
+    const local = lookupLocal(scope, name);
+    const binding = local ?? findSymbol(name, unit);
+    if (binding && (!SELECTABLE_KINDS.has(binding.kind) || local?.nonFactStep) && ranges?.[0]) {
+      reportUnselectable(name, ranges[0], unit);
+      return false;
+    }
+    if (argumentError) return report(argumentError.range, argumentError.message);
+    if (checkReference(reference, scope, unit, false)) return false;
+    const first = ranges?.[0];
+    const last = ranges?.[selectors.findLastIndex((selector) => selector.kind === "Name")];
+    const names = selectors.flatMap((selector) =>
+      selector.kind === "Name" ? [selector.name] : [],
+    );
+    return report(
+      first && last && { ...first, end: last.end },
+      `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
+    );
+  }
+  if (argumentError) return report(argumentError.range, argumentError.message);
+  const error = failed
+    ? (findNullError(failed.nulls) ?? failed.error)
+    : findNullError(nullSelections.get(def));
+  if (error) {
+    unit.errors.push(error);
+    return false;
+  }
+  // Generator#selectorToNode accepts a selection only when it ends on a LET definition's name.
+  return selectors.at(-1)?.kind === "Name" && selectors.at(-2)?.kind !== "Name";
 };
 
 const getHiddenExpressionLocation = (
