@@ -281,8 +281,8 @@ export class Context extends Internalizer {
     return family < 0 ? undefined : this.theoryByFamily[family];
   }
 
-  checkCanceled() {
-    if (this.manager.limit.inc()) return false;
+  checkCanceled(cost = 1) {
+    if (this.manager.limit.inc(cost)) return false;
     this.lastSearchFailure = FAILURE_CANCELED;
     return true;
   }

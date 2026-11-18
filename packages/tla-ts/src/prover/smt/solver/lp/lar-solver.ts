@@ -100,7 +100,7 @@ export class LarSolver {
   onAddTerm: ((term: LarTerm) => void) | undefined;
   onColumnBoundUpdate: ((column: number) => void) | undefined;
 
-  constructor(isCanceled: () => boolean) {
+  constructor(isCanceled: (cost?: number) => boolean) {
     this.settings = new LpSettings(isCanceled);
     this.core = new CoreSolver(this.settings);
     this.core.touchedRows = this.touchedRows;

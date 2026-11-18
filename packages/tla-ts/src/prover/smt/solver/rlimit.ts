@@ -14,11 +14,11 @@ export class ResourceLimit {
     private signal?: AbortSignal,
   ) {}
 
-  inc() {
-    this.count++;
+  inc(offset = 1) {
+    this.count += offset;
     if (
       !this.isCanceled &&
-      (this.count & CLOCK_CHECK_MASK) === 0 &&
+      (this.count & CLOCK_CHECK_MASK) < offset &&
       (Date.now() > this.deadline || this.signal?.aborted === true || this.isHeapNearlyFull())
     ) {
       this.isCanceled = true;

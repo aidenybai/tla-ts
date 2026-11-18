@@ -68,7 +68,8 @@ export class LpSettings {
   readonly isDioIgnoringBigNums = true;
   readonly dioUndoMaxWork = 1000000;
 
-  constructor(readonly isCanceled: () => boolean) {}
+  // get_cancel_flag, which theory_lra's resource limit charges with the cost of a pivot.
+  constructor(readonly isCanceled: (cost?: number) => boolean) {}
 
   setRandomSeed(seed: number) {
     this.random = new RandomGen(seed);

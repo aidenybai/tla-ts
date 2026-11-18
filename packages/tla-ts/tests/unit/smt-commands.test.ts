@@ -1471,6 +1471,24 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "(:rlimit 62)"]);
   });
 
+  it("charges each pivot of the simplex the cells it touches", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(push)",
+        "(assert (>= (+ x y z) 10))",
+        "(assert (<= (- x y) 3))",
+        "(assert (>= (+ y (* 2 z)) 7))",
+        "(assert (<= (+ x z) 5))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 206)"]);
+  });
+
   it("initializes the manager for get-info :rlimit", () => {
     expect(
       run(['(echo "a")', "(get-info :rlimit)", "(declare-const p Bool)", "(get-info :rlimit)"]),
