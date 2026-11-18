@@ -366,9 +366,12 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
   if (solved.result === L_UNDEF)
     throw new SmtTacticError(solved.reasonUnknown ?? getSmtTacticFailure(solved.context));
   goal.reset();
-  if (solved.result === L_FALSE)
+  if (solved.result === L_FALSE) {
     goal.assert(environment.manager.falseExpr, mkCoreDependency(solved.context.unsatCore));
-  else goal.model = solved.context.getModel();
+    return [goal];
+  }
+  if (goal.isModelsEnabled) goal.model = solved.context.getModel();
+  if (solved.context.checkCanceled()) throw new SmtTacticError("canceled");
   return [goal];
 };
 

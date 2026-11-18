@@ -1542,6 +1542,43 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "(:rlimit 62)"]);
   });
 
+  it("counts a step of the limit when the smt kernel builds a model", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (or p q))",
+        "(push 1)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 69)",
+      "(",
+      "  (define-fun p () Bool",
+      "    true)",
+      "  (define-fun q () Bool",
+      "    false)",
+      ")",
+      "(:rlimit 72)",
+    ]);
+  });
+
+  it("builds a model in the smt tactic only for a goal that produces models", () => {
+    const lines = [
+      "(declare-const p Bool)",
+      "(declare-const q Bool)",
+      "(assert (or p q))",
+      "(check-sat-using smt)",
+      "(get-info :rlimit)",
+    ];
+    expect(run(lines)).toEqual(["sat", "(:rlimit 50)"]);
+    expect(run(["(set-option :produce-models false)", ...lines])).toEqual(["sat", "(:rlimit 49)"]);
+  });
+
   it("charges each pivot of the simplex the cells it touches", () => {
     expect(
       run([

@@ -1,4 +1,4 @@
-import { SmtInvariantError } from "../../../errors";
+import { SmtCanceledError, SmtInvariantError } from "../../../errors";
 import type { AssertedFormulas } from "./asserted-formulas";
 import {
   AstManager,
@@ -1347,6 +1347,7 @@ export class Context extends Internalizer {
   getModel() {
     if (this.isInconsistent()) return undefined;
     if (this.modelState.kind === "final") return this.modelState.model;
+    if (!this.manager.limit.inc()) return undefined;
     const generated =
       this.modelState.kind === "proto" ? this.modelState.generated : this.mkProtoModel();
     if (generated === undefined) return undefined;
@@ -1359,8 +1360,9 @@ export class Context extends Internalizer {
 
   getSatModel() {
     const model = this.getModel();
-    if (model === undefined) throw new SmtInvariantError("a sat answer without a model");
-    return model;
+    if (model !== undefined) return model;
+    if (this.manager.limit.isExhausted()) throw new SmtCanceledError();
+    throw new SmtInvariantError("a sat answer without a model");
   }
 
   validateModel(model: ProtoModel) {
