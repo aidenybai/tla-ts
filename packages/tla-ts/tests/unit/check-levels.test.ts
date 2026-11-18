@@ -54,6 +54,34 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    [
+      "another definition",
+      "G == (x' = 2) /\\ []x /\\ TRUE\nH == LET J == INSTANCE Naturals IN J!+(1, 2)",
+    ],
+    [
+      "the same definition",
+      "G == (x' = 2) /\\ []x /\\ LET J == INSTANCE Naturals IN J!+(1, 2) = 3",
+    ],
+  ])(
+    "locates a parenthesized operand at its parenthesis when %s has a LET INSTANCE",
+    async (_, definitions) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definitions}\n====`,
+          config: "",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: "line 4, col 6 to line 4, col 20 of module M",
+            message: "\\land has both temporal formula and action as arguments.",
+          },
+        ]),
+      );
+    },
+  );
+
   it("checks the level of an operator argument against its parameter", async () => {
     await expect(
       check({

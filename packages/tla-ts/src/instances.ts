@@ -978,7 +978,12 @@ const expandLetInstances = (
   const mapped = mapChildren(expression, (child) =>
     expandLetInstances(child, instantiate, visibleLets),
   );
-  if (mapped.kind !== "Let" || !mapped.instances) return mapped;
+  if (mapped.kind !== "Let" || !mapped.instances) {
+    const children = getChildren(expression);
+    return getChildren(mapped).every((child, index) => child === children[index])
+      ? expression
+      : mapped;
+  }
   const definitions = mapped.instances.reduce((current, instance) => {
     const position = current.findIndex((definition) =>
       isBefore(instance.location, definition.location),
