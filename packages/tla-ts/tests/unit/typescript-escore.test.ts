@@ -418,5 +418,14 @@ describe("compiles scripts by specializing ESCore", () => {
         "tla-ts can't run the host's setTimeout",
       );
     });
+
+    it("runs a script's own binding named as one of Node's module globals", async () => {
+      expect(
+        (await checkScript("var global = this; if (global !== globalThis) throw 0;")).message,
+      ).toBeUndefined();
+      expect(
+        (await checkScript("var global = this; if (global === globalThis) throw 0;")).message,
+      ).toContain(THREW);
+    });
   });
 });

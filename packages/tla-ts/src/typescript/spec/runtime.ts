@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { TlaError } from "../../errors";
 import type { GeneratedDefinition, Library } from "./library";
 
@@ -185,22 +186,30 @@ export const getHostDefinitions = (library: Library): GeneratedDefinition[] => [
   },
 ];
 
-// The host whose behavior a compiled spec models is the one that compiles it, as the reference
-// a program runs on: the object an intrinsic of ESCore's names in this host, if it has one.
+// The host whose behavior a compiled spec models is the one that compiles it, running a script in
+// a new context of its virtual machine, as the reference a program runs on: the global object of
+// such a context, which has ECMAScript's globals and the host's own, such as Intl and console, and
+// not Node's module globals, such as process and global.
+const HOST_GLOBAL: object = runInNewContext("globalThis");
+
+// The host's timers, which a host adds to a script's context to run its jobs later.
+const HOST_TIMERS = ["setTimeout", "setInterval", "setImmediate", "queueMicrotask"];
+
+// The object an intrinsic of ESCore's names in the host, if it has one.
 const getHostObject = (owner: string): object | undefined => {
-  if (owner === "GlobalObject") return globalThis;
+  if (owner === "GlobalObject") return HOST_GLOBAL;
   const isPrototype = owner.endsWith("Prototype");
   const base = isPrototype ? owner.slice(0, -"Prototype".length) : owner;
-  const temporal: unknown = Reflect.get(globalThis, "Temporal");
+  const temporal: unknown = Reflect.get(HOST_GLOBAL, "Temporal");
   const found: unknown =
     base === "TypedArray"
-      ? Object.getPrototypeOf(Int8Array)
+      ? Object.getPrototypeOf(Reflect.get(HOST_GLOBAL, "Int8Array"))
       : base.startsWith("Temporal") &&
           base !== "Temporal" &&
           typeof temporal === "object" &&
           temporal !== null
         ? Reflect.get(temporal, base.slice("Temporal".length))
-        : Reflect.get(globalThis, base);
+        : Reflect.get(HOST_GLOBAL, base);
   if ((typeof found !== "object" && typeof found !== "function") || found === null)
     return undefined;
   const object: unknown = isPrototype ? Reflect.get(found, "prototype") : found;
@@ -224,7 +233,9 @@ export const getHostOnlyGlobals = (library: Library) => {
       .filter((property) => property.owner === "GlobalObject")
       .map((property) => property.key),
   );
-  return Object.getOwnPropertyNames(globalThis).filter((name) => !realm.has(name));
+  return [...Object.getOwnPropertyNames(HOST_GLOBAL), ...HOST_TIMERS].filter(
+    (name) => !realm.has(name),
+  );
 };
 
 // The keys of the host's built-ins that ESCore's realm has nowhere, such as V8's
