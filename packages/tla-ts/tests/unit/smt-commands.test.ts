@@ -1430,6 +1430,18 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["(:rlimit 4)", "(:rlimit 7)", "(:rlimit 14)"]);
   });
 
+  it("reduces the asserted formulas when the first assertion after push opens its scope", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(push)",
+        "(get-info :rlimit)",
+        "(assert p)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 9)", "(:rlimit 12)"]);
+  });
+
   it("initializes the manager for get-info :rlimit", () => {
     expect(
       run(['(echo "a")', "(get-info :rlimit)", "(declare-const p Bool)", "(get-info :rlimit)"]),

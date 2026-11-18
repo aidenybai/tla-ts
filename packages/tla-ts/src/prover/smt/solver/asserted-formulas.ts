@@ -251,8 +251,11 @@ export class AssertedFormulas {
     this.flushCache();
   }
 
+  // push_scope_core reduces and commits the formulas before it pushes.
   private forcePush() {
     for (; this.numLazyScopes > 0; this.numLazyScopes--) {
+      this.reduce();
+      this.commit();
       this.substitution.push();
       this.scopes.push({ numFormulas: this.formulas.size, isInconsistent: this.isInconsistent });
       this.names.push();
