@@ -228,12 +228,12 @@ export const createDt2BvTactic = (manager: AstManager) => {
       else argsCannotBeFd(expr);
     }
     for (const sort of nonFdSorts) fdSorts.delete(sort);
-    const size = goal.forms.size;
     if (fdSorts.size > 0)
       runEnum2Bv(
         manager,
         goal,
         (visit) => {
+          const size = goal.forms.size;
           for (let index = 0; index < size && !goal.isInconsistent; index++) visit(index);
         },
         fdSorts,

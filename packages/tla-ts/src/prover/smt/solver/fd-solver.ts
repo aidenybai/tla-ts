@@ -147,12 +147,16 @@ class SolverFormulas extends Goal {
       seen.add(form);
       if (manager.isTrue(form)) continue;
       if (manager.getOp(form) === OP_AND) {
-        for (const arg of manager.getArgs(form)) this.assert(arg);
+        const numArgs = manager.getNumArgs(form);
+        for (let argIndex = 0; argIndex < numArgs; argIndex++)
+          this.assert(manager.getArg(form, argIndex));
         continue;
       }
       if (manager.isNot(form) && manager.getOp(manager.getArg(form, 0)) === OP_OR) {
-        for (const arg of manager.getArgs(manager.getArg(form, 0)))
-          this.assert(mkNot(manager, arg));
+        const disjunction = manager.getArg(form, 0);
+        const numArgs = manager.getNumArgs(disjunction);
+        for (let argIndex = 0; argIndex < numArgs; argIndex++)
+          this.assert(mkNot(manager, manager.getArg(disjunction, argIndex)));
         continue;
       }
       if (index !== kept) forms.set(kept, form);

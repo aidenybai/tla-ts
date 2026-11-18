@@ -2101,13 +2101,15 @@ const getTacticCheck = (goal: Goal, goals: Goal[] | string | undefined): TacticC
 };
 
 export const checkSatUsing = (tactic: Tactic, goal: Goal) => {
-  let goals: Goal[] | string | undefined;
-  try {
-    goals = tactic(goal);
-  } catch (error) {
-    if (error instanceof SmtTacticError || error instanceof SmtDefaultError) goals = error.message;
-    else if (!(error instanceof SmtCanceledError)) throw error;
-  }
+  const goals = (() => {
+    try {
+      return tactic(goal);
+    } catch (error) {
+      if (error instanceof SmtTacticError || error instanceof SmtDefaultError) return error.message;
+      if (error instanceof SmtCanceledError) return undefined;
+      throw error;
+    }
+  })();
   try {
     return getTacticCheck(goal, goals);
   } finally {
