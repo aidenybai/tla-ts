@@ -4222,8 +4222,10 @@ const checkProgram = async (
     const compiled = performance.now();
     const result = await check({ ...spec, onPrint: () => {} });
     if (process.env.TLA_TS_STATS !== undefined) {
+      // The ESCore backend's spec is its root module and the program's code.
       const size =
-        typeof spec.source === "string" ? spec.source.length : printModule(spec.source).length;
+        (typeof spec.source === "string" ? spec.source.length : printModule(spec.source).length) +
+        (spec.loadModule?.("ProgramCode")?.length ?? 0);
       console.log(
         `STATS ${id} compile=${Math.round(compiled - start)} check=${Math.round(performance.now() - compiled)} size=${size}`,
       );
