@@ -1,4 +1,5 @@
 import { getChildren, getReferencedName, isLocallyResolved, type Expression } from "./ast";
+import { isTlcEvalReached } from "./dependencies";
 import {
   bindValue,
   expectBooleanBody,
@@ -414,7 +415,13 @@ const generateExpression = (generator: Generator, expression: Expression, frame:
         return `(${frame.state}?.[${global.index}] ?? unassigned(${name}, ${node}))`;
       }
       if (global?.kind === "Value") return addReference(generator, global.value);
-      return generateDelegate(generator, expression, frame);
+      // TLC evaluates an operator without parameters in its caller's context, which TLCEval tells from an empty one.
+      return generateDelegate(
+        generator,
+        expression,
+        frame,
+        global?.kind === "Definition" && isTlcEvalReached(global.definition, generator.environment),
+      );
     }
     case "Apply":
       return generateApply(generator, expression, frame);

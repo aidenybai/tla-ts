@@ -41,6 +41,7 @@ import {
   isExpressionImpure,
   isImpureDefinition,
   isNonconstant,
+  isTlcEvalReached,
   type DefinitionFacts,
 } from "./dependencies";
 import { contextualApplications, substitutionFrames } from "./instances";
@@ -837,14 +838,28 @@ const compileDefinitionBody = (definition: Definition, environment: Environment)
   return getEntryEvaluator(getDefinitionSource(definition), environment);
 };
 
+// Stands for the caller's context that TLC's Tool#getOpContext passes on to an operator without parameters, so TLCEval#tlcEval in it doesn't cache.
+const CALLER_SCOPE: Scope = {
+  name: "",
+  binding: { kind: "Value", value: false },
+  parent: undefined,
+};
+
 const getDefinitionEvaluator = (definition: Definition, environment: Environment): Evaluator => {
   const compiled = environment.definitionEvaluators.get(definition);
   if (compiled) return compiled;
   const body = compileDefinitionBody(definition, environment);
   const definitionId = environment.facts.ids.get(definition);
   const startupValues = environment.startupValues;
-  const evaluator: Evaluator =
-    definitionId === undefined
+  const isInCallerContext =
+    definition.kind === "Operator" &&
+    definition.params.length === 0 &&
+    isTlcEvalReached(definition, environment);
+  const evaluator: Evaluator = isInCallerContext
+    ? (context) =>
+        (definitionId === undefined ? undefined : startupValues[definitionId]) ??
+        body(withScope(context, isTlcContextEmpty(context.scope) ? undefined : CALLER_SCOPE))
+    : definitionId === undefined
       ? (context) => body(withScope(context, undefined))
       : (context) => startupValues[definitionId] ?? body(withScope(context, undefined));
   environment.definitionEvaluators.set(definition, evaluator);

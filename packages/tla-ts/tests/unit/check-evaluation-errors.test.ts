@@ -1423,6 +1423,17 @@ describe("evaluation errors match TLC", () => {
     expect(prints).toEqual(['"l"  TRUE', '"o"  TRUE', '"o"  TRUE', '"o"  TRUE']);
   });
 
+  it("evaluates a constant TLCEval argument again in an operator without parameters called under a bound name, whose context TLC passes on", async () => {
+    const prints: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nD == TLCEval(Print("d", TRUE)) /\\ x >= 0\nD2 == D\nInit == x = 0\nNext == x < 2 /\\ x\' = x + 1\nInv == /\\ \\A i \\in 1..2 : D\n       /\\ \\A i \\in 1..2 : D2\n       /\\ D\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect(prints).toEqual(Array.from({ length: 13 }, () => '"d"  TRUE'));
+  });
+
   it("rejects EXCEPT at an argument that is not a tuple of a lazy function of two arguments", async () => {
     const pairs = [1, 2].flatMap((first) =>
       [0, 1, 2, 3, 4].map((second) => `<<${first}, ${second}>> :> 100`),
