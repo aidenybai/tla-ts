@@ -2087,7 +2087,10 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
     );
   }
   const functionValue = toFiniteFunction(value);
-  return functionValue.domain.every((key, index) => key === index + 1)
+  // A tuple's domain is 1..n, as TLC's TupleValue's is, so only another function's domain needs a
+  // look, which takes as long as the function is.
+  return getFunctionClass(functionValue) === "tuple" ||
+    functionValue.domain.every((key, index) => key === index + 1)
     ? functionValue.range
     : undefined;
 };
