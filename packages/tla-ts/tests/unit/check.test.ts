@@ -327,6 +327,17 @@ describe("check matches TLC", () => {
     },
   );
 
+  it("splits the next-state relation of a specification without variables before it checks the assumptions, as TLC's Tool does", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS TLC\nNext == \\E i \\in {PrintT(<<"split", TLCGet("level")>>)} : TRUE\nSpec == [][Next]_<<>>\nASSUME PrintT("assume")\n====',
+      config: "SPECIFICATION Spec",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['<<"split", 1>>', '"assume"']);
+  });
+
   it("runs only the PlusCal actions whose label guard matches, with TLC's counts", async () => {
     const result = await check({
       source: [
