@@ -267,6 +267,7 @@ export const createTraceBuilder = (context: TraceContext) => {
           : [],
     }));
     // TLCTrace#printTrace leaves current the last state it aliases, else the state it rebuilds the last one from.
+    // Deviation from TLC: Worker#doPostCondition misses a random initial state it draws for from that state's seed, drops the NullPointerException and skips the rest of the trace and the postcondition.
     const seeding = alias === undefined ? last - 1 : last;
     const rebuiltOutput = isRebuiltAgain
       ? [

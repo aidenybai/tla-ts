@@ -191,6 +191,21 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     ]);
   });
 
+  // Deviation from TLC: TLC misses the initial state, skips the rest of the rebuild and skips the postcondition.
+  it("rebuilds the trace and checks the postcondition once the rebuild for it draws a different random initial state", async () => {
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nInit == x = RandomElement(1..1000) /\\ PrintT(x)\nNext == x\' = x + 1 /\\ PrintT(<<"next", x>>)\nInv == x < 734\nPost == PrintT(DOMAIN CounterExample)\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post",
+      seed: 4n,
+      onPrint: () => {},
+    });
+    expect([result.violation?.traceOutput, result.violation?.postconditionOutput]).toEqual([
+      ["493", '<<"next", 731>>', '<<"next", 732>>', '<<"next", 733>>'],
+      ['{"action", "state"}'],
+    ]);
+  });
+
   it.each([
     [
       "an invariant",
