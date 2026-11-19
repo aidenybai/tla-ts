@@ -1896,6 +1896,37 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ).toEqual(["sat", "(:rlimit 224)"]);
   });
 
+  it("counts the steps of a model cleanup as Z3 does", () => {
+    expect(
+      run([
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a2 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(declare-const i1 Int)",
+        "(assert (>= (select (store a0 (select a0 i0) i1) 0) 2))",
+        "(assert (= a2 a0))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a0 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 3) 4 0))",
+        "  (define-fun i1 () Int",
+        "    2)",
+        "  (define-fun i0 () Int",
+        "    4)",
+        "  (define-fun a2 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 3) 4 0))",
+        ")",
+      ].join("\n"),
+      "(:rlimit 288)",
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),

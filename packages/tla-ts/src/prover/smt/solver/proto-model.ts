@@ -906,7 +906,9 @@ export class ProtoModel {
         }
         return rewriter.mkApp(decl, args, manager.sorts[current]);
       });
-      trail.pushOwned(result);
+      // Z3 trails only the terms that change, so the rewriter caches no other subterm.
+      if (result === current) manager.decRef(result);
+      else trail.pushOwned(result);
       cache.set(current, result);
     }
     const result = rewriter.rewrite(cache.get(expr) as number);
