@@ -2053,9 +2053,10 @@ const compile = (
     case "lazy": {
       if (!isInternal)
         throw new SmtParseError(`invalid tactic, unknown tactic combinator lazy`, sexpr.end);
-      const child = compile(environment, sexpr.items[1], isInternal);
       return {
-        ...mergeDescrs([child]),
+        descrs: new Map(),
+        isRejectingUnknown: true,
+        isTrackingDependencies: true,
         build: (params) => {
           let tactic: Tactic | undefined;
           let destructors: (() => void)[] = [];
@@ -2063,7 +2064,7 @@ const compile = (
           return (goal) => {
             if (tactic === undefined) {
               const start = environment.destructors.length;
-              tactic = child.build(params);
+              tactic = compile(environment, sexpr.items[1], isInternal).build(params);
               destructors = environment.destructors.splice(start);
             }
             return tactic(goal);
