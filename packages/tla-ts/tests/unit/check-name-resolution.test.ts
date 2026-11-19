@@ -2251,6 +2251,47 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "a function named after a constant, whose body uses its bound name",
+      "CONSTANT F\nF[n \\in {1}] == n",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 17 of module M",
+          message: "Function name `F' already defined or declared.",
+        },
+        {
+          location: "line 3, col 17 to line 3, col 17 of module M",
+          message: "Unknown operator: `n'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a function named after a definition, whose body applies the definition",
+      "F(a) == a\nF[n \\in {1}] == F(n)",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 20 of module M",
+          message: "Function name `F' already defined or declared.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a LET function named after an operator parameter, whose body uses its bound name",
+      "A(F) == LET F[n \\in {1}] == n IN TRUE",
+      [
+        {
+          location: "line 2, col 13 to line 2, col 29 of module M",
+          message: "Function name `F' already defined or declared.",
+        },
+        {
+          location: "line 2, col 29 to line 2, col 29 of module M",
+          message: "Unknown operator: `n'.",
+        },
+      ],
+      [],
+    ],
+    [
       "an operator named after a function",
       "f[n \\in {1}] == n\nf == 1",
       [

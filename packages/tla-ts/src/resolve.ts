@@ -1095,10 +1095,20 @@ const resolveDefinition = (
     current.params = getParamArities(definition);
   }
   if (definition.kind === "Function") {
+    const isTaken = current !== undefined && !isDeclared;
+    const isTakenByDefinition =
+      isTaken &&
+      !current.isPending &&
+      (current.kind === "Definition" || current.kind === "Instance");
     // SANY names a function declared RECURSIVE by its definition in the body, and any other by a parameter of its own.
+    // Generator#processFunction gives a function whose name is taken no such parameter, and its bound names only when a definition took the name.
     resolveExpression(
       definition.body,
-      { name, kind: "Parameter", arity: 0, range, parent: inner, isSelf: !isDeclared },
+      !isTaken
+        ? { name, kind: "Parameter", arity: 0, range, parent: inner, isSelf: !isDeclared }
+        : isTakenByDefinition
+          ? inner
+          : scope,
       unit,
     );
     markRecursiveConstructions(definition.body, name);
