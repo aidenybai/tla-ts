@@ -71,6 +71,8 @@
   --font-sans: "Allo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-hand: "Caveat", cursive;
   --font-mono: "Geist Mono Variable", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  /* Shrinks on a phone so that the home example's longest line, 46 characters, stays on one line. */
+  --text-code: clamp(10px, calc((100vw - 80px) / 27.9), 13px);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
