@@ -1,6 +1,6 @@
 import { isEvaluatedAtStartup } from "./dependencies";
 import {
-  isAssumeProve,
+  getAssumeProveBody,
   isLocallyResolved,
   type Definition,
   type Expression,
@@ -367,8 +367,9 @@ const getActions = (
     ? undefined
     : instanceActions.get(getOperatorName(expression) ?? "");
   const called = resolveClosure(expression, scope, environment);
+  const theorem = called && getAssumeProveBody(called.body);
   // Deviation from TLC: Tool#getActionsAppl casts a theorem to an OpDefNode, and the ClassCastException crashes TLC unless an enclosing \E or operator catches it.
-  if (called && isAssumeProve(called.body)) throw createRelationError(called.body);
+  if (theorem) throw createRelationError(theorem);
   if (instanceAction)
     return getInstanceActions(instanceAction, expression, scope, called, environment);
   const letDefinition = getLetDefinition(expression, scope);

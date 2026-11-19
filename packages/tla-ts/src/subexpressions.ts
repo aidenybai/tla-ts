@@ -1,4 +1,5 @@
 import {
+  getAssumeProveBody,
   getAssumeProveExpression,
   getChildren,
   getDefinitionExpressions,
@@ -1005,7 +1006,7 @@ export const createModuleSubexpressions = (
   const getModuleDefinition = createLookup(ordered.map((entry) => entry.definition));
   const proofLookup: Lookup = (name) => {
     const definition = getOwnDefinition(name) ?? getAvailable(name);
-    return definition?.kind === "Operator" && isAssumeProve(definition.body)
+    return definition?.kind === "Operator" && getAssumeProveBody(definition.body)
       ? undefined
       : definition;
   };

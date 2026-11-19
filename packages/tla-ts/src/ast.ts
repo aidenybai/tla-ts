@@ -678,5 +678,12 @@ export const getAssumeProveExpression = (assumeProve: AssumeProve): Expression =
 export const isAssumeProve = (expression: Expression) =>
   expression.kind === "Apply" && expression.operator === ASSUME_PROVE_OPERATOR;
 
+export const getAssumeProveBody = (body: Expression): Expression | undefined =>
+  body.kind === "Let"
+    ? getAssumeProveBody(body.body)
+    : isAssumeProve(body)
+      ? body
+      : undefined;
+
 export const isNewDeclaration = (expression: Expression | undefined) =>
   expression?.kind === "Identifier" && expression.name === NEW_DECLARATION;

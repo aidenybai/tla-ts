@@ -542,6 +542,29 @@ describe("INSTANCE matches TLC", () => {
       ),
     );
   });
+
+  it("keeps the \\E around an ASSUME/PROVE theorem an instance substitutes an expression into as one action, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nCONSTANT c\nVARIABLE x\nI == INSTANCE Inner WITH k <- {c}\nInit == x = 0\nNext == \\E i \\in {1} : x' = x \\/ I!Tb\n====",
+      config: "CONSTANT c = 1\nINIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Inner"
+          ? "---- MODULE Inner ----\nCONSTANT k\nTHEOREM Tb == ASSUME k = k PROVE TRUE\n===="
+          : undefined,
+    });
+    expect([result.failure?.message, formatCallStackLines(result)]).toEqual([
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\nline 3, col 15 to line 3, col 37 of module Inner`,
+      [
+        "Line 6, column 9 to line 6, column 37 in M",
+        "Line 6, column 24 to line 6, column 37 in M",
+        "Line 6, column 34 to line 6, column 37 in M",
+        "Line 4, column 1 to line 4, column 33 in M",
+        "",
+        "Line 3, column 15 to line 3, column 37 in Inner",
+      ],
+    ]);
+  });
 });
 
 const INNER_MODULES: Record<string, string> = {
