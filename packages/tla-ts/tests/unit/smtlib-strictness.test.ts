@@ -512,6 +512,24 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("rejects a string parameter of the smt tactic at the end of the command", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        '(check-sat-using (using-params smt :qi.cost "(+ weight generation)"))',
+        '(check-sat-using (using-params smt :smt.mbqi.id "x"))',
+        "(check-sat-using (using-params smt :qi.cost 3))",
+        '(apply (using-params simplify :qi.cost "x"))',
+      ]),
+    ).toEqual([
+      '(error "line 3 column 68: invalid using-params combinator, unsupported parameter kind")',
+      '(error "line 4 column 52: invalid using-params combinator, unsupported parameter kind")',
+      '(error "line 5 column 46: invalid using-params combinator, unsupported parameter kind")',
+      '(error "line 6 column 39: invalid using-params combinator, unknown parameter qi.cost")',
+    ]);
+  });
+
   it("takes a whole decimal as a probe constant and rejects any other decimal", () => {
     expect(
       run([

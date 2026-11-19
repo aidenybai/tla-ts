@@ -97,6 +97,7 @@ const PARAM_BOOL = 0;
 const PARAM_UINT = 1;
 const PARAM_SYMBOL = 2;
 const PARAM_NUMERAL = 3;
+const PARAM_STRING = 4;
 
 export type TacticParam = boolean | number | string;
 export type TacticParams = ReadonlyMap<string, TacticParam>;
@@ -291,6 +292,8 @@ const SMT_DESCRS = getDescrs("smt", [
   ["arith.branch_cut_ratio", PARAM_UINT, 2, true],
   ["random_seed", PARAM_UINT, 0, true],
   ["auto_config", PARAM_BOOL, true, true],
+  ["mbqi.id", PARAM_STRING, ""],
+  ["qi.cost", PARAM_STRING, "(+ weight generation)", true],
 ]);
 
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
@@ -1627,9 +1630,13 @@ const parseParamValue = (kind: number, value: SExpr) =>
         ? value.kind === "numeral" || value.kind === "decimal"
           ? value.text
           : undefined
-        : isSymbol(value)
-          ? value.text
-          : undefined;
+        : kind === PARAM_STRING
+          ? value.kind === "string"
+            ? value.text
+            : undefined
+          : isSymbol(value)
+            ? value.text
+            : undefined;
 
 const getUntypedParamValue = (value: SExpr) =>
   value.kind === "list"
@@ -1687,6 +1694,8 @@ const getParams = (
         getSexprPosition(value),
       );
     }
+    if (found.descr.kind === PARAM_STRING)
+      throw new SmtDefaultError("invalid using-params combinator, unsupported parameter kind");
     const parsed = parseParamValue(found.descr.kind, value);
     if (parsed === undefined)
       throw new SmtParseError(
