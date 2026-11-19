@@ -574,13 +574,13 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     .map((input) => ({
       ...input,
       path:
-        input.isGlobbed || /\.(tla|cfg|ts)$/.test(input.path)
+        input.isGlobbed || /\.(tla|cfg|tsx?)$/.test(input.path)
           ? input.path.replace(/\.cfg$/, ".tla")
           : `${input.path}.tla`,
     }))
     .filter(
       (input) =>
-        input.path.endsWith(".ts") ||
+        /\.tsx?$/.test(input.path) ||
         (input.path.endsWith(".tla") &&
           (!input.isGlobbed || isConfigured || existsSync(input.path.replace(/\.tla$/, ".cfg")))),
     )
@@ -610,7 +610,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     });
     exitCodes.push(
       await reportErrors(async () => {
-        const isTypeScript = path.endsWith(".ts");
+        const isTypeScript = /\.tsx?$/.test(path);
         // Deviation from TLC: TLC checks one spec, so tla-ts names each of several it checks,
         // before a TypeScript file compiles, so a stop names the file it comes from.
         if (paths.length > 1) {

@@ -57,6 +57,15 @@ describe("the CLI with TypeScript files", () => {
     expect(readdirSync(directory)).toEqual(files);
   });
 
+  it("checks a file of JSX", () => {
+    const directory = copyFixtures("passing");
+    cpSync(join(FIXTURES, "../jsx/likes.tsx"), join(directory, "likes.tsx"));
+    const result = runCli(directory, ["likes.tsx"]);
+    expect(result.status).toBe(12);
+    expect(result.stdout).toContain(`Parsing file ${join(realpathSync(directory), "likes.tsx")}`);
+    expect(result.stdout).toContain("Invariant showsNoNegativeCount is violated.");
+  });
+
   it("prints a line for each exported function that it calls nowhere, and checks the rest", () => {
     const result = runCli(copyFixtures("passing"), ["library.ts"]);
     expect(result.status).toBe(0);
