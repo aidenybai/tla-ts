@@ -4847,6 +4847,15 @@ RegExpMatchesOf(regexp, value, isAll) ==
   THEN Assert(FALSE, "tla-ts can't throw the TypeError of replaceAll with a regexp that isn't global here")
   ELSE RegExpMatched(regexp, Text(value))
 
+\\* String.prototype.matchAll, spread: the array of each match's array, which a regexp that isn't
+\\* global throws a TypeError for.
+RegExpMatchAll(regexp, value) ==
+  LET text == Text(value)
+      matches == RegExpMatches(regexp, text, 0)
+  IN  IF regexp.global
+      THEN [position \\in DOMAIN matches |-> RegExpArray(regexp, text, matches[position])]
+      ELSE Assert(FALSE, "tla-ts can't throw the TypeError of matchAll with a regexp that isn't global here")
+
 \\* The argument at a position that replace calls a function with for a match: the matched text,
 \\* each capture, the match's position, the text, and the named groups where the regexp has them.
 RegExpArgument(regexp, text, match, position) ==
@@ -5840,6 +5849,15 @@ Clock == [clock |-> TRUE]
 
 LOCAL Known(time) == IF time = Clock THEN Assert(FALSE, "tla-ts can't read the clock") ELSE time
 
+\\* What a Date's built-in valueOf or toString gives where a conversion calls it, or else what
+\\* ConvertWith gives.
+ConvertDateWith(heap, ref, method) ==
+  CASE IsDate(heap, ref) /\\ IsDateMethod(method, "valueOf") ->
+         TimeNumber(Known(Lookup(heap, ref).time))
+    [] IsDate(heap, ref) /\\ IsDateMethod(method, "toString") ->
+         DateText(Known(Lookup(heap, ref).time), "toString")
+    [] OTHER -> ConvertWith(heap, ref, method)
+
 \\* The object that new Date makes, which holds its time value.
 \\* An error that the heap holds, which has the slot that marks it as one.
 ErrorObject(prototype) == [EmptyObject EXCEPT !.prototype = prototype] @@ [isError |-> TRUE]
@@ -6234,6 +6252,32 @@ RegExpMatchIn(heap, ref, value, prototype) ==
         [] IsLastIndexFixed(heap, ref) -> [heap |-> heap, value |-> Null, isThrown |-> TRUE]
         [] matches = <<>> -> [heap |-> reset, value |-> Null, isThrown |-> FALSE]
         [] OTHER -> [heap |-> made, value |-> Allocated(made), isThrown |-> FALSE]
+
+\\* The heap once it holds the array of each match, and the arrays.
+RECURSIVE RegExpResults(_, _, _, _, _)
+LOCAL RegExpResults(heap, prototype, regexp, text, matches) ==
+  IF matches = <<>>
+  THEN [heap |-> heap, value |-> <<>>]
+  ELSE LET made == RegExpResult(heap, prototype, regexp, text, Head(matches))
+           rest == RegExpResults(made, prototype, regexp, text, Tail(matches))
+       IN  [heap |-> rest.heap, value |-> <<Allocated(made)>> \\o rest.value]
+
+\\* The heap once a spread steps to its end the iterator that String.prototype.matchAll makes through
+\\* RegExp.prototype[@@matchAll], and the arrays of the matches it gives. The iterator matches with a
+\\* copy of the regexp from its lastIndex, so the regexp's own stays. A regexp that isn't global
+\\* throws a TypeError.
+RegExpMatchAllIn(heap, ref, value, prototype) ==
+  LET regexp == RegExpOf(heap, ref, {"RegExp", "RegExp.prototype", "String.prototype",
+                                     "Iterator.prototype", "%RegExpStringIteratorPrototype%"})
+      text == Text(value)
+      read == LastIndexValue(heap, ref)
+      start == IF IsLong(read) THEN Len(text) + 1 ELSE ToLength(read)
+      made == RegExpResults(heap, prototype, regexp, text,
+                            IF start > Len(text) THEN <<>> ELSE RegExpMatches(regexp, text, start))
+  IN  CASE ~regexp.global -> [heap |-> heap, value |-> <<>>, isThrown |-> TRUE]
+        [] start > 0 /\\ start <= Len(text) /\\ CharacterWidth(regexp, text, start - 1) = 2 ->
+             Assert(FALSE, "tla-ts can't match from a lastIndex inside a surrogate pair")
+        [] OTHER -> [heap |-> made.heap, value |-> made.value, isThrown |-> FALSE]
 
 \\* The heap once String.prototype.replace or replaceAll through RegExp.prototype[@@replace] finds its
 \\* matches, and those matches. A global regexp finds each match and leaves lastIndex at 0, and

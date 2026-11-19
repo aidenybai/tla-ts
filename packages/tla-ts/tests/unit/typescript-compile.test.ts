@@ -17246,7 +17246,7 @@ describe("errors", () => {
         add(box.items);
         const text = JSON.stringify(box);
       `),
-    ).toThrow("Only state variables and local lets can change: items");
+    ).toThrow("tla-ts can't change in place the collection that a parameter holds");
   });
 
   it("rejects a function parameter that a helper uses as a value", () => {
@@ -17816,7 +17816,7 @@ describe("errors", () => {
         const cut = (list: number[]) => list.splice(0, 1);
         const removed = cut(box.list);
       `),
-    ).toThrow("Unsupported array method: splice");
+    ).toThrow("tla-ts can't change in place the collection that a parameter holds");
   });
 
   it("splices an array with holes, which move with its elements", async () => {
@@ -26408,18 +26408,19 @@ describe("errors", () => {
     ).toContain(expected);
   });
 
-  it("stops where a script reads the time of a Date's subclass", async () => {
+  it("stops where a script reads the time of a Date's subclass, and converts one as a Date", async () => {
     expect(() =>
       compile(
         `class Day extends Date {}\nconst day = new Day(5);\nif (day.getTime() !== 5) throw new Error("x");`,
       ),
     ).toThrow("Unsupported");
-    const result = await checkModel(`
+    const getSource = (expected: number) => `
       class Day extends Date {}
       const day = new Day(5);
-      if (+day !== 5) throw new Error("x");
-    `);
-    expect(result.failure?.message).toContain("tla-ts can't call this Symbol.toPrimitive method");
+      if (+day !== ${expected}) throw new Error("seen " + String(+day));
+    `;
+    expect((await checkModel(getSource(5))).failure).toBeUndefined();
+    expect((await checkModel(getSource(6))).failure?.message).toContain("seen 5");
   });
 
   it("stops where a script constructs a Date's subclass other than with new", () => {
@@ -53171,13 +53172,26 @@ describe("BigInts", () => {
     });
   });
 
-  it("stops at NaN where a script holds no objects, rather than read it as undefined", () => {
-    expect(() =>
-      compile(`
-        const same = (left: any, right: any) => left === right;
-        if (same(NaN, NaN)) throw new Error("same");
-      `),
-    ).toThrow("tla-ts can't tell what NaN holds here");
+  describe("reads NaN and the infinities where a script holds no objects", () => {
+    const getSource = (expected: string) => `
+      const same = (left: any, right: any) => left === right;
+      const less = (left: any, right: any) => left < right;
+      const seen = [
+        same(NaN, NaN), less(1, Infinity), less(-Infinity, -1), String(NaN), String(-Infinity),
+        Number.isNaN(NaN), 1 / 0, Object.is(-0, 0), (2 ** 60) === 2 ** 60,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "false,true,true,NaN,-Infinity,true,Infinity,false,true";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace(/^false/, "true");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
   });
 
   describe("orders values of type any as IsLessThan does, converting objects first", () => {
@@ -54984,10 +54998,10 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("1", "a,b,c"))).failure?.message).toContain("seen b,c");
     });
 
-    it("stops where the value is an object", async () => {
+    it("stops where the value is an object that keys arguments", async () => {
       expect(
-        (await checkModel(getSource("{ valueOf: () => 1 }", "b,c"))).failure?.message,
-      ).toContain("tla-ts can't convert this object to a primitive here");
+        (await checkModel(getSource("{ valueOf: () => 1 }", "undefined,c"))).failure?.message,
+      ).toContain("tla-ts can't convert objects to strings");
     });
   });
 
@@ -57836,5 +57850,224 @@ describe("runs the script's methods in a conversion inside at most one other", (
     expect((await checkModel(source)).failure?.message).toContain(
       "tla-ts can't tell what this method gives where it converts an object",
     );
+  });
+
+  describe("runs the first operand of a comma in a for-in head once, then iterates the second", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      let warned = false;
+      const make = (config: Record<string, unknown>) => {
+        let key: string | null = null;
+        const names: string[] = [];
+        for (const name in (warned || "key" in config || ((warned = true), box.seen.push("warn")),
+        "id" in config && (box.seen.push("id"), (key = "" + config.id)),
+        config))
+          names.push(name);
+        return [key, names.join("+")].join(":");
+      };
+      box.seen.push(make({ a: 1 }), make({ id: 7, b: 2 }));
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "warn,id,:a,7:id+b";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = "warn,id,id,:a,7:id+b";
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("changes a parameter's map in place only where the call passes one", () => {
+    const getSource = (calls: string, expected: string) => `
+      const parse = (line: string, cache?: Map<string, number>): number => {
+        let found = cache?.get(line);
+        if (found === undefined) {
+          found = line.length;
+          cache?.set(line, found);
+        }
+        return found;
+      };
+      const lengths = new Map<string, number>();
+      const seen = [${calls}].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource('parse("ab"), parse("abc")', "2,3"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      await expect(checkModel(getSource('parse("ab"), parse("abc")', "2,2"))).rejects.toThrow(
+        "seen 2,3",
+      );
+    });
+
+    it("changes the map that a script's call passes, which the heap holds", async () => {
+      const result = await checkModel(getSource('parse("ab", lengths), lengths.size', "2,1"));
+      expect(result.failure).toBeUndefined();
+    });
+
+    it("stops where a model's call passes a map", () => {
+      expect(() =>
+        compile(`
+          const add = (line: string, cache?: Map<string, number>) => {
+            cache?.set(line, line.length);
+          };
+          const lengths = new Map<string, number>();
+          export const remember = (line: "ab" | "abc"): void => {
+            add(line, lengths);
+          };
+          export const isEmpty = (): boolean => lengths.size === 0;
+        `),
+      ).toThrow("tla-ts can't change in place the collection that a parameter holds");
+    });
+  });
+
+  describe("spreads the matches that a string's matchAll gives", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const PAIR = /(?<key>\\w+)=(\\d+)?/g;
+      const closest = (text: string, limit: number) => {
+        const all = [...text.matchAll(PAIR)];
+        const found = all.filter((match) => match.index <= limit).at(-1);
+        return found
+          ? [found[1], found[2], found.index, found.groups?.key, all.length].join("/")
+          : "none";
+      };
+      box.seen.push(closest("a=1 b= c=3", 5), closest("x", 0));
+      box.seen.push([..."a\\u{1F600}b".matchAll(/(?:)/gu)].map((match) => match.index).join("+"));
+      PAIR.lastIndex = 4;
+      box.seen.push([..."a=1 b=2".matchAll(PAIR)].map((match) => match[0]).join("+"));
+      box.seen.push(String(PAIR.lastIndex));
+      try {
+        box.seen.push(String([..."a".matchAll(/a/)].length));
+      } catch (error) {
+        box.seen.push(error instanceof TypeError ? "TypeError" : "other");
+      }
+      const seen = box.seen.join(",");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "b//4/b/3,none,0+1+3+4,b=2,4,TypeError";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace("b=2,4", "b=2,0");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+
+    it("spreads them where a script holds no objects", async () => {
+      const getPlain = (found: string) => `
+        const found = [..."a=1 b=2".matchAll(/(\\w)=(\\d)/g)].map((match) => match[2] + match.index);
+        if (found.join() !== "${found}") throw new Error("found " + found.join());
+      `;
+      expect((await checkModel(getPlain("10,24"))).failure).toBeUndefined();
+      await expect(checkModel(getPlain("10,25"))).rejects.toThrow("found 10,24");
+    });
+  });
+
+  describe("converts a Date through its Symbol.toPrimitive method", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const early = new Date(5);
+      const late = new Date(86400000 * 400 + 7);
+      box.seen.push(String(early < late), String(late <= early), \`\${late}\`);
+      const own = new Date(0);
+      own.toString = () => "own";
+      box.seen.push(own + "!", String(+own));
+      const valued = new Date(0);
+      valued.valueOf = () => 42;
+      box.seen.push(String(+valued), valued + "?");
+      const invalid = new Date(NaN);
+      box.seen.push(invalid + "", String(+invalid));
+      const seen = box.seen.join("|");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = [
+      "true|false|Fri Feb 05 1971 00:00:00 GMT+0000 (Coordinated Universal Time)|own!|0|42",
+      "Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)?|Invalid Date|NaN",
+    ].join("|");
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace("own!|0|42", "own!|0|0");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
+
+  describe("runs the operators of JavaScript's values of type unknown as of type any", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      var box = { seen: [] };
+      /**
+       * @param {unknown} left
+       * @param {unknown} right
+       */
+      function operate(left, right) {
+        return [left - right, left + right, left < right].join("/");
+      }
+      box.seen.push(operate(7, "2"), operate({ valueOf: () => 3 }, 1), operate(true, null));
+      if (box.seen.join() !== "${expected}") throw new Error("seen " + box.seen.join());
+    `;
+    const expected = "5/72/false,2/4/false,1/1/false";
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource(expected), path))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace("5/72", "5/9");
+      expect((await check(compile(getSource(wrong), path))).failure?.message).toContain(
+        `seen ${expected}`,
+      );
+    });
+  });
+
+  describe("converts an object in a condition, a branch, or a loop's test before what reads it", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const make = (name: string, value: number): any => ({
+        valueOf() {
+          box.seen.push(name);
+          return value;
+        },
+      });
+      const low = make("low", 1);
+      const high = make("high", 5);
+      const flag = box.seen.length === 0;
+      const picked = flag ? high - 1 : low - 1;
+      const other = !flag ? high * 2 : low * 2;
+      if (flag && high > low) box.seen.push("ordered");
+      const joined = flag || low < high ? "yes" : "no";
+      const nested = (low > 0 && high < 10) || low > high;
+      box.seen.push(String(picked), String(other), joined, String(nested));
+      let count = 0;
+      do count++;
+      while (count < 3 && (count === 1 ? low : high) > count);
+      box.seen.push(String(count));
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "high,low,high,low,ordered,low,high,4,2,yes,true,low,1";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replace("ordered,low,high", "ordered,low,high,low");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
   });
 });

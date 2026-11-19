@@ -2327,6 +2327,7 @@ const REGEXP_OPERATORS = new Map([
   ["exec", ["RegExpExec", "RegExpExecIn"]],
   ["test", ["RegExpTest", "RegExpTestIn"]],
   ["match", ["RegExpMatch", "RegExpMatchIn"]],
+  ["matchAll", ["RegExpMatchAll", "RegExpMatchAllIn"]],
   ["search", ["RegExpSearchIndex", "RegExpSearchIn"]],
   ["split", ["RegExpSplit", "RegExpSplitIn"]],
   ["replace", ["RegExpReplace", "RegExpReplaceIn"]],
@@ -2365,7 +2366,10 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
     context.heap !== undefined &&
     context.checker.getTypeAtLocation(receiver).getSymbol()?.name === "String";
   const operators = REGEXP_OPERATORS.get(method);
-  if (operators === undefined) return undefined;
+  // Only a string's matchAll that an array spreads gives its matches, rather than an iterator.
+  if (operators === undefined || (method === "matchAll" && (isSymbol || !isSpreadMatchAll(node)))) {
+    return undefined;
+  }
   const getCall = (regexp: ts.Expression, text: ts.Expression, rest: readonly ts.Expression[]) => ({
     method,
     operator: operators[0],
@@ -2392,6 +2396,7 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
   const limit = values.at(1);
   const isKnown =
     ((method === "match" || method === "search") && values.length === 1) ||
+    (method === "matchAll" && values.length === 1) ||
     (method === "split" &&
       (limit === undefined ||
         (values.length === 2 &&
@@ -2399,6 +2404,19 @@ const getRegExpCall = (node: ts.Node, context: Context): RegExpCall | undefined 
             isEvery(context.checker.getTypeAtLocation(limit), ts.TypeFlags.Undefined))))) ||
     ((method === "replace" || method === "replaceAll") && values.length === 2);
   return isKnown ? getCall(values[0], receiver, values.slice(1)) : undefined;
+};
+
+// A string's matchAll that an array spreads, whose iterator nothing else can step, so that the call
+// gives the arrays of the matches that the spread would.
+export const isSpreadMatchAll = (node: ts.Node): node is ts.CallExpression => {
+  const spread = node.parent;
+  return (
+    ts.isCallExpression(node) &&
+    isMethodCall(node) &&
+    node.expression.name.text === "matchAll" &&
+    ts.isSpreadElement(spread) &&
+    ts.isArrayLiteralExpression(spread.parent)
+  );
 };
 
 // The string that a regexp call reads, which ToString gives for a String object.
@@ -2446,7 +2464,8 @@ const getExpressionRegExpCall = (node: ts.Node, context: Context) => {
     (context.heap !== undefined &&
       ((!isLiteralRegExp(call.regexp) && getStringRegExp(call.regexp) === undefined) ||
         call.method === "exec" ||
-        call.method === "match"))
+        call.method === "match" ||
+        call.method === "matchAll"))
     ? undefined
     : call;
 };

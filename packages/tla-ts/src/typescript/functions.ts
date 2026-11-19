@@ -45,6 +45,7 @@ import {
   throwOnUnentered,
   enterScope,
   isValueReturn,
+  rejectChangedArguments,
   translateLocalStatements,
 } from "./actions";
 import { TlaTypeScriptError } from "../errors";
@@ -803,6 +804,7 @@ export const translateHelperCall = (
 ) => {
   rejectCaught(node ?? declaration, declaration, scope, context);
   const helper = getHelper(declaration, context);
+  if (helper !== undefined) rejectChangedArguments(helper, node?.arguments ?? [], context);
   const helperScope = bindFactory(declaration, scope, context);
   // A function that reads its this runs inline, where the call gives it its this.
   const readsThis =

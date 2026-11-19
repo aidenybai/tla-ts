@@ -1142,12 +1142,7 @@ const getTarget = (node: ts.Expression, path: Path, context: Context): Target =>
     if (!isReceiver && getImmutable(node, context) !== undefined) {
       throw new TlaTypeScriptError(`tla-ts can't follow this write to ${node.text}`, node);
     }
-    const declaration = getValueDeclaration(symbol, context);
-    const isChangedInPlace =
-      declaration !== undefined &&
-      ts.isParameter(declaration) &&
-      declaration.dotDotDotToken === undefined &&
-      isReceiver;
+    const isChangedInPlace = isReceiver && getParameterRead(node, context) !== undefined;
     if (
       symbol === undefined ||
       current === undefined ||
@@ -2072,6 +2067,49 @@ const isRemoving = (node: ts.Expression, context: Context): boolean => {
       !node.arguments.some(ts.isSpreadElement) &&
       REMOVING_METHODS.has(method))
   );
+};
+
+// The parameter that an expression reads, whose object may be the caller's too, though a rest
+// parameter's array is the call's own.
+const getParameterRead = (node: ts.Expression, context: Context) => {
+  const held = getCast(ts.isNonNullExpression(node) ? node.expression : node);
+  const declaration = ts.isIdentifier(held)
+    ? getValueDeclaration(getSymbol(held, context.checker), context)
+    : undefined;
+  return declaration !== undefined &&
+    ts.isParameter(declaration) &&
+    declaration.dotDotDotToken === undefined
+    ? declaration
+    : undefined;
+};
+
+// A call that passes a collection that the callee changes in place through a parameter, which a
+// TLA+ value would copy, so that the caller's would miss the change.
+export const rejectChangedArguments = (
+  callee: FunctionNode,
+  argumentNodes: readonly ts.Expression[],
+  context: Context,
+) => {
+  const body = callee.body;
+  const passed = callee.parameters.filter((_, position) => {
+    const argument = argumentNodes.at(position);
+    return argument !== undefined && !isUndefinedLiteral(argument, context);
+  });
+  if (body === undefined || passed.length === 0) return;
+  const changed = findNodesOf(
+    body,
+    ts.SyntaxKind.CallExpression,
+    (inner): inner is ts.CallExpression & { expression: ts.PropertyAccessExpression } =>
+      isMethodCall(inner) && isRemoving(inner, context),
+    context,
+  ).flatMap((call) => getParameterRead(call.expression.expression, context) ?? []);
+  const parameter = passed.find((inner) => changed.includes(inner));
+  if (parameter !== undefined) {
+    throw new TlaTypeScriptError(
+      "tla-ts can't change in place the collection that a parameter holds",
+      argumentNodes[callee.parameters.indexOf(parameter)],
+    );
+  }
 };
 
 // The value that a call like queue.shift() returns, before it changes the queue.
@@ -3135,6 +3173,32 @@ const translateCallStatementBody = (
       changed,
     );
   };
+  // A parameter's collection may be the caller's too, which a change in place would miss, so the
+  // change stops where it runs. A call that passes one stops before, so it runs only where no call
+  // passes one.
+  const changedParameter =
+    isMethodCall(expression) && isRemoving(expression, context)
+      ? getParameterRead(expression.expression.expression, context)
+      : undefined;
+  const changedOwner = changedParameter?.parent;
+  if (
+    isMethodCall(expression) &&
+    changedOwner !== undefined &&
+    (ts.isFunctionDeclaration(changedOwner) ||
+      ts.isFunctionExpression(changedOwner) ||
+      ts.isArrowFunction(changedOwner)) &&
+    isOnlyCalled(changedOwner, context)
+  ) {
+    return guardReceiver(
+      expression.expression.expression,
+      leaf(
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't change in place the collection that a parameter holds"),
+        ]),
+      ),
+    );
+  }
   // A call like stack.pop() that an expression evaluates, which gives its value from before.
   const removed = getRemovedValue(expression, path, context);
   if (removed !== undefined && isMethodCall(expression)) {
@@ -3539,9 +3603,9 @@ const translateCallStatementBody = (
                   heap,
                   identifier(regexp),
                   text,
-                  // exec and match make arrays, and split's limit is undefined where the call
+                  // exec, match, and matchAll make arrays, and split's limit is undefined where the call
                   // passes none.
-                  ...(method === "exec" || method === "match"
+                  ...(method === "exec" || method === "match" || method === "matchAll"
                     ? [translateBuiltInValue("Array.prototype", expression, context)]
                     : method === "split" && regExpCall.values.length === 0
                       ? [getUndefined(context)]
@@ -6613,6 +6677,7 @@ export const bindCall = (
   if (frame.inlining.has(callee)) {
     throw new TlaTypeScriptError("Functions that change state can't call themselves", node);
   }
+  rejectChangedArguments(callee, argumentNodes, context);
   const parameters = getParameters(callee);
   // A parameter's array pattern takes its values from a generator before the body runs.
   const destructured = parameters.flatMap((parameter, position) => {
@@ -19115,6 +19180,37 @@ const translateLoop = (
   frame: Frame,
   continueWith: (path: Path) => Formula,
 ): Formula => {
+  // A for-of or a for-in over a comma runs the comma's first operand as a statement, which may
+  // assign where a branch runs, and then iterates what the second gives.
+  const head = ts.isForInStatement(loop) || ts.isForOfStatement(loop) ? loop.expression : undefined;
+  const comma = head === undefined ? undefined : getCast(head);
+  if (
+    head !== undefined &&
+    comma !== undefined &&
+    isComma(comma) &&
+    !path.scope.results.has(comma)
+  ) {
+    return translateExpressionStatement(comma.left, path, context, frame, (after) => {
+      const value = translateExpression(comma.right, after.scope, context);
+      return translateLoop(
+        loop,
+        {
+          ...after,
+          scope: {
+            ...after.scope,
+            results: new Map([
+              ...after.scope.results,
+              [comma, value],
+              ...(comma === head ? [] : [[head, value] as const]),
+            ]),
+          },
+        },
+        context,
+        frame,
+        continueWith,
+      );
+    });
+  }
   const isYielding = frame.yieldTo !== undefined && hasYield(loop.statement);
   // A state machine runs a while, a do-while, or a for that yields as jumps to its head.
   const loopTo = frame.loopTo;
@@ -19648,6 +19744,31 @@ const translateIterations = (
               ),
             ),
           ),
+        );
+      }
+      // An operation that converts an object runs its conversion the same way.
+      const converted =
+        condition === undefined ? undefined : getLeadingConversion(condition, current, context);
+      if (converted !== undefined) {
+        return runConversion(
+          converted.node,
+          converted.conversion,
+          current,
+          context,
+          bodyFrame,
+          (after, value) =>
+            test(
+              {
+                ...after,
+                scope: {
+                  ...after.scope,
+                  results: new Map([...after.scope.results, [converted.node, value]]),
+                },
+              },
+              whenTrue,
+              whenFalse,
+              tested,
+            ),
         );
       }
       // A short-circuit whose operand runs such a call runs it only where the operand runs.
@@ -21308,7 +21429,8 @@ const findLeadingCall = (
         isAssignment(run) &&
         ts.isIdentifier(run.left) &&
         isPlainOperand(run.right)) ||
-      found.branch !== undefined
+      found.branch !== undefined ||
+      found.conversion !== undefined
     );
   };
   // An operand that runs nothing, which the operation evaluates as a value.
@@ -21323,9 +21445,14 @@ const findLeadingCall = (
   };
   // A condition or a short-circuit's left operand always runs first, so a read that it runs first
   // runs before the operand that runs only sometimes.
+  const isRunFirst = (found: LeadingCall) =>
+    found.call !== undefined ||
+    found.read !== undefined ||
+    found.branch !== undefined ||
+    found.conversion !== undefined;
   if (ts.isConditionalExpression(node)) {
     const found = findLeadingCall(node.condition, before, path, context);
-    return found.call !== undefined || found.read !== undefined || found.branch !== undefined
+    return isRunFirst(found)
       ? found
       : found.isBlocked
         ? blocked
@@ -21343,7 +21470,7 @@ const findLeadingCall = (
       kind === ts.SyntaxKind.QuestionQuestionToken
     ) {
       const found = findLeadingCall(node.left, before, path, context);
-      return found.call !== undefined || found.read !== undefined || found.branch !== undefined
+      return isRunFirst(found)
         ? found
         : found.isBlocked
           ? blocked
@@ -21619,9 +21746,14 @@ const getEvaluated = (statement: ts.Statement) =>
         ? statement.expression
         : ts.isReturnStatement(statement) || ts.isThrowStatement(statement)
           ? statement.expression
-          : ts.isForOfStatement(statement) || ts.isForInStatement(statement)
+          : (ts.isForOfStatement(statement) || ts.isForInStatement(statement)) &&
+              !isComma(getCast(statement.expression))
             ? statement.expression
             : undefined;
+
+// A comma, whose first operand a loop runs as a statement before it iterates what the second gives.
+const isComma = (node: ts.Expression): node is ts.BinaryExpression =>
+  ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.CommaToken;
 
 // The call inside a statement's expression that runs as its own statement first, other than one
 // that the statement itself runs.
@@ -21805,6 +21937,30 @@ const runBranch = (
       );
     }
     const leading = getLeadingCall(operand, () => true, next, context);
+    // An operation that converts an object runs its conversion first, as a call does.
+    const converted =
+      leading === undefined ? getLeadingConversion(operand, next, context) : undefined;
+    if (converted !== undefined) {
+      return runConversion(
+        converted.node,
+        converted.conversion,
+        next,
+        context,
+        frame,
+        (after, value) =>
+          evaluate(
+            operand,
+            {
+              ...after,
+              scope: {
+                ...after.scope,
+                results: new Map([...after.scope.results, [converted.node, value]]),
+              },
+            },
+            withOperand,
+          ),
+      );
+    }
     // An operand makes the objects in it only where its branch runs.
     return leading === undefined
       ? allocate(operand, next, context, (allocated) =>
@@ -21906,7 +22062,20 @@ const getBranch = (evaluated: ts.Expression | undefined, path: Path, context: Co
 // read what the conversion's methods change.
 const getHoistedConversion = (statement: ts.Statement, path: Path, context: Context) => {
   const evaluated = getEvaluated(statement);
-  if (evaluated === undefined) return undefined;
+  const leading =
+    evaluated === undefined ? undefined : getLeadingConversion(evaluated, path, context);
+  // A compound assignment assigns where it's all that the statement evaluates.
+  return leading !== undefined &&
+    isCompoundAssignment(leading.node) &&
+    !(ts.isExpressionStatement(statement) && skipCasts(statement.expression) === leading.node)
+    ? undefined
+    : leading;
+};
+
+// The operation that an expression evaluates first that converts an object to a primitive, which
+// runs as its own statement. Nothing that the expression evaluates before it may read what the
+// conversion's methods change.
+const getLeadingConversion = (evaluated: ts.Expression, path: Path, context: Context) => {
   const before: ts.Node[] = [];
   const node = findLeadingCall(evaluated, before, path, context).conversion;
   const conversion = node === undefined ? undefined : getConversion(node, context);
@@ -21914,13 +22083,6 @@ const getHoistedConversion = (statement: ts.Statement, path: Path, context: Cont
     node === undefined ||
     conversion === undefined ||
     getImmutableWrite(node, context) !== undefined
-  ) {
-    return undefined;
-  }
-  // A compound assignment assigns where it's all that the statement evaluates.
-  if (
-    isCompoundAssignment(node) &&
-    !(ts.isExpressionStatement(statement) && skipCasts(statement.expression) === node)
   ) {
     return undefined;
   }
