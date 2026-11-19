@@ -94,6 +94,7 @@ const GATED_GROUPS = [
   "87-eval.tla",
   "88-modules.tla",
   "89",
+  "90-intl.tla",
 ];
 
 // String methods that make regular expressions, and the methods of collections and arrays that

@@ -827,6 +827,54 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  describe("lays Intl out as ECMA-402 does, without its locale data", () => {
+    const getSource = (expected: string) => `
+      let errors = "";
+      for (const run of [
+        () => Reflect.apply(Intl.PluralRules, undefined, []),
+        () => Intl.ListFormat.prototype.format.call({}, []),
+        () => Intl.supportedValuesOf("colors" as "unit"),
+        () => Intl.getCanonicalLocales([1 as unknown as string]),
+        () => Reflect.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, "format")?.get?.call(5),
+        () => Intl.Collator.supportedLocalesOf([], { localeMatcher: "first" as "lookup" }),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [
+        Object.prototype.toString.call(Intl),
+        Intl.Collator.length,
+        Intl.DisplayNames.length,
+        Intl.Locale.name,
+        Object.getOwnPropertyNames(Intl.Locale.prototype).length,
+        Object.prototype.toString.call(Intl.Segmenter.prototype),
+        Intl.getCanonicalLocales().length,
+        Intl.Collator.supportedLocalesOf([]).length,
+        errors,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "[object Intl]|0|2|Locale|22|[object Intl.Segmenter]|0|0|TypeError;TypeError;RangeError;TypeError;TypeError;RangeError;";
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const expected =
+        "[object Intl]|0|1|Locale|22|[object Intl.Segmenter]|0|0|TypeError;TypeError;RangeError;TypeError;TypeError;RangeError;";
+      expect((await checkScript(getSource(expected))).message).toContain(THREW);
+    });
+
+    it("stops at a constructor, which reads locale data", async () => {
+      expect((await checkScript("new Intl.Collator();")).message).toContain("tla-ts can't");
+    });
+  });
+
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `
       const error = new Error("m");

@@ -715,16 +715,16 @@ const getHostObject = (owner: string): object | undefined => {
   if (owner === "GlobalObject") return HOST_GLOBAL;
   const isPrototype = owner.endsWith("Prototype");
   const base = isPrototype ? owner.slice(0, -"Prototype".length) : owner;
-  const temporal: unknown = Reflect.get(HOST_GLOBAL, "Temporal");
+  // An intrinsic of a namespace, such as TemporalPlainDate or IntlCollator, is the namespace's.
+  const namespace = ["Temporal", "Intl"].find((name) => base.startsWith(name) && base !== name);
+  const holder: unknown =
+    namespace === undefined ? HOST_GLOBAL : Reflect.get(HOST_GLOBAL, namespace);
   const found: unknown =
     base === "TypedArray"
       ? Object.getPrototypeOf(Reflect.get(HOST_GLOBAL, "Int8Array"))
-      : base.startsWith("Temporal") &&
-          base !== "Temporal" &&
-          typeof temporal === "object" &&
-          temporal !== null
-        ? Reflect.get(temporal, base.slice("Temporal".length))
-        : Reflect.get(HOST_GLOBAL, base);
+      : typeof holder === "object" && holder !== null
+        ? Reflect.get(holder, namespace === undefined ? base : base.slice(namespace.length))
+        : undefined;
   if ((typeof found !== "object" && typeof found !== "function") || found === null)
     return undefined;
   const object: unknown = isPrototype ? Reflect.get(found, "prototype") : found;
