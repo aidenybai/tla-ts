@@ -3312,6 +3312,64 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "a RECURSIVE operator named after a constant, whose definition uses the constant",
+      "CONSTANT k\nRECURSIVE k(_)\nk(a) == k",
+      [
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message: "Operator k already defined or declared.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message: "Symbol k declared in RECURSIVE statement but not defined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a RECURSIVE operator named after a constant, and a definition before it that uses the constant",
+      "CONSTANT k\nRECURSIVE k(_)\nF == k\nk(a) == 1",
+      [
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 9 of module M",
+          message: "Operator k already defined or declared.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message: "Symbol k declared in RECURSIVE statement but not defined.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });

@@ -323,12 +323,11 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
   const binding = getModuleBinding(name, unit, undefined);
   const isVisible =
     definition !== undefined &&
-    (definition === unit.self
-      ? definition.isRecursive
-      : definition.isRecursive
-        ? binding !== undefined
-        : isBefore(definition.location, unit.location) &&
-          (binding === undefined || !isBefore(binding.position, definition.location)));
+    (definition.isRecursive
+      ? binding?.isPending === true || isSameRange(binding?.range, definition.location.range)
+      : definition !== unit.self &&
+        isBefore(definition.location, unit.location) &&
+        (binding === undefined || !isBefore(binding.position, definition.location)));
   return isVisible ? definition : undefined;
 };
 
