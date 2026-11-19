@@ -153,13 +153,6 @@ const createDotWriter = (
       writeFile?.(dump.path.replaceAll(".dot", "_snapshot.dot"), lines.join("") + getEnding());
     }
   };
-  const getEdgeAttributes = (action: GraphAction | undefined, constraint: string | undefined) => {
-    const color = dump.colorize ? String(getColor(action)) : "black";
-    const name =
-      dump.actionLabels && action ? escapeDotString(is174 ? action.name : action.signature) : "";
-    const label = constraint === undefined ? name : `${name}\n${constraint}`;
-    return ` [label="${label}",color="${color}",fontcolor="${color}"]`;
-  };
   const writeEdge = (
     state: GraphState,
     successor: GraphState,
@@ -169,7 +162,11 @@ const createDotWriter = (
     constraint?: string,
   ) => {
     if (isDuplicate(state, successor)) return;
-    const attributes = isLabeled ? getEdgeAttributes(action, constraint) : "";
+    const color = dump.colorize ? String(getColor(action)) : "black";
+    const name =
+      dump.actionLabels && action ? escapeDotString(is174 ? action.name : action.signature) : "";
+    const label = constraint === undefined ? name : `${name}\n${constraint}`;
+    const attributes = isLabeled ? ` [label="${label}",color="${color}",fontcolor="${color}"]` : "";
     lines.push(`${state.fingerprint} -> ${successor.fingerprint}${attributes};\n`);
     if (!isSeen) {
       const tooltip = is174 ? "" : `,tooltip="${toDotLabel(successor.getText())}"`;
