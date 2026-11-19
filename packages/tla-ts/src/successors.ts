@@ -617,6 +617,18 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       );
       return;
     }
+    const local = binding?.kind === "Operator" ? binding.operator : undefined;
+    if (local?.kind === "Closure" && local.params.length === 0) {
+      getRunner(getUnchangedWrapper(local.body), environment, false)(
+        run,
+        local.scope,
+        partial,
+        action,
+        isFixed,
+        onComplete,
+      );
+      return;
+    }
     const context = getContext(run, scope, partial);
     if (run.isEnabled && expression.kind === "Apply") {
       const operator = resolveApplyOperator(expression, context);

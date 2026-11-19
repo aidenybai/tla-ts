@@ -411,6 +411,51 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("warns about a changed variable that a LET definition names under UNCHANGED with -coverage, which evaluates the definition at each reference as TLC does", async () => {
+    const warnings: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == LET m == y IN (y' = 1 /\\ UNCHANGED m /\\ x' = x)\n====",
+      config: "INIT Init\nNEXT Next",
+      coverage: 1,
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress.text);
+      },
+    });
+    expect(warnings).toEqual([
+      "The variable y was changed while it is specified as UNCHANGED at\nline 5, col 44 to line 5, col 44 of module M",
+    ]);
+  });
+
+  it.each([
+    [
+      "UNCHANGED of a tuple with an impure element",
+      "LET m == <<x, RandomElement({y})>> IN (y' = y /\\ UNCHANGED m)",
+      0,
+      [2, 1, 1],
+    ],
+    [
+      "UNCHANGED of a tuple with an impure element under -coverage",
+      "LET m == <<x, RandomElement({y})>> IN (y' = y /\\ UNCHANGED m)",
+      1,
+      [2, 1, 1],
+    ],
+    ["a prime under -coverage", "LET m == x IN (m' = 1 - x /\\ UNCHANGED y)", 1, [3, 2, 2]],
+    ["an equality under -coverage", "LET m == x' IN (m = 1 - x /\\ UNCHANGED y)", 1, [3, 2, 2]],
+  ])(
+    "finds the variables of a LET definition it evaluates at each reference in %s, as TLC looks through the definition",
+    async (_title, next, coverage, counts) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        coverage: coverage || undefined,
+      });
+      expect([result.failure, result.generatedStates, result.distinctStates, result.depth]).toEqual(
+        [undefined, ...counts],
+      );
+    },
+  );
+
   it("applies a function without computing the values it isn't applied to as TLC does", async () => {
     const result = await checkSteps(
       "G(n) == [k \\in {1, 2} |-> 10 \\div (k - n)]\nStep == x' = G(2)[1]",

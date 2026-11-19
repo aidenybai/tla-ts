@@ -203,10 +203,10 @@ const getVariable = (
   if (binding?.kind === "Thunk") {
     return getVariable(environment, binding.expression, binding.scope, frames);
   }
-  if (binding) return undefined;
-  const index = environment.variableIndex.get(name);
+  if (binding?.kind === "Value") return undefined;
+  const index = binding ? undefined : environment.variableIndex.get(name);
   if (index !== undefined) return index;
-  const operator = resolveGlobalOperator(name, environment);
+  const operator = binding ? binding.operator : resolveGlobalOperator(name, environment);
   return operator?.kind === "Closure" && operator.params.length === 0
     ? getVariable(environment, operator.body, operator.scope, frames)
     : undefined;
@@ -238,8 +238,8 @@ const getPrimedVariable = (
   if (binding?.kind === "Thunk") {
     return getPrimedVariable(environment, binding.expression, binding.scope, frames);
   }
-  if (binding) return undefined;
-  const operator = resolveGlobalOperator(name, environment);
+  if (binding?.kind === "Value") return undefined;
+  const operator = binding ? binding.operator : resolveGlobalOperator(name, environment);
   return operator?.kind === "Closure" && operator.params.length === 0
     ? getPrimedVariable(environment, operator.body, operator.scope, frames)
     : undefined;
@@ -993,7 +993,9 @@ const visitUnchanged = (
         return visitUnchanged(replay, binding.expression, items, binding.scope, partial, node);
       }
       const operator = binding
-        ? undefined
+        ? binding.kind === "Operator"
+          ? binding.operator
+          : undefined
         : resolveGlobalOperator(expression.name, replay.environment);
       // Deviation from TLC: Tool#processUnchanged takes the SubstInNode of an instance's definition for an expression and fails on an unassigned variable.
       if (operator?.kind === "Closure" && operator.params.length === 0) {
