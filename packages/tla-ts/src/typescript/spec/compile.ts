@@ -6,7 +6,7 @@ import { createFileResolver } from "../program";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
-import { getHostTimeZone, getTlaString, LOCALE_METHODS } from "./runtime";
+import { getHostDateFormat, getHostTimeZone, getTlaString, LOCALE_METHODS } from "./runtime";
 import { getNumber, type ProgramFile, specialize } from "./specialize";
 import { suspendDefinitions } from "./suspend";
 
@@ -32,9 +32,10 @@ interface CodeDefinition {
 }
 
 // A program's definitions with each one whose text is another's but for its name and the names of
-// definitions merged before it merged into the first, and with each literal sequence of numbers,
-// such as a name's code units, a definition of its own, so that a check reads each one once. A
-// sequence of the code units of characters that a TLA+ string can hold is that string's units.
+// definitions merged before it merged into the first, but for the hooks, which the config names,
+// and with each literal sequence of numbers, such as a name's code units, a definition of its own,
+// so that a check reads each one once. A sequence of the code units of characters that a TLA+
+// string can hold is that string's units.
 const getStringUnits = (sequence: string) => {
   const text = getTlaString(String.fromCharCode(...(sequence.match(/\d+/g) ?? []).map(Number)));
   return text === undefined ? undefined : `StringUnits(${text})`;
@@ -46,6 +47,7 @@ const compact = (definitions: readonly CodeDefinition[]) => {
   const rename = (text: string) =>
     text.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (name) => merged.get(name) ?? name);
   for (const definition of definitions) {
+    if (HOOKS.has(definition.name.replace(/^Program/, ""))) continue;
     const key = `${definition.arity} ${rename(definition.text).slice(definition.name.length)}`;
     const first = firsts.get(key);
     if (first === undefined) firsts.set(key, definition.name);
@@ -407,6 +409,11 @@ export const compileToEscore = (
           text: program.words.has("Temporal")
             ? getHostTimeZone(files.map((file) => file.sourceFile.text).join("\n"))
             : `HostTimeZone(key) == [found |-> "unknown"]`,
+        },
+        {
+          name: "HostDateFormat",
+          arity: 1,
+          text: getHostDateFormat(program.words),
         },
         {
           name: "SourceUnits",

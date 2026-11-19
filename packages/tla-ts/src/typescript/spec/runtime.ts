@@ -1,6 +1,7 @@
 import { runInNewContext } from "node:vm";
 import { TlaError } from "../../errors";
 import type { GeneratedDefinition, Library } from "./library";
+import { DATE_FORMATS } from "../date-formats";
 import { TIME_ZONES } from "../time-zones";
 
 // The ESCore operators that a compiled spec defines its own way, each a port of ESCore's with
@@ -842,6 +843,31 @@ export const getHostTimeZone = (text: string) => {
   return arms.length === 0
     ? `HostTimeZone(key) == [found |-> "unknown"]`
     : `HostTimeZone(key) ==\n  CASE ${arms.join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`;
+};
+
+// The program's HostDateFormat: the English patterns of Temporal's toLocaleString that Node 26
+// recorded (date-formats.ts) for the kinds of object the program names, where it formats a Temporal
+// object, and the host's default locale and time zone are the table's, English and UTC. Any other
+// key may be one that the host formats and the table leaves out.
+export const getHostDateFormat = (words: ReadonlySet<string>) => {
+  const defaults = new Intl.DateTimeFormat().resolvedOptions();
+  const entries =
+    words.has("Temporal") &&
+    words.has("toLocaleString") &&
+    defaults.locale === "en-US" &&
+    defaults.timeZone === "UTC"
+      ? Object.entries(DATE_FORMATS).filter(([key]) => {
+          const kind = key.slice(0, key.indexOf("|"));
+          return kind !== "DateTimeFormat" && words.has(kind);
+        })
+      : [];
+  const getEntry = (format: (typeof DATE_FORMATS)[string]) =>
+    format.error === undefined
+      ? `[found |-> "format", fields |-> <<${(format.fields ?? []).map((field) => `"${field}"`).join(", ")}>>, styles |-> <<${(format.styles ?? []).map((style, index) => (format.fields?.[index] === "literal" ? getUnitsOf(style) : `"${style}"`)).join(", ")}>>, isZoned |-> ${format.isZoned === true ? "TRUE" : "FALSE"}]`
+      : `[found |-> "error", error |-> "${format.error}"]`;
+  return entries.length === 0
+    ? `HostDateFormat(key) == [found |-> "unknown"]`
+    : `HostDateFormat(key) ==\n  LET table == ${entries.map(([key, format]) => `("${key}" :> ${getEntry(format)})`).join("\n    @@ ")}\n  IN IF key \\in DOMAIN table THEN table[key] ELSE [found |-> "unknown"]`;
 };
 
 const getUnitsOf = (text: string) =>

@@ -767,6 +767,66 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "formats Temporal's toLocaleString through the host's recorded English patterns",
+    () => {
+      const getSource = (expected: string) => `
+      const date = new Temporal.PlainDate(2024, 12, 26);
+      const time = new Temporal.PlainTime(14, 5, 9, 321);
+      const instant = Temporal.Instant.from("2024-12-26T11:46:40.321Z");
+      const read: string[] = [];
+      const options = new Proxy(
+        { month: "long" },
+        {
+          get: (target, key) => {
+            read.push(String(key));
+            return Reflect.get(target, key);
+          },
+        },
+      );
+      let errors = "";
+      for (const make of [
+        () => date.toLocaleString("en", { month: "longer" } as unknown as Intl.DateTimeFormatOptions),
+        () => date.toLocaleString("en", { timeStyle: "short" }),
+        () => time.toLocaleString("en", { dateStyle: "short" }),
+        () => Temporal.PlainDate.prototype.toLocaleString.call(time),
+      ]) {
+        try {
+          make();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [
+        date.toLocaleString(),
+        date.toLocaleString("en", options),
+        read.join(","),
+        time.toLocaleString("en-US", { hourCycle: "h23", hour: "numeric" }),
+        instant.toLocaleString("en", { dateStyle: "full", timeStyle: "short" }),
+        errors,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+      const read =
+        "localeMatcher,calendar,numberingSystem,hour12,hourCycle,timeZone,weekday,era,year,month,day,dayPeriod,hour,minute,second,fractionalSecondDigits,timeZoneName,formatMatcher,dateStyle,timeStyle";
+
+      it("agrees with Node", async () => {
+        const expected = `12/26/2024|December|${read}|14|Thursday, December 26, 2024 at 11:46 AM|RangeError;TypeError;TypeError;TypeError;`;
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = `12/26/2024|December|${read}|14|Thursday, December 26, 2024 at 11:46 PM|RangeError;TypeError;TypeError;TypeError;`;
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a locale other than English", async () => {
+        const source = 'new Temporal.PlainDate(2024, 12, 26).toLocaleString("de");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `
       const error = new Error("m");

@@ -124,7 +124,9 @@ PlainDateBuiltin(s, f, m, this, args, nt) ==
                    LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                    LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                    ELSE Ok(show.s, Str(TemporalDateToString(date, plain.calendar, Val(show))))
-              [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalDateToString(date, plain.calendar, N("auto"))))
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "PlainDate", plain, Arg(args, 1), Arg(args, 2), TemporalDateToString(date, plain.calendar, N("auto")))
+              [] m = "toJSON" -> Ok(s, Str(TemporalDateToString(date, plain.calendar, N("auto"))))
               [] m = "valueOf" -> ThrowTypeError(s)
 
 \* Temporal.PlainDate.prototype.toZonedDateTime.
@@ -297,7 +299,10 @@ PlainDateTimeBuiltin(s, f, m, this, args, nt) ==
                        result == RoundISODateTime(dt, precision.increment, precision.unit, Val(o).mode)
                    IN IF ~ISODateTimeWithinLimits(result) THEN ThrowError(o.s, "RangeError")
                       ELSE Ok(o.s, Str(FormatISODateTime(result, plain.calendar, precision.precision, Val(show))))
-              [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto"))))
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "PlainDateTime", plain, Arg(args, 1), Arg(args, 2),
+                                          FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto")))
+              [] m = "toJSON" -> Ok(s, Str(FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto"))))
               [] m = "valueOf" -> ThrowTypeError(s)
               [] m = "toZonedDateTime" ->
                    LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN IF IsAbrupt(tz) THEN tz ELSE
@@ -528,7 +533,10 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
                    LET precision == ToSecondsStringPrecisionRecord(Val(unit), Val(digits)) IN
                    Ok(showTimeZone.s, Str(TemporalZonedDateTimeToString(z, precision.precision, Val(show), Val(showTimeZone), Val(showOffset),
                                                                         precision.increment, precision.unit, Val(mode))))
-              [] m \in {"toLocaleString", "toJSON"} ->
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "ZonedDateTime", z, Arg(args, 1), Arg(args, 2),
+                                          TemporalZonedDateTimeToString(z, TPrecisionAuto, N("auto"), N("auto"), N("auto"), 1, TUNanosecond, N("trunc")))
+              [] m = "toJSON" ->
                    Ok(s, Str(TemporalZonedDateTimeToString(z, TPrecisionAuto, N("auto"), N("auto"), N("auto"), 1, TUNanosecond, N("trunc"))))
               [] m = "valueOf" -> ThrowTypeError(s)
               [] m = "startOfDay" ->
@@ -631,7 +639,9 @@ InstantBuiltin(s, f, m, this, args, nt) ==
                 LET precision == ToSecondsStringPrecisionRecord(Val(o).unit, Val(o).digits) IN
                 Ok(tz.s, Str(TemporalInstantToString(RoundEpochNanoseconds(ns, precision.increment, precision.unit, Val(o).mode),
                                                      Val(tz), precision.precision)))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalInstantToString(ns, Empty, TPrecisionAuto)))
+           [] m = "toLocaleString" ->
+                TemporalToLocaleString(s, "Instant", O(s, this).slots, Arg(args, 1), Arg(args, 2), TemporalInstantToString(ns, Empty, TPrecisionAuto))
+           [] m = "toJSON" -> Ok(s, Str(TemporalInstantToString(ns, Empty, TPrecisionAuto)))
            [] m = "valueOf" -> ThrowTypeError(s)
            [] m = "toZonedDateTimeISO" ->
                 LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN
@@ -769,7 +779,8 @@ PlainYearMonthBuiltin(s, f, m, this, args, nt) ==
                 LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                 ELSE Ok(show.s, Str(TemporalYearMonthToString(ym, Val(show))))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalYearMonthToString(ym, N("auto"))))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainYearMonth", ym, Arg(args, 1), Arg(args, 2), TemporalYearMonthToString(ym, N("auto")))
+           [] m = "toJSON" -> Ok(s, Str(TemporalYearMonthToString(ym, N("auto"))))
            [] m = "valueOf" -> ThrowTypeError(s)
            [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(ym.calendar, ym.date, "year-month"), Arg(args, 1), {"day"}, ym.calendar)
 
@@ -838,7 +849,8 @@ PlainMonthDayBuiltin(s, f, m, this, args, nt) ==
                 LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                 ELSE Ok(show.s, Str(TemporalMonthDayToString(md, Val(show))))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalMonthDayToString(md, N("auto"))))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainMonthDay", md, Arg(args, 1), Arg(args, 2), TemporalMonthDayToString(md, N("auto")))
+           [] m = "toJSON" -> Ok(s, Str(TemporalMonthDayToString(md, N("auto"))))
            [] m = "valueOf" -> ThrowTypeError(s)
            [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(md.calendar, md.date, "month-day"), Arg(args, 1), {"year"}, md.calendar)
 

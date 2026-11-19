@@ -235,6 +235,7 @@ export const HOOKS = new Map([
   ["RunBody", "s, ctx, body"],
   ["ResumeCode", "args, r"],
   ["HostTimeZone", "key"],
+  ["HostDateFormat", "key"],
   ["ModuleNode", "id"],
   ["ModuleDeclarations", "s, ctx, node"],
 ]);
@@ -297,7 +298,7 @@ export const assembleRuntime = (
 };
 
 // A program's CallBuiltin, which runs the built-ins of the families given and stops at the others
-// and at the methods in stoppedMethods.
+// and at the methods in stoppedMethods, but for Temporal's, which format through HostDateFormat.
 export const getCallBuiltin = (
   name: string,
   families: readonly Family[],
@@ -305,7 +306,12 @@ export const getCallBuiltin = (
 ) =>
   [
     `${name}(s, f, id, this, args, nt) ==`,
-    `  IF id[2] \\in {${stoppedMethods.map((method) => `"${method}"`).join(", ")}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
+    `  IF id[2] \\in {${stoppedMethods.map((method) => `"${method}"`).join(", ")}} /\\ id[1] \\notin {${families
+      .filter((family) => family.group === "89")
+      .map((family) => `"${family.name}"`)
+      .join(
+        ", ",
+      )}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
     ...families.map(
       (family, index) =>
         `  ${index === 0 ? "CASE" : "  []"} id[1] = "${family.name}" -> ${family.name}Builtin(s, f, id[2], this, args, nt)`,

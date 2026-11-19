@@ -539,7 +539,8 @@ PlainTimeBuiltin(s, f, m, this, args, nt) ==
                 ELSE LET precision == ToSecondsStringPrecisionRecord(Val(unit), Val(digits)) IN
                      Ok(unit.s, Str(TimeRecordToString(RoundTime(t, precision.increment, precision.unit, Val(mode)).time,
                                                        precision.precision)))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TimeRecordToString(t, TPrecisionAuto)))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainTime", O(s, this).slots, Arg(args, 1), Arg(args, 2), TimeRecordToString(t, TPrecisionAuto))
+           [] m = "toJSON" -> Ok(s, Str(TimeRecordToString(t, TPrecisionAuto)))
            [] m = "valueOf" -> ThrowTypeError(s)
 
 \* The relativeTo option of Temporal.Duration's round, total, and compare, as [plain, zoned]:
@@ -592,7 +593,8 @@ DurationBuiltin(s, f, m, this, args, nt) ==
                                                                        LargerOfTwoTemporalUnits(DefaultTemporalLargestUnit(d), TUSecond))
                              IN IF ~IsValidDuration(rounded) THEN ThrowError(time.s, "RangeError")
                                 ELSE Ok(time.s, Str(TemporalDurationToString([i \in 1..10 |-> TIFloat(rounded[i])], precision.precision)))
-              [] m \in {"toJSON", "toLocaleString"} -> Ok(s, Str(TemporalDurationToString(d, TPrecisionAuto)))
+              [] m = "toLocaleString" -> TemporalToLocaleString(s, "Duration", Empty, Arg(args, 1), Arg(args, 2), TemporalDurationToString(d, TPrecisionAuto))
+              [] m = "toJSON" -> Ok(s, Str(TemporalDurationToString(d, TPrecisionAuto)))
               [] m = "valueOf" -> ThrowTypeError(s)
 
 \* Temporal.Duration.compare after its fields differ (steps 6 to 13).

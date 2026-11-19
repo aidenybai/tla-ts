@@ -854,6 +854,7 @@ RECURSIVE HarnessResult(_, _)
 RECURSIVE RunFrom(_, _, _, _, _)
 RECURSIVE RunModuleFrom(_, _, _, _, _)
 RECURSIVE HostTimeZone(_)
+RECURSIVE HostDateFormat(_)
 RECURSIVE TestResult(_)
 RECURSIVE HasClass(_, _, _)
 RECURSIVE CanonicalizeKeyedCollectionKey(_)
@@ -1647,6 +1648,17 @@ RECURSIVE AddZonedDateTime(_, _, _, _, _, _)
 RECURSIVE RelativePlainTarget(_, _, _)
 RECURSIVE RelativeToFrom(_, _, _, _, _, _, _, _)
 RECURSIVE GetTemporalRelativeToOption(_, _)
+RECURSIVE GetFractionalSecondDigitsOption(_, _)
+RECURSIVE ReadDateTimeFormatOptions(_, _, _, _)
+RECURSIVE DateOptionText(_)
+RECURSIVE DateFormatEntry(_, _)
+RECURSIVE DateFormatEntries(_, _)
+RECURSIVE DateFormatKey(_, _, _, _)
+RECURSIVE NamedField(_, _)
+RECURSIVE NumeralField(_, _)
+RECURSIVE LocaleField(_, _, _, _)
+RECURSIVE LocaleText(_, _, _, _)
+RECURSIVE TemporalToLocaleString(_, _, _, _, _, _)
 RECURSIVE TPOk(_, _)
 RECURSIVE TPFull(_, _)
 RECURSIVE TPAt(_, _)
@@ -5137,6 +5149,34 @@ CalendarTimeFieldNames == {"hour", "minute", "second", "millisecond", "microseco
 EmptyCalendarFields == [n \in Range(CalendarFieldNames) |-> Empty]
 DateFieldNames == {"day", "month", "monthCode", "year"}
 YearMonthFieldNames == {"month", "monthCode", "year"}
+DateTimeFormatStyles == {N("full"), N("long"), N("medium"), N("short")}
+DateTimeFormatOptions ==
+  <<[key |-> "weekday", property |-> SV("weekday"), values |-> {N("narrow"), N("short"), N("long")}],
+    [key |-> "era", property |-> SV("era"), values |-> {N("narrow"), N("short"), N("long")}],
+    [key |-> "year", property |-> SV("year"), values |-> {N("2-digit"), N("numeric")}],
+    [key |-> "month", property |-> SV("month"), values |-> {N("2-digit"), N("numeric"), N("narrow"), N("short"), N("long")}],
+    [key |-> "day", property |-> SV("day"), values |-> {N("2-digit"), N("numeric")}],
+    [key |-> "dayPeriod", property |-> SV("dayPeriod"), values |-> {N("narrow"), N("short"), N("long")}],
+    [key |-> "hour", property |-> SV("hour"), values |-> {N("2-digit"), N("numeric")}],
+    [key |-> "minute", property |-> SV("minute"), values |-> {N("2-digit"), N("numeric")}],
+    [key |-> "second", property |-> SV("second"), values |-> {N("2-digit"), N("numeric")}],
+    [key |-> "fractionalSecondDigits", property |-> SV("fractionalSecondDigits"), values |-> {}],
+    [key |-> "timeZoneName", property |-> SV("timeZoneName"),
+     values |-> {N("short"), N("long"), N("shortOffset"), N("longOffset"), N("shortGeneric"), N("longGeneric")}],
+    [key |-> "formatMatcher", property |-> SV("formatMatcher"), values |-> {N("basic"), N("best fit")}],
+    [key |-> "dateStyle", property |-> SV("dateStyle"), values |-> DateTimeFormatStyles],
+    [key |-> "timeStyle", property |-> SV("timeStyle"), values |-> DateTimeFormatStyles]>>
+DateFormatKeyNames ==
+  <<"hourCycle", "weekday", "era", "year", "month", "day", "hour", "minute", "second">>
+DateOptionTexts ==
+  <<[text |-> "2-digit", units |-> N("2-digit")], [text |-> "numeric", units |-> N("numeric")], [text |-> "narrow", units |-> N("narrow")],
+    [text |-> "short", units |-> N("short")], [text |-> "long", units |-> N("long")], [text |-> "full", units |-> N("full")],
+    [text |-> "medium", units |-> N("medium")], [text |-> "h11", units |-> N("h11")], [text |-> "h12", units |-> N("h12")],
+    [text |-> "h23", units |-> N("h23")], [text |-> "h24", units |-> N("h24")]>>
+LongMonthNames ==
+  <<N("January"), N("February"), N("March"), N("April"), N("May"), N("June"), N("July"), N("August"),
+    N("September"), N("October"), N("November"), N("December")>>
+LongWeekdayNames == <<N("Monday"), N("Tuesday"), N("Wednesday"), N("Thursday"), N("Friday"), N("Saturday"), N("Sunday")>>
 TPFail == [ok |-> FALSE]
 TPNoOffset == [z |-> FALSE, offset |-> Empty]
 YearMonthGetters == {"era", "eraYear", "year", "month", "monthCode", "daysInYear", "daysInMonth", "monthsInYear", "inLeapYear"}
@@ -11382,6 +11422,12 @@ RunModuleFrom(harness, specifier, directory, canSuspend, parses) ==
 \* the end of daylight time. Else found is "rejected" where the host has no such time zone, and
 \* "unknown" where it may have one that this table leaves out. engine262 has none but UTC.
 HostTimeZone(key) == [found |-> "rejected"]
+\* HostDateFormat(key): how the host's Intl formats a Temporal object's toLocaleString for a key of
+\* its kind, its calendar, and its options (DateFormatKey): found is "format", with the fields and
+\* styles of an English pattern and whether a time zone option leaves the pattern as it is, or
+\* "error", with the name of the error that it throws. Else found is "unknown" where the host's
+\* table leaves the key out, and "none" where the host has no Intl, as engine262 has none.
+HostDateFormat(key) == [found |-> "none"]
 \* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
 \* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==
@@ -17694,6 +17740,125 @@ GetTemporalRelativeToOption(s, options) ==
           ELSE RelativeToFrom(calendar.s, [year |-> r.year, month |-> r.month, day |-> r.day], r.time, Val(calendar), Val(tz),
                               CASE r.z -> "exact" [] r.offset = Empty -> "wall" [] OTHER -> "option", r.offset,
                               IF r.offset # Empty /\ Len(r.offset) > 6 THEN "match-exactly" ELSE "match-minutes")
+\* Temporal's toLocaleString, with ECMA-402's CreateDateTimeFormat and FormatDateTime. engine262 has
+\* no Intl, so where HostDateFormat says the host has none, toLocaleString gives what toString
+\* gives. Otherwise it reads its options in CreateDateTimeFormat's order, and formats through the
+\* pattern that the host's table holds for the object's kind, its calendar, and the options: an
+\* English pattern of fields, each with its style, where a literal's style is its units. A field's
+\* text is as Node writes it in English, from 1583, before which Node writes the Julian calendar, to
+\* 9999. It stops at a locale other than English, at a calendar or numbering system option, and at
+\* options whose pattern the table leaves out.
+\* The options that CreateDateTimeFormat reads after the time zone, in its order (ECMA-402 Table 16,
+\* then formatMatcher, dateStyle, and timeStyle), with the values each may take.
+\* GetNumberOption of fractionalSecondDigits, from 1 to 3.
+GetFractionalSecondDigitsOption(s, options) ==
+  LET value == Get(s, options, SV("fractionalSecondDigits")) IN IF IsAbrupt(value) THEN value
+  ELSE IF Val(value) = Undefined THEN Ok(value.s, Empty) ELSE
+  LET n == ToNumber(value.s, Val(value)) IN IF IsAbrupt(n) THEN n ELSE
+  LET x == Val(n).value IN
+  IF ~NumIsFinite(x) \/ NumLessThan(x, NumFromInt(1)) \/ NumLessThan(NumFromInt(3), x) THEN ThrowError(n.s, "RangeError")
+  ELSE Ok(n.s, NumToInt(MathFloor(x)))
+\* The options of DateTimeFormatOptions from the ith on, read into acc, a record of each one's
+\* value, or Empty.
+ReadDateTimeFormatOptions(s, options, i, acc) ==
+  IF i > Len(DateTimeFormatOptions) THEN Ok(s, acc) ELSE
+  LET option == DateTimeFormatOptions[i]
+      value == IF option.key = "fractionalSecondDigits" THEN GetFractionalSecondDigitsOption(s, options)
+               ELSE GetStringOption(s, options, option.property, option.values, Empty)
+  IN IF IsAbrupt(value) THEN value
+     ELSE ReadDateTimeFormatOptions(value.s, options, i + 1, [acc EXCEPT ![option.key] = Val(value)])
+\* The key of the host's table for a kind of object, its calendar, and the options it formats with,
+\* as a TLA+ string: the kind, the calendar, and each option given, in a fixed order.
+DateOptionText(u) == DateOptionTexts[CHOOSE i \in DOMAIN DateOptionTexts : DateOptionTexts[i].units = u].text
+DateFormatEntry(values, name) == IF values[name] = Empty THEN "" ELSE "|" \o name \o "=" \o DateOptionText(values[name])
+DateFormatEntries(values, i) ==
+  IF i > Len(DateFormatKeyNames) THEN "" ELSE DateFormatEntry(values, DateFormatKeyNames[i]) \o DateFormatEntries(values, i + 1)
+DateFormatKey(kind, calendar, hour12, values) ==
+  kind \o "|" \o calendar \o (IF hour12 = Empty THEN "" ELSE "|hour12=" \o IF hour12 THEN "true" ELSE "false") \o
+     DateFormatEntries(values, 1) \o
+     (CASE values.fractionalSecondDigits = Empty -> ""
+        [] values.fractionalSecondDigits = 1 -> "|fractionalSecondDigits=1"
+        [] values.fractionalSecondDigits = 2 -> "|fractionalSecondDigits=2"
+        [] OTHER -> "|fractionalSecondDigits=3") \o
+     DateFormatEntry(values, "dateStyle") \o DateFormatEntry(values, "timeStyle")
+\* The text of a field of a pattern for a date [year, month, day] and a time [hour, minute, second,
+\* millisecond], where an hour's style is its cycle and width, as "h12 numeric", and a fraction's
+\* its digits.
+NamedField(name, style) == CASE style = "long" -> name [] style = "short" -> SubSeq(name, 1, 3) [] OTHER -> SubSeq(name, 1, 1)
+NumeralField(value, style) == IF style = "2-digit" THEN TwoDigits(value % 100) ELSE IntUnits(value)
+LocaleField(field, style, date, time) ==
+  LET cycle == SubSeq(style, 1, 3)
+      hour == CASE cycle = "h23" -> time[1]
+                [] cycle = "h24" -> IF time[1] = 0 THEN 24 ELSE time[1]
+                [] cycle = "h11" -> time[1] % 12
+                [] OTHER -> IF time[1] % 12 = 0 THEN 12 ELSE time[1] % 12
+  IN CASE field = "literal" -> style
+       [] field = "year" -> NumeralField(date.year, style)
+       [] field = "month" /\ style \in {"numeric", "2-digit"} -> NumeralField(date.month, style)
+       [] field = "month" -> NamedField(LongMonthNames[date.month], style)
+       [] field = "day" -> NumeralField(date.day, style)
+       [] field = "weekday" -> NamedField(LongWeekdayNames[ISODayOfWeek(date)], style)
+       [] field = "era" -> CASE style = "long" -> N("Anno Domini") [] style = "short" -> N("AD") [] OTHER -> N("A")
+       [] field = "dayPeriod" /\ style \in {"flexible long", "flexible narrow"} ->
+            CASE time[1] < 12 -> N("in the morning")
+              [] time[1] = 12 -> IF style = "flexible narrow" THEN N("n") ELSE N("noon")
+              [] time[1] < 18 -> N("in the afternoon")
+              [] time[1] < 21 -> N("in the evening")
+              [] OTHER -> N("at night")
+       [] field = "dayPeriod" -> IF time[1] < 12 THEN N("AM") ELSE N("PM")
+       [] field = "minute" -> NumeralField(time[2], style)
+       [] field = "second" -> NumeralField(time[3], style)
+       [] field = "fraction" -> SubSeq(PadStart(IntUnits(time[4]), 3), 1, CASE style = "1" -> 1 [] style = "2" -> 2 [] OTHER -> 3)
+       [] OTHER -> IF SubSeq(style, 5, Len(style)) = "2-digit" THEN TwoDigits(hour) ELSE IntUnits(hour)
+LocaleText(format, i, date, time) ==
+  IF i > Len(format.fields) THEN <<>>
+  ELSE LocaleField(format.fields[i], format.styles[i], date, time) \o LocaleText(format, i + 1, date, time)
+\* toLocaleString of a Temporal object of a kind ("PlainDate" and the like) with its slots, where
+\* text is what toString gives.
+TemporalToLocaleString(s, kind, slots, locales, options, text) ==
+  IF HostDateFormat(Empty).found = "none" THEN Ok(s, Str(text))
+  ELSE IF kind = "Duration" THEN Unsupported(s, N("Unsupported: Intl.DurationFormat"))
+  ELSE IF ~(locales = Undefined \/ (IsString(locales) /\ TPLower(locales.value) \in {N("en"), N("en-us")}))
+  THEN Unsupported(s, N("Unsupported: a locale other than English"))
+  ELSE LET o == IF options = Undefined THEN OrdinaryObjectCreate(s, Null) ELSE ToObject(s, options) IN IF IsAbrupt(o) THEN o ELSE
+  LET matcher == GetStringOption(o.s, Val(o), SV("localeMatcher"), {N("lookup"), N("best fit")}, Undefined) IN
+  IF IsAbrupt(matcher) THEN matcher ELSE
+  LET calendar == Get(matcher.s, Val(o), SV("calendar")) IN IF IsAbrupt(calendar) THEN calendar
+  ELSE IF Val(calendar) # Undefined THEN Unsupported(calendar.s, N("Unsupported: a calendar option"))
+  ELSE LET numbering == Get(calendar.s, Val(o), SV("numberingSystem")) IN IF IsAbrupt(numbering) THEN numbering
+  ELSE IF Val(numbering) # Undefined THEN Unsupported(numbering.s, N("Unsupported: a numberingSystem option")) ELSE
+  LET hour12 == Get(numbering.s, Val(o), SV("hour12")) IN IF IsAbrupt(hour12) THEN hour12 ELSE
+  LET hourCycle == GetStringOption(hour12.s, Val(o), SV("hourCycle"), {N("h11"), N("h12"), N("h23"), N("h24")}, Empty) IN
+  IF IsAbrupt(hourCycle) THEN hourCycle ELSE
+  LET zoneValue == Get(hourCycle.s, Val(o), SV("timeZone")) IN IF IsAbrupt(zoneValue) THEN zoneValue
+  ELSE IF Val(zoneValue) # Undefined /\ kind = "ZonedDateTime" THEN ThrowTypeError(zoneValue.s) ELSE
+  LET zoneText == IF Val(zoneValue) = Undefined THEN Ok(zoneValue.s, Undefined) ELSE ToStr(zoneValue.s, Val(zoneValue)) IN
+  IF IsAbrupt(zoneText) THEN zoneText ELSE
+  LET tz == IF Val(zoneText) = Undefined THEN Ok(zoneText.s, UTCTimeZone) ELSE ZonedConstructorTimeZone(zoneText.s, Val(zoneText)) IN
+  IF IsAbrupt(tz) THEN tz ELSE
+  LET read == ReadDateTimeFormatOptions(tz.s, Val(o), 1, [n \in {DateTimeFormatOptions[i].key : i \in 1..Len(DateTimeFormatOptions)} |-> Empty]) IN
+  IF IsAbrupt(read) THEN read ELSE
+  LET values == Val(read) @@ [hourCycle |-> Val(hourCycle)]
+      key == DateFormatKey(kind, IF kind \in {"PlainTime", "Instant"} \/ slots.calendar = ISO8601 THEN "iso8601" ELSE "gregory",
+                           IF Val(hour12) = Undefined THEN Empty ELSE ToBooleanValue(Val(hour12)), values)
+      format == HostDateFormat(key)
+      local == CASE kind = "Instant" -> GetISODateTimeFor(Val(tz), slots.epochNs)
+                 [] kind = "PlainTime" -> [date |-> [year |-> 1970, month |-> 1, day |-> 1], time |-> slots.time]
+                 [] kind = "PlainDateTime" -> slots.dateTime
+                 [] OTHER -> [date |-> slots.date, time |-> MidnightTimeRecord]
+  IN CASE kind \notin {"PlainTime", "Instant"} /\ slots.calendar \notin {ISO8601, N("gregory")} ->
+            Unsupported(read.s, N("Unsupported: a calendar the host's table leaves out"))
+       [] values.dayPeriod # Empty \/ values.timeZoneName # Empty ->
+            Unsupported(read.s, N("Unsupported: a dayPeriod or timeZoneName option"))
+       [] values.formatMatcher = N("basic") -> Unsupported(read.s, N("Unsupported: the basic format matcher"))
+       [] format.found = "error" -> ThrowError(read.s, format.error)
+       [] format.found # "format" -> Unsupported(read.s, N("Unsupported: options the host's table leaves out"))
+       [] Val(zoneText) # Undefined /\ ~format.isZoned -> Unsupported(read.s, N("Unsupported: a time zone option"))
+       [] kind # "PlainTime" /\ (local.date.year < 1583 \/ local.date.year > 9999) ->
+            Unsupported(read.s, N("Unsupported: a date that Node writes in the Julian calendar"))
+       [] OTHER ->
+            Ok(read.s, Str(LocaleText(format, 1, local.date,
+                                      <<local.time.hour, local.time.minute, local.time.second, local.time.millisecond>>)))
 \* Temporal's ISO 8601 and RFC 9557 string grammar (Temporal §13.33), parsed as engine262's
 \* DateParser does: by backtracking over code units. A parser takes the units u and the index p of
 \* the next unit and gives TPFail or TPOk(the index after the match, the parse node).
@@ -18143,7 +18308,9 @@ PlainDateBuiltin(s, f, m, this, args, nt) ==
                    LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                    LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                    ELSE Ok(show.s, Str(TemporalDateToString(date, plain.calendar, Val(show))))
-              [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalDateToString(date, plain.calendar, N("auto"))))
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "PlainDate", plain, Arg(args, 1), Arg(args, 2), TemporalDateToString(date, plain.calendar, N("auto")))
+              [] m = "toJSON" -> Ok(s, Str(TemporalDateToString(date, plain.calendar, N("auto"))))
               [] m = "valueOf" -> ThrowTypeError(s)
 \* Temporal.PlainDate.prototype.toZonedDateTime.
 PlainDateToZonedDateTime(s, plain, item) ==
@@ -18306,7 +18473,10 @@ PlainDateTimeBuiltin(s, f, m, this, args, nt) ==
                        result == RoundISODateTime(dt, precision.increment, precision.unit, Val(o).mode)
                    IN IF ~ISODateTimeWithinLimits(result) THEN ThrowError(o.s, "RangeError")
                       ELSE Ok(o.s, Str(FormatISODateTime(result, plain.calendar, precision.precision, Val(show))))
-              [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto"))))
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "PlainDateTime", plain, Arg(args, 1), Arg(args, 2),
+                                          FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto")))
+              [] m = "toJSON" -> Ok(s, Str(FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto"))))
               [] m = "valueOf" -> ThrowTypeError(s)
               [] m = "toZonedDateTime" ->
                    LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN IF IsAbrupt(tz) THEN tz ELSE
@@ -18524,7 +18694,10 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
                    LET precision == ToSecondsStringPrecisionRecord(Val(unit), Val(digits)) IN
                    Ok(showTimeZone.s, Str(TemporalZonedDateTimeToString(z, precision.precision, Val(show), Val(showTimeZone), Val(showOffset),
                                                                         precision.increment, precision.unit, Val(mode))))
-              [] m \in {"toLocaleString", "toJSON"} ->
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "ZonedDateTime", z, Arg(args, 1), Arg(args, 2),
+                                          TemporalZonedDateTimeToString(z, TPrecisionAuto, N("auto"), N("auto"), N("auto"), 1, TUNanosecond, N("trunc")))
+              [] m = "toJSON" ->
                    Ok(s, Str(TemporalZonedDateTimeToString(z, TPrecisionAuto, N("auto"), N("auto"), N("auto"), 1, TUNanosecond, N("trunc"))))
               [] m = "valueOf" -> ThrowTypeError(s)
               [] m = "startOfDay" ->
@@ -18622,7 +18795,9 @@ InstantBuiltin(s, f, m, this, args, nt) ==
                 LET precision == ToSecondsStringPrecisionRecord(Val(o).unit, Val(o).digits) IN
                 Ok(tz.s, Str(TemporalInstantToString(RoundEpochNanoseconds(ns, precision.increment, precision.unit, Val(o).mode),
                                                      Val(tz), precision.precision)))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalInstantToString(ns, Empty, TPrecisionAuto)))
+           [] m = "toLocaleString" ->
+                TemporalToLocaleString(s, "Instant", O(s, this).slots, Arg(args, 1), Arg(args, 2), TemporalInstantToString(ns, Empty, TPrecisionAuto))
+           [] m = "toJSON" -> Ok(s, Str(TemporalInstantToString(ns, Empty, TPrecisionAuto)))
            [] m = "valueOf" -> ThrowTypeError(s)
            [] m = "toZonedDateTimeISO" ->
                 LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN
@@ -18750,7 +18925,8 @@ PlainYearMonthBuiltin(s, f, m, this, args, nt) ==
                 LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                 ELSE Ok(show.s, Str(TemporalYearMonthToString(ym, Val(show))))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalYearMonthToString(ym, N("auto"))))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainYearMonth", ym, Arg(args, 1), Arg(args, 2), TemporalYearMonthToString(ym, N("auto")))
+           [] m = "toJSON" -> Ok(s, Str(TemporalYearMonthToString(ym, N("auto"))))
            [] m = "valueOf" -> ThrowTypeError(s)
            [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(ym.calendar, ym.date, "year-month"), Arg(args, 1), {"day"}, ym.calendar)
 \* PlainMonthDay (Temporal §10). A Temporal.PlainMonthDay has class "temporalMonthDay" and slots
@@ -18816,7 +18992,8 @@ PlainMonthDayBuiltin(s, f, m, this, args, nt) ==
                 LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                 ELSE Ok(show.s, Str(TemporalMonthDayToString(md, Val(show))))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalMonthDayToString(md, N("auto"))))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainMonthDay", md, Arg(args, 1), Arg(args, 2), TemporalMonthDayToString(md, N("auto")))
+           [] m = "toJSON" -> Ok(s, Str(TemporalMonthDayToString(md, N("auto"))))
            [] m = "valueOf" -> ThrowTypeError(s)
            [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(md.calendar, md.date, "month-day"), Arg(args, 1), {"year"}, md.calendar)
 \* Temporal.Now (Temporal §2). The system time zone is UTC, and the system time is the clock Date
@@ -19290,7 +19467,8 @@ PlainTimeBuiltin(s, f, m, this, args, nt) ==
                 ELSE LET precision == ToSecondsStringPrecisionRecord(Val(unit), Val(digits)) IN
                      Ok(unit.s, Str(TimeRecordToString(RoundTime(t, precision.increment, precision.unit, Val(mode)).time,
                                                        precision.precision)))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TimeRecordToString(t, TPrecisionAuto)))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainTime", O(s, this).slots, Arg(args, 1), Arg(args, 2), TimeRecordToString(t, TPrecisionAuto))
+           [] m = "toJSON" -> Ok(s, Str(TimeRecordToString(t, TPrecisionAuto)))
            [] m = "valueOf" -> ThrowTypeError(s)
 \* The relativeTo option of Temporal.Duration's round, total, and compare, as [plain, zoned]:
 \* a PlainDate or a ZonedDateTime object, or Empty.
@@ -19340,7 +19518,8 @@ DurationBuiltin(s, f, m, this, args, nt) ==
                                                                        LargerOfTwoTemporalUnits(DefaultTemporalLargestUnit(d), TUSecond))
                              IN IF ~IsValidDuration(rounded) THEN ThrowError(time.s, "RangeError")
                                 ELSE Ok(time.s, Str(TemporalDurationToString([i \in 1..10 |-> TIFloat(rounded[i])], precision.precision)))
-              [] m \in {"toJSON", "toLocaleString"} -> Ok(s, Str(TemporalDurationToString(d, TPrecisionAuto)))
+              [] m = "toLocaleString" -> TemporalToLocaleString(s, "Duration", Empty, Arg(args, 1), Arg(args, 2), TemporalDurationToString(d, TPrecisionAuto))
+              [] m = "toJSON" -> Ok(s, Str(TemporalDurationToString(d, TPrecisionAuto)))
               [] m = "valueOf" -> ThrowTypeError(s)
 \* Temporal.Duration.compare after its fields differ (steps 6 to 13).
 CompareDurations(s, x, y, relativeTo) ==
