@@ -97,6 +97,18 @@ describe("check with workers matches TLC", () => {
     ]);
   });
 
+  it("ranks the strings that splitting the next-state relation creates before those TLC interns as it creates the checker", async () => {
+    const printed: string[] = [];
+    await tlaTs.check({
+      source:
+        '---- MODULE Q1 ----\nEXTENDS TLC, Naturals, Sequences\nVARIABLE x\nInit == x = 0\nNext == \\E s \\in {"zz" \\o "z"} : x\' = (x + 1) % 2\nASSUME PrintT({"zz" \\o "z", "dur" \\o "ation"})\n====',
+      config: "INIT Init\nNEXT Next",
+      workers: 2,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['{"zzz", "duration"}']);
+  });
+
   it("reports the string the search orders as it checks again on the calling thread", async () => {
     const ordered: string[] = [];
     const result = await tlaTs.check({
