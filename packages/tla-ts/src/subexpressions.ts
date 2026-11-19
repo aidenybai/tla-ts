@@ -1089,7 +1089,6 @@ export const createModuleSubexpressions = (
     },
     resolve: (): Module => {
       resolveDefinitionsBefore(undefined);
-      // A named theorem or assumption keeps sharing its expression with its definition.
       const getSharedBody = (statement: Expression | AssumeProve) => {
         const definition = module.definitions.find((candidate) => candidate.body === statement);
         return definition && (resolvedDefinitions.get(definition) ?? definition).body;
@@ -1133,7 +1132,6 @@ export const createModuleSubexpressions = (
       );
       return {
         ...module,
-        // The level checker reads recursive sections from the units.
         units: module.units.map((unit) =>
           unit.kind === "Definition"
             ? { ...unit, definition: resolvedDefinitions.get(unit.definition) ?? unit.definition }

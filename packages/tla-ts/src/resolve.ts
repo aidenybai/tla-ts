@@ -45,7 +45,6 @@ interface Binding {
   range?: SourceRange;
   functionArity?: number;
   goal?: Goal;
-  // The definition's own range, when SANY locates its binding elsewhere, as at a LOCAL INSTANCE.
   source?: SourceRange;
   nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
 }
@@ -242,7 +241,6 @@ const isBindable = (name: string, current: Binding | undefined, added: Binding, 
     added.kind === "Parameter" ||
     current.kind !== added.kind ||
     current.arity !== added.arity ||
-    // SANY's DEFINE, USE, HIDE and INSTANCE steps are a kind of their own.
     (current.nonFactStep === undefined) !== (added.nonFactStep === undefined)
   ) {
     unit.errors.push({
@@ -586,7 +584,6 @@ const getOperandName = (operand: number | "<<" | ">>") =>
 
 const SCOPE_MESSAGE = "within the scope of a declaration\n from outside that declaration's scope.";
 
-// `start` indexes the first selector after the theorem's name, which may be qualified, as in I!Foo!1.
 const checkSelection = (
   reference: Reference,
   selectors: Selector[],
@@ -846,7 +843,6 @@ const checkReference = (
   if (!isReference(expression)) return false;
   const selectors = getSelectors(expression);
   const names: string[] = [];
-  // A theorem an instance imports may have a qualified name, as in I!Foo!1.
   for (let start = 1; start < selectors.length; start++) {
     const selector = selectors[start - 1];
     if (selector.kind !== "Name") return undefined;
@@ -2250,8 +2246,6 @@ const resolveStep = (
       message: "<*> and <+> cannot be used for a named step.",
     });
   }
-  // SANY binds a step's name after its body and before its proof, and keeps an earlier binding of
-  // the name. It locates the name at the step number, or at a non-fact step's whole step.
   const bindStep = (parent: LocalName | undefined, stepGoal = goal) =>
     step.name === undefined
       ? parent
@@ -2270,7 +2264,6 @@ const resolveStep = (
           { kind: "Theorem", arity: 0, range: step.head, nonFactStep },
           unit,
         );
-  // The step's one binding, moved onto the scope its proof or the next step sees.
   const moveStep = (
     named: LocalName | undefined,
     from: LocalName | undefined,
@@ -2723,7 +2716,6 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         isGenerated: false,
       }),
   });
-  // Resolution renames in place, so the definition that shares a named statement's expression resolves it alone.
   const isShared = (statement: Expression | AssumeProve) =>
     module.definitions.some((definition) => definition.body === statement);
   const bindDeclarations = (declarations: Declaration[], kind: "Constant" | "Variable") =>
@@ -2880,7 +2872,6 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     boundDefinitions: module.definitions.filter((definition) =>
       isSameRange(bindings.get(definition.name)?.range, definition.location.range),
     ),
-    // An ASSUME/PROVE theorem has no definition, but an INSTANCE imports its name.
     boundTheorems: module.theorems.flatMap((theorem) => {
       const binding = theorem.name === undefined ? undefined : bindings.get(theorem.name);
       return theorem.name !== undefined &&

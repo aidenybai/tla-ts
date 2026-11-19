@@ -59,7 +59,6 @@ export interface InstancedDefinition {
   isConstant: boolean;
 }
 
-// The substitutions are by declaration key, with a declaration's own name where the instance implies it.
 export interface LetInstance extends InstanceSubstitutes {
   copies: Map<string, InstanceCopy>;
   getArgParams: () => Set<string>;
@@ -73,13 +72,11 @@ export interface InstanceLevels {
 }
 
 interface LevelContext {
-  // The arity of each declared constant, by key.
   constants: Map<string, number>;
   variables: Set<string>;
   getDefinition: (name: string) => Definition | undefined;
   getQualifiedName?: (name: string) => string | undefined;
   instances: InstanceLevels;
-  // The members of every module's recursive sections, by member.
   recursiveSections: WeakMap<Definition, SectionMember[]>;
 }
 
@@ -877,8 +874,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const letCopies = new WeakMap<Definition, InstanceCopy>();
 
-  // SANY's InstanceNode maps the instanced module's argument level params through the substitutes
-  // (Subst.getSubALPSet), keeping only those whose operator becomes a parameter.
   const getInstanceArgParams = (instance: LetInstance, scope: Scope) => {
     const operands = getSubstitutes(instance, scope);
     const getParams = (param: string) => operands.get(param)?.data.params ?? [param];
@@ -1394,7 +1389,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const staleDefinitions = new Set<Definition>();
 
   const analyzeDefinition = (definition: Definition, scope: Scope): OperatorLevels => {
-    // SANY levels another module's recursive section before this module uses its operators.
     const members = context.recursiveSections.get(definition);
     if (definition.isRecursive && members && !definitionLevels.has(definition)) {
       checkRecursiveSection(members);
@@ -1501,7 +1495,6 @@ export const analyzeAssumeProve = (
       }
       const level = NEW_SYMBOL_LEVELS[assumption.level];
       inner.set(assumption.name, { kind: "Formal", arity: assumption.arity, level });
-      // SANY levels a NEW declaration at its kind's level, so NEW TEMPORAL makes a temporal goal.
       return [set ?? createData(level)];
     }
     return [
