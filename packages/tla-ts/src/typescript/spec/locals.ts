@@ -71,7 +71,10 @@ const isReaching = (node: ts.Node, isArrow: boolean): boolean => {
       (ts.isObjectLiteralExpression(node.left) || ts.isArrayLiteralExpression(node.left))) ||
     ((ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
       (ts.isObjectLiteralExpression(node.initializer) ||
-        ts.isArrayLiteralExpression(node.initializer))) ||
+        ts.isArrayLiteralExpression(node.initializer) ||
+        // The identifier let, which TypeScript parses as a declaration of no names.
+        (ts.isVariableDeclarationList(node.initializer) &&
+          node.initializer.declarations.length === 0))) ||
     ts.isEnumDeclaration(node) ||
     ts.isModuleDeclaration(node)
   ) {

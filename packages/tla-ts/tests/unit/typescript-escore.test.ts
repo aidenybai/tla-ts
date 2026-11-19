@@ -1458,6 +1458,28 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("assigns each key of a for-in statement to the identifier let outside strict mode", () => {
+    const getSource = (expected: string) => `
+      var let;
+      for (let in { key: 1 });
+      const inner = (function () {
+        var let;
+        for (let in { first: 1, last: 2 });
+        return let;
+      })();
+      const result = [let, inner].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("key,last"), false)).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("key,first"), false)).message).toContain(THREW);
+    });
+  });
+
   describe("models the realm of the host that compiles it", () => {
     const getSource = (expected: string) => `
       const result = [

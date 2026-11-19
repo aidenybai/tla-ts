@@ -2754,7 +2754,16 @@ export const specialize = (
     let bind: string;
     let tdz: string[] = [];
     let tdzSlots: number[] = [];
-    if (ts.isVariableDeclarationList(initializer)) {
+    if (ts.isVariableDeclarationList(initializer) && initializer.declarations.length === 0) {
+      // TypeScript parses the identifier let as the head of a for-in statement outside strict
+      // mode as a let declaration of no names.
+      if (!isEnumerate || scope.isStrict) {
+        throw new TlaTypeScriptError("tla-ts can't compile a declaration of no names", node);
+      }
+      words.add("let");
+      if (!moduleNames.has("let")) identifiers.add("let");
+      bind = `ResultThen(ctx, AssignToThen(Val(value), ResolveBinding(value.s, ctx, ${getUnits("let")}, FALSE)))`;
+    } else if (ts.isVariableDeclarationList(initializer)) {
       const declaration = initializer.declarations[0];
       if (declaration.initializer !== undefined) {
         throw new TlaTypeScriptError(
