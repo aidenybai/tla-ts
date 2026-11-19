@@ -1643,6 +1643,14 @@ ASSUME TLCFP(a) = -887695703
     expect(result.status).toBe("success");
   });
 
+  it("reports a table's set that mixes types as the unexpected exception TLC throws", async () => {
+    await expect(checkModule("CONSTANT F(_)", 'CONSTANT F(1) = {1, "a"}')).rejects.toThrow(
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}Attempted to compare string "a" with non-string:\n1`,
+      ),
+    );
+  });
+
   it("names why a state-level substitute failed like TLC", async () => {
     await expect(
       checkModule(

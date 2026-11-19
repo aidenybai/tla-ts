@@ -182,7 +182,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
           `The arity of the operator ${assignment.name} is inconsistent in the configuration file.`,
         );
       }
-      table.rows.push([assignment.args.map(toValue), toValue(assignment.value)]);
+      table.rows.push([assignment.args.map(toConstantValue), toConstantValue(assignment.value)]);
       tables.set(tableKey, table);
     });
   addRows(true);
