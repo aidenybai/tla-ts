@@ -35,8 +35,14 @@ const worker = new Worker(
   parentPort.on("message", async (spec) => {
     const loaded = await loading;
     try {
-      const compiled = loaded.compileModelToEscore(spec.source, spec.fileName, loaded.runtime);
-      const code = compiled.loadModule("ProgramCode");
+      const isHeap = spec.mode === "raw" || spec.mode === "compared";
+      const compiled = loaded.compileModelToEscore(spec.source, spec.fileName, loaded.runtime, undefined, !isHeap);
+      // spec.mutation replaces text in ESCanonicalPlain where the model compares canonical forms,
+      // and in the model's code otherwise.
+      const isCompared = spec.mode === "compared";
+      const code = compiled
+        .loadModule("ProgramCode")
+        .replace(isCompared ? "" : (spec.mutation?.[0] ?? ""), isCompared ? "" : (spec.mutation?.[1] ?? ""));
       // A raw model's steps end in the state they leave, and a compared model's compute the
       // canonical form both natively and with ESCanonical's TLA+, as the module ESCanonicalPlain
       // whose definitions take other names, which tla-ts runs as written, with spec.mutation
@@ -46,12 +52,25 @@ const worker = new Worker(
       const plain = canonical
         .replace("MODULE ESCanonical", "MODULE ESCanonicalPlain")
         .replace(new RegExp("\\\\b(" + names.join("|") + ")\\\\b", "g"), "Plain$1")
-        .replace(spec.mutation?.[0] ?? "", spec.mutation?.[1] ?? "");
+        .replace(isCompared ? (spec.mutation?.[0] ?? "") : "", isCompared ? (spec.mutation?.[1] ?? "") : "");
       const changed = code.replace(/^StepEnd\\(s\\) == CanonicalState\\((.*)\\)$/m, (line, state) =>
         spec.mode === "raw"
           ? "StepEnd(s) == " + state
           : spec.mode === "compared"
             ? "StepEnd(s) == LET native == CanonicalState(" + state + ") written == PlainCanonicalStateOf(" + state + ", InitialState) IN IF native = written THEN native ELSE Assert(FALSE, \\"the native canonical form differs\\")"
+            : line,
+      // A lowered model's steps run on ESCore and check that each state they lower materializes
+      // to the canonical state it lowers, and a native one's that each native call that doesn't
+      // bail gives what ESCore's gives.
+      ).replace(/^StepEnd\\(s\\) == LowerModel\\(s\\)$/m, (line) =>
+        spec.mode === "lowered"
+          ? "StepEnd(s) == LET m == LowerModel(s) IN IF CanonicalState(ModelState(m)) = CanonicalState([s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]]) THEN m ELSE Assert(FALSE, \\"the lowered state materializes to another state\\")"
+          : line,
+      ).replace(/IF n\\.type = "bail" THEN (\\w+)\\(a\\) ELSE (IF n\\.w THEN \\{n\\.m\\} ELSE \\{\\}|n\\.v = True|TRUE)$/gm, (line, escore, native) =>
+        spec.mode === "native"
+          ? "LET e == " + escore + "(a) IN IF n.type = \\"bail\\" THEN e ELSE IF e = (" + native + ") THEN e ELSE Assert(FALSE, \\"the native call differs from ESCore's\\")"
+          : spec.mode === "lowered"
+            ? escore + "(a)"
             : line,
       ).replace("\\nEXTENDS ESRuntime, ESCanonical\\n", spec.mode === "compared" ? "\\nEXTENDS ESRuntime, ESCanonical, ESCanonicalPlain\\n" : "\\nEXTENDS ESRuntime, ESCanonical\\n");
       const result = await loaded.check({
@@ -96,12 +115,14 @@ const ready = new Promise((resolve) => {
 // The worker prepares the runtime before the first check, which takes longer than a check.
 beforeAll(() => ready, 60_000);
 
-// Checks a module's model on ESCore, with its steps' states canonical, raw, or canonical where the
-// native canonical form and ESCanonical's TLA+ compare equal.
+// Checks a module's model on ESCore, with its steps' states lowered where the module lets them,
+// raw, canonical where the native canonical form and ESCanonical's TLA+ compare equal, lowered
+// where each lowered state materializes to the canonical state it lowers, or lowered where each
+// native call gives what ESCore's gives.
 const checkModel = (
   source: string,
   fileName = "spec.ts",
-  mode: "canonical" | "raw" | "compared" = "canonical",
+  mode: "canonical" | "raw" | "compared" | "lowered" | "native" = "canonical",
   mutation?: [string, string],
 ) =>
   new Promise<ModelResult>((resolve) => {
@@ -319,6 +340,151 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         "r.objects + walk.objects + 2",
       ]);
       expect(result.message).toContain("the native canonical form differs");
+    });
+  });
+
+  describe("lowers the state out of ESCore's heap, one to one with the canonical heap", () => {
+    const source = `
+      type Key = "a" | "b";
+      let owners = new Map<Key, number[]>();
+      let log: { key: Key }[] = [];
+      export const own = (key: Key) => {
+        if (log.length >= 2) return;
+        owners.set(key, [...(owners.get(key) ?? []), log.length]);
+        log = [...log, { key }];
+      };
+      export const drop = (key: Key) => {
+        if (!owners.has(key)) return;
+        owners.delete(key);
+      };
+      export const isShort = () => log.length <= 2;
+    `;
+
+    it("materializes each lowered state to the canonical state it lowers, as TLC counts", async () => {
+      const counts = ["deadlock", 17, 19];
+      expect(getCounts(await checkModel(source, "spec.ts", "lowered"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a lowering that loses an array's numbers", async () => {
+      const result = await checkModel(source, "spec.ts", "lowered", [
+        "MaterializeList(s, v.elems) IN NewArray(e.s, e.args)",
+        'MaterializeList(s, v.elems) IN NewArray(e.s, SelectSeq(e.args, LAMBDA x : x.type # "number"))',
+      ]);
+      expect(result.message).toContain("the lowered state materializes to another state");
+    });
+  });
+
+  describe("runs a lowered model's functions natively, as ESCore runs them", () => {
+    const source = `
+      type Key = "a" | "b";
+      interface Slot {
+        owner: Key | null;
+        count: number;
+      }
+      let slot: Slot = { owner: null, count: 0 };
+      let queue: Key[] = [];
+      let seen = new Set<Key>();
+      let totals = new Map<Key, number>();
+      const isFree = () => slot.owner === null;
+      export const request = (key: Key) => {
+        if (queue.length >= 2 || queue.includes(key)) return;
+        queue.push(key);
+        seen.add(key);
+      };
+      export const grant = () => {
+        if (!isFree() || queue.length === 0 || slot.count >= 3) return;
+        slot = { ...slot, owner: queue[0], count: slot.count + 1 };
+        queue.shift();
+      };
+      export const release = () => {
+        if (isFree()) return;
+        const owner = slot.owner;
+        totals.set(owner!, (totals.get(owner!) ?? 0) + 1);
+        slot.owner = null;
+        seen.delete(owner!);
+      };
+      export const isBounded = () => slot.count <= 3;
+    `;
+
+    it("gives what ESCore gives in every call, as TLC counts", async () => {
+      const counts = ["deadlock", 225, 317];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a native shift that drops the last element", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "[c |-> [c EXCEPT !.elems = Tail(@)], v |-> Head(c.elems)]",
+        "[c |-> [c EXCEPT !.elems = SubSeq(@, 1, Len(@) - 1)], v |-> Head(c.elems)]",
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+  });
+
+  describe("drops a native call's writes where it bails, and runs the call on ESCore", () => {
+    // The step bails where it adds a number to a string, after it writes count.
+    const source = `
+      let count = 0;
+      let label = "";
+      export const step = () => {
+        if (count >= 2) return;
+        count += 1;
+        label = label + count;
+      };
+      export const isShort = () => label.length < 2;
+    `;
+
+    it("agrees with Node", async () => {
+      const result = await checkModel(source);
+      expect(getCounts(result)).toEqual(["invariant-violation", 3, 3]);
+      expect(result.trace?.map((state) => `${state.count},${state.label}`)).toEqual([
+        '0,""',
+        '1,"1"',
+        '2,"12"',
+      ]);
+    });
+
+    it("rejects another result", async () => {
+      const result = await checkModel(source, "spec.ts", "canonical", [
+        'ELSE IF op = "+" /\\ a.type = "string" /\\ b.type = "string" THEN Str(a.value \\o b.value)',
+        'ELSE IF op = "+" /\\ a.type = "string" THEN Str(a.value \\o <<49>>)',
+      ]);
+      expect(result.trace?.map((state) => `${state.count},${state.label}`)).toEqual([
+        '0,""',
+        '1,"1"',
+        '2,"11"',
+      ]);
+    });
+  });
+
+  describe("runs an array's methods with an arrow function natively, as ESCore runs them", () => {
+    const source = `
+      let cells = [false, false, false];
+      let steps = 0;
+      export const flip = (index: 0 | 1 | 2) => {
+        if (steps >= 3) return;
+        cells = cells.map((cell, at) => (at === index ? !cell : cell));
+        steps += 1;
+      };
+      export const isBalanced = () =>
+        Array.from({ length: 3 }, (_, at) => at).some((at) =>
+          cells.slice(0, at).every((cell) => !cell),
+        ) && cells.filter((cell) => cell).length <= steps;
+    `;
+
+    it("gives what ESCore gives in every call, as TLC counts", async () => {
+      const counts = ["deadlock", 12, 25];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a native filter that keeps what fails", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "LAMBDA i : LTruthy(rs[i])",
+        "LAMBDA i : ~LTruthy(rs[i])",
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
     });
   });
 });

@@ -7,6 +7,8 @@ import { compile } from "../compile";
 import type { StateVariable } from "../emit";
 import type { Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
+import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
+import { getNativeFunctions, NATIVE_DEFINITIONS } from "./native";
 import { compileToEscore, type EscoreSpec } from "./compile";
 import { foldNames } from "./library";
 import type { EscoreRuntime } from "./prepare";
@@ -40,14 +42,8 @@ ThrownText(r) ==
       t == IF ~IsAbrupt(m) /\ IsString(Val(m)) THEN m ELSE ToStr(r.s, v)
   IN IF ~IsAbrupt(t) /\ IsString(Val(t)) THEN UnitsToString(Val(t).value) ELSE "a value that isn't a string"
 Completed(r) == IF r.c.type = "throw" THEN Assert(FALSE, ThrownText(r)) ELSE r
-\* A step's state, which starts counting the writes to what exists, and its state once it ends.
+\* A step's state, which starts counting the writes to what exists.
 StepStart(s) == [s EXCEPT !.written = FALSE, !.writeMark = [objects |-> s.objs.size, environments |-> s.envs.size]]
-StepEnd(s) == CanonicalState([s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]])
-\* A step that calls name with the arguments that convert makes, from the state s: no state where
-\* the call writes nothing that existed before it.
-StepOf(s, name, converted) ==
-  LET r == Completed(ModelCall(converted.s, name, converted.args)) IN
-  IF r.s.written THEN {StepEnd(r.s)} ELSE {}
 \* Whether a call of name returns true.
 HoldsOf(s, name, args) == Val(Completed(ModelCall(s, name, args))) = True
 \* Whether a call of name returns, for a check that only calls it.
@@ -164,6 +160,31 @@ const printExpression = (expression: Expression) =>
     location: expression.location,
   }).replace(/^X ==\s*/, "");
 
+// A lowered model's definitions of its bindings: the state the module's top level leaves, its
+// declarative environment, ModelBase, and how a step's state materializes and lowers the bindings.
+const getLoweredSteps = (names: string[]) => {
+  const reset = (env: string) =>
+    `[${env} EXCEPT ${names.map((name) => `!.b[${getUnits(name)}].value = Undefined`).join(", ")}]`;
+  return [
+    LOWERED_DEFINITIONS,
+    "ModelRun == ApplyTo(ModelStart, InitialState)",
+    "ModelEnv == E(ModelRun, ModelRun.globalEnv).declRec",
+    `ModelBase == CanonicalState([ModelRun EXCEPT !.envs = HeapSet(@, ModelEnv, ${reset("E(ModelRun, ModelEnv)")}), !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]])`,
+    `ModelInitial == [${names.map((name) => `${name} |-> LowerValue(ModelRun, E(ModelRun, ModelEnv).b[${getUnits(name)}].value, 0).v`).join(", ")}]`,
+    `ModelState(m) ==\n  LET ${names.map((name, index) => `v${index + 1} == MaterializeValue(${index === 0 ? "ModelBase" : `v${index}.s`}, m.${name})`).join("\n      ")}\n  IN [v${names.length}.s EXCEPT !.envs = HeapSet(@, ModelEnv, [E(v${names.length}.s, ModelEnv) EXCEPT ${names.map((name, index) => `!.b[${getUnits(name)}].value = v${index + 1}.v`).join(", ")}])]`,
+    `LowerModel(s) ==\n  LET env == E(s, ModelEnv)\n      ${names.map((name, index) => `l${index + 1} == LowerValue(s, env.b[${getUnits(name)}].value, 0)`).join("\n      ")}\n      ids == ${names.map((_, index) => `l${index + 1}.ids`).join(" \\o ")}\n  IN IF Cardinality(Range(ids)) # Len(ids) THEN LowerStop("an object that two places hold")\n     ELSE IF ~BaseKept(ModelBase, ModelEnv, s, ${reset("env")}) THEN LowerStop("a change outside the module's bindings")\n     ELSE [${names.map((name, index) => `${name} |-> l${index + 1}.v`).join(", ")}]`,
+    "StepEnd(s) == LowerModel(s)",
+    "StartState(s) == ModelStart(s)",
+  ];
+};
+
+// A step that calls name with the arguments that convert makes, from the state s: no state where
+// the call writes nothing that existed before it, and otherwise the state StepEnd makes of the
+// state it ends in.
+const STEP_OF = String.raw`StepOf(s, name, converted) ==
+  LET r == Completed(ModelCall(converted.s, name, converted.args)) IN
+  IF r.s.written THEN {StepEnd(r.s)} ELSE {}`;
+
 // The global that holds the values the initial state chose for the state variables without an
 // initializer, as the module's top level runs.
 const INITIAL = "$tlaTsInitial";
@@ -204,16 +225,20 @@ interface Converter {
   name: string;
 }
 
-// The model of a TypeScript module, checked on ESCore: one variable heap holds ESCore's state after
-// the module's top level, canonical, and each exported function that today's compiler makes an
-// action calls the function through ESCore with the arguments that today's compiler chooses.
-// Invariants, properties, and the other checks call the functions they name. A trace shows each
-// state variable as today's compiler does.
+// The model of a TypeScript module, checked on ESCore: one variable holds ESCore's state after the
+// module's top level, as model, the module's bindings lowered out of ESCore's heap (see
+// lowered.ts), where the module lets it, or else as heap, the canonical state. Each exported
+// function that today's compiler makes an action calls the function through ESCore with the
+// arguments that today's compiler chooses, natively where it can (see native.ts). Invariants,
+// properties, and the other checks call the functions they name. A trace shows each state
+// variable as today's compiler does.
 export const compileModelToEscore = (
   source: string,
   fileName: string,
   runtime: EscoreRuntime,
   library?: Library,
+  // Whether the state may lower out of ESCore's heap, which a test turns off to check the heap.
+  isLowerable = true,
 ): EscoreModel => {
   const today = compile(source, fileName, library);
   if (today.isScript) {
@@ -668,7 +693,7 @@ export const compileModelToEscore = (
     const operator = define(
       "GuardDomain",
       (name) =>
-        `${name}(a) ==\n  LET ${read.map((entry, index) => `e${index + 1} == ${entry.converter}(${index === 0 ? "a[1]" : `e${index}.s`}, a[${index + 2}])`).join("\n      ")}${read.length === 0 ? "" : "\n     "} g == GuardElements(${read.length === 0 ? "a[1]" : `e${read.length}.s`}, ${getUnits(guard.name)}, <<${read.map((_, index) => `e${index + 1}.v`).join(", ")}>>)\n  IN {Shown(g.state, e, 0) : e \\in g.elements}`,
+        `${name}(a) ==\n  LET ${read.map((entry, index) => `e${index + 1} == ${entry.converter}(${index === 0 ? getState("a[1]") : `e${index}.s`}, a[${index + 2}])`).join("\n      ")}${read.length === 0 ? "" : "\n     "} g == GuardElements(${read.length === 0 ? getState("a[1]") : `e${read.length}.s`}, ${getUnits(guard.name)}, <<${read.map((_, index) => `e${index + 1}.v`).join(", ")}>>)\n  IN {Shown(g.state, e, 0) : e \\in g.elements}`,
     );
     guardChoices.set(`${action} ${position}`, guard);
     return {
@@ -679,7 +704,7 @@ export const compileModelToEscore = (
         {
           kind: "Tuple",
           elements: [
-            { kind: "Identifier", name: "heap", location: module.location },
+            { kind: "Identifier", name: variable, location: module.location },
             ...read.map((entry) => ({
               kind: "Identifier" as const,
               name: entry.bound,
@@ -732,6 +757,46 @@ export const compileModelToEscore = (
   };
   if (next?.kind === "Operator") findApplied(next.body);
   const actions = [...actionParameters];
+  // The state variables that start at every value of their type, and the predicates the initial
+  // states satisfy.
+  const init = definitions.get("Init");
+  const conjuncts =
+    init?.kind !== "Operator" ? [] : init.body.kind === "And" ? init.body.operands : [init.body];
+  const choices = conjuncts.flatMap((conjunct) =>
+    conjunct.kind === "Apply" &&
+    conjunct.operator === "\\in" &&
+    conjunct.args[0].kind === "Identifier" &&
+    variables.has(conjunct.args[0].name)
+      ? [{ name: conjunct.args[0].name, domain: conjunct.args[1] }]
+      : [],
+  );
+  // A model without state, whose checks read none, runs the module's top level once as its
+  // assumptions do, and has no states, as today's spec has none.
+  const isStateless = module.variables.length === 0 && actions.length === 0;
+  const isAsync = /\b(?:async|Promise|then|setTimeout)\b/.test(source);
+  // The bindings that the state lowers out of ESCore's heap, where the module lets it (see
+  // lowered.ts), whose variable model holds them, and otherwise the variable heap holds ESCore's
+  // state. A step's or a check's ESCore state is what the variable's value gives.
+  const lowered =
+    isStateless || isAsync || !isLowerable
+      ? undefined
+      : getLoweredBindings(file, new Set(choices.map((choice) => choice.name)));
+  const variable = lowered === undefined ? "heap" : "model";
+  const getState = (state: string) => (lowered === undefined ? state : `ModelState(${state})`);
+  // A lowered model's functions run natively where they can, and on ESCore where that bails.
+  const native = lowered === undefined ? undefined : getNativeFunctions(file, lowered);
+  // The native call of a function in the lowered state model, with the arguments of the values
+  // given, converted and lowered, or undefined where the function runs on ESCore only.
+  const getNativeCall = (name: string, model: string, values: (index: number) => string) => {
+    const operator = native?.getOperator(name);
+    const parameters = exported.get(name)?.parameters ?? [];
+    const converters = parameters.map((_, index) =>
+      guardChoices.has(`${name} ${index}`) ? undefined : boundConverters.get(`${name} ${index}`),
+    );
+    return operator === undefined || converters.some((converter) => converter === undefined)
+      ? undefined
+      : `${operator}(${[model, "FALSE", ...converters.map((converter, index) => `LowerConverted(${converter}(ModelBase, ${values(index)}))`)].join(", ")})`;
+  };
   // A step's or a check's arguments, converted in turn from a[1], the state, with the
   // parameters' values from a[2] on.
   const getArguments = (action: string, state: string, values: (position: number) => string) => {
@@ -763,10 +828,19 @@ export const compileModelToEscore = (
     const step = define(
       "Step",
       (name) =>
-        `${name}(a) ==\n  LET s == StepStart(a[1])\n      converted == ${getArguments(action, "s", (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN StepOf(s, ${getUnits(action)}, converted)`,
+        `${name}(a) ==\n  LET s == StepStart(${getState("a[1]")})\n      converted == ${getArguments(action, "s", (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN StepOf(s, ${getUnits(action)}, converted)`,
     );
+    const nativeCall = getNativeCall(action, "a[1]", (index) => `a[${index + 2}]`);
+    const run =
+      nativeCall === undefined
+        ? step
+        : define(
+            "NativeStep",
+            (name) =>
+              `${name}(a) ==\n  LET n == ${nativeCall} IN\n  IF n.type = "bail" THEN ${step}(a) ELSE IF n.w THEN {n.m} ELSE {}`,
+          );
     steps.push(
-      `${action}${bounds.length === 0 ? "" : `(${bounds.join(", ")})`} == heap' \\in ApplyTo(${step}, <<heap${bounds.map((bound) => `, ${bound}`).join("")}>>)`,
+      `${action}${bounds.length === 0 ? "" : `(${bounds.join(", ")})`} == ${variable}' \\in ApplyTo(${run}, <<${variable}${bounds.map((bound) => `, ${bound}`).join("")}>>)`,
     );
   }
   // A check of a function's result at a state: whether it holds, or only that it returns.
@@ -780,10 +854,19 @@ export const compileModelToEscore = (
     const operator = define(
       "Check",
       (operatorName) =>
-        `${operatorName}(a) ==\n  LET converted == ${getArguments(name, "a[1]", (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN ${kind}(converted.s, ${getUnits(name)}, converted.args)`,
+        `${operatorName}(a) ==\n  LET converted == ${getArguments(name, getState("a[1]"), (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN ${kind}(converted.s, ${getUnits(name)}, converted.args)`,
     );
+    const nativeCall = getNativeCall(name, "a[1]", (index) => `a[${index + 2}]`);
+    const checked =
+      nativeCall === undefined
+        ? operator
+        : define(
+            "NativeCheck",
+            (operatorName) =>
+              `${operatorName}(a) ==\n  LET n == ${nativeCall} IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE ${kind === "HoldsOf" ? "n.v = True" : "TRUE"}`,
+          );
     return (state: string, values: string[]) =>
-      `ApplyTo(${operator}, <<${[state, ...values].join(", ")}>>)`;
+      `ApplyTo(${checked}, <<${[state, ...values].join(", ")}>>)`;
   };
   // The bounds that today's check of a function quantifies its parameters over, the first ones
   // of its \A, as many as the function's parameters.
@@ -814,10 +897,7 @@ export const compileModelToEscore = (
         expression.body.kind === "Apply" &&
         expression.body.operator === "=" &&
         expression.definitions.some((definition) => definition.name === "result");
-  // A model without state, whose checks read none, runs the module's top level once as its
-  // assumptions do, and has no states, as today's spec has none.
-  const isStateless = module.variables.length === 0 && actions.length === 0;
-  const current = isStateless ? "ApplyTo(StartState, InitialState)" : "heap";
+  const current = isStateless ? "ApplyTo(StartState, InitialState)" : variable;
   const defined = new Set<string>();
   const defineInvariant = (name: string) => {
     if (defined.has(name)) return;
@@ -858,9 +938,19 @@ export const compileModelToEscore = (
     const operator = define(
       "StepCheck",
       (operatorName) =>
-        `${operatorName}(a) ==\n  LET before == BeforeOf(a[2], a[1], <<${shownNames.map(getUnits).join(", ")}>>)\n  IN HoldsOf(before.s, ${getUnits(name)}, <<before.v>>)`,
+        `${operatorName}(a) ==\n  LET before == ${lowered === undefined ? `BeforeOf(a[2], a[1], <<${shownNames.map(getUnits).join(", ")}>>)` : `MaterializeValue(ModelState(a[2]), LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>))`}\n  IN HoldsOf(before.s, ${getUnits(name)}, <<before.v>>)`,
     );
-    return `ApplyTo(${operator}, <<heap, heap'>>)`;
+    const nativeOperator =
+      exported.get(name)?.parameters.length === 1 ? native?.getOperator(name) : undefined;
+    const checked =
+      nativeOperator === undefined
+        ? operator
+        : define(
+            "NativeStepCheck",
+            (operatorName) =>
+              `${operatorName}(a) ==\n  LET n == ${nativeOperator}(a[2], FALSE, LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>)) IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE n.v = True`,
+          );
+    return `ApplyTo(${checked}, <<${variable}, ${variable}'>>)`;
   };
   for (const name of config.properties) {
     const definition = definitions.get(name);
@@ -875,7 +965,7 @@ export const compileModelToEscore = (
     }
     const bounds = getBounds(name, body);
     const names = boundNames(bounds);
-    const predicate = defineCheck(name, "HoldsOf", bounds)("heap", names);
+    const predicate = defineCheck(name, "HoldsOf", bounds)(variable, names);
     defined.add(name);
     if (tags.has("eventually")) steps.push(`${name} == ${quantify(bounds, `<>(${predicate})`)}`);
     else if (tags.has("alwaysEventually"))
@@ -888,10 +978,10 @@ export const compileModelToEscore = (
       const operator = define(
         "Target",
         (operatorName) =>
-          `${operatorName}(a) ==\n  LET converted == ${getArguments(name, "a[1]", (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN HoldsOf(converted.s, ${getUnits(target)}, converted.args)`,
+          `${operatorName}(a) ==\n  LET converted == ${getArguments(name, getState("a[1]"), (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN HoldsOf(converted.s, ${getUnits(target)}, converted.args)`,
       );
       steps.push(
-        `${name} == ${quantify(bounds, `(${predicate}) ~> ApplyTo(${operator}, <<heap${names.map((bound) => `, ${bound}`).join("")}>>)`)}`,
+        `${name} == ${quantify(bounds, `(${predicate}) ~> ApplyTo(${operator}, <<${variable}${names.map((bound) => `, ${bound}`).join("")}>>)`)}`,
       );
     } else {
       throw new TlaTypeScriptError(`tla-ts can't check the property ${name} on ESCore yet`);
@@ -901,19 +991,6 @@ export const compileModelToEscore = (
   if (config.symmetry !== undefined) {
     throw new TlaTypeScriptError("tla-ts can't check a symmetric model on ESCore yet");
   }
-  // The state variables that start at every value of their type, and the predicates the initial
-  // states satisfy.
-  const init = definitions.get("Init");
-  const conjuncts =
-    init?.kind !== "Operator" ? [] : init.body.kind === "And" ? init.body.operands : [init.body];
-  const choices = conjuncts.flatMap((conjunct) =>
-    conjunct.kind === "Apply" &&
-    conjunct.operator === "\\in" &&
-    conjunct.args[0].kind === "Identifier" &&
-    variables.has(conjunct.args[0].name)
-      ? [{ name: conjunct.args[0].name, domain: conjunct.args[1] }]
-      : [],
-  );
   const initially = [...exported]
     .filter((entry) => entry[1].tags.has("initially"))
     .map((entry) => entry[0]);
@@ -933,6 +1010,29 @@ export const compileModelToEscore = (
   // The module's top level reads each state variable that starts at every value of its type, at
   // its declaration, from the global $tlaTsInitial, which the initial state's choice holds before
   // the module runs, and which the module deletes as it ends.
+  // A lowered model's initial states each convert the choice's values in ModelBase and lower
+  // them, with the values that ModelBase's module gave the other bindings.
+  const loweredInitialSteps = [
+    `InitialChoice(a) ==\n  LET s0 == ModelBase${choose
+      .map(
+        (choice, index) =>
+          `\n      c${index + 1} == ${choice.converter}(${index === 0 ? "s0" : `c${index}.s`}, a[${index + 2}])\n      l${index + 1} == LowerValue(c${index + 1}.s, c${index + 1}.v, 0)`,
+      )
+      .join(
+        "",
+      )}\n      m == ${choose.length === 0 ? "ModelInitial" : `[ModelInitial EXCEPT ${choose.map((choice, index) => `!.${choice.name} = l${index + 1}.v`).join(", ")}]`}\n  IN IF ${
+      initially.length === 0
+        ? "TRUE"
+        : initially
+            .map((name) => {
+              const call = getNativeCall(name, "m", () => "");
+              return call === undefined
+                ? `HoldsOf(ModelState(m), ${getUnits(name)}, <<>>)`
+                : `(LET n == ${call} IN IF n.type = "bail" THEN HoldsOf(ModelState(m), ${getUnits(name)}, <<>>) ELSE n.v = True)`;
+            })
+            .join(" /\\ ")
+    } THEN {m} ELSE {}`,
+  ];
   const initialSteps = [
     `InitialChoice(a) ==\n  LET s0 == a[1]${choose
       .map(
@@ -945,7 +1045,7 @@ export const compileModelToEscore = (
         : `\n      list == NewArray(c${choose.length}.s, <<${choose.map((_, index) => `c${index + 1}.v`).join(", ")}>>)\n      g == Completed(CreateDataPropertyOrThrow(list.s, Intrinsic(list.s, "GlobalObject"), Str(${getUnits(INITIAL)}), list.v))\n      s == ModelStart(g.s)`
     }\n  IN IF ${initially.length === 0 ? "TRUE" : initially.map((name) => `HoldsOf(s, ${getUnits(name)}, <<>>)`).join(" /\\ ")} THEN {StepEnd(s)} ELSE {}`,
     `InitialStates(s) ==\n  UNION {ApplyTo(InitialChoice, <<s${choose.map((choice) => `, ${choice.bound}`).join("")}>>) : ${choose.length === 0 ? "x \\in {0}" : choose.map((choice) => `${choice.bound} \\in ${choice.set}`).join(", ")}}`,
-    "Init == heap \\in ApplyTo(InitialStates, InitialState)",
+    `Init == ${variable} \\in ApplyTo(InitialStates, InitialState)`,
   ];
   steps.push(
     ...(isStateless
@@ -954,7 +1054,9 @@ export const compileModelToEscore = (
           "ModuleRuns(s) == StartState(s).objs.size > 0",
           "ASSUME ApplyTo(ModuleRuns, InitialState)",
         ]
-      : initialSteps),
+      : lowered === undefined
+        ? initialSteps
+        : [...loweredInitialSteps, ...initialSteps.slice(1)]),
   );
   if (rewrittenNext !== undefined) {
     // A @terminating function's state, where Next stutters, which isn't a deadlock.
@@ -969,15 +1071,15 @@ export const compileModelToEscore = (
     const operator = define(
       "View",
       (name) =>
-        `${name}(s) == LET r == Completed(ModelCall(s, ${getUnits(view)}, <<>>)) IN Shown(r.s, Val(r), 0)`,
+        `${name}(s) == LET r == Completed(ModelCall(${getState("s")}, ${getUnits(view)}, <<>>)) IN Shown(r.s, Val(r), 0)`,
     );
-    steps.push(`${view} == ApplyTo(${operator}, heap)`);
+    steps.push(`${view} == ApplyTo(${operator}, ${variable})`);
   }
   const shown = today.variables.map((variable) => variable.name);
   const alias = define(
     "Shown",
     (name) =>
-      `${name}(s) == [${shown.map((variable) => `${variable} |-> ShownBinding(s, ${getUnits(variable)})`).join(", ") || "heap |-> s.objs.size"}]`,
+      `${name}(m) == LET s == ${getState("m")} IN [${shown.map((shownName) => `${shownName} |-> ShownBinding(s, ${getUnits(shownName)})`).join(", ") || "heap |-> s.objs.size"}]`,
   );
   // The declarations of the state variables that start at every value of their type, which read
   // their values from $tlaTsInitial.
@@ -995,7 +1097,7 @@ export const compileModelToEscore = (
         )
       : [],
   );
-  const replaced = choose
+  const replaced = (lowered === undefined ? choose : [])
     .map((choice, index) => {
       const declaration = declarations.find(
         (candidate) =>
@@ -1021,19 +1123,27 @@ export const compileModelToEscore = (
   const augmented = [
     replaced,
     ...appended,
-    ...(choose.length === 0 ? [] : [`delete (globalThis as { ${INITIAL}?: unknown }).${INITIAL};`]),
+    ...(choose.length === 0 || lowered !== undefined
+      ? []
+      : [`delete (globalThis as { ${INITIAL}?: unknown }).${INITIAL};`]),
     "",
   ].join("\n");
   const modelSteps = [
     "CONSTANTS TsNull, TsUndefined",
-    ...(isStateless ? ["vars == <<>>"] : ["VARIABLE heap", "vars == <<heap>>"]),
+    ...(isStateless ? ["vars == <<>>"] : [`VARIABLE ${variable}`, `vars == <<${variable}>>`]),
     "CanonicalState(s) == CanonicalStateOf(s, InitialState)",
     settle,
     MODEL_DEFINITIONS,
     "ModelStart(s) == Completed(ApplyTo(RunProgram, s)).s",
-    "StartState(s) == StepEnd(ModelStart(s))",
+    ...(lowered === undefined
+      ? [
+          "StepEnd(s) == CanonicalState([s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]])",
+          "StartState(s) == StepEnd(ModelStart(s))",
+        ]
+      : [...getLoweredSteps(lowered), NATIVE_DEFINITIONS, ...(native?.definitions ?? [])]),
+    STEP_OF,
     ...steps,
-    ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, heap)`]),
+    ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, ${variable})`]),
   ].join("\n");
   // The module runs as an ES module does, in strict mode.
   const compiled = compileToEscore(`"use strict";\n${augmented}`, fileName, runtime, false, {
