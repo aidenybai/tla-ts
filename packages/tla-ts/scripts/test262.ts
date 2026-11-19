@@ -14,6 +14,9 @@ import { check } from "../src/parallel";
 import { STRING_METHODS } from "../src/typescript/collections";
 import { getIndexedKind, INDEX_PARAMETERS, SET_LIKE_METHODS } from "../src/typescript/types";
 import { compile } from "../src/typescript/compile";
+import { printModule } from "../src/printer";
+import { compileToEscore } from "../src/typescript/spec/compile";
+import { prepareRuntime } from "../src/typescript/spec/prepare";
 import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
 
 type Outcome = "pass" | "wrong" | "untranslatable" | "skipped";
@@ -207,26 +210,29 @@ process.on("unhandledRejection", (reason) => {
 // Runs a test in Node, with its jobs and then its timers, as an async test checks $DONE in one. The
 // global object is an ordinary one, as a script's is. vm's default global intercepts each access, so
 // that a global var named __proto__, or a global getter that deletes itself, behaves otherwise.
-const getNodeError = async (source: string, isSloppy: boolean) => {
-  const timers: (() => void)[] = [];
-  try {
-    const output = ts.transpileModule(source, {
+const getNodeError = (source: string, isSloppy: boolean) =>
+  getNodeScriptsError([
+    ts.transpileModule(source, {
       compilerOptions: {
         module: ts.ModuleKind.CommonJS,
         target: ts.ScriptTarget.ESNext,
         moduleDetection: isSloppy ? ts.ModuleDetectionKind.Legacy : ts.ModuleDetectionKind.Force,
         alwaysStrict: !isSloppy,
       },
-    }).outputText;
-    runInContext(
-      output,
-      Object.assign(createContext(constants.DONT_CONTEXTIFY), {
-        exports: {},
-        setTimeout: (callback: () => void) => {
-          timers.push(callback);
-        },
-      }),
-    );
+    }).outputText,
+  ]);
+
+// Runs scripts in turn in one global object, as a page runs its scripts.
+const getNodeScriptsError = async (scripts: readonly string[]) => {
+  const timers: (() => void)[] = [];
+  try {
+    const global = Object.assign(createContext(constants.DONT_CONTEXTIFY), {
+      exports: {},
+      setTimeout: (callback: () => void) => {
+        timers.push(callback);
+      },
+    });
+    scripts.forEach((script) => runInContext(script, global));
     await new Promise((resolve) => {
       setImmediate(resolve);
     });
@@ -4198,15 +4204,39 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
   return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
 
+// TLA_TS_ESCORE=1 compiles with the backend that specializes ESCore instead, and TLA_TS_STATS=1
+// prints each check's compile and check time and its module's size.
+const ESCORE =
+  process.env.TLA_TS_ESCORE === undefined
+    ? undefined
+    : prepareRuntime(join(import.meta.dirname, "../ecmascript"));
+
 // Compiles a program and checks it, where a TypeScript error gives the run that onTypeError makes.
 const checkProgram = async (
   id: string,
   program: string,
   path: string,
+  isModule: boolean,
+  scripts: readonly string[],
   onTypeError: (reason: string) => TestRun | Promise<TestRun>,
 ): Promise<TestRun> => {
   try {
-    const result = await check({ ...compile(program, path), onPrint: () => {} });
+    const start = performance.now();
+    const spec =
+      ESCORE === undefined
+        ? compile(program, path, undefined, false, scripts)
+        : compileToEscore(program, path, ESCORE, isModule);
+    const compiled = performance.now();
+    const result = await check({ ...spec, onPrint: () => {} });
+    if (process.env.TLA_TS_STATS !== undefined) {
+      // The ESCore backend's spec is its root module and the program's code.
+      const size =
+        (typeof spec.source === "string" ? spec.source.length : printModule(spec.source).length) +
+        (spec.loadModule?.("ProgramCode")?.length ?? 0);
+      console.log(
+        `STATS ${id} compile=${Math.round(compiled - start)} check=${Math.round(performance.now() - compiled)} size=${size}`,
+      );
+    }
     if (result.status === "success" || result.status === "deadlock") {
       return { id, outcome: "pass", reason: "" };
     }
@@ -4325,7 +4355,7 @@ const runJavaScriptTest = async (
       run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
     return { id, outcome: "skipped", reason: `Node fails as JavaScript: ${nodeError}` };
   }
-  return checkProgram(id, tla.test, tla.testPath, (reason) => ({
+  return checkProgram(id, tla.test, tla.testPath, true, [], (reason) => ({
     id,
     outcome: "skipped",
     reason: `type error as JavaScript: ${reason}`,
@@ -4345,6 +4375,65 @@ const runJavaScriptSyntaxTest = (id: string, source: string): TestRun => {
     }));
   }
   return { id, outcome: "wrong", reason: "Compiled a program with a SyntaxError" };
+};
+
+// A harness as a script, where its declare global's declarations augment the global scope as they
+// stand.
+const getScriptHarness = (harness: string) => {
+  const sourceFile = ts.createSourceFile("harness.ts", harness, ts.ScriptTarget.Latest, true);
+  return sourceFile.statements
+    .filter(
+      (statement): statement is ts.ModuleDeclaration & { body: ts.ModuleBlock } =>
+        ts.isModuleDeclaration(statement) &&
+        statement.name.text === "global" &&
+        statement.body !== undefined &&
+        ts.isModuleBlock(statement.body),
+    )
+    .reduceRight(
+      (text, statement) =>
+        text.slice(0, statement.getStart(sourceFile)) +
+        statement.body.statements.map((inner) => inner.getText(sourceFile)).join("\n") +
+        text.slice(statement.end),
+      harness,
+    );
+};
+
+// Runs a test outside strict mode as JavaScript: a script that runs after the harness's script,
+// in one global object, as a page runs its scripts, which tla-ts compiles as allowJs files too.
+const runJavaScriptScriptTest = async (
+  id: string,
+  source: string,
+  metadata: Metadata,
+): Promise<TestRun> => {
+  const harness = getScriptHarness(getHarness(metadata, source));
+  const nodeError = await getNodeScriptsError([
+    ts.transpileModule(harness, {
+      compilerOptions: {
+        module: ts.ModuleKind.CommonJS,
+        target: ts.ScriptTarget.ESNext,
+        moduleDetection: ts.ModuleDetectionKind.Legacy,
+      },
+    }).outputText,
+    source,
+  ]);
+  if (nodeError !== undefined) {
+    return {
+      id,
+      outcome: "skipped",
+      reason: `Node fails as JavaScript: ${getFirstLine(nodeError)}`,
+    };
+  }
+  const root = join(JAVASCRIPT_DIRECTORY, "script");
+  const harnessPath = join(root, "harness.ts");
+  const testPath = join(root, id);
+  mkdirSync(dirname(testPath), { recursive: true });
+  writeFileSync(harnessPath, harness);
+  writeFileSync(testPath, source);
+  return checkProgram(id, source, testPath, false, [harnessPath], (reason) => ({
+    id,
+    outcome: "skipped",
+    reason: `type error as JavaScript: ${reason}`,
+  }));
 };
 
 const runTest = async (path: string): Promise<TestRun> => {
@@ -4404,16 +4493,25 @@ const runTest = async (path: string): Promise<TestRun> => {
   // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
   // import of the test's .js path to the test's code rather than to the .js that Node runs.
   if (isLinked) writeFileSync(programPath, program);
-  // A test outside strict mode can't run as an ES module.
-  return checkProgram(id, program, isLinked ? programPath : "test262.ts", (reason) =>
-    isSloppy
-      ? { id, outcome: "skipped", reason: `type error: ${reason}` }
-      : runJavaScriptTest(
-          id,
-          metadata.isModule ? source : nameGlobalObject(source),
-          metadata,
-          fixtures,
-        ),
+  // A test outside strict mode runs as a script, and can't import fixtures as one. The ESCore
+  // backend compiles one script, so it can't run one after the harness's.
+  return checkProgram(
+    id,
+    program,
+    isLinked ? programPath : "test262.ts",
+    metadata.isModule,
+    [],
+    (reason) =>
+      isSloppy && (isLinked || ESCORE !== undefined)
+        ? { id, outcome: "skipped", reason: `type error: ${reason}` }
+        : isSloppy
+          ? runJavaScriptScriptTest(id, source, metadata)
+          : runJavaScriptTest(
+              id,
+              metadata.isModule ? source : nameGlobalObject(source),
+              metadata,
+              fixtures,
+            ),
   );
 };
 

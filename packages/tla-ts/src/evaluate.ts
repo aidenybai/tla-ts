@@ -83,6 +83,7 @@ import {
   setTrace,
 } from "./values";
 import type { TlcVersion } from "./tlc/version";
+import type { OperatorLevels } from "./levels";
 
 export type State = (Value | undefined)[];
 
@@ -169,6 +170,8 @@ export interface Environment {
   variables: string[];
   variableIndex: Map<string, number>;
   facts: DefinitionFacts;
+  // The definitions that their modules tell hold no wide string nor read a deserializer.
+  narrowDefinitions: ReadonlySet<Definition>;
   startupValues: (Value | undefined)[];
   substitutedDefinitions: Set<Definition>;
   instanceParams: Set<OperatorParam>;
@@ -179,6 +182,9 @@ export interface Environment {
   // modules compiles them again.
   initRunners: WeakMap<Expression, Runner>;
   nextRunners: WeakMap<Expression, Runner>;
+  // The levels that SANY's level checking gives a global operator: its own and the formals whose
+  // arguments' levels it takes.
+  getOperatorLevels: (name: string) => OperatorLevels | undefined;
   callStack?: CallStack;
   coverage?: Coverage;
 }

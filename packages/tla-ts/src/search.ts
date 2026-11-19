@@ -1,5 +1,4 @@
 import {
-  getChildren,
   isLocallyResolved,
   type Assumption,
   type Definition,
@@ -27,6 +26,8 @@ import {
   isConstantLevel,
   isExpressionImpure,
   isImpureDefinition,
+  isWideDefinition,
+  isWideString,
 } from "./dependencies";
 import { createEnvironment, type ResolvedModuleOperator } from "./environment";
 import {
@@ -59,7 +60,13 @@ import {
   TEMPORAL_LEVEL,
   VARIABLE_LEVEL,
 } from "./levels";
-import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
+import {
+  expandTemporal,
+  getLevel,
+  getLevelBound,
+  type ScopedExpression,
+  type TemporalProperty,
+} from "./liveness";
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint } from "./pretty-print";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
@@ -437,7 +444,7 @@ const getSpecification = (
         EXIT_STATUS.error,
       );
     }
-    const level = getLevel(conjunct, item.scope, environment);
+    const level = getLevelBound(conjunct, item.scope, environment);
     if (level === TEMPORAL_LEVEL) {
       if (property === undefined || !item.path.includes(property)) isUntaggedFound = true;
       temporals.push(item);
@@ -527,7 +534,7 @@ const getProperties = (
       }
       if (
         conjunct.kind === "Always" &&
-        getLevel(conjunct.expression, item.scope, environment) <= VARIABLE_LEVEL
+        getLevelBound(conjunct.expression, item.scope, environment) <= VARIABLE_LEVEL
       ) {
         const body = conjunct.expression;
         const operator =
@@ -541,7 +548,7 @@ const getProperties = (
         });
         return;
       }
-      const level = getLevel(conjunct, item.scope, environment);
+      const level = getLevelBound(conjunct, item.scope, environment);
       if (level < ACTION_LEVEL) {
         properties.initialPredicates.push({
           name: partName,
@@ -670,19 +677,10 @@ const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] 
   return true;
 };
 
-const WIDE_CHARACTER = /[\u0100-\uffff]/;
-
-const DESERIALIZERS = new Set(["JsonDeserialize", "ndJsonDeserialize"]);
-
 const isWideConfigValue = (value: ConfigValue): boolean =>
   value.kind === "String"
-    ? WIDE_CHARACTER.test(value.value)
+    ? isWideString(value.value)
     : value.kind === "Set" && value.elements.some(isWideConfigValue);
-
-const isWideExpression = (expression: Expression): boolean =>
-  (expression.kind === "String" && WIDE_CHARACTER.test(expression.value)) ||
-  (expression.kind === "Apply" && DESERIALIZERS.has(expression.operator)) ||
-  getChildren(expression).some(isWideExpression);
 
 // TLC fingerprints a string by the low byte of each character, so it merges states whose strings differ only above U+00FF.
 const hasWideString = (config: ModelConfig, environment: Environment) =>
@@ -691,10 +689,7 @@ const hasWideString = (config: ModelConfig, environment: Environment) =>
       isWideConfigValue(constant.value) || (constant.args ?? []).some(isWideConfigValue),
   ) ||
   [...environment.definitions.values()].some(
-    (definition) =>
-      isWideExpression(definition.body) ||
-      (definition.kind === "Function" &&
-        definition.bounds.some((bound) => isWideExpression(bound.set))),
+    (definition) => !environment.narrowDefinitions.has(definition) && isWideDefinition(definition),
   );
 
 export interface Search {

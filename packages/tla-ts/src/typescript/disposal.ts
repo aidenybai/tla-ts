@@ -38,6 +38,9 @@ export interface Resource {
   // Whether adopt or defer added the method, which tla-ts follows only as one of the candidates,
   // not as a DisposableStack's dispose.
   isCallback: boolean;
+  // Whether a stack's use added it, whose dispose method is a stack's own only where the script
+  // holds one as a value. A using declaration may hold a stack itself.
+  isUsed: boolean;
 }
 
 // The resources that a block's using declarations added, with the frame of the block and the path
@@ -130,7 +133,9 @@ export const disposeAll = (
   // A DisposableStack's dispose, or an AsyncDisposableStack's disposeAsync, which a stack that the
   // path made holds.
   const disposeStacks = (next: (path: Path, value?: Expression) => Formula) =>
-    resource.isCallback || (path.tasks?.stacks.size ?? 0) === 0
+    resource.isCallback ||
+    (path.tasks?.stacks.size ?? 0) === 0 ||
+    (resource.isUsed && !context.isStackMethodHeld)
       ? unknown
       : ifThenElse(
           useJavaScript(
@@ -245,6 +250,7 @@ export const readResource = (
     isAsync,
     isWrapped,
     isCallback: false,
+    isUsed: false,
   });
   const readDispose = (inner: Path, isWrapped: boolean) =>
     read(site, value, "@@dispose", inner, context, frame, (got, method) =>
@@ -308,6 +314,7 @@ export const addResource = (
           isAsync,
           isWrapped: false,
           isCallback: false,
+          isUsed: false,
         })
       : continueWith(path, frame);
   const addObject = () => readResource(site, value, isAsync, path, context, frame, add);

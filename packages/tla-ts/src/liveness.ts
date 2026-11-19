@@ -95,57 +95,76 @@ const createCannotHandleError = (expression: Expression, inner?: string) =>
     `TLC cannot handle the temporal formula ${describeRange(expression)}${inner === undefined ? "" : `:\n${inner}`}`,
   );
 
-export const getLevel = (
+// The level that SANY gives an expression, with the levels of what its scope binds read in, as
+// Specs.getLevel finds it, and the bound on that level that getLevelBound finds through the
+// operators that the expression calls.
+interface Levels {
+  level: number;
+  bound: number;
+}
+
+const toLevels = (level: number): Levels => ({ level, bound: level });
+
+const getMaximumLevels = (all: Levels[]): Levels => ({
+  level: Math.max(CONSTANT_LEVEL, ...all.map((levels) => levels.level)),
+  bound: Math.max(CONSTANT_LEVEL, ...all.map((levels) => levels.bound)),
+});
+
+const getLevels = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
-  shadowed = new Set<string>(),
-  visiting = new Set<object>(),
-): number => {
-  const getBodyLevel = (binding: object, body: Expression, bodyScope: Scope | undefined) => {
-    if (visiting.has(binding)) return CONSTANT_LEVEL;
+  shadowed: Set<string>,
+  visiting: Set<object>,
+): Levels => {
+  const getBodyLevels = (binding: object, body: Expression, bodyScope: Scope | undefined) => {
+    if (visiting.has(binding)) return toLevels(CONSTANT_LEVEL);
     visiting.add(binding);
-    const level = getLevel(body, bodyScope, environment, new Set(), visiting);
+    const levels = getLevels(body, bodyScope, environment, new Set(), visiting);
     visiting.delete(binding);
-    return level;
+    return levels;
   };
-  const getBindingLevel = (name: string) => {
+  const getBindingLevels = (name: string) => {
     const binding = lookupScope(scope, name);
     if (!binding) return undefined;
-    if (binding.kind === "Value") return CONSTANT_LEVEL;
+    if (binding.kind === "Value") return toLevels(CONSTANT_LEVEL);
     if (binding.kind === "Thunk") {
       return binding.isReleased
-        ? CONSTANT_LEVEL
-        : getBodyLevel(binding, binding.expression, binding.scope);
+        ? toLevels(CONSTANT_LEVEL)
+        : getBodyLevels(binding, binding.expression, binding.scope);
     }
     const operator = binding.operator;
     return operator.kind === "Closure"
-      ? getBodyLevel(operator, operator.body, operator.scope)
-      : CONSTANT_LEVEL;
+      ? getBodyLevels(operator, operator.body, operator.scope)
+      : toLevels(CONSTANT_LEVEL);
   };
-  const getGlobalLevel = (name: string) => {
-    if (environment.variableIndex.has(name)) return VARIABLE_LEVEL;
-    if (environment.constants.has(name)) return CONSTANT_LEVEL;
+  const getGlobalLevels = (name: string) => {
+    if (environment.variableIndex.has(name)) return toLevels(VARIABLE_LEVEL);
+    if (environment.constants.has(name)) return toLevels(CONSTANT_LEVEL);
     const definition = getDefinition(name, environment);
-    if (definition) return getDefinitionLevel(definition, environment);
+    if (definition) {
+      const bound = getDefinitionLevel(definition, environment);
+      return { level: environment.getOperatorLevels(name)?.level ?? bound, bound };
+    }
     const builtin = environment.builtins.get(environment.substitutions.get(name) ?? name);
     if (!builtin) return undefined;
-    if (builtin.isActionLevel) return ACTION_LEVEL;
-    return builtin.isStateLevel && !builtin.isLevelConstant ? VARIABLE_LEVEL : CONSTANT_LEVEL;
+    if (builtin.isActionLevel) return toLevels(ACTION_LEVEL);
+    return toLevels(
+      builtin.isStateLevel && !builtin.isLevelConstant ? VARIABLE_LEVEL : CONSTANT_LEVEL,
+    );
   };
-  const getNameLevel = (name: string, node: Expression) => {
-    if (shadowed.has(name)) return CONSTANT_LEVEL;
+  const getNameLevels = (name: string, node: Expression) => {
+    if (shadowed.has(name)) return toLevels(CONSTANT_LEVEL);
     if (isLocallyResolved(node)) {
-      return getBindingLevel(name) ?? getGlobalLevel(name) ?? CONSTANT_LEVEL;
+      return getBindingLevels(name) ?? getGlobalLevels(name) ?? toLevels(CONSTANT_LEVEL);
     }
-    return getGlobalLevel(name) ?? getBindingLevel(name) ?? CONSTANT_LEVEL;
+    return getGlobalLevels(name) ?? getBindingLevels(name) ?? toLevels(CONSTANT_LEVEL);
   };
-  const getChildrenLevel = (node: Expression) => {
-    let level = CONSTANT_LEVEL;
+  const getChildrenLevels = (node: Expression) => {
+    const all: Levels[] = [];
     mapChildren(node, (child, bound) => {
-      level = Math.max(
-        level,
-        getLevel(
+      all.push(
+        getLevels(
           child,
           scope,
           environment,
@@ -155,54 +174,72 @@ export const getLevel = (
       );
       return child;
     });
-    return level;
+    return getMaximumLevels(all);
   };
   switch (expression.kind) {
     case "Prime":
     case "Unchanged":
     case "BoxAction":
     case "AngleAction":
-      return ACTION_LEVEL;
+      return toLevels(ACTION_LEVEL);
     case "Enabled":
-      return VARIABLE_LEVEL;
+      return toLevels(VARIABLE_LEVEL);
     case "Always":
     case "Eventually":
     case "WeakFairness":
     case "StrongFairness":
-      return TEMPORAL_LEVEL;
+      return toLevels(TEMPORAL_LEVEL);
     case "UnboundedQuantifier":
-      return expression.isTemporal ? TEMPORAL_LEVEL : getChildrenLevel(expression);
+      return expression.isTemporal ? toLevels(TEMPORAL_LEVEL) : getChildrenLevels(expression);
     case "Identifier":
-      return getNameLevel(expression.name, expression);
+      return getNameLevels(expression.name, expression);
     case "OperatorReference":
-      return getNameLevel(expression.operator, expression);
+      return getNameLevels(expression.operator, expression);
     case "Apply": {
-      if (TEMPORAL_OPERATORS.has(expression.operator)) return TEMPORAL_LEVEL;
-      if (expression.operator === "\\cdot") return ACTION_LEVEL;
-      const operatorLevel = getNameLevel(expression.operator, expression);
-      const level = Math.max(operatorLevel, getChildrenLevel(expression));
+      if (TEMPORAL_OPERATORS.has(expression.operator)) return toLevels(TEMPORAL_LEVEL);
+      if (expression.operator === "\\cdot") return toLevels(ACTION_LEVEL);
+      const operatorLevels = getNameLevels(expression.operator, expression);
+      const argumentLevels = expression.args.map((argument) =>
+        getLevels(argument, scope, environment, shadowed, visiting),
+      );
+      const levels = getMaximumLevels([operatorLevels, ...argumentLevels]);
       const operator = isLocallyResolved(expression)
         ? undefined
-        : resolveGlobalOperator(expression.operator, environment);
-      if (
-        level === operatorLevel ||
-        operator?.kind !== "Closure" ||
-        operator.params.length !== expression.args.length
-      ) {
-        return level;
-      }
-      const getCallLevel = () =>
-        getBodyLevel(
-          operator.body,
-          operator.body,
-          bindOperatorArguments(operator, expression.args, getConstantContext(environment, scope)),
-        );
-      return getCallLevel();
+        : environment.getOperatorLevels(expression.operator);
+      if (operator?.formals.length !== expression.args.length) return levels;
+      // SANY levels a call by the operator's own level and the levels of the arguments to the
+      // formals that its level reads.
+      return {
+        level: Math.max(
+          operator.level,
+          ...argumentLevels
+            .filter((_, index) => operator.weights[index] === 1)
+            .map((argument) => argument.level),
+        ),
+        bound: levels.bound,
+      };
     }
     default:
-      return getChildrenLevel(expression);
+      return getChildrenLevels(expression);
   }
 };
+
+// As TLC levels a formula: by SANY's level, or by the bound where SANY's level is constant.
+export const getLevel = (
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+): number => {
+  const levels = getLevels(expression, scope, environment, new Set(), new Set());
+  return levels.level === CONSTANT_LEVEL ? levels.bound : levels.level;
+};
+
+// As TLC levels a conjunct of a spec or a property, which SpecProcessor reads by getLevelBound.
+export const getLevelBound = (
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+): number => getLevels(expression, scope, environment, new Set(), new Set()).bound;
 
 const getUnrolledElements = (bounds: Bound[], context: Context) => {
   try {

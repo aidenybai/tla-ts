@@ -14,6 +14,7 @@ import {
 } from "./context";
 import { getPrimitiveArgument, STRING_METHODS, translatePrimitiveMethod } from "./collections";
 import {
+  BIGINT_OPERATORS,
   BITWISE_OPERATORS,
   concatenate,
   translateBigInt,
@@ -92,7 +93,7 @@ const STRING_LOOKUPS = new Map<string, Lookup["key"][]>([
 
 const CONVERSION_KEYS = ["@@toPrimitive", "valueOf", "toString"];
 
-const NUMBER_OPERATIONS = new Map([
+export const NUMBER_OPERATIONS = new Map([
   [ts.SyntaxKind.MinusToken, "Subtract"],
   [ts.SyntaxKind.AsteriskToken, "Multiply"],
   [ts.SyntaxKind.SlashToken, "Divide"],
@@ -158,6 +159,30 @@ export const isAnyOperand = (node: ts.Expression, context: Context) =>
 
 // How a compound assignment combines the primitives that it reads and takes, as + joins a string
 // and every other operator converts to numbers. ToNumber stops at an object.
+// An arithmetic or bitwise operator of two primitives, which a BigInt pair runs as BigInts, as
+// ToNumeric keeps them.
+export const translateNumericOperation = (
+  kind: ts.SyntaxKind,
+  left: Expression,
+  right: Expression,
+  context: Context,
+) => {
+  const operation = NUMBER_OPERATIONS.get(kind) ?? BITWISE_OPERATORS.get(kind);
+  const bigIntOperation = BIGINT_OPERATORS.get(kind);
+  if (operation === undefined) return undefined;
+  return bigIntOperation === undefined
+    ? useJavaScript(
+        operation,
+        [left, right].map((primitive) => useJavaScript("ToNumber", [primitive], context)),
+        context,
+      )
+    : useJavaScript(
+        "NumericOperation",
+        [identifier(operation), identifier(bigIntOperation), left, right],
+        context,
+      );
+};
+
 export const getPrimitiveUpdate = (kind: ts.SyntaxKind, context: Context) => {
   const operator = COMPOUND_OPERATORS.get(kind);
   const operation =
@@ -169,17 +194,15 @@ export const getPrimitiveUpdate = (kind: ts.SyntaxKind, context: Context) => {
     const result =
       operation === undefined
         ? useJavaScript("AddPrimitives", [current, value], context)
-        : useJavaScript(
-            operation,
-            [current, value].map((primitive) => useJavaScript("ToNumber", [primitive], context)),
-            context,
-          );
+        : (translateNumericOperation(operator ?? kind, current, value, context) ??
+          useJavaScript("AddPrimitives", [current, value], context));
     return context.hasSpecialNumbers ? result : useJavaScript("PlainNumber", [result], context);
   };
 };
 
 const PRIMITIVE_FLAGS =
   ts.TypeFlags.NumberLike |
+  ts.TypeFlags.BigIntLike |
   ts.TypeFlags.StringLike |
   ts.TypeFlags.BooleanLike |
   ts.TypeFlags.Undefined |
@@ -239,30 +262,96 @@ export const isConvertedStringArgument = (
         construction?.arguments?.length === position + 1 &&
         construction.arguments[position] === argument)) &&
     isObjectOperand(node, context) &&
-    (ts.isIdentifier(node) ||
-      (ts.isObjectLiteralExpression(node) &&
-        node.properties.every(
-          (property) =>
-            (ts.isMethodDeclaration(property) && !ts.isComputedPropertyName(property.name)) ||
-            (ts.isPropertyAssignment(property) &&
-              !ts.isComputedPropertyName(property.name) &&
-              (ts.isFunctionExpression(property.initializer) ||
-                ts.isArrowFunction(property.initializer) ||
-                ts.isLiteralExpression(property.initializer))),
-        )))
+    isInertObject(node)
   );
 };
 
-// An object that a name holds which a class field's computed key converts to a property key as the
-// class is made.
+// A name, or a literal of methods and literals, which evaluates without running anything.
+const isInertObject = (node: ts.Expression) =>
+  ts.isIdentifier(node) ||
+  (ts.isObjectLiteralExpression(node) &&
+    node.properties.every(
+      (property) =>
+        (ts.isMethodDeclaration(property) && !ts.isComputedPropertyName(property.name)) ||
+        (ts.isPropertyAssignment(property) &&
+          !ts.isComputedPropertyName(property.name) &&
+          (ts.isFunctionExpression(property.initializer) ||
+            ts.isArrowFunction(property.initializer) ||
+            ts.isLiteralExpression(property.initializer))),
+    ));
+
+// An object that an element access reads, or that a plain assignment writes, as its key, inside any
+// casts, which ToPropertyKey converts once the access has its object, where it isn't undefined or
+// null, and, for a write, the value it writes.
+export const isConvertedElementKey = (node: ts.Node, context: Context): node is ts.Expression => {
+  if (!ts.isExpression(node) || skipCasts(node) !== node) return false;
+  const key = ts.findAncestor(
+    node,
+    (ancestor) => !(ts.isExpression(ancestor.parent) && skipCasts(ancestor.parent) === node),
+  );
+  const access = key?.parent;
+  if (
+    context.heap === undefined ||
+    access === undefined ||
+    !ts.isElementAccessExpression(access) ||
+    access.argumentExpression !== key ||
+    access.questionDotToken !== undefined ||
+    // super reads the home object's prototype before the key converts.
+    access.expression.kind === ts.SyntaxKind.SuperKeyword ||
+    !isObjectOperand(node, context) ||
+    !isInertObject(node)
+  ) {
+    return false;
+  }
+  const outer = ts.findAncestor(
+    access.parent,
+    (ancestor) => !ts.isParenthesizedExpression(ancestor),
+  );
+  const isTarget =
+    outer !== undefined &&
+    ((ts.isBinaryExpression(outer) &&
+      outer.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      outer.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      skipCasts(outer.left) === access) ||
+      ((ts.isPrefixUnaryExpression(outer) || ts.isPostfixUnaryExpression(outer)) &&
+        skipCasts(outer.operand) === access) ||
+      ts.isDeleteExpression(outer));
+  return (
+    !isTarget ||
+    (ts.isBinaryExpression(outer) && outer.operatorToken.kind === ts.SyntaxKind.EqualsToken)
+  );
+};
+
+// An object that a name holds which a class element's computed key converts to a property key as
+// the class is made.
 export const isConvertedClassKey = (node: ts.Node, context: Context): node is ts.Expression =>
   context.heap !== undefined &&
   ts.isExpression(node) &&
   ts.isIdentifier(skipCasts(node)) &&
   ts.isComputedPropertyName(node.parent) &&
-  ts.isPropertyDeclaration(node.parent.parent) &&
+  ts.isClassElement(node.parent.parent) &&
   ts.isClassLike(node.parent.parent.parent) &&
   isObjectOperand(node, context);
+
+// An object that a name holds which an object literal's computed key converts to a property key
+// before the literal evaluates the property's value.
+export const isConvertedLiteralKey = (node: ts.Node, context: Context): node is ts.Expression =>
+  context.heap !== undefined &&
+  ts.isExpression(node) &&
+  ts.isIdentifier(skipCasts(node)) &&
+  ts.isComputedPropertyName(node.parent) &&
+  ts.isObjectLiteralElement(node.parent.parent) &&
+  ts.isObjectLiteralExpression(node.parent.parent.parent) &&
+  isObjectOperand(node, context);
+
+// The methods that convert a key that they take, of Object and of an object.
+const KEY_CONVERTING_METHODS = new Set([
+  "defineProperty",
+  "getOwnPropertyDescriptor",
+  "hasOwn",
+  "hasOwnProperty",
+  "propertyIsEnumerable",
+]);
 
 // An object that a call converts to a property key, which runs its toString and valueOf: a name's,
 // or a wrapper's that new makes, as the key
@@ -277,6 +366,7 @@ export const isConvertedPropertyKey = (node: ts.Node, context: Context): node is
     call === undefined ||
     !ts.isCallExpression(call) ||
     !ts.isPropertyAccessExpression(call.expression) ||
+    !KEY_CONVERTING_METHODS.has(call.expression.name.text) ||
     call.arguments.some(ts.isSpreadElement) ||
     !(isObjectOperand(node, context) || isAnyOperand(node, context))
   ) {
@@ -308,7 +398,11 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
   if (context.heap === undefined) return undefined;
   // A property key converts to a primitive, which the call converts as ToPropertyKey does.
   // ToPropertyKey keeps a symbol that the object converts to.
-  if (isConvertedClassKey(node, context)) {
+  if (
+    isConvertedClassKey(node, context) ||
+    isConvertedLiteralKey(node, context) ||
+    isConvertedElementKey(node, context)
+  ) {
     return {
       operands: [node],
       hints: ["string"],
@@ -465,6 +559,16 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
         [argument],
         "number",
         (primitives) => plain(translateNumberOf(primitives[0], context)),
+        false,
+        true,
+      );
+    }
+    // BigInt converts its value to a primitive with the number hint, and then to a BigInt.
+    if (node.expression.text === "BigInt") {
+      return make(
+        [argument],
+        "number",
+        (primitives) => useJavaScript("BigIntOfPrimitive", [primitives[0]], context),
         false,
         true,
       );
@@ -626,11 +730,8 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
       "number",
       (primitives) =>
         plain(
-          useJavaScript(
-            operation,
-            primitives.map((primitive) => useJavaScript("ToNumber", [primitive], context)),
-            context,
-          ),
+          translateNumericOperation(kind, primitives[0], primitives[1], context) ??
+            getUndefined(context),
         ),
       true,
     );
@@ -652,10 +753,10 @@ export const getConversion = (node: ts.Node, context: Context): Conversion | und
     return conversion && { ...conversion, thrownSymbols: "none" };
   }
   // a > b and a <= b compare b with a, though they convert a first. Two strings don't convert, and
-  // a value of type any compares as it is.
-  const isOrdered =
-    !operands.every((operand) => hasFlags(operand, ts.TypeFlags.StringLike, context)) &&
-    !operands.some((operand) => isAnyOperand(operand, context));
+  // a value of type any converts as it runs, as IsLessThan converts each operand to a primitive.
+  const isOrdered = !operands.every((operand) =>
+    hasFlags(operand, ts.TypeFlags.StringLike, context),
+  );
   const compare = (name: string, left: Expression, right: Expression) =>
     useJavaScript(name, [left, right], context);
   if (kind === ts.SyntaxKind.LessThanToken || kind === ts.SyntaxKind.GreaterThanToken) {
@@ -706,11 +807,16 @@ export const getKeyedConversionFunctions = (node: ts.Node, context: Context) =>
   CONVERSION_KEYS.flatMap((key) => getWrittenFunctions(node, key, context));
 
 // The Symbol.toPrimitive methods that tla-ts calls, which can't see the hint that it doesn't pass.
+// A call, such as a regexp's protocol, may convert many values, so it runs only the methods that
+// read neither their hint nor their arguments, as each one's body would copy into each, but for a
+// call that converts its argument once.
 const getExoticMethods = (node: ts.Node, context: Context) =>
   getMethods(node, "@@toPrimitive", context).filter(
     (method) =>
-      getParameters(method).length === 0 &&
-      findNodes(method, ts.isIdentifier).every((name) => name.text !== "arguments"),
+      !ts.isCallExpression(node) ||
+      getConversion(node, context) !== undefined ||
+      (getParameters(method).length === 0 &&
+        findNodes(method, ts.isIdentifier).every((name) => name.text !== "arguments")),
   );
 
 // ToPrimitive of an object, which calls its Symbol.toPrimitive method where it has one, and
@@ -809,7 +915,7 @@ const toPrimitive = (
             getExoticMethods(site, context),
             exotic,
             value,
-            [],
+            [string(hint)],
             found,
             context,
             frame,

@@ -9,6 +9,7 @@ import {
   translateFunctionConstructor,
   translateHeapElements,
   translateArrayIteration,
+  getHeapElements,
   translateMethod,
   translateArrayConstruction,
   translateNew,
@@ -78,6 +79,7 @@ import {
   rejectDeclaredCall,
   isDeclarationOnly,
   getClassStop,
+  getFunctionStop,
   getValueDeclaration,
   getRunMembers,
   isUnresolved,
@@ -100,6 +102,7 @@ import {
   getErrorClass,
   isCaughtRead,
   isNativeErrorValue,
+  mayBeHeapError,
   translateHasInstanceCall,
   translateInstanceOf,
   translateNewError,
@@ -179,6 +182,7 @@ import {
   translateTypeOf,
   useJavaScript,
 } from "./javascript";
+import { isAnyOperand, NUMBER_OPERATIONS, translateNumericOperation } from "./conversions";
 import { getNamespaceModule, getNamespaceName, getNamespaceRef, isBindingRead } from "./namespaces";
 import { getThisOwner, isBeforeDeclaration, isCaughtBeforeDeclaration, type Scope } from "./scope";
 import { getMappedParameter } from "./actions";
@@ -219,7 +223,7 @@ import {
   getPropertyKey,
   isBooleanLike,
   isFieldName,
-  isHeapArray,
+  isHeapArrayLike,
   hasHeapType,
   isHeapSetOrMap,
   getOrderedIteration,
@@ -452,7 +456,7 @@ export const translateIterated = (
   scope: Scope,
   context: Context,
 ): Expression | Expression[] => {
-  if (isHeapArray(iterated, context)) return translateHeapElements(iterated, scope, context);
+  if (isHeapArrayLike(iterated, context)) return translateHeapElements(iterated, scope, context);
   // A string gives its code points.
   if (ts.isStringLiteralLike(iterated)) {
     return [...iterated.text].map((character) => translateString(character, context));
@@ -478,6 +482,34 @@ export const translateIterated = (
     !isArrayIteration(iterated, context)
   ) {
     throw new TlaTypeScriptError("tla-ts can't step an iterator in this spread", node);
+  }
+  // A value that is a string or an array, as an untyped array's element may be, gives a string's
+  // code points or an array's elements, whichever it holds as it runs.
+  const type = context.checker.getTypeAtLocation(iterated);
+  if (
+    type.isUnion() &&
+    type.types.some((member) => isEvery(member, ts.TypeFlags.StringLike)) &&
+    type.types.every(
+      (member) =>
+        isEvery(member, ts.TypeFlags.StringLike) ||
+        context.checker.isArrayType(member) ||
+        context.checker.isTupleType(member),
+    )
+  ) {
+    return share(translateExpression(iterated, scope, context), "iterated", context, (value) => {
+      const heap = context.heap === undefined ? undefined : getHeap(scope, node, context);
+      return ifExpression(
+        apply("=", [useJavaScript("TypeOf", [value], context), string("string")]),
+        useJavaScript("StringCharacters", [value], context),
+        heap === undefined
+          ? value
+          : ifExpression(
+              useJavaScript("IsRef", [value], context),
+              getHeapElements(heap, value, node, context),
+              translateArrayIteration(value, heap, node, context),
+            ),
+      );
+    });
   }
   if (getKind(iterated, context) !== "sequence" && !isArrayIteration(iterated, context)) {
     throw new TlaTypeScriptError(
@@ -852,17 +884,14 @@ const translateMath = (node: ts.CallExpression, method: string, scope: Scope, co
       !ts.isBinaryExpression(division) ||
       division.operatorToken.kind !== ts.SyntaxKind.SlashToken
     ) {
-      if (isSpecial) {
-        return useJavaScript(
-          method === "floor" ? "FloorDivide" : "TruncDivide",
-          [translate(argument), number(1)],
-          context,
-        );
-      }
-      throw new TlaTypeScriptError(
-        `Math.${method} only takes a division, as in Math.${method}(a / b)`,
-        node,
-      );
+      // Without special numbers every number is an integer, which floor and trunc keep.
+      return isSpecial
+        ? useJavaScript(
+            method === "floor" ? "FloorDivide" : "TruncDivide",
+            [translate(argument), number(1)],
+            context,
+          )
+        : translate(argument);
     }
     const left = translate(division.left);
     const right = translate(division.right);
@@ -1021,7 +1050,23 @@ const translateBuiltInCall = (
   const anyString = translateAnyStringCall(node, scope, context);
   if (anyString !== undefined) return anyString;
   const symbol = getNamedSymbol(node.expression, context);
-  const helper = getTopLevelDeclaration(symbol, context);
+  // A const that another top-level name initializes, as const alias = make does, holds what that
+  // name holds.
+  const getAliased = (
+    declaration: ReturnType<typeof getTopLevelDeclaration>,
+    depth: number,
+  ): ReturnType<typeof getTopLevelDeclaration> => {
+    const initializer =
+      declaration !== undefined && ts.isVariableDeclaration(declaration) && declaration.initializer
+        ? skipCasts(declaration.initializer)
+        : undefined;
+    return initializer !== undefined &&
+      (ts.isIdentifier(initializer) || ts.isPropertyAccessExpression(initializer)) &&
+      depth < 8
+      ? getAliased(getTopLevelDeclaration(getNamedSymbol(initializer, context), context), depth + 1)
+      : declaration;
+  };
+  const helper = getAliased(getTopLevelDeclaration(symbol, context), 0);
   if (helper?.getSourceFile().isDeclarationFile) {
     return translateUnknown(node, `Unsupported call: ${node.expression.getText()}`, context);
   }
@@ -1443,7 +1488,10 @@ const translateBuiltInCall = (
         },
       );
     }
-    if (OWN_KEYS_ANY.has(method) && mayBeHeapObject(argument, context)) {
+    if (
+      OWN_KEYS_ANY.has(method) &&
+      (mayBeHeapObject(argument, context) || mayBeHeapError(argument, context))
+    ) {
       return useJavaScript(
         "OwnKeysAny",
         [
@@ -1707,12 +1755,53 @@ const translateBuiltInCall = (
       context,
     );
   }
+  // A variable that holds Object.prototype's method, as var own = Object.prototype.hasOwnProperty
+  // does, runs it where it still holds the built-in as the call reads it.
+  const alias = skipCasts(receiver);
+  const aliasDeclaration = ts.isIdentifier(alias)
+    ? getValueDeclaration(getSymbol(alias, context.checker), context)
+    : undefined;
+  const aliased =
+    method !== "call" || aliasDeclaration === undefined
+      ? undefined
+      : ts.isVariableDeclaration(aliasDeclaration) && aliasDeclaration.initializer !== undefined
+        ? getBuiltInPath(aliasDeclaration.initializer, context)
+        : getBuiltInPath(alias, context);
+  const aliasedMethod =
+    aliased === "Object.prototype.hasOwnProperty" ||
+    aliased === "Object.prototype.propertyIsEnumerable"
+      ? aliased.slice("Object.prototype.".length)
+      : undefined;
   const calledMethod =
     method === "call" &&
     ts.isPropertyAccessExpression(receiver) &&
     getBuiltInPath(receiver.expression, context) === "Object.prototype"
       ? receiver.name.text
-      : undefined;
+      : aliasedMethod;
+  const guardAlias = (value: Expression) =>
+    aliased === undefined || aliasedMethod === undefined
+      ? value
+      : ifExpression(
+          useJavaScript(
+            "SameValue",
+            [
+              translateExpression(receiver, scope, context),
+              translateBuiltInValue(
+                aliasedMethod === "hasOwnProperty"
+                  ? "Object.prototype.hasOwnProperty"
+                  : "Object.prototype.propertyIsEnumerable",
+                node,
+                context,
+              ),
+            ],
+            context,
+          ),
+          value,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't tell which function this call runs"),
+          ]),
+        );
   const ownMethod =
     calledMethod ?? (global === "Object" && method === "hasOwn" ? "hasOwnProperty" : method);
   const owned =
@@ -1726,27 +1815,29 @@ const translateBuiltInCall = (
   // A function that the heap doesn't hold owns its keys, none of them enumerable.
   const ownFunctionKeys = isOwnMethod ? getOwnFunctionKeys(owned[0], context) : undefined;
   if (ownFunctionKeys !== undefined) {
-    return share(translateExpression(owned[0], scope, context), "function", context, (value) =>
-      share(translatePropertyKey(owned[1], scope, context), "key", context, (key) =>
-        ifExpression(
-          useJavaScript("IsRef", [value], context),
-          useJavaScript(
-            ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
-            [getHeap(scope, node, context), value, key],
-            context,
+    return guardAlias(
+      share(translateExpression(owned[0], scope, context), "function", context, (value) =>
+        share(translatePropertyKey(owned[1], scope, context), "key", context, (key) =>
+          ifExpression(
+            useJavaScript("IsRef", [value], context),
+            useJavaScript(
+              ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
+              [getHeap(scope, node, context), value, key],
+              context,
+            ),
+            ownMethod === "propertyIsEnumerable"
+              ? boolean(false)
+              : ifExpression(
+                  apply("\\in", [key, set([string("arguments"), string("caller")])]),
+                  apply("Assert", [
+                    boolean(false),
+                    string(
+                      "tla-ts can't tell whether this function has its own arguments and caller",
+                    ),
+                  ]),
+                  apply("\\in", [key, set(ownFunctionKeys.map(string))]),
+                ),
           ),
-          ownMethod === "propertyIsEnumerable"
-            ? boolean(false)
-            : ifExpression(
-                apply("\\in", [key, set([string("arguments"), string("caller")])]),
-                apply("Assert", [
-                  boolean(false),
-                  string(
-                    "tla-ts can't tell whether this function has its own arguments and caller",
-                  ),
-                ]),
-                apply("\\in", [key, set(ownFunctionKeys.map(string))]),
-              ),
         ),
       ),
     );
@@ -1757,14 +1848,36 @@ const translateBuiltInCall = (
       (context.heap !== undefined && isBuiltInObject(owned[0], context)) ||
       isFunctionValue(owned[0], context))
   ) {
-    return useJavaScript(
-      ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
-      [
-        getHeap(scope, node, context),
-        translateFunctionObject(owned[0], scope, context),
-        translatePropertyKey(owned[1], scope, context),
-      ],
-      context,
+    return guardAlias(
+      useJavaScript(
+        ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
+        [
+          getHeap(scope, node, context),
+          translateFunctionObject(owned[0], scope, context),
+          translatePropertyKey(owned[1], scope, context),
+        ],
+        context,
+      ),
+    );
+  }
+  // A value that may be an object or another reads its own key where the heap holds it, and stops
+  // otherwise, as an error may be either.
+  if (isOwnMethod && (mayBeHeapObject(owned[0], context) || mayBeHeapError(owned[0], context))) {
+    return guardAlias(
+      share(translateExpression(owned[0], scope, context), "owner", context, (value) =>
+        ifExpression(
+          useJavaScript("IsHeldObject", [value], context),
+          useJavaScript(
+            ownMethod === "hasOwnProperty" ? "HasOwn" : "IsEnumerableOwn",
+            [getHeap(scope, node, context), value, translatePropertyKey(owned[1], scope, context)],
+            context,
+          ),
+          apply("Assert", [
+            boolean(false),
+            string(`tla-ts can't run ${ownMethod} on a value that isn't an object here`),
+          ]),
+        ),
+      ),
     );
   }
   if (calledMethod === "toString" && node.arguments.length <= 1) {
@@ -2093,7 +2206,11 @@ export const translateToString = (node: ts.Expression, scope: Scope, context: Co
           ifExpression(apply("=", [text, getUndefined(context)]), string("undefined"), text),
         );
   }
-  if (isNumberLike(node, context)) return translateNumberString(value, context);
+  // A value of type never still runs where TypeScript's narrowing is wrong, as a check of an
+  // error's constructor may be, and may hold anything.
+  if (isNumberLike(node, context) && (flags & ts.TypeFlags.Never) === 0) {
+    return translateNumberString(value, context);
+  }
   if (isBigIntLike(node, context) || isBooleanLike(node, context)) {
     return useJavaScript("StringOf", [value], context);
   }
@@ -2107,6 +2224,33 @@ export const translateToString = (node: ts.Expression, scope: Scope, context: Co
   // message, may still hold.
   if (names.every((name) => name === "function")) {
     return apply("Assert", [boolean(false), string("tla-ts can't convert a function to a string")]);
+  }
+  // A value that is a string or an array, as an untyped array's element may be, converts as it is
+  // where it holds a string, or undefined that a missing element gives.
+  if (
+    type.isUnion() &&
+    type.types.some((member) => isEvery(member, ts.TypeFlags.StringLike)) &&
+    type.types.every(
+      (member) =>
+        isEvery(member, ts.TypeFlags.StringLike) ||
+        context.checker.isArrayType(member) ||
+        context.checker.isTupleType(member),
+    )
+  ) {
+    return share(value, "text", context, (text) =>
+      ifExpression(
+        apply("=", [useJavaScript("TypeOf", [text], context), string("string")]),
+        text,
+        ifExpression(
+          apply("=", [text, getUndefined(context)]),
+          string("undefined"),
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't convert an array to a string here"),
+          ]),
+        ),
+      ),
+    );
   }
   throw new TlaTypeScriptError(`Convert this to a string explicitly: ${node.getText()}`, node);
 };
@@ -2237,6 +2381,72 @@ const getUnverifiedPrimitive = (node: ts.Expression, context: Context) => {
           : undefined;
 };
 
+// An arithmetic operator or an ordering of a value of type any that no statement converts first, as
+// in a loop's condition, or where no heap holds objects, whose value is a primitive or an object,
+// which stops where it runs. The operator converts the primitives as JavaScript's does: + joins a
+// string, an ordering runs IsLessThan, and the others run ToNumeric.
+const translateAnyOperation = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
+  const kind = node.operatorToken.kind;
+  const operands = [node.left, node.right];
+  const operation = NUMBER_OPERATIONS.get(kind);
+  const isPrimitiveTyped = (operand: ts.Expression) =>
+    isEvery(
+      context.checker.getTypeAtLocation(operand),
+      ts.TypeFlags.NumberLike |
+        ts.TypeFlags.StringLike |
+        ts.TypeFlags.BooleanLike |
+        ts.TypeFlags.BigIntLike |
+        ts.TypeFlags.Null |
+        ts.TypeFlags.Undefined,
+    );
+  if (
+    !(
+      ORDERING_OPERATORS.has(kind) ||
+      kind === ts.SyntaxKind.PlusToken ||
+      operation !== undefined
+    ) ||
+    !operands.some((operand) => isAnyOperand(operand, context)) ||
+    !operands.every((operand) => isAnyOperand(operand, context) || isPrimitiveTyped(operand))
+  ) {
+    return undefined;
+  }
+  context.prelude.add("Null");
+  const plain = (value: Expression) =>
+    context.hasSpecialNumbers ? value : useJavaScript("PlainNumber", [value], context);
+  return share(translateExpression(node.left, scope, context), "left", context, (left) =>
+    share(translateExpression(node.right, scope, context), "right", context, (right) => {
+      const value = ORDERING_OPERATORS.has(kind)
+        ? kind === ts.SyntaxKind.LessThanToken
+          ? useJavaScript("LessThanPrimitives", [left, right], context)
+          : kind === ts.SyntaxKind.GreaterThanToken
+            ? useJavaScript("LessThanPrimitives", [right, left], context)
+            : kind === ts.SyntaxKind.LessThanEqualsToken
+              ? useJavaScript("LessOrEqualPrimitives", [left, right], context)
+              : useJavaScript("LessOrEqualPrimitives", [right, left], context)
+        : plain(
+            translateNumericOperation(kind, left, right, context) ??
+              useJavaScript("AddPrimitives", [left, right], context),
+          );
+      const isPrimitive = (operand: Expression) =>
+        apply("\\/", [
+          apply("=", [operand, identifier("Null")]),
+          apply("\\notin", [
+            useJavaScript("TypeOf", [operand], context),
+            set([string("object"), string("function")]),
+          ]),
+        ]);
+      return ifExpression(
+        apply("/\\", [isPrimitive(left), isPrimitive(right)]),
+        value,
+        apply("Assert", [
+          boolean(false),
+          string("tla-ts can't convert this object to a primitive here"),
+        ]),
+      );
+    }),
+  );
+};
+
 const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
   const kind = node.operatorToken.kind;
   const translate = (inner: ts.Expression) => translateExpression(inner, scope, context);
@@ -2319,6 +2529,8 @@ const translateBinary = (node: ts.BinaryExpression, scope: Scope, context: Conte
     ORDERING_OPERATORS.has(kind) && isBooleanLike(side, context);
   const translateOperand = (side: ts.Expression) =>
     isOrderedBoolean(side) ? translateToNumber(side, node, scope, context) : translate(side);
+  const anyOperation = translateAnyOperation(node, scope, context);
+  if (anyOperation !== undefined) return anyOperation;
   if (
     ARITHMETIC_OPERATORS.has(kind) &&
     [node.left, node.right].some((side) => !isNumberLike(side, context) && !isOrderedBoolean(side))
@@ -2777,10 +2989,12 @@ export const isGlobalObject = (node: ts.Expression, context: Context) => {
 
 const isUnset = (symbol: ts.Symbol, context: Context) => {
   const declarations = symbol.declarations ?? [];
+  // A global that a declaration file declares, such as NaN, holds what the host gives it.
   return (
     declarations.length > 0 &&
     declarations.every(
       (declaration) =>
+        !declaration.getSourceFile().isDeclarationFile &&
         ts.isVariableDeclaration(declaration) &&
         ts.isIdentifier(declaration.name) &&
         ts.isVariableStatement(declaration.parent.parent) &&
@@ -3325,6 +3539,23 @@ const translatePrimitiveRead = (
   );
 };
 
+// The built-in object that a node is, through casts and a const that holds it.
+const getHeldBuiltInName = (node: ts.Expression, context: Context) => {
+  const inner = skipCasts(node);
+  const symbol = ts.isIdentifier(inner) ? getSymbol(inner, context.checker) : undefined;
+  const declaration = symbol?.valueDeclaration;
+  const initializer =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0
+      ? declaration.initializer
+      : undefined;
+  return (
+    getBuiltIn(inner, context) ??
+    (initializer === undefined ? undefined : getBuiltIn(skipCasts(initializer), context))
+  );
+};
+
 const translatePropertyAccess = (
   node: ts.PropertyAccessExpression,
   scope: Scope,
@@ -3467,7 +3698,7 @@ const translatePropertyAccess = (
     context.checker.getTypeAtLocation(receiver).getCallSignatures().length > 0 &&
     (name === "length" ||
       name === "name" ||
-      (held === undefined ? getFunctionCandidates(receiver, context).some(isHeld) : isHeld(held)))
+      (held === undefined ? context.heap !== undefined : isHeld(held)))
   ) {
     const getProperty = (candidate: FunctionNode) => {
       const candidateValue = getCandidateValue(candidate, context);
@@ -3594,6 +3825,14 @@ const translatePropertyAccess = (
   }
   if (isAddedToBuiltIn(node, context)) {
     throw new TlaTypeScriptError("tla-ts can't read a key that a built-in object lacks", node);
+  }
+  // A built-in object, such as Error, that a cast or a const gives another type isn't a record.
+  const heldBuiltIn = getHeldBuiltInName(receiver, context);
+  if (heldBuiltIn !== undefined) {
+    throw new TlaTypeScriptError(
+      `tla-ts can't read ${name} of ${heldBuiltIn}, which isn't a record here`,
+      node,
+    );
   }
   // A string or an array isn't a record, so a value that may be either reads its length as they
   // do.
@@ -3986,15 +4225,31 @@ const translateElementRead = (
           index(object, [shared]),
           getUndefined(context),
         );
-        return mayBeStringOrArray(node.expression, context)
-          ? ifExpression(
-              isStringOrArray(object, context),
-              apply("Assert", [
-                boolean(false),
-                string("tla-ts can't read an element of a string or an array here"),
-              ]),
-              read,
+        // A number reads a string's or an array's element, as the value turns out to be one.
+        const element = isNumberLike(skipCasts(argument), context)
+          ? share(
+              context.hasSpecialNumbers
+                ? useJavaScript("ElementPosition", [shared], context)
+                : apply("+", [shared, number(1)]),
+              "position",
+              context,
+              (position) =>
+                ifExpression(
+                  apply("=", [useJavaScript("TypeOf", [object], context), string("string")]),
+                  ifExpression(
+                    apply("\\in", [position, apply("..", [number(1), apply("Len", [object])])]),
+                    apply("SubSeq", [object, position, position]),
+                    getUndefined(context),
+                  ),
+                  getElement(object, position, context),
+                ),
             )
+          : apply("Assert", [
+              boolean(false),
+              string("tla-ts can't read an element of a string or an array here"),
+            ]);
+        return mayBeStringOrArray(node.expression, context)
+          ? ifExpression(isStringOrArray(object, context), element, read)
           : read;
       }),
     );
@@ -4866,6 +5121,10 @@ export const translateNode = (
       ? translateNew(node, scope, context)
       : translateNewError(node, classes, scope, context);
   }
-  const stop = ts.isClassExpression(node) ? getClassStop(node, context) : undefined;
+  const stop = ts.isClassExpression(node)
+    ? getClassStop(node, context)
+    : ts.isFunctionExpression(node)
+      ? getFunctionStop(node, context)
+      : undefined;
   throw new TlaTypeScriptError(stop ?? `Unsupported expression: ${node.getText()}`, node);
 };

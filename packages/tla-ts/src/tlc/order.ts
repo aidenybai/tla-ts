@@ -1,4 +1,10 @@
-import { type Expression, getChildren, type Module, type SourceLocation } from "../ast";
+import {
+  type Definition,
+  type Expression,
+  getChildren,
+  type Module,
+  type SourceLocation,
+} from "../ast";
 import type { ConfigValue, ModelConfig } from "../config";
 import { createMissingModuleError } from "../errors";
 import { getJavaHashCode } from "../java-hash";
@@ -15,6 +21,8 @@ import {
   TLC_RUNTIME_STRINGS,
   TLC_STARTUP_STRINGS,
 } from "./jar-data";
+import type { Value } from "../values";
+import type { PreparedFacts } from "../dependencies";
 
 type SymbolKind = "builtin" | "constant" | "variable" | "definition" | "theorem" | "module";
 
@@ -59,7 +67,8 @@ type ModuleLoader = ((name: string) => string | undefined) | undefined;
 
 // A module that a compiler hands a check already read into its tokens and syntax tree. When SANY's
 // checks accepted its names and levels, levels holds the levels they found for each of its
-// definitions, so that a check links it as it is.
+// definitions, so that a check links it as it is. values holds what its definitions without
+// parameters evaluate to as a check starts, where every check that links it starts them alike.
 export interface PreparedModule {
   name: string;
   text: string;
@@ -67,6 +76,10 @@ export interface PreparedModule {
   module: Module;
   levels: readonly (OperatorLevels | undefined)[] | undefined;
   texts?: ModuleTexts;
+  /** @internal */
+  values?: ReadonlyMap<Definition, Value>;
+  /** @internal */
+  facts?: ReadonlyMap<string, PreparedFacts>;
 }
 
 interface ModuleUnit {
@@ -144,6 +157,14 @@ const getDeclaredName = (tokens: Token[], start: number) => {
   while (close < tokens.length && tokens[close].text !== ")") close++;
   return { name: first.text, end: close + 1 };
 };
+
+// The kind of symbol that each declaring keyword declares.
+const DECLARATION_KINDS = new Map<string, SymbolKind>([
+  ["CONSTANT", "constant"],
+  ["CONSTANTS", "constant"],
+  ["VARIABLE", "variable"],
+  ["VARIABLES", "variable"],
+]);
 
 const getDeclarations = (tokens: Token[], start: number) => {
   const names: string[] = [];
@@ -433,8 +454,8 @@ const createContexts = (getParsed: ModuleSet) => {
       });
     }
     let depth = 0;
-    tokens.slice(unit.start, unit.end).forEach((token, offset) => {
-      const index = unit.start + offset;
+    for (let index = unit.start; index < unit.end; index++) {
+      const token = tokens[index];
       if (token.kind === "Separator" && tokens[index + 1]?.text === "MODULE") {
         depth++;
         if (depth === 2) {
@@ -444,16 +465,13 @@ const createContexts = (getParsed: ModuleSet) => {
             apply: (table) => table.put(createEntry(name, "module", false)),
           });
         }
-        return;
+        continue;
       }
       if (token.kind === "ModuleEnd") depth--;
-      if (depth !== 1 || token.kind !== "Keyword") return;
-      const isDeclaration = declarationKeywords.has(`${token.line}:${token.column}`);
-      if (isDeclaration && (token.text === "CONSTANT" || token.text === "CONSTANTS")) {
-        declare(index, "constant");
-      }
-      if (isDeclaration && (token.text === "VARIABLE" || token.text === "VARIABLES")) {
-        declare(index, "variable");
+      if (depth !== 1 || token.kind !== "Keyword") continue;
+      const kind = DECLARATION_KINDS.get(token.text);
+      if (kind !== undefined && declarationKeywords.has(`${token.line}:${token.column}`)) {
+        declare(index, kind);
       }
       if (token.text === "RECURSIVE") {
         const names = getDeclarations(tokens, index + 1);
@@ -464,13 +482,14 @@ const createContexts = (getParsed: ModuleSet) => {
         tokens[index + 1]?.kind === "Identifier" &&
         tokens[index + 2]?.text === "==";
       if (isNamedTheorem) {
+        const name = tokens[index + 1].text;
         statementLocations.push(getLocation(token));
         units.push({
           location: getLocation(token),
-          apply: (table) => table.put(createEntry(tokens[index + 1].text, "theorem", false)),
+          apply: (table) => table.put(createEntry(name, "theorem", false)),
         });
       }
-    });
+    }
     module.assumptions.forEach((assumption) => {
       statementLocations.push(assumption.location);
       const name = assumption.name;

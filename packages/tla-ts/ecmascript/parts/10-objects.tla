@@ -65,10 +65,12 @@ IsDigit(u) == u >= 48 /\ u <= 57
 DigitsBelow(units, limit) ==
   Len(units) < Len(limit) \/
   (Len(units) = Len(limit) /\ LexLess(units, limit))
-LexLess(a, b) ==
-  IF a = <<>> THEN b # <<>>
-  ELSE IF b = <<>> THEN FALSE
-  ELSE IF Head(a) # Head(b) THEN Head(a) < Head(b) ELSE LexLess(Tail(a), Tail(b))
+LexLess(a, b) == LexLessFrom(a, b, 1)
+\* Whether a comes before b, where they agree before index i.
+LexLessFrom(a, b, i) ==
+  IF i > Len(a) THEN i <= Len(b)
+  ELSE IF i > Len(b) THEN FALSE
+  ELSE IF a[i] # b[i] THEN a[i] < b[i] ELSE LexLessFrom(a, b, i + 1)
 IsArrayIndexUnits(units) ==
   /\ units # <<>>
   /\ \A i \in DOMAIN units : IsDigit(units[i])

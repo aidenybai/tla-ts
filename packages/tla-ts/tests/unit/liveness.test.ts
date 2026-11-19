@@ -135,4 +135,54 @@ describe("liveness matches TLC", () => {
     });
     expect([result.status, result.distinctStates]).toEqual(["success", 3]);
   });
+
+  it("levels a property's conjunct by the bound TLC finds through the operators it calls", async () => {
+    // TLCExt.tla defines PickSuccessor at the constant level, and its Java override at the action
+    // level, which TLC's getLevelBound reads through Test.
+    const getCheck = (property: string) =>
+      check({
+        source: [
+          "---- MODULE M ----",
+          "EXTENDS TLCExt",
+          "VARIABLE x",
+          "Test == PickSuccessor(TRUE)",
+          "Spec == x = TRUE /\\ [][UNCHANGED x]_x",
+          `Prop == ${property}`,
+          "====",
+        ].join("\n"),
+        config: "SPECIFICATION Spec\nPROPERTY Prop",
+      });
+    await expect(getCheck("[](x /\\ Test)")).rejects.toThrow(
+      "Temporal formulas containing actions must be of forms <>[]A or []<>A.",
+    );
+    expect((await getCheck("[](x /\\ TRUE)")).status).toBe("success");
+  });
+
+  it("finds the level of a call from the levels SANY gives its operator, not by expanding it", async () => {
+    // Expanding each call to find its level would read each argument once for each place that
+    // names it, which doubles the work at each of the operators here.
+    const operators = Array.from(
+      { length: 14 },
+      (_, index) => `Op${index + 1}(n) == Op${index}(IF n = 0 THEN n ELSE n)`,
+    );
+    const getStatus = async (fairness: string) =>
+      (
+        await check({
+          source: [
+            "---- MODULE M ----",
+            "EXTENDS Naturals",
+            "VARIABLE x",
+            "Op0(n) == n = 0",
+            ...operators,
+            "Next == x' = 1 - x",
+            `Spec == x = 0 /\\ [][Next]_x${fairness}`,
+            "Live == []<>Op14(x)",
+            "====",
+          ].join("\n"),
+          config: "SPECIFICATION Spec\nPROPERTY Live",
+        })
+      ).status;
+    expect(await getStatus(" /\\ WF_x(Next)")).toBe("success");
+    expect(await getStatus("")).toBe("liveness-violation");
+  });
 });

@@ -4,6 +4,7 @@ import {
   type Construction,
   type HeapClass,
   type CalledMethod,
+  type Closure,
   type Context,
   isSteady,
   share,
@@ -117,7 +118,12 @@ import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { getReached } from "./aliasing";
 import { isObjectOperand } from "./conversions";
 import { createStateScope, type Scope } from "./scope";
-import { getIntlOutcome, getLocalesOutcome, getResolvedOptions } from "./locales";
+import {
+  getDateTimePattern,
+  getIntlOutcome,
+  getLocalesOutcome,
+  getResolvedOptions,
+} from "./locales";
 import { BUILT_INS } from "./built-ins";
 import {
   apply,
@@ -163,6 +169,7 @@ import {
   isBigIntLike,
   getWrappedThis,
   getCollection,
+  isHeapArray,
   isHeapSetOrMap,
   isOrderedCollection,
   isSetOrMapType,
@@ -306,8 +313,12 @@ export const translatePropertyKey = (node: ts.Expression, scope: Scope, context:
   if (ts.isNumericLiteral(node)) return getNumericKey(node);
   const value = translateExpression(node, scope, context);
   if (getKind(node, context) === "string") return value;
-  if (isNumberLike(node, context)) return translateNumberString(value, context);
-  const names = getTypeNames(context.checker.getTypeAtLocation(node), context.checker);
+  const type = context.checker.getTypeAtLocation(node);
+  // A value of type never may hold anything, as translateToString says.
+  if (isNumberLike(node, context) && (type.flags & ts.TypeFlags.Never) === 0) {
+    return translateNumberString(value, context);
+  }
+  const names = getTypeNames(type, context.checker);
   if (names?.length === 1 && names[0] === "symbol") return value;
   // Any other key converts as ToPropertyKey converts a primitive, as a type parameter's or a
   // JavaScript var's type may not tell what it holds, and stops as an object, whose conversion runs
@@ -495,7 +506,16 @@ const getKeyName = (key: ts.PropertyName, context: Context) => {
 // initializes gives, and which is empty where it's an argument, an element, an operand of in or of
 // a comma, or what an assignment to anything else assigns.
 export const getAnonymousName = (node: ts.ArrowFunction | HeapClass, context: Context) => {
-  const named = ts.findAncestor(node.parent, (parent) => !ts.isParenthesizedExpression(parent));
+  // A cast runs nothing, so the name passes through it as through parentheses.
+  const named = ts.findAncestor(
+    node.parent,
+    (parent) =>
+      !ts.isParenthesizedExpression(parent) &&
+      !ts.isAsExpression(parent) &&
+      !ts.isTypeAssertionExpression(parent) &&
+      !ts.isSatisfiesExpression(parent) &&
+      !ts.isNonNullExpression(parent),
+  );
   if (named === undefined) return undefined;
   if (ts.isVariableDeclaration(named)) {
     return ts.isIdentifier(named.name) ? named.name.text : undefined;
@@ -1479,6 +1499,88 @@ export const isNewError = (node: ts.Node, context: Context) =>
     getErrorClass(getSymbol(node.expression, context.checker), context) !== undefined) ||
   getCalledError(node, context) !== undefined;
 
+// Allocates a function that the script makes each time it runs, after the objects that its
+// environment needs, if any: the function's object, which holds the model value of its code and the
+// environment of the call that made it, where it reads that call's locals. The object has a
+// function's own properties, its length and its name, and a constructor's prototype, a new object
+// whose constructor is the function. A sloppy function also has its own arguments and caller, and
+// tla-ts may not tell a name, so such a function's object is one whose properties a read stops at.
+const allocateMadeFunction = (
+  heap: Expression,
+  node: Closure,
+  before: Expression[],
+  environment: Expression | undefined,
+  context: Context,
+) => {
+  const getRef = (offset: number) => useJavaScript("NextRef", [heap, number(offset)], context);
+  const functionPrototype = translateBuiltInValue("Function.prototype", node, context);
+  const code =
+    ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+      ? translateFunctionValue(node, context)
+      : ts.isMethodDeclaration(node)
+        ? getMethodValue(node, context)
+        : getAccessorValue(node, context);
+  // An arrow, a method, or an async function can't construct.
+  const isConstructor = ts.isFunctionExpression(node) && isPlain(node);
+  const name = ts.isMethodDeclaration(node)
+    ? getKeyName(node.name, context)
+    : ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+      ? (getAnonymousName(node, context) ??
+        (ts.isReturnStatement(node.parent) ||
+        (ts.isArrowFunction(node.parent) && node.parent.body === node)
+          ? ""
+          : undefined))
+      : undefined;
+  const isOwned = name !== undefined && !(isConstructor && !isStrictCode(node));
+  const length = number(getFunctionLength(getParameters(node)));
+  const prototype =
+    isOwned && isConstructor
+      ? [
+          useJavaScript(
+            "Define",
+            [
+              identifier("EmptyObject"),
+              string("constructor"),
+              getRef(before.length + 2),
+              ...[true, false, true].map(boolean),
+            ],
+            context,
+          ),
+        ]
+      : [];
+  const made = !isOwned
+    ? useJavaScript(
+        isConstructor ? "FunctionObject" : "MethodObject",
+        [functionPrototype, code],
+        context,
+      )
+    : isConstructor
+      ? useJavaScript(
+          "MadeConstructorObject",
+          [functionPrototype, code, string(name), length, getRef(before.length + 1)],
+          context,
+        )
+      : useJavaScript(
+          "MadeFunctionObject",
+          [functionPrototype, code, string(name), length],
+          context,
+        );
+  return useJavaScript(
+    "AllocateEach",
+    [
+      heap,
+      tuple([
+        ...before,
+        ...prototype,
+        environment === undefined
+          ? made
+          : useJavaScript("ClosureObject", [made, environment], context),
+      ]),
+    ],
+    context,
+  );
+};
+
 export const translateAllocated = (node: ts.Node, scope: Scope, context: Context) => {
   const heap = getHeap(scope, node, context);
   if (isNewError(node, context) && !isHeldError(node, context)) {
@@ -1554,43 +1656,15 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         ? []
         : [[string("arguments"), argumentsObject] satisfies [Expression, Expression]]),
     ];
-    return useJavaScript(
-      "Allocate",
-      [
-        useJavaScript(
-          "Allocate",
-          [heap, useJavaScript("EnvironmentObject", [functionFrom(bindings)], context)],
-          context,
-        ),
-        useJavaScript(
-          "ClosureObject",
-          [
-            // An arrow, a method, or an async function can't construct.
-            useJavaScript(
-              ts.isFunctionExpression(node) &&
-                (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Async) === 0
-                ? "FunctionObject"
-                : "MethodObject",
-              [
-                translateBuiltInValue("Function.prototype", node, context),
-                ts.isFunctionExpression(node) || ts.isArrowFunction(node)
-                  ? translateFunctionValue(node, context)
-                  : ts.isMethodDeclaration(node)
-                    ? getMethodValue(node, context)
-                    : getAccessorValue(node, context),
-              ],
-              context,
-            ),
-            useJavaScript("NextRef", [heap, number(1)], context),
-          ],
-          context,
-        ),
-      ],
+    return allocateMadeFunction(
+      heap,
+      node,
+      [useJavaScript("EnvironmentObject", [functionFrom(bindings)], context)],
+      useJavaScript("NextRef", [heap, number(1)], context),
       context,
     );
   }
   if (isNestedFunction(node, context)) {
-    const isFunction = ts.isFunctionExpression(node);
     const maker = getLiveMaker(node, context);
     const environment = maker === undefined ? undefined : scope.activations?.get(maker);
     if (maker !== undefined && environment === undefined) {
@@ -1599,28 +1673,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
         node,
       );
     }
-    const made = useJavaScript(
-      isFunction ? "FunctionObject" : "MethodObject",
-      [
-        translateBuiltInValue("Function.prototype", node, context),
-        isFunction || ts.isArrowFunction(node)
-          ? translateFunctionValue(node, context)
-          : ts.isMethodDeclaration(node)
-            ? getMethodValue(node, context)
-            : getAccessorValue(node, context),
-      ],
-      context,
-    );
-    return useJavaScript(
-      "Allocate",
-      [
-        heap,
-        environment === undefined
-          ? made
-          : useJavaScript("ClosureObject", [made, environment], context),
-      ],
-      context,
-    );
+    return allocateMadeFunction(heap, node, [], environment, context);
   }
 
   const builtInBinding = getBuiltInBinding(node, context);
@@ -2053,16 +2106,22 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
   if (ts.isCallExpression(node) && context.heapCollections.has(node)) {
     const prototype = translateBuiltInValue("Array.prototype", node, context);
     // A splice gives the elements that it removes, which its statement then removes.
-    const elements =
-      isMethodCall(node) && node.expression.name.text === "splice"
-        ? translateSpliced(
-            translateExpression(node.expression.expression, scope, context),
-            node.arguments,
-            true,
-            scope,
-            context,
-          )
-        : translateCall(node, scope, context, false);
+    const isSplice = isMethodCall(node) && node.expression.name.text === "splice";
+    if (isSplice && isHeapArray(node.expression.expression, context)) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't hold the elements that a splice removes from an array that the heap holds",
+        node,
+      );
+    }
+    const elements = isSplice
+      ? translateSpliced(
+          translateExpression(node.expression.expression, scope, context),
+          node.arguments,
+          true,
+          scope,
+          context,
+        )
+      : translateCall(node, scope, context, false);
     return useJavaScript(
       "Allocate",
       [
@@ -2243,6 +2302,12 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
                       ]),
                     ),
                   ),
+              intl.pattern?.fields === undefined
+                ? getUndefined(context)
+                : record("Record", [
+                    { name: "fields", value: tuple(intl.pattern.fields.map(string)) },
+                    { name: "styles", value: tuple((intl.pattern.styles ?? []).map(string)) },
+                  ]),
             ],
             context,
           ),
@@ -2310,7 +2375,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       describedValue === undefined
         ? useJavaScript(
             "Describe",
-            [heap, translateObjectValue(node.arguments[0], scope, context), key],
+            [heap, translateHeldValue(node.arguments[0], scope, context), key],
             context,
           )
         : useJavaScript(
@@ -2441,10 +2506,32 @@ export const isDescription = (node: ts.Node, context: Context) =>
   node.arguments.length >= 2 &&
   !isProxyValue(node.arguments[0], context) &&
   (["object", "sequence"].includes(getKind(node.arguments[0], context)) ||
+    isAnyValue(node.arguments[0], context) ||
     isBuiltInObject(node.arguments[0], context) ||
     (node.expression.expression.getText() === "Object" &&
       getKind(node.arguments[0], context) === "string") ||
     isUntypedObject(node.arguments[0], context));
+
+// A value of type any or unknown, which may be an object that the heap holds or another value.
+const isAnyValue = (node: ts.Expression, context: Context) =>
+  context.heap !== undefined &&
+  (context.checker.getTypeAtLocation(node).flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+
+// An object, which a value of type any reads where the heap or the built-in objects hold it, and
+// stops at otherwise.
+const translateHeldValue = (node: ts.Expression, scope: Scope, context: Context) =>
+  isAnyValue(node, context)
+    ? share(translateExpression(node, scope, context), "object", context, (value) =>
+        ifExpression(
+          useJavaScript("IsHeldObject", [value], context),
+          value,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't read the own properties of a value that isn't an object here"),
+          ]),
+        ),
+      )
+    : translateObjectValue(node, scope, context);
 
 // A global that the global object holds, whose type tells an object though only declarations give
 // it, such as the DOM's window, which holds what a script defines there.
@@ -2875,6 +2962,10 @@ const getIntlConstruction = (node: ts.Node, context: Context) => {
         name,
         outcome,
         resolved: localesPath === undefined ? getResolvedOptions(name, tags, read) : undefined,
+        pattern:
+          localesPath === undefined && name === "DateTimeFormat"
+            ? getDateTimePattern(tags, read)
+            : undefined,
         options: isOptionsLiteral ? options : undefined,
         locales: localesPath === undefined ? undefined : { path: localesPath, method, isCall },
       };
@@ -2885,7 +2976,7 @@ const getIntlConstruction = (node: ts.Node, context: Context) => {
 export const getNewIntl = (node: ts.Node, context: Context) => {
   const construction = getIntlConstruction(node, context);
   return construction?.outcome === "" && construction.locales === undefined
-    ? { name: construction.name, resolved: construction.resolved }
+    ? { name: construction.name, resolved: construction.resolved, pattern: construction.pattern }
     : undefined;
 };
 
@@ -3387,7 +3478,12 @@ export const getViewCall = (node: ts.Node, context: Context) => {
     declaration.getSourceFile().isDeclarationFile
       ? { owner: declaration.parent.name.text, method: declaration.name.getText() }
       : undefined;
-  const type = context.checker.getTypeAtLocation(target);
+  // An optional chain's link reads its receiver only where that isn't null or undefined.
+  const read = context.checker.getTypeAtLocation(target);
+  const type =
+    node.expression.questionDotToken === undefined
+      ? read
+      : context.checker.getNonNullableType(read);
   const typeNames =
     declared === undefined
       ? (type.isUnion() ? type.types : [type]).map((member) => member.getSymbol()?.name ?? "")
@@ -3624,6 +3720,57 @@ export const getResolvedOptionsCall = (node: ts.Node, context: Context) => {
     : undefined;
 };
 
+// A DateTimeFormat's format or formatToParts of a value that runs no code to read, as
+// dtf.format(date) is, where the receiver's type is the object that new Intl.DateTimeFormat makes.
+export const getDateTimeFormatCall = (node: ts.Node, context: Context) => {
+  if (
+    context.heap === undefined ||
+    !isMethodCall(node) ||
+    !["format", "formatToParts"].includes(node.expression.name.text) ||
+    node.arguments.length > 1
+  ) {
+    return undefined;
+  }
+  const receiver = skipCasts(node.expression.expression);
+  const argument = node.arguments.at(0);
+  const symbol = context.checker.getTypeAtLocation(receiver).getSymbol();
+  const isRead = (value: ts.Expression): boolean => {
+    const inner = skipCasts(value);
+    return (
+      isInertValue(inner) ||
+      (ts.isElementAccessExpression(inner) &&
+        ts.isIdentifier(skipCasts(inner.expression)) &&
+        isInertValue(skipCasts(inner.argumentExpression))) ||
+      (ts.isPropertyAccessExpression(inner) &&
+        getBuiltIn(inner.expression, context) === "Number") ||
+      (ts.isPrefixUnaryExpression(inner) &&
+        [ts.SyntaxKind.MinusToken, ts.SyntaxKind.PlusToken].includes(inner.operator) &&
+        isRead(inner.operand)) ||
+      (ts.isBinaryExpression(inner) &&
+        [
+          ts.SyntaxKind.PlusToken,
+          ts.SyntaxKind.MinusToken,
+          ts.SyntaxKind.AsteriskToken,
+          ts.SyntaxKind.SlashToken,
+        ].includes(inner.operatorToken.kind) &&
+        isNumberLike(inner, context) &&
+        isRead(inner.left) &&
+        isRead(inner.right))
+    );
+  };
+  return ts.isIdentifier(receiver) &&
+    symbol?.name === "DateTimeFormat" &&
+    (symbol.declarations ?? []).length > 0 &&
+    (symbol.declarations ?? []).every(
+      (declaration) =>
+        declaration.getSourceFile().isDeclarationFile &&
+        ts.findAncestor(declaration, ts.isModuleDeclaration)?.name.getText() === "Intl",
+    ) &&
+    (argument === undefined || (!ts.isSpreadElement(argument) && isRead(argument)))
+    ? { receiver, argument, method: node.expression.name.text }
+    : undefined;
+};
+
 export const getIntlMethodCall = (node: ts.Node, context: Context) => {
   if (context.heap === undefined || !ts.isCallExpression(node)) return undefined;
   const callee = skipCasts(node.expression);
@@ -3707,6 +3854,7 @@ const isRevocableMember = (node: ts.Expression, name: string, context: Context) 
 
 // A value that is a proxy that the script makes, where a statement that reads it runs its traps.
 export const isProxyValue = (node: ts.Expression, context: Context) => {
+  if (!context.isProxied) return false;
   const origin = getOrigin(node, context);
   return isNewProxy(origin, context) || isRevocableMember(origin, "proxy", context);
 };
@@ -3881,12 +4029,16 @@ export const getAllocated = (node: ts.Node, context: Context, isSometimes = fals
 export const isMade = (node: ts.Node, context: Context, isSometimes = false): boolean => {
   if (context.heap === undefined) return false;
   if (
-    isHeapFunction(node, context) ||
-    isFunctionObject(node, context) ||
-    isNestedFunction(node, context) ||
-    isClosure(node, context)
+    (ts.isFunctionLike(node) || ts.isClassExpression(node)) &&
+    (isHeapFunction(node, context) ||
+      isFunctionObject(node, context) ||
+      isNestedFunction(node, context) ||
+      isClosure(node, context))
   ) {
-    return !isSometimes;
+    // A closure that a branch makes reads only locals that don't change, so the statement makes
+    // it first, as it makes an object literal that a branch gives, which a branch that doesn't
+    // run leaves unread.
+    return !isSometimes || isClosure(node, context);
   }
   if (ts.isFunctionLike(node)) return false;
   if (ts.isClassLike(node)) return isHeapClass(node, context) && !isSometimes;
@@ -3894,26 +4046,39 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
   if (ts.isOptionalChain(node) || ts.isConditionalExpression(node) || ts.isBinaryExpression(node)) {
     return false;
   }
-  const created = getNewClass(node, context);
-  const isNewInstance =
-    !isSometimes &&
-    created !== undefined &&
-    ts.isExpression(node) &&
-    ((getRunConstructor(created, context) === undefined &&
-      getSettableSupers(created, context).length === 0) ||
-      isStatementNew(node));
   return (
     (ts.isObjectLiteralExpression(node) &&
       isObjectValue(node, context) &&
       !isProxyOperation(node, context) &&
       !isArrayFromLength(node, context)) ||
+    (ts.isArrayLiteralExpression(node) && context.heapCollections.has(node)) ||
+    ts.isRegularExpressionLiteral(node) ||
+    getWrappedThis(node, context) !== undefined ||
+    // Only a call or a new makes any other object, as each test below finds.
+    ((ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+      isMadeByCall(node, context, isSometimes))
+  );
+};
+
+// Whether a call or a new makes an object.
+const isMadeByCall = (
+  node: ts.CallExpression | ts.NewExpression,
+  context: Context,
+  isSometimes: boolean,
+) => {
+  const created = getNewClass(node, context);
+  const isNewInstance =
+    !isSometimes &&
+    created !== undefined &&
+    ((getRunConstructor(created, context) === undefined &&
+      getSettableSupers(created, context).length === 0) ||
+      isStatementNew(node));
+  return (
     // map makes its array as it runs, after it visits each element.
-    ((ts.isArrayLiteralExpression(node) ||
-      isHoleyNewArray(node, context) ||
+    ((isHoleyNewArray(node, context) ||
       (ts.isCallExpression(node) && getMapCall(node, context) === undefined) ||
       ts.isNewExpression(node)) &&
       context.heapCollections.has(node)) ||
-    ts.isRegularExpressionLiteral(node) ||
     getMadeRegExp(node, context) !== undefined ||
     isNewObject(node, context) ||
     isNewDate(node, context) ||
@@ -3921,7 +4086,6 @@ export const isMade = (node: ts.Node, context: Context, isSometimes = false): bo
     isNewProxy(node, context) ||
     getNewBuffer(node, context) !== undefined ||
     getNewWrapper(node, context) !== undefined ||
-    getWrappedThis(node, context) !== undefined ||
     isHeldError(node, context) ||
     isParsedObject(node, context) ||
     (!isSometimes && isAllocation(node, context)) ||
@@ -6307,7 +6471,10 @@ export const findMadeCollections = (roots: readonly ts.Node[], context: Context)
           !(ts.isArrayLiteralExpression(node.parent) && isAssignmentTarget(node.parent))) ||
         isNewArrayOfElements(node, context) ||
         (ts.isNewExpression(node) && isFreshCollection(node, context)) ||
-        (ts.isCallExpression(node) && isFreshArrayCall(node, context)) ||
+        // A splice whose result nothing holds makes no array that the heap need hold.
+        (ts.isCallExpression(node) &&
+          isFreshArrayCall(node, context) &&
+          !isUnheldSplice(node, context)) ||
         getOrderedSetMethod(node, context) !== undefined ||
         // A rest element's array is a new one.
         (ts.isBindingElement(node) &&
@@ -6948,7 +7115,8 @@ export const translateObjectChange = (node: ts.CallExpression, scope: Scope, con
     return (
       argument !== undefined &&
       (getKind(argument, context) === "object" ||
-        (position === 0 && isBuiltInObject(argument, context)))
+        (position === 0 &&
+          (isBuiltInObject(argument, context) || isFunctionValue(argument, context))))
     );
   };
   // Arrays, sets, and maps that tla-ts keeps outside the heap are objects it can't read.
@@ -6978,7 +7146,9 @@ export const translateObjectChange = (node: ts.CallExpression, scope: Scope, con
   const values = used.map((argument, position) =>
     (method === "defineProperty" || method === "deleteProperty") && position === 1
       ? translatePropertyKey(argument, scope, context)
-      : translateObjectValue(argument, scope, context),
+      : position === 0
+        ? translateFunctionObject(argument, scope, context)
+        : translateObjectValue(argument, scope, context),
   );
   return {
     change: useJavaScript(

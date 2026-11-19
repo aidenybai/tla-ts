@@ -1,10 +1,11 @@
 import ts from "@typescript/typescript6";
-import type { Expression, Module, ModuleUnit, SourceLocation } from "../ast";
+import type { Expression } from "../ast";
 import { getPreparedModuleLevels } from "../environment";
-import { tokenize, type Token } from "../lexer";
+import { tokenize } from "../lexer";
 import { decodeGraph, encodeGraph, type EncodedGraph } from "../graph-codec";
 import { parseModuleTokens } from "../parser";
-import { getParsedTexts, type PreparedModule } from "../tlc/order";
+import { createModuleView } from "../module-view";
+import type { PreparedModule } from "../tlc/order";
 import {
   type Context,
   getSymbol,
@@ -64,7 +65,7 @@ EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Undefined, Null, Ref, Big, Limbs, Wide, Double, BuiltIns, ConstantFunctions, Symbols, Fractions,
           Doubles, SourceTexts,
-          Characters, Searches, Cases, Normals, NaN, Infinity, NegativeInfinity, NegativeZero
+          Characters, Searches, Cases, Normals, TimeZones, DateFormats, NaN, Infinity, NegativeInfinity, NegativeZero
 
 LOCAL Digits == {"-", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"}
 
@@ -1824,6 +1825,16 @@ GeneratorObject == [EmptyObject EXCEPT !.isOpaque = TRUE]
 \\* A generator object that inherits from a prototype that tla-ts holds.
 GeneratorObjectOf(prototype) == [GeneratorObject EXCEPT !.prototype = prototype]
 
+\\* A generator object that a state machine runs, as ESCore's generator object keeps its state and
+\\* frames in its slots: [[GeneratorState]], and where the body suspended, as a resume point and the
+\\* locals saved there.
+MachineObject(object) ==
+  [generator |-> [state |-> "suspendedStart", point |-> 0, locals |-> <<>>]] @@ object
+
+MachineOf(heap, ref) == heap.objects[ref[Ref]].generator
+
+SetMachine(heap, ref, machine) == [heap EXCEPT !.objects[ref[Ref]].generator = machine]
+
 \\* An iterator helper, which tla-ts follows as a generator, inherits from %IteratorHelperPrototype%.
 IteratorHelperObject == GeneratorObjectOf(Ref :> "%IteratorHelperPrototype%")
 
@@ -1865,6 +1876,11 @@ WithCode(object, code) == [code |-> code] @@ object
 \\* A method that a function makes each time it runs, which can't construct.
 MethodObject(functionPrototype, code) ==
   [FunctionObject(functionPrototype, code) EXCEPT !.isConstructor = FALSE]
+
+\\* A function that a function makes each time it runs, which holds the model value of its code and
+\\* its own properties, as the function that the model value stands for would.
+MadeFunctionObject(functionPrototype, code, name, length) ==
+  WithCode(ArrowObject(functionPrototype, name, length), code)
 
 \\* A function object that reads the locals of the call that made it, with the environment of that
 \\* call, which holds the locals that it reads once it outlives the call, by key.
@@ -1983,6 +1999,11 @@ GeneratorObjectFrom(heap, function, generatorPrototype) ==
 \\* A plain function, whose prototype property holds what the objects its new makes inherit from.
 PlainFunctionObject(functionPrototype, name, length, prototype) ==
   [GeneratorFunctionObject(functionPrototype, name, length, prototype) EXCEPT !.isConstructor = TRUE]
+
+\\* A function that a function makes each time it runs and that new may construct, with the prototype
+\\* object that it makes with it.
+MadeConstructorObject(functionPrototype, code, name, length, prototype) ==
+  WithCode(PlainFunctionObject(functionPrototype, name, length, prototype), code)
 
 \\* Whether one string of digits is below another of the same length.
 RECURSIVE DigitsBelow(_, _)
@@ -2866,6 +2887,17 @@ FirstElementGetter(heap, ref) ==
   ELSE Undefined
 
 SetterOf(heap, ref, key) == AccessorFieldOf(heap, ref, key, "set")
+
+\\* Whether a write to an object's key converts the value it writes: a typed array's numeric key.
+IsTypedElementWrite(heap, ref, key) == IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+
+\\* Whether a compound assignment to a key that converts reads or writes an object plainly: one that
+\\* the heap holds, which is no proxy or typed array, with no accessor at the key.
+IsPlainKeyAccess(heap, ref, key) ==
+  /\\ IsHeap(ref)
+  /\\ ~IsProxy(heap, ref)
+  /\\ ~IsTypedArray(heap, ref)
+  /\\ AccessorOf(heap, ref, key) = Undefined
 
 \\* The getter that an object that the heap holds reads its then through, where it isn't a promise, a
 \\* generator, or a proxy, whose then tla-ts reads otherwise.
@@ -5198,24 +5230,6 @@ ParseInt(value, radix) ==
                  [] magnitude = 0 -> NegativeZero
                  [] OTHER -> -magnitude
 
-\\* JavaScript's + of two primitives, which joins them as strings where either is a string and adds
-\\* them as numbers otherwise.
-AddPrimitives(left, right) ==
-  IF TypeOf(left) = "string" \\/ TypeOf(right) = "string"
-  THEN StringOf(left) \\o StringOf(right)
-  ELSE Add(ToNumber(left), ToNumber(right))
-
-\\* JavaScript's < of two primitives.
-LessThanPrimitives(left, right) ==
-  IF TypeOf(left) = "string" /\\ TypeOf(right) = "string"
-  THEN StringLessThan(left, right)
-  ELSE LessThan(ToNumber(left), ToNumber(right))
-
-\\* JavaScript's <= of two primitives.
-LessOrEqualPrimitives(left, right) ==
-  IF TypeOf(left) = "string" /\\ TypeOf(right) = "string"
-  THEN ~StringLessThan(right, left)
-  ELSE LessOrEqual(ToNumber(left), ToNumber(right))
 
 \\* A number in a script that holds only integers, which can't hold NaN, the infinities, or -0.
 PlainNumber(value) ==
@@ -5255,6 +5269,55 @@ LOCAL StringToBigInt(value) ==
        [] unsigned = "" \\/ \\E position \\in 1..Len(unsigned) : SubSeq(unsigned, position, position) \\notin DigitsOf(radix) ->
             Undefined
        [] OTHER -> BigIntOf(Prefix(text, 1) = "-", NatOfDigits(unsigned, radix, <<>>))
+
+\\* BigInt(value) of the primitive that ToPrimitive gives: a string's integer, or ToBigInt of another.
+BigIntOfPrimitive(value) ==
+  CASE TypeOf(value) = "string" /\\ StringToBigInt(value) # Undefined -> StringToBigInt(value)
+    [] TypeOf(value) = "string" ->
+         Assert(FALSE, "tla-ts can't throw the SyntaxError of converting this string to a BigInt")
+    [] OTHER -> ToBigInt(value)
+
+\\* ToNumeric of a primitive: a BigInt as it is, and ToNumber of another.
+ToNumeric(value) == IF IsBigInt(value) THEN value ELSE ToNumber(value)
+
+\\* An arithmetic operator of two primitives, which converts them with ToNumeric: two BigInts take
+\\* the BigInt operation, and a BigInt with a number throws a TypeError.
+NumericOperation(NumberOperation(_, _), BigIntOperation(_, _), left, right) ==
+  LET numeric == <<ToNumeric(left), ToNumeric(right)>>
+  IN  CASE IsBigInt(numeric[1]) /\\ IsBigInt(numeric[2]) -> BigIntOperation(numeric[1], numeric[2])
+        [] IsBigInt(numeric[1]) \\/ IsBigInt(numeric[2]) ->
+             Assert(FALSE, "tla-ts can't throw the TypeError of mixing a BigInt with a number")
+        [] OTHER -> NumberOperation(numeric[1], numeric[2])
+
+\\* JavaScript's + of two primitives, which joins them as strings where either is a string and adds
+\\* them as numbers or as BigInts otherwise.
+AddPrimitives(left, right) ==
+  IF TypeOf(left) = "string" \\/ TypeOf(right) = "string"
+  THEN StringOf(left) \\o StringOf(right)
+  ELSE NumericOperation(Add, BigIntAdd, left, right)
+
+\\* IsLessThan of two primitives: TRUE, FALSE, or Undefined, which a NaN gives, or a string that holds
+\\* no BigInt where the other is one. Two strings compare by their code units, and a BigInt with a
+\\* number by their mathematical values.
+LOCAL PrimitiveLessThan(left, right) ==
+  CASE TypeOf(left) = "string" /\\ TypeOf(right) = "string" -> StringLessThan(left, right)
+    [] IsBigInt(left) /\\ TypeOf(right) = "string" ->
+         LET parsed == StringToBigInt(right)
+         IN  IF parsed = Undefined THEN Undefined ELSE NumericLessThan(left, parsed)
+    [] TypeOf(left) = "string" /\\ IsBigInt(right) ->
+         LET parsed == StringToBigInt(left)
+         IN  IF parsed = Undefined THEN Undefined ELSE NumericLessThan(parsed, right)
+    [] OTHER ->
+         LET numeric == <<ToNumeric(left), ToNumeric(right)>>
+         IN  IF numeric[1] = NaN \\/ numeric[2] = NaN
+             THEN Undefined
+             ELSE NumericLessThan(numeric[1], numeric[2])
+
+\\* JavaScript's < of two primitives.
+LessThanPrimitives(left, right) == PrimitiveLessThan(left, right) = TRUE
+
+\\* JavaScript's <= of two primitives, which an undefined comparison makes false.
+LessOrEqualPrimitives(left, right) == PrimitiveLessThan(right, left) = FALSE
 
 LOCAL EqualsText(number, text) ==
   ReadNumber(text, LAMBDA kind, isNegative, magnitude :
@@ -5430,6 +5493,8 @@ OwnKeysAny(heap, value, method, isEveryMapHeld) ==
        [] IsRef(value) /\\ method = "values" -> ObjectValues(heap, value)
        [] IsRef(value) /\\ method = "entries" -> ObjectEntries(heap, value)
        [] IsRef(value) -> OwnPropertyNames(heap, value)
+       \\* An error that a record holds has no own enumerable property.
+       [] IsError(value) /\\ method # "getOwnPropertyNames" -> <<>>
        [] method = "getOwnPropertyNames" -> OwnKeys(object)
        [] method = "keys" -> keys
        [] method = "values" -> [position \\in DOMAIN keys |-> object.values[keys[position]]]
@@ -5785,10 +5850,12 @@ ErrorToString(heap, ref) ==
        [] OTHER -> nameText \\o ": " \\o messageText
 
 \\* An object that an Intl constructor makes, of a kind, which holds the function that its compare
-\\* or format getter gives, bound to it, or Undefined, and the pairs of the options that its
-\\* resolvedOptions gives, or Undefined where they read locale data.
-IntlObject(prototype, kind, bound, resolved) ==
-  [EmptyObject EXCEPT !.prototype = prototype] @@ [intl |-> kind, bound |-> bound, resolved |-> resolved]
+\\* or format getter gives, bound to it, or Undefined, the pairs of the options that its
+\\* resolvedOptions gives, or Undefined where they read locale data, and a DateTimeFormat's pattern,
+\\* or Undefined where tla-ts doesn't record it.
+IntlObject(prototype, kind, bound, resolved, pattern) ==
+  [EmptyObject EXCEPT !.prototype = prototype]
+    @@ [intl |-> kind, bound |-> bound, resolved |-> resolved, pattern |-> pattern]
 
 \\* The object that resolvedOptions makes of the options that an Intl object holds.
 IntlResolvedObject(heap, receiver) == PairsObject(heap.objects[receiver[Ref]].resolved)
@@ -6415,6 +6482,13 @@ LOCAL ElementError(type, value) ==
     [] IsBigInt(value) \\/ TypeOf(value) = "boolean" -> ""
     [] TypeOf(value) = "string" -> IF StringToBigInt(value) = Undefined THEN "SyntaxError" ELSE ""
     [] OTHER -> "TypeError"
+
+\\* The error that a write to a typed array's index throws as it converts the value, or "" where it
+\\* throws none.
+TypedWriteError(heap, ref, key, value) ==
+  IF IsTypedArray(heap, ref) /\\ TypedKey(key) # "property"
+  THEN ElementError(heap.objects[ref[Ref]].elementType, value)
+  ELSE ""
 
 \\* The error that converting values in order for a typed array throws first, or "" where none
 \\* does, or an object before the first that does converts through its methods.
@@ -7684,13 +7758,23 @@ CopyWithinFirstGetter(heap, ref, target, start, end) ==
      THEN GetterOf(heap, ref, ToString(first))
      ELSE Undefined
 
+\\* Whether copyWithin of an array that a name holds, whose arguments' conversion changed the
+\\* array, copies through the elements the array holds after, with the length it read before.
+IsCopiedWithin(heap, afterHeap, before, after) ==
+  /\\ before = after
+  /\\ IsHeap(before)
+  /\\ ~IsProxy(afterHeap, before)
+  /\\ ~IsTypedArray(afterHeap, before)
+  /\\ ~afterHeap.objects[before[Ref]].isOpaque
+  /\\ ~HasLongLength(heap, before)
+
 \\* copyWithin() on an array-like object that the heap holds, as the spec runs it index by index,
 \\* backward where the indices it copies to overlap the end of those it copies from, where only the
 \\* indices that the object or its prototypes hold, and those that copy over them, change. The
 \\* indices are the numbers that its arguments give, and end is Undefined where it takes the length.
-LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
-  LET length == LengthOf(heap, ref)
-      to == ClampedIndex(target, length)
+\\* It copies with the length that it read.
+CopyWithinOf(heap, ref, length, target, start, end) ==
+  LET to == ClampedIndex(target, length)
       from == ClampedIndex(start, length)
       final == IF end = Undefined THEN length ELSE ClampedIndex(end, length)
       count == IF final - from < length - to THEN final - from ELSE length - to
@@ -7702,6 +7786,9 @@ LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
   IN IF count <= 0
      THEN [heap |-> heap, value |-> ref, isThrown |-> FALSE]
      ELSE [heap |-> state.heap, value |-> ref, isThrown |-> state.isThrown]
+
+LOCAL ShortCopyWithin(heap, ref, target, start, end) ==
+  CopyWithinOf(heap, ref, LengthOf(heap, ref), target, start, end)
 
 ArrayLikeCopyWithin(heap, ref, target, start, end) ==
   IF HasLongLength(heap, ref)
@@ -7952,6 +8039,23 @@ LOCAL TypedDefine(heap, ref, key, descriptor) ==
                 /\\ \\A field \\in {"writable", "enumerable", "configurable"} : has(field) => descriptor[field]
   IN [heap |-> IF isDone /\\ has("value") THEN TypedSet(heap, ref, key, descriptor.value) ELSE heap,
       isDone |-> isDone, isRangeError |-> FALSE]
+
+\\* Whether a typed array's definition of an index converts the object value that its descriptor
+\\* gives: the index is in bounds and the descriptor is of a writable, enumerable, configurable data
+\\* property.
+TypedDefineConverts(heap, ref, key, descriptor) ==
+  /\\ IsTypedElementWrite(heap, ref, key)
+  /\\ HasElement(heap, ref, key)
+  /\\ ~descriptor.isAccessor
+  /\\ "value" \\in descriptor.fields
+  /\\ IsObjectIn(heap, descriptor.value)
+  /\\ \\A field \\in {"writable", "enumerable", "configurable"} :
+        field \\in descriptor.fields => descriptor[field]
+
+WithDescriptorValue(descriptor, value) == [descriptor EXCEPT !.value = value]
+
+\\* Whether a typed array still has an element at an index, which a conversion may have detached.
+HasTypedElement(heap, ref, key) == HasElement(heap, ref, key)
 
 \\* Defines each key with the descriptor that ToPropertyDescriptor gave it, in order.
 LOCAL DefineConvertedAllOf(heap, ref, keys, descriptors) ==
@@ -8963,172 +9067,9 @@ const readPrelude = (): PreparedModule => {
 };
 const PRELUDE = readPrelude();
 
-const getReadNames = (text: string) => [...(text.match(/\b[A-Z]\w*\b/g) ?? [])];
-
-const getUnitLocation = (unit: ModuleUnit): SourceLocation => {
-  switch (unit.kind) {
-    case "Definition":
-      return unit.definition.location;
-    case "Instance":
-      return unit.instance.location;
-    case "Assumption":
-      return unit.assumption.location;
-    case "Theorem":
-      return unit.theorem.location;
-    case "Use":
-      return unit.use.location;
-    case "Module":
-      return unit.module.location;
-    default:
-      return unit.location;
-  }
-};
-
-const getUnitNames = (unit: ModuleUnit) =>
-  unit.kind === "Definition"
-    ? [unit.definition.name]
-    : unit.kind === "Recursive"
-      ? unit.declarations.map((declaration) => declaration.name)
-      : [];
-
-// The lines of the JavaScript module in units: the header, each top-level unit as the parser read
-// it, and the line that closes the module. A unit holds every line up to the next one, so its
-// lines stay together whatever their layout.
-const MODULE_LINES = JAVASCRIPT_MODULE.split("\n");
-// The column of each line's first token, before which a line that starts a unit holds only blanks,
-// not the end of a comment that a unit before it opened.
-const FIRST_COLUMNS = new Int32Array(MODULE_LINES.length).fill(-1);
-for (let index = PRELUDE.tokens.length - 1; index >= 0; index--) {
-  FIRST_COLUMNS[PRELUDE.tokens[index].line - 1] = PRELUDE.tokens[index].column;
-}
-const isCleanStart = (line: number) =>
-  MODULE_LINES[line].slice(0, FIRST_COLUMNS[line] - 1).trim() === "";
-const UNIT_START_NAMES = new Map<number, string[]>([[0, []]]);
-const addUnitStart = (line: number, names: string[]) => {
-  const start = isCleanStart(line) ? line : Math.max(...UNIT_START_NAMES.keys());
-  UNIT_START_NAMES.set(start, [...(UNIT_START_NAMES.get(start) ?? []), ...names]);
-};
-PRELUDE.module.units.forEach((unit) =>
-  addUnitStart(getUnitLocation(unit).line - 1, getUnitNames(unit)),
-);
-addUnitStart(PRELUDE.tokens[PRELUDE.tokens.length - 1].line - 1, []);
-const UNIT_STARTS = [...UNIT_START_NAMES.keys()].sort((left, right) => left - right);
-const MODULE_UNITS = UNIT_STARTS.map((start, position) => {
-  const lines = MODULE_LINES.slice(start, UNIT_STARTS[position + 1]);
-  const names = UNIT_START_NAMES.get(start) ?? [];
-  return {
-    lines,
-    names,
-    // A RECURSIVE declaration reads nothing; the definition it declares reads what it reads.
-    reads: lines[0].startsWith("RECURSIVE ") ? [] : getReadNames(lines.join("\n")),
-  };
-});
-// An id for each name a unit declares, and the units that declare each.
-const NAME_IDS = new Map<string, number>();
-MODULE_UNITS.forEach((unit) =>
-  unit.names.forEach((name) => NAME_IDS.set(name, NAME_IDS.get(name) ?? NAME_IDS.size)),
-);
-const NAME_UNITS = Array.from({ length: NAME_IDS.size }, (): number[] => []);
-MODULE_UNITS.forEach((unit, position) =>
-  unit.names.forEach((name) => NAME_UNITS[NAME_IDS.get(name) ?? 0].push(position)),
-);
-const getNameIds = (names: string[]) =>
-  Int32Array.from(new Set(names.flatMap((name) => NAME_IDS.get(name) ?? [])));
-const UNIT_NAME_IDS = MODULE_UNITS.map((unit) => getNameIds(unit.names));
-const UNIT_READ_IDS = MODULE_UNITS.map((unit) => getNameIds(unit.reads));
-// A unit that defines nothing, such as the header or an ASSUME, stays with what it reads.
-const ROOT_READ_IDS = getNameIds(
-  MODULE_UNITS.filter((unit) => unit.names.length === 0).flatMap((unit) => unit.reads),
-);
-// The unit of each line, and each unit's text, or the newlines that stand for it where a view
-// leaves it out.
-const LINE_UNITS = new Int32Array(MODULE_LINES.length);
-UNIT_STARTS.forEach((start, position) =>
-  LINE_UNITS.fill(position, start, start + MODULE_UNITS[position].lines.length),
-);
-const UNIT_TEXTS = MODULE_UNITS.map((unit) => unit.lines.join("\n"));
-const UNIT_BLANKS = MODULE_UNITS.map((unit) => "\n".repeat(unit.lines.length - 1));
-
-// Where each unit's tokens start in the prelude's tokens, which follow one another by line, and
-// where the last one ends.
-const UNIT_TOKEN_STARTS = new Int32Array(MODULE_UNITS.length + 1);
-for (let index = 0, unit = 0; index <= PRELUDE.tokens.length; index++) {
-  const line = index < PRELUDE.tokens.length ? PRELUDE.tokens[index].line - 1 : MODULE_LINES.length;
-  while (
-    unit < MODULE_UNITS.length &&
-    line >= UNIT_STARTS[unit] + MODULE_UNITS[unit].lines.length
-  ) {
-    UNIT_TOKEN_STARTS[++unit] = index;
-  }
-}
-// The texts each unit adds to TLC's order of strings, each once in the order it first comes.
-const UNIT_TEXTS_IN_ORDER = MODULE_UNITS.map((_unit, unit) => {
-  const tokens = PRELUDE.tokens.slice(UNIT_TOKEN_STARTS[unit], UNIT_TOKEN_STARTS[unit + 1]);
-  return {
-    parsed: [...new Set(getParsedTexts(tokens))],
-    strings: [...new Set(tokens.flatMap((token) => (token.kind === "String" ? [token.text] : [])))],
-  };
-});
-
-// The module that the units kept leave, which is what reading the module's text with every other
-// line blank gives.
-const getModuleView = (module: Module, isKept: (location: SourceLocation) => boolean): Module => ({
-  ...module,
-  modules: module.modules.filter((nested) => isKept(nested.location)),
-  constants: module.constants.filter((constant) => isKept(constant.location)),
-  variables: module.variables.filter((variable) => isKept(variable.location)),
-  definitions: module.definitions.filter((definition) => isKept(definition.location)),
-  instances: module.instances.filter((instance) => isKept(instance.location)),
-  assumptions: module.assumptions.filter((assumption) => isKept(assumption.location)),
-  theorems: module.theorems.filter((theorem) => isKept(theorem.location)),
-  uses: module.uses.filter((use) => isKept(use.location)),
-  units: module.units.filter((unit) => isKept(getUnitLocation(unit))),
-});
-
 // The JavaScript module with only the definitions that a spec and its config read, directly or
-// through other definitions, so that a check reads and analyzes only those. Every other line is
-// blank, so each definition keeps its line. Its tokens and syntax tree are those of the prelude
-// on the lines kept.
-export const getJavaScriptModule = (text: string): PreparedModule => {
-  const keptNames = new Uint8Array(NAME_IDS.size);
-  const pending = [...getNameIds(getReadNames(text)), ...ROOT_READ_IDS];
-  while (pending.length > 0) {
-    const name = pending.pop() ?? 0;
-    if (keptNames[name] === 1) continue;
-    keptNames[name] = 1;
-    for (const unit of NAME_UNITS[name]) pending.push(...UNIT_READ_IDS[unit]);
-  }
-  const keptUnits = Uint8Array.from(UNIT_NAME_IDS, (names) =>
-    names.length === 0 || names.some((name) => keptNames[name] === 1) ? 1 : 0,
-  );
-  const isKept = (location: SourceLocation) => keptUnits[LINE_UNITS[location.line - 1]] === 1;
-  const tokens: Token[] = [];
-  keptUnits.forEach((isUnitKept, unit) => {
-    if (isUnitKept === 0) return;
-    for (let index = UNIT_TOKEN_STARTS[unit]; index < UNIT_TOKEN_STARTS[unit + 1]; index++) {
-      tokens.push(PRELUDE.tokens[index]);
-    }
-  });
-  return {
-    name: PRELUDE.name,
-    text: UNIT_TEXTS.map((unitText, unit) =>
-      keptUnits[unit] === 1 ? unitText : UNIT_BLANKS[unit],
-    ).join("\n"),
-    tokens,
-    module: getModuleView(PRELUDE.module, isKept),
-    texts: {
-      parsed: UNIT_TEXTS_IN_ORDER.flatMap((texts, unit) =>
-        keptUnits[unit] === 1 ? texts.parsed : [],
-      ),
-      strings: UNIT_TEXTS_IN_ORDER.flatMap((texts, unit) =>
-        keptUnits[unit] === 1 ? texts.strings : [],
-      ),
-    },
-    levels: PRELUDE.levels?.filter((_levels, position) =>
-      isKept(PRELUDE.module.definitions[position].location),
-    ),
-  };
-};
+// through other definitions, so that a check reads and analyzes only those.
+export const getJavaScriptModule = createModuleView(PRELUDE);
 
 // The model values that stand for the numbers that TLA+ integers can't hold.
 export const SPECIAL_NUMBERS = ["NaN", "Infinity", "NegativeInfinity", "NegativeZero"];
@@ -9148,6 +9089,13 @@ export const getTypeNames = (type: ts.Type, checker: ts.TypeChecker): string[] |
   if (type.isUnion()) {
     const names = type.types.map((member) => getTypeNames(member, checker));
     return names.every((name) => name !== undefined) ? [...new Set(names.flat())] : undefined;
+  }
+  // A function with properties of its own, as Object.assign(f, {}) types it.
+  if (
+    type.isIntersection() &&
+    type.types.some((member) => getTypeNames(member, checker)?.[0] === "function")
+  ) {
+    return ["function"];
   }
   const flags = type.flags;
   if (flags & ts.TypeFlags.Never) return [];

@@ -309,7 +309,7 @@ const isPropertyName = (node: ts.Identifier) => {
 };
 
 // Whether a file declares process, which process.env then doesn't read Node's.
-const isProcessDeclared = (file: ts.SourceFile) => {
+export const isProcessDeclared = (file: ts.SourceFile) => {
   const visit = (node: ts.Node): boolean =>
     (ts.isIdentifier(node) && node.text === "process" && isBindingName(node)) ||
     (ts.forEachChild(node, visit) ?? false);

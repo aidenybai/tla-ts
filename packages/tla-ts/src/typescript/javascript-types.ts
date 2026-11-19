@@ -1,7 +1,7 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
 import { isJavaScriptFile } from "./common-js";
-import { skipCasts } from "./context";
+import { isStrictCode, skipCasts } from "./context";
 import { getRegularExpressionError } from "./early-errors";
 
 // TypeScript infers JavaScript's types without checking them, so a JavaScript value may hold
@@ -34,6 +34,11 @@ const LINT_ERRORS = new Set([6133, 6138, 6192, 6196, 6198, 6199, 6205, 7027, 702
 
 // A property that the type lacks, which a private name's class declares.
 const PRIVATE_NAME_ERRORS = new Set([2339, 2551]);
+
+// A key that the type of the value that a read or a write names lacks, which TypeScript reads as
+// any, but where an element access outside strict mode names it of a primitive, whose access
+// tla-ts makes of a value of any type, as the primitive's prototype holds the key if anything does.
+const MISSING_KEY_ERRORS = new Set([2339, 2550, 2551, 7015, 7017, 7053]);
 
 // A value that may be null or undefined, whose type holds, which tla-ts reads as such, but for one
 // that is only null or undefined, which it reads as any value, as the read throws.
@@ -78,6 +83,7 @@ const DELETE_ERRORS = new Set([2704, 2790]);
 
 // The errors of types that may not hold, which tla-ts makes hold.
 const FIXED_ERRORS = new Set([
+  ...MISSING_KEY_ERRORS,
   ...NULLABLE_ERRORS,
   ...ASSIGNED_ERRORS,
   ...EXCESS_PROPERTY_ERRORS,
@@ -318,6 +324,33 @@ const fixWrite = (
     : undefined;
 };
 
+// A function that a call takes as an argument, whose return gives a node, where the value doesn't
+// fit the type that the call's signature makes the function return. The callee may pass what the
+// function returns back to it, as reduce passes its accumulator, so that its parameters, which
+// that signature types, hold values of other types too, and the whole function becomes any.
+const getReturningCallback = (node: ts.Node) => {
+  const outer = ts.findAncestor(node, (ancestor) => !ts.isParenthesizedExpression(ancestor.parent));
+  const returning = outer?.parent;
+  const owner =
+    returning !== undefined && ts.isArrowFunction(returning) && returning.body === outer
+      ? returning
+      : returning !== undefined && ts.isReturnStatement(returning)
+        ? ts.findAncestor(returning, ts.isFunctionLike)
+        : undefined;
+  if (owner === undefined || (!ts.isArrowFunction(owner) && !ts.isFunctionExpression(owner))) {
+    return undefined;
+  }
+  const argument = ts.findAncestor(
+    owner.parent,
+    (ancestor) => !ts.isParenthesizedExpression(ancestor),
+  );
+  return argument !== undefined &&
+    (ts.isCallExpression(argument) || ts.isNewExpression(argument)) &&
+    argument.expression !== owner
+    ? owner
+    : undefined;
+};
+
 // The edits for a value of another type than what takes it: a write's target, a declaration's or a
 // property's value, an argument, which an array method that writes it makes the array's elements
 // any for, or every argument of a call whose signatures take none of them.
@@ -327,6 +360,8 @@ const fixAssigned = (
   checker: ts.TypeChecker,
 ): Edit[] | undefined => {
   if (isWritten(node)) return fixWrite(node, file, checker);
+  const callback = getReturningCallback(node);
+  if (callback !== undefined) return castExpression(callback, file);
   const parent = node.parent;
   const computed = ts.findAncestor(node, ts.isComputedPropertyName)?.parent;
   if (computed !== undefined && ts.isPropertyAssignment(computed)) {
@@ -376,6 +411,14 @@ const isUndefinedTaking = (type: ts.Type) =>
   (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Undefined)) !== 0 ||
   (type.isUnion() && type.types.some(isUndefinedTaking));
 
+// The property or element access that a node is or names.
+const getAccess = (node: ts.Node) =>
+  ts.findAncestor(
+    node,
+    (ancestor): ancestor is ts.PropertyAccessExpression | ts.ElementAccessExpression =>
+      ts.isPropertyAccessExpression(ancestor) || ts.isElementAccessExpression(ancestor),
+  );
+
 // The call whose argument a node is, or that it is, or whose callee or callee's method name it is.
 const getCall = (node: ts.Node) =>
   (ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent)) &&
@@ -411,6 +454,10 @@ const getEdits = (
   if (EXCESS_PROPERTY_ERRORS.has(code)) {
     const literal = ts.findAncestor(node, ts.isObjectLiteralExpression);
     return literal === undefined ? undefined : castExpression(literal, file);
+  }
+  if (MISSING_KEY_ERRORS.has(code)) {
+    const access = getAccess(node);
+    return access === undefined ? undefined : castExpression(access.expression, file);
   }
   if (code === READ_ONLY_ERROR) {
     const access = ts.findAncestor(
@@ -586,6 +633,19 @@ const isOverlapping = (left: Edit[], right: Edit[]) => {
   return leftStart <= rightEnd && rightStart <= leftEnd;
 };
 
+// TypeScript's errors of a JavaScript file, where its checker fails on some JavaScript, such as a
+// global script's expando that a symbol keys, which tla-ts then stops at.
+const getSemanticDiagnostics = (program: ts.Program, file: ts.SourceFile) => {
+  try {
+    return program.getSemanticDiagnostics(file);
+  } catch (error) {
+    if (error instanceof TlaTypeScriptError) throw error;
+    throw new TlaTypeScriptError(
+      `tla-ts can't type this JavaScript, as TypeScript fails: ${String(error)}`,
+    );
+  }
+};
+
 // A JavaScript file's text where each value or declaration that a type error shows may break its
 // type is any, or undefined where TypeScript reports no error that changes it. A round makes the
 // edits that don't overlap, and the next round, on the program of its text, makes the others.
@@ -605,6 +665,18 @@ export const typeJavaScript = (
   // class body around it declares reads an object that may lack it, which throws as tla-ts follows.
   const isIgnored = (diagnostic: ts.Diagnostic) => {
     const node = getDiagnosedNode(file, diagnostic);
+    const access = MISSING_KEY_ERRORS.has(diagnostic.code) ? getAccess(node) : undefined;
+    const isPrimitiveRead =
+      access !== undefined &&
+      ts.isElementAccessExpression(access) &&
+      !isStrictCode(access) &&
+      (checker.getTypeAtLocation(access.expression).flags &
+        (ts.TypeFlags.StringLike |
+          ts.TypeFlags.NumberLike |
+          ts.TypeFlags.BooleanLike |
+          ts.TypeFlags.ESSymbolLike |
+          ts.TypeFlags.BigIntLike)) !==
+        0;
     const isUndeclaredPrivate =
       ts.isPrivateIdentifier(node) &&
       ts.findAncestor(
@@ -622,6 +694,7 @@ export const typeJavaScript = (
       ) === undefined;
     return (
       IGNORED_ERRORS.has(diagnostic.code) &&
+      !isPrimitiveRead &&
       !(isUndeclaredPrivate && PRIVATE_NAME_ERRORS.has(diagnostic.code)) &&
       !(ts.isIdentifier(node) && node.text === "arguments") &&
       !ts.isExportSpecifier(node.parent)
@@ -635,16 +708,14 @@ export const typeJavaScript = (
     );
     return literal !== undefined && getRegularExpressionError(literal) === undefined;
   };
-  const errors = program
-    .getSemanticDiagnostics(file)
-    .filter(
-      (diagnostic) =>
-        diagnostic.category === ts.DiagnosticCategory.Error &&
-        !LINT_ERRORS.has(diagnostic.code) &&
-        !isIgnored(diagnostic) &&
-        isReported(diagnostic) &&
-        !isAcceptedPattern(diagnostic),
-    );
+  const errors = getSemanticDiagnostics(program, file).filter(
+    (diagnostic) =>
+      diagnostic.category === ts.DiagnosticCategory.Error &&
+      !LINT_ERRORS.has(diagnostic.code) &&
+      !isIgnored(diagnostic) &&
+      isReported(diagnostic) &&
+      !isAcceptedPattern(diagnostic),
+  );
   // A for-in's target that isn't a name, such as this, is an early error that TypeScript reports as
   // a type.
   const rejected = errors.filter(

@@ -16,6 +16,7 @@ import {
   type FunctionNode,
   createContext,
   createDispatch,
+  findCalleeRuns,
   findNodes,
   findFunctionCandidates,
   findFileAccessors,
@@ -34,6 +35,7 @@ import {
   getTopLevelDeclaration,
   hasObjectMembers,
   isClosure,
+  isOutliving,
   isInertValue,
   isImportCall,
   isScript,
@@ -95,8 +97,12 @@ import { translateSourceTexts } from "./source-text";
 import { classifySharedHelpers } from "./shared-calls";
 import { TlaTypeScriptError } from "../errors";
 import { getUnlistedParameter, translateStep } from "./steps";
+import { TIME_ZONES } from "./time-zones";
+import { findMadeKeys } from "./made-keys";
+import { DATE_FORMATS } from "./date-formats";
 import {
   apply,
+  boolean,
   define,
   getLocation,
   getModuleName,
@@ -114,6 +120,7 @@ import {
   getKeptIterator,
   getKind,
   getWrappedThis,
+  isBufferName,
   isCollectionName,
   isFractionKey,
   isHeapSetOrMap,
@@ -355,9 +362,12 @@ export const compile = (
   fileName = "spec.ts",
   library?: Library,
   isNodeScript = false,
+  // The paths of the scripts that run before the model, in order, with which it shares its global
+  // scope as a page's scripts do.
+  scripts: readonly string[] = [],
 ): CompiledSpec => {
   const path = fileName.replaceAll("\\", "/");
-  const program = createProgram(source, path, library);
+  const program = createProgram(source, path, library, scripts);
   const context = createContext(
     program.checker,
     program.files,
@@ -471,6 +481,11 @@ export const compile = (
     }
     if (file !== sourceFile) files.push(file);
   };
+  // The scripts run in order before the model, as a page runs its scripts.
+  scripts.forEach((script) => {
+    const file = program.files.find((inner) => inner.fileName === script);
+    if (file !== undefined) load(file);
+  });
   load(sourceFile);
   // The modules that only an import() of a string loads, which run after those the model imports.
   const loaded = files.length;
@@ -633,6 +648,25 @@ export const compile = (
     ? [sourceFile, ...files].flatMap(getLiterals)
     : [];
   const normals = [...new Set([...literals, ...literals.flatMap(getForms)])];
+  // The named time zones whose tables the module reads: in a script that reaches Temporal, those
+  // that a string literal names, itself or in an ISO string's annotation, in any case.
+  const getZoneNames = (node: ts.Node): string[] => [
+    ...(ts.isStringLiteralLike(node) && node.text.length <= LONG_LITERAL
+      ? [node.text, ...[...node.text.matchAll(/\[!?([^\]=]+)\]/g)].map((match) => match[1])]
+      : []),
+    ...node.getChildren().flatMap(getZoneNames),
+  ];
+  const timeZones = [
+    ...new Set(
+      ([sourceFile, ...files].some((file) => /\bTemporal\b/.test(file.text))
+        ? [sourceFile, ...files]
+        : []
+      )
+        .flatMap(getZoneNames)
+        .map((name) => name.toLowerCase())
+        .filter((name) => Object.hasOwn(TIME_ZONES, name)),
+    ),
+  ].sort();
   texts.push(...normals.flatMap(getForms));
   const getCodes = (text: string) =>
     Array.from({ length: text.length }, (_, position) => text.charCodeAt(position)).filter(
@@ -940,7 +974,14 @@ export const compile = (
       (isIterated && isSetOrMapType(node, context)) || (ts.forEachChild(node, usesOrder) ?? false)
     );
   };
+  // A function that outlives the call that made it and reads that call's locals is an object that
+  // the heap holds with the environment that holds them.
+  const isMakingClosure = (node: ts.Node): boolean =>
+    ((ts.isFunctionExpression(node) || ts.isArrowFunction(node)) && isOutliving(node, context)) ||
+    (ts.forEachChild(node, isMakingClosure) ?? false);
+  const isClosing = reached.some(isMakingClosure);
   const isUsingHeap =
+    isClosing ||
     reached.some(usesObjects) ||
     context.namespaces.size > 0 ||
     context.commonJsModules.length > 0 ||
@@ -961,12 +1002,19 @@ export const compile = (
       ) &&
       ["Object", "Reflect"].includes(getBuiltIn(node.expression.expression, context) ?? "")) ||
     (ts.forEachChild(node, isDescribing) ?? false);
+  // A buffer, a view of one, or a typed array is an object that only the heap makes, and the
+  // constructor of one is an object that only the heap holds.
+  const isMakingBuffer = (node: ts.Node): boolean =>
+    !ts.isTypeNode(node) &&
+    ((ts.isIdentifier(node) && isBufferName(getBuiltIn(node, context) ?? "")) ||
+      (ts.forEachChild(node, isMakingBuffer) ?? false));
   // A module whose code reads a module's namespace object holds it on the heap, as a script does.
   const isHeapFile =
     isScript(sourceFile) ||
     isSharing ||
+    isClosing ||
     context.namespaces.size > 0 ||
-    (heap !== undefined && reached.some(isDescribing));
+    (heap !== undefined && (reached.some(isDescribing) || reached.some(isMakingBuffer)));
   context.hasOrderedCollections = isHeapFile && reached.some(usesOrder);
   const changedArrays = isHeapFile ? findChangedArrays(reached, context) : [];
   if (heap !== undefined && isHeapFile && (isSharing || changedArrays.length > 0 || isUsingHeap)) {
@@ -987,6 +1035,23 @@ export const compile = (
           ),
         ),
       ]),
+    );
+    const isDisposeKey = (node: ts.Node) =>
+      (ts.isPropertyAccessExpression(node) &&
+        ["dispose", "disposeAsync"].includes(node.name.text) &&
+        node.expression.getText() !== "Symbol") ||
+      (ts.isElementAccessExpression(node) &&
+        ["Symbol.dispose", "Symbol.asyncDispose"].includes(node.argumentExpression.getText()));
+    context.madeKeys = findMadeKeys(program.files, program.checker);
+    context.isStackMethodHeld = program.files.some(
+      (file) =>
+        findNodes(
+          file,
+          (inner): inner is ts.Node =>
+            (isDisposeKey(inner) &&
+              !(ts.isCallExpression(inner.parent) && inner.parent.expression === inner)) ||
+            (ts.isStringLiteralLike(inner) && ["dispose", "disposeAsync"].includes(inner.text)),
+        ).length > 0,
     );
     // The functions that a call through a value may run, found once for every call: those of
     // each file that the model reaches.
@@ -1219,11 +1284,9 @@ export const compile = (
   if (context.isEveryCollectionHeld) rejectSharing(shareable, context);
   rejectRegExpIndicesUses(roots, context);
   if (context.heap !== undefined) {
-    context.dispatch = createDispatch(
-      findDispatchedCallees(reached, context),
-      context,
-      program.isStrictFunctionTypes,
-    );
+    const callees = findDispatchedCallees(reached, context);
+    context.dispatch = createDispatch(callees, context, program.isStrictFunctionTypes);
+    context.calleeRuns = findCalleeRuns(callees, context);
     context.effects = findEffects(reached, context);
     context.changes = summarizeEffects(context);
   }
@@ -1366,6 +1429,56 @@ export const compile = (
         ),
       ),
       define("UsedSearches", [], translateSearches(context)),
+      // The patterns of toLocaleString, which a script that formats a Temporal object reads.
+      define(
+        "UsedDateFormats",
+        [],
+        tuple(
+          /\btoLocaleString\b/.test(sourceFile.text) && /\bTemporal\b/.test(sourceFile.text)
+            ? Object.entries(DATE_FORMATS).flatMap(([key, format]) =>
+                key.startsWith("DateTimeFormat|")
+                  ? []
+                  : [
+                      record("Record", [
+                        { name: "key", value: string(key) },
+                        ...(format.error === undefined
+                          ? [
+                              { name: "fields", value: tuple((format.fields ?? []).map(string)) },
+                              { name: "styles", value: tuple((format.styles ?? []).map(string)) },
+                              { name: "isZoned", value: boolean(format.isZoned === true) },
+                            ]
+                          : [{ name: "error", value: string(format.error) }]),
+                      ]),
+                    ],
+              )
+            : [],
+        ),
+      ),
+      define(
+        "UsedTimeZones",
+        [],
+        tuple(
+          timeZones.map((key) => {
+            const table = TIME_ZONES[key];
+            const days = table.times.map((time) => Math.floor(time / 86400));
+            return record("Record", [
+              { name: "key", value: string(key) },
+              { name: "id", value: string(table.id) },
+              { name: "primary", value: string(table.primary) },
+              { name: "offsets", value: tuple(table.offsets.map(number)) },
+              { name: "days", value: tuple(days.map(number)) },
+              {
+                name: "seconds",
+                value: tuple(
+                  table.times.map((time, position) => number(time - days[position] * 86400)),
+                ),
+              },
+              { name: "isFinal", value: boolean(table.isFinal) },
+              { name: "rule", value: tuple(table.rule.map(number)) },
+            ]);
+          }),
+        ),
+      ),
       define(
         "UsedCharacters",
         [],

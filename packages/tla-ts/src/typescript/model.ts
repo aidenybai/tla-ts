@@ -3,6 +3,7 @@ import {
   type Context,
   findNodes,
   type FunctionNode,
+  getCallee,
   getFunction,
   getOwnSymbol,
   getRunStatements,
@@ -15,12 +16,15 @@ import {
   isScript,
   getValueDeclaration,
   getRunMembers,
+  isAmbientDeclaration,
+  skipCasts,
 } from "./context";
 import type { Expression } from "../ast";
 import { getWritten, getWrittenRoots } from "./actions";
 import { isMakingObjects } from "./aliasing";
 import { TlaTypeScriptError } from "../errors";
 import { getAllocated } from "./heap";
+import { getBuiltIn } from "./intrinsics";
 import { VALUE_TAGS } from "./properties";
 import { getBoundNames } from "./scope";
 import { getLocation, identifier, set } from "./tla";
@@ -103,6 +107,25 @@ const isExported = (node: HelperDeclaration) =>
   (ts.getCombinedModifierFlags(node) & ts.ModifierFlags.Export) !== 0 &&
   ts.isSourceFile(ts.isVariableDeclaration(node) ? node.parent.parent.parent : node.parent);
 
+// The local bindings that a file's exports of names export, as export { local as name } does.
+const getExportedLocals = (sourceFile: ts.SourceFile, checker: ts.TypeChecker) =>
+  new Set(
+    sourceFile.statements.flatMap((statement) =>
+      ts.isExportDeclaration(statement) &&
+      !statement.isTypeOnly &&
+      statement.moduleSpecifier === undefined &&
+      statement.exportClause !== undefined &&
+      ts.isNamedExports(statement.exportClause)
+        ? statement.exportClause.elements.flatMap((element) => {
+            const local = element.isTypeOnly
+              ? undefined
+              : checker.getExportSpecifierLocalTargetSymbol(element);
+            return local === undefined ? [] : [local];
+          })
+        : [],
+    ),
+  );
+
 // A let is a state variable, and so is a const in a script with a heap that makes an object, as
 // only statements can make objects, and a script's const whose value the script changes in place.
 const isLet = (declared: Declared, changed: ReadonlySet<ts.Symbol>, context: Context) => {
@@ -162,12 +185,9 @@ export const isDeclaration = (statement: ts.Statement) =>
   ts.isTypeAliasDeclaration(statement) ||
   ts.isInterfaceDeclaration(statement) ||
   ts.isEnumDeclaration(statement) ||
-  // A re-export, like an import, only loads the module it names, and a script's export only names
-  // bindings.
-  (ts.isExportDeclaration(statement) &&
-    (statement.isTypeOnly ||
-      statement.moduleSpecifier !== undefined ||
-      isScript(statement.getSourceFile()))) ||
+  // A re-export, like an import, only loads the module it names, and an export of names only names
+  // bindings, which the model takes as their declarations' exports.
+  ts.isExportDeclaration(statement) ||
   (ts.isFunctionDeclaration(statement) && statement.body !== undefined);
 
 // The variables that a var, let, or const declares.
@@ -187,11 +207,9 @@ const getDeclarations = (statement: ts.Statement): Declared[] => {
     if (statement.name === undefined) throw new TlaTypeScriptError("Name this function", statement);
     return [{ name: statement.name.text, declaration: statement, identifier: statement.name }];
   }
-  // A declare's variable is the host's, which no code here gives.
-  if (
-    !ts.isVariableStatement(statement) ||
-    statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)
-  ) {
+  // A declare's variable, or one that a declare global block declares, is the host's, which no
+  // code here gives.
+  if (!ts.isVariableStatement(statement) || isAmbientDeclaration(statement)) {
     return [];
   }
   return getListDeclarations(statement.declarationList);
@@ -242,7 +260,23 @@ export const readModel = (
         .flatMap(getListDeclarations)
     : [];
   const declarations = [...statements.flatMap(getDeclarations), ...nestedVars];
-  // A const whose object a write changes in place holds a new value after it, as a let does.
+  // A const whose object a write changes in place holds a new value after it, as a let does, where
+  // a literal or a new collection makes the object, which the state holds as a value. A built-in
+  // object, such as Error, isn't one.
+  const isLiteralObject = (symbol: ts.Symbol) => {
+    const declaration = symbol.valueDeclaration;
+    const initializer =
+      declaration !== undefined && ts.isVariableDeclaration(declaration)
+        ? declaration.initializer && skipCasts(declaration.initializer)
+        : undefined;
+    return (
+      initializer !== undefined &&
+      (ts.isObjectLiteralExpression(initializer) ||
+        ts.isArrayLiteralExpression(initializer) ||
+        (ts.isNewExpression(initializer) &&
+          ["Map", "Set", "Array"].includes(getBuiltIn(initializer.expression, context) ?? "")))
+    );
+  };
   const changed = new Set(
     [sourceFile, ...imported]
       .flatMap((root) => findNodes(root, (node): node is ts.Node => getWritten(node) !== undefined))
@@ -253,7 +287,7 @@ export const readModel = (
       .flatMap((root) => {
         const symbol = ts.isIdentifier(root) ? getSymbol(root, context.checker) : undefined;
         return symbol !== undefined &&
-          (!isScript(sourceFile) || getKind(root, context) !== "object")
+          (isScript(sourceFile) ? getKind(root, context) !== "object" : isLiteralObject(symbol))
           ? [symbol]
           : [];
       }),
@@ -305,10 +339,23 @@ export const readModel = (
     return [{ name, symbol, declaration: statement }];
   });
   const helpers = declarations.filter((declared) => !isLet(declared, changed, context));
+  const exportedLocals = getExportedLocals(sourceFile, context.checker);
+  // An exported const that another name's function initializes exports that function.
+  const getAliased = (declaration: HelperDeclaration) => {
+    const written = ts.isVariableDeclaration(declaration) ? declaration.initializer : undefined;
+    const initializer = written === undefined ? undefined : skipCasts(written);
+    return initializer !== undefined &&
+      (ts.isIdentifier(initializer) || ts.isPropertyAccessExpression(initializer)) &&
+      isInlined(written, context)
+      ? getCallee(initializer, context)
+      : undefined;
+  };
   const exported = helpers.flatMap((declared) => {
     const declaration = declared.declaration;
-    const node = getFunction(declaration);
-    if (!isExported(declaration) || node?.body === undefined) return [];
+    const node = getFunction(declaration) ?? getAliased(declaration);
+    const symbol = getSymbol(declared.identifier, context.checker);
+    const isListed = symbol !== undefined && exportedLocals.has(symbol);
+    if (!(isExported(declaration) || isListed) || node?.body === undefined) return [];
     const statement = ts.isVariableDeclaration(declaration)
       ? declaration.parent.parent
       : declaration;

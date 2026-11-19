@@ -518,20 +518,19 @@ const parse = (
     range: undefined,
   });
 
-  const tokenStarts: SourceLocation[] = [];
-  const tokenEnds: SourceLocation[] = [];
-  const tokenRanges: SourceRange[] = [];
+  // Dense, as an array written at scattered indices turns into a dictionary that reads slowly.
+  const tokenStarts = Array.from<SourceLocation | undefined>({ length: tokens.length });
+  const tokenEnds = Array.from<SourceLocation | undefined>({ length: tokens.length });
+  const tokenRanges = Array.from<SourceRange | undefined>({ length: tokens.length });
 
   const getRange = (startIndex: number, endIndex = cursor - 1) => {
     const cached = startIndex === endIndex ? tokenRanges[startIndex] : undefined;
     if (cached) return cached;
     const last = tokens[endIndex];
-    tokenStarts[startIndex] ??= getLocation(tokens[startIndex]);
-    tokenEnds[endIndex] ??= { line: last.line, column: last.endColumn };
     const range = {
       module: openModules[0].name,
-      start: tokenStarts[startIndex],
-      end: tokenEnds[endIndex],
+      start: (tokenStarts[startIndex] ??= getLocation(tokens[startIndex])),
+      end: (tokenEnds[endIndex] ??= { line: last.line, column: last.endColumn }),
     };
     if (startIndex === endIndex) tokenRanges[startIndex] = range;
     return range;
@@ -546,7 +545,9 @@ const parse = (
 
   const peek = (offset = 0) => {
     const token = peekRaw(offset);
-    const offsideColumn = offsideColumns[offsideColumns.length - 1];
+    // Reading an empty array at -1 looks the index up as a property, which is slow.
+    const offsideColumn =
+      offsideColumns.length === 0 ? undefined : offsideColumns[offsideColumns.length - 1];
     if (offsideColumn === undefined || offsideColumn === NO_OFFSIDE || token.kind === "End") {
       return token;
     }

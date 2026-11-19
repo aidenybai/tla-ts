@@ -34,6 +34,7 @@ import {
 } from "./context";
 import {
   allocateArguments,
+  getArgumentsLengths,
   checkDestructured,
   getArgumentsReads,
   getWritten,
@@ -522,9 +523,11 @@ const inlineCall = (
   );
   const values = shareArguments(passed.values, context);
   const reads = getArgumentsReads(callee, context);
+  const lengths = getArgumentsLengths(callee, argumentNodes, context);
   // A call inside an expression holds its arguments object on a heap that only the call reads, so
-  // the body may read only its length and elements.
+  // the body may read only its length and elements, or only its length, which needs no object.
   if (
+    lengths === undefined &&
     reads.length > 0 &&
     (passedCallbacks.length > 0 ||
       !reads.every((read) => isArgumentsRead(read, context)) ||
@@ -532,13 +535,16 @@ const inlineCall = (
   ) {
     throw new TlaTypeScriptError("Unsupported arguments object", reads[0]);
   }
-  const made = allocateArguments(
-    callee,
-    passed.list ?? tuple(values.shared),
-    callee,
-    { definitions: [], scope },
-    context,
-  );
+  const made =
+    lengths !== undefined
+      ? { definitions: [], scope }
+      : allocateArguments(
+          callee,
+          passed.list ?? tuple(values.shared),
+          callee,
+          { definitions: [], scope },
+          context,
+        );
   const bound = bindValues(
     getParameters(callee).filter((_, position) => isValue(position)),
     passed.isSpread ? values.shared.slice(0, -1) : values.shared,
@@ -548,15 +554,17 @@ const inlineCall = (
   );
   context.inProgress.add(callee);
   // A statement makes the objects and runs the calls only of its own expressions, so what the scope
-  // holds for the body's nodes belongs to a call that this one runs inside.
+  // holds for the body's nodes belongs to a call that this one runs inside, but for the arguments
+  // object that this call makes, which the scope holds under the body.
   const isOutside = (entry: [ts.Node, Expression]) =>
+    (entry[0] === body && made.definitions.length > 0) ||
     ts.findAncestor(entry[0], (ancestor) => ancestor === callee) === undefined;
   const value = translateBody(
     body,
     {
       ...bound.scope,
       allocated: new Map([...bound.scope.allocated].filter(isOutside)),
-      results: new Map([...bound.scope.results].filter(isOutside)),
+      results: new Map([...[...bound.scope.results].filter(isOutside), ...(lengths ?? [])]),
       functions: new Map([...bound.scope.functions, ...callbacks]),
       receiver,
       arrowReceivers: getArrowReceivers(callbacks, scope),

@@ -3,7 +3,13 @@ import type { Expression, OperatorDefinition, OperatorParam, SourceLocation } fr
 import { getTypeNames, JAVASCRIPT_OPERATORS } from "./javascript";
 import { BUILT_INS, HOST_GLOBAL_KEYS, NODE_GLOBALS } from "./built-ins";
 import { getErrorClass, isNativeErrorName, isPrototypeRead, NATIVE_ERRORS } from "./exceptions";
-import { type Collection, getBuiltIn, getBuiltInPath, isHeldBuiltInObject } from "./intrinsics";
+import {
+  type Collection,
+  findBuiltInNames,
+  getBuiltIn,
+  getBuiltInPath,
+  isHeldBuiltInObject,
+} from "./intrinsics";
 import {
   type BufferName,
   getArrayMethodCall,
@@ -15,7 +21,7 @@ import {
   isHeapSetOrMap,
 } from "./types";
 import { TlaTypeScriptError } from "../errors";
-import { getImportedCommonJs, getWrapperName, isCommonJsFile, isJavaScriptFile } from "./common-js";
+import { getImportedCommonJs, getWrapperName, isJavaScriptFile } from "./common-js";
 import { createNames, type Names } from "./names";
 import { getBindingNames, getLexicalNames } from "./early-errors";
 import { getKeptReads } from "./narrowing";
@@ -121,6 +127,11 @@ export interface Context {
   checker: ts.TypeChecker;
   // The nodes of the program's files, which tla-ts walks once, and the names of each symbol.
   nodes: ProgramNodes;
+  // Whether each name of the program's files names a global built-in, by its position.
+  builtInNames: Uint32Array | undefined;
+  // Whether the program's files name Proxy or a property proxy, as new Proxy and what
+  // Proxy.revocable gives do, without which no value is a proxy that the script makes.
+  isProxied: boolean;
   references: References;
   // What each declaration that a name names reaches by name.
   reachGraph: ReachGraph;
@@ -233,6 +244,13 @@ export interface Context {
   // The built-in methods that each file reads as values, as obj.pop = Array.prototype.pop does,
   // which a call of a key whose type doesn't tell which function it holds may run.
   storedBuiltIns: ReadonlyMap<ts.SourceFile, ReadonlySet<string>>;
+  // Whether the script may hold a DisposableStack's dispose or disposeAsync as a value, which a
+  // resource may then dispose with: it reads a key of that name other than to call it, or names
+  // the key in a string.
+  isStackMethodHeld: boolean;
+  // The keys that the script's syntax can make, or undefined where it makes one that isn't a
+  // literal. A callee that reads another key holds no function that the script made.
+  madeKeys: ReadonlySet<string> | undefined;
   // The closures of each file, which a call through a value whose type has calls may run.
   closures: ReadonlyMap<ts.SourceFile, readonly Closure[]>;
   // The vars, parameters, and declared functions of the functions of a script that run once, which
@@ -310,6 +328,8 @@ export interface Context {
   effects: NodeEffects;
   // Which function candidates the callees of the model's calls through values may hold.
   dispatch: Dispatch | undefined;
+  // The functions that each dispatched callee may hold.
+  calleeRuns: CalleeRuns | undefined;
 }
 
 // The types of the callees that findEffects dispatches among the function candidates, by type id in
@@ -322,6 +342,18 @@ export interface Dispatch {
   // The bits that each row tested, which the rest of the bits don't tell.
   tested: Uint32Array;
   candidateTypes: Int32Array;
+}
+
+// The functions that each callee that findEffects dispatches may hold, but for those that code only
+// calls by name, by the callee's position in order: the index of its run, whose functions run from
+// runStarts[run] to runStarts[run + 1], and a bit per run of whether the callee may hold any
+// function at all, those too.
+export interface CalleeRuns {
+  calleePositions: Int32Array;
+  calleeRuns: Int32Array;
+  runStarts: Int32Array;
+  functions: FunctionNode[];
+  heldBits: Uint32Array;
 }
 
 // The effects of the nodes of the program's files by their positions, and of the few nodes that no
@@ -664,6 +696,9 @@ export const createContext = (
       },
     },
     nodes,
+    builtInNames: undefined,
+    isProxied:
+      findProgramNames(nodes, "Proxy").length > 0 || findProgramNames(nodes, "proxy").length > 0,
     references,
     reachGraph: createReachGraph(nodes, references),
     makers: undefined,
@@ -715,6 +750,8 @@ export const createContext = (
     doubles: new Set(),
     heapCollections: new Set(),
     storedBuiltIns: new Map(),
+    isStackMethodHeld: true,
+    madeKeys: undefined,
     closures: new Map(),
     onceLocals: new Set(),
     onceFunctions: new Set(),
@@ -740,6 +777,7 @@ export const createContext = (
     changes: undefined,
     effects: { positions: [], elsewhere: new Map(), found: [] },
     dispatch: undefined,
+    calleeRuns: undefined,
     assignedNames: new Map(
       files.map((file) => [
         file,
@@ -778,7 +816,12 @@ export const createContext = (
                   (ts.isArrowFunction(name.parent) && name.parent.body === name) ||
                   (ts.isPropertyAssignment(name.parent) &&
                     name.parent.initializer === name &&
-                    ts.isObjectLiteralExpression(name.parent.parent))
+                    ts.isObjectLiteralExpression(name.parent.parent)) ||
+                  (ts.isBinaryExpression(name.parent) &&
+                    name.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+                    name.parent.right === name &&
+                    (ts.isPropertyAccessExpression(name.parent.left) ||
+                      ts.isElementAccessExpression(name.parent.left)))
                 ? (getSymbol(name, checker) ?? [])
                 : [],
           ),
@@ -786,6 +829,7 @@ export const createContext = (
       ]),
     ),
   };
+  context.builtInNames = findBuiltInNames(context);
   findCalledOnce(context);
   return context;
 };
@@ -811,10 +855,11 @@ const hasTopLevelAwait = (node: ts.Node): boolean =>
 
 // A file that imports, exports, or awaits outside a function, which Node runs only as a module.
 // Node runs another file as a script where it strips its types, and a CommonJS module's code in a
-// function. A JavaScript file is a module where Node loads it as one.
+// function. A JavaScript file is a module where Node loads it as one, and a script, as a page's,
+// where it runs as no module.
 export const isModuleFile = (file: ts.SourceFile) =>
   isJavaScriptFile(file.fileName)
-    ? !isCommonJsFile(file)
+    ? file.impliedNodeFormat === ts.ModuleKind.ESNext
     : file.statements.some(isModuleSyntax) || hasTopLevelAwait(file);
 
 // The variables that Node gives a CommonJS module's code, which an ES module doesn't have, though
@@ -1859,7 +1904,9 @@ export const getAnyFunction = (node: ts.Node | undefined): FunctionNode | undefi
   if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
     return node;
   }
-  return ts.isVariableDeclaration(node) ? getAnyFunction(node.initializer) : undefined;
+  return ts.isVariableDeclaration(node) && node.initializer !== undefined
+    ? getAnyFunction(skipCasts(node.initializer))
+    : undefined;
 };
 
 // The function a node is, or that a variable declaration initializes.
@@ -1868,14 +1915,21 @@ export const getFunction = (node: ts.Node | undefined) => {
   return found !== undefined && isPlain(found) ? found : undefined;
 };
 
-// The members of a class that run. TypeScript erases a method's or a constructor's signature
-// without a body, as an overload's or an abstract method's, which JavaScript never sees.
+// The members of a class that run. TypeScript erases a method's, an accessor's, or a
+// constructor's signature without a body, as an overload's or an abstract one's, and an abstract
+// or a declared field, which JavaScript never sees.
 export const getRunMembers = (node: ts.ClassLikeDeclaration) =>
   node.members.filter(
     (member) =>
       !(
-        (ts.isMethodDeclaration(member) || ts.isConstructorDeclaration(member)) &&
-        member.body === undefined
+        ((ts.isMethodDeclaration(member) ||
+          ts.isConstructorDeclaration(member) ||
+          ts.isAccessor(member)) &&
+          member.body === undefined) ||
+        (ts.isPropertyDeclaration(member) &&
+          (ts.getCombinedModifierFlags(member) &
+            (ts.ModifierFlags.Abstract | ts.ModifierFlags.Ambient)) !==
+            0)
       ),
   );
 
@@ -1906,7 +1960,19 @@ export const getClass = (node: ts.Node | undefined, context: Context) => {
 
 // Whether a variable's initializer is a function or a class, which tla-ts inlines where it's used
 // instead of storing.
-export const isInlined = (node: ts.Node | undefined, context: Context) => {
+export const isInlined = (node: ts.Node | undefined, context: Context): boolean => {
+  // A top-level const that another name's function initializes, as const isSymbol =
+  // predicate.isSymbol does, holds that function, which its calls run.
+  const aliased =
+    node !== undefined &&
+    ts.isVariableDeclaration(node.parent) &&
+    node.parent.initializer === node &&
+    getTopLevelDeclaration(getSymbol(node.parent.name, context.checker), context) === node.parent &&
+    (ts.isIdentifier(skipCasts(node as ts.Expression)) ||
+      ts.isPropertyAccessExpression(skipCasts(node as ts.Expression)))
+      ? getCallee(skipCasts(node as ts.Expression), context)
+      : undefined;
+  if (aliased !== undefined) return isInlined(aliased, context);
   const found = getAnyFunction(node);
   return (
     (found !== undefined &&
@@ -3612,6 +3678,50 @@ export const getClassStop = (node: ts.ClassLikeDeclaration, context: Context) =>
     : undefined;
 };
 
+// A function expression that a const holds, which a new constructs or whose property the script
+// writes, in code that may run more than once, which makes an object of its own each time.
+export const isMadeConstructor = (
+  node: ts.Node,
+  context: Context,
+): node is ts.FunctionExpression => {
+  if (
+    context.heap === undefined ||
+    !ts.isFunctionExpression(node) ||
+    !isPlain(node) ||
+    node.name !== undefined
+  ) {
+    return false;
+  }
+  const declared = getOutermostCast(node).parent;
+  const symbol =
+    ts.isVariableDeclaration(declared) &&
+    ts.isIdentifier(declared.name) &&
+    (ts.getCombinedNodeFlags(declared) & ts.NodeFlags.Const) !== 0
+      ? getSymbol(declared.name, context.checker)
+      : undefined;
+  return (
+    symbol !== undefined &&
+    !isOnce(declared, context) &&
+    context.objectTargets.get(node.getSourceFile())?.has(symbol) === true
+  );
+};
+
+// Why a function expression that a new constructs, or whose property the script writes, isn't a
+// heap function, where the reason is its place.
+export const getFunctionStop = (node: ts.FunctionExpression, context: Context) => {
+  const declared = getOutermostCast(node).parent;
+  const symbol =
+    ts.isVariableDeclaration(declared) && ts.isIdentifier(declared.name)
+      ? getSymbol(declared.name, context.checker)
+      : undefined;
+  return context.heap !== undefined &&
+    symbol !== undefined &&
+    !isOnce(declared, context) &&
+    context.objectTargets.get(node.getSourceFile())?.has(symbol) === true
+    ? "tla-ts can't make a function that a new constructs, or whose property the script writes, in code that may run more than once"
+    : undefined;
+};
+
 // The parameters that a call passes values to, without the this parameter that only types this.
 export const getParameters = (node: ts.SignatureDeclaration) =>
   node.parameters.filter(
@@ -3860,13 +3970,111 @@ const getHeldName = (node: ts.Node) =>
 // method or an accessor of an object literal, or one that it returns, itself or by the name of the
 // const that holds it, that reads a local of the function. An arrow reads the this of the function around it, which the environment doesn't hold,
 // and an async closure that awaits would resume after its call returns.
-export const isClosure = (node: ts.Node, context: Context): node is Closure => {
+// Whether a function reads a parameter as a value, as Object.assign(f, {}) or return f do, rather
+// than only calling it or passing it on to a parameter that it doesn't read as a value either.
+const isValueParameter = (
+  parameter: ts.ParameterDeclaration,
+  context: Context,
+  visited: Set<ts.Node>,
+): boolean => {
+  const symbol = ts.isIdentifier(parameter.name)
+    ? getSymbol(parameter.name, context.checker)
+    : undefined;
+  if (symbol === undefined || visited.has(parameter)) return false;
+  visited.add(parameter);
+  return findNodes(parameter.parent, ts.isIdentifier).some((name) => {
+    if (name === parameter.name || getSymbol(name, context.checker) !== symbol) return false;
+    const call = name.parent;
+    if (!ts.isCallExpression(call)) return true;
+    if (call.expression === name) return false;
+    const position = call.arguments.indexOf(name);
+    return position < 0 || isValueTarget(call, position, context, visited);
+  });
+};
+
+// Whether a call's argument at a position reaches a parameter that its function reads as a value.
+const isValueTarget = (
+  call: ts.CallExpression,
+  position: number,
+  context: Context,
+  visited: Set<ts.Node>,
+) => {
+  const callee = getCallee(call.expression, context);
+  const parameter = callee === undefined ? undefined : getParameters(callee).at(position);
+  return (
+    parameter !== undefined &&
+    callee?.body !== undefined &&
+    parameter.dotDotDotToken === undefined &&
+    !call.arguments.slice(0, position).some(ts.isSpreadElement) &&
+    isValueParameter(parameter, context, visited)
+  );
+};
+
+// A function that a call passes to a parameter that the function it calls reads as a value, so
+// the function is an object that outlives the call, as createUnsubscribe(() => {}) passes one to
+// Object.assign(unsubscribe, {}).
+const isValueArgument = (node: ts.Node, context: Context) => {
+  const call = node.parent;
+  return (
+    ts.isCallExpression(call) &&
+    call.expression !== node &&
+    isValueTarget(
+      call,
+      call.arguments.findIndex((argument) => argument === node),
+      context,
+      new Set(),
+    )
+  );
+};
+
+// Whether each call of a function is a factory's call, which stands for the function it returns.
+const isFactoryCalled = (maker: ts.Node, context: Context) => {
+  const name = ts.isFunctionDeclaration(maker)
+    ? maker.name
+    : ts.isVariableDeclaration(maker.parent) && ts.isIdentifier(maker.parent.name)
+      ? maker.parent.name
+      : undefined;
+  const symbol = name === undefined ? undefined : getSymbol(name, context.checker);
+  return (
+    symbol === undefined ||
+    findReferences(symbol, maker.getSourceFile(), context).every(
+      (reference) =>
+        reference === name ||
+        !ts.isCallExpression(reference.parent) ||
+        reference.parent.expression !== reference ||
+        getFactoryCall(reference.parent, context) !== undefined,
+    )
+  );
+};
+
+export const isClosure = (node: ts.Node, context: Context): node is Closure =>
+  context.heap !== undefined && isOutliving(node, context);
+
+// Whether a function is a closure, before tla-ts knows whether the heap holds objects.
+// The expression whose value a function gives, through parentheses and casts, the operands of ??,
+// ||, and &&, and the branches of ?:, as in combineAll ?? ((collection) => {}).
+const getValueSite = (node: ts.Node): ts.Node => {
+  const parent = node.parent;
+  return ts.isParenthesizedExpression(parent) ||
+    ts.isAsExpression(parent) ||
+    ts.isSatisfiesExpression(parent) ||
+    (ts.isBinaryExpression(parent) &&
+      [
+        ts.SyntaxKind.QuestionQuestionToken,
+        ts.SyntaxKind.BarBarToken,
+        ts.SyntaxKind.AmpersandAmpersandToken,
+      ].includes(parent.operatorToken.kind)) ||
+    (ts.isConditionalExpression(parent) && parent.condition !== node)
+    ? getValueSite(parent)
+    : node;
+};
+
+export const isOutliving = (node: ts.Node, context: Context): node is Closure => {
   const isMember =
     ((ts.isMethodDeclaration(node) && node.body !== undefined) || isPlainAccessor(node)) &&
     ts.isObjectLiteralExpression(node.parent) &&
     !isOnce(node.parent, context);
   if (
-    context.heap === undefined ||
     !(ts.isFunctionExpression(node) || ts.isArrowFunction(node) || isMember) ||
     (ts.isFunctionExpression(node) && node.name !== undefined) ||
     ((ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) &&
@@ -3912,15 +4120,18 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
       isReadingLocals()
     );
   }
-  const assignment = node.parent;
+  if (isValueArgument(node, context)) return !isOnce(node.parent, context) || isReadingLocals();
+  if (isMadeConstructor(node, context)) return true;
+  const site = getValueSite(node);
+  const assignment = site.parent;
   const isAssignment =
     ts.isBinaryExpression(assignment) &&
     assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-    assignment.right === node &&
+    assignment.right === site &&
     ts.isExpressionStatement(assignment.parent);
   if (
     (ts.isPropertyAssignment(assignment) &&
-      assignment.initializer === node &&
+      assignment.initializer === site &&
       ts.isObjectLiteralExpression(assignment.parent)) ||
     (isAssignment && ts.isPropertyAccessExpression(assignment.left))
   ) {
@@ -3947,9 +4158,10 @@ export const isClosure = (node: ts.Node, context: Context): node is Closure => {
               (declaration) => getAnyFunction(declaration) !== undefined,
             )
           : ts.isFunctionDeclaration(statement),
-      );
+      ) &&
+    isFactoryCalled(maker, context);
   const isReturned =
-    isReturnOf(node) ||
+    isReturnOf(site) ||
     (heldSymbol !== undefined &&
       (context.escapedNames.get(node.getSourceFile())?.has(heldSymbol) ?? false) &&
       !isFactory());
@@ -4269,6 +4481,17 @@ export type HeapFunction = ts.FunctionDeclaration | ts.FunctionExpression;
 export type AccessorFunction = HeapFunction | ts.MethodDeclaration;
 
 export type HeapClass = ts.ClassLikeDeclaration | HeapFunction;
+
+// The outermost of the casts around an expression, or the expression itself.
+export const getOutermostCast = (node: ts.Expression): ts.Expression =>
+  (ts.isParenthesizedExpression(node.parent) ||
+    ts.isNonNullExpression(node.parent) ||
+    ts.isAsExpression(node.parent) ||
+    ts.isSatisfiesExpression(node.parent) ||
+    ts.isTypeAssertionExpression(node.parent)) &&
+  node.parent.expression === node
+    ? getOutermostCast(node.parent)
+    : node;
 
 export const skipCasts = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) ||
@@ -4807,11 +5030,12 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
   if (known !== HEAP_UNKNOWN) return known === HEAP_YES;
   // A variable or an object literal's property may name a function expression, as obj.f names
   // the function of { f: function () {} }.
+  const outermost = ts.isFunctionDeclaration(node) ? node : getOutermostCast(node);
   const nameNode = ts.isFunctionDeclaration(node)
     ? node.name
-    : (ts.isVariableDeclaration(node.parent) || ts.isPropertyAssignment(node.parent)) &&
-        node.parent.initializer === node
-      ? node.parent.name
+    : (ts.isVariableDeclaration(outermost.parent) || ts.isPropertyAssignment(outermost.parent)) &&
+        outermost.parent.initializer === outermost
+      ? outermost.parent.name
       : undefined;
   const symbol =
     nameNode === undefined || !ts.isIdentifier(nameNode)
@@ -4867,7 +5091,7 @@ export const isHeapFunction = (node: ts.Node, context: Context): node is HeapFun
     symbol !== undefined &&
     node.body !== undefined &&
     isPlain(node) &&
-    isOnce(node.parent, context) &&
+    isOnce(outermost.parent, context) &&
     !isAssigned(symbol, sourceFile, context) &&
     ((named === undefined
       ? findNodes(sourceFile, (child): child is ts.Expression =>
@@ -4928,6 +5152,39 @@ export const findObjectTargets = (files: readonly ts.SourceFile[], context: Cont
     ]),
   );
 
+// The class that a function returns by its name, where a call runs the function where it's written
+// and the code runs once, so that one class is the value. The function ends with a return, so it
+// can't give undefined instead.
+const getReturnedClass = (call: ts.CallExpression, context: Context) => {
+  const callee = skipCasts(call.expression);
+  const last =
+    (ts.isFunctionExpression(callee) || ts.isArrowFunction(callee)) && ts.isBlock(callee.body)
+      ? callee.body.statements.at(-1)
+      : undefined;
+  if (last === undefined || !ts.isReturnStatement(last) || !isOnce(call, context)) {
+    return undefined;
+  }
+  const body = last.parent;
+  const returned = findNodes(body, ts.isReturnStatement).filter(
+    (statement) => ts.findAncestor(statement.parent, ts.isFunctionLike) === callee,
+  );
+  const classes = returned.map((statement) => {
+    const value = statement.expression && skipCasts(statement.expression);
+    const declaration =
+      value !== undefined && ts.isIdentifier(value)
+        ? getValueDeclaration(getSymbol(value, context.checker), context)
+        : undefined;
+    return declaration !== undefined &&
+      ts.isClassDeclaration(declaration) &&
+      declaration.parent === body &&
+      isHeapClass(declaration, context)
+      ? declaration
+      : undefined;
+  });
+  const first = classes.at(0);
+  return first !== undefined && classes.every((found) => found === first) ? first : undefined;
+};
+
 // The heap class that a name names.
 export const getHeapClass = (node: ts.Expression, context: Context): HeapClass | undefined => {
   const inPlace = skipCasts(node);
@@ -4938,9 +5195,20 @@ export const getHeapClass = (node: ts.Expression, context: Context): HeapClass |
       : undefined;
   }
   const declaration = getValueDeclaration(getSymbol(inPlace, context.checker), context);
+  const initializer =
+    declaration !== undefined && ts.isVariableDeclaration(declaration)
+      ? declaration.initializer && skipCasts(declaration.initializer)
+      : undefined;
+  // A function that a call runs where it's written, once, and that returns its own class gives
+  // that class, as (function () { class C {} return C; })() does.
+  const returned =
+    initializer !== undefined && ts.isCallExpression(initializer)
+      ? getReturnedClass(initializer, context)
+      : undefined;
+  if (returned !== undefined) return returned;
   const found =
     declaration !== undefined && ts.isVariableDeclaration(declaration)
-      ? declaration.initializer
+      ? initializer
       : declaration !== undefined &&
           ts.isPropertyDeclaration(declaration) &&
           declaration.initializer !== undefined &&
@@ -4949,7 +5217,9 @@ export const getHeapClass = (node: ts.Expression, context: Context): HeapClass |
         ? declaration.initializer
         : declaration;
   return found !== undefined &&
-    ((ts.isClassLike(found) && isHeapClass(found, context)) || isHeapFunction(found, context))
+    ((ts.isClassLike(found) && isHeapClass(found, context)) ||
+      isHeapFunction(found, context) ||
+      isMadeConstructor(found, context))
     ? found
     : undefined;
 };
@@ -5584,6 +5854,24 @@ export const getFactoryCall = (
   );
   const body = factory?.body;
   if (factory === undefined || !isPlain(factory) || body === undefined) return undefined;
+  // A factory's call stands for the function it returns only where the script calls the name that
+  // holds it; another read takes the function as a value, which a closure on the heap is.
+  const holder = ts.isVariableDeclaration(node.parent) ? node.parent.name : undefined;
+  const held =
+    holder !== undefined && ts.isIdentifier(holder)
+      ? getSymbol(holder, context.checker)
+      : undefined;
+  if (
+    context.heap !== undefined &&
+    held !== undefined &&
+    findReferences(held, node.getSourceFile(), context).some(
+      (reference) =>
+        reference !== holder &&
+        !(ts.isCallExpression(reference.parent) && reference.parent.expression === reference),
+    )
+  ) {
+    return undefined;
+  }
   const returned = ts.isBlock(body) ? body.statements.at(-1) : undefined;
   const statements = ts.isBlock(body) ? body.statements.slice(0, -1) : [];
   const variables = statements.flatMap((statement) =>
@@ -5674,8 +5962,19 @@ export const getFactoryCall = (
 
 // The function that a callee or callback names: one written in place, one declared elsewhere, one
 // that a factory returns, or a method of a known class.
-const resolve = (node: ts.Expression, context: Context) => {
+const resolve = (node: ts.Expression, context: Context, depth = 0): FunctionNode | undefined => {
   const declaration = getValueDeclaration(getNamedSymbol(skipCasts(node), context), context);
+  // A const that another name's function initializes, as const isEffect = core.isEffect does.
+  const alias =
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
+    declaration.initializer !== undefined &&
+    (ts.isIdentifier(skipCasts(declaration.initializer)) ||
+      ts.isPropertyAccessExpression(skipCasts(declaration.initializer))) &&
+    depth < 8
+      ? skipCasts(declaration.initializer)
+      : undefined;
   return (
     getAnyFunction(skipCasts(node)) ??
     getAnyFunction(declaration) ??
@@ -5683,7 +5982,8 @@ const resolve = (node: ts.Expression, context: Context) => {
       ? getFactoryCall(declaration.initializer, context)?.closure
       : undefined) ??
     getMethod(node, context) ??
-    getObjectFunction(node, context)
+    getObjectFunction(node, context) ??
+    (alias === undefined ? undefined : resolve(alias, context, depth + 1))
   );
 };
 
@@ -5696,7 +5996,12 @@ const findProgramReferences = (symbol: ts.Symbol, context: Context) =>
 // Whether a node is the object of a property read that nothing writes or deletes through.
 const isReadReceiver = (node: ts.Node) => {
   const access = node.parent;
-  if (!ts.isPropertyAccessExpression(access) || access.expression !== node) return false;
+  if (
+    !(ts.isPropertyAccessExpression(access) || ts.isElementAccessExpression(access)) ||
+    access.expression !== node
+  ) {
+    return false;
+  }
   const parent = access.parent;
   const isWritten =
     (ts.isBinaryExpression(parent) &&
@@ -5796,32 +6101,79 @@ const getReadOnlyObject = (
     : undefined;
 };
 
-// The function that a read of an object's property gives, in a script without a heap, where the
-// object is one that only reads of its properties reach, and the literal writes the function under
-// the name, which reads no this.
+// The string that a key gives where the script writes it: a string literal, or a const that a
+// string literal initializes.
+const getKeyText = (node: ts.Expression, context: Context): string | undefined => {
+  if (ts.isStringLiteralLike(node)) return node.text;
+  const declaration = ts.isIdentifier(node)
+    ? getValueDeclaration(getSymbol(node, context.checker), context)
+    : undefined;
+  return declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0 &&
+    declaration.initializer !== undefined &&
+    ts.isStringLiteralLike(declaration.initializer)
+    ? declaration.initializer.text
+    : undefined;
+};
+
+// The function that a read of an object's property gives, where the object is one that only reads
+// of its properties reach, and the literal writes the function under the key, which reads no this.
+// With a heap, no member of the literal reads this, which could change the object, and the function
+// is no closure, whose environment only a call through its value binds, and reads no local of a
+// function around it, unless the read runs in the function that holds the const.
 export const getObjectFunction = (node: ts.Expression, context: Context) => {
   const inner = skipCasts(node);
-  // A script whose heap holds its objects reads the function from the heap.
-  if (context.heap !== undefined || !ts.isPropertyAccessExpression(inner)) return undefined;
-  const object = getReadOnlyObject(inner.expression, context);
+  if (!ts.isPropertyAccessExpression(inner) && !ts.isElementAccessExpression(inner)) {
+    return undefined;
+  }
+  const key = ts.isPropertyAccessExpression(inner)
+    ? inner.name.text
+    : getKeyText(inner.argumentExpression, context);
+  // A literal's __proto__ sets its prototype, and a read of __proto__ reads the prototype.
+  const object =
+    key === undefined || key === "__proto__"
+      ? undefined
+      : getReadOnlyObject(inner.expression, context);
+  const getName = (name: ts.PropertyName) =>
+    ts.isIdentifier(name) || ts.isStringLiteral(name)
+      ? name.text
+      : ts.isComputedPropertyName(name)
+        ? getKeyText(name.expression, context)
+        : undefined;
+  const isKnown = (property: ts.ObjectLiteralElementLike) =>
+    !ts.isSpreadAssignment(property) &&
+    property.name !== undefined &&
+    getName(property.name) !== undefined;
   const properties = (object?.properties ?? []).filter(
-    (property) =>
-      property.name !== undefined &&
-      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
-      property.name.text === inner.name.text,
+    (property) => property.name !== undefined && getName(property.name) === key,
   );
   const property =
-    properties.length === 1 && object?.properties.every((other) => !ts.isSpreadAssignment(other))
-      ? properties[0]
-      : undefined;
+    properties.length === 1 && object?.properties.every(isKnown) ? properties[0] : undefined;
   const found =
     property !== undefined && ts.isPropertyAssignment(property)
       ? getAnyFunction(skipCasts(property.initializer))
       : undefined;
+  const isThis = (inside: ts.Node) =>
+    findNodes(inside, (node): node is ts.Node => node.kind === ts.SyntaxKind.ThisKeyword).length >
+    0;
+  const owner = (inside: ts.Node) => ts.findAncestor(inside.parent, ts.isFunctionLike);
+  const isOuterLocal = (name: ts.Identifier) => {
+    const declaration = getValueDeclaration(getSymbol(name, context.checker), context);
+    return (
+      declaration !== undefined &&
+      found !== undefined &&
+      ts.findAncestor(declaration, (ancestor) => ancestor === found) === undefined &&
+      owner(declaration) !== undefined
+    );
+  };
   return found !== undefined &&
-    (ts.isArrowFunction(found) ||
-      findNodes(found, (node): node is ts.Node => node.kind === ts.SyntaxKind.ThisKeyword)
-        .length === 0)
+    object !== undefined &&
+    (ts.isArrowFunction(found) || !isThis(found)) &&
+    (context.heap === undefined ||
+      (!isThis(object) &&
+        !isClosure(found, context) &&
+        (owner(inner) === owner(object) || !findNodes(found, ts.isIdentifier).some(isOuterLocal))))
     ? found
     : undefined;
 };
@@ -6068,22 +6420,23 @@ export const findSharedFunctionCandidates = (
     ]),
   );
 
+// The type of the functions that a callee may hold, which is a type parameter's constraint.
+const getCalleeType = (callee: ts.Expression, checker: ts.TypeChecker) => {
+  const type = checker.getTypeAtLocation(callee);
+  return (type.flags & ts.TypeFlags.TypeParameter) !== 0
+    ? (checker.getBaseConstraintOfType(type) ?? type)
+    : type;
+};
+
 // The functions that a value whose type has calls may hold, where tla-ts can't tell which, whose
 // type TypeScript lets the value hold: those of the callee's module, and of the modules it imports
 // but for one that reads the locals of a function that runs once around it, which only that
 // function's run binds.
 export const getFunctionCandidates = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
-  const sourceFile = callee.getSourceFile();
-  const found = context.functionCandidates.has(sourceFile)
-    ? [...context.functionCandidates.entries()].flatMap((entry) =>
-        entry[0] === sourceFile ? entry[1] : (context.sharedFunctionCandidates.get(entry[0]) ?? []),
-      )
-    : findFunctionCandidates(sourceFile, context).filter((candidate) =>
-        isReached(candidate, context),
-      );
+  const found = getFileCandidates(callee.getSourceFile(), context);
   const checker = context.checker;
-  const type = checker.getTypeAtLocation(callee);
+  const type = getCalleeType(callee, checker);
   const call = callee.parent;
   // What super reads in an object literal is any, which a call may pass anything and whose result
   // it may use as anything, so a method it runs takes the arguments' types and gives the type that
@@ -6113,30 +6466,189 @@ export const getFunctionCandidates = (callee: ts.Expression, context: Context) =
       )
     );
   };
-  // A callee whose type createDispatch tested reads its row.
+  const row = isSuperAccess(callee) ? -1 : getDispatchRow(type, context);
+  return found.filter(
+    (candidate) =>
+      (isDispatchAssignable(candidate, row, type, context) ||
+        isGenericFit(candidate, callee, [type], context)) &&
+      isTyped(candidate),
+  );
+};
+
+// The function candidates that a callee of a file may hold where its type lets it: those of the
+// file and the shared ones of the files it imports.
+const getFileCandidates = (sourceFile: ts.SourceFile, context: Context) =>
+  context.functionCandidates.has(sourceFile)
+    ? [...context.functionCandidates.entries()].flatMap((entry) =>
+        entry[0] === sourceFile ? entry[1] : (context.sharedFunctionCandidates.get(entry[0]) ?? []),
+      )
+    : findFunctionCandidates(sourceFile, context).filter((candidate) =>
+        isReached(candidate, context),
+      );
+
+// The row that createDispatch tested a callee type in, or -1.
+const getDispatchRow = (type: ts.Type, context: Context) => {
   const dispatch = context.dispatch;
-  const rowIndex =
-    dispatch === undefined || isSuperAccess(callee)
+  const row =
+    dispatch === undefined
       ? -1
       : getLowerBound(dispatch.calleeIds, 0, dispatch.calleeIds.length, type.id);
-  const row =
-    dispatch !== undefined && rowIndex >= 0 && dispatch.calleeIds[rowIndex] === type.id
-      ? rowIndex
-      : -1;
-  const isAssignable = (candidate: FunctionNode) => {
-    const position = row < 0 ? -1 : getPosition(context.nodes, candidate);
-    const bit = position < 0 || dispatch === undefined ? -1 : dispatch.candidateTypes[position] - 1;
-    const word = row * (dispatch?.words ?? 0) + (bit >>> 5);
-    return dispatch !== undefined && bit >= 0 && (dispatch.tested[word] & (1 << (bit & 31))) !== 0
-      ? (dispatch.rows[word] & (1 << (bit & 31))) !== 0
-      : checker.isTypeAssignableTo(checker.getTypeAtLocation(candidate), type);
+  return dispatch !== undefined &&
+    row < dispatch.calleeIds.length &&
+    dispatch.calleeIds[row] === type.id
+    ? row
+    : -1;
+};
+
+// Whether TypeScript lets a callee type hold a candidate, which the callee type's row tells where
+// createDispatch tested the candidate's type.
+const isDispatchAssignable = (
+  candidate: FunctionNode,
+  row: number,
+  type: ts.Type,
+  context: Context,
+) => {
+  const dispatch = context.dispatch;
+  const position = row < 0 ? -1 : getPosition(context.nodes, candidate);
+  const bit = position < 0 || dispatch === undefined ? -1 : dispatch.candidateTypes[position] - 1;
+  const word = row * (dispatch?.words ?? 0) + (bit >>> 5);
+  return dispatch !== undefined && bit >= 0 && (dispatch.tested[word] & (1 << (bit & 31))) !== 0
+    ? (dispatch.rows[word] & (1 << (bit & 31))) !== 0
+    : context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(candidate), type);
+};
+
+// Finds once the functions that each callee that findEffects dispatches may hold: the function
+// candidates that its type lets it hold, then the closures, but for those that code only calls by
+// name. Callees of one file and one type hold the same ones, which a run holds once for all of
+// them, but for a held built-in or super, which getFunctionCandidates and getClosures tell apart.
+export const findCalleeRuns = (callees: readonly ts.Expression[], context: Context): CalleeRuns => {
+  const table = context.nodes;
+  const checker = context.checker;
+  const placed = callees.filter((callee) => getPosition(table, callee) >= 0);
+  const positions = Int32Array.from(placed, (callee) => getPosition(table, callee));
+  const files = Int32Array.from(positions, (position) => table.files[position]);
+  const typeIds = Int32Array.from(placed, (callee) => getCalleeType(callee, checker).id);
+  const aloneBits = new Uint32Array((placed.length + 31) >>> 5);
+  placed.forEach((callee, index) => {
+    if (isHeldBuiltInObject(callee, context) || isSuperAccess(callee)) setBit(aloneBits, index);
+  });
+  const isShared = (left: number, right: number) =>
+    !hasBit(aloneBits, left) &&
+    !hasBit(aloneBits, right) &&
+    files[left] === files[right] &&
+    typeIds[left] === typeIds[right];
+  const byKey = Int32Array.from(placed, (_, index) => index).sort(
+    (left, right) => files[left] - files[right] || typeIds[left] - typeIds[right] || left - right,
+  );
+  const runOf = new Int32Array(placed.length);
+  const starts = [0];
+  const functions: FunctionNode[] = [];
+  const heldBits = new Uint32Array((placed.length + 31) >>> 5);
+  byKey.forEach((index, order) => {
+    const previous = order > 0 ? byKey[order - 1] : -1;
+    if (previous >= 0 && isShared(previous, index)) {
+      runOf[index] = runOf[previous];
+      return;
+    }
+    const callee = placed[index];
+    const run = starts.length - 1;
+    runOf[index] = run;
+    const type = getCalleeType(callee, checker);
+    const row = getDispatchRow(type, context);
+    const held = hasBit(aloneBits, index)
+      ? [...getFunctionCandidates(callee, context), ...getClosures(callee, context)]
+      : [
+          ...getFileCandidates(callee.getSourceFile(), context).filter(
+            (candidate) =>
+              isDispatchAssignable(candidate, row, type, context) ||
+              isGenericFit(candidate, callee, [type], context),
+          ),
+          ...getClosures(callee, context),
+        ];
+    if (held.length > 0) setBit(heldBits, run);
+    held.forEach((candidate) => {
+      if (!isOnlyCalled(candidate, context)) functions.push(candidate);
+    });
+    starts.push(functions.length);
+  });
+  const byPosition = Int32Array.from(placed, (_, index) => index).sort(
+    (left, right) => positions[left] - positions[right],
+  );
+  return {
+    calleePositions: Int32Array.from(byPosition, (index) => positions[index]),
+    calleeRuns: Int32Array.from(byPosition, (index) => runOf[index]),
+    runStarts: Int32Array.from(starts),
+    functions,
+    heldBits,
   };
-  return found.filter((candidate) => isAssignable(candidate) && isTyped(candidate));
+};
+
+// The run of the functions that a callee may hold, which findCalleeRuns found, or -1.
+export const getCalleeRun = (callee: ts.Expression, context: Context) => {
+  const runs = context.calleeRuns;
+  const position = getPosition(context.nodes, callee);
+  const index =
+    runs === undefined || position < 0
+      ? -1
+      : getLowerBound(runs.calleePositions, 0, runs.calleePositions.length, position);
+  return runs !== undefined && index >= 0 && runs.calleePositions[index] === position
+    ? runs.calleeRuns[index]
+    : -1;
 };
 
 // TypeScript's flags of a signature with a rest parameter, and of an untyped one of JavaScript.
 const SIGNATURE_REST = 1;
 const SIGNATURE_UNTYPED = 32;
+
+const NULLABLE = ts.TypeFlags.Undefined | ts.TypeFlags.Null;
+
+// The flags of the types that hold no type parameters, which TypeScript's instantiation leaves as
+// they are: the primitives but for template literals and string mappings, and any, unknown, never,
+// and object.
+const FIXED =
+  (ts.TypeFlags.StringLike |
+    ts.TypeFlags.NumberLike |
+    ts.TypeFlags.BigIntLike |
+    ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.EnumLike |
+    ts.TypeFlags.ESSymbolLike |
+    ts.TypeFlags.VoidLike |
+    ts.TypeFlags.Null |
+    ts.TypeFlags.Any |
+    ts.TypeFlags.Unknown |
+    ts.TypeFlags.Never |
+    ts.TypeFlags.NonPrimitive) &
+  ~(ts.TypeFlags.TemplateLiteral | ts.TypeFlags.StringMapping);
+
+// The answer of all of some answers, 1 and 2 for no and yes or 0 where they don't tell, which
+// fails where any fails, and of any of them, which holds where any holds, each taking the answers
+// in order only as far as they tell.
+const getEveryAnswer = (count: number, getAnswer: (index: number) => number) => {
+  const answers = new Uint8Array(count);
+  for (let index = 0; index < count; index += 1) {
+    answers[index] = getAnswer(index);
+    if (answers[index] === 1) return 1;
+  }
+  return answers.includes(0) ? 0 : 2;
+};
+
+const getSomeAnswer = (count: number, getAnswer: (index: number) => number) => {
+  const answers = new Uint8Array(count);
+  for (let index = 0; index < count; index += 1) {
+    answers[index] = getAnswer(index);
+    if (answers[index] === 2) return 2;
+  }
+  return answers.includes(0) ? 0 : 1;
+};
+
+// The starts of runs of lists laid end to end, with the end of the last.
+const getRunStarts = (runs: readonly (readonly unknown[])[]) => {
+  const starts = new Int32Array(runs.length + 1);
+  runs.forEach((run, index) => {
+    starts[index + 1] = starts[index] + run.length;
+  });
+  return starts;
+};
 
 // The distinct types of some nodes or values, in the order of their ids.
 const getDistinctTypes = (types: readonly ts.Type[]) =>
@@ -6166,9 +6678,7 @@ export const createDispatch = (
   const dispatched = callees.filter(
     (callee) => !isHeldBuiltInObject(callee, context) && !isSuperAccess(callee),
   );
-  const calleeTypes = getDistinctTypes(
-    dispatched.map((callee) => checker.getTypeAtLocation(callee)),
-  );
+  const calleeTypes = getDistinctTypes(dispatched.map((callee) => getCalleeType(callee, checker)));
   const calleeIds = Int32Array.from(calleeTypes, (type) => type.id);
   const words = (candidateTypes.length + 31) >>> 5;
   const rows = new Uint32Array(calleeTypes.length * words);
@@ -6188,7 +6698,7 @@ export const createDispatch = (
   const tested = new Uint32Array(calleeTypes.length * words);
   calleeTypes.forEach((_, row) => tested.set(sharedBits, row * words));
   dispatched.forEach((callee) => {
-    const row = getLowerBound(calleeIds, 0, calleeIds.length, checker.getTypeAtLocation(callee).id);
+    const row = getLowerBound(calleeIds, 0, calleeIds.length, getCalleeType(callee, checker).id);
     context.functionCandidates.get(callee.getSourceFile())?.forEach((candidate) => {
       const bit = getBit(candidate);
       tested[row * words + (bit >>> 5)] |= 1 << (bit & 31);
@@ -6305,62 +6815,116 @@ export const createDispatch = (
     const id = symbol === undefined ? -1 : ts.getSymbolId(symbol);
     return candidateSymbols[getLowerBound(candidateSymbols, 0, candidateSymbols.length, id)] === id;
   };
-  // Where both are function types of one call signature with no rest parameter, the candidate
-  // type a plain one with no this, and the callee type's signature has no type parameter or type
-  // predicate, TypeScript's compareSignaturesRelated relates them by the count of arguments, then
-  // each pair of parameter types, then the return types, unless the parameters at a position are
-  // both function types, which it compares as callbacks. The pairs of those types take far fewer
-  // tests than the pairs of function types: the candidate types' parameter and return types, and
-  // the callee types', each by an index, with a table each way of the answers that the tests find,
-  // 1 and 2 for no and yes.
-  const sources = candidateTypes.map((type) => {
+  // TypeScript relates a function type of TypeScript's own, not an alias's or an instantiation's,
+  // whose call signatures take no rest parameter or this, and that has nothing else, to a type of
+  // call signatures alone only through their signatures: one to the other by
+  // compareSignaturesRelated where each has one, and otherwise each of the target's to some of the
+  // source's, with their type parameters erased. The candidate types' signatures, by runs from
+  // sourceStarts[bit] to sourceStarts[bit + 1], none where TypeScript relates the type otherwise.
+  const isSignaturesOnly = (type: ts.Type) =>
+    checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
+    checker.getPropertiesOfType(type).length === 0 &&
+    checker.getIndexInfosOfType(type).length === 0;
+  const getSourceSignatures = (type: ts.Type) => {
     const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
-    return isPlainFunctionType(type) &&
-      signatures.length === 1 &&
-      (signatures[0].flags & SIGNATURE_REST) === 0 &&
-      signatures[0].thisParameter === undefined
-      ? signatures[0]
-      : undefined;
-  });
-  // A callee type may be an alias's or an instantiation's, and its signature may take a this,
-  // which TypeScript compares only to a candidate's own this, and come from a generic one, which
-  // changes only how it compares callbacks.
-  const targets = calleeTypes.map((type) => {
-    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
-    const signature = signatures.length === 1 ? signatures[0] : undefined;
     return type.flags === ts.TypeFlags.Object &&
-      ((type.objectFlags ?? 0) & (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped)) === 0 &&
-      signature !== undefined &&
-      signature.typeParameters === undefined &&
-      (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0 &&
-      signature.declaration !== undefined &&
-      !isJavaScriptFile(signature.declaration.getSourceFile().fileName) &&
-      checker.getTypePredicateOfSignature(signature) === undefined &&
-      checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length === 0 &&
-      checker.getPropertiesOfType(type).length === 0 &&
-      checker.getIndexInfosOfType(type).length === 0
-      ? signature
-      : undefined;
-  });
-  const getParts = (signature: ts.Signature | undefined) =>
-    signature === undefined
-      ? []
-      : [
-          ...signature.parameters.map((_, position) =>
-            checker.getParameterType(signature, position),
-          ),
-          checker.getReturnTypeOfSignature(signature),
-        ];
-  const sourceParts = sources.map(getParts);
-  const targetParts = targets.map(getParts);
+      type.aliasSymbol === undefined &&
+      ((type.objectFlags ?? 0) &
+        (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped | ts.ObjectFlags.Instantiated)) ===
+        0 &&
+      signatures.length > 0 &&
+      signatures.every(
+        (signature) =>
+          signature.target === undefined &&
+          signature.thisParameter === undefined &&
+          (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0 &&
+          signature.declaration !== undefined &&
+          !isJavaScriptFile(signature.declaration.getSourceFile().fileName),
+      ) &&
+      isSignaturesOnly(type)
+      ? signatures
+      : [];
+  };
+  // A callee type may be an alias's or an instantiation's, and its signatures may take a this,
+  // which TypeScript compares only to a candidate's own this, come from a generic one, which
+  // changes only how it compares callbacks, and take type parameters, which TypeScript compares as
+  // they are to a source of none where each type has one signature. A union that holds null or
+  // undefined besides one other type relates a function type as that type does, and another union
+  // as any of its types does, as the function type has no properties that it may discriminate the
+  // union by. The callee types' targets by runs from unitStarts[row] to unitStarts[row + 1], and
+  // their signatures by runs from targetStarts[unit] to targetStarts[unit + 1].
+  const getTargetSignatures = (type: ts.Type) => {
+    if (
+      type.flags !== ts.TypeFlags.Object ||
+      ((type.objectFlags ?? 0) & (ts.ObjectFlags.Reference | ts.ObjectFlags.Mapped)) !== 0
+    ) {
+      return [];
+    }
+    const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    return signatures.length > 0 &&
+      signatures.every(
+        (signature) =>
+          (signature.flags & (SIGNATURE_REST | SIGNATURE_UNTYPED)) === 0 &&
+          signature.declaration !== undefined &&
+          !isJavaScriptFile(signature.declaration.getSourceFile().fileName) &&
+          checker.getTypePredicateOfSignature(signature) === undefined,
+      ) &&
+      isSignaturesOnly(type)
+      ? signatures
+      : [];
+  };
+  const getUnits = (type: ts.Type) => {
+    if (!type.isUnion()) return [type];
+    const types = type.types;
+    const other =
+      types.length === 2 && (types[0].flags & NULLABLE) !== 0
+        ? types[1]
+        : types.length === 3 &&
+            (types[0].flags & NULLABLE) !== 0 &&
+            (types[1].flags & NULLABLE) !== 0
+          ? types[2]
+          : undefined;
+    return other !== undefined && (other.flags & NULLABLE) === 0 ? [other] : types;
+  };
+  const sourceRuns = candidateTypes.map(getSourceSignatures);
+  const sourceStarts = getRunStarts(sourceRuns);
+  const sourceSignatures = sourceRuns.flat();
+  const unitRuns = calleeTypes.map(getUnits);
+  const unitTypes = getDistinctTypes(unitRuns.flat());
+  const unitIds = Int32Array.from(unitTypes, (type) => type.id);
+  const unitStarts = getRunStarts(unitRuns);
+  const rowUnits = Int32Array.from(unitRuns.flat(), (type) =>
+    getLowerBound(unitIds, 0, unitIds.length, type.id),
+  );
+  const targetRuns = unitTypes.map(getTargetSignatures);
+  const targetStarts = getRunStarts(targetRuns);
+  const targetSignatures = targetRuns.flat();
+  // Where TypeScript relates two signatures, it relates them by the count of arguments, then each
+  // pair of parameter types, then the return types, unless the parameters at a position are both
+  // function types, which it compares as callbacks. A generic source takes the types that
+  // TypeScript infers from the target first, which leave a type of no type parameters as it is,
+  // such as a primitive's. The pairs of those types take far fewer tests than the pairs of
+  // function types: the signatures' parameter and return types, each by an index, with a table
+  // each way of the answers that the tests find, 1 and 2 for no and yes.
+  const getParts = (signature: ts.Signature) => [
+    ...signature.parameters.map((_, position) => checker.getParameterType(signature, position)),
+    checker.getReturnTypeOfSignature(signature),
+  ];
+  const sourceParts = sourceSignatures.map(getParts);
+  const targetParts = targetSignatures.map(getParts);
   const sourcePartTypes = getDistinctTypes(sourceParts.flat());
   const targetPartTypes = getDistinctTypes(targetParts.flat());
   const sourcePartIds = Int32Array.from(sourcePartTypes, (type) => type.id);
   const targetPartIds = Int32Array.from(targetPartTypes, (type) => type.id);
-  const getPartIndexes = (parts: readonly ts.Type[], ids: Int32Array) =>
-    Int32Array.from(parts, (part) => getLowerBound(ids, 0, ids.length, part.id));
-  const sourceIndexes = sourceParts.map((parts) => getPartIndexes(parts, sourcePartIds));
-  const targetIndexes = targetParts.map((parts) => getPartIndexes(parts, targetPartIds));
+  const sourcePartStarts = getRunStarts(sourceParts);
+  const targetPartStarts = getRunStarts(targetParts);
+  const sourceIndexes = Int32Array.from(sourceParts.flat(), (part) =>
+    getLowerBound(sourcePartIds, 0, sourcePartIds.length, part.id),
+  );
+  const targetIndexes = Int32Array.from(targetParts.flat(), (part) =>
+    getLowerBound(targetPartIds, 0, targetPartIds.length, part.id),
+  );
+  const sourceLeastArguments = Int32Array.from(sourceSignatures, getLeastArguments);
   // A parameter type that TypeScript may compare as a callback: an object type of call signatures.
   const isCallable = (type: ts.Type) => {
     const value = checker.getNonNullableType(type);
@@ -6369,8 +6933,11 @@ export const createDispatch = (
       checker.getSignaturesOfType(value, ts.SignatureKind.Call).length > 0
     );
   };
+  const isFixed = (type: ts.Type) =>
+    (type.isUnion() ? type.types : [type]).every((member) => (member.flags & FIXED) !== 0);
   const isSourceCallable = sourcePartTypes.map(isCallable);
   const isTargetCallable = targetPartTypes.map(isCallable);
+  const isSourceFixed = sourcePartTypes.map(isFixed);
   const sourceToTarget = new Uint8Array(sourcePartTypes.length * targetPartTypes.length);
   const targetToSource = new Uint8Array(targetPartTypes.length * sourcePartTypes.length);
   const isSourceRelated = (source: number, target: number) => {
@@ -6395,45 +6962,101 @@ export const createDispatch = (
     }
     return targetToSource[at] === 2;
   };
-  // The answer through the parts, 1 and 2 for no and yes, or 0 where only the whole relation tells.
-  const getPartsAnswer = (bit: number, row: number) => {
-    const source = sources[bit];
-    const target = targets[row];
-    if (source === undefined || target === undefined) return 0;
-    if (source === target) return 2;
-    const sourceCount = source.parameters.length;
-    const targetCount = target.parameters.length;
-    if (leastArguments[bit] > targetCount) return 1;
-    const kind = target.declaration?.kind;
+  // The answers through the parts, 1 and 2 for no and yes, or 0 where only the whole relation
+  // tells: of a parameter's pair, of the return types, and of two signatures, which fail where any
+  // pair fails.
+  const getParameterAnswer = (source: number, target: number, position: number) => {
+    const sourcePart = sourceIndexes[sourcePartStarts[source] + position];
+    const targetPart = targetIndexes[targetPartStarts[target] + position];
+    if (sourcePartTypes[sourcePart] === targetPartTypes[targetPart]) return 2;
+    if (
+      (sourceSignatures[source].typeParameters !== undefined && !isSourceFixed[sourcePart]) ||
+      (isSourceCallable[sourcePart] && isTargetCallable[targetPart])
+    ) {
+      return 0;
+    }
+    const kind = targetSignatures[target].declaration?.kind;
     const isStrictVariance =
       isStrictFunctionTypes &&
       kind !== ts.SyntaxKind.MethodDeclaration &&
       kind !== ts.SyntaxKind.MethodSignature &&
       kind !== ts.SyntaxKind.Constructor;
-    const sourceIndex = sourceIndexes[bit];
-    const targetIndex = targetIndexes[row];
-    for (let position = 0; position < Math.min(sourceCount, targetCount); position += 1) {
-      const sourcePart = sourceIndex[position];
-      const targetPart = targetIndex[position];
-      if (sourcePartTypes[sourcePart] === targetPartTypes[targetPart]) continue;
-      if (isSourceCallable[sourcePart] && isTargetCallable[targetPart]) return 0;
-      const isRelated =
-        (!isStrictVariance && isSourceRelated(sourcePart, targetPart)) ||
-        isTargetRelated(targetPart, sourcePart);
-      if (!isRelated) return 1;
-    }
-    const targetReturn = targetIndex[targetCount];
+    return (!isStrictVariance && isSourceRelated(sourcePart, targetPart)) ||
+      isTargetRelated(targetPart, sourcePart)
+      ? 2
+      : 1;
+  };
+  const getReturnAnswer = (source: number, target: number) => {
+    const sourceReturn = sourceIndexes[sourcePartStarts[source + 1] - 1];
+    const targetReturn = targetIndexes[targetPartStarts[target + 1] - 1];
     if ((targetPartTypes[targetReturn].flags & (ts.TypeFlags.Void | ts.TypeFlags.Any)) !== 0) {
       return 2;
     }
-    return isSourceRelated(sourceIndex[sourceCount], targetReturn) ? 2 : 1;
+    if (sourceSignatures[source].typeParameters !== undefined && !isSourceFixed[sourceReturn]) {
+      return 0;
+    }
+    return isSourceRelated(sourceReturn, targetReturn) ? 2 : 1;
+  };
+  // Where either type has more than one signature, TypeScript erases a generic source's type
+  // parameters, whose count of arguments that it then takes the least count of this doesn't tell.
+  const getSignatureAnswer = (source: number, target: number, isErased: boolean) => {
+    if (sourceSignatures[source] === targetSignatures[target]) return 2;
+    const targetCount = targetSignatures[target].parameters.length;
+    const isGeneric = sourceSignatures[source].typeParameters !== undefined;
+    if (sourceLeastArguments[source] > targetCount && !(isErased && isGeneric)) return 1;
+    if (targetSignatures[target].typeParameters !== undefined && (isErased || isGeneric)) return 0;
+    const count = Math.min(sourceSignatures[source].parameters.length, targetCount);
+    return getEveryAnswer(count + 1, (position) =>
+      position < count
+        ? getParameterAnswer(source, target, position)
+        : getReturnAnswer(source, target),
+    );
+  };
+  // Of a candidate type and a target, which fail where some target signature has no source
+  // signature that it relates to.
+  const getUnitAnswer = (bit: number, unit: number) => {
+    const sourceCount = sourceStarts[bit + 1] - sourceStarts[bit];
+    const targetCount = targetStarts[unit + 1] - targetStarts[unit];
+    const isErased = sourceCount > 1 || targetCount > 1;
+    return targetCount === 0
+      ? 0
+      : getEveryAnswer(targetCount, (targetIndex) =>
+          getSomeAnswer(sourceCount, (sourceIndex) =>
+            getSignatureAnswer(
+              sourceStarts[bit] + sourceIndex,
+              targetStarts[unit] + targetIndex,
+              isErased,
+            ),
+          ),
+        );
+  };
+  // Of a candidate type and a callee type, through the parts where the candidate type has only
+  // signatures, as some target relates it, and through the whole relation otherwise.
+  const getAnswer = (bit: number, row: number) => {
+    const candidateType = candidateTypes[bit];
+    if (sourceStarts[bit] === sourceStarts[bit + 1]) {
+      return checker.isTypeAssignableTo(candidateType, calleeTypes[row]) ? 2 : 1;
+    }
+    const units = rowUnits.subarray(unitStarts[row], unitStarts[row + 1]);
+    return units.some((unit) => {
+      const answer = getUnitAnswer(bit, unit);
+      return answer === 0
+        ? checker.isTypeAssignableTo(candidateType, unitTypes[unit])
+        : answer === 2;
+    })
+      ? 2
+      : 1;
   };
   // The answer of each group's first candidate type for the callee type being tested, by the
   // callee type's row plus one: 1 and 2 for no and yes.
   const answerRows = new Int32Array(candidateTypes.length);
   const answers = new Uint8Array(candidateTypes.length);
   calleeTypes.forEach((calleeType, row) => {
-    const isGrouped = !isCandidateSymbol(calleeType.symbol);
+    const isGrouped =
+      !isCandidateSymbol(calleeType.symbol) &&
+      !rowUnits
+        .subarray(unitStarts[row], unitStarts[row + 1])
+        .some((unit) => isCandidateSymbol(unitTypes[unit].symbol));
     candidateTypes.forEach((candidateType, bit) => {
       const isTooFew =
         parameterCounts[row] >= 0 &&
@@ -6444,13 +7067,7 @@ export const createDispatch = (
       const first = isGrouped ? firsts[bit] : bit;
       if (answerRows[first] !== row + 1) {
         answerRows[first] = row + 1;
-        const partsAnswer = getPartsAnswer(bit, row);
-        answers[first] =
-          partsAnswer !== 0
-            ? partsAnswer
-            : checker.isTypeAssignableTo(candidateType, calleeType)
-              ? 2
-              : 1;
+        answers[first] = getAnswer(bit, row);
       }
       if (answers[first] === 2) rows[row * words + (bit >>> 5)] |= 1 << (bit & 31);
     });
@@ -6468,10 +7085,94 @@ export const isReached = (node: ts.Node, context: Context) => {
 };
 
 // The closures that a value whose type has calls may hold, whose type TypeScript lets it hold.
+// The count of arguments that a function needs, past those its defaults or rest let a call leave out.
+const getNeededCount = (node: FunctionNode) =>
+  getParameters(node).filter(
+    (parameter) =>
+      parameter.initializer === undefined &&
+      parameter.questionToken === undefined &&
+      parameter.dotDotDotToken === undefined,
+  ).length;
+
+// Whether a declaration sits in a generic function, whose type parameters its type may name.
+const isInGeneric = (node: ts.Node | undefined) =>
+  node !== undefined &&
+  ts.findAncestor(
+    node.parent,
+    (ancestor) => ts.isFunctionLike(ancestor) && (ancestor.typeParameters?.length ?? 0) > 0,
+  ) !== undefined;
+
+// Whether a type names a type parameter, itself or in a union's members, a reference's type
+// arguments, or its calls' parameters and results, a few levels deep.
+const namesTypeParameter = (type: ts.Type, checker: ts.TypeChecker, depth = 3): boolean => {
+  const inner = [
+    ...(type.isUnionOrIntersection() ? type.types : []),
+    ...((type.flags & ts.TypeFlags.Object) !== 0 &&
+    ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0
+      ? checker.getTypeArguments(type as ts.TypeReference)
+      : []),
+    ...type
+      .getCallSignatures()
+      .flatMap((signature) => [
+        ...signature.getParameters().map((parameter) => checker.getTypeOfSymbol(parameter)),
+        signature.getReturnType(),
+      ]),
+  ];
+  return (
+    (type.flags & ts.TypeFlags.TypeParameter) !== 0 ||
+    (depth > 0 && inner.some((member) => namesTypeParameter(member, checker, depth - 1)))
+  );
+};
+
+// Whether a function fits a callee where one's type names the type parameters of a generic
+// function around it, which TypeScript relates to no other type: where the callee's calls pass the
+// arguments that the function needs. The call still runs it only where the value holds it. A
+// callee's own function binds what it holds, so only one that a closure reads may hold another.
+// A type that names no type parameter is one that TypeScript relates, so its fit is TypeScript's.
+const isGenericFit = (
+  candidate: FunctionNode,
+  callee: ts.Expression,
+  types: readonly ts.Type[],
+  context: Context,
+) => {
+  const declaration = getValueDeclaration(getSymbol(skipCasts(callee), context.checker), context);
+  const isCaptured =
+    declaration !== undefined &&
+    ts.findAncestor(callee.parent, ts.isFunctionLike) !==
+      ts.findAncestor(declaration.parent, ts.isFunctionLike);
+  return (
+    ((isInGeneric(candidate) &&
+      namesTypeParameter(context.checker.getTypeAtLocation(candidate), context.checker)) ||
+      (isCaptured &&
+        isInGeneric(declaration) &&
+        types.some((type) => namesTypeParameter(type, context.checker)))) &&
+    types.every((type) =>
+      type
+        .getCallSignatures()
+        .some(
+          (signature) =>
+            signature.parameters.length >= getNeededCount(candidate) ||
+            (signature.declaration?.parameters.some(
+              (parameter) => ts.isParameter(parameter) && parameter.dotDotDotToken !== undefined,
+            ) ??
+              false),
+        ),
+    )
+  );
+};
+
 export const getClosures = (callee: ts.Expression, context: Context) => {
   if (isHeldBuiltInObject(callee, context)) return [];
-  const type = context.checker.getTypeAtLocation(callee);
-  return (context.closures.get(callee.getSourceFile()) ?? []).filter((closure) =>
-    context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), type),
+  const type = getCalleeType(callee, context.checker);
+  // A function with properties of its own, as Object.assign(f, {}) types it, holds a closure whose
+  // type fits its calls.
+  const called = type.isIntersection()
+    ? type.types.filter((member) => member.getCallSignatures().length > 0)
+    : [type];
+  return (context.closures.get(callee.getSourceFile()) ?? []).filter(
+    (closure) =>
+      called.every((member) =>
+        context.checker.isTypeAssignableTo(context.checker.getTypeAtLocation(closure), member),
+      ) || isGenericFit(closure, callee, called, context),
   );
 };

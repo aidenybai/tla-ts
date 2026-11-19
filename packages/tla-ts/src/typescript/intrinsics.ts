@@ -6,6 +6,7 @@ import {
   getSymbol,
   getUndefined,
   isAmbientDeclaration,
+  isScript,
   isAssigned,
   isInertValue,
   isUndeclared,
@@ -42,7 +43,8 @@ import {
   string,
   tuple,
 } from "./tla";
-import { getCollection, getKind, isGeneratorType } from "./types";
+import { getCollection, getKind, isEvery, isGeneratorType } from "./types";
+import { findProgramNames, getPosition, hasBit, setBit } from "./program-nodes";
 
 // Built-in constructors, besides the errors, whose prototype objects tla-ts compiles to
 // constants, which compare by identity.
@@ -52,11 +54,74 @@ const isGlobal = (name: string) => !/[.%\s]/.test(name) && Object.hasOwn(BUILT_I
 const isLibrary = (symbol: ts.Symbol) =>
   (symbol.declarations ?? []).length > 0 && (symbol.declarations ?? []).every(isAmbientDeclaration);
 
-export const getBuiltIn = (node: ts.Expression, context: Pick<Context, "checker">) => {
-  const symbol = getSymbol(node, context.checker);
-  return ts.isIdentifier(node) && isGlobal(node.text) && symbol !== undefined && isLibrary(symbol)
-    ? node.text
+// A var or a function at a script's top, which the global object holds as its property, where
+// tla-ts runs the file as a script.
+const isScriptGlobal = (declaration: ts.Declaration) => {
+  const statement = ts.isVariableDeclaration(declaration) ? declaration.parent.parent : declaration;
+  return (
+    !isAmbientDeclaration(declaration) &&
+    (ts.isFunctionDeclaration(declaration) ||
+      (ts.isVariableDeclaration(declaration) &&
+        (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0)) &&
+    ts.isSourceFile(statement.parent) &&
+    isScript(statement.parent)
+  );
+};
+
+// The name that a read of the global object's property names, as globalThis.Error names Error,
+// where no var or function of a script's replaces the built-in that the property holds. A name of
+// a module's own, such as a const Error, doesn't, as the global object doesn't hold it.
+const getGlobalProperty = (node: ts.Node, context: Pick<Context, "checker">) => {
+  const global =
+    ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)
+      ? getSymbol(node.expression, context.checker)
+      : undefined;
+  return ts.isPropertyAccessExpression(node) &&
+    global !== undefined &&
+    global.name === "globalThis" &&
+    (global.declarations ?? []).every(isAmbientDeclaration) &&
+    !context.checker
+      .getSymbolsInScope(node.getSourceFile(), ts.SymbolFlags.Value)
+      .some(
+        (candidate) =>
+          candidate.name === node.name.text && (candidate.declarations ?? []).some(isScriptGlobal),
+      )
+    ? node.name
     : undefined;
+};
+
+export const getBuiltIn = (
+  node: ts.Expression,
+  context: Pick<Context, "checker"> & Partial<Pick<Context, "nodes" | "builtInNames">>,
+) => {
+  const read = getGlobalProperty(node, context) ?? node;
+  // A name of the program's files reads the bit that findBuiltInNames found.
+  const names = context.builtInNames;
+  const position =
+    names === undefined || context.nodes === undefined ? -1 : getPosition(context.nodes, read);
+  if (names !== undefined && position >= 0) {
+    return ts.isIdentifier(read) && hasBit(names, position) ? read.text : undefined;
+  }
+  const symbol = getSymbol(read, context.checker);
+  return ts.isIdentifier(read) && isGlobal(read.text) && symbol !== undefined && isLibrary(symbol)
+    ? read.text
+    : undefined;
+};
+
+// Finds once which names of the program's files name a global built-in, such as Math, by their
+// positions.
+export const findBuiltInNames = (context: Context) => {
+  const table = context.nodes;
+  const names = new Uint32Array((table.nodes.length + 31) >>> 5);
+  Object.keys(BUILT_INS)
+    .filter(isGlobal)
+    .forEach((text) =>
+      findProgramNames(table, text).forEach((name) => {
+        const symbol = getSymbol(name, context.checker);
+        if (symbol !== undefined && isLibrary(symbol)) setBit(names, getPosition(table, name));
+      }),
+    );
+  return names;
 };
 
 // The reads of the global object's built-ins that a statement at a script's top checks before it
@@ -558,9 +623,12 @@ export const translateBuiltInInstanceOf = (
   const isObject = getKind(left, context) === "object";
   const isGenerator = !isPrimitive && !isObject && isGeneratorType(left, context);
   const parent = isPrimitive || isObject || isGenerator ? undefined : getPrototype(left, context);
-  // A value of type unknown or any may be anything, which only the run can tell.
+  // A value of type unknown or any may be anything, which only the run can tell, as may one of a
+  // type parameter's type, which typeof may narrow to A & object.
   const isUnknown =
-    !isPrimitive && !isObject && (type.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0;
+    !isPrimitive &&
+    !isObject &&
+    isEvery(type, ts.TypeFlags.Unknown | ts.TypeFlags.Any | ts.TypeFlags.TypeParameter);
   if (
     !isPrimitive &&
     !isObject &&
@@ -731,9 +799,16 @@ const isCompared = (node: ts.Expression, context: Context): boolean => {
 };
 
 const getGlobal = (name: string, node: ts.Node, context: Context) => {
-  const named = context.checker
-    .getSymbolsInScope(node.getSourceFile(), ts.SymbolFlags.Value)
-    .find((candidate) => candidate.name === name);
+  const symbols = context.checker.getSymbolsInScope(node.getSourceFile(), ts.SymbolFlags.Value);
+  const scoped = symbols.find((candidate) => candidate.name === name);
+  // A module's own name, such as a const Error, hides the built-in from the module's code but not
+  // from the global object, which still holds it, as globalThis.Error reads it.
+  const named =
+    scoped !== undefined && !isLibrary(scoped) && !(scoped.declarations ?? []).some(isScriptGlobal)
+      ? symbols
+          .find((candidate) => candidate.name === "globalThis")
+          ?.exports?.get(ts.escapeLeadingUnderscores(name))
+      : scoped;
   if (named !== undefined && !isLibrary(named)) {
     throw new TlaTypeScriptError(
       `tla-ts can't name the built-in ${name}, which ${name} hides`,

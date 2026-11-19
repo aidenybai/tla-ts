@@ -115,11 +115,14 @@ export const mayBeSetOrMapType = (type: ts.Type) =>
 export const mayBeSequenceType = (type: ts.Type, checker: ts.TypeChecker) =>
   (type.isUnion() ? type.types : [type]).some((member) => isSequenceType(member, checker));
 
-// Whether every member of a type, such as each literal in a union, has the given flags.
+// Whether every member of a type, such as each literal in a union, has the given flags, where every
+// value of an intersection has each member's kind, as typeof narrows a type parameter to A & bigint.
 export const isEvery = (type: ts.Type, flags: ts.TypeFlags): boolean =>
   type.isUnion()
     ? type.types.every((member) => isEvery(member, flags))
-    : (type.flags & flags) !== 0;
+    : type.isIntersection()
+      ? type.types.some((member) => isEvery(member, flags))
+      : (type.flags & flags) !== 0;
 
 // The plain objects that built-in functions take or give.
 // The type of each typed array's elements.
@@ -292,8 +295,9 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
         (LIBRARY_OBJECTS.has(symbol.name) ||
           // A mapped type, such as Record or Partial, whose declaration the library writes.
           ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Mapped) !== 0 ||
-          // The objects that Proxy.revocable, Object.getOwnPropertyDescriptors, and
-          // Atomics.waitAsync give, whose types their declarations write in place.
+          // The objects that Proxy.revocable, Object.getOwnPropertyDescriptors,
+          // Object.fromEntries, and Atomics.waitAsync give, whose types their declarations write
+          // in place.
           (symbol.declarations ?? []).some((declaration) => {
             if (!ts.isTypeLiteralNode(declaration)) return false;
             const signature =
@@ -303,7 +307,7 @@ const isPlainObject = (type: ts.Type, context: Context): boolean => {
                 : declaration.parent;
             return (
               ts.isMethodSignature(signature) &&
-              ["revocable", "getOwnPropertyDescriptors", "waitAsync"].includes(
+              ["revocable", "getOwnPropertyDescriptors", "fromEntries", "waitAsync"].includes(
                 signature.name.getText(),
               )
             );
@@ -663,6 +667,12 @@ const isCollectionProxy = (node: ts.Expression, context: Context): boolean => {
   );
 };
 
+// An array that the heap holds, or an arguments object, which spread and apply read as one.
+export const isHeapArrayLike = (node: ts.Expression, context: Context) =>
+  isHeapArray(node, context) ||
+  (context.heap !== undefined &&
+    context.checker.getTypeAtLocation(skipCasts(node)).getSymbol()?.name === "IArguments");
+
 export const isHeapArray = (node: ts.Expression, context: Context) => {
   if (context.heap === undefined) return false;
   const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
@@ -804,10 +814,19 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
     symbol !== undefined && ts.isIdentifier(node) && isAutoTyped(node, context)
       ? getAssignedValues(symbol, context)
       : undefined;
+  // Where it's assigned other values too, a read whose type TypeScript narrows to an array's reads
+  // what an assignment of an array gave it.
+  const checker = context.checker;
+  const isArrayLike = (type: ts.Type) => checker.isArrayType(type) || checker.isTupleType(type);
+  const arrays = (assigned ?? []).filter(
+    (value) => ts.isArrayLiteralExpression(value) || isArrayLike(checker.getTypeAtLocation(value)),
+  );
   if (
     assigned !== undefined &&
-    assigned.length > 0 &&
-    assigned.every(
+    arrays.length > 0 &&
+    (arrays.length === assigned.length ||
+      isArrayLike(checker.getNonNullableType(checker.getTypeAtLocation(node)))) &&
+    arrays.every(
       (value) => ts.isArrayLiteralExpression(value) && context.heapCollections.has(value),
     )
   ) {
@@ -1415,6 +1434,14 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
   ) {
     return "object";
   }
+  // A name of a function that the heap holds, whatever type a cast gives it.
+  if (
+    symbol !== undefined &&
+    context.heap !== undefined &&
+    getHeapClass(node, context) !== undefined
+  ) {
+    return "object";
+  }
   if (
     declared !== undefined &&
     symbol !== undefined &&
@@ -1440,7 +1467,13 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
     return "object";
   }
   if (isHeldBuiltInObject(node, context) || isCreatedObject(node, context)) return "object";
-  const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
+  // A value of a type parameter holds one of its constraint's, as a rest parameter of type A
+  // extends ReadonlyArray<unknown> holds an array.
+  const read = checker.getNonNullableType(checker.getTypeAtLocation(node));
+  const type =
+    (read.flags & ts.TypeFlags.TypeParameter) !== 0
+      ? (checker.getBaseConstraintOfType(read) ?? read)
+      : read;
   // A value of a built-in object's type, other than the global that names it, holds that object.
   if (
     context.heap !== undefined &&
@@ -1749,8 +1782,15 @@ export const isBooleanType = (type: ts.Type) => isEvery(type, ts.TypeFlags.Boole
 export const isBooleanLike = (node: ts.Expression, context: Context) =>
   isBooleanType(context.checker.getTypeAtLocation(node));
 
-export const isNumberLike = (node: ts.Expression, context: Context) =>
-  isEvery(context.checker.getTypeAtLocation(node), ts.TypeFlags.NumberLike | ts.TypeFlags.Never);
+// A value of a generic type, such as Parameters<F>["length"], holds one of its constraint's.
+export const isNumberLike = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getTypeAtLocation(node);
+  const fixed =
+    (type.flags & (ts.TypeFlags.TypeParameter | ts.TypeFlags.IndexedAccess)) !== 0
+      ? (context.checker.getBaseConstraintOfType(type) ?? type)
+      : type;
+  return isEvery(fixed, ts.TypeFlags.NumberLike | ts.TypeFlags.Never);
+};
 
 // A primitive that ToNumber converts without running a method.
 export const isPrimitiveIndex = (node: ts.Expression, context: Context) =>
@@ -2102,6 +2142,21 @@ export const translateUnknown = (
   const isLibrary =
     (declaration !== undefined && declaration.getSourceFile().isDeclarationFile) ||
     (parameter !== undefined && ts.isParameter(parameter) && parameter.parent === unknowns?.owner);
+  // A method that only the program's interface declares, inside a function, which may never run:
+  // the call stops the check where it runs.
+  if (
+    declaration !== undefined &&
+    !declaration.getSourceFile().isDeclarationFile &&
+    (ts.isMethodSignature(declaration) || ts.isPropertySignature(declaration)) &&
+    ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined
+  ) {
+    return apply("Assert", [
+      boolean(false),
+      string(
+        `tla-ts can't tell which function ${node.expression.getText()} runs, as only an interface declares it`,
+      ),
+    ]);
+  }
   if (
     !isLibrary ||
     unknowns === undefined ||

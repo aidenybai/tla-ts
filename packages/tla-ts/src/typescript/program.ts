@@ -296,6 +296,57 @@ const createVarFunctionsFile = (
   return declared === text ? file : createFile(fileName, declared, languageVersion);
 };
 
+// The module that a file's literal names, for a file whose imports load as Node loads them where
+// isValue: TypeScript's resolution, where TypeScript compiles the module's code itself or only
+// types read it, and else the file that Node loads, as a package or JavaScript, though a package
+// may give its types, which isDeclared tells. containingFile is the file's path as TypeScript
+// resolves from it, which a model's own file, named as the CLI is given it, may not be.
+const resolveLiteral = (
+  literal: ts.StringLiteralLike,
+  containingFile: string,
+  containingSourceFile: ts.SourceFile,
+  isValue: boolean,
+  options: ts.CompilerOptions,
+  host: ts.CompilerHost,
+  redirectedReference: ts.ResolvedProjectReference | undefined,
+): { module: ts.ResolvedModuleWithFailedLookupLocations; isDeclared: boolean } => {
+  const resolved =
+    isJavaScriptFile(containingFile) && isValue
+      ? undefined
+      : ts.resolveModuleName(
+          literal.text,
+          containingFile,
+          options,
+          host,
+          undefined,
+          redirectedReference,
+        );
+  // tla-ts reads JSON's value as any, which the declaration of JSON's modules gives.
+  if (resolved?.resolvedModule?.extension === ts.Extension.Json) {
+    return { module: { resolvedModule: undefined }, isDeclared: false };
+  }
+  if (
+    resolved !== undefined &&
+    (!isValue ||
+      CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "") ||
+      containingSourceFile.isDeclarationFile ||
+      isTypeImport(literal))
+  ) {
+    return { module: resolved, isDeclared: false };
+  }
+  const found = resolveModule(literal, containingFile);
+  const extension = found === undefined ? undefined : getExtension(found);
+  if (found === undefined || extension === undefined || extension === ts.Extension.Json) {
+    return { module: resolved ?? { resolvedModule: undefined }, isDeclared: false };
+  }
+  return {
+    module: {
+      resolvedModule: { resolvedFileName: found, extension, isExternalLibraryImport: false },
+    },
+    isDeclared: resolved?.resolvedModule !== undefined,
+  };
+};
+
 // The project of the nearest tsconfig.json, where it holds the file, as an editor finds it.
 const getProject = (path: string) => {
   if (!ts.sys.fileExists(path)) return undefined;
@@ -333,13 +384,59 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
   ignoreDeprecations: "6.0",
 });
 
+// The file that a literal of a model's file loads as the model runs, as createProgram resolves
+// it for the model at path, or undefined where none does.
+export const createFileResolver = (path: string) => {
+  const project = getProject(path);
+  const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
+  const host = ts.createCompilerHost(options);
+  // A JSON file, which tla-ts reads TypeScript's resolution of as no module, is the one that Node
+  // loads.
+  return (literal: ts.StringLiteralLike) =>
+    resolveLiteral(
+      literal,
+      literal.getSourceFile().fileName,
+      literal.getSourceFile(),
+      true,
+      options,
+      host,
+      undefined,
+    ).module.resolvedModule?.resolvedFileName ??
+    [resolveModule(literal, literal.getSourceFile().fileName)].find((path) =>
+      path?.endsWith(".json"),
+    );
+};
+
 // Type checks a model, with the files it imports, and throws their type errors. A file of a project
 // on disk type checks with the project's options, and where it needs them, as in an editor, the
 // globals that the project's other files declare, such as those of a types package one references.
-export const createProgram = (source: string, path: string, library: Library = DEFAULT_LIBRARY) => {
+export const createProgram = (
+  source: string,
+  path: string,
+  library: Library = DEFAULT_LIBRARY,
+  // The paths of the scripts that run before the model, which shares their global scope, as a
+  // page's scripts do, where the model is a script too.
+  scripts: readonly string[] = [],
+) => {
   const libraries = library.texts;
   const project = libraries === undefined ? getProject(path) : undefined;
-  const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
+  const projectOptions =
+    project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
+  // Scripts share their global scope only where TypeScript reads them as scripts.
+  const options: ts.CompilerOptions =
+    scripts.length === 0
+      ? projectOptions
+      : { ...projectOptions, moduleDetection: ts.ModuleDetectionKind.Legacy };
+  const roots = [...scripts, path];
+  // A script's JavaScript runs as a page's script does, rather than as Node loads a module.
+  const createModelFile = (
+    fileName: string,
+    text: string,
+    languageVersion: ts.ScriptTarget | ts.CreateSourceFileOptions,
+  ) =>
+    roots.length > 1 && roots.includes(fileName) && isJavaScriptFile(fileName)
+      ? ts.createSourceFile(fileName, text, languageVersion, true, ts.ScriptKind.JS)
+      : createFile(fileName, text, languageVersion);
   const host =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
   // Whether a module that Node loads as JavaScript gave its types from a declaration file, which
@@ -359,41 +456,18 @@ export const createProgram = (source: string, path: string, library: Library = D
       resolutionOptions: ts.CompilerOptions,
       containingSourceFile: ts.SourceFile,
     ) =>
-      literals.map((literal): ts.ResolvedModuleWithFailedLookupLocations => {
-        const isValue = valueFiles === undefined || valueFiles.has(containingFile);
-        const resolved =
-          isJavaScriptFile(containingFile) && isValue
-            ? undefined
-            : ts.resolveModuleName(
-                literal.text,
-                containingFile,
-                resolutionOptions,
-                host,
-                undefined,
-                redirectedReference,
-              );
-        // tla-ts reads JSON's value as any, which the declaration of JSON's modules gives.
-        if (resolved?.resolvedModule?.extension === ts.Extension.Json) {
-          return { resolvedModule: undefined };
-        }
-        if (resolved !== undefined && !isValue) return resolved;
-        if (
-          resolved !== undefined &&
-          (CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "") ||
-            containingSourceFile.isDeclarationFile ||
-            isTypeImport(literal))
-        ) {
-          return resolved;
-        }
-        const found = resolveModule(literal, containingFile);
-        const extension = found === undefined ? undefined : getExtension(found);
-        if (found === undefined || extension === undefined || extension === ts.Extension.Json) {
-          return resolved ?? { resolvedModule: undefined };
-        }
-        if (resolved?.resolvedModule !== undefined) isDeclared = true;
-        return {
-          resolvedModule: { resolvedFileName: found, extension, isExternalLibraryImport: false },
-        };
+      literals.map((literal) => {
+        const resolution = resolveLiteral(
+          literal,
+          containingFile,
+          containingSourceFile,
+          valueFiles === undefined || valueFiles.has(containingFile),
+          resolutionOptions,
+          host,
+          redirectedReference,
+        );
+        if (resolution.isDeclared) isDeclared = true;
+        return resolution.module;
       });
   // HACK: a write outside strict mode to a name that no binding has makes a global, which the text
   // gains a var for, at its start, so that the name binds wherever it's written or read. The
@@ -418,9 +492,9 @@ export const createProgram = (source: string, path: string, library: Library = D
           return ts.createSourceFile(fileName, JSON_DECLARATIONS.text, languageVersion);
         }
         const typedText = typedTexts.get(fileName);
-        if (typedText !== undefined) return createFile(fileName, typedText, languageVersion);
+        if (typedText !== undefined) return createModelFile(fileName, typedText, languageVersion);
         if (fileName === path) {
-          return createFile(
+          return createModelFile(
             path,
             [...globals].map((name) => getAnyVar(name, path)).join("") + text,
             languageVersion,
@@ -428,6 +502,9 @@ export const createProgram = (source: string, path: string, library: Library = D
         }
         const file = library.files.get(fileName) ?? host.getSourceFile(fileName, languageVersion);
         if (file === undefined || file.isDeclarationFile) return file;
+        if (roots.includes(fileName) && isJavaScriptFile(fileName)) {
+          return createModelFile(fileName, file.text, languageVersion);
+        }
         return createVarFunctionsFile(
           fileName,
           assignParameterProperties(fileName, file.text),
@@ -452,7 +529,7 @@ export const createProgram = (source: string, path: string, library: Library = D
     return file;
   };
   const firstText = declareFileVarFunctions(path, assignParameterProperties(path, source));
-  const firstProgram = createTypeScriptProgram([path], firstText, new Set(), undefined, new Map());
+  const firstProgram = createTypeScriptProgram(roots, firstText, new Set(), undefined, new Map());
   const firstSourceFile = getModelSourceFile(firstProgram);
   const syntaxErrors = firstProgram.getSyntacticDiagnostics(firstSourceFile);
   if (syntaxErrors.length > 0)
@@ -462,12 +539,12 @@ export const createProgram = (source: string, path: string, library: Library = D
   const withProgram =
     withText === firstText
       ? firstProgram
-      : createTypeScriptProgram([path], withText, new Set(), undefined, new Map());
+      : createTypeScriptProgram(roots, withText, new Set(), undefined, new Map());
   const text = rewriteNameDeletes(getModelSourceFile(withProgram), withProgram.getTypeChecker());
   const rewrittenProgram =
     text === withText
       ? withProgram
-      : createTypeScriptProgram([path], text, new Set(), undefined, new Map());
+      : createTypeScriptProgram(roots, text, new Set(), undefined, new Map());
   const rewrittenChecker = rewrittenProgram.getTypeChecker();
   const globals = getImplicitGlobals(getModelSourceFile(rewrittenProgram), (name) =>
     getSymbol(name, rewrittenChecker),
@@ -483,7 +560,7 @@ export const createProgram = (source: string, path: string, library: Library = D
   const untypedProgram =
     globals.size === 0
       ? rewrittenProgram
-      : createTypeScriptProgram([path], text, globals, undefined, new Map());
+      : createTypeScriptProgram(roots, text, globals, undefined, new Map());
   // The JavaScript that the model loads, its own and its packages', whose types tla-ts makes hold,
   // round by round, until TypeScript reports no error that changes them.
   const typeJavaScriptFiles = (
@@ -500,7 +577,7 @@ export const createProgram = (source: string, path: string, library: Library = D
     if (texts.length === 0) return { program, typedTexts };
     const next = new Map([...typedTexts, ...texts]);
     return typeJavaScriptFiles(
-      createTypeScriptProgram([path], text, globals, undefined, next),
+      createTypeScriptProgram(roots, text, globals, undefined, next),
       next,
     );
   };
@@ -535,12 +612,12 @@ export const createProgram = (source: string, path: string, library: Library = D
           ).filter(isTypeScript),
         ];
   };
-  const modelDiagnostics = getTypedDiagnostics(modelProgram, [path]);
+  const modelDiagnostics = getTypedDiagnostics(modelProgram, roots);
   // A model that type checks by itself keeps the program of its own files, which loads faster.
   // Where the model reads a package's types from its declarations, only the program that reads
   // them type checks it, with the project's globals, and the model's own program, whose package
   // values are any, compiles it.
-  const projectRoots = [path, ...(project?.fileNames ?? [])];
+  const projectRoots = [...roots, ...(project?.fileNames ?? [])];
   const isProjectChecked = project !== undefined && modelDiagnostics.length > 0;
   const program =
     !isProjectChecked || isDeclared

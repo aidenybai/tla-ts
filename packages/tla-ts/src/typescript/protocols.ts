@@ -39,6 +39,7 @@ import {
 import { getFileIndex } from "./program-nodes";
 import { TlaTypeScriptError } from "../errors";
 import { readsUninitialized } from "./aliasing";
+import { isAnyOperand, isObjectOperand, runToPrimitive } from "./conversions";
 import { translateExpression } from "./expressions";
 import { type Formula, ifThenElse, leaf, letIn, render } from "./formula";
 import { getBuiltIn, translateBuiltInValue } from "./intrinsics";
@@ -57,7 +58,7 @@ import { useJavaScript } from "./javascript";
 import type { Scope } from "./scope";
 import { mayThrow } from "./functions";
 import { getThrownMessage } from "./shared-calls";
-import { getKind, isHeapPattern } from "./types";
+import { getKind, isHeapPattern, TYPED_ARRAYS } from "./types";
 import {
   apply,
   boolean,
@@ -347,6 +348,9 @@ export const callMethod = (
   frame: Frame,
   throwWith: (path: Path) => Formula,
   continueWith: (path: Path, result: Expression) => Formula,
+  // Whether the caller steps the generator that a generator method makes in a loop, which a state
+  // machine can then run.
+  isLooped = false,
 ) =>
   callValue(
     site,
@@ -392,6 +396,7 @@ export const callMethod = (
               context,
               frame,
               (after, result) => continueWith(after, result ?? getUndefined(context)),
+              isLooped,
             ),
             rest,
           ),
@@ -781,8 +786,39 @@ export const isDescriptorRead = (node: ts.Node, context: Context): node is ts.Ca
   ["Object", "Reflect"].includes(node.expression.expression.getText()) &&
   node.expression.name.text === "defineProperty" &&
   node.arguments.length >= 3 &&
-  DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node, context).has(key)) &&
+  (isTypedValueDefine(node, context) ||
+    DESCRIPTOR_FIELDS.some((key) => getGetterKeys(node, context).has(key))) &&
   getFieldGetters(node, context).every((getter) => isRunnableGetter(getter, context));
+
+// A definition of a target that may be a typed array, whose descriptor may give an object value,
+// which a typed array's index converts.
+const isTypedValueDefine = (node: ts.CallExpression, context: Context) => {
+  const target = node.arguments[0];
+  const descriptor = node.arguments[2];
+  if (target === undefined || descriptor === undefined) return false;
+  const literal = skipCasts(descriptor);
+  const value = ts.isObjectLiteralExpression(literal)
+    ? literal.properties.find(
+        (property) =>
+          ts.isPropertyAssignment(property) &&
+          ts.isIdentifier(property.name) &&
+          property.name.text === "value",
+      )
+    : undefined;
+  return (
+    mayBeTypedArray(context.checker.getTypeAtLocation(skipCasts(target))) &&
+    (!ts.isObjectLiteralExpression(literal) ||
+      (value !== undefined &&
+        ts.isPropertyAssignment(value) &&
+        (isObjectOperand(value.initializer, context) || isAnyOperand(value.initializer, context))))
+  );
+};
+
+// Whether a value of a type may be a typed array: one of type any or unknown, or a typed array's.
+export const mayBeTypedArray = (type: ts.Type): boolean =>
+  (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+  TYPED_ARRAYS.has(type.getSymbol()?.getName() ?? "") ||
+  (type.isUnion() && type.types.some(mayBeTypedArray));
 
 // The getters that reading a descriptor's fields may run.
 const getFieldGetters = (node: ts.Node, context: Context) => [
@@ -983,47 +1019,85 @@ export const readDescriptor = (
   context: Context,
   frame: Frame,
   continueWith: (path: Path, value: Expression) => Formula,
-): Formula =>
-  ifThenElse(
+): Formula => {
+  const isReflect =
+    ts.isPropertyAccessExpression(site.expression) &&
+    site.expression.expression.getText() === "Reflect";
+  const define = (after: Path, descriptor: Expression) =>
+    isReflect
+      ? bind(
+          after,
+          "change",
+          useJavaScript(
+            "ReflectDefineConverted",
+            [getHeap(after.scope, site, context), values[0], values[1], descriptor],
+            context,
+          ),
+          context,
+          (bound, change) => {
+            const defined = withHeap(bound, field(change, "heap"), context);
+            return ifThenElse(
+              field(change, "isDone"),
+              continueWith(defined, field(change, "value")),
+              ifThenElse(
+                field(change, "isRangeError"),
+                throwError("RangeError", defined, site, context, frame),
+                throwTypeError(defined, site, context, frame),
+              ),
+            );
+          },
+        )
+      : defineAll(
+          site,
+          values[0],
+          tuple([values[1]]),
+          tuple([descriptor]),
+          after,
+          context,
+          frame,
+          (defined) => continueWith(defined, values[0]),
+        );
+  // A typed array's index converts an object value that its definition takes, once it checks the
+  // index and the descriptor, and writes it only where the index is still in bounds.
+  const key = useJavaScript("PropertyKey", [values[1]], context);
+  return ifThenElse(
     isObjectArgument(values[0], context),
     readFields(site, values[2], path, context, frame, (after, descriptor) =>
-      ts.isPropertyAccessExpression(site.expression) &&
-      site.expression.expression.getText() === "Reflect"
-        ? bind(
-            after,
-            "change",
+      !isTypedValueDefine(site, context)
+        ? define(after, descriptor)
+        : ifThenElse(
             useJavaScript(
-              "ReflectDefineConverted",
-              [getHeap(after.scope, site, context), values[0], values[1], descriptor],
+              "TypedDefineConverts",
+              [getHeap(after.scope, site, context), values[0], key, descriptor],
               context,
             ),
-            context,
-            (bound, change) => {
-              const defined = withHeap(bound, field(change, "heap"), context);
-              return ifThenElse(
-                field(change, "isDone"),
-                continueWith(defined, field(change, "value")),
+            runToPrimitive(
+              site,
+              field(descriptor, "value"),
+              "number",
+              after,
+              context,
+              frame,
+              (converted, primitive) =>
                 ifThenElse(
-                  field(change, "isRangeError"),
-                  throwError("RangeError", defined, site, context, frame),
-                  throwTypeError(defined, site, context, frame),
+                  useJavaScript(
+                    "HasTypedElement",
+                    [getHeap(converted.scope, site, context), values[0], key],
+                    context,
+                  ),
+                  define(
+                    converted,
+                    useJavaScript("WithDescriptorValue", [descriptor, primitive], context),
+                  ),
+                  continueWith(converted, isReflect ? boolean(true) : values[0]),
                 ),
-              );
-            },
-          )
-        : defineAll(
-            site,
-            values[0],
-            tuple([values[1]]),
-            tuple([descriptor]),
-            after,
-            context,
-            frame,
-            (defined) => continueWith(defined, values[0]),
+            ),
+            define(after, descriptor),
           ),
     ),
     throwTypeError(path, site, context, frame),
   );
+};
 
 // The keys of an object literal that a definition takes, in the order that JavaScript lists them,
 // where each is a name that isn't an index.
@@ -1041,13 +1115,10 @@ const getLiteralKeys = (node: ts.Expression | undefined) => {
     : undefined;
 };
 
-// The most keys that tla-ts reads descriptors of where it lists an object's keys as it runs.
-const KEYS_LIMIT = 4;
-
 // Object.defineProperties or Object.create, which reads the descriptor under each enumerable own
 // key in turn, running its getter, reads each descriptor's fields, and then defines them all.
 // Object.create makes its object first, and gives it. An object literal gives its keys as it's
-// written, and otherwise the statement lists them as it runs and reads at most a few.
+// written, and otherwise the statement lists them as it runs and reads them in a loop.
 export const readDescriptors = (
   site: ts.CallExpression,
   values: readonly Expression[],
@@ -1092,59 +1163,34 @@ export const readDescriptors = (
         ),
     );
   };
-  // The keys and descriptors that the statement read so far, as a pair that each join passes on.
-  const readListed = (
-    current: Path,
-    target: Expression,
-    keys: Expression,
-    position: number,
-    read: Expression,
-  ): Formula => {
-    if (position > KEYS_LIMIT) {
-      return ifThenElse(
-        apply("<=", [apply("Len", [keys]), number(KEYS_LIMIT)]),
-        defineAll(
-          site,
-          target,
-          index(read, [number(1)]),
-          index(read, [number(2)]),
-          current,
-          context,
-          frame,
-          (after) => continueWith(after, target),
-        ),
-        leaf(
-          apply("Assert", [
-            boolean(false),
-            string(`tla-ts can't read the descriptors of more than ${KEYS_LIMIT} keys`),
-          ]),
-        ),
-      );
-    }
-    const heap = getHeap(current.scope, site, context);
-    const key = index(keys, [number(position)]);
-    return translateJoined(
+  // Reads the descriptor under each listed key that is still enumerable and own, in a loop that
+  // gathers the keys and descriptors that it read as a pair.
+  const readListed = (current: Path, target: Expression, keys: Expression): Formula =>
+    loopKeys(
       site,
+      keys,
+      tuple([tuple([]), tuple([])]),
       current,
       context,
-      (after, value) => readListed(after, target, keys, position + 1, value ?? read),
-      (next) =>
+      frame,
+      (inner, key, read, innerFrame, again) =>
         ifThenElse(
-          junction("And", [
-            apply("<=", [number(position), apply("Len", [keys])]),
-            useJavaScript("IsEnumerableOwn", [heap, properties, key], context),
-          ]),
+          useJavaScript(
+            "IsEnumerableOwn",
+            [getHeap(inner.scope, site, context), properties, key],
+            context,
+          ),
           readWith(
             site,
             properties,
             key,
             getReadGetters(site, context),
-            current,
+            inner,
             context,
-            frame,
+            innerFrame,
             (got, attributes) =>
-              readFields(site, attributes, got, context, frame, (after, descriptor) =>
-                next(
+              readFields(site, attributes, got, context, innerFrame, (after, descriptor) =>
+                again(
                   after,
                   tuple([
                     apply("Append", [index(read, [number(1)]), key]),
@@ -1153,10 +1199,20 @@ export const readDescriptors = (
                 ),
               ),
           ),
-          next(current, read),
+          again(inner, read),
+        ),
+      (after, read) =>
+        defineAll(
+          site,
+          target,
+          index(read, [number(1)]),
+          index(read, [number(2)]),
+          after,
+          context,
+          frame,
+          (defined) => continueWith(defined, target),
         ),
     );
-  };
   const readAll = (current: Path, target: Expression): Formula =>
     literalKeys !== undefined
       ? readLiteral(current, target, 0, [])
@@ -1171,7 +1227,7 @@ export const readDescriptors = (
               context,
             ),
             context,
-            (bound, keys) => readListed(bound, target, keys, 1, tuple([tuple([]), tuple([])])),
+            (bound, keys) => readListed(bound, target, keys),
           ),
           leaf(
             apply("Assert", [
@@ -1246,7 +1302,7 @@ export const getOwnValuesGetters = (node: ts.Node, context: Context) =>
 // Object.values, Object.entries, or Object.assign, which lists an object's own keys, and then
 // reads each that is still an enumerable own property in turn, running its getter. values and
 // entries read string keys and gather what they read, and assign reads symbols too and writes each
-// value to its target before it reads the next. The statement reads at most a few keys.
+// value to its target before it reads the next, in a loop over the keys.
 export const readOwnValues = (
   site: ts.CallExpression,
   path: Path,
@@ -1256,72 +1312,54 @@ export const readOwnValues = (
 ): Formula => {
   const method = getCallName(site);
   const getters = getOwnValueGetters(site, context);
-  const readFrom = (
-    current: Path,
-    target: Expression,
-    object: Expression,
-    keys: Expression,
-    position: number,
-    read: Expression,
-  ): Formula => {
-    if (position > KEYS_LIMIT) {
-      return ifThenElse(
-        apply("<=", [apply("Len", [keys]), number(KEYS_LIMIT)]),
-        continueWith(current, method === "assign" ? target : read),
-        leaf(
-          apply("Assert", [
-            boolean(false),
-            string(`tla-ts can't read the values of more than ${KEYS_LIMIT} keys`),
-          ]),
-        ),
-      );
-    }
-    const key = index(keys, [number(position)]);
-    const gather = (
-      after: Path,
-      value: Expression,
-      next: (inner: Path, read: Expression) => Formula,
-    ) =>
-      method === "assign"
-        ? // Object.assign writes as a strict-mode assignment, which throws where the write fails.
-          ifThenElse(
-            useJavaScript("CanPut", [getHeap(after.scope, site, context), target, key], context),
-            writeWith(
-              site,
-              target,
-              key,
-              value,
-              getSetters(site, context),
-              after,
-              context,
-              frame,
-              (written) => next(written, read),
-            ),
-            throwTypeError(after, site, context, frame),
-          )
-        : next(after, apply("Append", [read, method === "entries" ? tuple([key, value]) : value]));
-    return translateJoined(
+  // Reads each listed key that is still enumerable and own, in a loop that gathers what it read.
+  const readFrom = (current: Path, target: Expression, object: Expression, keys: Expression) =>
+    loopKeys(
       site,
+      keys,
+      tuple([]),
       current,
       context,
-      (after, value) => readFrom(after, target, object, keys, position + 1, value ?? read),
-      (next) =>
+      frame,
+      (inner, key, read, innerFrame, again) =>
         ifThenElse(
-          junction("And", [
-            apply("<=", [number(position), apply("Len", [keys])]),
-            useJavaScript(
-              "IsEnumerableOwn",
-              [getHeap(current.scope, site, context), object, key],
-              context,
-            ),
-          ]),
-          readWith(site, object, key, getters, current, context, frame, (after, value) =>
-            gather(after, value, next),
+          useJavaScript(
+            "IsEnumerableOwn",
+            [getHeap(inner.scope, site, context), object, key],
+            context,
           ),
-          next(current, read),
+          readWith(site, object, key, getters, inner, context, innerFrame, (after, value) =>
+            method === "assign"
+              ? // Object.assign writes as a strict-mode assignment, which throws where the write
+                // fails.
+                ifThenElse(
+                  useJavaScript(
+                    "CanPut",
+                    [getHeap(after.scope, site, context), target, key],
+                    context,
+                  ),
+                  writeWith(
+                    site,
+                    target,
+                    key,
+                    value,
+                    getSetters(site, context),
+                    after,
+                    context,
+                    innerFrame,
+                    (written) => again(written, read),
+                  ),
+                  throwTypeError(after, site, context, innerFrame),
+                )
+              : again(
+                  after,
+                  apply("Append", [read, method === "entries" ? tuple([key, value]) : value]),
+                ),
+          ),
+          again(inner, read),
         ),
+      (after, read) => continueWith(after, method === "assign" ? target : read),
     );
-  };
   const values = site.arguments.map((argument) =>
     method === "assign"
       ? translateObjectValue(argument, path.scope, context)
@@ -1345,7 +1383,7 @@ export const readOwnValues = (
             context,
           ),
       context,
-      (listed, keys) => readFrom(listed, target, object, keys, 1, tuple([])),
+      (listed, keys) => readFrom(listed, target, object, keys),
     ),
     method === "assign"
       ? leaf(
@@ -1764,7 +1802,8 @@ const getOperation = (node: ts.Node, context: Context): ProxyOperation | undefin
 // read, an in, an assignment, or a delete of a key that the script writes, or a function of Object
 // or Reflect that runs an internal method.
 const getProxyOperation = (node: ts.Node, context: Context) => {
-  const operation = context.heap === undefined ? undefined : getOperation(node, context);
+  const operation =
+    context.heap === undefined || !context.isProxied ? undefined : getOperation(node, context);
   return operation !== undefined &&
     (operation.key !== undefined || !KEYED_TRAPS.has(operation.trap)) &&
     isProxyValue(operation.object, context)

@@ -140,7 +140,19 @@ The bounds on `number`, `string`, and arrays keep the search finite, so a check 
 - **Maps and records**: `get`, `has`, `size`, `keys()`, `values()`, `entries()`, `Object.keys`, `Object.values`, `Object.entries`, and `new Map(s.values().map((k) => [k, v]))` or `Object.fromEntries(…)` to build one from a set.
 - **Changes in actions**: assignments to variables and their fields, destructuring such as `[a, b] = [b, a]`, `++`, `--`, `+=`, `-=`, `*=`, `push`, `pop`, `shift`, `unshift`, `add`, `delete`, `set`, and `clear`. Changes reach through lookups, as in `held.get(proc)!.add(fork)`. `const head = queue.shift()!` reads the first element and removes it.
 - **Control flow**: `if`, `else`, `switch`, `return`, `?:`, `const` and `let` locals, and local arrow functions. Use `map`, `filter`, `every`, `some`, or a parameter in place of loops.
-- **Output**: `console.log` prints, and `console.assert(condition, message)` and `throw new Error(message)` stop the check with an error.
+- **Output**: `console.log`, `console.error`, `console.warn`, `console.info`, and `console.debug` print the values they take, as [what console prints](#what-console-prints) describes. `console.assert(condition, message)` and `throw new Error(message)` stop the check with an error.
+
+### What console prints
+
+`console.log`, `console.error`, `console.warn`, `console.info`, and `console.debug` print with TLC's `PrintT`, not as Node does. Each call writes the TLA+ form of the values it takes to stdout:
+
+- A string prints in double quotes, so `console.log("text")` prints `"text"`.
+- Two or more values print as one tuple, so `console.log("count", 0)` prints `<<"count", 0>>`.
+- `true`, `undefined`, and `null` print as `TRUE`, `Undefined`, and `Null`.
+- An object prints as a record, such as `[balance |-> 1, owner |-> "alice"]`, or as a reference, such as `(Ref :> 3)`.
+- `console.error`, `console.warn`, `console.info`, and `console.debug` write to stdout, not stderr.
+
+TLC prints each time it evaluates a call, so a call in an action prints once for each state that the action runs from. When TLC reports an error, it evaluates the states of the trace again to print them. The calls in those states then print again.
 
 ### Helpers and imports
 
