@@ -302,13 +302,13 @@ const createVarFunctionsFile = (
 // may give its types, which isDeclared tells.
 const resolveLiteral = (
   literal: ts.StringLiteralLike,
+  containingFile: string,
   containingSourceFile: ts.SourceFile,
   isValue: boolean,
   options: ts.CompilerOptions,
   host: ts.CompilerHost,
   redirectedReference: ts.ResolvedProjectReference | undefined,
 ): { module: ts.ResolvedModuleWithFailedLookupLocations; isDeclared: boolean } => {
-  const containingFile = containingSourceFile.fileName;
   const resolved =
     isJavaScriptFile(containingFile) && isValue
       ? undefined
@@ -392,8 +392,15 @@ export const createFileResolver = (path: string) => {
   // A JSON file, which tla-ts reads TypeScript's resolution of as no module, is the one that Node
   // loads.
   return (literal: ts.StringLiteralLike) =>
-    resolveLiteral(literal, literal.getSourceFile(), true, options, host, undefined).module
-      .resolvedModule?.resolvedFileName ??
+    resolveLiteral(
+      literal,
+      literal.getSourceFile().fileName,
+      literal.getSourceFile(),
+      true,
+      options,
+      host,
+      undefined,
+    ).module.resolvedModule?.resolvedFileName ??
     [resolveModule(literal, literal.getSourceFile().fileName)].find((path) =>
       path?.endsWith(".json"),
     );
@@ -428,6 +435,7 @@ export const createProgram = (source: string, path: string, library: Library = D
       literals.map((literal) => {
         const resolution = resolveLiteral(
           literal,
+          containingFile,
           containingSourceFile,
           valueFiles === undefined || valueFiles.has(containingFile),
           resolutionOptions,
