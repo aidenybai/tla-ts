@@ -59,10 +59,12 @@ import { overrideDefinitions, type JavaOverride } from "./java-overrides";
 import { extractModule } from "./parser";
 import {
   collectSemanticErrors,
+  compareLocations,
   getArity,
   getFunctionArity,
   getKeyName,
   getParamArities,
+  getTheoremGoal,
   isBefore,
   isSameSanyError,
   isTheoremDefinition,
@@ -176,6 +178,7 @@ export interface LinkedModule {
   constants: KeyedDeclaration[];
   variables: string[];
   variableLocations: SourceLocation[];
+  declarations: KeyedDeclaration[];
   visible: Symbols;
   exported: Symbols;
   modules: Map<string, LinkedModule>;
@@ -193,16 +196,6 @@ interface ModuleScope {
   warnings: SanyError[];
   levelChecks: ReturnType<typeof checkModuleLevels>[];
 }
-
-const getDeclarations = (linked: LinkedModule): KeyedDeclaration[] => [
-  ...linked.constants,
-  ...linked.variables.map((variable, index) => ({
-    name: variable,
-    key: variable,
-    arity: 0,
-    location: linked.variableLocations[index],
-  })),
-];
 
 const createModuleRedefinedError = (module: Module) =>
   new TlaSyntaxError(
@@ -609,13 +602,14 @@ export const createEnvironment = (
       );
     }
     const linked = nested ?? getLinkedModule(instance.module, module.name);
-    const declarations = getDeclarations(linked);
+    const declarations = linked.declarations;
     const suffix = `#${copyCount++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
     const substitutions = resolveSubstitutions(
       resolveInstanceSubexpressions(instance, module),
       declarations,
-      module,
+      resolved,
+      module.name,
       unit,
     );
     // SANY substitutes into the bodies of a module with parameters, or of any module a named instance substitutes for.
@@ -894,7 +888,7 @@ export const createEnvironment = (
     const explicitSubstitutions = new Map(
       instance.substitutions.map((item) => [item.name, item.expression]),
     );
-    const declarations = getDeclarations(linked);
+    const declarations = linked.declarations;
     const getReplacement = (declaration: OperatorParam): Expression =>
       explicitSubstitutions.get(declaration.name) ?? {
         kind: "Identifier",
@@ -1080,7 +1074,7 @@ export const createEnvironment = (
     const modules = new Map<string, LinkedModule>();
     const extended: LinkedModule[] = [];
     const getKey = (item: { name: string }) => `${item.name}${KEY_SEPARATOR}${scope.id}`;
-    const constants = parsed.constants.map((constant) => ({ ...constant, key: getKey(constant) }));
+    const extendedConstants: KeyedDeclaration[] = [];
     const declaredVariables = parsed.variables.filter(
       (variable, index) =>
         parsed.variables.findIndex((other) => other.name === variable.name) === index,
@@ -1095,16 +1089,18 @@ export const createEnvironment = (
         return;
       }
       const linked = nested ?? getLinkedModule(name, parsed.name);
-      constants.push(
+      extendedConstants.push(
         ...linked.constants.filter(
           (constant) =>
-            constants.every((existing) => existing.name !== constant.name) &&
+            extendedConstants.every((existing) => existing.name !== constant.name) &&
             !variables.includes(constant.name),
         ),
       );
       linked.variables.forEach((variable, index) => {
         const isDeclared =
-          variables.includes(variable) || constants.some((constant) => constant.name === variable);
+          variables.includes(variable) ||
+          parsed.constants.some((constant) => constant.name === variable) ||
+          extendedConstants.some((constant) => constant.name === variable);
         if (isDeclared) return;
         variables.push(variable);
         variableLocations.push(linked.variableLocations[index]);
@@ -1113,6 +1109,14 @@ export const createEnvironment = (
       linked.modules.forEach((module, moduleName) => modules.set(moduleName, module));
       extended.push(linked);
     });
+    const constants = [
+      ...parsed.constants
+        .filter((constant) =>
+          extendedConstants.every((existing) => existing.name !== constant.name),
+        )
+        .map((constant) => ({ ...constant, key: getKey(constant) })),
+      ...extendedConstants,
+    ];
     const bound = new Map(visible);
     const declarations = [
       ...parsed.constants.map((constant) => ({ ...constant, kind: "Constant" as const })),
@@ -1124,9 +1128,19 @@ export const createEnvironment = (
       kind: declaration.kind,
       range: declaration.location.range,
     });
-    declarations.forEach((declaration) =>
-      exported.set(declaration.name, getDeclarationSymbol(declaration)),
-    );
+    const firstDeclarations = new Map<string, (typeof declarations)[number]>();
+    declarations.forEach((declaration) => {
+      const first = firstDeclarations.get(declaration.name);
+      if (first === undefined || isBefore(declaration.location, first.location)) {
+        firstDeclarations.set(declaration.name, declaration);
+      }
+    });
+    declarations
+      .filter(
+        (declaration) =>
+          !bound.has(declaration.name) && firstDeclarations.get(declaration.name) === declaration,
+      )
+      .forEach((declaration) => exported.set(declaration.name, getDeclarationSymbol(declaration)));
     const getDefinitionSymbol = (definition: Definition): ModuleSymbol => ({
       key: getKey(definition),
       arity: getArity(definition),
@@ -1134,6 +1148,12 @@ export const createEnvironment = (
       kind: isTheoremDefinition(parsed, definition) ? "Theorem" : "Definition",
       range: definition.location.range,
       functionArity: getFunctionArity(definition),
+    });
+    const getInstanceSymbol = (instance: Instance, name: string): ModuleSymbol => ({
+      key: `${name}${KEY_SEPARATOR}${scope.id}`,
+      arity: instance.params.length,
+      kind: "Instance",
+      range: instance.location.range,
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const instanced = new Map<Instance, Symbols>();
@@ -1159,13 +1179,12 @@ export const createEnvironment = (
           };
         }
         const linked = nested ?? getLinkedModule(instance.module, parsed.name);
-        const declarations = getDeclarations(linked);
         return {
-          declarations,
+          declarations: linked.declarations,
           symbols: getInstanceSymbols(
             instance,
             linked.exported,
-            declarations,
+            linked.declarations,
             (symbol) => symbol.key,
           ),
           instancer: parsed.name,
@@ -1189,29 +1208,22 @@ export const createEnvironment = (
       warnings: scope.warnings,
       goalOperands,
     });
-    const getSymbolsBefore = (location: SourceLocation): Symbols =>
-      [
-        ...declarations
-          .filter((declaration) => isBefore(declaration.location, location))
-          .map((declaration): [string, ModuleSymbol] => [
-            declaration.name,
-            getDeclarationSymbol(declaration),
-          ]),
-        ...parsed.definitions
-          .filter((definition) => isBefore(definition.location, location))
-          .map((definition): [string, ModuleSymbol] => [
-            definition.name,
-            getDefinitionSymbol(definition),
-          ]),
-      ].reduce(
-        (symbols, entry) => (symbols.has(entry[0]) ? symbols : symbols.set(entry[0], entry[1])),
-        new Map(visible),
-      );
+    const symbolsBefore = new Map(bound);
+    const boundLocations = new Map<string, SourceLocation>();
+    const bindBefore = (name: string, symbol: ModuleSymbol, location: SourceLocation) => {
+      if (symbolsBefore.has(name)) return;
+      symbolsBefore.set(name, symbol);
+      boundLocations.set(name, location);
+    };
+    const isBoundBefore = (name: string, location: SourceLocation) => {
+      const boundLocation = boundLocations.get(name);
+      return bound.has(name) || (boundLocation !== undefined && isBefore(boundLocation, location));
+    };
     const subexpressions = createModuleSubexpressions(
       parsed,
       getLetInstanceExpansion(parsed, (instance, lets) =>
         instantiateLocally(instance, lets, parsed.name, getLetModule(instance), (name) =>
-          getSymbolsBefore(instance.location).has(name),
+          isBoundBefore(name, instance.location),
         ),
       ),
       (name) => {
@@ -1263,7 +1275,7 @@ export const createEnvironment = (
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         isHidden: scope.isHidden,
-        symbols: getSymbolsBefore(nested.location),
+        symbols: symbolsBefore,
         getDefinition: (name) => getDefinitionBefore(name) ?? scope.getDefinition(name),
         modules: visibleModules,
         nested: scope.nested,
@@ -1276,6 +1288,34 @@ export const createEnvironment = (
     };
     const instancingUnit = getUnit(parsed);
     [
+      ...declarations.map((declaration) => ({
+        location: declaration.location,
+        link: () =>
+          bindBefore(declaration.name, getDeclarationSymbol(declaration), declaration.location),
+      })),
+      ...parsed.definitions.map((definition) => ({
+        location: definition.location,
+        link: () =>
+          bindBefore(definition.name, getDefinitionSymbol(definition), definition.location),
+      })),
+      ...parsed.theorems.map((theorem) => ({
+        location: theorem.location,
+        link: () => {
+          const goal = getTheoremGoal(theorem);
+          if (theorem.name === undefined || goal === undefined) return;
+          bindBefore(
+            theorem.name,
+            {
+              key: getKey({ name: theorem.name }),
+              arity: 0,
+              kind: "Theorem",
+              range: theorem.location.range,
+              goal,
+            },
+            theorem.location,
+          );
+        },
+      })),
       ...parsed.instances.map((instance) => ({
         location: instance.location,
         link: () => {
@@ -1285,22 +1325,29 @@ export const createEnvironment = (
             instancingUnit,
             isParameterFree,
             getVisibleModules().get(instance.module),
-            getSymbolsBefore(instance.location),
+            new Map(symbolsBefore),
           );
           instanced.set(instance, symbols);
           symbols.forEach((symbol, name) => {
-            if (visible.has(name)) return;
+            if (symbolsBefore.has(name)) return;
             visible.set(name, symbol);
             if (!instance.isLocal) exported.set(name, symbol);
           });
-          if (instance.name !== undefined && !instance.isLocal) {
-            exported.set(instance.name, {
-              key: `${instance.name}${KEY_SEPARATOR}${scope.id}`,
-              arity: instance.params.length,
-              kind: "Instance",
-              range: instance.location.range,
-            });
+          if (
+            instance.name !== undefined &&
+            !instance.isLocal &&
+            !symbolsBefore.has(instance.name)
+          ) {
+            exported.set(instance.name, getInstanceSymbol(instance, instance.name));
           }
+          if (instance.name !== undefined) {
+            bindBefore(
+              instance.name,
+              getInstanceSymbol(instance, instance.name),
+              instance.location,
+            );
+          }
+          symbols.forEach((symbol, name) => bindBefore(name, symbol, instance.location));
         },
       })),
       ...parsed.modules.map((nested) => ({
@@ -1308,7 +1355,7 @@ export const createEnvironment = (
         link: () => linkNested(nested),
       })),
     ]
-      .sort((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
+      .sort((left, right) => compareLocations(left.location, right.location))
       .forEach((unit) => unit.link());
     const module = subexpressions.resolve();
     parsed.theorems
@@ -1364,6 +1411,18 @@ export const createEnvironment = (
       constants,
       variables,
       variableLocations,
+      declarations: [
+        ...declarations
+          .filter((declaration) => !isBoundBefore(declaration.name, declaration.location))
+          .map((declaration) => ({ ...declaration, key: getDeclarationSymbol(declaration).key })),
+        ...extended
+          .flatMap((other) => other.declarations)
+          .filter(
+            (declaration, index, all) =>
+              bound.get(declaration.name)?.key === declaration.key &&
+              all.findIndex((other) => other.key === declaration.key) === index,
+          ),
+      ],
       visible,
       exported,
       modules,
@@ -1554,9 +1613,7 @@ export const createEnvironment = (
     variableLocations: linkedRoot.variableLocations,
     instanceActions,
     startupDefinitions: linkOrder
-      .filter(
-        (linked) => !instantiated.has(linked.module.name) || getDeclarations(linked).length === 0,
-      )
+      .filter((linked) => !instantiated.has(linked.module.name) || linked.declarations.length === 0)
       .flatMap((linked) =>
         getDefinitionOrder(linked === linkedRoot ? undefined : linked.module.name).flatMap(
           (name) => {
