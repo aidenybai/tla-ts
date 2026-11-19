@@ -56,17 +56,22 @@ export interface EscoreRuntime {
 
 // Every compiled spec's root module. It extends each module of the runtime before the program's,
 // so that the strings of the runtime come first in TLC's order of strings for every program, and
-// what the runtime's definitions evaluate to as a check starts is the same for every program.
+// what the runtime's definitions evaluate to as a check starts is the same for every program. Its
+// text is the same for every program too, as TLC ranks the strings of the root's tokens first: the
+// program's code declares the variables and defines Init and Next.
 export const ROOT = `---- MODULE Program ----
 EXTENDS Naturals, Integers, Sequences, FiniteSets, TLC, ESBigNat, ESNumber, ESRuntime, ProgramCode
-VARIABLE programDone
+====
+`;
+
+// The variable and the steps of a script's spec, whose Init runs the script and whose Next leaves
+// it as it ends.
+export const SCRIPT_STEPS = `VARIABLE programDone
 Init ==
   LET r == ApplyTo(RunProgram, InitialState) IN
   /\\ IF r.c.type = "throw" THEN PrintT(ApplyTo(DescribeResult, r)) /\\ Assert(FALSE, "the script threw an exception") ELSE TRUE
   /\\ programDone = TRUE
-Next == UNCHANGED programDone
-====
-`;
+Next == UNCHANGED programDone`;
 
 // The program's code is ProgramCode's, which the config puts in place of the runtime's hooks.
 export const CONFIG = `INIT Init
@@ -83,6 +88,7 @@ const EMPTY_PROGRAM = [
     (hook) => `Program${hook[0]}(${hook[1]}) == Assert(FALSE, "a program without code")`,
   ),
   "RunProgram(s) == Ok(s, Undefined)",
+  SCRIPT_STEPS,
   "====",
   "",
 ].join("\n");

@@ -2,7 +2,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
-import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
+import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
 import { getTlaString, LOCALE_METHODS } from "./runtime";
 import { specialize } from "./specialize";
 import { suspendDefinitions } from "./suspend";
@@ -13,6 +13,11 @@ export interface EscoreSpec {
   config: string;
   loadModule: (name: string) => string | undefined;
   preparedModules: PreparedModule[];
+}
+
+export interface EscoreSteps {
+  steps: string;
+  entries: readonly string[];
 }
 
 interface CodeDefinition {
@@ -96,11 +101,14 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
 
 // Compiles a TypeScript script to a spec whose Init runs it as ESCore runs a script: the realm,
 // then the script, then the jobs it queued. An uncaught exception fails Init's assertion. The
-// spec's module ProgramCode holds the script's code, and the runtime's prepared modules the rest.
+// spec's module ProgramCode holds the script's code and the spec's steps, the variables and the
+// definitions of Init and Next, and the runtime's prepared modules the rest. A model gives its own
+// steps, and the names of the functions they call, which the script may name nowhere else.
 export const compileToEscore = (
   source: string,
   fileName: string,
   runtime: EscoreRuntime,
+  model: EscoreSteps = { steps: SCRIPT_STEPS, entries: [] },
 ): EscoreSpec => {
   const transpiled = ts.transpileModule(source, {
     compilerOptions: {
@@ -127,7 +135,7 @@ export const compileToEscore = (
     true,
     ts.ScriptKind.JS,
   );
-  const program = specialize(sourceFile, runtime.internalKeys);
+  const program = specialize(sourceFile, new Set([...runtime.internalKeys, ...model.entries]));
   // The runtime's setTimeout gives undefined where Node's gives a Timeout, so a program may only
   // call it as a statement.
   const findTimerValue = (node: ts.Node): ts.Node | undefined =>
@@ -217,7 +225,7 @@ export const compileToEscore = (
   );
   const code = definitions.map((definition) => definition.text).join("\n");
   const view = runtime.getView(
-    `${code}\n${ROOT}\n${CONFIG}`,
+    `${code}\n${model.steps}\n${ROOT}\n${CONFIG}`,
     leaves.map((leaf) => leaf.name),
   );
   const viewed = new Set(view.module.definitions.map((definition) => definition.name));
@@ -237,6 +245,7 @@ export const compileToEscore = (
       (stub) =>
         `Stub${stub.name}(${Array.from({ length: stub.arity }, (_, index) => `p${index + 1}`).join(", ")}) == Assert(FALSE, "tla-ts can't run ${stub.name}, which this program's spec leaves out of ESCore")`,
     ),
+    model.steps,
     "====",
     "",
   ].join("\n");
