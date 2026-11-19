@@ -3738,6 +3738,119 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "an inner module's uses of a RECURSIVE operator defined with another arity",
+      "RECURSIVE F(_)\nF == 1\n---- MODULE Inner ----\nU == F(1)\nV == F\n====",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Definition of F has different arity than its RECURSIVE declaration.",
+        },
+        {
+          location: "line 5, col 6 to line 5, col 9 of module M",
+          message:
+            "Wrong number of arguments (1) given to operator 'F', \nwhich requires 0 arguments.",
+        },
+        {
+          location: "line 6, col 6 to line 6, col 6 of module M",
+          message: "The operator F requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "uses through EXTENDS and instances of a RECURSIVE operator defined with another arity",
+      "---- MODULE A ----\nRECURSIVE F(_)\nF == 1\n====\n---- MODULE B ----\nEXTENDS A\nU == F(1)\nV == F\n====\n---- MODULE C ----\nLOCAL INSTANCE A\nW == F(1)\nX == F\n====\nI == INSTANCE A\nY == I!F(1)\nZ == I!F",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 6 of module M",
+          message: "Definition of F has different arity than its RECURSIVE declaration.",
+        },
+        {
+          location: "line 8, col 6 to line 8, col 9 of module M",
+          message:
+            "Wrong number of arguments (1) given to operator 'F', \nwhich requires 0 arguments.",
+        },
+        {
+          location: "line 9, col 6 to line 9, col 6 of module M",
+          message: "The operator F requires 1 arguments.",
+        },
+        {
+          location: "line 13, col 7 to line 13, col 9 of module M",
+          message: "The operator F requires 0 arguments.",
+        },
+        {
+          location: "line 17, col 9 to line 17, col 11 of module M",
+          message: "The operator I!F requires 0 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "uses through an unnamed instance of a RECURSIVE operator defined with another arity",
+      "---- MODULE A ----\nRECURSIVE F(_)\nF == 1\n====\nINSTANCE A\nU == F(1)\nV == F",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 6 of module M",
+          message: "Definition of F has different arity than its RECURSIVE declaration.",
+        },
+        {
+          location: "line 7, col 6 to line 7, col 9 of module M",
+          message:
+            "Wrong number of arguments (1) given to operator 'F', \nwhich requires 0 arguments.",
+        },
+        {
+          location: "line 8, col 6 to line 8, col 6 of module M",
+          message: "The operator F requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a deeper module's uses of a RECURSIVE operator that an inner module defined with another arity",
+      "RECURSIVE G(_)\n---- MODULE Inner ----\nG(a, b) == 1\n---- MODULE Deeper ----\nU == G(1)\nV == G(1, 2)\n====\n====",
+      [
+        {
+          location: "line 3, col 1 to line 9, col 4 of module M",
+          message: "A MODULE  may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 12 of module M",
+          message: "Definition of G has different arity than its RECURSIVE declaration.",
+        },
+        {
+          location: "line 6, col 6 to line 6, col 9 of module M",
+          message:
+            "Wrong number of arguments (1) given to operator 'G', \nwhich requires 2 arguments.",
+        },
+        {
+          location: "line 7, col 7 to line 7, col 12 of module M",
+          message: "The operator G requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an inner module's definition with the declared arity of a RECURSIVE operator defined with another",
+      "RECURSIVE F(_)\nF == 1\n---- MODULE Inner ----\nF(a) == 2\n====",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "Definition of F has different arity than its RECURSIVE declaration.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 9 of module M",
+          message: "Operator F already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 5, col 1 to line 5, col 9 of module M",
+          message:
+            "Multiple declarations or definitions for symbol F.  \nThis duplicates the one at line 3, col 1 to line 3, col 6 of module M.",
+        },
+      ],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
