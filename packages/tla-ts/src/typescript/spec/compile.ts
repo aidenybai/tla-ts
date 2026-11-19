@@ -1,10 +1,12 @@
+import { readFileSync } from "node:fs";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
+import { createFileResolver } from "../program";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
 import { getTlaString, LOCALE_METHODS } from "./runtime";
-import { specialize } from "./specialize";
+import { type ProgramFile, specialize } from "./specialize";
 import { suspendDefinitions } from "./suspend";
 
 export interface EscoreSpec {
@@ -46,14 +48,13 @@ const compact = (definitions: readonly CodeDefinition[]) => {
     .filter((definition) => !merged.has(definition.name))
     .map((definition) => ({
       ...definition,
-      text:
-        definition.name === "SourceText"
-          ? definition.text
-          : rename(definition.text).replace(/<<\d+(?:, \d+)*>>/g, (sequence) => {
-              const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;
-              sequences.set(sequence, name);
-              return name;
-            }),
+      text: /^SourceText\d+$/.test(definition.name)
+        ? definition.text
+        : rename(definition.text).replace(/<<\d+(?:, \d+)*>>/g, (sequence) => {
+            const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;
+            sequences.set(sequence, name);
+            return name;
+          }),
     }));
   return [
     ...[...sequences].map((entry) => ({
@@ -94,24 +95,23 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
   return { sorted, recursive };
 };
 
-// Compiles a TypeScript script to a spec whose Init runs it as ESCore runs a script: the realm,
-// then the script, then the jobs it queued. An uncaught exception fails Init's assertion. The
-// spec's module ProgramCode holds the script's code, and the runtime's prepared modules the rest.
-export const compileToEscore = (
-  source: string,
-  fileName: string,
-  runtime: EscoreRuntime,
-): EscoreSpec => {
+// JavaScript of a file of TypeScript's code, which keeps its imports and exports. A module is one
+// where it neither imports nor exports too, where await at its top level awaits, which its
+// JavaScript marks with an empty export.
+const transpile = (source: string, fileName: string, isModule: boolean) => {
   const transpiled = ts.transpileModule(source, {
     compilerOptions: {
       target: ts.ScriptTarget.ESNext,
-      module: ts.ModuleKind.Preserve,
+      module: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.Preserve,
+      moduleDetection: isModule ? ts.ModuleDetectionKind.Force : ts.ModuleDetectionKind.Legacy,
       useDefineForClassFields: true,
       // A script runs in strict mode only where it says so, which TypeScript 6 deprecates.
       alwaysStrict: false,
       ignoreDeprecations: "6.0",
     },
-    fileName,
+    // TypeScript fails on a file that imports itself by the name it transpiles under, which
+    // keeps only the file's extension.
+    fileName: `/tla-ts/transpiled${/\.[^./]*$/.exec(fileName)?.[0] ?? ""}`,
     reportDiagnostics: true,
   });
   const error = transpiled.diagnostics?.find(
@@ -120,14 +120,73 @@ export const compileToEscore = (
   if (error !== undefined) {
     throw new TlaTypeScriptError(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
   }
-  const sourceFile = ts.createSourceFile(
-    fileName.replace(/\.ts$/, ".js"),
+  return ts.createSourceFile(
+    fileName.replace(/\.[cm]?tsx?$/, ".js"),
     transpiled.outputText,
     ts.ScriptTarget.ESNext,
     true,
     ts.ScriptKind.JS,
   );
-  const program = specialize(sourceFile, runtime.internalKeys);
+};
+
+// The specifier of each import and export of a file, with the literal that names it.
+const getSpecifiers = (sourceFile: ts.SourceFile) =>
+  new Map(
+    sourceFile.statements.flatMap((statement) =>
+      (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) &&
+      statement.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(statement.moduleSpecifier)
+        ? [[statement.moduleSpecifier.text, statement.moduleSpecifier] as const]
+        : [],
+    ),
+  );
+
+// A program's files: the script, or the module and each file that its imports load, as the
+// model's resolver finds them, each once, by path.
+const loadFiles = (source: string, fileName: string, isModule: boolean): ProgramFile[] => {
+  if (!isModule)
+    return [{ sourceFile: transpile(source, fileName, false), isModule, targets: new Map() }];
+  const resolve = createFileResolver(fileName);
+  const getRealPath = (path: string) => ts.sys.realpath?.(ts.sys.resolvePath(path)) ?? path;
+  const entry = ts.sys.fileExists(fileName) ? getRealPath(fileName) : fileName;
+  // Each file's number, by its path, in the order the program finds them.
+  const numbers = new Map([[entry, 1]]);
+  const files: ProgramFile[] = [];
+  for (const path of numbers.keys()) {
+    const text = path === entry ? source : readFileSync(path, "utf8");
+    const written = getSpecifiers(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true));
+    const sourceFile = transpile(text, path, true);
+    const targets = new Map(
+      [...getSpecifiers(sourceFile).keys()].flatMap((specifier) => {
+        const literal = written.get(specifier);
+        const found = literal === undefined ? undefined : resolve(literal);
+        if (found === undefined) return [];
+        const target = getRealPath(found);
+        if (!numbers.has(target)) numbers.set(target, numbers.size + 1);
+        return [[specifier, numbers.get(target) ?? 0] as const];
+      }),
+    );
+    files.push({ sourceFile, isModule, targets });
+  }
+  return files;
+};
+
+// The groups of ESCore's parts that a module runs on: its loading, linking, and evaluation, and
+// the promise of its evaluation.
+const MODULE_GROUPS = new Set(["86-promise.tla", "88-modules.tla"]);
+
+// Compiles a TypeScript script or module to a spec whose Init runs it as ESCore runs a script or a
+// host its entry module: the realm, then the program, then the jobs it queued. An uncaught exception
+// fails Init's assertion. The spec's module ProgramCode holds the program's code, and the
+// runtime's prepared modules the rest.
+export const compileToEscore = (
+  source: string,
+  fileName: string,
+  runtime: EscoreRuntime,
+  isModule = false,
+): EscoreSpec => {
+  const files = loadFiles(source, fileName, isModule);
+  const program = specialize(files, runtime.internalKeys);
   // The runtime's setTimeout gives undefined where Node's gives a Timeout, so a program may only
   // call it as a statement.
   const findTimerValue = (node: ts.Node): ts.Node | undefined =>
@@ -140,24 +199,29 @@ export const compileToEscore = (
     )
       ? node
       : ts.forEachChild(node, findTimerValue);
-  const timerValue = program.identifiers.has("setTimeout") ? findTimerValue(sourceFile) : undefined;
+  const timerValue = program.identifiers.has("setTimeout")
+    ? files.map((file) => findTimerValue(file.sourceFile)).find((node) => node !== undefined)
+    : undefined;
   if (timerValue !== undefined) {
     throw new TlaTypeScriptError("tla-ts can't read the value of setTimeout", timerValue);
   }
   const hostOnly =
-    runtime.hostOnlyGlobals.find((name) => program.identifiers.has(name)) ??
-    runtime.hostOnlyKeys.find((key) => program.words.has(key));
+    (isModule ? runtime.hostOnlyModuleGlobals : runtime.hostOnlyGlobals).find((name) =>
+      program.identifiers.has(name),
+    ) ?? runtime.hostOnlyKeys.find((key) => program.words.has(key));
   if (hostOnly !== undefined) {
     throw new TlaTypeScriptError(
       `tla-ts can't run the host's ${hostOnly}, which ESCore leaves out`,
     );
   }
   const isQueuing =
+    isModule ||
     program.isAsync ||
     program.words.has("Promise") ||
     program.words.has("then") ||
     program.identifiers.has("setTimeout");
   const isIncluded = (gate: EscoreRuntime["gates"][number]) =>
+    (isModule && MODULE_GROUPS.has(gate.group)) ||
     [...gate.triggers].some((word) => program.words.has(word));
   const included = runtime.gates.filter(isIncluded);
   const kept = new Set(included.flatMap((gate) => gate.reached));
@@ -169,29 +233,36 @@ export const compileToEscore = (
   const leftOut = new Set(
     runtime.gates.filter((gate) => !isIncluded(gate)).map((gate) => gate.group),
   );
-  // A program's source text is a string where a TLA+ string can hold it, which a check reads as
+  // A program's source texts are strings where a TLA+ string can hold each, which a check reads as
   // one token rather than one for each code unit.
-  const sourceString = getTlaString(sourceFile.text);
+  const sourceStrings = files.map((file) => getTlaString(file.sourceFile.text));
+  const isStringSource = sourceStrings.every((text) => text !== undefined);
+  const runJobs =
+    "LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE";
   const definitions = compact(
     suspendDefinitions(
       [
-        ...program.definitions.map((definition) =>
-          definition.name === "SourceText" && sourceString !== undefined
-            ? { ...definition, text: `SourceText == ${sourceString}` }
-            : definition,
-        ),
+        ...program.definitions.map((definition) => {
+          const number = /^SourceText(\d+)$/.exec(definition.name)?.[1];
+          return number !== undefined && isStringSource
+            ? { ...definition, text: `${definition.name} == ${sourceStrings[Number(number) - 1]}` }
+            : definition;
+        }),
         {
           name: "SourceUnits",
           arity: 1,
-          text:
-            sourceString === undefined ? "SourceUnits(t) == t" : "SourceUnits(t) == StringUnits(t)",
+          text: isStringSource ? "SourceUnits(t) == StringUnits(t)" : "SourceUnits(t) == t",
         },
         {
           name: "RunProgram",
           arity: 1,
-          text: isQueuing
-            ? "RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTimers(u.s)"
-            : "RunProgram(s) == Program(s)",
+          // A host exits with an error where its entry module still awaits once nothing is left
+          // to run, as Node does.
+          text: isModule
+            ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
+            : isQueuing
+              ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
+              : "RunProgram(s) == Program(s)",
         },
         {
           name: "CallBuiltin",

@@ -122,6 +122,28 @@ const DEFINITIONS = [
   `BindArguments(s, env, names, args, i) ==
   IF i > Len(names) THEN s
   ELSE BindArguments(InitializeBinding(s, env, names[i], Arg(args, i)).s, env, names, args, i + 1)`,
+  // A compiled module's code gives the entries and requests that ParseModule (§16.2.1.7.1) reads
+  // of the module's parse node, which ModuleNode gives the program's modules as.
+  `ImportEntries(node) == node.imports`,
+  `ExportEntries(node) == node.exports`,
+  `ModuleRequests(node) == node.requests`,
+  `ModuleRequestPhases(node) == node.phases`,
+  // HostLoadImportedModule (§16.2.1.10) for a program's host, which loads the module of the file
+  // that the referrer's request names, made the first time the host loads it in the realm.
+  `HostLoadModuleFrom(s, referrer, request) ==
+  LoadModuleNode(s, ModuleNode(ModuleAt(s, referrer).node.targets[request.specifier]))`,
+  `LoadModuleNode(s, node) ==
+  IF <<s.realmId, node.file>> \\in DOMAIN s.moduleIds THEN Ok(s, s.moduleIds[<<s.realmId, node.file>>])
+  ELSE LET m == Len(s.modules) + 1 IN
+       Ok([s EXCEPT !.modules = Append(@, SourceTextModule(node)), !.moduleIds = (<<s.realmId, node.file>> :> m) @@ @], m)`,
+  // RunModule for a program whose code is a module, as the host runs its entry: the module loaded,
+  // linked, and evaluated, with the promise of its evaluation as the result's value.
+  `RunModuleNode(s, node) ==
+  LET loaded == LoadModuleNode(s, node)
+      loading == LoadRequestedModules(loaded.s, Val(loaded))
+  IN IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowValue(loading.s, Slots(loading.s, Val(loading)).result) ELSE
+     LET link == ModuleLink(loading.s, Val(loaded)) IN
+     IF IsAbrupt(link) THEN link ELSE ModuleEvaluate(link.s, Val(loaded))`,
   `Unsupported(s, what) == Assert(FALSE, "tla-ts can't run a part of ECMAScript that ESCore leaves out")`,
 ];
 
@@ -262,6 +284,32 @@ const HOST_PATCHES = [
     from: "ResumeFrame(frame, r) ==\n  CASE ",
     to: 'ResumeFrame(frame, r) ==\n  CASE frame.step = "Code" -> ResumeCode(frame.args, r)\n    [] ',
   },
+  // A program's module loads the files of its requests, links the declarations that its code
+  // instantiates, and runs its body as the code gives it.
+  {
+    name: "LoadRequests",
+    from: "HostLoadModule(s, request)",
+    to: "HostLoadModuleFrom(s, m, request)",
+  },
+  {
+    name: "InitializeEnvironment",
+    from: `LET vars == CreateVarBindings(imported.s, env.e, Dedupe(ConcatMap(VarScopedDeclarations(rec.node), BoundNames)), env.e, FALSE, {})
+      lexicals == LexicallyScopedDeclarations(rec.node)
+  IN Ok(InitializeModuleFunctions(CreateLexicalBindings(vars, env.e, lexicals), ModuleContext(env.e), env.e,
+                                  SelectSeq(lexicals, LAMBDA d : d.type \\in FunctionDeclarationTypes)),
+        Empty)`,
+    to: "ModuleDeclarations(imported.s, ModuleContext(env.e), rec.node)",
+  },
+  {
+    name: "ExecuteModule",
+    from: "EvaluateDisposing(s, ModuleContext(ModuleAt(s, m).env), ModuleItems(ModuleAt(s, m).node))",
+    to: "RunBody(s, ModuleContext(ModuleAt(s, m).env), ModuleAt(s, m).node.body)",
+  },
+  {
+    name: "ExecuteAsyncModule",
+    from: "EvaluateDisposing(then.s, ModuleContext(ModuleAt(s, m).env), ModuleItems(ModuleAt(s, m).node))",
+    to: "RunBody(then.s, ModuleContext(ModuleAt(s, m).env), ModuleAt(s, m).node.body)",
+  },
   // A program's functions hold their source text as the program's code gives it, which
   // SourceUnits makes code units of when a program reads it.
   {
@@ -332,16 +380,17 @@ const getMissingProperties = (library: Library) =>
     return object !== undefined && !(property.key in object);
   });
 
-// The host's globals that ESCore's realm lacks, such as Intl, at whose names a compile stops.
-export const getHostOnlyGlobals = (library: Library) => {
-  const realm = new Set(
-    library.properties
+// The host's globals that ESCore's realm lacks, such as Intl, at whose names a compile stops: a
+// script's, of a new context, and a module's, which the host runs in its own context, whose
+// global object has the host's globals too, such as process.
+export const getHostOnlyGlobals = (library: Library, host: object = HOST_GLOBAL) => {
+  const realm = new Set([
+    ...library.properties
       .filter((property) => property.owner === "GlobalObject")
       .map((property) => property.key),
-  );
-  return [...Object.getOwnPropertyNames(HOST_GLOBAL), ...HOST_TIMERS].filter(
-    (name) => !realm.has(name),
-  );
+    "setTimeout",
+  ]);
+  return [...Object.getOwnPropertyNames(host), ...HOST_TIMERS].filter((name) => !realm.has(name));
 };
 
 // The keys of the host's built-ins that ESCore's realm has nowhere, such as V8's

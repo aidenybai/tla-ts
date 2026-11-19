@@ -51,6 +51,7 @@ export interface EscoreRuntime {
   resumableSteps: ReadonlySet<string>;
   // The host's globals and built-in keys that ESCore's realm lacks, at whose names a compile stops.
   hostOnlyGlobals: string[];
+  hostOnlyModuleGlobals: string[];
   hostOnlyKeys: string[];
 }
 
@@ -249,6 +250,7 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
       ],
     })),
     hostOnlyGlobals: getHostOnlyGlobals(library),
+    hostOnlyModuleGlobals: getHostOnlyGlobals(library, globalThis),
     hostOnlyKeys: getHostOnlyKeys(library),
   };
 };
