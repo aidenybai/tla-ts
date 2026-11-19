@@ -168,6 +168,18 @@ const getNamedOccurrence = (expression: Expression, frames: Expression[]) => {
     : undefined;
 };
 
+const bindLetDefinitions = (
+  environment: Environment,
+  expression: Expression & { kind: "Let" },
+  scope: Scope | undefined,
+) =>
+  bindDefinitions(expression.definitions, {
+    environment,
+    scope,
+    state: undefined,
+    next: undefined,
+  });
+
 const getVariable = (
   environment: Environment,
   expression: Expression,
@@ -177,6 +189,14 @@ const getVariable = (
   const occurrence = frames && getNamedOccurrence(expression, frames);
   if (occurrence?.kind === "Identifier") return environment.variableIndex.get(occurrence.name);
   if (expression.kind === "Label") return getVariable(environment, expression.body, scope, frames);
+  if (expression.kind === "Let") {
+    return getVariable(
+      environment,
+      expression.body,
+      bindLetDefinitions(environment, expression, scope),
+      frames,
+    );
+  }
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;
   const binding = lookupScope(scope, name);
@@ -203,6 +223,14 @@ const getPrimedVariable = (
   }
   if (expression.kind === "Label") {
     return getPrimedVariable(environment, expression.body, scope, frames);
+  }
+  if (expression.kind === "Let") {
+    return getPrimedVariable(
+      environment,
+      expression.body,
+      bindLetDefinitions(environment, expression, scope),
+      frames,
+    );
   }
   const name = getIdentifierName(expression);
   if (name === undefined) return undefined;

@@ -338,6 +338,79 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it.each([
+    ["the next-state relation", "TRUE", "x' = 1 - x /\\ UNCHANGED (LET m == y IN m)", 0],
+    [
+      "ENABLED",
+      "ENABLED (y' = 1 - y /\\ UNCHANGED (LET m == x IN m))",
+      "x' = 1 - x /\\ UNCHANGED y",
+      0,
+    ],
+    [
+      "the next-state relation under -coverage",
+      "TRUE",
+      "x' = 1 - x /\\ UNCHANGED (LET m == y IN m)",
+      1,
+    ],
+    [
+      "ENABLED under -coverage",
+      "ENABLED (y' = 1 - y /\\ UNCHANGED (LET m == x IN m))",
+      "x' = 1 - x /\\ UNCHANGED y",
+      1,
+    ],
+  ])(
+    "keeps the variable a LET names under UNCHANGED in %s, as TLC's Tool#getVar looks through the LET",
+    async (_title, invariant, next, coverage) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == ${next}\nInv == ${invariant}\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        coverage: coverage || undefined,
+      });
+      expect([result.failure, result.generatedStates, result.distinctStates, result.depth]).toEqual(
+        [undefined, 3, 2, 2],
+      );
+    },
+  );
+
+  it.each([
+    ["an initial predicate", "(LET m == x IN m) = 0 /\\ y = 0", "UNCHANGED <<x, y>>", [2, 1, 1]],
+    ["a primed LET", "x = 0 /\\ y = 0", "(LET m == x IN m)' = 1 - x /\\ UNCHANGED y", [3, 2, 2]],
+    [
+      "a LET of a primed variable",
+      "x = 0 /\\ y = 0",
+      "(LET m == x' IN m) = 1 - x /\\ UNCHANGED y",
+      [3, 2, 2],
+    ],
+  ])(
+    "assigns the variable a LET names in %s under -coverage, as TLC's Tool#getVar and Spec#getPrimedVar look through the LET",
+    async (_title, init, next, counts) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == ${init}\nNext == ${next}\n====`,
+        config: "INIT Init\nNEXT Next",
+        coverage: 1,
+      });
+      expect([result.failure, result.generatedStates, result.distinctStates, result.depth]).toEqual(
+        [undefined, ...counts],
+      );
+    },
+  );
+
+  it("warns about a changed variable that a LET definition names under UNCHANGED at the name, as TLC does", async () => {
+    const warnings: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == LET m == y IN (y' = 1 /\\ UNCHANGED m /\\ x' = x)\n====",
+      config: "INIT Init\nNEXT Next",
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress.text);
+      },
+    });
+    expect(result.status).toBe("deadlock");
+    expect(warnings).toEqual([
+      "The variable y was changed while it is specified as UNCHANGED at\nline 5, col 44 to line 5, col 44 of module M",
+    ]);
+  });
+
   it("applies a function without computing the values it isn't applied to as TLC does", async () => {
     const result = await checkSteps(
       "G(n) == [k \\in {1, 2} |-> 10 \\div (k - n)]\nStep == x' = G(2)[1]",

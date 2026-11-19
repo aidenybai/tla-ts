@@ -588,6 +588,22 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
     return compileConjunction([unchanged], environment, false);
   if (expression.kind === "Tuple") return getRunner(unchanged, environment, false);
   return (run, scope, partial, action, isFixed, onComplete) => {
+    const index = getRuntimeVariableIndex(expression, scope, partial, run, false);
+    if (index !== undefined) {
+      const value = run.current?.[index];
+      if (value === undefined) return;
+      const assigned = partial[index];
+      if (assigned === undefined) {
+        onComplete(assign(partial, index, value), action);
+        return;
+      }
+      if (!isEqualLikeTlc(assigned, value)) {
+        warnChangedUnchanged(run.environment, index, expression);
+        return;
+      }
+      onComplete(partial, action);
+      return;
+    }
     const binding =
       expression.kind === "Identifier" ? lookupScope(scope, expression.name) : undefined;
     if (binding?.kind === "Thunk" && !binding.isReleased) {
