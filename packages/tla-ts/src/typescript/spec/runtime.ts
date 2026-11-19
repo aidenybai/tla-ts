@@ -649,7 +649,8 @@ const HOST_PATCHES = [
     to: "RunBody(then.s, ModuleContext(ModuleAt(s, m).env), ModuleAt(s, m).node.body)",
   },
   // A Synthetic Module Record that import() evaluates as the root of its graph evaluates as one
-  // that a graph does.
+  // that a graph does, and throws what its evaluation threw the first time, as V8's
+  // Module::Evaluate does, which gives a promise rejected with it after that.
   {
     name: "ModuleEvaluate",
     from: `LET cap == NewPromiseCapability(SyntheticEvaluate(s, m0), Intrinsic(s, "Promise"))
@@ -659,7 +660,7 @@ const HOST_PATCHES = [
            cap == NewPromiseCapability(evaluated.s, Intrinsic(evaluated.s, "Promise"))
            settled == IF IsAbrupt(evaluated) THEN Call(cap.s, Val(cap).reject, Undefined, <<evaluated.c.value>>)
                       ELSE Call(cap.s, Val(cap).resolve, Undefined, <<Undefined>>)
-       IN Ok(settled.s, Val(cap).promise)`,
+       IN IF IsAbrupt(evaluated) /\\ rec0.status # "evaluated" THEN evaluated ELSE Ok(settled.s, Val(cap).promise)`,
   },
   // A Synthetic Module Record links once, as Node's does, so that a CommonJS module that a later
   // link reaches keeps its exports.

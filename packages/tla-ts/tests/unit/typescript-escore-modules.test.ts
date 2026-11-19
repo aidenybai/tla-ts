@@ -265,12 +265,14 @@ describe("compiles modules by specializing ESCore", () => {
       "leaf.js": "export const leaf = 1;",
       "throws.js": 'throw new Error("bad");',
       "counter.cjs": "exports.count = 1;",
+      "throws.cjs": 'throw new Error("cjs bad");',
     });
     const imports = `import("./static.js").then(() => log.push("static@" + tick));
       import("./fresh.js").then((ns) => log.push("fresh@" + tick + ":" + Object.keys(ns)));
       import("./deep.js").then(() => log.push("deep@" + tick));
       import("./counter.cjs").then((ns) => log.push("cjs@" + tick + ":" + ns.count));
-      import("./throws.js").catch((error) => log.push("rejected@" + tick + ":" + error.message));`;
+      import("./throws.js").catch((error) => log.push("rejected@" + tick + ":" + error.message));
+      import("./throws.cjs").catch((error) => log.push("cjs rejected@" + tick + ":" + error.message));`;
 
     it("agrees with Node", async () => {
       expect(
@@ -278,7 +280,7 @@ describe("compiles modules by specializing ESCore", () => {
           await checkModules(
             getImporting(
               imports,
-              "body@6,job@7,static@9,fresh@12:f,cjs@12:1,rejected@12:bad,deep@14",
+              "body@6,job@7,static@9,cjs rejected@11:cjs bad,fresh@12:f,cjs@12:1,rejected@12:bad,deep@14",
             ),
           )
         ).message,
@@ -291,7 +293,7 @@ describe("compiles modules by specializing ESCore", () => {
           await checkModules(
             getImporting(
               imports,
-              "body@6,job@7,static@9,fresh@12:f,cjs@12:1,deep@14,rejected@12:bad",
+              "body@6,job@7,static@9,fresh@12:f,cjs@12:1,cjs rejected@12:cjs bad,rejected@12:bad,deep@14",
             ),
           )
         ).message,
