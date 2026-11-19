@@ -1012,8 +1012,9 @@ export const getHostOnlyProperties = (library: Library) => {
   });
 };
 
-// ESCore's operators on Reference Records, which take a reference whose base is a local: the slot
-// of the frame that holds a binding that only its function's own code reaches (see locals.ts). A
+// ESCore's operators that a compiled function's frame changes (see locals.ts): those on Reference
+// Records, which take a reference whose base is a local, the slot of the frame that holds a binding
+// that only its function's own code reaches, and the call of a code that needs no environment. A
 // local behaves as the declarative binding it stands for: it has no value before its declaration
 // runs, and a const's throws at an assignment.
 const LOCAL_PATCHES = [
@@ -1041,6 +1042,16 @@ const LOCAL_PATCHES = [
     name: "CallThisValue",
     from: `IF ref.type # "reference" THEN Undefined`,
     to: `IF ref.type # "reference" \\/ ref.base.type = "local" THEN Undefined`,
+  },
+  // A bare code's call makes no environment and binds no this, which nothing it runs can observe.
+  {
+    name: "OrdinaryCallRun",
+    from: `LET p == PrepareForOrdinaryCall(s, f, Undefined)
+        b == OrdinaryCallBindThis(p.s, f, p.ctx, this)`,
+    to: `LET fo == O(s, f)
+        p == IF fo.slots.body.bare THEN [s |-> s, ctx |-> Context(fo.slots.env, fo.slots.env, fo.slots.priv, f)]
+             ELSE PrepareForOrdinaryCall(s, f, Undefined)
+        b == IF fo.slots.body.bare THEN Ok(p.s, Undefined) ELSE OrdinaryCallBindThis(p.s, f, p.ctx, this)`,
   },
   {
     name: "IsPropertyReference",

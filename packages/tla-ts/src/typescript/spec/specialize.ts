@@ -509,6 +509,13 @@ const getLex = (context: string) =>
 const hasWithAround = (node: ts.Node): boolean =>
   node.parent !== undefined && (ts.isWithStatement(node.parent) || hasWithAround(node.parent));
 
+// Whether code reads its function's this value, its home object, or new.target.
+const readsThis = (node: ts.Node): boolean =>
+  node.kind === ts.SyntaxKind.ThisKeyword ||
+  node.kind === ts.SyntaxKind.SuperKeyword ||
+  ts.isMetaProperty(node) ||
+  (ts.forEachChild(node, (child) => (readsThis(child) ? true : undefined)) ?? false);
+
 // Whether code makes a function or a class, whose closure keeps the environment it runs in.
 const hasClosure = (node: ts.Node): boolean =>
   ts.isFunctionDeclaration(node) ||
@@ -667,17 +674,19 @@ export const specialize = (
     `<<${fileNumbers.get(node.getSourceFile())}, ${node.getStart() + 1}, ${node.getEnd()}>>`;
 
   // A function's code record, which the module evaluates once, as it has no parameters.
+  // A bare code runs without the environment that a call makes for it (OrdinaryCallRun).
   const defineRecord = (
     id: number,
     isStrict: boolean,
     length: number,
     sourceText: string,
     flavor: Flavor = "normal",
+    isBare = false,
   ) => {
     definitions.push({
       name: `CodeRecord${id}`,
       arity: 0,
-      text: `CodeRecord${id} == [id |-> ${id}, strict |-> ${getBool(isStrict)}, kind |-> "${flavor}", length |-> ${length}, sourceText |-> ${sourceText}]`,
+      text: `CodeRecord${id} == [id |-> ${id}, strict |-> ${getBool(isStrict)}, kind |-> "${flavor}", length |-> ${length}, sourceText |-> ${sourceText}, bare |-> ${getBool(isBare)}]`,
     });
     return `CodeRecord${id}`;
   };
@@ -1976,12 +1985,22 @@ export const specialize = (
     const length = parameters.findIndex(
       (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
     );
+    // A function whose frame holds all its bindings, which makes no closure and, unless it's an
+    // arrow, whose this an arrow would find in an outer function, reads no this, super, or
+    // new.target, can't observe the environment a call makes for it, which holds nothing.
+    const isBare =
+      isFramed &&
+      !isUnnamed &&
+      body !== undefined &&
+      !hasClosure(body) &&
+      (fn.kind === "arrow" || !readsThis(body));
     return defineRecord(
       id,
       isStrict,
       length === -1 ? parameters.length : length,
       fn.kind === "staticBlock" ? "<<>>" : getSourceText(node),
       flavor,
+      isBare,
     );
   };
 

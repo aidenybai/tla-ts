@@ -180,6 +180,30 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("calls a function that needs no environment without making one", () => {
+    const getSource = (expected: string) => `
+      const flip = (bit: number) => (bit === 0 ? 1 : 0);
+      function made(this: { n?: number }, v: number) { let w = v + 1; return w; }
+      const owner = {
+        n: 5,
+        arrow() { const read = () => this.n; return read(); },
+        bare(k: number) { const j = k * 2; return j; },
+      };
+      function depth(n: number): number { return n === 0 ? 0 : 1 + depth(n - 1); }
+      const instance = new (made as unknown as new (v: number) => object)(1);
+      const result = [flip(0), flip(1), made.call(undefined, 2), owner.arrow(), owner.bare(4), depth(20), typeof instance, [3, 1, 2].map(flip).join("")].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("1,0,3,5,8,20,object,000"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("1,0,3,5,8,20,object,001"))).message).toContain(THREW);
+    });
+  });
+
   describe("calls a function that only a value at run time picks", () => {
     const getSource = (expected: string) => `
       const handlers = [(value: number) => value * 2, (value: number) => value + 100];
