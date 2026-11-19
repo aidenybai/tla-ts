@@ -160,6 +160,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   }
   const stateWriter =
     options.dump && createStateWriter(options.dump, options.writeFile, options.version);
+  // Deviation from TLC: it returns without closing the writer after a failed assumption or initial state, which loses what it buffered.
   const closeDump = (status: number) => {
     stateWriter?.close();
     return status;

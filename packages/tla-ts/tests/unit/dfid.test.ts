@@ -157,6 +157,19 @@ it("dumps the state graph at each level with unlabeled edges, as TLC's DFIDModel
   );
 });
 
+// Deviation from TLC: it returns without closing the writer after an initial state fails, which leaves the header alone in the file.
+it("dumps the whole graph when an initial state violates an invariant, unlike TLC", () => {
+  expect(
+    dumpDepthFirst(
+      "Init == x = 0\nNext == x' = x\nInv == x # 0",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      false,
+    ),
+  ).toBe(
+    'strict digraph DiskGraph {\nnode [shape=box,style=rounded]\nnodesep=0.35;\nsubgraph cluster_graph {\ncolor="white";\n-3406341414084290173 [label="x = 0",style = filled]\n{rank = same; -3406341414084290173;}\n}\n}',
+  );
+});
+
 it("dumps the step again as TLC's DFIDModelChecker replays an invariant that fails to evaluate", () => {
   expect(
     dumpDepthFirst(

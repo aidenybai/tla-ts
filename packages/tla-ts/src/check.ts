@@ -368,6 +368,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   } catch (error) {
     throw isStackOverflow(error) ? createStackOverflowError() : error;
   } finally {
+    // Deviation from TLC: it returns without closing the writer after a failed assumption or initial state, which loses what it buffered.
     stateWriter?.close();
   }
 };

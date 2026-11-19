@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
-import type { CheckOptions } from "../../src";
+import { check, type CheckOptions } from "../../src";
 import { checkFixture, FIXTURES, getModuleLoader } from "./check-harness";
 import { runCliWith } from "./cli-harness";
 
@@ -158,6 +158,21 @@ describe("check dumps the state graph like TLC's -dump", () => {
     const strict = await dumpFixture("state-graph", "Excluded", { ...options, strict: true });
     const plain = await dumpFixture("state-graph", "Excluded", options);
     expect(strict.written.get("Excluded.dot")).toBe(plain.written.get("Excluded.dot"));
+  });
+
+  // Deviation from TLC: it returns without closing the writer after an initial state fails, which leaves the header alone in the file.
+  it("writes the whole graph when an initial state violates an invariant, unlike TLC", async () => {
+    const written = new Map<string, string>();
+    const result = await check({
+      source: "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nInv == x # 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      dump: { path: "M.dot", dot: true },
+      writeFile: (path, content) => written.set(path, String(content)),
+    });
+    expect([result.status, written.get("M.dot")]).toEqual([
+      "invariant-violation",
+      'strict digraph DiskGraph {\nnode [shape=box,style=rounded]\nnodesep=0.35;\nsubgraph cluster_graph {\ncolor="white";\n-3406341414084290173 [label="x = 0",style = filled]\n{rank = same; -3406341414084290173;}\n}\n}',
+    ]);
   });
 
   it("leaves a snapshot that matches the finished graph", async () => {
