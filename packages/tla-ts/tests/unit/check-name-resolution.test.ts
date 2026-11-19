@@ -3885,6 +3885,22 @@ describe("name resolution matches SANY", () => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
 
+  it("ends a line at a lone CR like SANY", async () => {
+    await expect(
+      check({
+        source: "---- MODULE M ----\r\nVARIABLE x\rA == y\nB == z\r\nC == w\r====\n",
+        config: "",
+      }),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: ["y", "z", "w"].map((name, index) => ({
+          location: `line ${index + 3}, col 6 to line ${index + 3}, col 6 of module M`,
+          message: `Unknown operator: \`${name}'.`,
+        })),
+      },
+    });
+  });
+
   it.each([
     [
       "a definition before an instance that imports it",

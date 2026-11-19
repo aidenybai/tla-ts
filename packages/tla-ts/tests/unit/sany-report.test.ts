@@ -186,6 +186,30 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("ends a line at a lone CR as SANY does", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\rVARIABLE x\rA == y\rB ==\r  /\\ x = 1\r  /\\ z\r====\r",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        ...[
+          ["line 3, col 6 to line 3, col 6", "y"],
+          ["line 6, col 6 to line 6, col 6", "z"],
+        ].flatMap(([range, name]) => [
+          `${range} of module M`,
+          "",
+          `Unknown operator: \`${name}'.`,
+          "",
+          "",
+        ]),
+      ]),
+    );
+  });
+
   it("passes an operator whose definition has fewer parameters than its RECURSIVE declaration, where SANY crashes", () => {
     const report = getReport({
       M: "---- MODULE M ----\nRECURSIVE R(_, _)\nR == 1\nL(P(_, _)) == 1\nA == L(R)\n====\n",
