@@ -1,4 +1,5 @@
 import { SmtParseError } from "../../../errors";
+import { Rational } from "./rational";
 import type { SExpr } from "./smtlib-parser";
 
 interface ParameterKinds {
@@ -206,11 +207,28 @@ export const isDoubleParameter = (name: string) => {
   return found.kinds?.doubles.split(" ").includes(found.parameter) === true;
 };
 
-export const checkParameterValue = (name: string, value: string, token: SExpr) => {
+// rational's parser skips any character it doesn't expect.
+const getDigits = (text: string) => BigInt(`0${text.replace(/[^0-9]/g, "")}`);
+
+const getDouble = (value: string, token: SExpr) => {
+  const split = value.search(/[./]/);
+  const whole = getDigits(split === -1 ? value : value.slice(0, split));
+  const rest = split === -1 ? "" : value.slice(split + 1).replace(/[^0-9]/g, "");
+  if (value[split] === "/" && getDigits(rest) === 0n)
+    throw new SmtParseError("division by zero", token);
+  const scale = 10n ** BigInt(rest.length);
+  const magnitude =
+    value[split] === "/"
+      ? Rational.of(whole, getDigits(rest))
+      : Rational.of(whole * scale + getDigits(rest), scale);
+  return (value.startsWith("-") ? magnitude.neg() : magnitude).toDouble();
+};
+
+export const getParameterValue = (name: string, value: string, token: SExpr) => {
   const found = getParameterKinds(name);
   const parameter = found.parameter;
   const kinds = found.kinds;
-  if (kinds === undefined) return;
+  if (kinds === undefined) return value;
   if (kinds.uints.split(" ").includes(parameter)) {
     if (!/^[0-9]*$/.test(value))
       throw new SmtParseError(
@@ -223,14 +241,16 @@ export const checkParameterValue = (name: string, value: string, token: SExpr) =
         token,
       );
   }
-  if (kinds.doubles.split(" ").includes(parameter) && !/^[0-9./-]*$/.test(value))
-    throw new SmtParseError(
-      `Expected values for parameter ${parameter} is a double. It was given argument '${value}'`,
-      token,
-    );
   if (kinds.bools.split(" ").includes(parameter) && value !== "true" && value !== "false")
     throw new SmtParseError(
       `Expected values for parameter ${parameter} are 'true' or 'false'. It was given argument '${value}'`,
       token,
     );
+  if (!kinds.doubles.split(" ").includes(parameter)) return value;
+  if (!/^[0-9./-]*$/.test(value))
+    throw new SmtParseError(
+      `Expected values for parameter ${parameter} is a double. It was given argument '${value}'`,
+      token,
+    );
+  return String(getDouble(value, token));
 };

@@ -891,6 +891,21 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ).toEqual(["100000", "1.23456e+06", "1e+06", "1.23456e-05", "inf"]);
   });
 
+  it("reads a double option as Z3's rational, which skips the characters it doesn't expect", () => {
+    expect(
+      run([
+        '(set-option :sat.restart.factor "3/2")',
+        "(get-option :sat.restart.factor)",
+        '(set-option :sat.restart.factor "1.2.3")',
+        "(get-option :sat.restart.factor)",
+        '(set-option :sat.restart.factor "--1")',
+        "(get-option :sat.restart.factor)",
+        '(set-option :sat.restart.factor "1/0")',
+        "(get-option :sat.restart.factor)",
+      ]),
+    ).toEqual(["1.5", "1.23", "-1", '(error "line 7 column 32: division by zero")', "-1"]);
+  });
+
   it("sets an option before it finds too many arguments", () => {
     expect(
       run([

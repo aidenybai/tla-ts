@@ -60,7 +60,7 @@ import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { FdSolver } from "./fd-solver";
-import { checkParameterValue, isDoubleParameter } from "./gparams";
+import { getParameterValue, isDoubleParameter } from "./gparams";
 import { formatDouble } from "./probes";
 import { SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
@@ -2230,11 +2230,7 @@ export const runSmtlibScript = (
                 ? BigInt(value.text.replace("#", "0")).toString()
                 : value.text;
           const name = getParameterName(keyword);
-          checkParameterValue(name, text, value);
-          settings.parameters.set(
-            name,
-            isDoubleParameter(name) && text.includes("/") ? value.text : text,
-          );
+          settings.parameters.set(name, getParameterValue(name, text, value));
           if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
           if (optionName === ":rlimit") settings.rlimit = Number(text);
           // Z3 reads the parameters model and unsat_core again whenever any parameter is set.
