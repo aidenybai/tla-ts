@@ -1304,17 +1304,20 @@ const parse = (
       expect(":");
       return { kind: "Lambda", params, body: parseExpression(), location };
     }
-    // SANY's Number() reads NUMBER_LITERAL [DOT NUMBER_LITERAL], so spaces and comments may surround the point.
-    if (token.kind === "Number" && !isTlapm && isAt(".") && peek(1).kind === "Number") {
+    if (token.kind === "Number") {
+      // SANY's Number() reads NUMBER_LITERAL [DOT NUMBER_LITERAL], so spaces and comments may surround the point.
+      if (isTlapm || !isAt(".") || peek(1).kind !== "Number") {
+        return { kind: "Number", value: getNumeralValue(token.text), text: token.text, location };
+      }
       advance();
       const fraction = advance();
-      const based = [token, fraction].find((part) => part.text.startsWith("\\"));
+      const based = token.text.startsWith("\\") ? token : fraction;
       // Deviation from SANY: DecimalNode throws NumberFormatException on a based part, as in \b1.1; tla-ts rejects the part as a syntax error.
-      if (based) throw createError(`Expected decimal digits but found ${based.text}`, based);
+      if (based.text.startsWith("\\")) {
+        throw createError(`Expected decimal digits but found ${based.text}`, based);
+      }
       return { kind: "Decimal", text: `${token.text}.${fraction.text}`, location };
     }
-    if (token.kind === "Number")
-      return { kind: "Number", value: getNumeralValue(token.text), text: token.text, location };
     if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };
     if (token.kind === "String") return { kind: "String", value: token.text, location };
     const isStep = token.kind === "Step" && isStepReference(token);

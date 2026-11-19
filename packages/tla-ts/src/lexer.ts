@@ -636,10 +636,8 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
       const digitsEnd = skipClass(source, index, DIGIT);
       if (digitsEnd === wordEnd) {
         const fractionEnd =
-          isTlapm && source.charCodeAt(wordEnd) === CODE_DOT
-            ? skipClass(source, wordEnd + 1, DIGIT)
-            : wordEnd;
-        const isDecimal = fractionEnd > wordEnd + 1;
+          source.charCodeAt(wordEnd) === CODE_DOT ? skipClass(source, wordEnd + 1, DIGIT) : wordEnd;
+        const isDecimal = isTlapm && fractionEnd > wordEnd + 1;
         const number = isDecimal ? source.slice(index, fractionEnd) : word;
         pushToken(isDecimal ? "Decimal" : "Number", number, number.length);
         continue;
