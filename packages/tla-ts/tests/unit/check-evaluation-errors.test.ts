@@ -1577,6 +1577,31 @@ describe("evaluation errors match TLC", () => {
     expect(prints.slice(1)).toEqual(['"<<[fld2 |-> 2, fld1 |-> 1]>>"']);
   });
 
+  it("fails on a set that mixes types in a value TLC compares with itself", async () => {
+    const messages = await Promise.all(
+      [
+        ['ASSUME PrintT(LET D == <<{1, "a"}>> IN D = D)', ""],
+        ['ASSUME PrintT(LET D == [a |-> {1, "a"}] IN D = D)', ""],
+        ['ASSUME PrintT(LET D == {{1, "a"}} IN D = D)', ""],
+        ['ASSUME PrintT(LET D == SUBSET {1, "a"} IN D = D)', ""],
+        ['ASSUME PrintT(LET D == [{1, "a"} -> {1}] IN D = D)', ""],
+        ['ASSUME PrintT(LET D == {1, "a"} \\X {1} IN D = D)', ""],
+        ['ASSUME PrintT(LET D == {1, "a"} IN D \\in {D})', ""],
+        ['D == {1, "a"}\nASSUME PrintT(D = D)', ""],
+        ["Def == 3\nASSUME PrintT(Def = Def)", 'CONSTANT Def = {{1, "a"}}'],
+        ['ASSUME PrintT(LET D == {1, "a"} IN Cardinality({D, D}))', ""],
+      ].map(async (item) => (await checkModule(item[0], item[1])).violation?.message),
+    );
+    const message = 'Attempted to compare string "a" with non-string:\n1';
+    expect(messages).toEqual([
+      ...Array(9).fill(message),
+      getJavaError(
+        "value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)",
+        message,
+      ),
+    ]);
+  });
+
   it("sorts a TLCEval argument only outside an instance that substitutes", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';
