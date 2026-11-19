@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check } from "../../src";
-import { getUnexpectedException } from "../../src/errors";
+import { check, TlaError } from "../../src";
+import { getErrorExitCode, getUnexpectedException, STACK_OVERFLOW_MESSAGE } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
 import { checkFixture, formatCallStackLines } from "./check-harness";
 
@@ -347,6 +347,29 @@ describe("liveness matches TLC", () => {
     });
     expect([result.status, result.distinctStates]).toEqual(["success", 3]);
   });
+
+  it.each([
+    ["a property's conjunction", "Spec", "Prop == LET RECURSIVE F F == F /\\ <>(x = 1) IN F"],
+    ["a property's IF", "Spec", "Prop == LET RECURSIVE F F == IF x = 0 THEN <>(x = 1) ELSE F IN F"],
+    ["a property's []", "Spec", "Prop == LET RECURSIVE F F == <>(x = 1) /\\ []F IN F"],
+    [
+      "the specification's fairness",
+      "Fair",
+      "Fair == LET RECURSIVE F F == F /\\ WF_x(Next) IN Init /\\ [][Next]_x /\\ F\nProp == <>(x = 1)",
+    ],
+  ])(
+    "reports a stack overflow for a zero-argument recursive LET definition in %s as TLC does",
+    async (_title, specification, definitions) => {
+      const error = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\n${definitions}\n====`,
+        config: `SPECIFICATION ${specification}\nPROPERTY Prop`,
+      }).catch((caught: unknown) => caught);
+      expect(error instanceof TlaError && [error.message, getErrorExitCode(error)]).toEqual([
+        STACK_OVERFLOW_MESSAGE,
+        255,
+      ]);
+    },
+  );
 
   it.each([
     ["[][x' >= x]_vars", 1],
