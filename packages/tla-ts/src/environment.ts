@@ -1208,59 +1208,61 @@ export const createEnvironment = (
       warnings: scope.warnings,
       goalOperands,
     });
-    const getSymbolsBefore = (location: SourceLocation): Symbols =>
-      [
-        ...declarations.map((declaration) => ({
-          location: declaration.location,
-          name: declaration.name,
-          symbol: getDeclarationSymbol(declaration),
-        })),
-        ...parsed.definitions.map((definition) => ({
-          location: definition.location,
-          name: definition.name,
-          symbol: getDefinitionSymbol(definition),
-        })),
-        ...parsed.theorems.flatMap((theorem) => {
+    const orderedUnits = [
+      ...declarations.map((declaration) => ({
+        location: declaration.location,
+        getEntries: (): [string, ModuleSymbol][] => [
+          [declaration.name, getDeclarationSymbol(declaration)],
+        ],
+      })),
+      ...parsed.definitions.map((definition) => ({
+        location: definition.location,
+        getEntries: (): [string, ModuleSymbol][] => [
+          [definition.name, getDefinitionSymbol(definition)],
+        ],
+      })),
+      ...parsed.theorems.map((theorem) => ({
+        location: theorem.location,
+        getEntries: (): [string, ModuleSymbol][] => {
           const name = theorem.name;
           const goal = getTheoremGoal(theorem);
           return name === undefined || goal === undefined
             ? []
             : [
-                {
-                  location: theorem.location,
+                [
                   name,
-                  symbol: {
+                  {
                     key: getKey({ name }),
                     arity: 0,
                     kind: "Theorem",
                     range: theorem.location.range,
                     goal,
-                  } satisfies ModuleSymbol,
-                },
+                  },
+                ],
               ];
-        }),
-        ...parsed.instances.flatMap((instance) => [
+        },
+      })),
+      ...parsed.instances.map((instance) => ({
+        location: instance.location,
+        getEntries: (): [string, ModuleSymbol][] => [
           ...(instance.name === undefined
             ? []
             : [
-                {
-                  location: instance.location,
-                  name: instance.name,
-                  symbol: getInstanceSymbol(instance, instance.name),
-                },
+                [instance.name, getInstanceSymbol(instance, instance.name)] satisfies [
+                  string,
+                  ModuleSymbol,
+                ],
               ]),
-          ...[...(instanced.get(instance) ?? [])].map((entry) => ({
-            location: instance.location,
-            name: entry[0],
-            symbol: entry[1],
-          })),
-        ]),
-      ]
-        .filter((item) => isBefore(item.location, location))
-        .toSorted((left, right) => compareLocations(left.location, right.location))
+          ...(instanced.get(instance) ?? []),
+        ],
+      })),
+    ].toSorted((left, right) => compareLocations(left.location, right.location));
+    const getSymbolsBefore = (location: SourceLocation): Symbols =>
+      orderedUnits
+        .filter((unit) => isBefore(unit.location, location))
+        .flatMap((unit) => unit.getEntries())
         .reduce(
-          (symbols, item) =>
-            symbols.has(item.name) ? symbols : symbols.set(item.name, item.symbol),
+          (symbols, entry) => (symbols.has(entry[0]) ? symbols : symbols.set(entry[0], entry[1])),
           new Map(bound),
         );
     const subexpressions = createModuleSubexpressions(
