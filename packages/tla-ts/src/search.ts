@@ -928,16 +928,21 @@ export const createCheckEnvironment = (
   isStringOrderFrozen = false,
 ) => {
   const order = createTlcOrder(options.source, options.loadModule);
+  const getOperatorModules = (kind: ModuleOperator["kind"]) =>
+    (options.moduleOperators ?? []).flatMap((operator) =>
+      operator.kind === kind ? [operator.module] : [],
+    );
   setStringOrder(
     order.getStringOrder(
       config,
       (options.runtimeInvariants ?? []).flatMap((invariant) => invariant.module ?? []),
-      // TLC extends the root with the modules of postconditions before those of constraints and the view.
-      ["postcondition", "constraint", "view"].flatMap((kind) =>
-        (options.moduleOperators ?? []).flatMap((operator) =>
-          operator.kind === kind ? [operator.module] : [],
-        ),
-      ),
+      // TLC extends the root with the modules of postconditions, the trace spec's last, before those of constraints and the view.
+      [
+        ...getOperatorModules("postcondition"),
+        ...(options.traceSpec?.traceFile === undefined ? [] : ["_TLCTrace"]),
+        ...getOperatorModules("constraint"),
+        ...getOperatorModules("view"),
+      ],
     ),
   );
   setValueOptions(options);
