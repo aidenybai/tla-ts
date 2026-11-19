@@ -14,7 +14,7 @@ export const UNLOCATED: SourceLocation = { line: 0, column: 0 };
 export const getModuleName = (fileName: string) =>
   fileName
     .slice(fileName.lastIndexOf("/") + 1)
-    .replace(/\.ts$/, "")
+    .replace(/\.tsx?$/, "")
     .split(/[^A-Za-z0-9]+/)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join("");

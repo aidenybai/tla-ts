@@ -1,19 +1,24 @@
-import counter from "./examples/counter.ts?raw";
-
-const fixtures = import.meta.glob<string>(
-  [
-    "../../tla-ts/tests/fixtures/typescript/examples/*/*.ts",
-    "../../tla-ts/tests/fixtures/typescript/cli/failing/overdraft.ts",
-  ],
+const sources = import.meta.glob<string>(
+  ["./examples/*.ts", "../../tla-ts/tests/fixtures/typescript/examples/two-phase/*.ts"],
   { query: "?raw", import: "default", eager: true },
 );
 
-export const PLAYGROUND_EXAMPLES = [
-  { fileName: "counter.ts", source: counter.trim() },
-  ...Object.entries(fixtures)
-    .map(([path, source]) => ({
-      fileName: path.slice(path.lastIndexOf("/") + 1),
-      source: source.trim(),
-    }))
-    .toSorted((left, right) => left.fileName.localeCompare(right.fileName)),
+// Code from real libraries comes first, and the port of a TLA+ spec last.
+const FILE_NAMES = [
+  "likes.ts",
+  "search-box.ts",
+  "react-scheduler.ts",
+  "react-lanes.ts",
+  "solid-signals.ts",
+  "effect-semaphore.ts",
+  "typescript-queue.ts",
+  "two-phase.ts",
 ];
+
+export const PLAYGROUND_EXAMPLES = FILE_NAMES.map((fileName) => ({
+  fileName,
+  source:
+    Object.entries(sources)
+      .find((entry) => entry[0].endsWith(`/${fileName}`))?.[1]
+      .trim() ?? "",
+}));
