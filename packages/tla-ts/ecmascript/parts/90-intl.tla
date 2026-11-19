@@ -70,8 +70,9 @@ IntlMethodServices ==
   @@ ("Segmenter.segment" :> "Segmenter")
 
 \* The options that the constructors of the services below read, in their order, each with its key,
-\* its kind: "string" with the values it may take, "boolean", or "type", a string that must be a
-\* type sequence of UTS 35, and whether the constructor throws a TypeError where it's undefined.
+\* its kind: "string" with the values it may take, "boolean", "type", a string that must be a type
+\* sequence of UTS 35, "timeZone", a time zone's identifier, or "digits", a number from 1 to 3, and
+\* whether the constructor throws a TypeError where it's undefined.
 IntlOption(key, kind, values, required) == [key |-> key, kind |-> kind, values |-> values, required |-> required]
 IntlMatcherOption == IntlOption(SV("localeMatcher"), "string", {N("lookup"), N("best fit")}, FALSE)
 IntlStyleOption == IntlOption(SV("style"), "string", {N("long"), N("short"), N("narrow")}, FALSE)
@@ -86,6 +87,15 @@ IntlConstructorOptions ==
      <<IntlMatcherOption, IntlOption(SV("type"), "string", {N("conjunction"), N("disjunction"), N("unit")}, FALSE),
        IntlStyleOption>>,
    Segmenter |-> <<IntlMatcherOption, IntlOption(SV("granularity"), "string", {N("grapheme"), N("word"), N("sentence")}, FALSE)>>,
+   DateTimeFormat |->
+     <<IntlMatcherOption, IntlOption(SV("calendar"), "type", {}, FALSE), IntlOption(SV("numberingSystem"), "type", {}, FALSE),
+       IntlOption(SV("hour12"), "boolean", {}, FALSE),
+       IntlOption(SV("hourCycle"), "string", {N("h11"), N("h12"), N("h23"), N("h24")}, FALSE),
+       IntlOption(SV("timeZone"), "timeZone", {}, FALSE)>> \o
+     [i \in 1..Len(DateTimeFormatOptions) |->
+        IntlOption(DateTimeFormatOptions[i].property,
+                   IF DateTimeFormatOptions[i].key = "fractionalSecondDigits" THEN "digits" ELSE "string",
+                   DateTimeFormatOptions[i].values, FALSE)],
    RelativeTimeFormat |->
      <<IntlMatcherOption, IntlOption(SV("numberingSystem"), "type", {}, FALSE), IntlStyleOption,
        IntlOption(SV("numeric"), "string", {N("always"), N("auto")}, FALSE)>>,
@@ -112,7 +122,15 @@ ReadIntlOptions(s, options, list, i, acc) ==
      ELSE IF Val(value) = Undefined THEN
        IF option.required THEN ThrowTypeError(value.s) ELSE ReadIntlOptions(value.s, options, list, i + 1, acc @@ (option.key :> Empty))
      ELSE IF option.kind = "boolean" THEN ReadIntlOptions(value.s, options, list, i + 1, acc @@ (option.key :> ToBooleanValue(Val(value))))
+     ELSE IF option.kind = "digits" THEN
+       LET n == ToNumber(value.s, Val(value)) IN IF IsAbrupt(n) THEN n
+       ELSE IF ~NumIsFinite(Val(n).value) \/ NumLessThan(Val(n).value, NumFromInt(1)) \/ NumLessThan(NumFromInt(3), Val(n).value)
+       THEN ThrowError(n.s, "RangeError")
+       ELSE ReadIntlOptions(n.s, options, list, i + 1, acc @@ (option.key :> NumToInt(MathFloor(Val(n).value))))
      ELSE LET str == ToStr(value.s, Val(value)) IN IF IsAbrupt(str) THEN str
+     ELSE IF option.kind = "timeZone" THEN
+       LET tz == ZonedConstructorTimeZone(str.s, Val(str)) IN IF IsAbrupt(tz) THEN tz
+       ELSE ReadIntlOptions(tz.s, options, list, i + 1, acc @@ (option.key :> Val(tz)))
      ELSE IF IF option.kind = "type" THEN ~IsTypeSequenceFrom(Val(str).value, 1, 0) ELSE Val(str).value \notin option.values
      THEN ThrowError(str.s, "RangeError")
      ELSE ReadIntlOptions(str.s, options, list, i + 1, acc @@ (option.key :> Val(str).value))
@@ -130,7 +148,15 @@ IntlConstruct(s, service, newTarget, locales, options) ==
                 [] OTHER -> ToObject(requested.s, options)
   IN IF IsAbrupt(opts) THEN opts ELSE
   LET read == ReadIntlOptions(opts.s, Val(opts), IntlConstructorOptions[service], 1, <<>>) IN IF IsAbrupt(read) THEN read
+  ELSE IF service = "DateTimeFormat" /\ IsDateTimeFormatConflict(Val(read)) THEN ThrowTypeError(read.s)
   ELSE Ok(SetSlots(read.s, Val(o), [locales |-> Val(requested), options |-> Val(read)]), Val(o))
+
+\* CreateDateTimeFormat's TypeError, where a date or time style comes with an explicit format
+\* component, of options read as IntlConstruct reads them.
+IsDateTimeFormatConflict(read) ==
+  LET styled == read[SV("dateStyle")] # Empty \/ read[SV("timeStyle")] # Empty
+      components == {DateTimeFormatOptions[i].property : i \in 1..11}
+  IN styled /\ \E key \in components : read[key] # Empty
 
 \* CanonicalizeLocaleList (ECMA-402 §9.2.1), as a list of canonical tags, which reads whether a tag
 \* is valid and its canonical form from HostLocale. A list longer than any a program makes stops,
@@ -297,7 +323,14 @@ IntlProperties ==
 IntlBuiltin(s, f, m, this, args, nt) ==
   CASE m \in IntlConstructors ->
          IF nt = Undefined /\ m \notin IntlCallableConstructors THEN ThrowTypeError(s)
-         ELSE IF m \in DOMAIN IntlConstructorOptions THEN IntlConstruct(s, m, IF nt = Undefined THEN f ELSE nt, Arg(args, 1), Arg(args, 2))
+         ELSE IF m \in DOMAIN IntlConstructorOptions THEN
+           LET o == IntlConstruct(s, m, IF nt = Undefined THEN f ELSE nt, Arg(args, 1), Arg(args, 2)) IN
+           IF IsAbrupt(o) \/ nt # Undefined \/ m \notin {"DateTimeFormat", "NumberFormat"} THEN o ELSE
+           \* ChainDateTimeFormat and ChainNumberFormat, which define %Intl%.[[FallbackSymbol]] on an
+           \* instance that a call without new receives.
+           LET inherits == OrdinaryHasInstance(o.s, f, this) IN IF IsAbrupt(inherits) THEN inherits
+           ELSE IF Val(inherits) = True THEN Unsupported(inherits.s, N("Unsupported: Intl's legacy constructed symbol"))
+           ELSE Ok(inherits.s, Val(o))
          ELSE Unsupported(s, N("Unsupported: an Intl constructor, which reads locale data"))
     [] m = "getCanonicalLocales" ->
          LET list == CanonicalizeLocaleList(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list

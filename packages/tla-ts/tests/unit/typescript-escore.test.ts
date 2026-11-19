@@ -938,6 +938,60 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("constructs an Intl.DateTimeFormat from its options", () => {
+    const getSource = (expected: string) => `
+      const read: string[] = [];
+      const options = new Proxy(
+        {},
+        {
+          get: (target, key) => {
+            read.push(String(key));
+            return Reflect.get(target, key);
+          },
+        },
+      );
+      const format = new Intl.DateTimeFormat(["en-US"], options);
+      let errors = "";
+      for (const run of [
+        () => new Intl.DateTimeFormat([], { dateStyle: "short", hour: "numeric" }),
+        () => new Intl.DateTimeFormat([], { calendar: "ab" }),
+        () => new Intl.DateTimeFormat([], { fractionalSecondDigits: 4 as 3 }),
+        () => new Intl.DateTimeFormat([], { timeZone: "+01:00:30" }),
+        () => Intl.DateTimeFormat.prototype.formatToParts.call({}),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [
+        read.join(),
+        format instanceof Intl.DateTimeFormat,
+        Reflect.apply(Intl.DateTimeFormat, {}, []) instanceof Intl.DateTimeFormat,
+        errors,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const read =
+      "localeMatcher,calendar,numberingSystem,hour12,hourCycle,timeZone,weekday,era,year,month,day,dayPeriod,hour,minute,second,fractionalSecondDigits,timeZoneName,formatMatcher,dateStyle,timeStyle";
+
+    it("agrees with Node", async () => {
+      const expected = `${read}|true|true|TypeError;RangeError;RangeError;RangeError;TypeError;`;
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const expected = `${read}|true|true|TypeError;RangeError;TypeError;RangeError;TypeError;`;
+      expect((await checkScript(getSource(expected))).message).toContain(THREW);
+    });
+
+    it("stops where a call without new chains an instance, as Intl's legacy symbol does", async () => {
+      const source = "Intl.DateTimeFormat.call(new Intl.DateTimeFormat());";
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
+    });
+  });
+
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `
       const error = new Error("m");
