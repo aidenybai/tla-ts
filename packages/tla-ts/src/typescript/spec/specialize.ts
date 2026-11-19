@@ -2765,7 +2765,13 @@ export const specialize = (
       bind = `ResultThen(ctx, AssignToThen(Val(value), ResolveBinding(value.s, ctx, ${getUnits("let")}, FALSE)))`;
     } else if (ts.isVariableDeclarationList(initializer)) {
       const declaration = initializer.declarations[0];
-      if (declaration.initializer !== undefined) {
+      if (
+        declaration.initializer !== undefined &&
+        (!isEnumerate ||
+          scope.isStrict ||
+          isLexical(initializer) ||
+          !ts.isIdentifier(declaration.name))
+      ) {
         throw new TlaTypeScriptError(
           "tla-ts can't compile an initializer in a for-in head to ESCore yet",
           node,
@@ -2803,8 +2809,16 @@ export const specialize = (
       `ForInOfStatementThen(ctx, loop, it, v, ${body("bound.s", "Val(bound)")})`,
     ].join("\n    ");
     const expression = value(node.expression, scope);
+    // §B.3.5: a var's initializer in a for-in head assigns the var before the head's expression.
+    const initialized =
+      ts.isVariableDeclarationList(initializer) &&
+      initializer.declarations[0]?.initializer !== undefined
+        ? declarationList(initializer, scope)
+        : undefined;
     const head =
-      tdz.length === 0
+      initialized !== undefined
+        ? `LET d == ${initialized("s", "ctx")} IN IF IsAbrupt(d) THEN d ELSE ${expression("d.s", "ctx")}`
+        : tdz.length === 0
         ? `${expression(resetSlots("s", tdzSlots), "ctx")}`
         : `LET env == NewDeclarativeEnvironment(s, ctx.lex) IN ${expression(`BlockBindNames(env.s, env.e, ${getSequence(tdz.map(getUnits))}, FALSE)`, "WithLex(ctx, env.e)")}`;
     return defineCode(

@@ -1480,6 +1480,25 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("runs a var's initializer in a for-in head before its expression, as Annex B does", () => {
+    const getSource = (expected: string) => `
+      let effects = 0;
+      let stored;
+      for (var key = (++effects, -1) in ((stored = key), { first: 0, last: 1 }));
+      for (var named = function () {} in {});
+      const result = [stored, effects, key, named.name].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("-1,1,last,named"), false)).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(",1,last,named"), false)).message).toContain(THREW);
+    });
+  });
+
   describe("models the realm of the host that compiles it", () => {
     const getSource = (expected: string) => `
       const result = [
