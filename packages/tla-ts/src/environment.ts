@@ -1099,9 +1099,8 @@ export const createEnvironment = (
       linked.variables.forEach((variable, index) => {
         const isDeclared =
           variables.includes(variable) ||
-          [...parsed.constants, ...extendedConstants].some(
-            (constant) => constant.name === variable,
-          );
+          parsed.constants.some((constant) => constant.name === variable) ||
+          extendedConstants.some((constant) => constant.name === variable);
         if (isDeclared) return;
         variables.push(variable);
         variableLocations.push(linked.variableLocations[index]);

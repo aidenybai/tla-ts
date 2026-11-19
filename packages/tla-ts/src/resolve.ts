@@ -331,6 +331,9 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
   return isVisible ? definition : undefined;
 };
 
+const hasKey = (binding: ModuleBinding | undefined): binding is ModuleBinding & ModuleSymbol =>
+  binding?.key !== undefined;
+
 const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   const definition = getVisibleDefinition(name, unit);
   if (definition) {
@@ -348,7 +351,7 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   if (binding?.isPending) {
     return { key: name, arity: binding.arity, params: binding.params, kind: binding.kind };
   }
-  if (binding?.key !== undefined) return { ...binding, key: binding.key };
+  if (hasKey(binding)) return binding;
   return binding ? unit.imported.get(name) : undefined;
 };
 
