@@ -465,4 +465,17 @@ describe("theory_bv, as Z3 5.3.2 bit-blasts its terms", () => {
       ]),
     ).toEqual(["sat", "sat", "(:rlimit 1854)"]);
   });
+
+  it("bit-blasts the assertions after one that internalizes to a conflict", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 1))",
+        "(push 1)",
+        "(assert (bvslt (bvsdiv x #b1) x))",
+        "(assert (= (bvshl x x) #b1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 95)"]);
+  });
 });
