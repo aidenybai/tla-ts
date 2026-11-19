@@ -1271,6 +1271,20 @@ describe("evaluation errors match TLC", () => {
     expect(local.status).toBe("invariant-violation");
   });
 
+  it("evaluates a deep recursion of an operator that an operator argument names", async () => {
+    const getResult = (body: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nRECURSIVE Count(_)\nCount(n) == IF n < 100000 THEN Count(n + 1) ELSE n\nApply(F(_), v) == F(v)\nTwice(n) == LET Add(m) == m + n IN Add(Add(0))\nInit == x = ${body}\nNext == UNCHANGED x\nInv == x = 100000\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      });
+    const counted = await getResult("Apply(Count, 0)");
+    expect([counted.status, counted.distinctStates]).toEqual(["success", 1]);
+    const added = await getResult("Apply(Twice, 50000)");
+    expect([added.status, added.distinctStates]).toEqual(["success", 1]);
+    const other = await getResult("Apply(Twice, 49999)");
+    expect(other.status).toBe("invariant-violation");
+  });
+
   it("enters each LET operator once where the branches of a recursion's body all reach it", async () => {
     const getResult = (limit: number, depth: number) => {
       const joins = Array.from(
