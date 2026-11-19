@@ -57593,3 +57593,22 @@ describe("gives the methods and accessors of a class with numeric names the type
     );
   });
 });
+
+describe("starts a script's var that a loop's pattern declares as undefined", () => {
+  const getSource = (expected: string) => `
+    let seen = "";
+    for (const item of [1, 2]) {
+      var { first, second } = { first: item, second: item * 2 };
+      seen += first + second + ",";
+    }
+    if (seen !== "${expected}") throw new Error("seen " + seen);
+  `;
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource("3,6,"))).failure).toBeUndefined();
+  });
+
+  it("rejects another sum", async () => {
+    expect((await checkModel(getSource("3,7,"))).failure?.message).toContain("seen 3,6,");
+  });
+});

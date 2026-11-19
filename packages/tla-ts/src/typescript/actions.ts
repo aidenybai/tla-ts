@@ -24477,10 +24477,14 @@ export const translateScript = (
   );
   const scope = createStateScope(context);
   if (context.heap !== undefined) context.prelude.add("JavaScript");
-  // A script's vars hold undefined until their declarations run, as do the parameters of a
-  // function that runs once until it runs.
+  // A script's vars, those that a pattern binds too, hold undefined until their declarations run,
+  // as do the parameters of a function that runs once until it runs.
   const hoisted = [...context.variables.keys()].filter((symbol) => {
-    const declaration = getValueDeclaration(symbol, context);
+    const bound = getValueDeclaration(symbol, context);
+    const declaration =
+      bound !== undefined && ts.isBindingElement(bound)
+        ? ts.walkUpBindingElementsAndPatterns(bound)
+        : bound;
     return (
       isLast &&
       declaration !== undefined &&
