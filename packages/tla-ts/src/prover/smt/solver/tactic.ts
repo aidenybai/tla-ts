@@ -429,7 +429,10 @@ const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: 
   // mk_smt_tactic: with sat.euf, the smt tactic is the sat tactic.
   if (environment.parameters.get("sat.euf") === "true") return runSat(environment, params)(goal);
   const kernelParams = getKernelParams(environment, params, goal);
-  const extracted = extractClauses(manager, goal);
+  // Without unsat cores, smt_tactic asserts the goal's formulas, which only the goal holds.
+  const extracted = goal.isCoresEnabled
+    ? extractClauses(manager, goal)
+    : { clauses: new RefVector(manager), assumptions: [] };
   const solved =
     extracted.assumptions.length === 0
       ? solveGoal(manager, goal.forms.items, kernelParams)

@@ -2648,6 +2648,41 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
     ).toEqual(["sat", "sat", "((a 5)\n (b 2))"]);
   });
 
+  it("leaves the formulas of the smt tactic to the goal alone without unsat cores", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(assert (= #x3 x))",
+        "(assert (not (or (= z (concat ((_ extract 3 2) x) ((_ extract 3 2) #x1))) (= (concat ((_ extract 3 2) y) ((_ extract 3 2) (concat ((_ extract 3 2) z) #b01))) (concat ((_ extract 3 2) #x1) ((_ extract 3 2) #x3))))))",
+        "(check-sat)",
+        "(assert (not (= #x3 (concat ((_ extract 1 0) z) ((_ extract 3 2) #x1)))))",
+        "(assert (not (or (= #x0 (concat ((_ extract 1 0) z) ((_ extract 3 2) z))) (= #x1 (concat ((_ extract 3 2) (concat #x3 ((_ extract 3 2) #x0))) #b01)))))",
+        "(check-sat)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or p (and (not p) r) q))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      [
+        "(goals",
+        "(goal",
+        "  (= x #x3)",
+        "  (not (= z (concat ((_ extract 3 2) x) #b00)))",
+        "  (or (not (= ((_ extract 3 2) z) #b00)) (not (= ((_ extract 3 2) y) #b00)))",
+        "  (or (not (= ((_ extract 3 2) z) #b00)) (not (= ((_ extract 1 0) z) #b00)))",
+        "  (or p q r)",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("frees the rewriter cache of propagate-values when the tactic of the first check ends", () => {
     expect(
       run([
