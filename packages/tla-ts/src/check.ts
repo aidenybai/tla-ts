@@ -121,7 +121,6 @@ import { runTypedSearch, type TypedResult } from "./typed-tier";
 import {
   createCanonicalizer,
   createModelValue,
-  formatState,
   getFingerprintError,
   getModelValues,
   isSameValue,
@@ -1090,17 +1089,8 @@ const searchStates = (
     name: action.name,
     signature: getActionSignature(action),
   });
-  const getGraphState = (state: Value[], level: number): GraphState => ({
-    fingerprint: BigInt.asIntN(64, runtime.getFingerprint(state)),
-    level,
-    getLabel: () =>
-      formatState(
-        config.alias === undefined
-          ? toRecord(state)
-          : search.evaluateAlias(config.alias, state, undefined, options.isTool ?? false),
-      ),
-    getText: () => formatState(toRecord(state)),
-  });
+  const getGraphState = (state: Value[], level: number) =>
+    search.getGraphState(state, runtime.getFingerprint(state), level, options.isTool ?? false);
 
   const visitInitialState = (state: Value[]) => {
     runtime.generatedStates++;

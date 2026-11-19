@@ -115,6 +115,73 @@ it("replays the step whose invariant fails to evaluate with the actions it count
   ]);
 });
 
+const dumpDepthFirst = (body: string, config: string, colorize: boolean) => {
+  const written = new Map<string, string>();
+  checkDepthFirst({
+    source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\n${body}\n====`,
+    config,
+    maxDepth: 4,
+    dump: { path: "M.dot", dot: true, colorize, actionLabels: true },
+    writeFile: (path, content) => written.set(path, String(content)),
+    onOutput: () => {},
+  });
+  return written.get("M.dot");
+};
+
+it("dumps the state graph at each level with unlabeled edges, as TLC's DFIDModelChecker does", () => {
+  expect(
+    dumpDepthFirst("Init == x = 0\nNext == x' = (x + 1) % 3", "INIT Init\nNEXT Next", true),
+  ).toBe(
+    [
+      "strict digraph DiskGraph {",
+      "node [shape=box,style=rounded]",
+      'edge [colorscheme="paired12"]',
+      "nodesep=0.35;",
+      "subgraph cluster_graph {",
+      'color="white";',
+      '-3406341414084290173 [label="x = 0",style = filled]',
+      "-3406341414084290173 -> -686636423115914061;",
+      '-686636423115914061 [label="x = 1",tooltip="x = 1"];',
+      "-3406341414084290173 -> -686636423115914061;",
+      "-686636423115914061 -> -7115858903467826205;",
+      '-7115858903467826205 [label="x = 2",tooltip="x = 2"];',
+      "-3406341414084290173 -> -686636423115914061;",
+      "-686636423115914061 -> -7115858903467826205;",
+      "-7115858903467826205 -> -3406341414084290173;",
+      "{rank = same; -3406341414084290173;}",
+      "{rank = same; -686636423115914061;}",
+      "{rank = same; -7115858903467826205;}",
+      "}",
+      "}",
+    ].join("\n"),
+  );
+});
+
+it("dumps the step again as TLC's DFIDModelChecker replays an invariant that fails to evaluate", () => {
+  expect(
+    dumpDepthFirst(
+      "Init == x = 0\nNext == x' = 1 - x\nBad == x = 1 => x \\div 0 = 1",
+      "INIT Init\nNEXT Next\nINVARIANT Bad",
+      false,
+    ),
+  ).toBe(
+    [
+      "strict digraph DiskGraph {",
+      "node [shape=box,style=rounded]",
+      "nodesep=0.35;",
+      "subgraph cluster_graph {",
+      'color="white";',
+      '-3406341414084290173 [label="x = 0",style = filled]',
+      "-3406341414084290173 -> -686636423115914061;",
+      '-686636423115914061 [label="x = 1",tooltip="x = 1"];',
+      "-3406341414084290173 -> -686636423115914061;",
+      "{rank = same; -3406341414084290173;}",
+      "}",
+      "}",
+    ].join("\n"),
+  );
+});
+
 it("warns about symmetry during liveness checking whenever the configuration declares it, as TLC's Tool#hasSymmetry asks", () => {
   const progress: CheckProgress[] = [];
   checkDepthFirst({

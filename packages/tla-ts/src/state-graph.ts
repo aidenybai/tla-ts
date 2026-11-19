@@ -32,6 +32,7 @@ export interface StateWriter {
     isSeen: boolean,
     action: GraphAction | undefined,
   ) => void;
+  writeUnlabeledSuccessor: (state: GraphState, successor: GraphState, isSeen: boolean) => void;
   writeConstrained: (
     state: GraphState,
     successor: GraphState,
@@ -75,11 +76,13 @@ const createPlainWriter = (dump: StateDump, writeFile: WriteFile): StateWriter =
   const states: string[] = [];
   const writeState = (state: GraphState) =>
     states.push(`State ${states.length + 1}:\n${state.getText()}\n`);
+  const writeSuccessor = (_state: GraphState, successor: GraphState, isSeen: boolean) => {
+    if (!isSeen) writeState(successor);
+  };
   return {
     writeInitialState: writeState,
-    writeSuccessor: (_state, successor, isSeen) => {
-      if (!isSeen) writeState(successor);
-    },
+    writeSuccessor,
+    writeUnlabeledSuccessor: writeSuccessor,
     writeConstrained: () => {},
     writeStuttering: writeState,
     close: () => writeFile?.(dump.path, states.join("")),
@@ -150,21 +153,24 @@ const createDotWriter = (
       writeFile?.(dump.path.replaceAll(".dot", "_snapshot.dot"), lines.join("") + getEnding());
     }
   };
-  const writeEdge = (
-    state: GraphState,
-    successor: GraphState,
-    isSeen: boolean,
-    action: GraphAction | undefined,
-    constraint?: string,
-  ) => {
-    if (isDuplicate(state, successor)) return;
+  const getEdgeAttributes = (action: GraphAction | undefined, constraint: string | undefined) => {
     const color = dump.colorize ? String(getColor(action)) : "black";
     const name =
       dump.actionLabels && action ? escapeDotString(is174 ? action.name : action.signature) : "";
     const label = constraint === undefined ? name : `${name}\n${constraint}`;
-    lines.push(
-      `${state.fingerprint} -> ${successor.fingerprint} [label="${label}",color="${color}",fontcolor="${color}"];\n`,
-    );
+    return ` [label="${label}",color="${color}",fontcolor="${color}"]`;
+  };
+  const writeEdge = (
+    state: GraphState,
+    successor: GraphState,
+    isSeen: boolean,
+    isLabeled: boolean,
+    action?: GraphAction,
+    constraint?: string,
+  ) => {
+    if (isDuplicate(state, successor)) return;
+    const attributes = isLabeled ? getEdgeAttributes(action, constraint) : "";
+    lines.push(`${state.fingerprint} -> ${successor.fingerprint}${attributes};\n`);
     if (!isSeen) {
       const tooltip = is174 ? "" : `,tooltip="${toDotLabel(successor.getText())}"`;
       const fill = constraint === undefined ? "" : ",style = filled, fillcolor=lightyellow";
@@ -181,9 +187,13 @@ const createDotWriter = (
       addRank(state);
       writeSnapshot();
     },
-    writeSuccessor: writeEdge,
+    writeSuccessor: (state, successor, isSeen, action) =>
+      writeEdge(state, successor, isSeen, true, action),
+    // TLC's DFIDModelChecker passes no action, so DotStateWriter gives the edge no attributes.
+    writeUnlabeledSuccessor: (state, successor, isSeen) =>
+      writeEdge(state, successor, isSeen, false),
     writeConstrained: (state, successor, action, constraint) =>
-      writeEdge(state, successor, false, action, constraint),
+      writeEdge(state, successor, false, true, action, constraint),
     writeStuttering: (state) => {
       if (!(is174 || dump.stuttering) || isDuplicate(state, state)) return;
       lines.push(
