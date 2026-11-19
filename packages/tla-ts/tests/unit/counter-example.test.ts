@@ -73,6 +73,43 @@ describe("POSTCONDITION after a violation matches TLC", () => {
   });
 });
 
+describe("POSTCONDITION with a dumped trace matches TLC", () => {
+  it.each([
+    ["_JsonTrace", "_JsonTraceFile", "t.json"],
+    ["_TLCTrace", "_TLCTraceFile", "t.bin"],
+  ])(
+    "orders the fields of CounterExample by the strings of %s, which TLC adds to the modules the root extends",
+    async (module, constant, path) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == x < 1\nPost == PrintT(CounterExample)\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post",
+        moduleOperators: [
+          { kind: "postcondition", module, operator: module, constants: { [constant]: path } },
+        ],
+        onPrint: () => {},
+        writeFile: () => {},
+      });
+      expect(result.violation?.postconditionOutput).toEqual([
+        `"CounterExample written: ${path}"`,
+        [
+          "[ state |-> {<<1, [x |-> 0]>>, <<2, [x |-> 1]>>},",
+          "  action |->",
+          "      { << <<1, [x |-> 0]>>,",
+          '           [ name |-> "Next",',
+          "             location |->",
+          "                 [ beginLine |-> 5,",
+          "                   beginColumn |-> 9,",
+          "                   endLine |-> 5,",
+          "                   endColumn |-> 18,",
+          '                   module |-> "M" ] ],',
+          "           <<2, [x |-> 1]>> >> } ]",
+        ].join("\n"),
+      ]);
+    },
+  );
+});
+
 const checkAliased = async (body: string, config: string) => {
   const printed: string[] = [];
   const result = await check({

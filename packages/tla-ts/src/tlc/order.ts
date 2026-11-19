@@ -476,6 +476,7 @@ const getStringOrder = (
   getParsed: ModuleSet,
   config: ModelConfig,
   runtimeModules: string[],
+  rootExtendees: string[],
 ): string[] => {
   const order = new Set<string>();
   const intern = (text: string) => {
@@ -543,6 +544,8 @@ const getStringOrder = (
     intern(text);
   });
   const rootReferences = getUnitReferences(undefined);
+  rootReferences.extends.push(...rootExtendees);
+  rootExtendees.forEach((name) => rootReferences.allExtends.add(name));
   while (true) {
     const found =
       findExtension(rootReferences, new Set()) ?? findInstantiation(rootReferences, new Set());
@@ -587,7 +590,11 @@ const getStringOrder = (
 };
 
 export interface TlcOrder {
-  getStringOrder: (config: ModelConfig, runtimeModules: string[]) => string[];
+  getStringOrder: (
+    config: ModelConfig,
+    runtimeModules: string[],
+    rootExtendees: string[],
+  ) => string[];
   getDeclarationOrder: (kind: "variable" | "constant") => string[];
   getInstanceDeclarations: (module: string) => string[];
   createDefinitionOrder: () => (name: string | undefined) => string[];
@@ -601,7 +608,8 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
   let contexts: ReturnType<typeof createContexts> | undefined;
   const getContexts = () => (contexts ??= createContexts(getParsed));
   return {
-    getStringOrder: (config, runtimeModules) => getStringOrder(getParsed, config, runtimeModules),
+    getStringOrder: (config, runtimeModules, rootExtendees) =>
+      getStringOrder(getParsed, config, runtimeModules, rootExtendees),
     getDeclarationOrder: (kind) =>
       getContexts()
         .getContext(undefined)
