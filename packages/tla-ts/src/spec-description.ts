@@ -1,5 +1,7 @@
 import { isEvaluatedAtStartup } from "./dependencies";
 import {
+  getChildren,
+  getDefinitionExpressions,
   isLocallyResolved,
   type Definition,
   type Expression,
@@ -9,7 +11,13 @@ import {
 import type { ModelConfig } from "./config";
 import { getCoverageCounts, getDistinctCount, letDefinitions, type CoverageKind } from "./coverage";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { substitutionFrames, withSubstitutionFrames } from "./instances";
+import {
+  frameSubstitutions,
+  getSubstitutedName,
+  isSubstitutionDefinition,
+  substitutionFrames,
+  withSubstitutionFrames,
+} from "./instances";
 import type { InstanceAction } from "./environment";
 import { formatRange, TlaError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import {
@@ -437,6 +445,34 @@ const getActions = (
   }, callAction);
 };
 
+// SpecProcessor#processConfigSpec bounds the level of a definition without the substitutions of its instances, so a declaration of an instance counts as a variable only by the name of a variable of the root module.
+const isVariableBound = (
+  expression: Expression,
+  environment: Environment,
+  visited: Set<Definition>,
+): boolean => {
+  const substituted = getSubstitutedName(expression);
+  if (substituted !== undefined) return environment.variableIndex.has(substituted);
+  if (expression.kind === "Enabled") return true;
+  const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
+  if (name !== undefined && environment.variableIndex.has(name)) return true;
+  const definition = name === undefined ? undefined : getDefinition(name, environment);
+  if (definition?.kind === "Operator" && !visited.has(definition)) {
+    visited.add(definition);
+    if (isVariableBound(definition.body, environment, visited)) return true;
+  }
+  const children =
+    expression.kind === "Let"
+      ? [
+          ...expression.definitions
+            .filter((item) => !isSubstitutionDefinition(item))
+            .flatMap(getDefinitionExpressions),
+          expression.body,
+        ]
+      : getChildren(expression);
+  return children.some((child) => isVariableBound(child, environment, visited));
+};
+
 const describeSpecification = (
   expression: Expression,
   scope: Scope | undefined,
@@ -447,8 +483,15 @@ const describeSpecification = (
 ): void => {
   const recurse = (inner: Expression, innerScope: Scope | undefined, innerFrames = frames) =>
     describeSpecification(inner, innerScope, environment, description, next, innerFrames);
-  const createConjunct = (name: string, conjunct: Expression, conjunctScope: Scope | undefined) =>
-    createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope);
+  const substitutionFrame = frames.find((frame) => frameSubstitutions.has(frame));
+  const createConjunct = (
+    name: string,
+    conjunct: Expression,
+    conjunctScope: Scope | undefined,
+  ) => ({
+    ...createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope),
+    location: substitutionFrame?.location ?? conjunct.location,
+  });
   const unwrapped = unwrapBinding(expression, scope, environment);
   if (unwrapped) {
     recurse(unwrapped.expression, unwrapped.scope);
@@ -460,8 +503,18 @@ const describeSpecification = (
     ? [...frames, ...(substitutionFrames.get(called.body) ?? [])]
     : frames;
   if (called && called.params.length === 0) {
-    if (getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL) {
-      description.inits.push(createConjunct(called.name, called.body, called.scope));
+    if (
+      getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL &&
+      (!substitutionFrame || isVariableBound(called.body, environment, new Set()))
+    ) {
+      const definition =
+        substitutionFrame && !isLocallyResolved(expression)
+          ? getDefinition(getOperatorName(expression) ?? "", environment)
+          : undefined;
+      description.inits.push({
+        ...createConjunct(called.name, called.body, called.scope),
+        ...getDefinitionRanges(definition),
+      });
       return;
     }
     recurse(called.body, called.scope, calledFrames);

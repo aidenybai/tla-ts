@@ -3124,6 +3124,56 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "splits it where the instance's variables have names the root module doesn't declare",
+      "U1",
+      "x, y",
+      "Max <- 2, c <- x, d <- y",
+      [
+        "Action line 4, col 1 to line 4, col 46 of module U1 0:0",
+        "Action line 4, col 1 to line 4, col 46 of module U1 6:6",
+        "Action line 4, col 1 to line 4, col 46 of module U1 4:8",
+      ],
+      'UnnamedAction",\n    location |->\n        [ beginLine |-> 4,\n          beginColumn |-> 1,\n          endLine |-> 4,\n          endColumn |-> 46,\n          module |-> "U1" ] ] }',
+    ],
+    [
+      "keeps it whole where the root module declares variables of their names",
+      "U2",
+      "c, d",
+      "Max <- 2",
+      [
+        "Two line 7, col 1 to line 7, col 3 of module Lo (4 1 4 30) 6:6",
+        "Action line 4, col 1 to line 4, col 30 of module U2 4:8",
+      ],
+      'Two",\n    location |->\n        [ beginLine |-> 4,\n          beginColumn |-> 1,\n          endLine |-> 4,\n          endColumn |-> 30,\n          module |-> "U2" ] ] }',
+    ],
+  ])(
+    "takes the initial predicate of a specification from an instance at the instance, and %s, as TLC's SpecProcessor bounds its level without the substitutions",
+    async (_title, module, variables, substitutions, labels, printed) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE ${module} ----\nEXTENDS Integers, TLC\nVARIABLES ${variables}\nL == INSTANCE Lo WITH ${substitutions}\nSpec == L!Spec2\nASSUME PrintT(TLCGet("spec").inits)\n====`,
+        config: "SPECIFICATION Spec",
+        coverage: 1,
+        onPrint: (text) => prints.push(text),
+        loadModule: (name) =>
+          name === "Lo"
+            ? "---- MODULE Lo ----\nEXTENDS Integers\nCONSTANT Max\nVARIABLES c, d\nhv == <<c, d>>\nOne == c = 0\nTwo == c = 0 /\\ d \\in {0, 1}\nStep == c < Max /\\ c' = c + 1 /\\ d' = d\nSpec1 == One /\\ d = 0 /\\ [][Step]_hv\nSpec2 == Two /\\ [][Step]_hv\n===="
+            : undefined,
+      });
+      expect([
+        result.coverage?.relations.map(
+          (relation) => `${relation.label} ${relation.distinct}:${relation.generated}`,
+        ),
+        prints,
+      ]).toEqual([
+        labels,
+        [`{ [ coverage |-> [generated |-> 0, distinct |-> 0],\n    name |-> "${printed}`],
+      ]);
+    },
+  );
+
   it("counts a recursive function of an instance of an instance at its definition once", async () => {
     const lines = await getCoverageLines(
       "---- MODULE G ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES a, b\nD == \\E e \\in {0, K % 4} : a' = e /\\ b' = b\nRf[n \\in 0..2] == IF n = 0 THEN K ELSE Rf[n - 1] + (a % 2)\n====\n---- MODULE Mid ----\nEXTENDS Naturals\nCONSTANT L\nVARIABLES p, q\nII == INSTANCE Inner WITH K <- L + 1, a <- p, b <- q\n====\nMd == INSTANCE Mid WITH L <- 1, p <- x, q <- y\nInit == x = 0 /\\ y = 0\nNext == Md!II!D\nInv == Md!II!Rf[2] > 0\n====",

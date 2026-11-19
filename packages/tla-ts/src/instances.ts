@@ -414,7 +414,25 @@ interface Rewrite {
   selections: Map<Expression, Expression>;
 }
 
-const getSubstitutionName = (name: string) => `${name}@SUBSTITUTION`;
+const SUBSTITUTION_SUFFIX = "@SUBSTITUTION";
+
+const getSubstitutionName = (name: string) => `${name}${SUBSTITUTION_SUFFIX}`;
+
+export const getSubstitutedName = (expression: Expression) => {
+  if (
+    expression.kind === "Identifier" &&
+    isLocallyResolved(expression) &&
+    expression.name.endsWith(SUBSTITUTION_SUFFIX)
+  ) {
+    return expression.name.slice(0, -SUBSTITUTION_SUFFIX.length);
+  }
+  const substitution = substitutedExpressions.get(expression);
+  if (!substitution || substitution.replacement === expression) return undefined;
+  const occurrence = substitutionFrames
+    .get(expression)
+    ?.find((frame) => !frameSubstitutions.has(frame));
+  return occurrence?.kind === "Identifier" ? occurrence.name : undefined;
+};
 
 const isVariableAlias = (expression: Expression): boolean =>
   expression.kind === "Identifier" ||
