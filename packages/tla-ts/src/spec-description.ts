@@ -449,7 +449,7 @@ const getActions = (
   }, callAction);
 };
 
-// SpecProcessor#processConfigSpec bounds the level of a definition without the substitutions of its instances, so a declaration of an instance counts as a variable only by the name of a variable of the root module.
+// TLC bounds the level of a definition without the substitutions of its instances, so an instance's declaration counts as a variable only by the name of a root variable.
 const isVariableBound = (
   expression: Expression,
   environment: Environment,

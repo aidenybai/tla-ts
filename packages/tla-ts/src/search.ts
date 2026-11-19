@@ -932,7 +932,7 @@ export const createCheckEnvironment = (
     order.getStringOrder(
       config,
       (options.runtimeInvariants ?? []).flatMap((invariant) => invariant.module ?? []),
-      // TLC's ParameterizedSpecObj adds the modules of postconditions to the root's EXTENDS before those of constraints and the view.
+      // TLC extends the root with the modules of postconditions before those of constraints and the view.
       ["postcondition", "constraint", "view"].flatMap((kind) =>
         (options.moduleOperators ?? []).flatMap((operator) =>
           operator.kind === kind ? [operator.module] : [],

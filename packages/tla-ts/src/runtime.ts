@@ -126,7 +126,6 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
   return runtime;
 };
 
-// TLC's TLCState.Empty, in which Tool splits the next-state relation at level 1 before the checker exists.
 export const EMPTY_STATE: (Value | undefined)[] = [];
 
 export const NAMED_REGISTER_PREFIX = "s:";

@@ -86,7 +86,6 @@ export interface SearchGraph<State> {
     onSuccessors: (successors: LiveSuccessor<State>[]) => void,
     replay?: Environment,
   ) => void;
-  // The state at index as the dump draws it, where an initial state isn't stored yet.
   getGraphState?: (index: number, state: State) => GraphState;
 }
 
@@ -613,7 +612,7 @@ export const createLiveGraph = <State>(
       behavior.writer.writeInitialState(getGraphState(index, state), tableauNode);
     }
   };
-  // TLC's BitVector#toString(from, length, 't', 'f') prints the result of the last check first.
+  // TLC prints the result of the last action check first.
   const writeSuccessor = (
     behavior: BehaviorGraph<State>,
     index: number,

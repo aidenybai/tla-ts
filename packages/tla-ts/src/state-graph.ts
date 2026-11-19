@@ -227,9 +227,7 @@ export const createStateWriter = (
     : createPlainWriter(dump, writeFile);
 
 export interface LivenessWriter {
-  // A state without a tableau has the tableau node -1.
   writeInitialState: (state: GraphState, tableauNode: number) => void;
-  // The action checks are the results of the step as TLC's BitVector prints them, or empty without any.
   writeSuccessor: (
     state: GraphState,
     tableauNode: number,
@@ -246,7 +244,6 @@ export interface LivenessDump {
   close: () => void;
 }
 
-// TLC's DotLivenessStateWriter, one for each branch of the liveness check, which writes a branch without a tableau as a DotStateWriter does.
 export const createLivenessDump = (
   dump: StateDump,
   writeFile: WriteFile,
@@ -258,7 +255,6 @@ export const createLivenessDump = (
   const closers: (() => void)[] = [];
   const createWriter = (isTableau: boolean): LivenessWriter => {
     const position = graphs.push(header) - 1;
-    // TLC's DotStateWriter flushes its header as it starts.
     writeFile?.(path, header);
     const setGraph = (_path: string, graph: string) => {
       graphs[position] = graph;
