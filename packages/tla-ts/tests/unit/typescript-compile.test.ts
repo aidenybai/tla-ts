@@ -58070,4 +58070,312 @@ describe("runs the script's methods in a conversion inside at most one other", (
       expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
     });
   });
+
+  describe("runs a generator's state machine through yield*", () => {
+    const getDelegated = (expected: string) => `
+      const trace = { log: "" };
+      function* leaf(count: number): Generator<number, number, unknown> {
+        for (let index = 0; index < count; index++) yield index;
+        return count;
+      }
+      function* tree(): Generator<number, number, unknown> {
+        let total = 0;
+        for (let round = 0; round < 10; round++) total += yield* leaf(3);
+        try {
+          yield* leaf(2);
+        } finally {
+          trace.log += "f";
+        }
+        return total;
+      }
+      let seen = 0;
+      let sum = 0;
+      for (const value of tree()) {
+        seen += 1;
+        sum += value;
+      }
+      const closing = tree();
+      closing.next();
+      const closed = closing.return(7);
+      function* thrower(): Generator<number, void, unknown> {
+        yield 1;
+        throw new Error("boom");
+      }
+      function* wrapper(): Generator<number, string, unknown> {
+        try {
+          yield* thrower();
+        } catch (error) {
+          return "caught " + (error as Error).message;
+        }
+        return "missed";
+      }
+      const wrapped = wrapper();
+      wrapped.next();
+      const caught = wrapped.next();
+      const result = [seen, sum, trace.log, closed.value, closed.done, caught.value].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on a yield* that delegates to a state machine", async () => {
+      expect(
+        (await checkModel(getDelegated("32|31|f|7|true|caught boom"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the yield*", async () => {
+      expect(
+        (await checkModel(getDelegated("32|30|f|7|true|caught boom"))).failure?.message,
+      ).toContain("32|31|f|7|true|caught boom");
+    });
+  });
+
+  describe("runs a generator's state machine whose body makes closures", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      function* count(factor: number) {
+        let total = 0;
+        const bump = (by: number) => {
+          total += by;
+          return total;
+        };
+        const add = function (amount: number) {
+          bump(amount);
+        };
+        const doubled = [1, 2, 3].map((value) => value * factor);
+        for (let index = 0; index < 70; index++) {
+          const sent: number | undefined = yield bump(1);
+          if (sent !== undefined) add(sent);
+        }
+        box.log += doubled.join(",");
+        return total;
+      }
+      const counter = count(2);
+      counter.next();
+      counter.next(10);
+      let last = 0;
+      for (const value of counter) last = value;
+      const result = [last, box.log].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("80|2,4,6"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("70|2,4,6"))).failure?.message).toContain("80|2,4,6");
+    });
+  });
+
+  describe("steps a generator's state machine from another function", () => {
+    const getSource = (expected: string) => `
+      const box = { values: [] as number[], total: 0 };
+      function* numbers() {
+        for (let index = 0; index < 70; index++) yield index;
+      }
+      const counter = numbers();
+      function pull() {
+        const step = counter.next();
+        if (!step.done) box.values.push(step.value);
+      }
+      function drain() {
+        for (const value of counter) box.total += value;
+      }
+      pull();
+      pull();
+      drain();
+      const result = [box.values.join(" "), box.total].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0 1,2414"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("0 1,2415"))).failure?.message).toContain("0 1,2414");
+    });
+  });
+
+  describe("destructures through a generator method's state machine", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      const numbers = {
+        *[Symbol.iterator]() {
+          for (let index = 0; index < 66; index++) yield index * 2;
+        },
+      };
+      const [first, second, ...rest] = numbers;
+      Array.prototype[Symbol.iterator] = function* (this: number[]) {
+        for (let index = this.length - 1; index >= 0; index--) yield this[index];
+      } as never;
+      for (const [left, right] of [
+        [1, 2],
+        [3, 4],
+      ]) {
+        box.log += left + "" + right;
+      }
+      const result = [first, second, rest.length, box.log].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("0|2|64|4321"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("0|2|64|1234"))).failure?.message).toContain(
+        "0|2|64|4321",
+      );
+    });
+  });
+
+  describe("runs a generator's loops in for-ofs and finally blocks as a state machine", () => {
+    const getSource = (expected: string) => `
+      const box = { log: "" };
+      function* walk(items: number[]) {
+        for (const item of items) {
+          if (item === 2) continue;
+          for (let step = 0; step < item; step++) yield item * 10 + step;
+          if (item === 5) break;
+        }
+        try {
+          yield -1;
+        } finally {
+          let count = 0;
+          while (count < 3) {
+            box.log += count;
+            count++;
+            yield 100 + count;
+          }
+        }
+      }
+      const walked: number[] = [];
+      const items = [1, 2, 3, 5, 7];
+      for (const value of walk(items)) walked.push(value);
+      function* grow(items: number[]) {
+        for (const item of items) {
+          if (items.length < 4) items.push(item + 1);
+          yield item;
+        }
+      }
+      const grown: number[] = [];
+      const seeds = [4, 6];
+      for (const value of grow(seeds)) grown.push(value);
+      const single = [3];
+      const early = walk(single);
+      early.next();
+      early.next();
+      const closed = early.return(9 as never);
+      const result = [walked.join(" "), box.log, grown.join(" "), closed.value, closed.done].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected = "10 30 31 32 50 51 52 53 54 -1 101 102 103|012|4 6 5 7|9|true";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace("4 6 5 7", "4 6 5")))).failure?.message,
+      ).toContain(expected);
+    });
+  });
+
+  describe("delegates a state machine's yield* to an object's iterator", () => {
+    const getSource = (expected: string) => `
+      const counts = { next: 0, closed: 0, thrown: 0, log: "" };
+      type Source = { [Symbol.iterator]: () => Iterator<number> };
+      const holder: { source: Source } = {
+        source: { [Symbol.iterator]: () => ({ next: () => ({ done: true, value: 0 }) }) },
+      };
+      function* delegate(): Generator<number, void, unknown> {
+        yield* holder.source;
+      }
+      holder.source = {
+        [Symbol.iterator]: function () {
+          return {
+            next() {
+              counts.next++;
+              return { done: false, value: 1 };
+            },
+            return() {
+              counts.closed++;
+              return { done: false, value: 5 };
+            },
+          };
+        },
+      };
+      const kept = delegate();
+      kept.next();
+      const returned = kept.return(undefined);
+      counts.log += returned.value + "" + returned.done;
+      holder.source = {
+        [Symbol.iterator]: function () {
+          return {
+            next() {
+              return { done: false, value: 2 };
+            },
+            throw(error: unknown) {
+              counts.thrown++;
+              throw error;
+            },
+          };
+        },
+      };
+      const thrown = delegate();
+      thrown.next();
+      try {
+        thrown.throw("boom");
+      } catch (error) {
+        counts.log += String(error);
+      }
+      const result = [counts.next, counts.closed, counts.thrown, counts.log].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1|1|1|5falseboom"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect((await checkModel(getSource("1|1|1|5trueboom"))).failure?.message).toContain(
+        "1|1|1|5falseboom",
+      );
+    });
+
+    const getLive = (expected: string) => `
+      const box = { got: 0 };
+      let finished = false;
+      let received: unknown = undefined;
+      const quick = {
+        [Symbol.iterator]() {
+          return {
+            next(sent: unknown) {
+              received = sent;
+              return { done: finished, value: 3333 };
+            },
+          };
+        },
+      };
+      function* outer(): Generator<number, void, unknown> {
+        box.got = yield* quick;
+      }
+      const running = outer();
+      running.next(2222);
+      finished = true;
+      running.next(5555);
+      const result = [received, box.got].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node on an iterator that reads what the code changed since", async () => {
+      expect((await checkModel(getLive("5555,3333"))).failure).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation for the iterator", async () => {
+      expect((await checkModel(getLive("5555,0"))).failure?.message).toContain("5555,3333");
+    });
+  });
 });

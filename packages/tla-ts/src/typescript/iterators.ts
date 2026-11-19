@@ -904,16 +904,18 @@ const takeAll = (
             ),
     );
   };
-  return openIterator(
+  return openLoopedIterator(
     pattern,
     iterable,
     path,
     context,
     frame,
     throwWith,
-    // The generator that a generator method made steps as the pattern takes from it.
+    // The generator that a generator method made steps as the pattern takes from it, through its
+    // next where a state machine runs it, which keeps where it is on the heap so that the steps
+    // join.
     (opened, iterator, next) =>
-      madeIterators.has(iterator)
+      madeIterators.has(iterator) && getMachine(iterator, opened) === undefined
         ? takeFromHeld(
             pattern,
             iterator,
