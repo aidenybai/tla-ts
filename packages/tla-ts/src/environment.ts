@@ -710,13 +710,13 @@ export const createEnvironment = (
         .filter(
           (entry) =>
             !declared.has(entry[0]) &&
-            (instance.name !== undefined || entry[1].kind !== "Instance") &&
-            // SANY reuses a theorem that a module with parameters got from one without, but never adds its name.
             (instance.name !== undefined ||
-              instance.isLocal ||
-              declarations.length === 0 ||
-              entry[1].kind !== "Theorem" ||
-              parameterized.get(entry[1].key) === true),
+              (entry[1].kind !== "Instance" &&
+                // SANY reuses a theorem that a module with parameters got from one without, but never adds its name.
+                (instance.isLocal ||
+                  declarations.length === 0 ||
+                  entry[1].kind !== "Theorem" ||
+                  parameterized.get(entry[1].key) === true))),
         )
         .map((entry): [string, ModuleSymbol] => {
           if (instance.name === undefined) {
@@ -732,9 +732,9 @@ export const createEnvironment = (
                     ? instance.location.range
                     : entry[1].range,
                 // SANY copies what a LOCAL INSTANCE imports to the instance, but a copy from a module without parameters stays the same definition.
-                source:
+                sourceRange:
                   instance.isLocal && parameterized.get(entry[1].key) !== true
-                    ? (entry[1].source ?? entry[1].range)
+                    ? entry[1].range
                     : undefined,
                 functionArity:
                   parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,

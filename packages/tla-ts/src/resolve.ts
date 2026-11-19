@@ -45,7 +45,7 @@ interface Binding {
   range?: SourceRange;
   functionArity?: number;
   goal?: Goal;
-  source?: SourceRange;
+  sourceRange?: SourceRange;
   nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
 }
 
@@ -225,7 +225,9 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
 
 const isBindable = (name: string, current: Binding | undefined, added: Binding, unit: Unit) => {
   if (current === undefined) return true;
-  if (isSameRange(current.source ?? current.range, added.source ?? added.range)) return false;
+  if (isSameRange(current.sourceRange ?? current.range, added.sourceRange ?? added.range)) {
+    return false;
+  }
   const range = added.range;
   if (range === undefined || unit.isGenerated || (current.kind !== "Builtin" && !current.range)) {
     return true;
@@ -587,7 +589,7 @@ const SCOPE_MESSAGE = "within the scope of a declaration\n from outside that dec
 const checkSelection = (
   reference: Reference,
   selectors: Selector[],
-  start: number,
+  nameLength: number,
   goal: Goal,
   unit: Unit,
   isFact: boolean,
@@ -608,8 +610,8 @@ const checkSelection = (
   };
   let params = 0;
   let args = 0;
-  for (const [offset, selector] of selectors.slice(start).entries()) {
-    const index = offset + start;
+  for (const [offset, selector] of selectors.slice(nameLength).entries()) {
+    const index = offset + nameLength;
     const node = state.node;
     if (selector.kind === "Name") {
       if (selectors[index - 1].kind !== "Name") {
@@ -624,7 +626,7 @@ const checkSelection = (
           ? [...statement.assumptions, statement.conclusion]
           : [statement];
       const found =
-        index === start
+        index === nameLength
           ? clauses
               .map((clause, position) => ({
                 position,
@@ -637,13 +639,13 @@ const checkSelection = (
             };
       if (!found?.label) return report(index, `Cannot find label \`${selector.name}'.`);
       if (
-        index === start &&
+        index === nameLength &&
         statement.kind === "AssumeProve" &&
         isInScopeOfDeclaration(statement, found.position) &&
         isOutOfScope
       ) {
         return report(
-          start,
+          nameLength,
           `Accessing subexpression labeled \`${selector.name}' of ASSUME/PROVE clause ${SCOPE_MESSAGE}`,
         );
       }
@@ -660,7 +662,7 @@ const checkSelection = (
         return report(index - 1, "!: should not follow an operand selector.");
       }
       const next = selectors[index + 1];
-      if (next === undefined ? index !== start : next.kind !== "Name") {
+      if (next === undefined ? index !== nameLength : next.kind !== "Name") {
         return report(
           index,
           "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
@@ -843,13 +845,16 @@ const checkReference = (
   if (!isReference(expression)) return false;
   const selectors = getSelectors(expression);
   const names: string[] = [];
-  for (let start = 1; start < selectors.length; start++) {
-    const selector = selectors[start - 1];
+  for (let nameLength = 1; nameLength < selectors.length; nameLength++) {
+    const selector = selectors[nameLength - 1];
     if (selector.kind !== "Name") return undefined;
     names.push(selector.name);
     const name = names.join("!");
-    const goal = (start === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
-    if (goal) return { node: checkSelection(expression, selectors, start, goal, unit, isFact) };
+    const goal =
+      (nameLength === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
+    if (goal) {
+      return { node: checkSelection(expression, selectors, nameLength, goal, unit, isFact) };
+    }
   }
   return undefined;
 };
@@ -2346,9 +2351,9 @@ const resolveTheorem = (
   theorem: Theorem,
   unit: Unit,
   bindings: Map<string, ModuleBinding>,
-  isShared: boolean,
+  isDefinitionBody: boolean,
 ) => {
-  const scope = isShared ? undefined : resolveStatement(theorem.statement, undefined, unit);
+  const scope = isDefinitionBody ? undefined : resolveStatement(theorem.statement, undefined, unit);
   const goal =
     theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
       ? { statement: theorem.statement, isSuffices: false, isInProof: false, keyword: undefined }
@@ -2716,7 +2721,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         isGenerated: false,
       }),
   });
-  const isShared = (statement: Expression | AssumeProve) =>
+  const isDefinitionBody = (statement: Expression | AssumeProve) =>
     module.definitions.some((definition) => definition.body === statement);
   const bindDeclarations = (declarations: Declaration[], kind: "Constant" | "Variable") =>
     declarations.map((declaration) =>
@@ -2828,7 +2833,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.assumptions.map((assumption) =>
         createCheck(assumption.location, undefined, assumption.name !== undefined, (inner) => {
-          if (!isShared(assumption.expression)) {
+          if (!isDefinitionBody(assumption.expression)) {
             resolveExpression(assumption.expression, undefined, inner);
           }
           if (assumption.name !== undefined) {
@@ -2843,7 +2848,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.theorems.map((theorem) =>
         createCheck(theorem.location, undefined, theorem.name !== undefined, (inner) =>
-          resolveTheorem(theorem, inner, bindings, isShared(theorem.statement)),
+          resolveTheorem(theorem, inner, bindings, isDefinitionBody(theorem.statement)),
         ),
       ),
       ...module.uses.map((use) =>
@@ -2873,10 +2878,9 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       isSameRange(bindings.get(definition.name)?.range, definition.location.range),
     ),
     boundTheorems: module.theorems.flatMap((theorem) => {
-      const binding = theorem.name === undefined ? undefined : bindings.get(theorem.name);
-      return theorem.name !== undefined &&
-        binding?.goal &&
-        isSameRange(binding.range, theorem.location.range)
+      if (theorem.name === undefined) return [];
+      const binding = bindings.get(theorem.name);
+      return binding?.goal && isSameRange(binding.range, theorem.location.range)
         ? [{ name: theorem.name, location: theorem.location, goal: binding.goal }]
         : [];
     }),
