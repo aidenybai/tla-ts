@@ -123,6 +123,16 @@ describe("TLCExt matches TLC", () => {
     expect(result.violation?.trace.map((step) => step.state.n)).toEqual([1, 2]);
   });
 
+  // Deviation from TLC: it prints n = 0, 1, 2, 4 under BFS, and n = 1, 2, 3, 4 under -simulate.
+  it("reads Trace in an ALIAS of a liveness counterexample as the path to each state, unlike TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLE x\nAlias == [x |-> x, n |-> Len(Trace)]\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == <>(x = 4)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Prop\nALIAS Alias\nCHECK_DEADLOCK FALSE",
+    });
+    expect(result.violation?.trace.map((step) => step.state.n)).toEqual([1, 2, 3, 4]);
+  });
+
   // Deviation from TLC: it reports 8:11-24, 8:11-20 and 8:15-19 in Constr and exits with 75.
   it("replays a failed step with a constraint that reads Trace, unlike TLC", async () => {
     const result = await check({

@@ -239,6 +239,7 @@ export const createTraceBuilder = (context: TraceContext) => {
                 steps[loopStart ?? position].state,
               position + 1,
               // Deviation from TLC: TLCTrace#printTrace gives the ALIAS an empty Trace when the trace is an initial state and its successor.
+              // Deviation from TLC: LiveWorker#printTrace leaves each state of a lasso's prefix out of the Trace its ALIAS reads.
               () => steps.slice(0, position + 1).map((inner) => inner.state),
             ),
           );
