@@ -247,7 +247,7 @@ const getDefinitionBody = (definition: Definition) => {
     : body;
 };
 
-const applyDefinition = (definition: Definition, selection: Selection) => {
+const applyDefinition = (definition: Definition, selection: Selection, isOverride: boolean) => {
   const location = selection.location;
   const params =
     definition.kind === "Operator"
@@ -270,7 +270,7 @@ const applyDefinition = (definition: Definition, selection: Selection) => {
           operator: definition.name,
           args,
           location,
-          resolution: LOCAL_RESOLUTION,
+          resolution: isOverride ? undefined : LOCAL_RESOLUTION,
         };
   return createApplication(
     { ...selection, params: [...selection.params, ...params] },
@@ -398,7 +398,7 @@ const selectSubexpression = (
       selectorIndex === selectors.length - 2 &&
       selectors[selectorIndex + 1].kind === "Colon" &&
       !lookup(found.name);
-    if (isLast || isOverride) return { definition, args: found.args };
+    if (isLast || isOverride) return { definition, args: found.args, isOverride };
     const range = definition.location.range;
     const isUndefined =
       declaredArities.has(definition) &&
@@ -601,7 +601,9 @@ const selectSubexpression = (
 
   const first = enterDefinition(undefined);
   if (isFailed) return reference;
-  if (first) return applyDefinition(first.definition, { ...selection, args: first.args });
+  if (first) {
+    return applyDefinition(first.definition, { ...selection, args: first.args }, first.isOverride);
+  }
   followLabels();
   while (selectorIndex < selectors.length && !isFailed) {
     const selector = selectors[selectorIndex];
@@ -619,10 +621,11 @@ const selectSubexpression = (
       const last = enterDefinition(current.definitions);
       if (isFailed) return reference;
       if (last) {
-        return applyDefinition(last.definition, {
-          ...selection,
-          args: [...selection.args, ...last.args],
-        });
+        return applyDefinition(
+          last.definition,
+          { ...selection, args: [...selection.args, ...last.args] },
+          last.isOverride,
+        );
       }
       followLabels();
       continue;

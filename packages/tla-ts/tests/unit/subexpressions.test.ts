@@ -417,6 +417,16 @@ describe("selections into standard operators match SANY and TLC", () => {
     expect([result.status, prints]).toEqual(["success", ['<<{}, 2, 3, "1", TRUE, 2>>']]);
   });
 
+  it("gives a selected override the level of the override, as TLC does", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nC == TLCGet("level")!:\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1 /\\ PrintT(C)\n====`,
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["1", "2"]]);
+  });
+
   it("rejects the selections into standard bodies that SANY rejects", async () => {
     await expect(checkStandard("ASSUME PrintT(<<Nat!1, Tail(<<7, 8>>)!1>>)")).rejects.toThrow(
       createSanyError([
