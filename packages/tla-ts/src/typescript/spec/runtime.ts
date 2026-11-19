@@ -528,6 +528,20 @@ export const getTlaString = (text: string) =>
     ? `"${[...text].map((character) => CHARACTERS.get(character.charCodeAt(0))).join("")}"`
     : undefined;
 
+// A file's text as a TLA+ string of one character for each code unit, with "?" for each unit that a
+// string can't hold, and those units by their positions, from 1.
+export const getSourceString = (text: string) => {
+  const patches: number[][] = [];
+  // Every code unit but a printable one that a string spells as itself.
+  const spelled = text.replace(/[^\x20\x21\x23-\x5b\x5d-\x7e]/g, (character, index: number) => {
+    const unit = character.charCodeAt(0);
+    const spelling = CHARACTERS.get(unit);
+    if (spelling === undefined) patches.push([index + 1, unit]);
+    return spelling ?? "?";
+  });
+  return { text: `"${spelled}"`, patches };
+};
+
 export const RUNTIME_DEFINITIONS: GeneratedDefinition[] = [
   ...DEFINITIONS,
   // The code units of a TLA+ string's characters.

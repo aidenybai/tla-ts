@@ -272,14 +272,23 @@ GetModuleNamespace(s, m, isDeferred) ==
   LET field == IF isDeferred THEN "deferredNamespace" ELSE "namespace" IN
   IF ModuleAt(s, m)[field] # Empty THEN Ok(s, ModuleAt(s, m)[field]) ELSE
   LET names == SelectSeq(GetExportedNames(s, m, {}).names, LAMBDA name : IsResolvable(s, m, name))
-      object == MakeObject(Null, "namespace", [module |-> m, exports |-> SortCodeUnits(Range(names)), deferred |-> isDeferred])
+      object == MakeObject(Null, "namespace", [module |-> m, exports |-> SortCodeUnits(names), deferred |-> isDeferred])
       tag == IF isDeferred THEN SV("Deferred Module") ELSE SV("Module")
       ns == Alloc(s, PutProp([object EXCEPT !.ext = FALSE], SymToStringTag, DataDesc(tag, FALSE, FALSE, FALSE)))
   IN Ok(SetModule(ns.s, m, [name \in {field} |-> ns.v]), ns.v)
+\* The distinct names of a sequence in the order of their code units, by a merge sort.
 SortCodeUnits(names) ==
-  IF names = {} THEN <<>>
-  ELSE LET first == CHOOSE name \in names : \A other \in names : name = other \/ CodeUnitLess(name, other)
-       IN <<first>> \o SortCodeUnits(names \ {first})
+  IF Len(names) <= 1 THEN names
+  ELSE LET half == Len(names) \div 2
+       IN MergeCodeUnits(SortCodeUnits(SubSeq(names, 1, half)),
+                         SortCodeUnits(SubSeq(names, half + 1, Len(names))), <<>>)
+\* The distinct names of two sorted sequences of distinct names, after those of done.
+MergeCodeUnits(a, b, done) ==
+  IF a = <<>> THEN done \o b
+  ELSE IF b = <<>> THEN done \o a
+  ELSE IF Head(a) = Head(b) THEN MergeCodeUnits(a, Tail(b), done)
+  ELSE IF CodeUnitLess(Head(a), Head(b)) THEN MergeCodeUnits(Tail(a), b, Append(done, Head(a)))
+  ELSE MergeCodeUnits(a, Tail(b), Append(done, Head(b)))
 
 \* Module namespace exotic objects (§10.4.6), with slots [module, exports, deferred]. A deferred
 \* namespace evaluates its module before it reads the exports, except for a symbol-like key: a
