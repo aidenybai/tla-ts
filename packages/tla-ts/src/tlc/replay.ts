@@ -336,6 +336,17 @@ export const getUnchangedVariables = (
   return getUnchangedVariables(definition.body, environment, visited, written);
 };
 
+// Deviation from TLC: Tool#getNextStates0 takes its all-assigned path when warnings are on, though its comment says off, so it evaluates UNCHANGED as a boolean and doesn't warn.
+export const findChangedVariable = (
+  variables: UnchangedVariable[],
+  partial: State,
+  current: Value[],
+) =>
+  variables.find((variable) => {
+    const assigned = partial[variable.index];
+    return assigned !== undefined && !isEqualLikeTlc(assigned, current[variable.index]);
+  });
+
 export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
   !replay.isEnabled && (replay.isInit || replay.environment.runtime.isWarningEnabled);
 
@@ -443,6 +454,12 @@ const proceedAssigned = (
     if (!isHeld) {
       const coverage = replay.coverage;
       if (coverage && replay.isInit) coverage.secondary[coverage.roots[node]]++;
+      const current = replay.current;
+      if (current && item.kind === "Predicate" && item.expression.kind === "Unchanged") {
+        const variables = getUnchangedVariables(item.expression.expression, replay.environment);
+        const changed = variables && findChangedVariable(variables, partial, current);
+        if (changed) warnChangedUnchanged(replay.environment, changed.index, changed.expression);
+      }
       return false;
     }
   }

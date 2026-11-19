@@ -455,12 +455,13 @@ describe("evaluation errors match TLC", () => {
   ])(
     "warns about a changed variable under UNCHANGED after the step assigns every variable, unlike TLC: %s",
     async (definitions, location) => {
-      const getOutcome = async (maxSetSize: number | undefined) => {
+      const getOutcome = async (maxSetSize: number | undefined, coverage?: number) => {
         const warnings: string[] = [];
         const result = await check({
           source: `---- MODULE M ----\nEXTENDS Naturals\n${definitions}\n====`,
           config: "INIT Init\nNEXT Next",
           maxSetSize,
+          coverage,
           onProgress: (progress) => {
             if (progress.kind === "warning") warnings.push(progress.text);
           },
@@ -473,6 +474,7 @@ describe("evaluation errors match TLC", () => {
       ];
       expect(await getOutcome(undefined)).toEqual(expected);
       expect(await getOutcome(1_000_000)).toEqual(expected);
+      expect(await getOutcome(undefined, 1)).toEqual(expected);
     },
   );
 
