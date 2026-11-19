@@ -2332,6 +2332,32 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
     ]);
   });
 
+  it("makes the 1-bit numerals of a bv logic's tactic before its solvers", () => {
+    const getOutput = (logic: string) =>
+      run([
+        `(set-logic ${logic})`,
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(declare-const z (_ BitVec 8))",
+        "(assert (bvult x y))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]).slice(3, 7);
+    expect(getOutput("QF_AUFBV")).toEqual([
+      "  (or q (not p))",
+      "  (or p q r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+    ]);
+    expect(getOutput("QF_BV")).toEqual([
+      "  (or q r p)",
+      "  (or q (not p))",
+      "  (or q r)",
+      "  (or q (not r) (not p))",
+    ]);
+  });
+
   it("keeps each bv term solve-eqs solves for only in its equation", () => {
     expect(
       run([

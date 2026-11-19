@@ -913,19 +913,19 @@ export const runSmtlibScript = (
     state.tacticDestructors = destructors;
     state.tacticCleanups = cleanups;
     state.tacticInits = inits;
-    state.tactic = tactic;
     state.strategy = getLogicStrategy(logic, isProofsEnabled);
     state.isSolverProducingModels = settings.isProducingModels;
-    state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
+    // smt_strategic_solver_factory makes the tactic of the logic before its solvers.
     state.manager.dropStartupExprs();
-    // The bv1-blaster of the QF_BV tactic makes a 1-bit one and zero.
-    if (logic === "QF_BV" && tactic === undefined) {
-      const numerals = [state.manager.mkBvNumeral(1n, 1), state.manager.mkBvNumeral(0n, 1)];
-      for (const numeral of numerals) state.manager.incRef(numeral);
-      destructors.push(() => {
-        for (const numeral of numerals) state.manager.decRef(numeral);
-      });
-    }
+    state.tactic =
+      tactic ??
+      (isFdSolver
+        ? undefined
+        : compileInternalTactic(
+            getTacticEnvironment(destructors, cleanups, inits),
+            state.strategy,
+          ));
+    state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
     state.satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
         ? new IncSatSolver(
