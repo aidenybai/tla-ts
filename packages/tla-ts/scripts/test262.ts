@@ -1,7 +1,7 @@
 // Runs test262 through the TypeScript compiler. A test that TypeScript rejects for its types runs as
 // JavaScript. Tests that Node fails or that TypeScript rejects otherwise are skipped, not blamed on
 // the compiler.
-// Usage: bun scripts/run.ts test262 [--verbose] [test path prefixes]
+// Usage: bun scripts/run.ts test262 [--verbose] [--shard <index>/<count>] [test path prefixes]
 
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -14,7 +14,7 @@ import { check } from "../src/parallel";
 import { STRING_METHODS } from "../src/typescript/collections";
 import { getIndexedKind, INDEX_PARAMETERS, SET_LIKE_METHODS } from "../src/typescript/types";
 import { compile } from "../src/typescript/compile";
-import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
+import { CONFORMANCE_DIRECTORY, getOption, listTest262Files, TEST262_DIRECTORY } from "./corpora";
 
 type Outcome = "pass" | "wrong" | "untranslatable" | "skipped";
 
@@ -4424,13 +4424,19 @@ const getReasonKind = (reason: string) =>
     .split(": ")[0];
 
 const isVerbose = process.argv.includes("--verbose");
-const prefixes = process.argv.slice(2).filter((argument) => !argument.startsWith("--"));
+const shard = getOption("--shard");
+const shardParts = shard?.split("/").map(Number) ?? [0, 1];
+const prefixes = process.argv
+  .slice(2)
+  .filter((argument) => !argument.startsWith("--") && argument !== shard);
+// Every nth test goes to a shard, so that each shard holds a like share of every directory.
 const paths = listTest262Files()
   .filter((path) => {
     const id = relative(TEST262_DIRECTORY, path);
     return prefixes.length === 0 || prefixes.some((prefix) => id.startsWith(prefix));
   })
-  .sort();
+  .sort()
+  .filter((_, index) => index % shardParts[1] === shardParts[0]);
 
 const runs: TestRun[] = [];
 for (const path of paths) {

@@ -1,0 +1,84 @@
+name: test262
+
+on:
+  push:
+    branches: [main, typescript-test262]
+    paths:
+      - packages/tla-ts/src/typescript/**
+      - packages/tla-ts/scripts/test262.ts
+      - packages/tla-ts/scripts/record-test262.ts
+      - packages/tla-ts/tests/conformance/test262-*
+      - packages/tla-ts/tests/conformance/corpora.json
+      - .github/workflows/test262.yml
+  pull_request:
+    paths:
+      - packages/tla-ts/scripts/test262.ts
+      - packages/tla-ts/scripts/record-test262.ts
+      - .github/workflows/test262.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test262-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shard:
+    name: test262 ${{ matrix.shard }}/16
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.13.1
+          cache: "pnpm"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter tla-ts conformance:fetch
+      - run: pnpm --filter tla-ts --silent conformance:test262 --verbose --shard ${{ matrix.shard }}/16 > test262-${{ matrix.shard }}.txt
+      - if: always()
+        run: tail -n 24 test262-${{ matrix.shard }}.txt
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test262-shard-${{ matrix.shard }}
+          path: test262-${{ matrix.shard }}.txt
+
+  record:
+    name: test262 record
+    needs: shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.13.1
+          cache: "pnpm"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter tla-ts conformance:fetch
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: test262-shard-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/shards
+      - shell: bash
+        run: pnpm --filter tla-ts --silent conformance:record-test262 ${{ runner.temp }}/shards/test262-*.txt | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test262-record
+          path: |
+            packages/tla-ts/tests/conformance/test262-runs.json
+            packages/tla-ts/tests/conformance/test262-passing.txt
