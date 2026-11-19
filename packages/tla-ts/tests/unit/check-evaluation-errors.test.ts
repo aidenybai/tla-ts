@@ -989,6 +989,41 @@ describe("evaluation errors match TLC", () => {
     expect(await getOverrideMessages(cases)).toEqual(cases.map((item) => item[3]));
   });
 
+  it("checks the number of arguments an arithmetic Java override gets from a <-, like TLC", async () => {
+    const integers = "tlc2.value.impl.IntValue,tlc2.value.impl.IntValue";
+    const one = "CONSTANT F(_)\nASSUME PrintT(F(1))";
+    const cases = [
+      [
+        "Naturals, TLC",
+        one,
+        "F <- +",
+        getJavaError(
+          `value.impl.IntValue tlc2.module.Naturals.Plus(${integers})`,
+          "array is not of length 2",
+        ),
+      ],
+      [
+        "Naturals, TLC",
+        one,
+        "F <- ..",
+        getJavaError(
+          `value.impl.IntervalValue tlc2.module.Naturals.DotDot(${integers})`,
+          "array is not of length 2",
+        ),
+      ],
+      [
+        "Integers, TLC",
+        "CONSTANT F(_, _)\nASSUME PrintT(F(1, 2))",
+        "F <- -.",
+        getJavaError(
+          "value.impl.IntValue tlc2.module.Integers.Neg(tlc2.value.impl.IntValue)",
+          "array is not of length 1",
+        ),
+      ],
+    ];
+    expect(await getOverrideMessages(cases)).toEqual(cases.map((item) => item[3]));
+  });
+
   it.each([
     ["1.7.4" as const, "Append(v, s)"],
     [undefined, "Append(s, v)"],

@@ -225,6 +225,21 @@ const createJavaOverrideError = (signature: string, message: string) =>
     `Attempted to apply the operator overridden by the Java method\n${signature},\nbut it produced the following error:\n${message}`,
   );
 
+export const checkJavaArity = (builtin: Builtin, signature: string): Builtin => ({
+  ...builtin,
+  evaluate: (args, context) => {
+    if (args.length === builtin.arity) return builtin.evaluate(args, context);
+    // TLC's MethodValue invokes a method without parameters exactly, so java.lang.invoke rejects arguments.
+    const result = signature.split(" ")[2].split(".").pop();
+    throw createJavaOverrideError(
+      signature,
+      builtin.arity === 0
+        ? `cannot convert MethodHandle()${result} to (Value[])Value`
+        : `array is not of length ${builtin.arity}`,
+    );
+  },
+});
+
 export const overrideWithJava = (builtin: Builtin, signature: string): Builtin => {
   const reportAsJavaFailure =
     <Arguments extends unknown[]>(compute: (...args: Arguments) => Value) =>
@@ -246,25 +261,15 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
         throw createJavaOverrideError(signature, error.message);
       }
     };
-  const evaluate = reportAsJavaFailure(builtin.evaluate);
-  return {
-    ...builtin,
-    evaluate: (args, context) => {
-      if (args.length !== builtin.arity) {
-        // TLC's MethodValue invokes a method without parameters exactly, so java.lang.invoke rejects arguments.
-        const result = signature.split(" ")[2].split(".").pop();
-        throw createJavaOverrideError(
-          signature,
-          builtin.arity === 0
-            ? `cannot convert MethodHandle()${result} to (Value[])Value`
-            : `array is not of length ${builtin.arity}`,
-        );
-      }
-      return evaluate(args, context);
+  return checkJavaArity(
+    {
+      ...builtin,
+      evaluate: reportAsJavaFailure(builtin.evaluate),
+      evaluateUnary: builtin.evaluateUnary && reportAsJavaFailure(builtin.evaluateUnary),
+      evaluateBinary: builtin.evaluateBinary && reportAsJavaFailure(builtin.evaluateBinary),
     },
-    evaluateUnary: builtin.evaluateUnary && reportAsJavaFailure(builtin.evaluateUnary),
-    evaluateBinary: builtin.evaluateBinary && reportAsJavaFailure(builtin.evaluateBinary),
-  };
+    signature,
+  );
 };
 
 export const getJavaInteger = (value: Value, signature: string) => {
@@ -287,14 +292,17 @@ export const defineArithmetic = (
   compute: (left: number, right: number) => number,
 ) => {
   const signature = getJavaSignature(module, method, "IntValue", 2);
-  return defineBinary(name, (left, right) => {
-    // TLC's MethodHandle casts the last argument first.
-    const rightNumber = getJavaInteger(right, signature);
-    const leftNumber = getJavaInteger(left, signature);
-    const result = compute(leftNumber, rightNumber);
-    if (isOutOfRange(result)) throw createOverflowError(`${leftNumber}${name}${rightNumber}`);
-    return result;
-  });
+  return checkJavaArity(
+    defineBinary(name, (left, right) => {
+      // TLC's MethodHandle casts the last argument first.
+      const rightNumber = getJavaInteger(right, signature);
+      const leftNumber = getJavaInteger(left, signature);
+      const result = compute(leftNumber, rightNumber);
+      if (isOutOfRange(result)) throw createOverflowError(`${leftNumber}${name}${rightNumber}`);
+      return result;
+    }),
+    signature,
+  );
 };
 
 const getIntegerArgument = (value: Value, position: string, name: string) => {

@@ -1,5 +1,6 @@
 import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import {
+  checkJavaArity,
   createModuleArgumentError,
   createOverflowError,
   defineArithmetic,
@@ -345,11 +346,14 @@ const createArithmeticOperators = (module: string) => {
       }
       return ((left % right) + right) % right;
     }),
-    defineBinary("..", (low, high) => {
-      // TLC's MethodHandle casts the last argument first.
-      const highNumber = getJavaInteger(high, dotDotSignature);
-      return { kind: "Interval", low: getJavaInteger(low, dotDotSignature), high: highNumber };
-    }),
+    checkJavaArity(
+      defineBinary("..", (low, high) => {
+        // TLC's MethodHandle casts the last argument first.
+        const highNumber = getJavaInteger(high, dotDotSignature);
+        return { kind: "Interval", low: getJavaInteger(low, dotDotSignature), high: highNumber };
+      }),
+      dotDotSignature,
+    ),
   ];
 };
 
@@ -403,11 +407,14 @@ const INTEGERS_OPERATORS = [
   ),
   ...INTEGERS_ARITHMETIC,
   ...createComparisonOperators("Integers"),
-  defineOperator("-.", 1, (args) => {
-    const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);
-    if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);
-    return -value;
-  }),
+  checkJavaArity(
+    defineOperator("-.", 1, (args) => {
+      const value = getJavaInteger(getValue(args, 0, "-"), NEG_SIGNATURE);
+      if (isOutOfRange(-value)) throw createOverflowError(`-${value}`);
+      return -value;
+    }),
+    NEG_SIGNATURE,
+  ),
 ];
 
 const getSequenceArgument = (args: BuiltinArgument[], index: number, message: string) => {
