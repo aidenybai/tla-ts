@@ -353,11 +353,28 @@ export const createTraceBuilder = (context: TraceContext) => {
     }
     return steps;
   };
-  const getTrace = (index: number, lastSuccessor?: Successor, traceOptions: TraceOptions = {}) => {
+  const getIndexPath = (index: number) => {
     const path: number[] = [];
     for (let position = index; position !== -1; position = context.parents[position]) {
       path.unshift(position);
     }
+    return path;
+  };
+  // TLCExt#getTrace has TLCTrace rebuild the states up to one, which evaluates the initial predicate and the actions again.
+  // Deviation from TLC: getTrace leaves the state it rebuilt the last step from current, though it restores the state for one it hasn't written, so a later draw in the same step seeds from that state and a later Trace of a successor ends there.
+  const rebuildPath = (index: number) => {
+    const path = getIndexPath(index);
+    if (path.length === 0) return;
+    runtime.runWithNewRandom(() => {
+      rebuildInitialState(path[0]);
+      for (let position = 1; position < path.length; position++) {
+        const source = path[position - 1];
+        findStepAction(source, states[source], context.fingerprintStates[path[position]], false);
+      }
+    });
+  };
+  const getTrace = (index: number, lastSuccessor?: Successor, traceOptions: TraceOptions = {}) => {
+    const path = getIndexPath(index);
     const steps =
       isReducing && path.length > 1
         ? getPathStates(path, INITIAL_RECOVERY_FAILURE)
@@ -424,5 +441,6 @@ export const createTraceBuilder = (context: TraceContext) => {
     getStateTrace,
     getIncompleteStep,
     getPathSteps,
+    rebuildPath,
   };
 };

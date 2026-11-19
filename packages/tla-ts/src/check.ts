@@ -1079,8 +1079,19 @@ const searchStates = (
     exploredFingerprintStates.push(fingerprintState);
     runtime.distinctStates++;
   };
+  // TLCExt#getTrace rebuilds the states before one TLC has written, as Worker writes a successor before its invariants, else those before the state it expands.
+  const getTracedParent = (state: Value[], index: number) => {
+    if (index !== -1) return parents[index];
+    if (state !== current.candidate || current.index === -1) return -1;
+    const isWritten =
+      unstoredFingerprint !== undefined &&
+      findStateIndex(seenStates, getStateHash(unstoredFingerprint), unstoredFingerprint) === -1;
+    return isWritten ? current.index : parents[current.index];
+  };
+  const isTraceRebuilt = coverage !== undefined || search.isTraceRebuildShown;
   runtime.getBehavior = (state) => {
     const index = state === current.candidate ? -1 : states.indexOf(state);
+    if (isTraceRebuilt) traces.rebuildPath(getTracedParent(state, index));
     return index === -1 ? [...getPath(current.index), state] : getPath(index);
   };
   runtime.getCurrentState = () =>
