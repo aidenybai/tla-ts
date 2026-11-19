@@ -379,6 +379,32 @@ describe("typed tier matches TLC", () => {
     );
   });
 
+  it.each([
+    ["before", "y' = 1 /\\ UNCHANGED y /\\ x' = x", "line 5, col 29 to line 5, col 29 of module M"],
+    ["after", "y' = 1 /\\ x' = x /\\ UNCHANGED y", "line 5, col 39 to line 5, col 39 of module M"],
+  ])(
+    "warns about a variable UNCHANGED keeps that the step changes %s it assigns every variable, as the interpreter does",
+    async (_title, next, location) => {
+      const getWarnings = async (maxSetSize: number | undefined) => {
+        const warnings: string[] = [];
+        await check({
+          source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == ${next}\n====`,
+          config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+          maxSetSize,
+          onProgress: (progress) => {
+            if (progress.kind === "warning") warnings.push(progress.text);
+          },
+        });
+        return warnings;
+      };
+      const expected = [
+        `The variable y was changed while it is specified as UNCHANGED at\n${location}`,
+      ];
+      expect(await getWarnings(undefined)).toEqual(expected);
+      expect(await getWarnings(INTERPRETED_SET_SIZE)).toEqual(expected);
+    },
+  );
+
   it("branches on the right side of => only with warnings off, like TLC", async () => {
     const results = await Promise.all([
       checkFixture("ImpliesBranches", false),
