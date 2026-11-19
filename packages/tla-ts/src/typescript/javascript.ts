@@ -18,6 +18,11 @@ import {
   share,
   skipCasts,
 } from "./context";
+import {
+  UNHANDLED_REJECTION_LOCATION,
+  UNHANDLED_REJECTION_PREFIX,
+  UNHANDLED_REJECTION_SUFFIX,
+} from "../exit-codes";
 import { NODE_GLOBALS } from "./built-ins";
 import { getWrapperName } from "./common-js";
 import { TlaTypeScriptError } from "../errors";
@@ -3172,7 +3177,7 @@ StringRaw(heap, template, substitutions) ==
 \\* the stack frames.
 UnhandledRejection(reason) ==
   IF reason \\in {Undefined, Null} \\/ TypeOf(reason) \\in {"boolean", "string", "number", "bigint"}
-  THEN "node:internal/process/promises:392\\n      new UnhandledPromiseRejection(reason);\\n      ^\\n\\nUnhandledPromiseRejection: This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \\"" \\o StringOf(reason) \\o "\\". {\\n  code: 'ERR_UNHANDLED_REJECTION'\\n}"
+  THEN ${JSON.stringify(`${UNHANDLED_REJECTION_LOCATION}\n\n${UNHANDLED_REJECTION_PREFIX}"`)} \\o StringOf(reason) \\o ${JSON.stringify(`"${UNHANDLED_REJECTION_SUFFIX}`)}
   ELSE "A promise rejected with no handler"
 
 \\* Array.prototype.join of values that aren't all strings, which writes undefined and null as
