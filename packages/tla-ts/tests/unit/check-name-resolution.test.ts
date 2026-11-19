@@ -3567,6 +3567,34 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "an extended constant that an instance's operator after it redeclares",
+      "---- MODULE Z ----\nOp(a) == a\n====\n---- MODULE A ----\nCONSTANT Op\nINSTANCE Z\n====\n---- MODULE B ----\nEXTENDS A\nF == Op(1)\n====",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 6, col 10 to line 6, col 11 of module M.",
+        },
+        {
+          location: "line 11, col 8 to line 11, col 10 of module M",
+          message: "The operator Op requires 0 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an extended constant that an instance's name after it redeclares",
+      "---- MODULE Z ----\n====\n---- MODULE A ----\nCONSTANT I\nI == INSTANCE Z\n====\n---- MODULE B ----\nEXTENDS A\nF == I\n====",
+      [
+        {
+          location: "line 6, col 1 to line 6, col 15 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 5, col 10 to line 5, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });

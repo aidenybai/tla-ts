@@ -1335,21 +1335,26 @@ export const createEnvironment = (
       ...parsed.instances.map((instance) => ({
         location: instance.location,
         link: () => {
+          const symbolsBefore = getSymbolsBefore(instance.location);
           const symbols = instantiate(
             instance,
             parsed,
             instancingUnit,
             isParameterFree,
             getVisibleModules().get(instance.module),
-            getSymbolsBefore(instance.location),
+            symbolsBefore,
           );
           instanced.set(instance, symbols);
           symbols.forEach((symbol, name) => {
-            if (visible.has(name)) return;
+            if (symbolsBefore.has(name)) return;
             visible.set(name, symbol);
             if (!instance.isLocal) exported.set(name, symbol);
           });
-          if (instance.name !== undefined && !instance.isLocal) {
+          if (
+            instance.name !== undefined &&
+            !instance.isLocal &&
+            !symbolsBefore.has(instance.name)
+          ) {
             exported.set(instance.name, getInstanceSymbol(instance, instance.name));
           }
         },
