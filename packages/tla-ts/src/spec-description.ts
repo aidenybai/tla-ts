@@ -1,4 +1,3 @@
-import { isEvaluatedAtStartup } from "./dependencies";
 import {
   getAssumeProveBody,
   getChildren,
@@ -28,6 +27,7 @@ import {
   forEachBinding,
   getDefinition,
   getRootKey,
+  getStartupValue,
   lookupScope,
   resolveGlobalOperator,
   type Closure,
@@ -221,21 +221,10 @@ const resolveClosure = (
   return operator?.kind === "Closure" ? operator : undefined;
 };
 
-const isEvaluable = (expression: Expression, environment: Environment) => {
-  try {
-    evaluate(expression, getConstantContext(environment, undefined));
-    return true;
-  } catch (error) {
-    if (error instanceof TlaError) return false;
-    throw error;
-  }
-};
-
 const isStartupValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&
   definition.params.length === 0 &&
-  isEvaluatedAtStartup(definition, environment) &&
-  isEvaluable(definition.body, environment);
+  getStartupValue(definition, environment) !== undefined;
 
 const isConstantValue = (definition: Definition | undefined, environment: Environment) =>
   definition?.kind === "Operator" &&

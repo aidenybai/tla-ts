@@ -303,6 +303,30 @@ describe("check matches TLC", () => {
     ]);
   });
 
+  it.each([
+    [
+      "with",
+      'VARIABLE x\nInit == x = 0\nNever == \\E i \\in (IF PrintT("split") THEN {} ELSE {1}) : TRUE\nNext == (x < 2 /\\ x\' = x + 1) \\/ Never',
+      "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    ],
+    [
+      "without",
+      'Next == \\E i \\in (IF PrintT("split") THEN {1} ELSE {}) : TRUE\nSpec == [][Next]_<<>>',
+      "SPECIFICATION Spec",
+    ],
+  ])(
+    "splits a next-state relation %s variables by the value of a constant definition, as TLC's Tool looks it up",
+    async (_kind, definitions, config) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC\n${definitions}\n====`,
+        config,
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(['"split"']);
+    },
+  );
+
   it("runs only the PlusCal actions whose label guard matches, with TLC's counts", async () => {
     const result = await check({
       source: [
