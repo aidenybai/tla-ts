@@ -1495,6 +1495,31 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  // Deviation from TLC: TLC fails each with "The symmetry values must be function records.", since it holds the value as a tuple, a record or a lazy function rather than a FcnRcdValue.
+  it.each([
+    ["{<<>>}", "<<>>"],
+    ["{Append(<<>>, a)}", "Append(<<>>,a)"],
+    ["{[f |-> a]}", "[f|->a]"],
+    ["{[v \\in Nat |-> v]}", "[v\\inNat|->v]"],
+  ])("checks the symmetry %s as a function", async (symmetry, image) => {
+    const warnings: CheckProgress[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS TLC, Naturals, Sequences\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSym == ${symmetry}\n====`,
+      config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress);
+      },
+    });
+    expect(result.status).toBe("success");
+    expect(warnings).toEqual([
+      {
+        kind: "warning",
+        code: 2300,
+        text: `The set ${image} has been defined to be a symmetry set but contains less than two elements.`,
+      },
+    ]);
+  });
+
   it("reports a failing constant part of a property while processing the spec like TLC", async () => {
     const properties = [
       "<>(1 = {})",

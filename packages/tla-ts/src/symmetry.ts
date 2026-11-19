@@ -129,6 +129,7 @@ export const getSymmetryGroup = (
   const elements = toFiniteSet(value).elements;
   // Tool#getSymmetryPerms rejects a set that isn't a SetEnumValue before it looks at the values.
   // Deviation from TLC: it rejects a set of functions it keeps lazy, such as {f \in [S -> S] : P}, too.
+  // Deviation from TLC: it asks for each value to be a FcnRcdValue, so it rejects a tuple, a record and a function it keeps lazy.
   if (!elements.every(isFunctionValue)) {
     throw createSymmetryError(
       isEnumeratedSet(value)
