@@ -39,9 +39,10 @@ export class BitBlaster {
     private manager: AstManager,
     private isBlasterCfg = false,
   ) {
-    this.rewriter = isBlasterCfg
-      ? new BlasterBoolRewriter(manager, { ...BOOL_REWRITER_OPTIONS, isEliminatingAnd: true })
-      : new Rewriter(manager, BOOL_REWRITER_OPTIONS);
+    this.rewriter = new BlasterBoolRewriter(
+      manager,
+      isBlasterCfg ? { ...BOOL_REWRITER_OPTIONS, isEliminatingAnd: true } : BOOL_REWRITER_OPTIONS,
+    );
   }
 
   private checkpoint() {
@@ -65,35 +66,30 @@ export class BitBlaster {
     return expr === this.manager.trueExpr || expr === this.manager.falseExpr;
   }
 
-  // blaster_cfg's bool_rewriter releases the conjunction that eliminating and makes, so its
-  // temporaries are held until it returns.
-  private beginRewrite() {
-    return this.isBlasterCfg ? this.manager.beginTemporaries() : -1;
-  }
-
+  // bool_rewriter frees the temporaries of each call as it returns.
   private endRewrite(result: number, outer: number) {
     this.manager.incRef(result);
-    if (this.isBlasterCfg) this.manager.endTemporaries(outer);
+    this.manager.endTemporaries(outer);
     return result;
   }
 
   mkNot(arg: number) {
-    const outer = this.beginRewrite();
+    const outer = this.manager.beginTemporaries();
     return this.endRewrite(this.rewriter.mkNot(arg), outer);
   }
 
   mkAnd(args: number[]) {
-    const outer = this.beginRewrite();
+    const outer = this.manager.beginTemporaries();
     return this.endRewrite(this.rewriter.mkAnd(args), outer);
   }
 
   mkOr(args: number[]) {
-    const outer = this.beginRewrite();
+    const outer = this.manager.beginTemporaries();
     return this.endRewrite(this.rewriter.mkOr(args), outer);
   }
 
   mkIff(first: number, second: number) {
-    const outer = this.beginRewrite();
+    const outer = this.manager.beginTemporaries();
     return this.endRewrite(this.rewriter.mkEq(first, second), outer);
   }
 
@@ -108,7 +104,7 @@ export class BitBlaster {
   }
 
   mkIte(condition: number, thenExpr: number, elseExpr: number) {
-    const outer = this.beginRewrite();
+    const outer = this.manager.beginTemporaries();
     const result = this.rewriter.mkIte(condition, thenExpr, elseExpr);
     return this.endRewrite(typeof result === "number" ? result : result.expr, outer);
   }
