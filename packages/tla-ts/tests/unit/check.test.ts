@@ -1719,6 +1719,17 @@ ASSUME TLCFP(a) = -887695703
     }
   });
 
+  it("substitutes the value the configuration assigns a definition, with no check of its arity, as TLC does", async () => {
+    const statuses = await Promise.all(
+      [
+        ["CONSTANT F(_)\nDef == 3\nASSUME F(1) = 7", "CONSTANT F <- Def Def = 7"],
+        ["Op(a) == a\nDef == 3\nASSUME Op(1) = 7", "CONSTANT Op <- Def Def = 7"],
+        ["CONSTANT N\nOp(a) == a\nASSUME N = 7", "CONSTANT N <- Op Op = 7"],
+      ].map(async (item) => (await checkModule(item[0], item[1])).status),
+    );
+    expect(statuses).toEqual(["success", "success", "success"]);
+  });
+
   it("reports a table's set that mixes types as the unexpected exception TLC throws", async () => {
     await expect(checkModule("CONSTANT F(_)", 'CONSTANT F(1) = {1, "a"}')).rejects.toThrow(
       new TlaEvaluationError(

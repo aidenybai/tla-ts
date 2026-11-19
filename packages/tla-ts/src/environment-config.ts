@@ -171,26 +171,29 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     linked.definitions.delete(key);
     constants.delete(key);
   };
+  const setValue = (name: string, configValue: ConfigValue, keys: string[]) => {
+    const value = toConstantValue(configValue);
+    markNormalized(value);
+    keys.forEach((key) => {
+      const arity = getKeyArity(key);
+      if (arity === 0) constants.set(key, value);
+      else
+        setOperator(key, {
+          kind: "Builtin",
+          name,
+          arity,
+          evaluate: () => value,
+          evaluateUnary: undefined,
+          evaluateBinary: undefined,
+          isLazy: true,
+        });
+    });
+  };
   config.constants
     .filter((assignment) => assignment.args === undefined)
-    .forEach((assignment) => {
-      const value = toConstantValue(assignment.value);
-      markNormalized(value);
-      getScopedKeys(assignment).forEach((key) => {
-        const arity = getKeyArity(key);
-        if (arity === 0) constants.set(key, value);
-        else
-          setOperator(key, {
-            kind: "Builtin",
-            name: assignment.name,
-            arity,
-            evaluate: () => value,
-            evaluateUnary: undefined,
-            evaluateBinary: undefined,
-            isLazy: true,
-          });
-      });
-    });
+    .forEach((assignment) =>
+      setValue(assignment.name, assignment.value, getScopedKeys(assignment)),
+    );
   const tables = new Map<string, { name: string; module?: string; rows: [Value[], Value][] }>();
   const addRows = (isRoot: boolean) =>
     config.constants.forEach((assignment) => {
@@ -237,18 +240,45 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       setOperator(key, createOperatorTable(table.name, getKeyArity(key), table.rows)),
     ),
   );
-  const substitutions = new Map(
-    config.substitutions.flatMap((substitution) =>
-      getSubstitutedKeys(substitution).map((key): [string, string] => [
-        key,
-        getRootKey(substitution.target),
+  // ModelConfig keeps the last <- of a name for each module.
+  const lastSubstitutions = [
+    ...new Map(
+      config.substitutions.map((substitution) => [
+        `${substitution.module ?? ""}!${substitution.name}`,
+        substitution,
       ]),
-    ),
+    ).values(),
+  ];
+  // Defns holds the value of a definition the configuration assigns one, and a <- of that definition takes the value.
+  const rootValues = new Map(
+    config.constants
+      .filter((assignment) => assignment.module === undefined && assignment.args === undefined)
+      .map((assignment) => [assignment.name, assignment]),
+  );
+  lastSubstitutions.forEach((substitution) => {
+    const assignment = rootValues.get(substitution.target);
+    if (assignment) {
+      setValue(substitution.name, assignment.value, getSubstitutedKeys(substitution));
+    }
+  });
+  const substitutions = new Map(
+    lastSubstitutions
+      .filter((substitution) => !rootValues.has(substitution.target))
+      .flatMap((substitution) =>
+        getSubstitutedKeys(substitution).map((key): [string, string] => [
+          key,
+          getRootKey(substitution.target),
+        ]),
+      ),
   );
   [...substitutions.keys()].forEach((key) => constants.delete(key));
+  // Defns holds the value of a definition the configuration assigns one, so TLC checks no arity against it.
   const getTargetArity = (target: string) => {
     const definition = linked.definitions.get(getRootKey(target));
-    if (definition === undefined) return undefined;
+    const isAssigned = config.constants.some(
+      (assignment) => assignment.module === undefined && assignment.name === target,
+    );
+    if (definition === undefined || isAssigned) return undefined;
     return definition.kind === "Operator" ? definition.params.length : 0;
   };
   const checkTarget = (
@@ -268,10 +298,9 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       throw createArityError(name, target);
     }
   };
-  // ModelConfig keeps the last <- of a name for each module.
   const getOverrides = (module: string | undefined) =>
     new Map(
-      config.substitutions
+      lastSubstitutions
         .filter((substitution) => substitution.module === module)
         .map((substitution) => [substitution.name, substitution.target]),
     );
