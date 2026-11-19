@@ -68,6 +68,11 @@ LSpread(o, a) ==
          ELSE LCopyKeys(o, a, a.keys)
     [] OTHER -> LBail
 LArray(list) == IF \E i \in DOMAIN list : list[i].type = "bail" THEN LBail ELSE [type |-> "larray", elems |-> list]
+\* The elements that a spread of an array or a Set gives an array literal, in the order their
+\* iterators give them, which must be primitives, or <<LBail>>.
+LSpreadElems(v) ==
+  IF v.type \in {"larray", "lset"} /\ \A i \in DOMAIN v.elems : ~IsLComposite(v.elems[i]) THEN v.elems
+  ELSE <<LBail>>
 \* PutValue of a property: an ordinary object's own data property or a new one that no prototype
 \* sets, or an array's element within it or just after it.
 LAssign(c, k, v) ==
@@ -561,17 +566,32 @@ export const getNativeFunctions = (
       return { text, isFresh: true };
     }
     if (ts.isArrayLiteralExpression(node)) {
-      if (
-        node.elements.some(
-          (element) => ts.isSpreadElement(element) || ts.isOmittedExpression(element),
-        )
-      ) {
-        return undefined;
+      if (node.elements.some(ts.isOmittedExpression)) return undefined;
+      // A spread of an array or a Set gives its elements, and each run of other elements
+      // between spreads gives them.
+      const parts: string[] = [];
+      for (const [index, element] of node.elements.entries()) {
+        if (ts.isSpreadElement(element)) {
+          const spread = compileExpression(element.expression, scope);
+          if (spread === undefined) return undefined;
+          parts.push(`LSpreadElems(${spread.text})`);
+        } else if (index === 0 || ts.isSpreadElement(node.elements[index - 1])) {
+          const end = node.elements.findIndex(
+            (other, at) => at > index && ts.isSpreadElement(other),
+          );
+          const owned = compileArguments(
+            node.elements.slice(index, end === -1 ? undefined : end),
+            scope,
+            true,
+          );
+          if (owned === undefined) return undefined;
+          parts.push(`<<${owned.join(", ")}>>`);
+        }
       }
-      const elements = compileArguments(node.elements, scope, true);
-      return elements === undefined
-        ? undefined
-        : { text: `LArray(<<${elements.join(", ")}>>)`, isFresh: true };
+      return {
+        text: `LArray(${parts.length === 0 ? "<<>>" : parts.join(" \\o ")})`,
+        isFresh: true,
+      };
     }
     if (ts.isCallExpression(node) && node.questionDotToken === undefined)
       return compileCall(node, scope);

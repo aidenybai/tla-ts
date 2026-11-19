@@ -553,6 +553,38 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       expect(result.message).toContain("the native call differs from ESCore's");
     });
   });
+  describe("spreads an array or a Set into an array literal natively, as ESCore does", () => {
+    const source = `
+      type Key = "a" | "b" | "c";
+      let seen = new Set<Key>();
+      let order: Key[] = [];
+      export const add = (key: Key) => {
+        if (order.length >= 2 || seen.has(key)) return;
+        seen.add(key);
+        order = [...order, key];
+      };
+      export const isOrdered = () =>
+        [...seen].every((key) => order.includes(key)) &&
+        [...seen].filter((key) => key !== "a").length <= 2 &&
+        [0, ...order, 1].length === order.length + 2 &&
+        [...order, ...order].slice(order.length).every((key) => seen.has(key));
+    `;
+
+    it("gives what ESCore gives in every call, as TLC counts", async () => {
+      const counts = ["deadlock", 10, 10];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a spread that drops the last element", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "THEN v.elems\n",
+        "THEN SubSeq(v.elems, 1, Len(v.elems) - 1)\n",
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+  });
+
   describe("runs ESNative's operators natively, as their TLA+ runs them", () => {
     // A model that lowers its state, whose module ESNative the checks read.
     const source = `
