@@ -414,15 +414,20 @@ export const getSmtTacticFailure = (context: Context) =>
 const getSatTacticParams = (environment: TacticEnvironment, params: TacticParams) =>
   new Map([...getSatParams(environment.parameters), ...params]);
 
+// goal2sat hands the atoms to euf when the sat parameters of the tactic set euf.
+const runSat = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
+  const satParams = getSatTacticParams(environment, params);
+  return createSatTactic(
+    environment.manager,
+    satParams,
+    satParams.get("euf") === true ? mkThSolver(environment.parameters) : null,
+  )(goal);
+};
+
 const runSmt = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
   const manager = environment.manager;
   // mk_smt_tactic: with sat.euf, the smt tactic is the sat tactic.
-  if (environment.parameters.get("sat.euf") === "true")
-    return createSatTactic(
-      manager,
-      getSatParams(environment.parameters),
-      mkThSolver(environment.parameters),
-    )(goal);
+  if (environment.parameters.get("sat.euf") === "true") return runSat(environment, params)(goal);
   const kernelParams = getKernelParams(environment, params, goal);
   const extracted = extractClauses(manager, goal);
   const solved =
@@ -687,6 +692,7 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   return [goal];
 };
 
+// Every parameter of Z3's sat tactic, so the sat tactic rejects any other.
 const SAT_DESCRS = getDescrs("sat", [
   ["max_memory", PARAM_UINT, UINT_MAX, true],
   ["ite_extra", PARAM_BOOL, true, true],
@@ -755,8 +761,68 @@ const SAT_DESCRS = getDescrs("sat", [
   ["probing_binary", PARAM_BOOL, true, true],
   ["local_search", PARAM_BOOL, false],
   ["threads", PARAM_UINT, 1],
-  ["euf", PARAM_BOOL, false],
+  ["euf", PARAM_BOOL, false, true],
   ["cardinality.solver", PARAM_BOOL, true],
+  ["anf", PARAM_BOOL, false],
+  ["anf.delay", PARAM_UINT, 2],
+  ["anf.exlin", PARAM_BOOL, false],
+  ["bca", PARAM_BOOL, false],
+  ["branching.anti_exploration", PARAM_BOOL, false],
+  ["branching.heuristic", PARAM_SYMBOL, "vsids"],
+  ["cardinality.encoding", PARAM_SYMBOL, "grouped"],
+  ["core.minimize", PARAM_BOOL, false],
+  ["core.minimize_partial", PARAM_BOOL, false],
+  ["ddfw.init_clause_weight", PARAM_UINT, 8],
+  ["ddfw.reinit_base", PARAM_UINT, 10000],
+  ["ddfw.restart_base", PARAM_UINT, 100000],
+  ["ddfw.threads", PARAM_UINT, 0],
+  ["ddfw.use_reward_pct", PARAM_UINT, 15],
+  ["ddfw_search", PARAM_BOOL, false],
+  ["dimacs.core", PARAM_BOOL, false],
+  ["drat.activity", PARAM_BOOL, false],
+  ["drat.binary", PARAM_BOOL, false],
+  ["drat.check_sat", PARAM_BOOL, false],
+  ["drat.check_unsat", PARAM_BOOL, false],
+  ["drat.disable", PARAM_BOOL, false],
+  ["drat.file", PARAM_SYMBOL, ""],
+  ["inprocess.out", PARAM_SYMBOL, ""],
+  ["local_search_dbg_flips", PARAM_BOOL, false],
+  ["local_search_mode", PARAM_SYMBOL, "wsat"],
+  ["local_search_threads", PARAM_UINT, 0],
+  ["lookahead.cube.cutoff", PARAM_SYMBOL, "depth"],
+  ["lookahead.cube.depth", PARAM_UINT, 1],
+  ["lookahead.cube.fraction", PARAM_NUMERAL, "0.4"],
+  ["lookahead.cube.freevars", PARAM_NUMERAL, "0.8"],
+  ["lookahead.cube.psat.clause_base", PARAM_NUMERAL, "2"],
+  ["lookahead.cube.psat.trigger", PARAM_NUMERAL, "5"],
+  ["lookahead.cube.psat.var_exp", PARAM_NUMERAL, "1"],
+  ["lookahead.delta_fraction", PARAM_NUMERAL, "1.0"],
+  ["lookahead.double", PARAM_BOOL, true],
+  ["lookahead.global_autarky", PARAM_BOOL, false],
+  ["lookahead.preselect", PARAM_BOOL, false],
+  ["lookahead.reward", PARAM_SYMBOL, "march_cu"],
+  ["lookahead.use_learned", PARAM_BOOL, false],
+  ["lookahead_scores", PARAM_BOOL, false],
+  ["lookahead_simplify", PARAM_BOOL, false],
+  ["lookahead_simplify.bca", PARAM_BOOL, true],
+  ["pb.lemma_format", PARAM_SYMBOL, "cardinality"],
+  ["pb.min_arity", PARAM_UINT, 9],
+  ["pb.resolve", PARAM_SYMBOL, "cardinality"],
+  ["pb.solver", PARAM_SYMBOL, "solver"],
+  ["phase.sticky", PARAM_BOOL, true],
+  ["prob_search", PARAM_BOOL, false],
+  ["propagate.prefetch", PARAM_BOOL, true],
+  ["random_freq", PARAM_NUMERAL, "0.01"],
+  ["reorder.activity_scale", PARAM_UINT, 100],
+  ["reorder.base", PARAM_UINT, UINT_MAX],
+  ["reorder.itau", PARAM_NUMERAL, "4.0"],
+  ["restart.emafastglue", PARAM_NUMERAL, "0.03"],
+  ["restart.emaslowglue", PARAM_NUMERAL, "1e-05"],
+  ["restart.factor", PARAM_NUMERAL, "1.5"],
+  ["restart.margin", PARAM_NUMERAL, "1.1"],
+  ["retain_blocked_clauses", PARAM_BOOL, true],
+  ["smt", PARAM_BOOL, false],
+  ["smt.proof.check", PARAM_BOOL, false],
 ]);
 
 const NAMED_TACTICS = new Map<string, NamedTactic>([
@@ -1560,10 +1626,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "sat",
     {
       descrs: SAT_DESCRS,
-      isRejectingUnknown: false,
       isTrackingDependencies: true,
-      build: (environment, params) => (goal) =>
-        createSatTactic(environment.manager, getSatTacticParams(environment, params))(goal),
+      build: runSat,
     },
   ],
   [
@@ -1579,10 +1643,8 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     "psat",
     {
       descrs: SAT_DESCRS,
-      isRejectingUnknown: false,
       isTrackingDependencies: true,
-      build: (environment, params) => (goal) =>
-        createSatTactic(environment.manager, getSatTacticParams(environment, params))(goal),
+      build: runSat,
     },
   ],
   [
@@ -1928,7 +1990,10 @@ const compile = (
 ): TacticBuilder => {
   if (sexpr.kind !== "list") {
     if (!isSymbol(sexpr)) throw new SmtParseError("invalid tactic, unexpected input", sexpr);
-    const named = NAMED_TACTICS.get(sexpr.text);
+    // mk_smt_tactic makes the sat tactic under sat.euf, with its parameters.
+    const named = NAMED_TACTICS.get(
+      sexpr.text === "smt" && environment.parameters.get("sat.euf") === "true" ? "sat" : sexpr.text,
+    );
     if (named !== undefined)
       return {
         descrs: named.descrs,
