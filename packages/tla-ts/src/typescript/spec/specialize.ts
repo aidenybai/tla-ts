@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
+import { isProcessDeclared } from "../common-js";
 import type { GeneratedDefinition } from "./library";
 
 // Specializes ESCore's evaluation rules to a program: each syntax node gives the TLA+ that ESCore's
@@ -47,6 +48,16 @@ interface LexicalDeclaration {
   names: string[];
   isConst: boolean;
   fn: ts.FunctionDeclaration | undefined;
+}
+
+// A file of a program at its path: a script, an ES module, or a CommonJS module, whose code is the
+// function that Node wraps it in, its only statement. A module's requests and requires load the
+// files at the indices of the program's files that targets gives by specifier, starting at 1.
+export interface ProgramFile {
+  sourceFile: ts.SourceFile;
+  path: string;
+  kind: "script" | "module" | "commonjs";
+  targets: ReadonlyMap<string, number>;
 }
 
 export interface SpecializedProgram {
@@ -381,6 +392,39 @@ const getHoistableFunctions = (statements: readonly ts.Statement[]) => {
   return statements.flatMap((statement) => inStatement(statement, blocked));
 };
 
+// Whether a declaration has a modifier of the kind given, as export or default.
+const hasModifier = (node: ts.Node, kind: ts.SyntaxKind) =>
+  ts.canHaveModifiers(node) &&
+  (ts.getModifiers(node)?.some((modifier) => modifier.kind === kind) ?? false);
+
+const isExported = (node: ts.Node) => hasModifier(node, ts.SyntaxKind.ExportKeyword);
+
+// Syntax that only a module has: an import or export declaration, or a declaration it exports.
+const isModuleItem = (node: ts.Statement) =>
+  ts.isImportDeclaration(node) ||
+  ts.isImportEqualsDeclaration(node) ||
+  ts.isExportDeclaration(node) ||
+  ts.isExportAssignment(node) ||
+  isExported(node);
+
+// The name a module's declaration binds, *default* for a default export without a name.
+const getDeclaredName = (node: ts.FunctionDeclaration | ts.ClassDeclaration) =>
+  node.name?.text ?? "*default*";
+
+// Whether a module's code awaits outside its functions (HasTopLevelAwait, §16.2.1.7.1), where a
+// computed key of a method or a field still runs.
+const hasTopLevelAwait = (node: ts.Node): boolean => {
+  if (ts.isAwaitExpression(node) || (ts.isForOfStatement(node) && node.awaitModifier !== undefined))
+    return true;
+  if (ts.isClassStaticBlockDeclaration(node)) return false;
+  if (ts.isFunctionLike(node) || ts.isPropertyDeclaration(node)) {
+    return (
+      node.name !== undefined && ts.isComputedPropertyName(node.name) && hasTopLevelAwait(node.name)
+    );
+  }
+  return ts.forEachChild(node, (child) => (hasTopLevelAwait(child) ? true : undefined)) ?? false;
+};
+
 // The function declarations to initialize (§10.2.11 step 15): the last of each name, in the order
 // of the last ones.
 const getFunctionsToInitialize = (functions: ts.FunctionDeclaration[]) => {
@@ -450,6 +494,13 @@ const getDispatch = (
 // runs wherever its property is read or written, by keys that ESCore may compute, as an array's
 // operators compute indices, so it has none, nor has a function under an index.
 const getFunctionKey = (node: ts.Node) => {
+  // A module's namespace object reaches what the module exports by any key.
+  if (
+    isExported(node) ||
+    (ts.isVariableDeclaration(node.parent) && isExported(node.parent.parent.parent))
+  ) {
+    return undefined;
+  }
   const named =
     ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node)
       ? node.name
@@ -505,10 +556,10 @@ const METHOD_PRODUCTIONS = {
 // elsewhere, and that ESCore's own operators don't use as a key, has a body that stops the check,
 // as a call to it can only come by reflection.
 export const specialize = (
-  sourceFile: ts.SourceFile,
+  files: readonly ProgramFile[],
   internalKeys: ReadonlySet<string>,
 ): SpecializedProgram => {
-  // How many times the script writes each name, as an identifier or a string.
+  // How many times the program writes each name, as an identifier or a string.
   const occurrences = new Map<string, number>();
   const countNames = (node: ts.Node): void => {
     if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node) || ts.isStringLiteralLike(node)) {
@@ -516,7 +567,22 @@ export const specialize = (
     }
     ts.forEachChild(node, countNames);
   };
-  countNames(sourceFile);
+  files.forEach((file) => countNames(file.sourceFile));
+  // Whether the program's process is Node's, whose env a module's code reads, where no file
+  // declares process and a module runs in Node's context, whose global object has it.
+  const isHostProcess =
+    typeof process !== "undefined" &&
+    files[0].kind !== "script" &&
+    !files.some((file) => isProcessDeclared(file.sourceFile));
+  // Each file's number, from 1, and where its text starts in the program's texts, one after
+  // another, which makes the sites of the program's nodes distinct.
+  const fileNumbers = new Map(files.map((file, index) => [file.sourceFile, index + 1]));
+  const fileStarts = new Map(
+    files.map((file, index) => [
+      file.sourceFile,
+      files.slice(0, index).reduce((start, other) => start + other.sourceFile.text.length, 0),
+    ]),
+  );
   const definitions: GeneratedDefinition[] = [];
   const words = new Set<string>();
   const identifiers = new Set<string>();
@@ -527,14 +593,17 @@ export const specialize = (
   const loops: { id: number; body: string }[] = [];
   let count = 0;
   let templateSites = 0;
+  // The names that the top level of the module being compiled declares, which its code never
+  // resolves to the global object's.
+  let moduleNames: ReadonlySet<string> = new Set();
 
   // A function declaration's site, which the state's hoisted pairs with a var environment: where
   // the declaration starts in the program.
-  const getSite = (node: ts.Node) => node.getStart();
+  const getSite = (node: ts.Node) => (fileStarts.get(node.getSourceFile()) ?? 0) + node.getStart();
 
-  // A node's source text, as a slice of the program's, which SourceText holds once.
+  // A node's source text, as a slice of its file's, which SourceTextN holds once for file N.
   const getSourceText = (node: ts.Node) =>
-    `SubSeq(SourceText, ${node.getStart() + 1}, ${node.getEnd()})`;
+    `SubSeq(SourceText${fileNumbers.get(node.getSourceFile())}, ${node.getStart() + 1}, ${node.getEnd()})`;
 
   // A function's code record, which the module evaluates once, as it has no parameters.
   const defineRecord = (
@@ -571,7 +640,7 @@ export const specialize = (
   const reference = (node: ts.Expression, scope: Scope): Code => {
     if (ts.isIdentifier(node)) {
       words.add(node.text);
-      identifiers.add(node.text);
+      if (!moduleNames.has(node.text)) identifiers.add(node.text);
       return (state, context) =>
         `ResolveBinding(${state}, ${context}, ${getUnits(node.text)}, ${getBool(scope.isStrict)})`;
     }
@@ -987,6 +1056,19 @@ export const specialize = (
       words.add(node.text);
       return (state) => `Ok(${state}, ${getStr(node.text)})`;
     }
+    // A read of process.env.NAME, of Node's process, is the environment's value as the process
+    // that compiles has it.
+    if (
+      isHostProcess &&
+      ts.isPropertyAccessExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "env" &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "process"
+    ) {
+      const variable = process.env[node.name.text];
+      return (state) => `Ok(${state}, ${variable === undefined ? "Undefined" : getStr(variable)})`;
+    }
     if (
       ts.isIdentifier(node) ||
       ts.isPropertyAccessExpression(node) ||
@@ -1022,7 +1104,10 @@ export const specialize = (
     if (ts.isMetaProperty(node)) {
       if (node.keywordToken === ts.SyntaxKind.NewKeyword)
         return (state, context) => `Ok(${state}, GetNewTarget(${state}, ${context}))`;
-      throw new TlaTypeScriptError("tla-ts can't compile import.meta to ESCore yet", node);
+      if (files[(fileNumbers.get(node.getSourceFile()) ?? 1) - 1].kind !== "module") {
+        throw new TlaTypeScriptError("tla-ts can't compile import.meta outside a module", node);
+      }
+      return (state, context) => `EvaluateImportMeta(${state}, ${context}, Empty)`;
     }
     if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
       const operator = node.operator;
@@ -1843,13 +1928,22 @@ export const specialize = (
         `IF <<${context}.var, ${getSite(node)}>> \\in ${state}.hoisted THEN HoistedFunctionEvaluation(${state}, ${context}, ${getUnits(node.name?.text ?? "*default*")}) ELSE Ok(${state}, Empty)`;
     }
     if (ts.isClassDeclaration(node)) {
-      // BindingClassDeclarationEvaluation (§15.7.15) binds the class in the running context too.
-      const name = node.name?.text ?? "default";
-      const definition = classDefinition(node, name);
+      // BindingClassDeclarationEvaluation (§15.7.15) binds the class in the running context too,
+      // and a module's default export of a class without a name binds *default* to the class that
+      // it names default (§16.2.3.7).
+      const definition = classDefinition(node, node.name?.text);
       return defineCode(
         "ClassDeclaration",
-        `LET r == ${definition("s", "ctx", "EmptyStr")} IN IF IsAbrupt(r) THEN r ELSE LET b == InitializeBinding(r.s, ctx.lex, ${getUnits(name)}, Val(r)) IN IF IsAbrupt(b) THEN b ELSE Ok(b.s, Empty)`,
+        `LET r == ${definition("s", "ctx", node.name === undefined ? getStr("default") : "EmptyStr")} IN IF IsAbrupt(r) THEN r ELSE LET b == InitializeBinding(r.s, ctx.lex, ${getUnits(getDeclaredName(node))}, Val(r)) IN IF IsAbrupt(b) THEN b ELSE Ok(b.s, Empty)`,
       );
+    }
+    // An import, and an export of names, evaluate to empty (§16.2.2.7, §16.2.3.7).
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
+      return (state) => `Ok(${state}, Empty)`;
+    // export default of an expression, which binds *default* (§16.2.3.7).
+    if (ts.isExportAssignment(node) && node.isExportEquals !== true) {
+      const exported = named(node.expression, scope, getStr("default"));
+      return defineCode("ExportDefault", `ExportDefaultThen(ctx, FALSE, ${exported("s", "ctx")})`);
     }
     if (ts.isEmptyStatement(node) || ts.isDebuggerStatement(node))
       return (state) => `Ok(${state}, Empty)`;
@@ -2212,18 +2306,13 @@ export const specialize = (
   };
 
   // ScriptEvaluation (§16.1.6) with GlobalDeclarationInstantiation (§16.1.7).
-  const script = () => {
+  const script = (sourceFile: ts.SourceFile) => {
     const statements = sourceFile.statements;
     const isStrict = hasUseStrict(statements);
     const scope: Scope = { isStrict, isClassBody: false, isAsyncGenerator: false };
-    for (const current of statements) {
-      if (
-        ts.isImportDeclaration(current) ||
-        ts.isExportDeclaration(current) ||
-        ts.isExportAssignment(current)
-      ) {
-        throw new TlaTypeScriptError("tla-ts can't compile a module to ESCore yet", current);
-      }
+    const item = statements.find(isModuleItem);
+    if (item !== undefined) {
+      throw new TlaTypeScriptError("tla-ts can't compile a module as a script", item);
     }
     const lexical = getLexicalDeclarations(statements, false);
     const lexicalNames = lexical.flatMap((declaration) => declaration.names);
@@ -2272,7 +2361,242 @@ export const specialize = (
     return define("Script", ["s"], steps.join("\n  "));
   };
 
-  const entry = script();
+  // The files of a module's specifiers, as a function from each specifier's code units.
+  const getTargets = (file: ProgramFile) =>
+    file.targets.size === 0
+      ? "<<>>"
+      : [...file.targets].map((target) => `(${getUnits(target[0])} :> ${target[1]})`).join(" @@ ");
+
+  // A Source Text Module Record's fields that ParseModule (§16.2.1.7.1) reads of the module's code,
+  // as ESCore's ImportEntries, ExportEntries, ModuleRequests, and ModuleRequestPhases give them, the
+  // file of each request, and the module's body, which RunBody runs; and the declarations that
+  // InitializeEnvironment (§16.2.1.7.3.1) instantiates once the module binds its imports.
+  const moduleCode = (file: ProgramFile, number: number) => {
+    const statements = file.sourceFile.statements;
+    const scope: Scope = { isStrict: true, isClassBody: false, isAsyncGenerator: false };
+    const getRequest = (node: ts.ImportDeclaration | ts.ExportDeclaration) => {
+      if (node.attributes !== undefined) {
+        throw new TlaTypeScriptError("tla-ts can't import a module with attributes yet", node);
+      }
+      const specifier = node.moduleSpecifier;
+      if (specifier === undefined || !ts.isStringLiteral(specifier)) return undefined;
+      if (!file.targets.has(specifier.text)) {
+        throw new TlaTypeScriptError(`tla-ts can't load the module ${specifier.text}`, node);
+      }
+      return `[specifier |-> ${getUnits(specifier.text)}, attributes |-> NoAttributes]`;
+    };
+    const imports: string[] = [];
+    const importedNames: string[] = [];
+    const exports: string[] = [];
+    const requests: string[] = [];
+    for (const statement of statements) {
+      if (
+        ts.isImportEqualsDeclaration(statement) ||
+        (ts.isExportAssignment(statement) && statement.isExportEquals === true)
+      ) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't compile TypeScript's CommonJS syntax to ESCore",
+          statement,
+        );
+      }
+      // Node finds the names a CommonJS module exports by reading its code, other than default.
+      const specifier =
+        ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)
+          ? statement.moduleSpecifier
+          : undefined;
+      const target =
+        specifier !== undefined && ts.isStringLiteral(specifier)
+          ? files[(file.targets.get(specifier.text) ?? 0) - 1]
+          : undefined;
+      const clause = ts.isImportDeclaration(statement) ? statement.importClause : undefined;
+      const exported = ts.isExportDeclaration(statement) ? statement.exportClause : undefined;
+      if (
+        target?.kind === "commonjs" &&
+        (clause?.namedBindings !== undefined ||
+          (ts.isExportDeclaration(statement) &&
+            (exported === undefined ||
+              !ts.isNamedExports(exported) ||
+              exported.elements.some(
+                (element) => (element.propertyName ?? element.name).text !== "default",
+              ))))
+      ) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't import names other than default from a CommonJS module, which Node finds by reading its code",
+          statement,
+        );
+      }
+      if (ts.isImportDeclaration(statement)) {
+        const request = getRequest(statement);
+        if (request === undefined) continue;
+        requests.push(request);
+        if (clause?.phaseModifier !== undefined) {
+          throw new TlaTypeScriptError(
+            "tla-ts can't import a module's source or defer it yet",
+            statement,
+          );
+        }
+        const getEntry = (importName: string, localName: string) => {
+          importedNames.push(localName);
+          return `[request |-> ${request}, isNamespace |-> FALSE, isSource |-> FALSE, importName |-> ${importName}, localName |-> ${getUnits(localName)}]`;
+        };
+        if (clause?.name !== undefined)
+          imports.push(getEntry(getUnits("default"), clause.name.text));
+        const bindings = clause?.namedBindings;
+        if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
+          importedNames.push(bindings.name.text);
+          imports.push(
+            `[request |-> ${request}, isNamespace |-> TRUE, isSource |-> FALSE, isDeferred |-> FALSE, importName |-> <<>>, localName |-> ${getUnits(bindings.name.text)}]`,
+          );
+        }
+        if (bindings !== undefined && ts.isNamedImports(bindings)) {
+          bindings.elements.forEach((element) =>
+            imports.push(
+              getEntry(getUnits((element.propertyName ?? element.name).text), element.name.text),
+            ),
+          );
+        }
+        continue;
+      }
+      if (ts.isExportDeclaration(statement)) {
+        const request = getRequest(statement);
+        if (request !== undefined) requests.push(request);
+        const clause = statement.exportClause;
+        if (request === undefined && clause !== undefined && ts.isNamedExports(clause)) {
+          clause.elements.forEach((element) =>
+            exports.push(
+              `LocalExport(${getUnits(element.name.text)}, ${getUnits((element.propertyName ?? element.name).text)})`,
+            ),
+          );
+        } else if (clause === undefined) {
+          exports.push(`ExportEntry(<<>>, ${request}, "star", <<>>, <<>>)`);
+        } else if (ts.isNamespaceExport(clause)) {
+          exports.push(
+            `ExportEntry(${getUnits(clause.name.text)}, ${request}, "namespace", <<>>, <<>>)`,
+          );
+        } else {
+          clause.elements.forEach((element) =>
+            exports.push(
+              `ExportEntry(${getUnits(element.name.text)}, ${request}, "name", ${getUnits((element.propertyName ?? element.name).text)}, <<>>)`,
+            ),
+          );
+        }
+        continue;
+      }
+      if (ts.isExportAssignment(statement)) {
+        exports.push(`LocalExport(${getUnits("default")}, ${getUnits("*default*")})`);
+        continue;
+      }
+      if (!isExported(statement)) continue;
+      if (ts.isVariableStatement(statement)) {
+        getDeclaredNames(statement.declarationList).forEach((name) =>
+          exports.push(`LocalExport(${getUnits(name)}, ${getUnits(name)})`),
+        );
+      } else if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+        const name = getDeclaredName(statement);
+        exports.push(
+          `LocalExport(${getUnits(hasModifier(statement, ts.SyntaxKind.DefaultKeyword) ? "default" : name)}, ${getUnits(name)})`,
+        );
+      } else {
+        throw new TlaTypeScriptError(
+          `tla-ts can't export ${ts.SyntaxKind[statement.kind]} from a module to ESCore`,
+          statement,
+        );
+      }
+    }
+    // LexicallyScopedDeclarations (§16.2.1.4) of the module: its let, const, class, and function
+    // declarations, and *default* for a default export of an expression.
+    const lexical = statements.flatMap((statement): LexicalDeclaration[] =>
+      ts.isFunctionDeclaration(statement)
+        ? [{ names: [getDeclaredName(statement)], isConst: false, fn: statement }]
+        : ts.isClassDeclaration(statement)
+          ? [{ names: [getDeclaredName(statement)], isConst: false, fn: undefined }]
+          : ts.isExportAssignment(statement)
+            ? [{ names: ["*default*"], isConst: false, fn: undefined }]
+            : getLexicalDeclarations([statement], false),
+    );
+    const varNames = dedupe(
+      getVarScoped(statements.filter((statement) => !ts.isFunctionDeclaration(statement))).names,
+    );
+    moduleNames = new Set([
+      ...varNames,
+      ...lexical.flatMap((declaration) => declaration.names),
+      ...importedNames,
+    ]);
+    const steps = [
+      `LET env == ctx.lex s1 == CreateVarBindings(s, env, ${getSequence(varNames.map(getUnits))}, env, FALSE, {}) IN`,
+      `LET s2 == ${lexical.reduce((current, declaration) => `CreateLexicalNames(${current}, env, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)})`, "s1")} IN`,
+    ];
+    let state = "s2";
+    lexical.forEach((declaration, index) => {
+      if (declaration.fn === undefined) return;
+      const instantiate = instantiateFunction(declaration.fn, scope);
+      steps.push(
+        `LET fo${index + 1} == ${instantiate(state, "ctx")} IN`,
+        `LET fs${index + 1} == InitializeBinding(fo${index + 1}.s, env, ${getUnits(declaration.names[0])}, Val(fo${index + 1})).s IN`,
+      );
+      state = `fs${index + 1}`;
+    });
+    steps.push(`Ok(${state}, Empty)`);
+    const declarations = define("ModuleDeclarations", ["s", "ctx"], steps.join("\n  "));
+    bodies.push(statementList(statements, scope));
+    const dedupedRequests = dedupe(requests);
+    definitions.push({
+      name: `ModuleNode${number}`,
+      arity: 0,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "module", body |-> [code |-> ${bodies.length}], hasTopLevelAwait |-> ${getBool(hasTopLevelAwait(file.sourceFile))}, imports |-> ${getSequence(imports)}, exports |-> ${getSequence(exports)}, requests |-> ${getSequence(dedupedRequests)}, phases |-> ${getSequence(dedupedRequests.map((request) => `[request |-> ${request}, phase |-> "evaluation"]`))}, targets |-> ${getTargets(file)}]`,
+    });
+    return declarations;
+  };
+
+  // A CommonJS module's code: the function that Node wraps the module's code in, which RequireFile
+  // calls with the module's exports, require, module, __filename and __dirname, as Node's loader
+  // does (lib/internal/modules/cjs/loader.js). Its code may not read the wrapper's arguments
+  // object, whose callee is the runtime's function rather than Node's.
+  const commonJsCode = (file: ProgramFile, number: number) => {
+    const statement = file.sourceFile.statements[0];
+    const wrapper =
+      ts.isExpressionStatement(statement) && ts.isParenthesizedExpression(statement.expression)
+        ? statement.expression.expression
+        : undefined;
+    if (wrapper === undefined || !ts.isFunctionExpression(wrapper)) {
+      throw new TlaTypeScriptError("tla-ts can't read this CommonJS module", statement);
+    }
+    if (getMayUseArguments(wrapper.body)) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't read the arguments of the function that Node wraps a CommonJS module in",
+        statement,
+      );
+    }
+    const code = functionCode(
+      { node: wrapper, parameters: wrapper.parameters, body: wrapper.body, kind: "normal" },
+      { isStrict: false, isClassBody: false, isAsyncGenerator: false },
+    );
+    const directory = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), 1));
+    definitions.push({
+      name: `ModuleNode${number}`,
+      arity: 0,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "commonjs", code |-> ${code}, filename |-> ${getUnits(file.path)}, dirname |-> ${getUnits(directory)}, targets |-> ${getTargets(file)}]`,
+    });
+    return undefined;
+  };
+
+  const entry = files[0];
+  if (entry.kind === "script" && files.length > 1) {
+    throw new TlaTypeScriptError("tla-ts can't compile a script that loads modules to ESCore yet");
+  }
+  const moduleDeclarations = files.map((file, index) =>
+    file.kind === "module"
+      ? moduleCode(file, index + 1)
+      : file.kind === "commonjs"
+        ? commonJsCode(file, index + 1)
+        : undefined,
+  );
+  const program =
+    entry.kind === "module"
+      ? "RunModuleNode(s, ModuleNode(1))"
+      : entry.kind === "commonjs"
+        ? "RequireFile(s, 1)"
+        : `${script(entry.sourceFile)}(s)`;
   definitions.push({
     name: "CallCode",
     arity: 5,
@@ -2310,11 +2634,35 @@ export const specialize = (
       arity: 4,
       text: `Loop${current.id}(s, ctx, loop, v) ==\n  ${current.body.includes("it.next") ? "LET it == loop.it IN " : ""}${current.body}`,
     })),
-    { name: "Program", arity: 1, text: `Program(s) == ${entry}(s)` },
+    {
+      name: "ModuleNode",
+      arity: 1,
+      text: `ModuleNode(id) ==\n  ${entry.kind === "script" ? `Assert(FALSE, "tla-ts can't load a module the program doesn't have")` : getDispatch("id", 1, files.length, (number) => `ModuleNode${number}`)}`,
+    },
+    {
+      name: "ModuleDeclarations",
+      arity: 3,
+      text: `ModuleDeclarations(s, ctx, node) ==\n  ${getDispatch(
+        "node.file",
+        1,
+        moduleDeclarations.length,
+        (number) => {
+          const declarations = moduleDeclarations[number - 1];
+          return declarations === undefined
+            ? `Assert(FALSE, "tla-ts can't link a module the program doesn't have")`
+            : `${declarations}(s, ctx)`;
+        },
+      )}`,
+    },
+    { name: "Program", arity: 1, text: `Program(s) == ${program}` },
   );
   return {
     definitions: [
-      { name: "SourceText", arity: 0, text: `SourceText == ${getUnits(sourceFile.text)}` },
+      ...files.map((file, index) => ({
+        name: `SourceText${index + 1}`,
+        arity: 0,
+        text: `SourceText${index + 1} == ${getUnits(file.sourceFile.text)}`,
+      })),
       ...definitions,
     ],
     words,

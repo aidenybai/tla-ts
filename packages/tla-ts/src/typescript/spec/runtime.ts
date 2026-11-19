@@ -123,6 +123,230 @@ const DEFINITIONS = [
   `BindArguments(s, env, names, args, i) ==
   IF i > Len(names) THEN s
   ELSE BindArguments(InitializeBinding(s, env, names[i], Arg(args, i)).s, env, names, args, i + 1)`,
+  // A compiled module's code gives the entries and requests that ParseModule (§16.2.1.7.1) reads
+  // of the module's parse node, which ModuleNode gives the program's modules as.
+  `ImportEntries(node) == node.imports`,
+  `ExportEntries(node) == node.exports`,
+  `ModuleRequests(node) == node.requests`,
+  `ModuleRequestPhases(node) == node.phases`,
+  // HostLoadImportedModule (§16.2.1.10) for a program's host, which loads the module of the file
+  // that the referrer's request names, made the first time the host loads it in the realm.
+  `HostLoadModuleFrom(s, referrer, request) ==
+  LoadModuleNode(s, ModuleNode(ModuleAt(s, referrer).node.targets[request.specifier]))`,
+  // A CommonJS module that an ES module imports is a Synthetic Module Record whose default export
+  // is the module's exports, as Node's ModuleWrap for it gives them.
+  `LoadModuleNode(s, node) ==
+  IF <<s.realmId, node.file>> \\in DOMAIN s.moduleIds THEN Ok(s, s.moduleIds[<<s.realmId, node.file>>])
+  ELSE LET m == Len(s.modules) + 1
+           record == IF node.kind = "commonjs"
+                     THEN ModuleRecord("synthetic", node, Undefined, <<>>, <<>>, FALSE, <<>>, <<>>, <<>>, <<>>)
+                     ELSE SourceTextModule(node)
+       IN Ok([s EXCEPT !.modules = Append(@, record), !.moduleIds = (<<s.realmId, node.file>> :> m) @@ @], m)`,
+  // The evaluation of a Synthetic Module Record in InnerModuleEvaluation, with the result value
+  // given. A CommonJS module's runs its code, as Node's ModuleWrap does once, and sets its default
+  // export to the exports, and evaluates to the error it threw from then on.
+  `SyntheticEvaluateThen(s, m, value) ==
+  LET rec == ModuleAt(s, m) IN
+  CASE rec.node = None -> Ok(SyntheticEvaluate(s, m), value)
+    [] rec.status = "evaluated" -> IF rec.error = Empty THEN Ok(s, value) ELSE ThrowValue(s, rec.error)
+    [] OTHER ->
+         LET r == RequireFile(s, rec.node.file) IN
+         IF IsAbrupt(r) THEN Abrupt(SetModule(r.s, m, [status |-> "evaluated", error |-> r.c.value]), r.c)
+         ELSE Ok(SetModule(SetMutableBinding(r.s, rec.env, N("default"), Val(r), TRUE).s, m, [status |-> "evaluated"]), value)`,
+  // RunModule for a program whose code is a module, as the host runs its entry: the module loaded,
+  // linked, and evaluated, with the promise of its evaluation as the result's value.
+  `RunModuleNode(s, node) ==
+  LET loaded == LoadModuleNode(s, node)
+      loading == LoadRequestedModules(loaded.s, Val(loaded))
+  IN IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowValue(loading.s, Slots(loading.s, Val(loading)).result) ELSE
+     LET link == ModuleLink(loading.s, Val(loaded)) IN
+     IF IsAbrupt(link) THEN link ELSE ModuleEvaluate(link.s, Val(loaded))`,
+  // Module._load of Node's CommonJS loader (lib/internal/modules/cjs/loader.js) for a file of the
+  // program, which require calls: the exports of the module, whose code runs the first time, in
+  // the function Node wraps it in, with this as its exports; and, for a module whose code still
+  // runs, its exports so far. The state's required holds each module object and whether its code
+  // ran, and forgets a module whose code threw. Node's require is a function that new constructs
+  // too, which the proxy of it stops at.
+  `RequireFile(s, id) ==
+  IF id \\in DOMAIN s.required THEN
+    LET exports == Get(s, s.required[id].module, SV("exports")) IN
+    IF IsAbrupt(exports) \\/ s.required[id].loaded THEN exports ELSE CircularExports(exports.s, Val(exports))
+  ELSE LET node == ModuleNode(id) IN
+  IF node.kind # "commonjs" THEN Assert(FALSE, "tla-ts can't require an ES module yet") ELSE
+  LET exports == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+      module == OrdinaryObjectCreate(exports.s, Intrinsic(exports.s, "ObjectPrototype"))
+      made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(exports))
+      require == LET a == Alloc(made.s, BuiltinObject(Intrinsic(made.s, "FunctionPrototype"), <<"Module", "require">>, 1,
+                                                       N("require"), TRUE, id, made.s.realmId))
+                 IN Ok(a.s, a.v)
+      moduleProxy == StoppingProxy(require.s, Val(module), N("module"), <<[trap |-> SV("get"), method |-> "moduleExportsGet"],
+                                                              [trap |-> SV("set"), method |-> "moduleExportsSet"]>>)
+      requireProxy == StoppingProxy(moduleProxy.s, Val(require), N("require"), <<[trap |-> SV("apply"), method |-> "requireApply"]>>)
+      f == CodeFunctionCreate(requireProxy.s, Intrinsic(requireProxy.s, "FunctionPrototype"), node.code, FALSE, s.globalEnv, NoPrivateEnvironment)
+      r == Call([f.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE]) @@ @], f.v, Val(exports),
+                <<Val(exports), Val(requireProxy), Val(moduleProxy), Str(node.filename), Str(node.dirname)>>)
+  IN IF IsAbrupt(r) THEN Abrupt([r.s EXCEPT !.required = [i \\in DOMAIN @ \\ {id} |-> @[i]]], r.c)
+     ELSE Get([r.s EXCEPT !.required[id].loaded = TRUE], Val(module), SV("exports"))`,
+  // getExportsForCircularRequire of Node's CommonJS loader, which gives the exports of a module
+  // whose code still runs a prototype that warns of each property that it lacks, where they are
+  // an object of Object.prototype that doesn't mark itself an ES module's.
+  `CircularExports(s, exports) ==
+  IF ~IsObject(exports) \\/ O(s, exports).class = "proxy" \\/ O(s, exports).proto # Intrinsic(s, "ObjectPrototype") THEN Ok(s, exports) ELSE
+  LET esModule == Get(s, exports, SV("__esModule")) IN
+  IF IsAbrupt(esModule) \\/ ToBooleanValue(Val(esModule)) THEN IF IsAbrupt(esModule) THEN esModule ELSE Ok(esModule.s, exports)
+  ELSE Assert(FALSE, "tla-ts can't give the exports of a CommonJS module in a cycle the prototype that Node gives them")`,
+  // What of Node a program reaches that the runtime has only part of, such as a CommonJS module's
+  // module and require: a proxy whose handler stops at every operation but its allowed traps,
+  // which reach only what the runtime has, such as module.exports and a call of require.
+  `StoppingProxy(s, target, name, allowed) ==
+  LET handler == OrdinaryObjectCreate(s, Null)
+      stop == CreateBuiltinFunction(handler.s, <<"Module", "hostStop">>, 0, <<>>, name)
+  IN ProxyCreate(AllowTraps(DefineTraps(stop.s, Val(handler), Val(stop), CommonJsTraps), Val(handler), allowed),
+                 target, Val(handler))`,
+  `CommonJsTraps ==
+  <<SV("getPrototypeOf"), SV("setPrototypeOf"), SV("isExtensible"), SV("preventExtensions"), SV("getOwnPropertyDescriptor"),
+    SV("defineProperty"), SV("has"), SV("get"), SV("set"), SV("deleteProperty"), SV("ownKeys"), SV("apply"), SV("construct")>>`,
+  `DefineTraps(s, handler, trap, names) ==
+  IF names = <<>> THEN s ELSE DefineTraps(CreateDataProperty(s, handler, Head(names), trap).s, handler, trap, Tail(names))`,
+  `AllowTraps(s, handler, allowed) ==
+  IF allowed = <<>> THEN s ELSE
+  LET f == CreateBuiltinFunction(s, <<"Module", Head(allowed).method>>, 0, <<>>, IF "data" \\in DOMAIN Head(allowed) THEN Head(allowed).data ELSE Empty) IN
+  AllowTraps(CreateDataProperty(f.s, handler, Head(allowed).trap, Val(f)).s, handler, Tail(allowed))`,
+  // The host's globals and built-ins' properties that a module program names and ESCore's realm
+  // lacks, on the global object and the intrinsics as the host's own context has them, where a
+  // module runs. One whose value is a primitive has the host's value. One whose value is a function
+  // or an object is a proxy whose handler stops at every operation, whose target is a function
+  // where the host's value is one, and a constructor where it's one, so that a new of it reaches
+  // the handler. A new of a constructor that makes an object quietly, which runs nothing a program
+  // sees but its arguments' conversions until it uses the object, as TextEncoder's, makes a proxy
+  // that stops at every operation. One that the host gives a getter has a getter that gives the
+  // proxy, or undefined where the host's gives undefined, and a setter that stops. Any other
+  // accessor stops where it's read or written.
+  `DefineHost(s, properties) ==
+  LET handler == OrdinaryObjectCreate(s, Null)
+      trap == CreateBuiltinFunction(handler.s, <<"Module", "hostTrap">>, 0, <<>>, Empty)
+      construct == CreateBuiltinFunction(trap.s, <<"Module", "hostConstruct">>, 0, <<>>, Empty)
+      traps == AllowTraps(DefineTraps(construct.s, Val(handler), Val(trap), CommonJsTraps), Val(handler),
+                          <<[trap |-> SV("construct"), method |-> "hostConstruct"]>>)
+  IN DefineHostWith([traps EXCEPT !.hostHandler = Val(handler)], Val(handler), properties)`,
+  `DefineHostWith(s, handler, properties) ==
+  IF properties = <<>> THEN Ok(s, Empty) ELSE
+  LET p == Head(properties)
+      stop == LET a == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"),
+                                              <<"Module", IF p.isQuiet THEN "hostQuietConstructor" ELSE "hostStop">>, 0, <<>>,
+                                              p.isConstructor, p.name, s.realmId))
+              IN Ok(a.s, a.v)
+      target == CASE p.kind = "function" -> stop
+                  [] p.kind = "console" -> ConsoleObject(stop.s)
+                  [] p.kind = "process" -> ProcessObject(stop.s)
+                  [] OTHER -> LET a == Alloc(stop.s, MakeObject(Null, "ordinary", [hostName |-> p.name])) IN Ok(a.s, a.v)
+      value == CASE p.kind = "value" -> Ok(target.s, p.value)
+                 [] p.kind \\in {"undefined", "accessor"} -> Ok(target.s, Undefined)
+                 [] p.kind = "console" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
+                 [] p.kind = "process" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "processGet"]>>)
+                 [] OTHER -> ProxyCreate(target.s, Val(target), handler)
+      getter == IF p.kind = "accessor" THEN Ok(value.s, Val(stop))
+                ELSE CreateBuiltinFunction(value.s, <<"Module", "hostGlobal">>, 0, <<>>, Val(value))
+      d == IF p.isAccessor
+           THEN DefinePropertyOrThrow(getter.s, Intrinsic(s, p.owner), Str(p.name), AccessorDesc(Val(getter), Val(stop), p.enumerable, p.configurable))
+           ELSE DefinePropertyOrThrow(value.s, Intrinsic(s, p.owner), Str(p.name), DataDesc(Val(value), p.writable, p.enumerable, p.configurable))
+  IN IF IsAbrupt(d) THEN d ELSE DefineHostWith(d.s, handler, Tail(properties))`,
+  // import.meta of module m, as Node gives it: an object without a prototype whose dirname,
+  // filename, resolve, and url, which the runtime leaves out, are accessors that stop, and whose
+  // main tells whether m is the entry, the module the host loaded first.
+  `ImportMeta(s, m) ==
+  LET o == OrdinaryObjectCreate(s, Null)
+      stop == CreateBuiltinFunction(o.s, <<"Module", "hostStop">>, 0, <<>>, N("import.meta"))
+      d == DefineMetaProperties(stop.s, Val(o), Val(stop), <<N("dirname"), N("filename"), N("main"), N("resolve"), N("url")>>, m = 1)
+  IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, Val(o))`,
+  `DefineMetaProperties(s, o, stop, names, isMain) ==
+  IF names = <<>> THEN Ok(s, Empty) ELSE
+  LET d == DefinePropertyOrThrow(s, o, Str(Head(names)),
+             IF Head(names) = N("main") THEN DataDesc(Bool(isMain), TRUE, TRUE, TRUE) ELSE AccessorDesc(stop, stop, TRUE, TRUE))
+  IN IF IsAbrupt(d) THEN d ELSE DefineMetaProperties(d.s, o, stop, Tail(names), isMain)`,
+  // The steps of a constructor of the host that makes its object quietly, from the arguments it
+  // converts: TextEncoder's, which converts none, and TextDecoder's, as Node's runs them
+  // (lib/internal/encoding.js), of a label of UTF-8, and of options that it reads fatal and ignoreBOM
+  // of, then ignoreBOM and fatal again. A label of another encoding, which the host's table of labels
+  // decides, stops.
+  `QuietConstruct(s, name, args) ==
+  IF name = N("TextEncoder") THEN Ok(s, Empty) ELSE
+  LET label == IF Arg(args, 1) = Undefined THEN Ok(s, Str(N("utf-8"))) ELSE ToStr(s, Arg(args, 1))
+      options == Arg(args, 2)
+  IN IF IsAbrupt(label) THEN label
+     ELSE IF options \\notin {Undefined, Null} /\\ ~IsObject(options) THEN HostStop(name)
+     ELSE IF Val(label).value \\notin {N("utf-8"), N("utf8"), N("unicode-1-1-utf-8"), N("unicode11utf8"), N("unicode20utf8"), N("x-unicode20utf8")}
+     THEN HostStop(name)
+     ELSE IF options \\in {Undefined, Null} THEN Ok(label.s, Empty)
+     ELSE ReadOptions(label.s, options, <<SV("fatal"), SV("ignoreBOM"), SV("ignoreBOM"), SV("fatal")>>)`,
+  `ReadOptions(s, options, keys) ==
+  IF keys = <<>> THEN Ok(s, Empty) ELSE
+  LET r == Get(s, options, Head(keys)) IN IF IsAbrupt(r) THEN r ELSE ReadOptions(r.s, options, Tail(keys))`,
+  // A stop at what of the host that ESCore leaves out a program uses, by its name's code units.
+  `HostStop(name) == Assert(FALSE, "tla-ts can't run the host's " \\o UnitsText(name) \\o ", which ESCore leaves out")`,
+  // The TLA+ string of code units that a TLA+ string can hold.
+  `UnitsText(units) ==
+  IF units = <<>> THEN "" ELSE (CHOOSE c \\in DOMAIN CharacterUnits : CharacterUnits[c] = Head(units)) \\o UnitsText(Tail(units))`,
+  // TextEncoder's encode, as Node's runs it: the UTF-8 bytes of the string of input, where a lone
+  // surrogate is U+FFFD, in a new Uint8Array.
+  `TextEncode(s, input) ==
+  LET str == ToStr(s, input) IN
+  IF IsAbrupt(str) THEN str ELSE
+  LET bytes == Utf8Bytes(Val(str).value, 1, <<>>)
+      array == CreateArrayFromList(str.s, [i \\in 1..Len(bytes) |-> IntV(bytes[i])])
+  IN IF IsAbrupt(array) THEN array
+     ELSE Construct(array.s, Intrinsic(array.s, "Uint8Array"), <<Val(array)>>, Intrinsic(array.s, "Uint8Array"))`,
+  `Utf8Bytes(u, k, acc) ==
+  IF k > Len(u) THEN acc ELSE
+  IF u[k] >= 55296 /\\ u[k] <= 56319 /\\ k < Len(u) /\\ u[k + 1] >= 56320 /\\ u[k + 1] <= 57343
+  THEN Utf8Bytes(u, k + 2, acc \\o UTF8Encode((u[k] - 55296) * 1024 + u[k + 1] - 56320 + 65536))
+  ELSE Utf8Bytes(u, k + 1, acc \\o UTF8Encode(IF u[k] >= 55296 /\\ u[k] <= 57343 THEN 65533 ELSE u[k]))`,
+  // A function of the host, as a proxy that stops at every operation but typeof.
+  `HostFunction(s, name) ==
+  LET stop == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE, name, s.realmId))
+  IN ProxyCreate(stop.s, stop.v, s.hostHandler)`,
+  // Node's process, of which a program reads only hrtime, whose bigint it may only read, and
+  // getBuiltinModule, of async_hooks, of which it reads
+  // only AsyncResource, whose objects run a function in their scope and emit their destroy, as
+  // Node's do (lib/async_hooks.js) where no hook of async_hooks observes them, which a program would
+  // make by reading more of async_hooks. A program reads process.env as the compile gives it.
+  `ProcessObject(s) ==
+  LET bigint == HostFunction(s, N("process.hrtime.bigint"))
+      hrtimeTarget == Alloc(bigint.s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE,
+                                                    N("process.hrtime"), s.realmId))
+      hrtime == StoppingProxy(hrtimeTarget.s, hrtimeTarget.v, N("process.hrtime"),
+                              <<[trap |-> SV("get"), method |-> "hrtimeGet", data |-> Val(bigint)]>>)
+      o == OrdinaryObjectCreate(hrtime.s, Intrinsic(s, "ObjectPrototype"))
+      withHrtime == CreateDataProperty(o.s, Val(o), SV("hrtime"), Val(hrtime))
+      run == CreateBuiltinFunction(withHrtime.s, <<"Module", "asyncRun">>, 1, N("runInAsyncScope"), Empty)
+      destroy == CreateBuiltinFunction(run.s, <<"Module", "asyncDestroy">>, 0, N("emitDestroy"), Empty)
+      resource == Alloc(destroy.s, BuiltinObject(Intrinsic(destroy.s, "FunctionPrototype"), <<"Module", "asyncResource">>, 1,
+                                                 N("AsyncResource"), TRUE, [run |-> Val(run), destroy |-> Val(destroy)], destroy.s.realmId))
+      hooks == OrdinaryObjectCreate(resource.s, Null)
+      withResource == CreateDataProperty(hooks.s, Val(hooks), SV("AsyncResource"), resource.v)
+      hooksProxy == StoppingProxy(withResource.s, Val(hooks), N("async_hooks"), <<[trap |-> SV("get"), method |-> "asyncHooksGet"]>>)
+      load == CreateBuiltinFunction(hooksProxy.s, <<"Module", "getBuiltinModule">>, 1, N("getBuiltinModule"), Val(hooksProxy))
+      made == CreateDataProperty(load.s, Val(o), SV("getBuiltinModule"), Val(load))
+  IN Ok(made.s, Val(o))`,
+  // Node's console, of which a program reads only the methods that write what they're given and
+  // createTask: each of the former writes nothing that the program reads, where the values it's
+  // given are primitives, which no code of the program runs to format.
+  `ConsoleObject(s) ==
+  LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+      run == CreateBuiltinFunction(o.s, <<"Module", "taskRun">>, 0, N("run"), Empty)
+      createTask == CreateBuiltinFunction(run.s, <<"Module", "createTask">>, 0, N("createTask"), Val(run))
+      made == CreateDataProperty(createTask.s, Val(o), SV("createTask"), Val(createTask))
+  IN Ok(ConsoleMethods(made.s, Val(o), <<N("log"), N("info"), N("debug"), N("warn"), N("error")>>), Val(o))`,
+  `ConsoleMethods(s, o, names) ==
+  IF names = <<>> THEN s ELSE
+  LET f == CreateBuiltinFunction(s, <<"Module", "consoleWrite">>, 0, Head(names), Empty) IN
+  ConsoleMethods(CreateDataProperty(f.s, o, Str(Head(names)), Val(f)).s, o, Tail(names))`,
+  // Module.prototype.require of Node's CommonJS loader for the module of the file referrer, which
+  // loads the file of a specifier that its code requires.
+  `Require(s, referrer, id) ==
+  IF ~IsString(id) \\/ id.value \\notin DOMAIN ModuleNode(referrer).targets
+  THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
+  ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,
   `Unsupported(s, what) == Assert(FALSE, "tla-ts can't run a part of ECMAScript that ESCore leaves out")`,
 ];
 
@@ -238,13 +462,17 @@ const HOST_PATCHES = [
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
   },
-  // setTimeout, of a callback and no delay, whose callback RunTimers calls once the jobs ran.
+  // setTimeout, of a callback and no delay, whose callback RunTimers calls once the jobs ran. In a
+  // module program, which runs in the host's own context, it gives a Timeout, as Node does, which
+  // stops at any use, and a script may only call it as a statement.
   {
     name: "GlobalBuiltin",
     from: `    [] m = "gc" ->`,
     to: `    [] m = "setTimeout" ->
          IF Len(args) > 1 \\/ ~IsCallable(s, Arg(args, 1)) THEN Unsupported(s, <<>>)
-         ELSE Ok([s EXCEPT !.timers = Append(@, Arg(args, 1))], Undefined)
+         ELSE IF s.hostHandler = Empty THEN Ok([s EXCEPT !.timers = Append(@, Arg(args, 1))], Undefined)
+         ELSE LET timeout == Alloc([s EXCEPT !.timers = Append(@, Arg(args, 1))], MakeObject(Null, "ordinary", [hostName |-> N("Timeout")]))
+              IN ProxyCreate(timeout.s, timeout.v, s.hostHandler)
     [] m = "gc" ->`,
   },
   // A frame of a program's code, whose step is "Code" and whose arguments start with the id of the
@@ -253,6 +481,133 @@ const HOST_PATCHES = [
     name: "ResumeFrame",
     from: "ResumeFrame(frame, r) ==\n  CASE ",
     to: 'ResumeFrame(frame, r) ==\n  CASE frame.step = "Code" -> ResumeCode(frame.args, r)\n    [] ',
+  },
+  // A program's module loads the files of its requests, links the declarations that its code
+  // instantiates, and runs its body as the code gives it.
+  {
+    name: "LoadRequests",
+    from: "HostLoadModule(s, request)",
+    to: "HostLoadModuleFrom(s, m, request)",
+  },
+  {
+    name: "InitializeEnvironment",
+    from: `LET vars == CreateVarBindings(imported.s, env.e, Dedupe(ConcatMap(VarScopedDeclarations(rec.node), BoundNames)), env.e, FALSE, {})
+      lexicals == LexicallyScopedDeclarations(rec.node)
+  IN Ok(InitializeModuleFunctions(CreateLexicalBindings(vars, env.e, lexicals), ModuleContext(env.e), env.e,
+                                  SelectSeq(lexicals, LAMBDA d : d.type \\in FunctionDeclarationTypes)),
+        Empty)`,
+    to: "ModuleDeclarations(imported.s, ModuleContext(env.e), rec.node)",
+  },
+  {
+    name: "ExecuteModule",
+    from: "EvaluateDisposing(s, ModuleContext(ModuleAt(s, m).env), ModuleItems(ModuleAt(s, m).node))",
+    to: "RunBody(s, ModuleContext(ModuleAt(s, m).env), ModuleAt(s, m).node.body)",
+  },
+  {
+    name: "ExecuteAsyncModule",
+    from: "EvaluateDisposing(then.s, ModuleContext(ModuleAt(s, m).env), ModuleItems(ModuleAt(s, m).node))",
+    to: "RunBody(then.s, ModuleContext(ModuleAt(s, m).env), ModuleAt(s, m).node.body)",
+  },
+  // A Synthetic Module Record links once, as Node's does, so that a CommonJS module that a later
+  // link reaches keeps its exports.
+  {
+    name: "SyntheticLink",
+    from: "SyntheticLink(s, m) ==\n",
+    to: "SyntheticLink(s, m) ==\n  IF ModuleAt(s, m).env # 0 THEN s ELSE\n",
+  },
+  {
+    name: "InnerModuleEvaluation",
+    from: `CASE rec.kind = "synthetic" -> Ok(SyntheticEvaluate(s, m), [stack |-> stack, index |-> index])`,
+    to: `CASE rec.kind = "synthetic" -> SyntheticEvaluateThen(s, m, [stack |-> stack, index |-> index])`,
+  },
+  // import.meta of a module, with the properties that Node gives it (HostGetImportMetaProperties).
+  {
+    name: "EvaluateImportMeta",
+    from: "LET meta == OrdinaryObjectCreate(s, Null) IN",
+    to: "LET meta == ImportMeta(s, m) IN",
+  },
+  // The require that a CommonJS module's code calls.
+  {
+    name: "ModuleBuiltin",
+    from: `    [] m = "importEvaluated" -> ResolveImport(s, data)`,
+    to: `    [] m = "importEvaluated" -> ResolveImport(s, data)
+    [] m = "require" -> Require(s, data, Arg(args, 1))
+    [] m = "moduleExportsGet" ->
+         IF Arg(args, 2) # SV("exports") THEN Assert(FALSE, "tla-ts can't use a CommonJS module's module other than for module.exports")
+         ELSE Get(s, Arg(args, 1), SV("exports"))
+    [] m = "moduleExportsSet" ->
+         IF Arg(args, 2) # SV("exports") THEN Assert(FALSE, "tla-ts can't use a CommonJS module's module other than for module.exports")
+         ELSE ResultThen(True, Set(s, Arg(args, 1), SV("exports"), Arg(args, 3), TRUE))
+    [] m = "requireApply" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list ELSE Call(list.s, Arg(args, 1), Arg(args, 2), Val(list))
+    [] m = "hostGlobal" -> Ok(s, data)
+    [] m = "consoleGet" ->
+         IF Arg(args, 2) \\notin {SV("log"), SV("info"), SV("debug"), SV("warn"), SV("error"), SV("createTask")}
+         THEN Assert(FALSE, "tla-ts can't use the host's console other than to write primitives and createTask")
+         ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "textEncoderGet" ->
+         CASE Arg(args, 2) = SV("encode") -> Ok(s, data)
+           [] Arg(args, 2) = SV("encoding") -> Ok(s, SV("utf-8"))
+           [] OTHER -> HostStop(N("TextEncoder"))
+    [] m = "textEncode" ->
+         IF ~IsObject(this) \\/ O(s, this).class # "proxy" \\/ O(s, O(s, this).slots.target).slots # [hostName |-> N("TextEncoder")]
+         THEN HostStop(N("TextEncoder"))
+         ELSE TextEncode(s, IF Arg(args, 1) = Undefined THEN EmptyStr ELSE Arg(args, 1))
+    [] m = "processGet" ->
+         IF Arg(args, 2) \\notin {SV("getBuiltinModule"), SV("hrtime")} THEN HostStop(N("process")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "getBuiltinModule" ->
+         IF Arg(args, 1) \\notin {SV("node:async_hooks"), SV("async_hooks")} THEN HostStop(N("getBuiltinModule")) ELSE Ok(s, data)
+    [] m = "asyncHooksGet" ->
+         IF Arg(args, 2) # SV("AsyncResource") THEN HostStop(N("async_hooks")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "asyncResource" ->
+         IF nt # f \\/ ~IsString(Arg(args, 1)) \\/ (Arg(args, 2) # Undefined /\\ ~IsObject(Arg(args, 2))) THEN HostStop(N("AsyncResource")) ELSE
+         LET trigger == IF Arg(args, 2) = Undefined THEN Ok(s, Undefined) ELSE Get(s, Arg(args, 2), SV("triggerAsyncId")) IN
+         IF IsAbrupt(trigger) THEN trigger ELSE IF Val(trigger) # Undefined THEN HostStop(N("AsyncResource")) ELSE
+         LET manual == IF Arg(args, 2) = Undefined THEN Ok(trigger.s, Undefined) ELSE Get(trigger.s, Arg(args, 2), SV("requireManualDestroy")) IN
+         IF IsAbrupt(manual) THEN manual ELSE
+         LET instance == Alloc(manual.s, MakeObject(Null, "ordinary", [asyncResource |-> TRUE])) IN
+         StoppingProxy(instance.s, instance.v, N("AsyncResource"), <<[trap |-> SV("get"), method |-> "asyncResourceGet", data |-> data]>>)
+    [] m = "asyncResourceGet" ->
+         CASE Arg(args, 2) = SV("runInAsyncScope") -> Ok(s, data.run)
+           [] Arg(args, 2) = SV("emitDestroy") -> Ok(s, data.destroy)
+           [] OTHER -> HostStop(N("AsyncResource"))
+    [] m \\in {"asyncRun", "asyncDestroy"} ->
+         IF ~IsObject(this) \\/ O(s, this).class # "proxy" \\/ "asyncResource" \\notin DOMAIN O(s, O(s, this).slots.target).slots
+         THEN HostStop(N("AsyncResource"))
+         ELSE IF m = "asyncDestroy" THEN Ok(s, this)
+         ELSE Call(s, Arg(args, 1), Arg(args, 2), IF Len(args) > 2 THEN SubSeq(args, 3, Len(args)) ELSE <<>>)
+    [] m = "consoleWrite" ->
+         IF \\E i \\in DOMAIN args : IsObject(args[i])
+         THEN Assert(FALSE, "tla-ts can't write an object to the host's console, which formats it")
+         ELSE Ok(s, Undefined)
+    [] m = "createTask" ->
+         IF ~IsString(Arg(args, 1)) \\/ Arg(args, 1).value = <<>> THEN Assert(FALSE, "tla-ts can't make a task of the host's console without a name")
+         ELSE LET task == Alloc(s, MakeObject(Intrinsic(s, "ObjectPrototype"), "ordinary", [consoleTask |-> TRUE])) IN
+              ResultThen(task.v, CreateDataProperty(task.s, task.v, SV("run"), data))
+    [] m = "taskRun" ->
+         IF ~IsObject(this) \\/ "consoleTask" \\notin DOMAIN O(s, this).slots \\/ ~IsCallable(s, Arg(args, 1))
+         THEN Assert(FALSE, "tla-ts can't run a task of the host's console other than a function")
+         ELSE Call(s, Arg(args, 1), Undefined, <<>>)
+    [] m \\in {"hostStop", "hostQuietConstructor"} -> HostStop(data)
+    [] m = "hostConstruct" ->
+         LET target == Arg(args, 1)
+             list == CreateListFromArrayLike(s, Arg(args, 2), "all")
+         IN IF IsAbrupt(list) THEN list
+            ELSE IF O(s, target).slots.id[2] # "hostQuietConstructor" \\/ O(s, Arg(args, 3)).class # "proxy" \\/
+                    O(s, Arg(args, 3)).slots.target # target
+            THEN HostStop(O(s, target).slots.data) ELSE
+            LET quiet == QuietConstruct(list.s, O(s, target).slots.data, Val(list)) IN
+            IF IsAbrupt(quiet) THEN quiet ELSE
+            LET name == O(s, target).slots.data
+                instance == Alloc(quiet.s, MakeObject(Null, "ordinary", [hostName |-> name]))
+                encode == CreateBuiltinFunction(instance.s, <<"Module", "textEncode">>, 0, N("encode"), Empty)
+            IN IF name = N("TextEncoder")
+               THEN StoppingProxy(encode.s, instance.v, name, <<[trap |-> SV("get"), method |-> "textEncoderGet", data |-> Val(encode)]>>)
+               ELSE ProxyCreate(instance.s, instance.v, s.hostHandler)
+    [] m = "hostTrap" ->
+         HostStop(IF "hostName" \\in DOMAIN O(s, Arg(args, 1)).slots THEN O(s, Arg(args, 1)).slots.hostName ELSE O(s, Arg(args, 1)).slots.data)
+    [] m = "hrtimeGet" -> IF Arg(args, 2) # SV("bigint") THEN HostStop(N("process.hrtime")) ELSE Ok(s, data)`,
   },
   // A program's functions hold their source text as the program's code gives it, which
   // SourceUnits makes code units of when a program reads it.
@@ -324,36 +679,42 @@ const getMissingProperties = (library: Library) =>
     return object !== undefined && !(property.key in object);
   });
 
-// The host's globals that ESCore's realm lacks, such as Intl, at whose names a compile stops.
-export const getHostOnlyGlobals = (library: Library) => {
-  const realm = new Set(
-    library.properties
+// The host's globals that ESCore's realm lacks, such as Intl, at whose names a compile stops: a
+// script's, of a new context, and a module's, which the host runs in its own context, whose
+// global object has the host's globals too, such as process.
+export const getHostOnlyGlobals = (library: Library, host: object = HOST_GLOBAL) => {
+  const realm = new Set([
+    ...library.properties
       .filter((property) => property.owner === "GlobalObject")
       .map((property) => property.key),
-  );
-  return [...Object.getOwnPropertyNames(HOST_GLOBAL), ...HOST_TIMERS].filter(
-    (name) => !realm.has(name),
-  );
+    "setTimeout",
+    // The parameters of the function that Node wraps a CommonJS module's code in, which the process
+    // that compiles may hold as globals.
+    "exports",
+    "require",
+    "module",
+    "__filename",
+    "__dirname",
+  ]);
+  return [...Object.getOwnPropertyNames(host), ...HOST_TIMERS].filter((name) => !realm.has(name));
 };
 
-// The keys of the host's built-ins that ESCore's realm has nowhere, such as V8's
-// Error.captureStackTrace, at whose names a compile stops.
-export const getHostOnlyKeys = (library: Library) => {
+// The properties of the host's built-ins whose keys ESCore's realm has nowhere, such as V8's
+// Error.captureStackTrace, by the intrinsic that holds each, with the host's descriptor of it.
+export const getHostOnlyProperties = (library: Library) => {
   const known = new Set(
     [...library.definitions.values()].flatMap((definition) =>
       [...definition.text.matchAll(/\bSV\("([^"]+)"\)/g)].map((match) => match[1]),
     ),
   );
-  return [
-    ...new Set(
-      [...new Set(library.properties.map((property) => property.owner))].flatMap((owner) => {
-        const object = owner === "GlobalObject" ? undefined : getHostObject(owner);
-        return object === undefined
-          ? []
-          : Object.getOwnPropertyNames(object).filter((key) => !known.has(key));
-      }),
-    ),
-  ];
+  return [...new Set(library.properties.map((property) => property.owner))].flatMap((owner) => {
+    const object = owner === "GlobalObject" ? undefined : getHostObject(owner);
+    return object === undefined
+      ? []
+      : Object.getOwnPropertyNames(object)
+          .filter((key) => !known.has(key))
+          .map((key) => ({ owner, key, descriptor: Object.getOwnPropertyDescriptor(object, key) }));
+  });
 };
 
 export const getRealmDefinitions = (library: Library): GeneratedDefinition[] => {

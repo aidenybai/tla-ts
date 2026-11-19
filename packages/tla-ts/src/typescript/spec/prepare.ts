@@ -15,7 +15,7 @@ import { assembleRuntime, createLibrary, type Family, getDependencies, HOOKS } f
 import {
   getHostDefinitions,
   getHostOnlyGlobals,
-  getHostOnlyKeys,
+  getHostOnlyProperties,
   getRealmDefinitions,
   INTERPRETER,
   RUNTIME_DEFINITIONS,
@@ -51,7 +51,8 @@ export interface EscoreRuntime {
   resumableSteps: ReadonlySet<string>;
   // The host's globals and built-in keys that ESCore's realm lacks, at whose names a compile stops.
   hostOnlyGlobals: string[];
-  hostOnlyKeys: string[];
+  hostOnlyModuleGlobals: string[];
+  hostOnlyProperties: { owner: string; key: string; descriptor: PropertyDescriptor | undefined }[];
 }
 
 // Every compiled spec's root module. It extends each module of the runtime before the program's,
@@ -131,7 +132,10 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
       arity: 0,
       text: (library.definitions.get("InitialState")?.text ?? "")
         .replace("HeapOf(IntrinsicObjects(0, 1))", "InitialObjects")
-        .replace("jobs |-> <<>>,", "jobs |-> <<>>, timers |-> <<>>,"),
+        .replace(
+          "jobs |-> <<>>,",
+          "jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty,",
+        ),
     },
     {
       name: "DescribeResult",
@@ -249,6 +253,7 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
       ],
     })),
     hostOnlyGlobals: getHostOnlyGlobals(library),
-    hostOnlyKeys: getHostOnlyKeys(library),
+    hostOnlyModuleGlobals: getHostOnlyGlobals(library, globalThis),
+    hostOnlyProperties: getHostOnlyProperties(library),
   };
 };

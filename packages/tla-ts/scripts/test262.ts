@@ -4213,12 +4213,15 @@ const checkProgram = async (
   id: string,
   program: string,
   path: string,
+  isModule: boolean,
   onTypeError: (reason: string) => TestRun | Promise<TestRun>,
 ): Promise<TestRun> => {
   try {
     const start = performance.now();
     const spec =
-      ESCORE === undefined ? compile(program, path) : compileToEscore(program, path, ESCORE);
+      ESCORE === undefined
+        ? compile(program, path)
+        : compileToEscore(program, path, ESCORE, isModule);
     const compiled = performance.now();
     const result = await check({ ...spec, onPrint: () => {} });
     if (process.env.TLA_TS_STATS !== undefined) {
@@ -4348,7 +4351,7 @@ const runJavaScriptTest = async (
       run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
     return { id, outcome: "skipped", reason: `Node fails as JavaScript: ${nodeError}` };
   }
-  return checkProgram(id, tla.test, tla.testPath, (reason) => ({
+  return checkProgram(id, tla.test, tla.testPath, true, (reason) => ({
     id,
     outcome: "skipped",
     reason: `type error as JavaScript: ${reason}`,
@@ -4424,24 +4427,24 @@ const runTest = async (path: string): Promise<TestRun> => {
   // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
   // Node runs it as a module.
   const program = isSloppy ? annotated : `"use strict"; ${annotated}`;
-  // The ESCore backend compiles a program as a script, which differs from a module in its this,
-  // its top-level await and where its var bindings live.
-  if (ESCORE !== undefined && metadata.isModule) {
-    return { id, outcome: "untranslatable", reason: "tla-ts can't compile a module to ESCore yet" };
-  }
   // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
   // import of the test's .js path to the test's code rather than to the .js that Node runs.
   if (isLinked) writeFileSync(programPath, program);
   // A test outside strict mode can't run as an ES module.
-  return checkProgram(id, program, isLinked ? programPath : "test262.ts", (reason) =>
-    isSloppy
-      ? { id, outcome: "skipped", reason: `type error: ${reason}` }
-      : runJavaScriptTest(
-          id,
-          metadata.isModule ? source : nameGlobalObject(source),
-          metadata,
-          fixtures,
-        ),
+  return checkProgram(
+    id,
+    program,
+    isLinked ? programPath : "test262.ts",
+    metadata.isModule,
+    (reason) =>
+      isSloppy
+        ? { id, outcome: "skipped", reason: `type error: ${reason}` }
+        : runJavaScriptTest(
+            id,
+            metadata.isModule ? source : nameGlobalObject(source),
+            metadata,
+            fixtures,
+          ),
   );
 };
 
