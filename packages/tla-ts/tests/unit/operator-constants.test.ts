@@ -55,6 +55,18 @@ describe("operator constants match TLC", () => {
     ]);
   });
 
+  it("checks and uses only the last <- of a name, as TLC's ModelConfig keeps it", async () => {
+    expect(await getTrace("F <- Add F <- Inc G <- Add C = 1")).toEqual([
+      "invariant-violation",
+      [0, 1, 2],
+    ]);
+    await expect(checkConstants("F <- x F <- Nope G <- Add C = 1")).rejects.toThrow(
+      new TlaConfigError(
+        "The configuration file substitutes for F with the undefined identifier Nope.",
+      ),
+    );
+  });
+
   it("reports arguments a table does not cover like TLC", async () => {
     const cases = [
       [

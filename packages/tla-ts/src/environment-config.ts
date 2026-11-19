@@ -219,31 +219,37 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       );
     }
   };
-  config.substitutions
-    .filter((substitution) => substitution.module === undefined)
-    .forEach((substitution) => {
-      const name = substitution.name;
-      const target = substitution.target;
-      if (!declaredConstants.includes(name) && !linked.root.visible.has(name)) {
-        throw new TlaConfigError(
-          `In the configuration file, the identifier ${name} does not appear in the specification.`,
-        );
-      }
-      if (config.substitutions.some((other) => other.name === target)) {
-        throw createReusedTargetError(target);
-      }
-      checkSubstitutionTarget(
-        name,
-        target,
-        linked.root.constants.find((constant) => constant.name === name)?.arity ??
-          linked.root.visible.get(name)?.arity,
+  // ModelConfig keeps the last <- of a name for each module.
+  const getOverrides = (module: string | undefined) => [
+    ...new Map(
+      config.substitutions
+        .filter((substitution) => substitution.module === module)
+        .map((substitution) => [substitution.name, substitution]),
+    ).values(),
+  ];
+  getOverrides(undefined).forEach((substitution) => {
+    const name = substitution.name;
+    const target = substitution.target;
+    if (!declaredConstants.includes(name) && !linked.root.visible.has(name)) {
+      throw new TlaConfigError(
+        `In the configuration file, the identifier ${name} does not appear in the specification.`,
       );
-    });
+    }
+    if (config.substitutions.some((other) => other.name === target)) {
+      throw createReusedTargetError(target);
+    }
+    checkSubstitutionTarget(
+      name,
+      target,
+      linked.root.constants.find((constant) => constant.name === name)?.arity ??
+        linked.root.visible.get(name)?.arity,
+    );
+  });
   const scopedSubstitutions = config.substitutions.filter(
     (substitution) => substitution.module !== undefined,
   );
   [...linked.moduleSymbols.keys()].forEach((name) => {
-    const inModule = scopedSubstitutions.filter((substitution) => substitution.module === name);
+    const inModule = getOverrides(name);
     inModule.forEach((substitution) => {
       const symbol = getScopedSymbol(substitution);
       if (!symbol) return;
