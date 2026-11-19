@@ -951,6 +951,24 @@ export const warnChangedUnchanged = (
     `The variable ${environment.variables[index]} was changed while it is specified as UNCHANGED at\n${describeRange(expression)}`,
   );
 
+// Deviation from TLC: Tool#enabledUnchanged fails on a variable the step leaves unassigned in an application, whose body tla-ts keeps unchanged instead.
+export const bindUnchangedApplication = (
+  expression: Expression,
+  context: Context,
+  error: TlaUnassignedError,
+) => {
+  const operator =
+    expression.kind === "Apply" ? resolveApplyOperator(expression, context) : undefined;
+  if (
+    expression.kind !== "Apply" ||
+    operator?.kind !== "Closure" ||
+    operator.params.length !== expression.args.length
+  ) {
+    throw toUnspecifiedSubscriptError(error, context.environment.runtime.version);
+  }
+  return { body: operator.body, scope: bindOperatorArguments(operator, expression.args, context) };
+};
+
 const visitUnchanged = (
   replay: Replay,
   expression: Expression,
@@ -1017,30 +1035,17 @@ const visitUnchanged = (
     if (!(after instanceof TlaUnassignedError)) {
       return isEqualLikeTlc(before, after) && proceed(replay, items, partial, node);
     }
-    const context = getContext(replay, scope, partial);
-    const operator =
-      expression.kind === "Apply" ? resolveApplyOperator(expression, context) : undefined;
-    // Deviation from TLC: Tool#enabledUnchanged fails on a variable the step leaves unassigned in an application, whose body tla-ts keeps unchanged instead.
-    if (
-      expression.kind !== "Apply" ||
-      operator?.kind !== "Closure" ||
-      operator.params.length !== expression.args.length
-    ) {
-      throw toUnspecifiedSubscriptError(after, replay.environment.runtime.version);
-    }
+    const application = bindUnchangedApplication(
+      expression,
+      getContext(replay, scope, partial),
+      after,
+    );
     if (callStack) {
       callStack.expressions.length = depth;
       callStack.isFrozen = false;
       callStack.fingerprint = fingerprint;
     }
-    return visitUnchanged(
-      replay,
-      operator.body,
-      items,
-      bindOperatorArguments(operator, expression.args, context),
-      partial,
-      node,
-    );
+    return visitUnchanged(replay, application.body, items, application.scope, partial, node);
   });
 
 const createReplay = (

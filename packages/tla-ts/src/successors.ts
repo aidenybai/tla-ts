@@ -47,6 +47,7 @@ import {
 import { forEachChild } from "./instances";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
+  bindUnchangedApplication,
   createRunError,
   getCaseGuardMessage,
   getCaseOtherMessage,
@@ -642,19 +643,10 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       if (isHeld) onComplete(partial, action);
       return;
     }
-    const operator =
-      expression.kind === "Apply" ? resolveApplyOperator(expression, context) : undefined;
-    // Deviation from TLC: Tool#enabledUnchanged fails on a variable the step leaves unassigned in an application, whose body tla-ts keeps unchanged instead.
-    if (
-      expression.kind !== "Apply" ||
-      operator?.kind !== "Closure" ||
-      operator.params.length !== expression.args.length
-    ) {
-      throw toUnspecifiedSubscriptError(isHeld, run.environment.runtime.version);
-    }
-    getRunner(getUnchangedWrapper(operator.body), environment, false)(
+    const application = bindUnchangedApplication(expression, context, isHeld);
+    getRunner(getUnchangedWrapper(application.body), environment, false)(
       run,
-      bindOperatorArguments(operator, expression.args, context),
+      application.scope,
       partial,
       action,
       isFixed,
