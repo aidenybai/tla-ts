@@ -1304,6 +1304,18 @@ const parse = (
       expect(":");
       return { kind: "Lambda", params, body: parseExpression(), location };
     }
+    // SANY's Number() reads NUMBER_LITERAL [DOT NUMBER_LITERAL], so spaces and comments may surround the point.
+    if (
+      token.kind === "Number" &&
+      !isTlapm &&
+      isAt(".") &&
+      peek(1).kind === "Number" &&
+      !token.text.startsWith("\\") &&
+      !peek(1).text.startsWith("\\")
+    ) {
+      advance();
+      return { kind: "Decimal", text: `${token.text}.${advance().text}`, location };
+    }
     if (token.kind === "Number")
       return { kind: "Number", value: getNumeralValue(token.text), text: token.text, location };
     if (token.kind === "Decimal") return { kind: "Decimal", text: token.text, location };

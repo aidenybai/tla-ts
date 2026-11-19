@@ -636,8 +636,11 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
       const word = source.slice(index, wordEnd);
       const digitsEnd = skipClass(source, index, DIGIT);
       if (digitsEnd === wordEnd) {
+        // tlapm reads a decimal as one token; SANY reads its parts and point apart.
         const fractionEnd =
-          source.charCodeAt(wordEnd) === CODE_DOT ? skipClass(source, wordEnd + 1, DIGIT) : wordEnd;
+          isTlapm && source.charCodeAt(wordEnd) === CODE_DOT
+            ? skipClass(source, wordEnd + 1, DIGIT)
+            : wordEnd;
         const isDecimal = fractionEnd > wordEnd + 1;
         const number = isDecimal ? source.slice(index, fractionEnd) : word;
         pushToken(isDecimal ? "Decimal" : "Number", number, number.length);

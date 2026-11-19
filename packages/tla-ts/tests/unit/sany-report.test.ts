@@ -409,6 +409,38 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reads a decimal's point and parts as separate tokens, as SANY does", () => {
+    const DEF_ERRORS = ["Unexpected token found.", "Need name or step number here, not `.'."];
+    const report = getReport({
+      M: "---- MODULE M ----\nVARIABLE x\nA == 1\nTHEOREM TRUE BY DEF 12 . 50, A\nTHEOREM TRUE BY DEF 1\n  .2, A\nB == 1.(* c *)2 + 1.5x\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 8",
+        "",
+        ...[
+          ...DEF_ERRORS.map((message) => ["line 4, col 24 to line 4, col 24", message]),
+          [
+            "line 4, col 21 to line 4, col 27",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          ...DEF_ERRORS.map((message) => ["line 6, col 3 to line 6, col 3", message]),
+          [
+            "line 5, col 21 to line 6, col 4",
+            "DEF clause entry should describe a defined operator.",
+          ],
+          [
+            "line 7, col 17 to line 7, col 17",
+            "Could not find declaration or definition of symbol '+'.",
+          ],
+          ["line 7, col 6 to line 7, col 22", "Couldn't resolve infix operator symbol `+'."],
+        ].flatMap((error) => [`${error[0]} of module M`, "", error[1], "", ""]),
+      ]),
+    );
+  });
+
   it("reports DEF clause entries of bracketed, quantified and infix shapes as SANY does", () => {
     const report = getReport({
       M: "---- MODULE M ----\nA == 1\nB == 2\nTHEOREM TRUE BY DEF CASE A -> 1 [] OTHER -> 2, [a |-> 1], [a : {}], A\nTHEOREM TRUE BY DEF [v \\in {} |-> 1], \\A v, w \\in {} : TRUE, A\nTHEOREM TRUE BY DEF LET Q == 1 IN Q, A \\X B, A /\\ B, {A \\/ B}, A\nTHEOREM TRUE BY DEF [A EXCEPT ![1] = 2], [A -> B], {A : v \\in {}}, WF_A(B), A\nTHEOREM TRUE BY DEF /\\ A\n                    /\\ B\n====\n",
