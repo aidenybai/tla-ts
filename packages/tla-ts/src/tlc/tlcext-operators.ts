@@ -418,11 +418,11 @@ export const createPossibleOperators = (
   defineStateOperator("_CheckName", 1, (args) => {
     const name = String(getValue(args, 0, "_CheckName"));
     if (runtime.possibleCounts.get(name)) return true;
-    print(formatValue(getPossibleCounts(runtime), true));
+    print(prettyPrint(formatValue(getPossibleCounts(runtime), true)));
     return false;
   }),
   defineStateOperator("_PrintCounts", 0, () => {
-    print(formatValue(getPossibleCounts(runtime), true));
+    print(prettyPrint(formatValue(getPossibleCounts(runtime), true)));
     return true;
   }),
 ];
