@@ -92,23 +92,31 @@ const createPlainWriter = (dump: StateDump, writeFile: WriteFile): StateWriter =
   };
 };
 
-export const getDotHeader = (dump: StateDump, version: TlcVersion | undefined) =>
+const getGraphHeader = (
+  prefix: string,
+  isColorized: boolean | undefined,
+  version: TlcVersion | undefined,
+) =>
   [
-    "strict digraph DiskGraph {\n",
+    `${prefix}digraph DiskGraph {\n`,
     version === "1.7.4" ? "" : "node [shape=box,style=rounded]\n",
-    dump.colorize ? `edge [colorscheme="${COLOR_SCHEME}"]\n` : "",
+    isColorized ? `edge [colorscheme="${COLOR_SCHEME}"]\n` : "",
     "nodesep=0.35;\n",
     "subgraph cluster_graph {\n",
     'color="white";\n',
   ].join("");
 
+export const getDotHeader = (dump: StateDump, version: TlcVersion | undefined) =>
+  getGraphHeader("strict ", dump.colorize, version);
+
 const createDotWriter = (
   dump: StateDump,
   writeFile: WriteFile,
   version: TlcVersion | undefined,
+  header: string,
 ): StateWriter => {
   const is174 = version === "1.7.4";
-  const lines = [getDotHeader(dump, version)];
+  const lines = [header];
   const ranks = new Map<number, Set<bigint>>();
   const colors = new Map<string, number>();
   // Deviation from TLC: it keys an edge by the XOR of its fingerprints, which merges distinct edges.
@@ -213,4 +221,97 @@ export const createStateWriter = (
   dump: StateDump,
   writeFile: WriteFile,
   version: TlcVersion | undefined,
-) => (dump.dot ? createDotWriter(dump, writeFile, version) : createPlainWriter(dump, writeFile));
+) =>
+  dump.dot
+    ? createDotWriter(dump, writeFile, version, getDotHeader(dump, version))
+    : createPlainWriter(dump, writeFile);
+
+export interface LivenessWriter {
+  // A state without a tableau has the tableau node -1.
+  writeInitialState: (state: GraphState, tableauNode: number) => void;
+  // The action checks are the results of the step as TLC's BitVector prints them, or empty without any.
+  writeSuccessor: (
+    state: GraphState,
+    tableauNode: number,
+    successor: GraphState,
+    successorNode: number,
+    actionChecks: string,
+    isSeen: boolean,
+    isDotted: boolean,
+  ) => void;
+}
+
+export interface LivenessDump {
+  createWriter: (isTableau: boolean) => LivenessWriter;
+  close: () => void;
+}
+
+// TLC's DotLivenessStateWriter, one for each branch of the liveness check, which writes a branch without a tableau as a DotStateWriter does.
+export const createLivenessDump = (
+  dump: StateDump,
+  writeFile: WriteFile,
+  version: TlcVersion | undefined,
+): LivenessDump => {
+  const path = dump.path.replaceAll(".dot", "_liveness.dot");
+  const header = getGraphHeader("", false, version);
+  const graphs: string[] = [];
+  const closers: (() => void)[] = [];
+  const createWriter = (isTableau: boolean): LivenessWriter => {
+    const position = graphs.push(header) - 1;
+    // TLC's DotStateWriter flushes its header as it starts.
+    writeFile?.(path, header);
+    const setGraph = (_path: string, graph: string) => {
+      graphs[position] = graph;
+    };
+    if (!isTableau) {
+      const writer = createDotWriter(
+        { path, isDiffTrace: dump.isDiffTrace },
+        setGraph,
+        version,
+        header,
+      );
+      closers.push(writer.close);
+      return {
+        writeInitialState: writer.writeInitialState,
+        writeSuccessor: (state, _tableauNode, successor, _successorNode, _actionChecks, isSeen) =>
+          writer.writeUnlabeledSuccessor(state, successor, isSeen),
+      };
+    }
+    const lines = [header];
+    closers.push(() => setGraph(path, `${lines.join("")}}\n}`));
+    const getNode = (state: GraphState, tableauNode: number) =>
+      `"${state.fingerprint}.${tableauNode}"`;
+    const getLabel = (state: GraphState, tableauNode: number) =>
+      `${toDotLabel(formatState(state.getRecord()))}\n#${state.fingerprint}.${tableauNode}#`;
+    return {
+      writeInitialState: (state, tableauNode) =>
+        lines.push(
+          `${getNode(state, tableauNode)} [style = filled] [label="${getLabel(state, tableauNode)}"]\n`,
+        ),
+      writeSuccessor: (
+        state,
+        tableauNode,
+        successor,
+        successorNode,
+        actionChecks,
+        isSeen,
+        isDotted,
+      ) => {
+        const target = getNode(successor, successorNode);
+        lines.push(
+          `${getNode(state, tableauNode)} -> ${target}${isDotted ? ' [style="dotted"]' : ""}${actionChecks === "" ? "" : ` [label="${actionChecks}"]`};\n`,
+        );
+        if (!isSeen) lines.push(`${target} [label="${getLabel(successor, successorNode)}"];\n`);
+      },
+    };
+  };
+  return {
+    createWriter,
+    close: () => {
+      if (graphs.length === 0) return;
+      closers.forEach((close) => close());
+      // Deviation from TLC: the writers of its branches overwrite one another in the file, which leaves the tail of an earlier branch's graph past the end of a later one's.
+      writeFile?.(path, graphs.join("\n"));
+    },
+  };
+};

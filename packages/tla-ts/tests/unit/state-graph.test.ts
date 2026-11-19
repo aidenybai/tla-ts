@@ -110,6 +110,23 @@ describe("check dumps the state graph like TLC's -dump", () => {
     expect(dump.written.get("Picks.dump")).toBe(readTlcDump("Picks.dump"));
   });
 
+  it("writes the behavior graph of a liveness check with a tableau next to the state graph", async () => {
+    const dump = await dumpFixture("state-graph", "LeadsTo", { path: "LeadsTo.dot", dot: true });
+    expect(dump.written.get("LeadsTo_liveness.dot")).toBe(readTlcDump("LeadsTo_liveness.dot"));
+  });
+
+  it("writes the behavior graph of a liveness check without a tableau as a state graph", async () => {
+    const dump = await dumpFixture("state-graph", "Cycle", { path: "Cycle.dot", dot: true });
+    expect(dump.written.get("Cycle_liveness.dot")).toBe(readTlcDump("Cycle_liveness.dot"));
+  });
+
+  // Deviation from TLC: the writers of its branches overwrite one another in the file, which here leaves the last branch's graph alone.
+  it("writes the behavior graph of every branch of a liveness check, unlike TLC", async () => {
+    const dump = await dumpFixture("state-graph", "Branches", { path: "Branches.dot", dot: true });
+    const graphs = dump.written.get("Branches_liveness.dot")?.split(/\n(?=digraph)/) ?? [];
+    expect([graphs.length, graphs[2]]).toEqual([3, readTlcDump("Branches_liveness.dot")]);
+  });
+
   it("writes the graph of a single TLC worker when several are asked for", async () => {
     const dump = await dumpFixture(
       "mutex",
@@ -261,5 +278,13 @@ describe("the CLI takes TLC's -dump flag", () => {
       join(directory, "Changes"),
     ]);
     expect(readFileSync(join(directory, "Changes.dot"), "utf8")).toBe(readTlcDump("Changes.dot"));
+  });
+
+  it("names the liveness graph after the dot file", () => {
+    const directory = createDirectory();
+    runCliWith("state-graph", ["LeadsTo.tla", "-dump", "dot", join(directory, "LeadsTo")]);
+    expect(readFileSync(join(directory, "LeadsTo_liveness.dot"), "utf8")).toBe(
+      readTlcDump("LeadsTo_liveness.dot"),
+    );
   });
 });
