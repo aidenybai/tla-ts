@@ -98,8 +98,10 @@ import { createTlcOrder } from "./tlc/order";
 import { getPrimedRanges, walkSuccessors } from "./tlc/replay";
 import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
+import type { GraphState } from "./state-graph";
 import {
   createModelValue,
+  formatState,
   formatValue,
   freezeStringOrder,
   getWrittenPairs,
@@ -767,12 +769,19 @@ export interface Search {
     next: State | undefined,
     isTool: boolean,
   ) => Record<string, Value>;
+  getGraphState: (
+    state: Value[],
+    fingerprint: bigint,
+    level: number,
+    isTool: boolean,
+  ) => GraphState;
   spec: Specification;
   getFingerprintState: (state: Value[]) => Value[];
   getStoredFingerprints: (states: Value[][], fingerprintStates: Value[][]) => BigInt64Array;
   getTlcOrder: () => number[];
   isSymmetric: boolean;
   isConstrained: boolean;
+  isNextReplayed: boolean;
   getTypedChecks: (liveness: Solution[] | undefined) =>
     | {
         init: Expression;
@@ -1426,29 +1435,45 @@ export const createSearch = (
       : setViewText(record, () => getViewText(view.expression, state));
   };
   runtime.toRecord = toRecord;
+  // Deviation from TLC: StatePrinter fingerprints the alias it prints, so a VIEW that fails on the alias's values crashes TLC.
+  const evaluateAlias: Search["evaluateAlias"] = (alias, state, next, isTool) => {
+    const getStateRecord = () => toRecord(state.map((value) => value ?? createModelValue("null")));
+    try {
+      getConfigDefinition("alias", alias, environment);
+      const value = evaluate(
+        createIdentifier(getRootKey(alias, environment)),
+        getContext(environment, state, next),
+      );
+      const record = toAliasRecord(value);
+      return record === undefined ? getStateRecord() : setAliasName(record, alias);
+    } catch (error) {
+      if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
+      return { ...getStateRecord(), _ALIASEvalError: formatNestedMessage(error.message, isTool) };
+    }
+  };
+  const scopeExpressions = getScopeExpressions(spec.scope);
   return {
     properties,
     spec,
     toRecord,
-    // Deviation from TLC: StatePrinter fingerprints the alias it prints, so a VIEW that fails on the alias's values crashes TLC.
-    evaluateAlias: (alias, state, next, isTool) => {
-      const getStateRecord = () =>
-        toRecord(state.map((value) => value ?? createModelValue("null")));
-      try {
-        getConfigDefinition("alias", alias, environment);
-        const value = evaluate(
-          createIdentifier(getRootKey(alias, environment)),
-          getContext(environment, state, next),
-        );
-        const record = toAliasRecord(value);
-        return record === undefined ? getStateRecord() : setAliasName(record, alias);
-      } catch (error) {
-        if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
-        return { ...getStateRecord(), _ALIASEvalError: formatNestedMessage(error.message, isTool) };
-      }
-    },
+    evaluateAlias,
+    getGraphState: (state, fingerprint, level, isTool) => ({
+      fingerprint: BigInt.asIntN(64, fingerprint),
+      level,
+      getLabel: () =>
+        formatState(
+          config.alias === undefined
+            ? toRecord(state)
+            : evaluateAlias(config.alias, state, undefined, isTool),
+        ),
+      getText: () => formatState(toRecord(state)),
+    }),
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
+    isNextReplayed:
+      spec.next !== undefined &&
+      (scopeExpressions === undefined ||
+        isExpressionImpure([spec.next, ...scopeExpressions], environment, "replayed")),
     getTypedChecks: (liveness) => {
       const isInterpreted =
         coverage !== undefined ||
@@ -1467,7 +1492,6 @@ export const createSearch = (
         (predicate) => predicate.expression,
       );
       const definitions = [...environment.facts.ids.keys()];
-      const scopeExpressions = getScopeExpressions(spec.scope);
       // The interpreter evaluates again what the tier evaluated before it fell back. TLC evaluates
       // a constant definition without parameters once as it starts, so one with a startup value
       // never draws again. An operator a scope binds without its expression can reach any

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vite-plus/test";
-import type { CheckOptions } from "../../src";
+import { check, type CheckOptions } from "../../src";
 import { checkFixture, FIXTURES, getModuleLoader } from "./check-harness";
 import { runCliWith } from "./cli-harness";
 
@@ -160,6 +160,21 @@ describe("check dumps the state graph like TLC's -dump", () => {
     expect(strict.written.get("Excluded.dot")).toBe(plain.written.get("Excluded.dot"));
   });
 
+  // Deviation from TLC: it returns without closing the writer after an initial state fails, which leaves the header alone in the file.
+  it("writes the whole graph when an initial state violates an invariant, unlike TLC", async () => {
+    const written = new Map<string, string>();
+    const result = await check({
+      source: "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nInv == x # 0\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      dump: { path: "M.dot", dot: true },
+      writeFile: (path, content) => written.set(path, String(content)),
+    });
+    expect([result.status, written.get("M.dot")]).toEqual([
+      "invariant-violation",
+      'strict digraph DiskGraph {\nnode [shape=box,style=rounded]\nnodesep=0.35;\nsubgraph cluster_graph {\ncolor="white";\n-3406341414084290173 [label="x = 0",style = filled]\n{rank = same; -3406341414084290173;}\n}\n}',
+    ]);
+  });
+
   it("leaves a snapshot that matches the finished graph", async () => {
     const dump = await dumpFixture("water-jugs", "WaterJugs", {
       path: "WaterJugs.dot",
@@ -203,6 +218,22 @@ describe("the CLI takes TLC's -dump flag", () => {
       "Usage: java tlc2.TLC [-help] [-option] inputfile",
       "",
     ]);
+  });
+
+  it("leaves only the header TLC writes as it starts in the dot file of a simulation", () => {
+    const directory = createDirectory();
+    runCli([
+      "-simulate",
+      "num=1",
+      "-depth",
+      "3",
+      "-dump",
+      "dot,colorize",
+      join(directory, "Counter"),
+    ]);
+    expect(readFileSync(join(directory, "Counter.dot"), "utf8")).toBe(
+      'strict digraph DiskGraph {\nnode [shape=box,style=rounded]\nedge [colorscheme="paired12"]\nnodesep=0.35;\nsubgraph cluster_graph {\ncolor="white";\n',
+    );
   });
 
   it("takes the options of a dot format", () => {

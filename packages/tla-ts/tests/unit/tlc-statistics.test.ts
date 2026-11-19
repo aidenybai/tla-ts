@@ -49,6 +49,19 @@ it.each([
   },
 );
 
+it('prints the trace of a sub-action of \\E that reads TLCGet("stats") with the sub-action\'s name once the statistics forbid the step', async () => {
+  const result = await check({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA(i) == x < 3 /\\ TLCGet("stats").distinct < 3 /\\ x\' = x + i\nNext == \\E i \\in {1} : A(i)\nInv == x < 2\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+  });
+  expect(result.violation?.trace.map((step) => [step.state.x, step.action, step.label])).toEqual([
+    [0, undefined, undefined],
+    [1, "A", undefined],
+    [2, "A", undefined],
+  ]);
+});
+
 it('reads TLCGet("level") as 0 in the initial predicate as it rebuilds an initial state for a trace, as TLC does', async () => {
   const printed: string[] = [];
   const result = await check({

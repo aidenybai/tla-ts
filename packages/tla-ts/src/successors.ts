@@ -680,6 +680,18 @@ const compileIdentifier = (
       );
       return;
     }
+    const operator = binding?.kind === "Operator" ? binding.operator : undefined;
+    if (operator?.kind === "Closure" && operator.params.length === 0) {
+      getRunner(operator.body, environment, isInit)(
+        run,
+        operator.scope,
+        partial,
+        action,
+        isFixed,
+        onComplete,
+      );
+      return;
+    }
     if (
       binding ||
       !definition ||
