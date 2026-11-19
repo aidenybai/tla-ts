@@ -1434,7 +1434,7 @@ const searchStates = (
     options.dump?.dot && (options.dump.actionLabels || options.dump.colorize),
   );
   // Tool's constructor evaluates the bounds and arguments it splits Next on once, which shows when they draw, print or read a register.
-  const isNextSplit = isNamingEdges || search.isNextVarying;
+  const isNextSplit = isNamingEdges || search.isNextReplayed;
   const forEachActionSuccessor = (
     state: Value[],
     onUnsatisfied:

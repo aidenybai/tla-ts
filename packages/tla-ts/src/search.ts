@@ -777,7 +777,7 @@ export interface Search {
   getTlcOrder: () => number[];
   isSymmetric: boolean;
   isConstrained: boolean;
-  isNextVarying: boolean;
+  isNextReplayed: boolean;
   getTypedChecks: (liveness: Solution[] | undefined) =>
     | {
         init: Expression;
@@ -1466,10 +1466,10 @@ export const createSearch = (
     }),
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
-    isNextVarying:
+    isNextReplayed:
       spec.next !== undefined &&
       (scopeExpressions === undefined ||
-        isExpressionImpure([spec.next, ...scopeExpressions], environment, "varying")),
+        isExpressionImpure([spec.next, ...scopeExpressions], environment, "replayed")),
     getTypedChecks: (liveness) => {
       const isInterpreted =
         coverage !== undefined ||
