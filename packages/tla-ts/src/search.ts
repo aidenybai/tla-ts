@@ -231,12 +231,17 @@ const getConfigOperator = (kind: string, name: string, environment: Environment)
   return definition;
 };
 
-const isLiteralDefinition = (definition: Definition) =>
-  definition.body.kind === "Number" || definition.body.kind === "String";
+// SpecProcessor#processConstantDefns leaves in defns a definition whose body has a tool object: a literal's value or a [Mod] value.
+const hasBodyValue = (definition: Definition, environment: Environment) =>
+  definition.body.kind === "Number" ||
+  definition.body.kind === "String" ||
+  environment.bodyValues.has(definition.body);
 
 const getConstantValue = (key: string, definition: Definition, environment: Environment) => {
   if (environment.constants.has(key)) return environment.constants.get(key);
-  return isLiteralDefinition(definition) ? undefined : getStartupValue(definition, environment);
+  return hasBodyValue(definition, environment)
+    ? undefined
+    : getStartupValue(definition, environment);
 };
 
 // SpecProcessor reads a name of the configuration in defns, which holds TRUE, FALSE and BOOLEAN as values and a Java override as a MethodValue.
@@ -1239,6 +1244,7 @@ export const createSearch = (
   const invariantPredicates = [
     ...new Map(invariants.map((invariant) => [invariant.predicate, invariant])).values(),
   ];
+  // Deviation from TLC: SpecProcessor#processModelConstraints replaces the tool object of a constraint's body with its OpDefNode, so a constraint whose literal body has a [Mod] value throws a ClassCastException. tla-ts evaluates the body to the value, as for an invariant.
   const namedConstraints = getNamedExpressions(
     "constraint",
     [...config.constraints, ...getModuleOperators("constraint").map((operator) => operator.name)],
@@ -1779,7 +1785,7 @@ export const createSearch = (
             return `TLC requires post condition not to take any argument, but one was given: ${name}`;
           }
           const isConstant =
-            !isLiteralDefinition(definition) &&
+            !hasBodyValue(definition, environment) &&
             getStartupValue(definition, environment) !== undefined;
           return isConstant ? `The post condition ${name} cannot be a constant.` : undefined;
         })

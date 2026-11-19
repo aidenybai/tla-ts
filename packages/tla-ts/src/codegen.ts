@@ -530,7 +530,9 @@ export const generateEvaluator = (
   expression: Expression,
   environment: Environment,
 ): Evaluator | undefined => {
-  if (!GENERATED_KINDS.has(expression.kind)) return undefined;
+  if (!GENERATED_KINDS.has(expression.kind) || environment.bodyValues.has(expression)) {
+    return undefined;
+  }
   isCodeGenerationAllowed ??= getIsCodeGenerationAllowed();
   if (!isCodeGenerationAllowed) return undefined;
   const generator: Generator = { environment, references: [], helpers: [], counter: 0 };

@@ -1873,6 +1873,82 @@ ASSUME TLCFP(a) = -887695703
       "CONSTANT Def = [M] 4 N <- Def",
     );
     expect(result.status).toBe("success");
+    const invariant = await checkModule(
+      "NonLit == x = 0",
+      "CONSTANT NonLit = [M] FALSE\nINVARIANT NonLit",
+    );
+    expect([invariant.status, invariant.violation?.name]).toEqual([
+      "invariant-violation",
+      "NonLit",
+    ]);
+  });
+
+  it("treats a definition with a [Mod] value as a definition under each name of the configuration, as TLC does", async () => {
+    const invariants = await Promise.all(
+      [
+        ["Def == 3", "CONSTANT Def = [M] FALSE\nINVARIANT Def", "Def"],
+        ["CONSTANT N\nDef == 3", "CONSTANT Def = [M] FALSE N <- Def\nINVARIANT N", "N"],
+      ].map(async (item) => {
+        const result = await checkModule(item[0], item[1]);
+        return [result.status, result.violation?.name, result.violation?.trace.length];
+      }),
+    );
+    expect(invariants).toEqual([
+      ["invariant-violation", "Def", 1],
+      ["invariant-violation", "N", 1],
+    ]);
+    const postcondition = await checkModule(
+      "Def == 3",
+      "CONSTANT Def = [M] FALSE\nPOSTCONDITION Def",
+    );
+    expect(postcondition.violation?.postcondition).toEqual({
+      name: "Def",
+      code: 2404,
+      message: "Postcondition Def at 3 is false.",
+    });
+    expect((await checkModule("Def == 3", "CONSTANT Def = [M] 4\nVIEW Def")).status).toBe(
+      "success",
+    );
+    await expect(checkModule("Def == 3", "CONSTANT Def = [M] 4\nSYMMETRY Def")).rejects.toThrow(
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}The symmetry operator must specify a set of functions.`,
+      ),
+    );
+    const init = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, TLC\nCONSTANTS A, N\nVARIABLE x\nInit == x = 0\nNext == x' = x\nSpec == Init /\\ [][Next]_x\nPerms == Permutations(A)\nDef == 3\n====",
+      config: "CONSTANT A = {a1, a2}\nCONSTANT N = 1\nCONSTANT Def = [M] 4\nINIT Def\nNEXT Next",
+    });
+    expect([init.failure?.message, formatCallStackLines(init)]).toEqual([
+      "The init state relation is not a boolean expression.\n3",
+      ["Line 9, column 8 to line 9, column 8 in M"],
+    ]);
+  });
+
+  it("evaluates at startup a definition that reads one with a [Mod] value, as TLC does", async () => {
+    const prints: string[] = [];
+    const warned: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\nDef == x\nInv == PrintT(Def)\n====",
+      config: "CONSTANT Def = [M] 4\nINVARIANT Inv\nINIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+      onProgress: (event) => {
+        if (event.kind === "constant-level-invariant") warned.push(event.name);
+      },
+    });
+    expect([result.status, prints, warned]).toEqual(["success", ["4"], ["Inv"]]);
+  });
+
+  it("evaluates a constraint a [Mod] value gives a literal body, where TLC throws a ClassCastException", async () => {
+    const results = await Promise.all(
+      [
+        "CONSTANT Def = [M] FALSE\nCONSTRAINT Def",
+        "CONSTANT Def = [M] FALSE\nACTION_CONSTRAINT Def",
+        "CONSTANT Def = [M] FALSE\nINVARIANT Def\nCONSTRAINT Def",
+      ].map(async (config) => (await checkModule("Def == 3", config)).status),
+    );
+    expect(results).toEqual(["success", "success", "invariant-violation"]);
   });
 
   it("reports a table's set that mixes types as the unexpected exception TLC throws", async () => {

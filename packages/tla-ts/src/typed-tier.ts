@@ -3258,6 +3258,8 @@ const compileBuiltin = (
 };
 
 const compileValue = (program: Program, expression: Expression, frame: Frame): Compiled => {
+  const bodyValue = program.environment.bodyValues.get(expression);
+  if (bodyValue !== undefined) return compileConstant(program, bodyValue);
   switch (expression.kind) {
     case "Selection":
       return compileValue(program, expression.expression, frame);

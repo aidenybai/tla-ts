@@ -1,4 +1,4 @@
-import type { Definition } from "./ast";
+import type { Definition, Expression } from "./ast";
 import type { ConfigValue, ConstantAssignment, ModelConfig } from "./config";
 import {
   TlaConfigError,
@@ -51,6 +51,7 @@ interface LinkedSpecification {
 
 interface AppliedConfig {
   constants: Map<string, Value>;
+  bodyValues: WeakMap<Expression, Value>;
   substitutions: Map<string, string>;
 }
 
@@ -168,7 +169,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     return linked.definitions.has(key) || linked.builtins.has(key) || declaredConstants.has(name);
   };
   // SpecProcessor#processConstants reads the value of a root name only for a constant or a definition.
-  // Deviation from TLC: a [Mod] value becomes the tool object of the definition's body, which a lookup of the name returns, but a <- evaluates the body, which keeps it only in the slot where TLC caches a literal's value. tla-ts gives the <- the value too.
+  // Deviation from TLC: a [Mod] value becomes the tool object of the definition's body, which a lookup of the name returns, but a <- or a name of the configuration evaluates the body, which keeps it only in the slot where TLC caches a literal's value. tla-ts gives the value to every evaluation of the body.
   const getScopedKeys = (item: ConfigName) =>
     item.module === undefined && !isDefined(item.name) ? [] : getSubstitutedKeys(item);
   const getKeyArity = (key: string) => {
@@ -306,6 +307,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     );
   }
   const constants = new Map<string, Value>();
+  const bodyValues = new WeakMap<Expression, Value>();
   const setOperator = (key: string, operator: Builtin) => {
     linked.builtins.set(key, operator);
     linked.definitions.delete(key);
@@ -327,7 +329,15 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     if (isNormalized) markNormalized(value);
     keys.forEach((key) => {
       const arity = getKeyArity(key);
-      if (arity === 0) constants.set(key, value);
+      const definition = linked.definitions.get(key);
+      // TLC gives a [Mod] value to the definition's body, so defns keeps the name as a definition.
+      if (
+        item.module === linked.root.module.name &&
+        definition?.kind === "Operator" &&
+        arity === 0
+      ) {
+        bodyValues.set(definition.body, value);
+      } else if (arity === 0) constants.set(key, value);
       else
         setOperator(key, {
           kind: "Builtin",
@@ -433,5 +443,5 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     linked.definitions.set(key, alias);
   });
   linked.operatorConstants.forEach((value, name) => constants.set(name, value));
-  return { constants, substitutions };
+  return { constants, bodyValues, substitutions };
 };

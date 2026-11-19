@@ -1611,6 +1611,7 @@ export const createEnvironment = (
     order,
   });
   const constants = applied.constants;
+  const bodyValues = applied.bodyValues;
   const substitutions = applied.substitutions;
 
   if (traceFile !== undefined) {
@@ -1628,6 +1629,7 @@ export const createEnvironment = (
     definitions,
     substitutions,
     constants,
+    bodyValues,
     variableIndex,
     builtins,
     variables,
@@ -1638,6 +1640,7 @@ export const createEnvironment = (
     rootKeys,
     builtins,
     constants,
+    bodyValues,
     substitutions,
     instanceNames,
     variables,

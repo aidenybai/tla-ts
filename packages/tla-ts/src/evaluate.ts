@@ -183,6 +183,7 @@ export interface Environment {
   rootKeys: Map<string, string>;
   builtins: Map<string, Builtin>;
   constants: Map<string, Value>;
+  bodyValues: WeakMap<Expression, Value>;
   substitutions: Map<string, string>;
   instanceNames: Map<string, string>;
   variables: string[];
@@ -2497,6 +2498,8 @@ const compileRecord = (recordFields: RecordField[], environment: Environment): E
 };
 
 const compile = (expression: Expression, environment: Environment): Evaluator => {
+  const bodyValue = environment.bodyValues.get(expression);
+  if (bodyValue !== undefined) return () => bodyValue;
   const getChildEvaluator = (node: Expression) => getEvaluator(node, environment);
   switch (expression.kind) {
     case "Number": {
