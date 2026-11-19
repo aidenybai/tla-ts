@@ -17,12 +17,12 @@ const SITE_DATA = "virtual:site-data";
 const README_URL = new URL("../../README.md", import.meta.url);
 const EXAMPLE_PATHS = [
   "./src/examples/likes.ts",
-  "../tla-ts/tests/fixtures/typescript/cli/failing/overdraft.ts",
+  "./src/examples/search-box.ts",
   "../tla-ts/tests/fixtures/typescript/examples/hour-clock/hour-clock.ts",
 ];
 const PLAYGROUND_PATHS = [
-  "./src/examples/counter.ts",
-  "../tla-ts/tests/fixtures/typescript/examples/*/*.ts",
+  "./src/examples/*.ts",
+  "../tla-ts/tests/fixtures/typescript/examples/two-phase/*.ts",
 ];
 const GENERATED_NAMES = new Set(["vars", "Init", "Next", "Spec"]);
 const BENCHMARK_ROW =
@@ -171,7 +171,7 @@ const outlines = (): Plugin => ({
 
 const COMPILATIONS = "virtual:compilations";
 const COMPILATION = "virtual:compilation/";
-const INITIAL_FILE_NAME = "counter.ts";
+const INITIAL_FILE_NAME = "likes.ts";
 
 // Every example compiled ahead of time. The playground's first file ships with the page, and
 // each other file is a chunk of its own, fetched when it is opened.
