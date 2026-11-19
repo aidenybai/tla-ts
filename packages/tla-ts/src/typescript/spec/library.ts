@@ -320,8 +320,13 @@ export const assembleRuntime = (
   );
 };
 
+// The families whose toLocaleString only calls another method: an element's toLocaleString, or
+// toString.
+const INVOKING_FAMILIES = ["Array", "TypedArray", "Object"];
+
 // A program's CallBuiltin, which runs the built-ins of the families given and stops at the others
-// and at the methods in stoppedMethods, but for Temporal's, which format through HostDateFormat.
+// and at the methods in stoppedMethods, but for Temporal's, which format through HostDateFormat,
+// and for the invoking families'.
 export const getCallBuiltin = (
   name: string,
   families: readonly Family[],
@@ -329,12 +334,12 @@ export const getCallBuiltin = (
 ) =>
   [
     `${name}(s, f, id, this, args, nt) ==`,
-    `  IF id[2] \\in {${stoppedMethods.map((method) => `"${method}"`).join(", ")}} /\\ id[1] \\notin {${families
-      .filter((family) => family.group === "89")
-      .map((family) => `"${family.name}"`)
-      .join(
-        ", ",
-      )}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
+    `  IF id[2] \\in {${stoppedMethods.map((method) => `"${method}"`).join(", ")}} /\\ id[1] \\notin {${[
+      ...families.filter((family) => family.group === "89").map((family) => family.name),
+      ...INVOKING_FAMILIES,
+    ]
+      .map((family) => `"${family}"`)
+      .join(", ")}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
     ...families.map(
       (family, index) =>
         `  ${index === 0 ? "CASE" : "  []"} id[1] = "${family.name}" -> ${family.name}Builtin(s, f, id[2], this, args, nt)`,

@@ -544,6 +544,45 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("joins the elements' toLocaleString with their locales and options, as ECMA-402 does", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const element = {
+        toLocaleString(...args: unknown[]) {
+          seen.push(args.length + ":" + String(args[0]));
+          return "e";
+        },
+      };
+      const result = [
+        [undefined, element, null, element].toLocaleString("zh", {}),
+        Array.prototype.toLocaleString.call({ length: 2, 0: element, 1: element }),
+        new Uint8Array(2).subarray(0, 0).toLocaleString(),
+        ({ toString: () => "plain" }).toLocaleString(),
+        [true, "x"].toLocaleString(),
+        seen.join(" "),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource(",e,,e|e,e||plain|true,x|2:zh 2:zh 2:undefined 2:undefined")))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(",e,,e|e,e||plain|true,x|1:zh 1:zh 0:undefined 0:undefined")))
+          .message,
+      ).toContain(THREW);
+    });
+
+    it("stops at an element whose toLocaleString reads the host's locale", async () => {
+      expect((await checkScript("[1234.5].toLocaleString();")).message).toContain("tla-ts can't");
+    });
+  });
+
   describe("resumes a generator where it yielded", () => {
     const getSource = (expected: string) => `
       const log: unknown[] = [];
