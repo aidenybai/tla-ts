@@ -170,6 +170,22 @@ it("dumps the whole graph when an initial state violates an invariant, unlike TL
   );
 });
 
+it("leaves the header of the liveness graph that TLC opens before it refuses to check liveness", () => {
+  const written = new Map<string, string>();
+  checkDepthFirst({
+    source:
+      "---- MODULE M ----\nVARIABLE x\nInit == x = 0\nNext == x' = x\nSpec == Init /\\ [][Next]_x\nLive == <>(x = 0)\n====",
+    config: "SPECIFICATION Spec\nPROPERTY Live",
+    maxDepth: 4,
+    dump: { path: "M.dot", dot: true },
+    writeFile: (path, content) => written.set(path, String(content)),
+    onOutput: () => {},
+  });
+  expect(written.get("M_liveness.dot")).toBe(
+    'digraph DiskGraph {\nnode [shape=box,style=rounded]\nnodesep=0.35;\nsubgraph cluster_graph {\ncolor="white";\n',
+  );
+});
+
 it("dumps the step again as TLC's DFIDModelChecker replays an invariant that fails to evaluate", () => {
   expect(
     dumpDepthFirst(

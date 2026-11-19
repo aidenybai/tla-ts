@@ -98,7 +98,7 @@ const checkNotDirectory = (path: string) => {
 const getDumpPath = (path: string, extension: string) =>
   path.endsWith(extension) ? path : `${path}${extension}`;
 
-const getStateDump = (values: string[]): StateDump => {
+const getStateDump = (values: string[], isDiffTrace: boolean): StateDump => {
   if (values.length === 1) return { path: getDumpPath(values[0], ".dump") };
   const format = values[0].toLowerCase();
   return {
@@ -110,6 +110,7 @@ const getStateDump = (values: string[]): StateDump => {
     constrained: format.includes("constrained"),
     stuttering: format.includes("stuttering"),
     strict: format.includes("strict"),
+    isDiffTrace,
   };
 };
 
@@ -527,7 +528,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
     }
     return printCommandLineError(parsed.isTool, version, parsed.error);
   }
-  const dump = parsed.dump && getStateDump(parsed.dump);
+  const dump = parsed.dump && getStateDump(parsed.dump, parsed.isDiffTrace);
   if (dump?.path.startsWith("${metadir}")) {
     dump.path = dump.path.replaceAll("${metadir}", createMetadir(parsed));
   }
