@@ -424,6 +424,23 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("reads the tag that every built-in iterator inherits", () => {
+    const getSource = (expected: string) => `
+      const iterator = ""[Symbol.iterator]();
+      delete Object.getPrototypeOf(iterator)[Symbol.toStringTag];
+      const result = Object.prototype.toString.call(iterator);
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("[object Iterator]"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("[object Object]"))).message).toContain(THREW);
+    });
+  });
+
   describe("runs the methods of a buffer's view", () => {
     const getSource = (expected: string) => `
       const view = new DataView(new ArrayBuffer(4));

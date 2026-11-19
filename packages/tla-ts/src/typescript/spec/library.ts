@@ -149,10 +149,10 @@ export const createLibrary = (directory: string): Library => {
         triggers.get(groupOf.get(`${match[3]}Builtin`) ?? "")?.add(match[2]);
       }
     }
-    // The iterator prototypes' methods, such as map and Symbol.dispose, by the word that names
-    // each.
+    // The iterator prototypes' methods and accessors, such as map, Symbol.dispose and
+    // Symbol.toStringTag, by the word that names each.
     for (const match of part.text.matchAll(
-      /\bM\("([A-Za-z]+)", (?:SV\("([^"]+)"\)|Sym([A-Za-z]+)), "([A-Za-z0-9]+)"/g,
+      /\b(?:M|G)\("([A-Za-z]+)", (?:SV\("([^"]+)"\)|Sym([A-Za-z]+)), "([A-Za-z0-9]+)"/g,
     )) {
       if (ITERATOR_PROTOTYPES.has(match[1])) {
         triggers
