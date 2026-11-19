@@ -2318,6 +2318,30 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
     ]);
   });
 
+  it("keeps the 1-bit numerals of the QF_BV tactic it makes on the first QF_BV goal", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(declare-const z (_ BitVec 8))",
+        "(assert (= (bvadd (bvmul x y) (bvmul y z) (bvmul x z)) #x00))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or p q r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
   // cmd_context's m_check_sat_result keeps the finite-domain solver that answered past
   // reset-assertions, and the next assert frees it.
   it("keeps the solver of the last check-sat until the next assert", () => {

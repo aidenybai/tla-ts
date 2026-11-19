@@ -32,7 +32,7 @@ import { type BitBlasterRewriter, runBitBlast } from "./bit-blast-tactic";
 import { runMaxBvSharing } from "./max-bv-sharing-tactic";
 import { runBvBoundChk } from "./bv-bound-chk";
 import { runBvDivremBounds } from "./bv-divrem-bounds";
-import { runBv1Blast } from "./bv1-blast";
+import { createBv1Blast } from "./bv1-blast";
 import { runReduceBvSize } from "./reduce-bv-size";
 import { createSatTactic } from "./sat/sat-tactic";
 import { mkThSolver } from "./euf/th-solvers";
@@ -127,6 +127,8 @@ export interface TacticEnvironment {
   hasDefinitions: () => boolean;
   destructors: (() => void)[];
   cleanups: (() => void)[];
+  // What updt_params does to each tactic, which makes the simplifier a tactic has freed.
+  inits: (() => void)[];
 }
 
 // Z3's and-then frees its last tactic first.
@@ -456,7 +458,8 @@ const createTacticSolver = (environment: TacticEnvironment, strategy: string): A
   const manager = environment.manager;
   const destructors: (() => void)[] = [];
   const cleanups: (() => void)[] = [];
-  const tactic = compileInternalTactic({ ...environment, destructors, cleanups }, strategy);
+  const inits: (() => void)[] = [];
+  const tactic = compileInternalTactic({ ...environment, destructors, cleanups, inits }, strategy);
   const assertions = new RefVector(manager);
   let model: ProtoModel | undefined;
   let converters: Goal["converters"] = [];
@@ -464,6 +467,7 @@ const createTacticSolver = (environment: TacticEnvironment, strategy: string): A
     assert: (expr) => assertions.push(expr),
     check: () => {
       for (const cleanup of cleanups) cleanup();
+      for (const init of inits) init();
       model?.decRef();
       model = undefined;
       const goal = new Goal(manager);
@@ -1371,7 +1375,12 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_steps", PARAM_UINT, UINT_MAX],
       ]),
       isTrackingDependencies: true,
-      build: (environment) => runBv1Blast(environment.manager),
+      build: (environment) => {
+        const tactic = createBv1Blast(environment.manager);
+        environment.inits.push(tactic.init);
+        environment.destructors.push(tactic.release);
+        return tactic.run;
+      },
     },
   ],
   [
@@ -2025,7 +2034,13 @@ const compile = (
       const own = getParams(child, sexpr.items, isInternal);
       return {
         ...mergeDescrs([child]),
-        build: (params) => child.build(new Map([...params, ...own])),
+        // using_params_tactical gives its child the parameters as it is made.
+        build: (params) => {
+          const start = environment.inits.length;
+          const tactic = child.build(new Map([...params, ...own]));
+          for (const init of environment.inits.slice(start)) init();
+          return tactic;
+        },
       };
     }
     case "skip-if-failed": {
@@ -2038,6 +2053,28 @@ const compile = (
       return {
         ...mergeDescrs([child]),
         build: (params) => runOrElse([child.build(params), (goal) => [goal]]),
+      };
+    }
+    // mk_default_tactic makes the tactic of a logic when its branch first runs.
+    case "lazy": {
+      if (!isInternal)
+        throw new SmtParseError(`invalid tactic, unknown tactic combinator lazy`, sexpr.end);
+      const child = compile(environment, sexpr.items[1], isInternal);
+      return {
+        ...mergeDescrs([child]),
+        build: (params) => {
+          let tactic: Tactic | undefined;
+          let destructors: (() => void)[] = [];
+          environment.destructors.push(() => destroyTactics(destructors));
+          return (goal) => {
+            if (tactic === undefined) {
+              const start = environment.destructors.length;
+              tactic = child.build(params);
+              destructors = environment.destructors.splice(start);
+            }
+            return tactic(goal);
+          };
+        },
       };
     }
     case "if":

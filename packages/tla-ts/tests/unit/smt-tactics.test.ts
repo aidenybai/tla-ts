@@ -1008,6 +1008,7 @@ describe("the optimizer releases what Z3 releases", () => {
         hasDefinitions: () => false,
         destructors: [],
         cleanups: [],
+        inits: [],
       },
       { getBaseModel: () => null, setModel: () => {} },
       {
