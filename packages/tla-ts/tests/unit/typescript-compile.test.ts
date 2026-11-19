@@ -57612,3 +57612,33 @@ describe("starts a script's var that a loop's pattern declares as undefined", ()
     expect((await checkModel(getSource("3,7,"))).failure?.message).toContain("seen 3,6,");
   });
 });
+
+describe("rejects a private name after ?., which TypeScript's parser rejects", () => {
+  const getSource = (read: string, expected: string) => `
+    class Holder {
+      #held = "held";
+      static read(holder: Holder | null) {
+        return ${read};
+      }
+    }
+    const result = [Holder.read(new Holder()), Holder.read(null)].join();
+    if (result !== "${expected}") throw new Error("result " + result);
+  `;
+  const conditional = "holder === null ? undefined : holder.#held";
+
+  it("reports TypeScript's error", () => {
+    expect(() => compile(getSource("holder?.#held", "held,"))).toThrow(
+      "TS18030: An optional chain cannot contain private identifiers.",
+    );
+  });
+
+  it("agrees with Node on the same read without ?.", async () => {
+    expect((await checkModel(getSource(conditional, "held,"))).failure).toBeUndefined();
+  });
+
+  it("rejects the wrong expectation", async () => {
+    expect((await checkModel(getSource(conditional, "held,held"))).failure?.message).toContain(
+      "result held,",
+    );
+  });
+});

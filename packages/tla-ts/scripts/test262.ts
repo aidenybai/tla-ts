@@ -3922,6 +3922,28 @@ const isEarlyError = (code: number) =>
 const isModuleSyntaxError = (source: string) =>
   spawnSync(process.execPath, ["--input-type=module", "--check"], { input: source }).status !== 0;
 
+// The first error of TypeScript's parser in a program, which it reports even where Node runs the
+// syntax, as for a private name after ?.
+const getParseError = (text: string, kind: ts.ScriptKind) => {
+  const sourceFile = ts.createSourceFile(
+    kind === ts.ScriptKind.JS ? "/parsed.js" : "/parsed.ts",
+    text,
+    ts.ScriptTarget.Latest,
+    false,
+    kind,
+  );
+  const host = ts.createCompilerHost({});
+  const program = ts.createProgram({
+    rootNames: [sourceFile.fileName],
+    options: { allowJs: true, noLib: true, noResolve: true, types: [] },
+    host: {
+      ...host,
+      getSourceFile: (path) => (path === sourceFile.fileName ? sourceFile : undefined),
+    },
+  });
+  return program.getSyntacticDiagnostics(sourceFile).at(0);
+};
+
 const isNodeSyntaxError = (source: string) => {
   try {
     new Script(source);
@@ -4514,6 +4536,17 @@ const runTest = async (path: string): Promise<TestRun> => {
     }
   })();
   if (annotated === undefined) return { id, outcome: "skipped", reason: "TypeScript fails" };
+  // A program that TypeScript's parser rejects both as TypeScript and as JavaScript is one that
+  // tla-ts compiles neither way, and that TypeScript's emitter may fail to print for Node.
+  const parseError =
+    getParseError(annotated, ts.ScriptKind.TS) && getParseError(source, ts.ScriptKind.JS);
+  if (parseError !== undefined) {
+    return {
+      id,
+      outcome: "skipped",
+      reason: `TypeScript rejects its syntax: ${ts.flattenDiagnosticMessageText(parseError.messageText, " ")}`,
+    };
+  }
   const isSloppy = metadata.flags.includes("noStrict");
   const nodeError = metadata.isModule
     ? getModuleError(annotated, isLinked ? programPath.replace(/\.ts$/, ".js") : undefined)
