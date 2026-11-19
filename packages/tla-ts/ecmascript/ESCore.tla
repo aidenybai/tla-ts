@@ -402,6 +402,7 @@ RECURSIVE NumberOperation(_, _, _)
 RECURSIVE PrivateInThen(_, _, _)
 RECURSIVE RelationalLeftThen(_, _, _)
 RECURSIVE RelationalRightThen(_, _, _)
+RECURSIVE NumberRelation(_, _, _)
 RECURSIVE InstanceofOperator(_, _, _)
 RECURSIVE EqualityLeftThen(_, _, _)
 RECURSIVE EqualityRightThen(_, _, _)
@@ -6217,8 +6218,13 @@ CreateGlobalFunctionBinding(s, e, name, value, deletable) ==
 Reference(base, name, strict, this) ==
   [type |-> "reference", base |-> base, name |-> name, strict |-> strict, this |-> this]
 EnvBase(e) == [type |-> "env", env |-> e]
+\* A declarative environment's HasBinding reads its names and leaves the state as it is.
 GetIdentifierReference(s, e, name, strict) ==
   IF e = 0 THEN Ok(s, Reference(Unresolvable, Str(name), strict, Empty))
+  ELSE LET env == E(s, e) IN
+  IF IsDeclarativeKind(env.kind) THEN
+    IF name \in DOMAIN env.b THEN Ok(s, Reference(EnvBase(e), Str(name), strict, Empty))
+    ELSE GetIdentifierReference(s, env.outer, name, strict)
   ELSE LET h == HasBinding(s, e, name) IN
        IF IsAbrupt(h) THEN h
        ELSE IF Val(h) = True THEN Ok(h.s, Reference(EnvBase(e), Str(name), strict, Empty))
@@ -7288,8 +7294,10 @@ BinaryLeftThen(ctx, op, right, r) ==
 BinaryRightThen(lval, op, r) ==
   IF IsSuspended(r) THEN Pass(r, "BinaryRightThen", <<lval, op>>) ELSE
   IF IsAbrupt(r) THEN r ELSE ApplyStringOrNumericBinaryOperator(r.s, lval, op, Val(r))
+\* Two Numbers skip the conversions, which give a Number back unchanged and leave the state as it is.
 ApplyStringOrNumericBinaryOperator(s, lval, op, rval) ==
-  IF op = "+" THEN
+  IF IsNumber(lval) /\ IsNumber(rval) THEN Ok(s, Num(NumberOperation(lval.value, op, rval.value)))
+  ELSE IF op = "+" THEN
     LET lp == ToPrimitive(s, lval, "none") IN
     IF IsAbrupt(lp) THEN lp ELSE
     LET rp == ToPrimitive(lp.s, rval, "none") IN
@@ -7312,12 +7320,12 @@ NumericBinary(s, lval, op, rval) ==
      ELSE IF IsNumber(a) THEN Ok(rn.s, Num(NumberOperation(a.value, op, b.value)))
      ELSE BigIntOperationResult(rn.s, a.value, op, b.value)
 NumberOperation(a, op, b) ==
-  CASE op = "**" -> NumExp(a, b)
+  CASE op = "+" -> NumAdd(a, b)
+    [] op = "-" -> NumSub(a, b)
     [] op = "*" -> NumMul(a, b)
     [] op = "/" -> NumDiv(a, b)
     [] op = "%" -> NumRem(a, b)
-    [] op = "+" -> NumAdd(a, b)
-    [] op = "-" -> NumSub(a, b)
+    [] op = "**" -> NumExp(a, b)
     [] op = "<<" -> NumShl(a, b)
     [] op = ">>" -> NumShr(a, b)
     [] op = ">>>" -> NumUShr(a, b)
@@ -7338,7 +7346,8 @@ RelationalRightThen(lv, op, r) ==
   IF IsAbrupt(r) THEN r ELSE
   LET rv == Val(r)
       s1 == r.s
-  IN CASE op = "<" ->
+  IN IF IsNumber(lv) /\ IsNumber(rv) /\ op \in {"<", ">", "<=", ">="} THEN Ok(s1, NumberRelation(lv.value, op, rv.value))
+     ELSE CASE op = "<" ->
             LET c == IsLessThan(s1, lv, rv, TRUE) IN
             IF IsAbrupt(c) THEN c ELSE Ok(c.s, IF Val(c) = Undefined THEN False ELSE Val(c))
        [] op = ">" ->
@@ -7355,6 +7364,10 @@ RelationalRightThen(lv, op, r) ==
             IF ~IsObject(rv) THEN ThrowTypeError(s1)
             ELSE LET k == ToPropertyKey(s1, lv) IN
                  IF IsAbrupt(k) THEN k ELSE HasProperty(k.s, rv, Val(k))
+\* The relation of two Numbers, as IsLessThan gives it once ToPrimitive gives each back unchanged.
+NumberRelation(x, op, y) ==
+  LET c == IF op \in {"<", ">="} THEN NumLessResult(x, y) ELSE NumLessResult(y, x)
+  IN IF op \in {"<", ">"} THEN (IF c = Undefined THEN False ELSE c) ELSE Bool(c = False)
 \* InstanceofOperator (§13.10.2).
 InstanceofOperator(s, v, target) ==
   IF ~IsObject(target) THEN ThrowTypeError(s)

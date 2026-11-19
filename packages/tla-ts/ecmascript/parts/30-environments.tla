@@ -213,8 +213,13 @@ Reference(base, name, strict, this) ==
 EnvBase(e) == [type |-> "env", env |-> e]
 Unresolvable == [type |-> "unresolvable"]
 
+\* A declarative environment's HasBinding reads its names and leaves the state as it is.
 GetIdentifierReference(s, e, name, strict) ==
   IF e = 0 THEN Ok(s, Reference(Unresolvable, Str(name), strict, Empty))
+  ELSE LET env == E(s, e) IN
+  IF IsDeclarativeKind(env.kind) THEN
+    IF name \in DOMAIN env.b THEN Ok(s, Reference(EnvBase(e), Str(name), strict, Empty))
+    ELSE GetIdentifierReference(s, env.outer, name, strict)
   ELSE LET h == HasBinding(s, e, name) IN
        IF IsAbrupt(h) THEN h
        ELSE IF Val(h) = True THEN Ok(h.s, Reference(EnvBase(e), Str(name), strict, Empty))

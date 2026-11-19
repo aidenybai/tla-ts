@@ -30,7 +30,7 @@ const DEFINITIONS = [
   IF IsAbrupt(ref) THEN ref ELSE
   LET old == GetValue(ref.s, Val(ref)) IN
   IF IsAbrupt(old) THEN old ELSE
-  LET num == ToNumeric(old.s, Val(old)) IN
+  LET num == IF IsNumber(Val(old)) THEN old ELSE ToNumeric(old.s, Val(old)) IN
   IF IsAbrupt(num) THEN num ELSE
   LET v == Val(num)
       new == IF IsNumber(v)
@@ -136,6 +136,18 @@ const DEFINITIONS = [
   `BindArguments(s, env, names, args, i) ==
   IF i > Len(names) THEN s
   ELSE BindArguments(InitializeBinding(s, env, names[i], Arg(args, i)).s, env, names, args, i + 1)`,
+  // GetValue of the reference that GetIdentifierReference (§9.1.2.1) gives for name from the
+  // environment e: a declarative binding's value, or that of a global environment's declarative
+  // part, as GetBindingValue reads it, and any other through the reference.
+  `IdentifierValue(s, e, name, strict) ==
+  IF e = 0 THEN ThrowError(s, "ReferenceError") ELSE
+  LET env == E(s, e) IN
+  IF IsDeclarativeKind(env.kind) /\\ name \\notin DOMAIN env.b THEN IdentifierValue(s, env.outer, name, strict)
+  ELSE IF env.kind \\in {"declarative", "catch", "function"} \\/ (env.kind = "module" /\\ env.b[name].value.type # "import") THEN
+    IF env.b[name].init THEN Ok(s, env.b[name].value) ELSE ThrowError(s, "ReferenceError")
+  ELSE IF env.kind = "global" /\\ name \\in DOMAIN E(s, env.declRec).b THEN
+    IF E(s, env.declRec).b[name].init THEN Ok(s, E(s, env.declRec).b[name].value) ELSE ThrowError(s, "ReferenceError")
+  ELSE GetValueThen(GetIdentifierReference(s, e, name, strict))`,
   // A compiled module's code gives the entries and requests that ParseModule (§16.2.1.7.1) reads
   // of the module's parse node, which ModuleNode gives the program's modules as.
   `ImportEntries(node) == node.imports`,
