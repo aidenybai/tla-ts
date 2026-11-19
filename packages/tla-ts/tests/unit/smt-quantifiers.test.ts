@@ -150,6 +150,127 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
       ")",
     ]);
   });
+
+  it("counts the steps of the quantifier analyzer", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(assert (forall ((x Int)) (and (p x) (or (p (f x)) (= (f x) x)))))",
+        "(push)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 174)"]);
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(assert (forall ((x Int) (y Int)) (or (= (f x) (g y)) (= (f y) (g x)) (= (f x) (f y)))))",
+        "(push)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(:rlimit 185)"]);
+  });
+
+  it("makes the model finder with smt.mbqi off", () => {
+    const lines = ["(set-option :smt.mbqi false)", "(declare-const x Int)", "(assert (> x 0))"];
+    expect(run([...lines, "(push)", "(get-info :rlimit)"])).toEqual(["(:rlimit 50)"]);
+    expect(run([...lines, "(check-sat-using smt)", "(get-info :rlimit)"])).toEqual([
+      "sat",
+      "(:rlimit 65)",
+    ]);
+  });
+
+  it("frees the instantiation sets of a quantifier's macro", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-fun g (U) U)",
+        "(declare-fun h (U U) U)",
+        "(declare-fun p (U) Bool)",
+        "(declare-const c1 U)",
+        "(declare-const c3 U)",
+        "(assert (forall ((x U)) (p x)))",
+        "(assert (forall ((x U) (y U)) (! (= x (h y x)) :pattern ((f x) (g y)) :qid q2)))",
+        "(assert (p (h c3 (g c1))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1301)", "sat", "(:rlimit 2581)"]);
+  });
+});
+
+describe("e-matching, as Z3 5.3.2 counts its steps", () => {
+  it("counts the steps of the matcher and of the instantiation queue", () => {
+    const lines = [
+      "(declare-fun f (Int) Int)",
+      "(declare-const a Int)",
+      "(declare-const b Int)",
+      "(assert (forall ((x Int)) (! (> (f x) x) :pattern ((f x)))))",
+      "(assert (= (f a) b))",
+      "(assert (< b a))",
+      "(check-sat)",
+      "(get-info :rlimit)",
+    ];
+    expect(run(["(set-option :smt.mbqi false)", ...lines])).toEqual(["unsat", "(:rlimit 469)"]);
+    expect(run(["(set-option :smt.mbqi false)", "(push)", ...lines])).toEqual([
+      "unsat",
+      "(:rlimit 296)",
+    ]);
+  });
+
+  it("reads no cancel flag between the lazy instances of a final check", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi false)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-const c0 Int)",
+        "(assert (forall ((x Int)) (p (f (f x)))))",
+        "(assert (= c0 0))",
+        "(assert (not (= c0 (f 0))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 981)"]);
+  });
+});
+
+describe("the model checker, as Z3 5.3.2 counts its steps", () => {
+  it("pushes its context as the kernel does", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-fun h (Int Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-const c0 Int)",
+        "(declare-const c1 Int)",
+        "(declare-const c2 Int)",
+        "(assert (forall ((x Int)) (! (p (f x)) :pattern ((f x)) :weight 4)))",
+        "(assert (p (g 0)))",
+        "(assert (= 1 c1))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 356)"]);
+  });
+
+  it("leaves the quantifiers out of validate_model", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(assert (forall ((x Int)) (= (f x) x)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 187)"]);
+  });
 });
 
 describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {

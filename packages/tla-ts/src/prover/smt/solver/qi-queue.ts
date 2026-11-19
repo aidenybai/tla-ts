@@ -202,12 +202,18 @@ export class QiQueue {
   private instanceNext: number[] = [];
   private bindingOwners: number[] = [];
   private lemmas: RefVector;
+  private costExprs: number[];
   numInstances = 0;
 
   constructor(private context: Context) {
+    const manager = context.manager;
     this.checker = new Checker(context);
-    this.subst = new VarSubst(context.manager, true);
-    this.lemmas = new RefVector(context.manager);
+    this.costExprs = manager.mkQiCostExprs();
+    for (const expr of this.costExprs) manager.incRef(expr);
+    // smt.qi.new_gen is the variable cost, so the queue holds that variable twice.
+    manager.incRef(this.costExprs[0]);
+    this.subst = new VarSubst(manager, true);
+    this.lemmas = new RefVector(manager);
   }
 
   private getInstance(quantifier: number, bindings: number[]) {
@@ -253,21 +259,20 @@ export class QiQueue {
   }
 
   instantiate() {
+    const context = this.context;
     const entries = this.newEntries;
     this.newEntries = [];
     let sinceLastCheck = 0;
     for (const entry of entries) {
+      if (context.checkCanceled()) break;
       if (entry.cost <= EAGER_COST_THRESHOLD) this.instantiateEntry(entry);
       else if (
-        this.checker.isUnsat(
-          this.context.manager.getQuantifier(entry.quantifier).body,
-          entry.bindings,
-        )
+        this.checker.isUnsat(context.manager.getQuantifier(entry.quantifier).body, entry.bindings)
       )
         this.instantiateEntry(entry);
       else this.delayedEntries.push(entry);
       if (sinceLastCheck++ > 100) {
-        if (this.context.checkCanceled()) break;
+        if (context.isResourceLimitExceeded()) break;
         sinceLastCheck = 0;
       }
     }
@@ -312,7 +317,6 @@ export class QiQueue {
       result = false;
       this.instantiatedTrail.push(index);
       this.instantiateEntry(entry);
-      if (this.context.checkCanceled()) break;
     }
     return result;
   }
@@ -335,9 +339,14 @@ export class QiQueue {
   }
 
   release() {
+    const manager = this.context.manager;
+    const costExprs = this.costExprs;
     this.lemmas.reset();
     this.initSearchEh();
     this.subst.release();
+    for (let index = 0; index < costExprs.length - 1; index++) manager.decRef(costExprs[index]);
+    manager.decRef(costExprs[0]);
+    manager.decRef(costExprs[costExprs.length - 1]);
   }
 
   initSearchEh() {

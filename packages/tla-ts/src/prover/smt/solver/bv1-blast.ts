@@ -193,22 +193,35 @@ class Bv1BlasterRewriter extends RewriterTpl {
   }
 }
 
-export const runBv1Blast = (manager: AstManager) => (goal: Goal) => {
-  runSimplifier(goal, false, (state) => {
-    const rewriter = new Bv1BlasterRewriter(manager);
-    return {
-      reduce: () => {
-        state.rewriteEach((form) => rewriter.rewrite(form));
-        if (rewriter.newbits.length === 0 || !goal.isModelsEnabled) return;
-        const definitions: Definition[] = rewriter.newbits.map((decl) => ({ decl, def: -1 }));
-        for (const [decl, bits] of rewriter.const2bits) definitions.push({ decl, def: bits });
-        goal.addDefinitions(definitions);
-      },
-      release: () => {
-        rewriter.releaseCfg();
-        rewriter.release();
-      },
-    };
-  });
-  return [goal];
+export const createBv1Blast = (manager: AstManager) => {
+  let rewriter: Bv1BlasterRewriter | undefined;
+  const init = () => {
+    rewriter ??= new Bv1BlasterRewriter(manager);
+    return rewriter;
+  };
+  const release = () => {
+    rewriter?.releaseCfg();
+    rewriter?.release();
+    rewriter = undefined;
+  };
+  return {
+    init,
+    release,
+    run: (goal: Goal) => {
+      runSimplifier(goal, false, (state) => {
+        const current = init();
+        return {
+          reduce: () => {
+            state.rewriteEach((form) => current.rewrite(form));
+            if (current.newbits.length === 0 || !goal.isModelsEnabled) return;
+            const definitions: Definition[] = current.newbits.map((decl) => ({ decl, def: -1 }));
+            for (const [decl, bits] of current.const2bits) definitions.push({ decl, def: bits });
+            goal.addDefinitions(definitions);
+          },
+          release,
+        };
+      });
+      return [goal];
+    },
+  };
 };

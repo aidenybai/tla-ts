@@ -73,7 +73,7 @@ import {
 } from "./levels";
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { getLiveExpressions } from "./liveness-checker";
-import { prettyPrint } from "./pretty-print";
+import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
@@ -89,6 +89,7 @@ import type { Solution } from "./tableau";
 import {
   formatInnerMessage,
   formatNestedMessage,
+  formatPrompt,
   MESSAGE_CODE,
   MISSING_INIT_174,
   withHeadline,
@@ -115,6 +116,8 @@ import {
 
 export interface CliSettings {
   readLine?: () => string | undefined;
+  printPrompt?: (text: string, code?: number) => void;
+  hasUserFile?: boolean;
   runtimeInvariants?: RuntimeInvariant[];
   errorCodes?: number[];
 }
@@ -936,12 +939,14 @@ export const createCheckEnvironment = (
     },
     seed: options.seed,
     isTool: options.isTool,
+    hasUserFile: options.hasUserFile,
     traceFile: options.traceSpec?.traceFile,
     isSanyReported: options.isSanyReported,
     isWarningEnabled: options.isWarningEnabled,
     version: options.version,
     moduleOperators: options.moduleOperators,
     readLine: options.readLine,
+    printPrompt: options.printPrompt,
     runtimeInvariants: options.runtimeInvariants,
   });
   return { order, specification };
@@ -954,13 +959,18 @@ export const createOutputCapture = (onPrint: (text: string) => void) => {
       if (capturedLines) capturedLines.push(text);
       else onPrint(text);
     },
-    captureWarnings: (runtime: CheckerRuntime, errorCodes: number[] = []) => {
+    captureMessages: (runtime: CheckerRuntime, errorCodes: number[] = []) => {
       const warn = runtime.warn;
+      const printPrompt = runtime.printPrompt;
       runtime.warn = (code, text) => {
         // TLC's MP#printWarning fails on a warning -messagesAsErrors lists, even one whose output tla-ts holds back.
         if (errorCodes.includes(code)) throw new TlaWarningAsError(code, text);
         if (capturedLines) capturedLines.push({ kind: "warning", code, text });
         else warn(code, text);
+      };
+      runtime.printPrompt = (text, code) => {
+        if (capturedLines) capturedLines.push(formatPrompt(runtime.isTool, text, code));
+        else printPrompt(text, code);
       };
     },
     captureOutput: <Result>(evaluate: () => Result) => {
@@ -1381,7 +1391,7 @@ export const createSearch = (
       name: unwitnessed.name,
       code: MESSAGE_CODE.possibleUnwitnessed,
       message: `The _POSSIBLE predicate ${unwitnessed.name}${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
-      counts: prettyPrint(formatValue(getPossibleCounts(runtime), true)),
+      counts: prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime.hasUserFile),
     };
   };
   // Deviation from TLC: a tuple VIEW prints as a state only when its elements are distinct variables, since TLC mislabels <<y, x>> and <<x + 1>>.
@@ -1406,11 +1416,7 @@ export const createSearch = (
           .join("")
       : prettyPrint(formatValue(getViewValue(expression, state)));
   const holdsActionConstraint = (constraint: NamedExpression, state: Value[], next: State) =>
-    holdsLikeTlc(
-      constraint.expression,
-      getContext(environment, state, next),
-      (expression) => `${UNEXPECTED_EXCEPTION}${getExpectedBoolean(expression, environment)}`,
-    );
+    holdsLikeTlc(constraint.expression, getContext(environment, state, next));
   const toRecord = (state: Value[]): Record<string, Value> => {
     const record = Object.fromEntries(
       getTlcOrder().map((index) => [environment.variables[index], state[index]]),

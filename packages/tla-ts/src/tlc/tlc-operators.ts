@@ -1,7 +1,7 @@
 import { TlaModuleError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import type { Builtin, Context } from "../evaluate";
-import { prettyPrint } from "../pretty-print";
+import { prettyPrint, prettyPrintT } from "../pretty-print";
 import {
   defineConstant,
   defineHigherOrderOperator,
@@ -189,7 +189,9 @@ export const createTlcOperators = (
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
-    print(prettyPrint(formatNormalizedCopies([getValue(args, 0, "PrintT")])[0]));
+    print(
+      prettyPrintT(formatNormalizedCopies([getValue(args, 0, "PrintT")])[0], runtime.hasUserFile),
+    );
     return true;
   }),
   defineOperator("Assert", 2, (args) => {
@@ -274,7 +276,7 @@ export const createTlcOperators = (
         "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
       ),
   defineStateOperator("TLCSet", 2, (args) => {
-    setTlcValue(runtime, print, getValue(args, 0, "TLCSet"), getValue(args, 1, "TLCSet"));
+    setTlcValue(runtime, getValue(args, 0, "TLCSet"), getValue(args, 1, "TLCSet"));
     return true;
   }),
   defineConstant("Any", ANY_SET),

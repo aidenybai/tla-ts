@@ -1,4 +1,4 @@
-import { SmtCanceledError, SmtInvariantError } from "../../../errors";
+import { SmtCanceledError, SmtDefaultError, SmtInvariantError } from "../../../errors";
 import type { AssertedFormulas } from "./asserted-formulas";
 import {
   AstManager,
@@ -170,6 +170,7 @@ export interface SmtParams {
   relevancyLevel: 0 | 2;
   randomSeed?: number;
   intHammerPeriod?: number;
+  isArithPropagatingEqs?: boolean;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
 }
@@ -225,6 +226,10 @@ export class Context extends Internalizer {
   ) {
     super(manager, params.relevancyLevel > 0);
     this.qmanager = new DefaultQuantifierManager(this);
+    this.config = {
+      ...DEFAULT_CONFIG,
+      isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
+    };
   }
 
   release(asserted: AssertedFormulas) {
@@ -254,9 +259,11 @@ export class Context extends Internalizer {
     this.params.mbqiMaxIterations = params.mbqiMaxIterations;
     this.params.randomSeed = params.randomSeed;
     this.params.intHammerPeriod = params.intHammerPeriod;
+    this.params.isArithPropagatingEqs = params.isArithPropagatingEqs;
     this.arith?.updateParams();
     this.config = {
       ...DEFAULT_CONFIG,
+      isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
       theories: this.config.theories,
       isFindingMacros: params.isFindingMacros,
       isNnfCnf: this.config.isNnfCnf,
@@ -266,7 +273,6 @@ export class Context extends Internalizer {
       isEliminatingBounds: this.config.isEliminatingBounds,
       arithPropagationThreshold: this.config.arithPropagationThreshold,
     };
-    this.qmanager.updateParams();
   }
 
   // setup_context and setup_components. The setup's theories come in its order, then setup_card's.
@@ -783,8 +789,7 @@ export class Context extends Internalizer {
       }
       parent.cg = congruent;
       this.mergeCgcGenerations(parent, parentGeneration, congruent);
-      if (congruent.root !== parent.root)
-        this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
+      this.pushEq(parent, congruent, getCongruenceJustification(parent, congruent));
     }
     this.r1ParentGenerations.clear();
   }
@@ -1313,7 +1318,7 @@ export class Context extends Internalizer {
   }
 
   // Z3's resource_limits_exceeded reads the cancel flag twice while searching.
-  private isResourceLimitExceeded() {
+  isResourceLimitExceeded() {
     if (this.isSearching && (this.lastSearchFailure !== FAILURE_OK || this.checkCanceled()))
       return true;
     return this.checkCanceled();
@@ -1400,7 +1405,7 @@ export class Context extends Internalizer {
       if (!this.isRelevant(atom)) continue;
       const expr = isNegated(literal) ? manager.mkNot(atom) : atom;
       manager.incRef(expr);
-      const value = manager.isGround(expr) ? model.eval(expr, false) : -1;
+      const value = manager.isGroundApp(expr) ? model.eval(expr, false) : -1;
       if (value !== -1) manager.decRef(value);
       manager.decRef(expr);
       if (value === manager.falseExpr) return false;
@@ -1537,6 +1542,20 @@ export class Context extends Internalizer {
     this.isBaseScopeInconsistent.push(this.isInconsistent());
     this.baseLevel++;
     this.searchLevel++;
+  }
+
+  internalizeAndPush(asserted: AssertedFormulas) {
+    const wasConsistent = !this.isInconsistent();
+    this.internalizeAssertions(asserted);
+    const limit = this.manager.limit;
+    if (!limit.inc()) throw new SmtDefaultError("push canceled");
+    const wasSuspended = limit.isSuspended;
+    limit.isSuspended = true;
+    if (!this.isInconsistent()) this.propagate();
+    if (wasConsistent && this.isInconsistent() && !asserted.isInconsistent) this.resolveConflict();
+    limit.isSuspended = wasSuspended;
+    this.push();
+    asserted.push();
   }
 
   pop(numScopes: number) {

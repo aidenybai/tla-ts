@@ -78,6 +78,7 @@ export class FuncInterp {
   private entryTable = new Map<string, FuncEntry>();
   elseExpr: number | null = null;
   private interp: number | null = null;
+  private arrayInterp: number | null = null;
 
   constructor(
     private manager: AstManager,
@@ -125,7 +126,9 @@ export class FuncInterp {
 
   private resetInterpCache() {
     if (this.interp !== null) this.manager.decRef(this.interp);
+    if (this.arrayInterp !== null) this.manager.decRef(this.arrayInterp);
     this.interp = null;
+    this.arrayInterp = null;
   }
 
   private releaseEntry(entry: FuncEntry) {
@@ -244,8 +247,17 @@ export class FuncInterp {
     return this.entries.length + 1 === 2;
   }
 
-  // get_array_interp: an interpretation that is not ground becomes a lambda.
+  // Z3 keeps the array, so the subterms it shares with other values stay shared.
   getArrayInterp(decl: number) {
+    if (this.arrayInterp !== null) return this.arrayInterp;
+    const arrayInterp = this.mkArrayInterp(decl);
+    if (arrayInterp === undefined) return undefined;
+    this.manager.incRef(arrayInterp);
+    this.arrayInterp = arrayInterp;
+    return arrayInterp;
+  }
+
+  private mkArrayInterp(decl: number) {
     const manager = this.manager;
     const elseExpr = this.elseExpr;
     if (elseExpr === null) return undefined;
@@ -906,7 +918,9 @@ export class ProtoModel {
         }
         return rewriter.mkApp(decl, args, manager.sorts[current]);
       });
-      trail.pushOwned(result);
+      // Z3 trails only the terms that change, so the rewriter caches no other subterm.
+      if (result === current) manager.decRef(result);
+      else trail.pushOwned(result);
       cache.set(current, result);
     }
     const result = rewriter.rewrite(cache.get(expr) as number);
@@ -1067,7 +1081,8 @@ export class ProtoModel {
     this.funcInterps.clear();
     this.funcDecls = [];
     for (const entry of this.values)
-      if (!isArithSort(entry[0])) for (const value of entry[1]) model.registerValue(value);
+      if (this.manager.isUninterpretedSort(entry[0]))
+        for (const value of entry[1]) model.registerValue(value);
     for (const entry of this.universes) model.registerUsort(entry[0], entry[1].items);
     return model;
   }

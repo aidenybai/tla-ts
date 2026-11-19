@@ -448,3 +448,21 @@ describe("algebraic datatypes", () => {
     ).toEqual(["(:rlimit 12)", "sat", "(:rlimit 56)"]);
   });
 });
+
+describe("theory_bv, as Z3 5.3.2 bit-blasts its terms", () => {
+  it("frees the negation mk_not_core makes of an equality's left side", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(push)",
+        "(assert (= (bvmul x y) #x00))",
+        "(check-sat)",
+        "(pop)",
+        "(assert (bvult (bvmul x y) #x10))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "sat", "(:rlimit 1854)"]);
+  });
+});

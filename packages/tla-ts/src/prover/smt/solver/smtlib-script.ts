@@ -383,6 +383,19 @@ interface CheckResult {
   core: number[] | undefined;
   // check_sat_result::reason_unknown, where the port tracks it.
   reasonUnknown?: string;
+  isHoldingSolver: boolean;
+  heldSolver: SolverParts | undefined;
+}
+
+interface SolverParts {
+  kernel: SmtKernel | undefined;
+  satSolver: IncSatSolver | undefined;
+  fdSolver: FdSolver | undefined;
+  tacticDestructors: (() => void)[];
+  tacticConverters: Goal["converters"];
+  tacticModel: ProtoModel | undefined;
+  lastAssertions: RefVector;
+  assertions: RefVector;
 }
 
 interface SolverAnswer {
@@ -415,10 +428,11 @@ interface ScriptState {
   kernel: SmtKernel | undefined;
   satSolver: IncSatSolver | undefined;
   fdSolver: FdSolver | undefined;
-  strategy: string;
+  strategy: string | undefined;
   tactic: Tactic | undefined;
   tacticDestructors: (() => void)[];
   tacticCleanups: (() => void)[];
+  tacticInits: (() => void)[];
   tacticConverters: Goal["converters"];
   tacticModel: ProtoModel | undefined;
   lastAssertions: RefVector;
@@ -495,10 +509,11 @@ export const runSmtlibScript = (
       kernel: undefined,
       satSolver: undefined,
       fdSolver: undefined,
-      strategy: "default",
+      strategy: undefined,
       tactic: undefined,
       tacticDestructors: [],
       tacticCleanups: [],
+      tacticInits: [],
       tacticConverters: [],
       tacticModel: undefined,
       lastAssertions: new RefVector(manager),
@@ -565,6 +580,7 @@ export const runSmtlibScript = (
         hasDefinitions: () => state.reader.hasDefinitions(),
         destructors: [],
         cleanups: [],
+        inits: [],
       },
       objectives,
     );
@@ -623,15 +639,16 @@ export const runSmtlibScript = (
     state.optimizer = undefined;
   };
   // The port keeps answering with the smt kernel where it lacks a piece of the logic's strategy.
-  const solveWithStrategy = () => {
+  const solveWithStrategy = (strategy: string) => {
     releaseTacticModel();
     const goal = getGoal(state.isSolverProducingModels);
     try {
       state.tactic ??= compileInternalTactic(
-        getTacticEnvironment(state.tacticDestructors, state.tacticCleanups),
-        state.strategy,
+        getTacticEnvironment(state.tacticDestructors, state.tacticCleanups, state.tacticInits),
+        strategy,
       );
       for (const cleanup of state.tacticCleanups) cleanup();
+      for (const init of state.tacticInits) init();
       const checked = checkSatUsing(state.tactic, goal);
       if (checked.status === L_UNDEF && state.scopes.length === 0) {
         state.lastAssertions.reset();
@@ -693,6 +710,7 @@ export const runSmtlibScript = (
     isCoreMinimizing: settings.parameters.get("smt.core.minimize") === "true",
     setup: getSetup(),
     intHammerPeriod: getHammerPeriod(settings.parameters),
+    isArithPropagatingEqs: settings.parameters.get("smt.arith.propagate_eqs") !== "false",
   });
   const checkFdSolver = (fdSolver: FdSolver, extra: number[]) => {
     const result = fdSolver.check(extra);
@@ -714,6 +732,11 @@ export const runSmtlibScript = (
     // satisfiable, optsmt and maxsmt only improve the model. The unported parts of optimization
     // only get that answer.
     if (state.objectives.length > 0 && optimize(extra, end)) return;
+    const strategy = state.strategy;
+    if (strategy === undefined) {
+      print("unknown");
+      return;
+    }
     state.manager.limit.push(settings.rlimit);
     const isOptimizing = state.objectives.length > 0;
     const manager = state.manager;
@@ -738,7 +761,7 @@ export const runSmtlibScript = (
         fdSolver !== undefined
           ? checkFdSolver(fdSolver, extra)
           : isFromTactic
-            ? { ...solveWithStrategy(), core: undefined }
+            ? { ...solveWithStrategy(strategy), core: undefined }
             : kernel;
       // solver::check_sat and cmd_context::check_sat each count a step for an unknown answer.
       if (fdSolver === undefined && !isOptimizing && solved.result === L_UNDEF) {
@@ -754,6 +777,7 @@ export const runSmtlibScript = (
         satSolver: isKernelChecking && !isFromTactic ? state.satSolver : undefined,
         core: solved.core ?? solved.context?.unsatCore ?? [],
         reasonUnknown: getReasonUnknown(solved, deadline),
+        isHoldingSolver: true,
       });
       print(getVerdict(solved.result));
     } catch (error) {
@@ -776,6 +800,7 @@ export const runSmtlibScript = (
           error instanceof SmtDefaultError
             ? ((isKernelChecking ? undefined : reasonUnknown) ?? error.message)
             : getReasonUnknown({ result: L_UNDEF, context, reasonUnknown }, deadline),
+        isHoldingSolver: true,
       });
       print("unknown");
     } finally {
@@ -815,9 +840,9 @@ export const runSmtlibScript = (
     return model;
   };
   const clearCheck = () => {
-    state.check?.model?.decRef();
-    const satSolver = state.check?.satSolver;
-    if (satSolver !== undefined && satSolver !== state.satSolver) satSolver.release();
+    const check = state.check;
+    check?.model?.decRef();
+    if (check?.heldSolver !== undefined) releaseSolver(check.heldSolver);
     state.check = undefined;
   };
   const releaseTacticModel = () => {
@@ -842,13 +867,37 @@ export const runSmtlibScript = (
       fdSolver: undefined,
       satSolver: undefined,
       core: undefined,
+      isHoldingSolver: false,
+      heldSolver: undefined,
       ...result,
     };
+  };
+  // parse_sexpr reports its own errors under an empty file name and gives no tactic.
+  const readDefaultTactic = (text: string) => {
+    try {
+      return createCommandReader(text).readSExpr();
+    } catch (error) {
+      if (!(error instanceof SmtParseError)) throw error;
+      print(`(error ": line ${error.line} column ${error.column}: ${error.message}")`);
+      return undefined;
+    }
   };
   const resetKernel = () => {
     const logic = state.logic;
     const parameters = settings.parameters;
     const isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
+    const defaultTactic = parameters.get("tactic.default_tactic");
+    const sexpr =
+      defaultTactic === undefined || defaultTactic === ""
+        ? undefined
+        : readDefaultTactic(defaultTactic);
+    const destructors: (() => void)[] = [];
+    const cleanups: (() => void)[] = [];
+    const inits: (() => void)[] = [];
+    const tactic =
+      sexpr === undefined
+        ? undefined
+        : compileTactic(getTacticEnvironment(destructors, cleanups, inits), sexpr).build(new Map());
     const isParallel = parameters.get("parallel.enable") === "true";
     const isFdSolver =
       !isParallel &&
@@ -860,18 +909,23 @@ export const runSmtlibScript = (
       parameters.get("tactic.default_tactic") === "sat" ||
       parameters.get("sat.smt") === "true" ||
       isEuf;
-    if (state.satSolver !== state.check?.satSolver) state.satSolver?.release();
-    decConverterRefs(state.manager, state.tacticConverters);
-    state.tacticConverters = [];
-    destroyTactics(state.tacticDestructors);
-    state.tacticCleanups.length = 0;
-    state.tactic = undefined;
-    state.strategy =
-      parameters.get("tactic.default_tactic") ?? getLogicStrategy(logic, isProofsEnabled);
-    releaseTacticModel();
-    state.lastAssertions.reset();
+    const old = detachSolver();
+    state.tacticDestructors = destructors;
+    state.tacticCleanups = cleanups;
+    state.tacticInits = inits;
+    state.tactic = tactic;
+    state.strategy = getLogicStrategy(logic, isProofsEnabled);
     state.isSolverProducingModels = settings.isProducingModels;
     state.kernel = isSatSolver ? undefined : new SmtKernel(state.manager, getKernelParams());
+    state.manager.dropStartupExprs();
+    // The bv1-blaster of the QF_BV tactic makes a 1-bit one and zero.
+    if (logic === "QF_BV" && tactic === undefined) {
+      const numerals = [state.manager.mkBvNumeral(1n, 1), state.manager.mkBvNumeral(0n, 1)];
+      for (const numeral of numerals) state.manager.incRef(numeral);
+      destructors.push(() => {
+        for (const numeral of numerals) state.manager.decRef(numeral);
+      });
+    }
     state.satSolver =
       isSatSolver && !isFdSolver && parameters.get("sat.smt") !== "true"
         ? new IncSatSolver(
@@ -881,27 +935,75 @@ export const runSmtlibScript = (
             isEuf ? mkThSolver(parameters) : null,
           )
         : undefined;
-    state.fdSolver?.release();
     state.fdSolver =
       (logic === "QF_FD" || logic === "SAT") &&
       !isProofsEnabled &&
       !isParallel &&
-      !parameters.has("tactic.default_tactic")
+      tactic === undefined
         ? new FdSolver(state.manager, getSatParams(parameters))
         : undefined;
+    dropSolver(old);
+  };
+  const pushSolver = () => {
     for (let index = 0; index < state.scopes.length; index++) {
       state.kernel?.push();
       useSatSolver((solver) => solver.push());
       state.fdSolver?.push();
     }
   };
+  const detachSolver = (): SolverParts => {
+    const assertions = new RefVector(state.manager);
+    if (state.strategy !== undefined && state.fdSolver === undefined)
+      for (const assertion of state.assertions) assertions.push(assertion);
+    const parts = {
+      kernel: state.kernel,
+      satSolver: state.satSolver,
+      fdSolver: state.fdSolver,
+      tacticDestructors: state.tacticDestructors,
+      tacticConverters: state.tacticConverters,
+      tacticModel: state.tacticModel,
+      lastAssertions: state.lastAssertions,
+      assertions,
+    };
+    state.strategy = undefined;
+    state.tactic = undefined;
+    state.kernel = undefined;
+    state.satSolver = undefined;
+    state.fdSolver = undefined;
+    state.tacticDestructors = [];
+    state.tacticCleanups = [];
+    state.tacticInits = [];
+    state.tacticConverters = [];
+    state.tacticModel = undefined;
+    state.lastAssertions = new RefVector(state.manager);
+    return parts;
+  };
+  const dropSolver = (parts: SolverParts) => {
+    const check = state.check;
+    if (check?.isHoldingSolver !== true) return releaseSolver(parts);
+    check.isHoldingSolver = false;
+    check.heldSolver = parts;
+  };
+  const releaseSolver = (parts: SolverParts) => {
+    parts.kernel?.release();
+    parts.satSolver?.release();
+    parts.fdSolver?.release();
+    decConverterRefs(state.manager, parts.tacticConverters);
+    destroyTactics(parts.tacticDestructors);
+    parts.tacticModel?.decRef();
+    parts.lastAssertions.reset();
+    parts.assertions.reset();
+  };
   const initManager = () => {
     if (state.isProofsEnabled !== undefined) return;
     state.isProofsEnabled = settings.parameters.get("proof") === "true";
     if (state.logic === undefined || logicHasSeq(state.logic)) state.manager.initSeqPlugin();
     if (state.logic === undefined) state.reader.registerList();
-    resetKernel();
-    if (state.kernel === undefined) state.manager.dropSmtSolverDecl();
+    try {
+      resetKernel();
+    } finally {
+      state.manager.dropStartupExprs();
+    }
   };
   // The parts of inc_sat_solver that are not ported leave its answers to the smt kernel.
   const useSatSolver = <Result>(action: (solver: IncSatSolver) => Result) => {
@@ -981,7 +1083,11 @@ export const runSmtlibScript = (
       settings.parameters.get("smt.auto_config") !== "false",
   });
   // tactic2solver gives its tactic the parameters as they are at each check.
-  const getTacticEnvironment = (destructors: (() => void)[], cleanups: (() => void)[]) => ({
+  const getTacticEnvironment = (
+    destructors: (() => void)[],
+    cleanups: (() => void)[],
+    inits: (() => void)[],
+  ) => ({
     manager: state.manager,
     get isMbqi() {
       return settings.isMbqi;
@@ -1000,6 +1106,7 @@ export const runSmtlibScript = (
     hasDefinitions: () => state.reader.hasDefinitions(),
     destructors,
     cleanups,
+    inits,
   });
   const getDatalog = () => {
     state.datalog ??= createDatalogContext(
@@ -1376,8 +1483,10 @@ export const runSmtlibScript = (
           throw new SmtParseError("check-sat-using needs a tactic argument", list.end);
         expectClosed(list.items[1]);
         const destructors: (() => void)[] = [];
-        const builder = compileTactic(getTacticEnvironment(destructors, []), list.items[1]);
+        const inits: (() => void)[] = [];
+        const builder = compileTactic(getTacticEnvironment(destructors, [], inits), list.items[1]);
         const tactic = builder.build(params);
+        for (const init of inits) init();
         const goal = getCommandGoal(builder.isTrackingDependencies, list.end);
         clearCheck();
         const deadline = Date.now() + options.timeLimitMs;
@@ -1451,6 +1560,7 @@ export const runSmtlibScript = (
               fdSolver,
               core: [...fdSolver.getUnsatCore()],
               reasonUnknown: fdSolver.reasonUnknown,
+              isHoldingSolver: true,
             });
             print(getVerdict(found.result));
             print("");
@@ -1466,6 +1576,7 @@ export const runSmtlibScript = (
             context: kernel.context,
             core: kernel.context.unsatCore,
             reasonUnknown: kernel.context.getLastFailureMessage(),
+            isHoldingSolver: true,
           });
           print(getVerdict(found.result));
           print("");
@@ -1475,7 +1586,7 @@ export const runSmtlibScript = (
           if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
           const reasonUnknown = getCancelMessage(deadline);
           if (state.kernel !== undefined) state.kernel.context.reasonUnknown = reasonUnknown;
-          setCheck(L_UNDEF, { reasonUnknown });
+          setCheck(L_UNDEF, { reasonUnknown, isHoldingSolver: true });
           print("unknown");
           print("");
         } finally {
@@ -1589,9 +1700,13 @@ export const runSmtlibScript = (
       "reset-assertions",
       (list) => {
         checkArgumentCount(list, 0);
-        restoreAssertions(0);
         resetOptimizer();
         releaseObjectives(0, 0);
+        if (state.isProofsEnabled !== undefined) {
+          dropSolver(detachSolver());
+          resetKernel();
+        }
+        restoreAssertions(0);
         state.checkedObjectives = 0;
         state.scopes = state.scopes.map((scope) => ({
           ...scope,
@@ -1599,7 +1714,7 @@ export const runSmtlibScript = (
           objectives: 0,
           softTrail: 0,
         }));
-        if (state.isProofsEnabled !== undefined) resetKernel();
+        pushSolver();
         state.isIncremental = state.scopes.length > 0;
         state.hasChecked = false;
       },
@@ -1672,11 +1787,16 @@ export const runSmtlibScript = (
         expectClosed(list.items[1]);
         // apply_tactic_cmd, unlike check-sat-using, gives the tactic no logic.
         const destructors: (() => void)[] = [];
+        const inits: (() => void)[] = [];
         const builder = compileTactic(
-          { ...getTacticEnvironment(destructors, []), setup: { ...getSetup(), logic: undefined } },
+          {
+            ...getTacticEnvironment(destructors, [], inits),
+            setup: { ...getSetup(), logic: undefined },
+          },
           list.items[1],
         );
         const tactic = builder.build(params);
+        for (const init of inits) init();
         const input = getCommandGoal(builder.isTrackingDependencies, list.end);
         const isPrintingDependencies = params.get("print_dependencies") === true;
         if (isPrintingDependencies && !builder.isTrackingDependencies && hasNames())
@@ -2100,17 +2220,21 @@ export const runSmtlibScript = (
           value !== undefined &&
           value.kind !== "list";
         if (isParameter) {
-          // Z3 checks a numeral as the string of its rational, so 1.5 becomes 3/2.
-          checkParameterValue(
-            getParameterName(keyword),
+          // Z3 sets a numeral as the string of its rational, so 2.0 becomes 2 and 1.5 becomes 3/2.
+          const text =
             value.kind === "decimal"
               ? Rational.fromDecimal(value.text).toString()
               : value.kind === "numeral" || value.kind === "bitvector"
                 ? BigInt(value.text.replace("#", "0")).toString()
-                : value.text,
-            value,
+                : value.text;
+          checkParameterValue(getParameterName(keyword), text, value);
+          // A fraction keeps its decimal, which is how Z3 prints a double.
+          settings.parameters.set(
+            getParameterName(keyword),
+            text.includes("/") ? value.text : text,
           );
-          settings.parameters.set(getParameterName(keyword), value.text);
+          if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
+          if (optionName === ":rlimit") settings.rlimit = Number(text);
           // Z3 reads the parameters model and unsat_core again whenever any parameter is set.
           const model = settings.parameters.get("model");
           if (model !== undefined) settings.isProducingModels = model === "true";
@@ -2125,10 +2249,6 @@ export const runSmtlibScript = (
           settings.isPrintingSuccess = true;
         if (optionName === ":smt.mbqi") settings.isMbqi = isTrue;
         if (optionName === ":smt.macro_finder") settings.isFindingMacros = isTrue;
-        if (optionName === ":smt.mbqi.max_iterations" && value?.kind === "numeral")
-          settings.mbqiMaxIterations = Number(value.text);
-        if (optionName === ":rlimit" && value?.kind === "numeral")
-          settings.rlimit = Number(value.text);
         const kernel = state.kernel;
         if (isParameter && kernel !== undefined)
           kernel.updateParams(getKernelParams(kernel.isSetUp));
@@ -2153,7 +2273,7 @@ export const runSmtlibScript = (
             numericOption === undefined &&
             booleanOption === undefined) ||
           (optionName.startsWith(":lp.") &&
-            (optionName !== ":lp.int_hammer_period" || value?.kind !== "numeral"))
+            (optionName !== ":lp.int_hammer_period" || !isParameter))
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
       },
@@ -2221,6 +2341,7 @@ export const runSmtlibScript = (
           state.reader.restrictSorts(logic.text);
           // Deviation from Z3: its new solver starts without the open scopes, so it ignores their pop and keeps what they asserted.
           resetKernel();
+          pushSolver();
         }
         if (settings.isPrintingSuccess) print("success");
         checkArgumentCount(list, 1);

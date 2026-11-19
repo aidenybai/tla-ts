@@ -215,7 +215,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const specification = prepared.specification;
   const environment = prepared.environment;
   const runtime = environment.runtime;
-  capture.captureWarnings(runtime, options.errorCodes);
+  capture.captureMessages(runtime, options.errorCodes);
   const search = prepared.search;
   const seed = options.seed ?? 0n;
   const traceDepth = options.traceDepth === -1 ? INFINITE_DEPTH : options.traceDepth;

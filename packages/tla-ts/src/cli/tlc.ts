@@ -414,6 +414,9 @@ const checkSpec = async (
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
       readLine: readStandardInputLine,
+      printPrompt: (text, code) =>
+        code === undefined ? console.log(text) : printer.print(code, MESSAGE_LEVEL.none, text),
+      hasUserFile: args.userFile !== undefined,
       runtimeInvariants: runtimeInvariants.map((invariant) => ({
         name: invariant.name,
         module: invariant.module,

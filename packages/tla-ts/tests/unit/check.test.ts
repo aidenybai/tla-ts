@@ -1101,6 +1101,46 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("names a permuted set with fewer than two elements by its source, with the parentheses of its operands, as TLC does", async () => {
+    const warnings: CheckProgress[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b, c\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSym == ({( a :> b @@ b :> a )}) \\cup Permutations(({c}))\n====",
+      config: "CONSTANTS a = a\nb = b\nc = c\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress);
+      },
+    });
+    expect(warnings).toEqual([
+      {
+        kind: "warning",
+        code: 2300,
+        text: "The sets {(a:>b@@b:>a)}, and ({c}) have been defined to be a symmetry set but contain less than two elements.",
+      },
+    ]);
+  });
+
+  it("warns about symmetry during liveness checking whenever the configuration declares it, as TLC's Tool#hasSymmetry asks", async () => {
+    const progress: CheckProgress[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSym == Permutations({a})\nLive == <>(x = a)\n====",
+      config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym\nPROPERTY Live",
+      onProgress: (event) => {
+        if (event.kind === "warning" || event.kind === "liveness-initializing")
+          progress.push(event);
+      },
+    });
+    expect(progress).toEqual([
+      {
+        kind: "warning",
+        code: 2300,
+        text: "The set {a} has been defined to be a symmetry set but contains less than two elements.",
+      },
+      { kind: "liveness-initializing", isSymmetric: true, isConstrained: false },
+    ]);
+  });
+
   it.each([
     ["no permutation", "{}", 2],
     ["one permutation it names by a definition", "Swap", 1],
@@ -1403,6 +1443,81 @@ ASSUME TLCFP(a) = -887695703
         new TlaEvaluationError(`${UNEXPECTED_EXCEPTION}${item[2]}`),
       );
     }
+  });
+
+  it.each([
+    [
+      "{(a :> b)[b]}",
+      `${UNEXPECTED_EXCEPTION}Attempted to apply function:\n(a :> b)\nto argument b, which is not in the domain of the function.`,
+    ],
+    ["{1 \\div 0}", `${UNEXPECTED_EVAL_EXCEPTION}The second argument of \\div is 0.`],
+  ])(
+    "reports the symmetry %s that fails to evaluate as an unexpected exception, as TLC's Tool does",
+    async (symmetry, message) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSym == ${symmetry}\n====`,
+          config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+        }),
+      ).rejects.toThrow(new TlaEvaluationError(message));
+    },
+  );
+
+  it.each(["1..2", "SUBSET Permutations({a, b})", "{f \\in SUBSET {a} : TRUE}"])(
+    "reports that the symmetry %s, which TLC keeps lazy or as an interval, isn't a set of functions",
+    async (symmetry) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSym == ${symmetry}\n====`,
+          config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+        }),
+      ).rejects.toThrow(
+        new TlaEvaluationError(
+          `${UNEXPECTED_EXCEPTION}The symmetry operator must specify a set of functions.`,
+        ),
+      );
+    },
+  );
+
+  it.each(["[{a, b} -> {a, b}]", "{f \\in [{a, b} -> {a, b}] : f[a] # f[b]}", "Perms"])(
+    "rejects the symmetry %s, a set of functions TLC keeps lazy, as Tool#getSymmetryPerms does",
+    async (symmetry) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nPerms == {f \\in [{a, b} -> {a, b}] : f[a] # f[b]}\nSym == ${symmetry}\n====`,
+          config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+        }),
+      ).rejects.toThrow(
+        new TlaEvaluationError(
+          `${UNEXPECTED_EXCEPTION}The symmetry operator must specify a set of functions.`,
+        ),
+      );
+    },
+  );
+
+  // Deviation from TLC: TLC fails each with "The symmetry values must be function records.", since it holds the value as a tuple, a record or a lazy function rather than a FcnRcdValue.
+  it.each([
+    ["{<<>>}", "<<>>"],
+    ["{Append(<<>>, a)}", "Append(<<>>,a)"],
+    ["{[f |-> a]}", "[f|->a]"],
+    ["{[v \\in Nat |-> v]}", "[v\\inNat|->v]"],
+  ])("checks the symmetry %s as a function", async (symmetry, image) => {
+    const warnings: CheckProgress[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS TLC, Naturals, Sequences\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSym == ${symmetry}\n====`,
+      config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress);
+      },
+    });
+    expect(result.status).toBe("success");
+    expect(warnings).toEqual([
+      {
+        kind: "warning",
+        code: 2300,
+        text: `The set ${image} has been defined to be a symmetry set but contains less than two elements.`,
+      },
+    ]);
   });
 
   it("reports a failing constant part of a property while processing the spec like TLC", async () => {

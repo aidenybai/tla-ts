@@ -1195,6 +1195,10 @@ export class TheoryArray extends Theory {
       this.propagateSelectToStoreParents(todo[head][0], todo[head][1], todo);
   }
 
+  includeFuncInterp(decl: number) {
+    return this.manager.funcDecls[decl].op === OP_ARRAY_EXT;
+  }
+
   initModel(model: ProtoModel) {
     this.model = model;
     this.isUnspecifiedDefault = this.isUnspecifiedDefaultOk();

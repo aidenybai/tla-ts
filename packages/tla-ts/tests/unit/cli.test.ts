@@ -8,6 +8,15 @@ import { getToolSequence, runCliWith } from "./cli-harness";
 const runCli = (directory: string, name: string, args: string[] = []) =>
   runCliWith(directory, [`${name}.tla`, ...args]);
 
+const runCliWithUserFile = (directory: string, args: string[], input?: string) => {
+  const userDirectory = mkdtempSync(join(tmpdir(), "user-file-"));
+  const path = join(userDirectory, "user.txt");
+  const result = runCliWith(directory, [...args, "-noGenerateSpecTE", "-userFile", path], input);
+  const written = readFileSync(path, "utf8");
+  rmSync(userDirectory, { recursive: true });
+  return { result, written };
+};
+
 const getCheckedSpecs = (output: string) =>
   output.split("\n").filter((line) => /^Checking \S+\.tla with /.test(line));
 
@@ -838,17 +847,8 @@ describe("the CLI reports results like TLC", () => {
     ]);
   });
 
-  const runCliWithUserFile = (name: string) => {
-    const directory = mkdtempSync(join(tmpdir(), "user-file-"));
-    const path = join(directory, "user.txt");
-    const result = runCli("cli-output", name, ["-noGenerateSpecTE", "-userFile", path]);
-    const written = readFileSync(path, "utf8");
-    rmSync(directory, { recursive: true });
-    return { result, written };
-  };
-
   it("writes the output of Print and PrintT to -userFile, also while it rebuilds the trace, like TLC", () => {
-    const run = runCliWithUserFile("UserFile");
+    const run = runCliWithUserFile("cli-output", ["UserFile.tla"]);
     expect(run.result.status).toBe(12);
     expect(run.result.stdout.split("\n").filter((line) => line.startsWith("<<"))).toEqual([]);
     expect(run.written).toBe(
@@ -868,10 +868,34 @@ describe("the CLI reports results like TLC", () => {
   });
 
   it("writes the counts of the _POSSIBLE predicates to -userFile like TLC", () => {
-    const run = runCliWithUserFile("UserFilePossible");
+    const run = runCliWithUserFile("cli-output", ["UserFilePossible.tla"]);
     expect(run.result.status).toBe(10);
     expect(run.result.stdout).not.toContain("[Seen |-> 1, Unseen |-> 0]");
     expect(run.written).toBe("[Seen |-> 1, Unseen |-> 0]\n");
+  });
+
+  it("writes the value of PrintT and the counts of the _POSSIBLE predicates to -userFile on one line, and that of Print pretty-printed, like TLC", () => {
+    const run = runCliWithUserFile("cli-output", ["UserFileLong.tla"]);
+    expect(run.result.status).toBe(10);
+    expect(run.written).toBe(
+      [
+        "<<100000, 200000, 300000, 400000, 500000, 600000, 700000, 800000, 900000, 1000000, 1100000, 1200000>>",
+        "<< 100000,",
+        "   200000,",
+        "   300000,",
+        "   400000,",
+        "   500000,",
+        "   600000,",
+        "   700000,",
+        "   800000,",
+        "   900000,",
+        "   1000000,",
+        "   1100000,",
+        "   1200000 >>  TRUE",
+        "[ReachesTheFirstLongState |-> 1, ReachesTheSecondLongState |-> 1, ReachesTheThirdLongStateNever |-> 0, AlsoNeverReachedWithLongName |-> 0]",
+        "",
+      ].join("\n"),
+    );
   });
 });
 
@@ -916,6 +940,40 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
       ask(2, 9),
       ask(3, 8),
     ]);
+  });
+
+  it("prints its questions and states to the console, not to -userFile, and none of them with -suppressMessages 20000, as TLC's MP#printMessage does", () => {
+    const answers = `s\n${"y\n".repeat(6)}`;
+    const run = runCliWithUserFile("tlc-ext", ["PickAsk.tla"], answers);
+    expect(run.result.status).toBe(0);
+    expect(getPickLines(run.result.stdout)).toEqual([
+      ask(1, 8),
+      "/\\ x = 0",
+      "/\\ y = 0",
+      "~>",
+      "/\\ x = 1",
+      "/\\ y = 0",
+      ask(1, 8),
+      ask(1, 9),
+      ask(2, 8),
+      ask(2, 9),
+      ask(3, 9),
+    ]);
+    expect(run.written).toBe("");
+    const suppressed = runCliWith(
+      "tlc-ext",
+      ["PickAsk.tla", "-suppressMessages", "20000"],
+      answers,
+    );
+    expect(suppressed.status).toBe(0);
+    expect(getPickLines(suppressed.stdout)).toEqual([]);
+  });
+
+  it('prints the prompt of TLCSet("pause") to the console, not to -userFile, like TLC', () => {
+    const run = runCliWithUserFile("tlc-ext", ["Pause.tla"], "\n");
+    expect(run.result.status).toBe(0);
+    expect(getPickLines(run.result.stdout)).toEqual(["Press enter to resume model checking."]);
+    expect(run.written).toBe('<<"next", 0>>\n<<"next", 1>>\n<<"next", 2>>\n');
   });
 
   it("marks a successor explored, which TLC neither checks nor asks about again", () => {
@@ -1271,6 +1329,7 @@ describe("the CLI takes several specs and globs", () => {
       "Checking UnfingerprintedState.tla with UnfingerprintedState.cfg",
       "Checking UnspecifiedFairness.tla with UnspecifiedFairness.cfg",
       "Checking UserFile.tla with UserFile.cfg",
+      "Checking UserFileLong.tla with UserFileLong.cfg",
       "Checking UserFilePossible.tla with UserFilePossible.cfg",
       "Checking ViewLasso.tla with ViewLasso.cfg",
       "Checking Warned.tla with Warned.cfg",
@@ -1694,5 +1753,43 @@ describe("the CLI prints messages for a program to read like TLC", () => {
       "2186",
     ]);
     expect(result.stdout).toContain("6. Line 5, column 26 to line 5, column 26 in PromotedWarning");
+  });
+});
+
+describe("the CLI reports an ACTION_CONSTRAINT that is not a boolean like TLC", () => {
+  const getError = (args: string[]) => {
+    const lines = runCliWith("tool-output", ["ActionConstraintValue.tla", ...args]).stdout.split(
+      "\n",
+    );
+    return lines.slice(
+      lines.findIndex((line) => line.startsWith("Error: ")),
+      lines.indexOf("Error: The behavior up to this point is:"),
+    );
+  };
+  const expected =
+    "TLC expected a boolean value, but did not find one. line 10, col 8 to line 10, col 33 of module ActionConstraintValue";
+
+  it("in a breadth-first search, which wraps it once as an unexpected exception", () => {
+    expect(getError([])).toEqual([
+      "Error: TLC threw an unexpected exception.",
+      "This was probably caused by an error in the spec or model.",
+      "See the User Output or TLC Console for clues to what happened.",
+      "The exception was a java.lang.RuntimeException",
+      `: ${expected}`,
+    ]);
+  });
+
+  it("in a simulation, whose SimulationWorker reports the EvalException of Tool#isInActions", () => {
+    expect(getError(["-simulate", "num=1", "-depth", "4"])).toEqual([`Error: ${expected}`]);
+  });
+
+  it("in a depth-first search, which wraps it once as the failure of the next states", () => {
+    expect(getError(["-dfid", "4"])).toEqual([
+      "Error: TLC threw an unexpected exception.",
+      "This was probably caused by an error in the spec or model.",
+      "The error occurred when TLC was computing the set of next states.",
+      "The exception was a java.lang.RuntimeException",
+      `: ${expected}`,
+    ]);
   });
 });

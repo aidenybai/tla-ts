@@ -216,6 +216,7 @@ export class AssertedFormulas {
   private bvSharing: MaxBvSharing;
   private ngLiftIte: NgPushAppIteRw;
   private boundsElim: ElimBoundsRw;
+  private bit0: number;
   hasQuantifiers = false;
   readonly macros: MacroManager;
   isInconsistent = false;
@@ -232,30 +233,39 @@ export class AssertedFormulas {
     this.substitution = new Substitution(manager);
     // set_eliminate_and turns coalesce_chars off when smt.string_solver is seq, its default, so
     // string literals reach the seq theory as concatenations of units.
-    this.rewriter = new Rewriter(manager, { ...KERNEL_REWRITER_OPTIONS, isCoalescingChars: false });
+    this.rewriter = new Rewriter(manager, {
+      ...KERNEL_REWRITER_OPTIONS,
+      isCoalescingChars: false,
+      isExpandingSelectStores: true,
+    });
     this.names = new DefinedNames(manager);
     this.termIteElim = new ElimTermIteRw(manager, this.names);
     this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));
     this.bvSharing = new MaxBvSharing(manager);
     this.ngLiftIte = new NgPushAppIteRw(manager);
     this.boundsElim = new ElimBoundsRw(manager);
+    this.bit0 = manager.mkBvNumeral(0n, 1);
+    manager.incRef(this.bit0);
   }
 
   finalize() {
     this.names.release();
     this.formulas.reset();
     this.macros.release();
-    this.bvSharing.release();
-    this.rewriter.release();
+    this.bvSharing.reset();
+    this.rewriter.reset();
     this.substitution.cleanup();
   }
 
   release() {
     this.ngLiftIte.release();
+    this.manager.decRef(this.bit0);
     this.boundsElim.release();
     this.termIteElim.release();
     this.patternInference.release();
+    this.bvSharing.release();
     this.substitution.release();
+    this.rewriter.release();
   }
 
   push() {
