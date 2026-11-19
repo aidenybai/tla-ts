@@ -390,6 +390,7 @@ const compileConjunction = (
         for (let rest = index; rest < conjuncts.length; rest++) {
           const conjunct = conjuncts[rest];
           const state = run.current;
+          // Deviation from TLC: Tool#getNextStates0 takes its all-assigned path when warnings are on, though its comment says off, so it evaluates UNCHANGED as a boolean and doesn't warn.
           const changed =
             state && conjunct.kind === "Unchanged"
               ? conjunct.variables.find((variable) => {

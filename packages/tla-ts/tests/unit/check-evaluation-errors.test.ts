@@ -442,6 +442,40 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  // Deviation from TLC: TLC's all-assigned path evaluates UNCHANGED x as FALSE and deadlocks without the warning.
+  it.each([
+    [
+      "VARIABLE x\nInit == x = 0\nNext == x' = 1 /\\ UNCHANGED x",
+      "line 5, col 29 to line 5, col 29 of module M",
+    ],
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 1\nNext == x' = 1 /\\ y' = 2 /\\ UNCHANGED x",
+      "line 5, col 39 to line 5, col 39 of module M",
+    ],
+  ])(
+    "warns about a changed variable under UNCHANGED after the step assigns every variable, unlike TLC: %s",
+    async (definitions, location) => {
+      const getOutcome = async (maxSetSize: number | undefined) => {
+        const warnings: string[] = [];
+        const result = await check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\n${definitions}\n====`,
+          config: "INIT Init\nNEXT Next",
+          maxSetSize,
+          onProgress: (progress) => {
+            if (progress.kind === "warning") warnings.push(progress.text);
+          },
+        });
+        return [result.status, warnings];
+      };
+      const expected = [
+        "deadlock",
+        [`The variable x was changed while it is specified as UNCHANGED at\n${location}`],
+      ];
+      expect(await getOutcome(undefined)).toEqual(expected);
+      expect(await getOutcome(1_000_000)).toEqual(expected);
+    },
+  );
+
   it.each([
     [
       "UNCHANGED of a tuple with an impure element",
