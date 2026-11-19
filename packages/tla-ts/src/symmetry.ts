@@ -1,8 +1,8 @@
 import type { BoundPattern, Expression } from "./ast";
 import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
-import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { MESSAGE_CODE } from "./tlc/messages";
+import { EXIT_STATUS, setExitCode, withErrorExitCode } from "./exit-codes";
+import { MESSAGE_CODE, withUnexpectedException } from "./tlc/messages";
 import { evaluate, getRootKey, type Environment } from "./evaluate";
 import { parenthesizedRanges } from "./parser";
 import { getKeyName } from "./resolve";
@@ -119,7 +119,9 @@ export const getSymmetryGroup = (
   }
   const evaluateConstant = (expression: Expression) =>
     evaluate(expression, { environment, scope: undefined, state: undefined, next: undefined });
-  const value = evaluateConstant(definition.body);
+  const value = withErrorExitCode(() =>
+    withUnexpectedException(() => evaluateConstant(definition.body)),
+  );
   if (!isSetValue(value) || !isEnumerable(value)) {
     throw createSymmetryError("The symmetry operator must specify a set of functions.");
   }

@@ -1449,6 +1449,24 @@ ASSUME TLCFP(a) = -887695703
     }
   });
 
+  it.each([
+    [
+      "{(a :> b)[b]}",
+      `${UNEXPECTED_EXCEPTION}Attempted to apply function:\n(a :> b)\nto argument b, which is not in the domain of the function.`,
+    ],
+    ["{1 \\div 0}", `${UNEXPECTED_EVAL_EXCEPTION}The second argument of \\div is 0.`],
+  ])(
+    "reports the symmetry %s that fails to evaluate as an unexpected exception, as TLC's Tool does",
+    async (symmetry, message) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSym == ${symmetry}\n====`,
+          config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+        }),
+      ).rejects.toThrow(new TlaEvaluationError(message));
+    },
+  );
+
   it("reports a failing constant part of a property while processing the spec like TLC", async () => {
     const properties = [
       "<>(1 = {})",

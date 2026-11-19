@@ -62,7 +62,7 @@ export const setExitCode = <Thrown>(error: Thrown, code: number) => {
 
 export const getExitCode = (error: Error) => exitCodes.get(error);
 
-const withErrorExitCode = <Result>(run: () => Result) => {
+export const withErrorExitCode = <Result>(run: () => Result) => {
   try {
     return run();
   } catch (error) {
