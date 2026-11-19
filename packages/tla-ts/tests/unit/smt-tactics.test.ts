@@ -1125,6 +1125,28 @@ describe("tseitin-cnf, as Z3 5.3.2 composes it", () => {
       "(goals\n(goal\n  false\n  :precision precise :depth 1)\n)",
     ]);
   });
+
+  it("keeps the negation of true and false in a literal", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(push)",
+        "(assert (not true))",
+        "(apply tseitin-cnf)",
+        "(pop)",
+        "(push)",
+        "(assert (not false))",
+        "(apply tseitin-cnf)",
+        "(pop)",
+        "(assert (or p (not true)))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (not true)\n  :precision precise :depth 1)\n)",
+      "(goals\n(goal\n  (not false)\n  :precision precise :depth 1)\n)",
+      "(goals\n(goal\n  (or p (not true))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
 });
 
 describe("elim-term-ite, as Z3 5.3.2 names the term if-then-elses", () => {

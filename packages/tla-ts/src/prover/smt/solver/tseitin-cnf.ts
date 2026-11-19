@@ -88,7 +88,9 @@ export const tseitinCnf = (manager: AstManager, goal: Goal) => {
     return pin(manager.mkNot(expr));
   };
 
-  const mkLit = (expr: number, isNeg: boolean) => (isNeg ? pin(manager.mkNot(expr)) : expr);
+  // ast_manager::mk_not keeps (not true), which AstManager.mkNot folds to false.
+  const mkLit = (expr: number, isNeg: boolean) =>
+    isNeg ? pin(manager.mkApp(OP_NOT, [expr], SORT_BOOL)) : expr;
 
   const getLit = (form: number, isNegated: boolean): number => {
     let expr = form;
