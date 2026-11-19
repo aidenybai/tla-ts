@@ -874,7 +874,7 @@ export const runSmtlibScript = (
       ...result,
     };
   };
-  // parse_sexpr_ref reports an error at the token it scans, under an empty file name.
+  // Z3 reports a parse error at the token it last scanned, under an empty file name.
   const readDefaultTactic = (text: string) => {
     const reader = createCommandReader(text);
     try {

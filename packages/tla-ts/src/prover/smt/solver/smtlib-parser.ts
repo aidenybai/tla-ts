@@ -904,7 +904,7 @@ export const createCommandReader = (text: string) => {
     if (token.kind === ")") throw new SmtParseError("invalid s-expression, unexpected ')'", token);
     const sexpr = token.kind === "(" ? readList(token) : token;
     expectClosed(sexpr);
-    // parse_sexpr scans the token after the s-expression.
+    // Z3 scans one token past the s-expression.
     state.lookahead = take();
     return sexpr;
   };

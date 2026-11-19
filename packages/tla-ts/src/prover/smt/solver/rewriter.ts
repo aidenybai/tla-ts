@@ -687,7 +687,7 @@ export class Rewriter extends RewriterTpl {
       return manager.mkNot(arg);
     if (!manager.isHoldingTemporaries)
       return this.mkEq(this.mkNot(manager.getArg(arg, 0)), manager.getArg(arg, 1));
-    // mk_not_core releases the negation of an equality's left side before it returns.
+    // Z3 frees the negation of the left side before it returns, not with the other temporaries.
     const outer = manager.beginTemporaries();
     const result = this.mkEq(this.mkNot(manager.getArg(arg, 0)), manager.getArg(arg, 1));
     manager.incRef(result);
