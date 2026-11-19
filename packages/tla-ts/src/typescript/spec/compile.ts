@@ -285,8 +285,8 @@ export const compileToEscore = (
 ): EscoreSpec => {
   const files = loadFiles(source, fileName, isModule);
   const program = specialize(files, runtime.internalKeys);
-  // The runtime's setTimeout gives undefined where Node's gives a Timeout, so a program may only
-  // call it as a statement.
+  // The runtime's setTimeout gives a script undefined where Node gives a Timeout, so a script may
+  // only call it as a statement.
   const findTimerValue = (node: ts.Node): ts.Node | undefined =>
     ts.isIdentifier(node) &&
     node.text === "setTimeout" &&
@@ -297,9 +297,10 @@ export const compileToEscore = (
     )
       ? node
       : ts.forEachChild(node, findTimerValue);
-  const timerValue = program.identifiers.has("setTimeout")
-    ? files.map((file) => findTimerValue(file.sourceFile)).find((node) => node !== undefined)
-    : undefined;
+  const timerValue =
+    !isModule && program.identifiers.has("setTimeout")
+      ? files.map((file) => findTimerValue(file.sourceFile)).find((node) => node !== undefined)
+      : undefined;
   if (timerValue !== undefined) {
     throw new TlaTypeScriptError("tla-ts can't read the value of setTimeout", timerValue);
   }

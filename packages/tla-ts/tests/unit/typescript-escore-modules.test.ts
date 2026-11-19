@@ -278,6 +278,29 @@ describe("gives a module the host's globals and properties that ESCore lacks, wh
   });
 });
 
+describe("gives a module a Timeout of setTimeout, which stops where its code uses it", () => {
+  const getFiles = (expected: string) => ({
+    "main.js": `const log = [];
+      const handle = setTimeout(() => log.push("timer"));
+      log.push(typeof handle, handle === setTimeout(() => {}));
+      setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+  });
+
+  it("agrees with Node", async () => {
+    expect((await checkModules(getFiles("object,false,timer"))).message).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect((await checkModules(getFiles("object,true,timer"))).message).toContain(THREW);
+  });
+
+  it("stops at a use of the Timeout", async () => {
+    expect((await checkModules({ "main.js": "setTimeout(() => {}).unref();" })).message).toContain(
+      "tla-ts can't run the host's Timeout",
+    );
+  });
+});
+
 describe("gives a module the part of Node's console that writes primitives and makes tasks", () => {
   const getFiles = (expected: string) => ({
     "main.js": getMain(

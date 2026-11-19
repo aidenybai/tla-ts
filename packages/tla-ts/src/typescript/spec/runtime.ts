@@ -218,7 +218,8 @@ const DEFINITIONS = [
   `DefineHost(s, properties) ==
   LET handler == OrdinaryObjectCreate(s, Null)
       trap == CreateBuiltinFunction(handler.s, <<"Module", "hostTrap">>, 0, <<>>, Empty)
-  IN DefineHostWith(DefineTraps(trap.s, Val(handler), Val(trap), CommonJsTraps), Val(handler), properties)`,
+      traps == DefineTraps(trap.s, Val(handler), Val(trap), CommonJsTraps)
+  IN DefineHostWith([traps EXCEPT !.hostHandler = Val(handler)], Val(handler), properties)`,
   `DefineHostWith(s, handler, properties) ==
   IF properties = <<>> THEN Ok(s, Empty) ELSE
   LET p == Head(properties)
@@ -384,13 +385,17 @@ const HOST_PATCHES = [
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
   },
-  // setTimeout, of a callback and no delay, whose callback RunTimers calls once the jobs ran.
+  // setTimeout, of a callback and no delay, whose callback RunTimers calls once the jobs ran. In a
+  // module program, which runs in the host's own context, it gives a Timeout, as Node does, which
+  // stops at any use, and a script may only call it as a statement.
   {
     name: "GlobalBuiltin",
     from: `    [] m = "gc" ->`,
     to: `    [] m = "setTimeout" ->
          IF Len(args) > 1 \\/ ~IsCallable(s, Arg(args, 1)) THEN Unsupported(s, <<>>)
-         ELSE Ok([s EXCEPT !.timers = Append(@, Arg(args, 1))], Undefined)
+         ELSE IF s.hostHandler = Empty THEN Ok([s EXCEPT !.timers = Append(@, Arg(args, 1))], Undefined)
+         ELSE LET timeout == Alloc([s EXCEPT !.timers = Append(@, Arg(args, 1))], MakeObject(Null, "ordinary", [hostName |-> N("Timeout")]))
+              IN ProxyCreate(timeout.s, timeout.v, s.hostHandler)
     [] m = "gc" ->`,
   },
   // A frame of a program's code, whose step is "Code" and whose arguments start with the id of the
