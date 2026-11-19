@@ -899,18 +899,15 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: SMT_DESCRS,
       isRejectingUnknown: false,
-      build: (environment, params) =>
-        inPlace(
-          createCtxSolverSimplify(environment.manager, () => ({
-            isMbqi: getBool(params, "mbqi", environment.isMbqi),
-            mbqiMaxIterations: getUint(
-              params,
-              "mbqi.max_iterations",
-              environment.mbqiMaxIterations,
-            ),
-            isFindingMacros: environment.isFindingMacros,
-          })),
-        ),
+      build: (environment, params) => {
+        const simplifier = createCtxSolverSimplify(environment.manager, () => ({
+          isMbqi: getBool(params, "mbqi", environment.isMbqi),
+          mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
+          isFindingMacros: environment.isFindingMacros,
+        }));
+        environment.destructors.push(simplifier.release);
+        return inPlace(simplifier.run);
+      },
     },
   ],
   [

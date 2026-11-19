@@ -15,15 +15,16 @@ interface ExprPos {
   expr: number;
 }
 
+// The tactic makes its kernel when it is made, and cleanup_tactical resets the kernel after each run.
 export const createCtxSolverSimplify = (manager: AstManager, getParams: () => KernelParams) => {
+  let kernel = new SmtKernel(manager, getParams());
   const boolFn = manager.mkFuncDecl(FRESH_SYMBOL, [SORT_INT], SORT_BOOL);
   const fns = new Map<number, number>();
-  return (goal: Goal) => {
+  const reduceGoal = (goal: Goal) => {
     if (goal.isProofsEnabled || goal.isInconsistent) {
       goal.depth++;
       return;
     }
-    const kernel = new SmtKernel(manager, getParams());
     const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
     const trail = new RefVector(manager);
     const pin = (expr: number) => {
@@ -118,5 +119,13 @@ export const createCtxSolverSimplify = (manager: AstManager, getParams: () => Ke
     }
     trail.reset();
     goal.depth++;
+  };
+  return {
+    run: (goal: Goal) => {
+      reduceGoal(goal);
+      kernel.release();
+      kernel = new SmtKernel(manager, getParams());
+    },
+    release: () => kernel.release(),
   };
 };

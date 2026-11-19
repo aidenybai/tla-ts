@@ -2942,6 +2942,28 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
   });
 });
 
+describe("ctx-solver-simplify, as Z3 5.3.2 keeps its kernel", () => {
+  it("makes its kernel with the tactic, even when the tactic never runs", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(apply (or-else skip ctx-solver-simplify))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(goals\n(goal\n  :precision precise :depth 0)\n)", "(:rlimit 2)"]);
+  });
+
+  it("makes a new kernel after each run", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(apply (then ctx-solver-simplify ctx-solver-simplify ctx-solver-simplify))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["(goals\n(goal\n  :precision precise :depth 1)\n)", "(:rlimit 63)"]);
+  });
+});
+
 describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
   it("keeps the cache of lia2card's rewriter across the checks", () => {
     expect(
