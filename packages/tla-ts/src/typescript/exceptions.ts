@@ -407,6 +407,11 @@ export const isNativeErrorValue = (node: ts.Expression, context: Context) => {
   return symbol !== undefined && isNative(symbol);
 };
 
+// A value of a native error's type where the heap holds objects, which may hold an instance of a
+// class that extends the error, as an object on the heap, rather than a record.
+export const mayBeHeapError = (node: ts.Expression, context: Context) =>
+  context.heap !== undefined && isNativeErrorValue(node, context);
+
 const getSubclasses = (node: ts.Node, symbol: ts.Symbol, context: Context) => {
   const found = new Map<ts.Symbol, Expression>();
   const add = (created: ts.Symbol | undefined) => {

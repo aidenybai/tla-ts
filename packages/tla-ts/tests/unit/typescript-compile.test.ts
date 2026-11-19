@@ -57377,3 +57377,71 @@ describe("runs a generic function's closure only where its type fits the call", 
     );
   });
 });
+
+describe("lists the keys of an error-typed value that holds an instance of a class that extends an error", () => {
+  const getSource = (expected: string) => `
+    const box = { seen: "" };
+    class Failure extends Error {
+      getKind() {
+        return "failure";
+      }
+    }
+    class Coded extends TypeError {
+      code = 7;
+      getKind() {
+        return "coded";
+      }
+    }
+    const failure: Error = new Failure("x");
+    const coded: TypeError = new Coded("y");
+    const plain: Error = new Error("z");
+    box.seen = [
+      Object.keys(failure).length,
+      Object.entries(failure).length,
+      Object.keys(coded).join(),
+      Object.entries(coded)
+        .map(([key, value]) => key + ":" + value)
+        .join("+"),
+      Object.values(coded).join(),
+      Object.hasOwn(failure, "message"),
+      failure.hasOwnProperty("name"),
+      Object.hasOwn(coded, "code"),
+      Object.keys(plain).length,
+      Object.hasOwn(plain, "message"),
+      Object.getOwnPropertyNames(coded)
+        .filter((key) => key !== "stack")
+        .join("+"),
+    ].join();
+    if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+  `;
+  // Object.keys and Object.entries count no own enumerable key of the error, where they once
+  // counted the field of the reference that the heap gives it.
+  const getCounts = (expected: string) => `
+    const box = { seen: "" };
+    class Failure extends Error {
+      getKind() {
+        return "failure";
+      }
+    }
+    const failure: Error = new Failure("x");
+    const plain: Error = new Error("z");
+    box.seen = [Object.keys(failure).length, Object.entries(failure).length, Object.keys(plain).length].join();
+    if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+  `;
+
+  it("agrees with Node", async () => {
+    expect(
+      (await checkModel(getSource("0,0,code,code:7,7,true,false,true,0,true,message+code")))
+        .failure,
+    ).toBeUndefined();
+    expect((await checkModel(getCounts("0,0,0"))).failure).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (await checkModel(getSource("1,0,code,code:7,7,true,false,true,0,true,message+code"))).failure
+        ?.message,
+    ).toContain("seen 0,0,code,code:7,7,true,false,true,0,true,message+code");
+    expect((await checkModel(getCounts("1,1,0"))).failure?.message).toContain("seen 0,0,0");
+  });
+});

@@ -102,6 +102,7 @@ import {
   getErrorClass,
   isCaughtRead,
   isNativeErrorValue,
+  mayBeHeapError,
   translateHasInstanceCall,
   translateInstanceOf,
   translateNewError,
@@ -1487,7 +1488,10 @@ const translateBuiltInCall = (
         },
       );
     }
-    if (OWN_KEYS_ANY.has(method) && mayBeHeapObject(argument, context)) {
+    if (
+      OWN_KEYS_ANY.has(method) &&
+      (mayBeHeapObject(argument, context) || mayBeHeapError(argument, context))
+    ) {
       return useJavaScript(
         "OwnKeysAny",
         [
@@ -1857,8 +1861,8 @@ const translateBuiltInCall = (
     );
   }
   // A value that may be an object or another reads its own key where the heap holds it, and stops
-  // otherwise.
-  if (isOwnMethod && mayBeHeapObject(owned[0], context)) {
+  // otherwise, as an error may be either.
+  if (isOwnMethod && (mayBeHeapObject(owned[0], context) || mayBeHeapError(owned[0], context))) {
     return guardAlias(
       share(translateExpression(owned[0], scope, context), "owner", context, (value) =>
         ifExpression(

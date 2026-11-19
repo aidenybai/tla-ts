@@ -5492,6 +5492,8 @@ OwnKeysAny(heap, value, method, isEveryMapHeld) ==
        [] IsRef(value) /\\ method = "values" -> ObjectValues(heap, value)
        [] IsRef(value) /\\ method = "entries" -> ObjectEntries(heap, value)
        [] IsRef(value) -> OwnPropertyNames(heap, value)
+       \\* An error that a record holds has no own enumerable property.
+       [] IsError(value) /\\ method # "getOwnPropertyNames" -> <<>>
        [] method = "getOwnPropertyNames" -> OwnKeys(object)
        [] method = "keys" -> keys
        [] method = "values" -> [position \\in DOMAIN keys |-> object.values[keys[position]]]

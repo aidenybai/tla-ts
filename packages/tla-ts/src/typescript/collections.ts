@@ -60,6 +60,7 @@ import {
   translateRegExpValue,
   translateSymbolProperty,
 } from "./intrinsics";
+import { mayBeHeapError } from "./exceptions";
 import { getTypeNames, isComparableType, useJavaScript } from "./javascript";
 import { getWrittenFunctions, isNullish } from "./protocols";
 import { bindNames, bindPatternInline, type Receiver, type Scope } from "./scope";
@@ -523,8 +524,8 @@ const translateUnordered = (
       return { set: set([]), isMapped: false };
     }
     // A value that may be an object in the heap, whose reference has no fields that are its keys,
-    // lists them as it runs.
-    if (mayBeHeapObject(argument, context)) {
+    // lists them as it runs, as an error may be.
+    if (mayBeHeapObject(argument, context) || mayBeHeapError(argument, context)) {
       if (OWN_KEYS_ANY.has(method)) return undefined;
       throw new TlaTypeScriptError(
         "tla-ts can't list the keys of a value that may be an object or another value",
