@@ -639,6 +639,14 @@ const STACK_DEFINITIONS = [
   // writes the header of Error.prototype.toString, which reads the error's name and message, and
   // the frames V8 captured.
   `FormatStack(s, error, t) ==
+  LET header == StackHeader(s, error, t) IN IF IsAbrupt(header) THEN header ELSE
+  Ok(header.s, Str(Val(header).value \\o JoinFrames(WalkFrames(header.s, t, t.callers, <<>>, NoFrames).lines)))`,
+  // The walk of a stack's frames before it counts one: their lines, where it writes them, and
+  // their positions.
+  `NoFrames == [skipping |-> TRUE, count |-> 0, isText |-> TRUE, lines |-> <<>>, positions |-> <<>>]`,
+  // The header of an error's stack as Node writes it, Error.prototype.toString's, where no
+  // Error.prepareStackTrace of a program writes it instead.
+  `StackHeader(s, error, t) ==
   IF t.realm # 1 \\/ s.realmId # 1 THEN Assert(FALSE, "tla-ts can't read the stack of an error of another realm as Node writes it") ELSE
   LET e == Get(s, Intrinsic(s, "GlobalObject"), SV("Error")) IN IF IsAbrupt(e) THEN e ELSE
   LET p == CASE IsNullish(Val(e)) -> Ok(e.s, Undefined)
@@ -648,8 +656,7 @@ const STACK_DEFINITIONS = [
   LET q == Get(p.s, Intrinsic(p.s, "Error"), SV("prepareStackTrace")) IN IF IsAbrupt(q) THEN q ELSE
   IF IsCallable(q.s, Val(p)) \\/ IsCallable(q.s, Val(q)) THEN Assert(FALSE, "tla-ts can't run a program's Error.prepareStackTrace") ELSE
   IF ProxyOnChain(q.s, error) THEN Assert(FALSE, "tla-ts can't ask a proxy whether an error is one of Node's") ELSE
-  LET header == ErrorBuiltin(q.s, Undefined, "toString", error, <<>>, Undefined) IN IF IsAbrupt(header) THEN header ELSE
-  Ok(header.s, Str(Val(header).value \\o JoinFrames(WalkFrames(header.s, t, t.callers, <<>>, [skipping |-> TRUE, count |-> 0, lines |-> <<>>]))))`,
+  ErrorBuiltin(q.s, Undefined, "toString", error, <<>>, Undefined)`,
   `ProxyOnChain(s, o) == o # Null /\\ (O(s, o).class = "proxy" \\/ ProxyOnChain(s, O(s, o).proto))`,
   `JoinFrames(lines) == IF lines = <<>> THEN <<>> ELSE <<10>> \\o N("    at ") \\o Head(lines) \\o JoinFrames(Tail(lines))`,
   // The built-ins that run a function with no frame of their own on V8's stack, and those whose
@@ -668,9 +675,10 @@ const STACK_DEFINITIONS = [
   // The frames of a stack, from the frame of the call e, whose position is pos, down
   // (CallSiteBuilder): a frame of a built-in that V8 hides counts for nothing, as a class's default
   // constructor that a derived class's super calls, which V8 skips; and one that tla-ts can't tell
-  // stops, but where V8 skips it anyway.
+  // stops, but where V8 skips it anyway. The walk gives the lines of the frames it counts, and
+  // their positions.
   `WalkFrames(s, t, e, pos, r) ==
-  IF r.count >= t.limit THEN r.lines
+  IF r.count >= t.limit THEN r
   ELSE IF e = Null THEN BottomFrames(s, t, pos, r)
   ELSE LET o == O(s, e.f)
            frame == [kind |-> o.class, f |-> e.f, this |-> e.this, isNew |-> e.isNew, pos |-> pos]
@@ -683,6 +691,9 @@ const STACK_DEFINITIONS = [
                  IF SameValue(e.this, e.f) THEN WalkFrames(s, t, e.next, e.site, VisitFrame(s, t, [frame EXCEPT !.kind = "default"], r))
                  ELSE WalkFrames(s, t, e.next, e.site, r)
             [] r.skipping /\\ t.target # Empty /\\ ~SameValue(e.f, t.target) -> WalkFrames(s, t, e.next, e.site, r)
+            \\* An await's resumption, of which V8 shows the resumed code's frame, at its position.
+            [] ~r.isText /\\ o.class = "builtin" /\\ o.slots.id \\in {<<"Await", "fulfilled">>, <<"Await", "rejected">>} ->
+                 WalkFrames(s, t, e.next, e.site, VisitFrame(s, t, [kind |-> "top", pos |-> pos], r))
             [] OTHER -> Assert(FALSE, "tla-ts can't tell whether Node shows this frame of a stack")`,
   // The frame of a generator's body, which its function has, with its this value.
   `GeneratorFrame(s, gen, pos) ==
@@ -694,23 +705,26 @@ const STACK_DEFINITIONS = [
   IF r.count >= t.limit THEN r
   ELSE IF r.skipping THEN
     IF t.target = Empty \\/ (frame.kind \\in {"function", "builtin", "default"} /\\ SameValue(frame.f, t.target)) THEN [r EXCEPT !.skipping = FALSE] ELSE r
-  ELSE [r EXCEPT !.count = @ + 1, !.lines = Append(@, FrameText(s, frame))]`,
+  ELSE [r EXCEPT !.count = @ + 1, !.lines = IF r.isText THEN Append(@, FrameText(s, frame)) ELSE @,
+                 !.positions = Append(@, IF frame.kind = "host" THEN <<>> ELSE frame.pos)]`,
   // The frames below a program's: the top level of an entry module and the host's frames that run
   // it, nothing below a promise job's function but async frames, which stop, and in a job, code at
-  // the top level, which a resumed async body or module is, stops.
+  // the top level, which a resumed async body or module is, stops, but for a walk of positions
+  // alone, which takes its position.
   `BottomFrames(s, t, pos, r) ==
   CASE t.task.kind = "main" ->
          LET top == VisitFrame(s, t, [kind |-> "top", pos |-> pos], r) IN
-         IF top.count >= t.limit THEN top.lines
+         IF top.count >= t.limit THEN top
          ELSE IF HostEntryFrames(1) = Empty THEN Assert(FALSE, "tla-ts can't tell the frames that Node runs this program from")
-         ELSE VisitHostFrames(s, t, HostEntryFrames(1), top).lines
+         ELSE VisitHostFrames(s, t, HostEntryFrames(1), top)
     [] t.task.kind = "reaction" /\\ pos = <<>> ->
          IF t.task.promise # Empty /\\ O(s, t.task.promise).slots.state = "pending" /\\
             Len(O(s, t.task.promise).slots.fulfillReactions) = 1 /\\
             O(s, t.task.promise).slots.fulfillReactions[1].handler # Empty /\\
             O(s, O(s, t.task.promise).slots.fulfillReactions[1].handler).class = "builtin"
          THEN Assert(FALSE, "tla-ts can't write the async frames of a stack as Node does")
-         ELSE r.lines
+         ELSE r
+    [] ~r.isText /\\ pos # <<>> -> VisitFrame(s, t, [kind |-> "top", pos |-> pos], r)
     [] OTHER -> Assert(FALSE, "tla-ts can't tell the frames below this job's as Node writes them")`,
   `VisitHostFrames(s, t, lines, r) ==
   IF lines = <<>> THEN r ELSE VisitHostFrames(s, t, Tail(lines), VisitFrame(s, t, [kind |-> "host", text |-> Head(lines)], r))`,

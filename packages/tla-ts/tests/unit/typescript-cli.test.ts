@@ -147,6 +147,21 @@ describe("the CLI with TypeScript files", () => {
       "Promise.reject(undefined).catch(() => {});\n",
     ],
     [
+      "an error of a subclass that names itself",
+      'class Oops extends Error {}\nclass Named extends Oops {\n  name = "Custom";\n}\nthrow new Named("named");\n',
+      'class Oops extends Error {}\nclass Named extends Oops {\n  name = "Custom";\n}\ntry {\n  throw new Named("named");\n} catch {}\n',
+    ],
+    [
+      "an error that a function makes and a script throws",
+      'const make = (n: number) => new TypeError("made " + n);\nlet n = 2;\n\tif (n > 1) throw make(n);\n',
+      'const make = (n: number) => new TypeError("made " + n);\nlet n = 2;\nif (n > 2) throw make(n);\n',
+    ],
+    [
+      "an error that a promise rejects with",
+      'const fail = async () => {\n  throw new Error("in");\n};\nfail();\n',
+      'const fail = async () => {\n  throw new Error("in");\n};\nfail().catch(() => {});\n',
+    ],
+    [
       "a throw in an async function",
       "const fail = async () => {\n  throw 1;\n};\nfail();\n",
       "const fail = async () => {\n  throw 1;\n};\nfail().catch(() => {});\n",
@@ -396,9 +411,9 @@ describe("the CLI with TypeScript files", () => {
     expect(getExit(runCli(directory, ["settled.ts"]))).toEqual([0, ""]);
   });
 
-  it("stops where a script leaves an error uncaught, whose stack V8 writes", () => {
+  it("stops where a script leaves an error uncaught whose properties Node prints", () => {
     const directory = copyFixtures("passing");
-    writeFileSync(join(directory, "error.ts"), 'throw new RangeError("total");\n');
+    writeFileSync(join(directory, "error.ts"), 'throw new RangeError("total", { cause: 1 });\n');
     const result = runCli(directory, ["error.ts"]);
     expect(result.status).not.toBe(1);
     expect(result.stdout).toContain(
