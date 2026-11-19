@@ -89,6 +89,7 @@ import type { Solution } from "./tableau";
 import {
   formatInnerMessage,
   formatNestedMessage,
+  formatPrompt,
   MESSAGE_CODE,
   MISSING_INIT_174,
   withHeadline,
@@ -115,6 +116,8 @@ import {
 
 export interface CliSettings {
   readLine?: () => string | undefined;
+  /** Prints to TLC's console, never to -userFile, the prompts TLC prints as it reads standard input, under their message code if any. */
+  printPrompt?: (text: string, code?: number) => void;
   /** TLC's -userFile, to which PrintT writes a value without line breaks. */
   hasUserFile?: boolean;
   runtimeInvariants?: RuntimeInvariant[];
@@ -941,6 +944,7 @@ export const createCheckEnvironment = (
     version: options.version,
     moduleOperators: options.moduleOperators,
     readLine: options.readLine,
+    printPrompt: options.printPrompt,
     runtimeInvariants: options.runtimeInvariants,
   });
   return { order, specification };
@@ -953,13 +957,19 @@ export const createOutputCapture = (onPrint: (text: string) => void) => {
       if (capturedLines) capturedLines.push(text);
       else onPrint(text);
     },
-    captureWarnings: (runtime: CheckerRuntime, errorCodes: number[] = []) => {
+    captureMessages: (runtime: CheckerRuntime, errorCodes: number[] = []) => {
       const warn = runtime.warn;
+      const printPrompt = runtime.printPrompt;
       runtime.warn = (code, text) => {
         // TLC's MP#printWarning fails on a warning -messagesAsErrors lists, even one whose output tla-ts holds back.
         if (errorCodes.includes(code)) throw new TlaWarningAsError(code, text);
         if (capturedLines) capturedLines.push({ kind: "warning", code, text });
         else warn(code, text);
+      };
+      // TLC prints a prompt as it replays a step, among the output tla-ts holds back until then.
+      runtime.printPrompt = (text, code) => {
+        if (capturedLines) capturedLines.push(formatPrompt(runtime.isTool, text, code));
+        else printPrompt(text, code);
       };
     },
     captureOutput: <Result>(evaluate: () => Result) => {

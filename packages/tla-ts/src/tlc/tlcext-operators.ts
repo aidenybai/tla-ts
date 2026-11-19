@@ -16,7 +16,7 @@ import {
 } from "../errors";
 import { getTlcFingerprint } from "./fingerprint";
 import { prettyPrint, prettyPrintT } from "../pretty-print";
-import { formatMessage, formatNestedMessage, MESSAGE_CODE, MESSAGE_LEVEL } from "./messages";
+import { formatNestedMessage, MESSAGE_CODE } from "./messages";
 import {
   describeRange,
   evaluate,
@@ -114,12 +114,7 @@ const getRegister = (runtime: CheckerRuntime, key: Value) => {
   return undefined;
 };
 
-export const setTlcValue = (
-  runtime: CheckerRuntime,
-  print: (text: string) => void,
-  key: Value,
-  value: Value,
-) => {
+export const setTlcValue = (runtime: CheckerRuntime, key: Value, value: Value) => {
   if (typeof key === "number" && key >= 0) {
     runtime.registers.set(key, value);
     return;
@@ -130,7 +125,7 @@ export const setTlcValue = (
   }
   if (key === "pause") {
     if (value !== true || !runtime.pause) return;
-    print("Press enter to resume model checking.");
+    runtime.printPrompt("Press enter to resume model checking.");
     runtime.pause();
     return;
   }
@@ -182,10 +177,7 @@ const getMentionedLevel = (
   return Math.max(CONSTANT_LEVEL, ...levels);
 };
 
-export const createTlcExtOperators = (
-  print: (text: string) => void,
-  runtime: CheckerRuntime,
-): Builtin[] => {
+export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
   const globalCaches = new Map<Expression, Map<string, Value>>();
   const stateCaches = new WeakMap<(Value | undefined)[], Map<Expression, Map<string, Value>>>();
   const getStateCaches = (state: (Value | undefined)[]) => {
@@ -302,14 +294,7 @@ export const createTlcExtOperators = (
         const state = context.state;
         const action = runtime.getSuccessorAction(state, next);
         const printOverride = (text: string) =>
-          print(
-            formatMessage(
-              runtime.isTool,
-              MESSAGE_CODE.moduleOverrideStdout,
-              MESSAGE_LEVEL.none,
-              text,
-            ),
-          );
+          runtime.printPrompt(text, MESSAGE_CODE.moduleOverrideStdout);
         while (true) {
           printOverride(
             `Extend behavior of length ${runtime.getLevel(state)} with a "${action?.name}" step [<Action ${action?.location.range && formatRange(action.location.range)}>]? (Yes/no/explored/states/diff):`,

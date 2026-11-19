@@ -8,6 +8,15 @@ import { getToolSequence, runCliWith } from "./cli-harness";
 const runCli = (directory: string, name: string, args: string[] = []) =>
   runCliWith(directory, [`${name}.tla`, ...args]);
 
+const runCliWithUserFile = (directory: string, args: string[], input?: string) => {
+  const userDirectory = mkdtempSync(join(tmpdir(), "user-file-"));
+  const path = join(userDirectory, "user.txt");
+  const result = runCliWith(directory, [...args, "-noGenerateSpecTE", "-userFile", path], input);
+  const written = readFileSync(path, "utf8");
+  rmSync(userDirectory, { recursive: true });
+  return { result, written };
+};
+
 const getCheckedSpecs = (output: string) =>
   output.split("\n").filter((line) => /^Checking \S+\.tla with /.test(line));
 
@@ -838,17 +847,8 @@ describe("the CLI reports results like TLC", () => {
     ]);
   });
 
-  const runCliWithUserFile = (name: string) => {
-    const directory = mkdtempSync(join(tmpdir(), "user-file-"));
-    const path = join(directory, "user.txt");
-    const result = runCli("cli-output", name, ["-noGenerateSpecTE", "-userFile", path]);
-    const written = readFileSync(path, "utf8");
-    rmSync(directory, { recursive: true });
-    return { result, written };
-  };
-
   it("writes the output of Print and PrintT to -userFile, also while it rebuilds the trace, like TLC", () => {
-    const run = runCliWithUserFile("UserFile");
+    const run = runCliWithUserFile("cli-output", ["UserFile.tla"]);
     expect(run.result.status).toBe(12);
     expect(run.result.stdout.split("\n").filter((line) => line.startsWith("<<"))).toEqual([]);
     expect(run.written).toBe(
@@ -868,14 +868,14 @@ describe("the CLI reports results like TLC", () => {
   });
 
   it("writes the counts of the _POSSIBLE predicates to -userFile like TLC", () => {
-    const run = runCliWithUserFile("UserFilePossible");
+    const run = runCliWithUserFile("cli-output", ["UserFilePossible.tla"]);
     expect(run.result.status).toBe(10);
     expect(run.result.stdout).not.toContain("[Seen |-> 1, Unseen |-> 0]");
     expect(run.written).toBe("[Seen |-> 1, Unseen |-> 0]\n");
   });
 
   it("writes the value of PrintT and the counts of the _POSSIBLE predicates to -userFile on one line, and that of Print pretty-printed, like TLC", () => {
-    const run = runCliWithUserFile("UserFileLong");
+    const run = runCliWithUserFile("cli-output", ["UserFileLong.tla"]);
     expect(run.result.status).toBe(10);
     expect(run.written).toBe(
       [
@@ -940,6 +940,40 @@ describe("the CLI answers PickSuccessor from standard input like TLC", () => {
       ask(2, 9),
       ask(3, 8),
     ]);
+  });
+
+  it("prints its questions and states to the console, not to -userFile, and none of them with -suppressMessages 20000, as TLC's MP#printMessage does", () => {
+    const answers = `s\n${"y\n".repeat(6)}`;
+    const run = runCliWithUserFile("tlc-ext", ["PickAsk.tla"], answers);
+    expect(run.result.status).toBe(0);
+    expect(getPickLines(run.result.stdout)).toEqual([
+      ask(1, 8),
+      "/\\ x = 0",
+      "/\\ y = 0",
+      "~>",
+      "/\\ x = 1",
+      "/\\ y = 0",
+      ask(1, 8),
+      ask(1, 9),
+      ask(2, 8),
+      ask(2, 9),
+      ask(3, 9),
+    ]);
+    expect(run.written).toBe("");
+    const suppressed = runCliWith(
+      "tlc-ext",
+      ["PickAsk.tla", "-suppressMessages", "20000"],
+      answers,
+    );
+    expect(suppressed.status).toBe(0);
+    expect(getPickLines(suppressed.stdout)).toEqual([]);
+  });
+
+  it('prints the prompt of TLCSet("pause") to the console, not to -userFile, like TLC', () => {
+    const run = runCliWithUserFile("tlc-ext", ["Pause.tla"], "\n");
+    expect(run.result.status).toBe(0);
+    expect(getPickLines(run.result.stdout)).toEqual(["Press enter to resume model checking."]);
+    expect(run.written).toBe('<<"next", 0>>\n<<"next", 1>>\n<<"next", 2>>\n');
   });
 
   it("marks a successor explored, which TLC neither checks nor asks about again", () => {

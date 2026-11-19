@@ -22,6 +22,7 @@ export interface CheckerRuntime {
   evaluateAtStartup: <Result>(evaluate: () => Result) => Result;
   pause: (() => void) | undefined;
   readLine: (() => string | undefined) | undefined;
+  printPrompt: (text: string, code?: number) => void;
   warn: (code: number, text: string) => void;
   isWarningEnabled: boolean;
   isTool: boolean;
@@ -101,6 +102,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     },
     pause: undefined,
     readLine: undefined,
+    printPrompt: () => {},
     warn: () => {},
     isWarningEnabled: true,
     isTool: false,

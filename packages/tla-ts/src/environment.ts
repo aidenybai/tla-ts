@@ -100,7 +100,7 @@ import {
   type SectionMember,
 } from "./levels";
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
-import { isEvalException } from "./tlc/messages";
+import { formatPrompt, isEvalException } from "./tlc/messages";
 import { createDefinitionFacts } from "./dependencies";
 import { createTlcOrder, type TlcOrder } from "./tlc/order";
 import { isTlcInteger, type Value } from "./values";
@@ -122,6 +122,7 @@ interface EnvironmentOptions {
   version?: TlcVersion;
   moduleOperators?: ModuleOperator[];
   readLine?: () => string | undefined;
+  printPrompt?: (text: string, code?: number) => void;
   runtimeInvariants?: RuntimeInvariant[];
 }
 
@@ -309,6 +310,9 @@ export const createEnvironment = (
   runtime.hasUserFile = options.hasUserFile ?? false;
   runtime.version = options.version ?? "master";
   runtime.readLine = options.readLine;
+  runtime.printPrompt =
+    options.printPrompt ??
+    ((text, code) => options.print(formatPrompt(runtime.isTool, text, code)));
   const linkedModules = new Map<string, LinkedModule>();
   const checkedModules = new Map<string, LinkedModule>();
   const linkOrder: LinkedModule[] = [];

@@ -137,6 +137,9 @@ export const formatMessage = (isTool: boolean, code: number, level: MessageLevel
     ? `@!@!@STARTMSG ${code}:${level} @!@!@\n${text}\n@!@!@ENDMSG ${code} @!@!@`
     : `${LEVEL_PREFIXES[level]}${text}`;
 
+export const formatPrompt = (isTool: boolean, text: string, code: number | undefined) =>
+  code === undefined ? text : formatMessage(isTool, code, MESSAGE_LEVEL.none, text);
+
 export const createMessagePrinter = (options: MessagePrinterOptions): MessagePrinter => {
   const warnings = new Set<string>();
   return {

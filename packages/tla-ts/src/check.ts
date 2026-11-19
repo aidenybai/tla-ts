@@ -391,7 +391,7 @@ const searchStates = (
   const created = createCheckEnvironment(config, options, output.print);
   const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
-  output.captureWarnings(specification.environment.runtime, options.errorCodes);
+  output.captureMessages(specification.environment.runtime, options.errorCodes);
   const coverage =
     options.coverage === undefined
       ? undefined
