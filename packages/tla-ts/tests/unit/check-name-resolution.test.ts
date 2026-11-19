@@ -2898,6 +2898,36 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "selections whose names before an operand name no symbol",
+      "X == J!Ta!1\nUSE J!Ti!1\nLEMMA J!K!Ta!<<",
+      [
+        {
+          location: "line 2, col 6 to line 2, col 9 of module M",
+          message: "Unknown operator: `J!Ta'.",
+        },
+        {
+          location: "line 3, col 5 to line 3, col 8 of module M",
+          message: "Unknown operator: `J!Ti'.",
+        },
+        {
+          location: "line 4, col 7 to line 4, col 12 of module M",
+          message: "Unknown operator: `J!K!Ta'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection of a label and an operand of a variable",
+      "VARIABLE y\nX == y!Ta!1",
+      [
+        {
+          location: "line 3, col 6 to line 3, col 6 of module M",
+          message: "Cannot take subexpression of `y'.",
+        },
+      ],
+      [],
+    ],
+    [
       "the statement of a theorem named like an earlier definition",
       "Foo == 1 = 1\nBar == 1\nTHEOREM Bar == Foo!1 = Undefined",
       [

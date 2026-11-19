@@ -1865,13 +1865,21 @@ const isSubexpressionReported = (
     });
     return true;
   }
-  if (head.kind === "Name" && expression.selectors[1].kind !== "Name" && range) {
+  if (head.kind === "Name" && range && lastRange) {
     const local = lookupLocal(scope, head.name);
     const binding = local ?? findSymbol(head.name, unit);
-    if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
+    const isUnknown = binding === undefined && !isFact(head.name, unit);
+    if (expression.selectors[1].kind !== "Name" && (isUnknown || binding?.kind === "Instance")) {
       unit.errors.push({
         location: formatRange(range),
         message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
+      });
+      return true;
+    }
+    if (isUnknown && !isInstance) {
+      unit.errors.push({
+        location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
+        message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
       });
       return true;
     }
