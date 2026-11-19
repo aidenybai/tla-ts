@@ -253,6 +253,31 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       });
     });
 
+    // A class without a constructor of its own has a built-in one, which holds the class's
+    // fields, and which the canonical form numbers natively and in TLA+ alike.
+    describe("keeps a class whose constructor is the default one", () => {
+      writeFileSync(join(directory, "box.ts"), "export class Box {\n  size = 1;\n}\n");
+      const getSource = (operator: string) =>
+        `import { Box } from "./box";\nlet made = 0;\nlet last: Box | undefined = undefined;\nexport const make = () => {\n  if (made < 2) {\n    last = new Box();\n    made += last.size;\n  }\n};\nexport const isSmall = () => made ${operator} 2;\n`;
+      const checkBox = (operator: string, mode: "canonical" | "compared" = "canonical") => {
+        const source = getSource(operator);
+        writeFileSync(join(directory, "boxes.ts"), source);
+        return checkModel(source, join(directory, "boxes.ts"), mode);
+      };
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await checkBox("<="))).toEqual(["deadlock", 3, 3]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await checkBox("<"))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        expect(getCounts(await checkBox("<=", "compared"))).toEqual(["deadlock", 3, 3]);
+      });
+    });
+
     it("calls none of the functions whose parameters take values it can't list", async () => {
       expect(
         getCounts(

@@ -32,6 +32,8 @@ PlainClasses == {"ordinary", "array", "error", "boolean", "number", "string", "d
 \* The built-in functions whose data is the cell of a promise's resolving functions or capability.
 CellBuiltins == {<<"Promise", "resolveFunction">>, <<"Promise", "rejectFunction">>, <<"Promise", "capabilityExecutor">>}
 BuiltinSlots == {"id", "constructor", "data", "realm", "initialName"}
+\* The slots of a class's default constructor, a built-in that holds the class's elements.
+DefaultConstructorSlots == BuiltinSlots \cup {"ctorKind", "sourceText", "privateMethods", "fields", "initializers"}
 SlotRefs(o, r) ==
   CASE o.class \in PlainClasses ->
          IF "initializers" \in DOMAIN o.slots THEN ValueRefs(o.slots.initializers, r) ELSE <<>>
@@ -51,6 +53,10 @@ SlotRefs(o, r) ==
     [] o.class = "cell" /\ DOMAIN o.slots = {"resolve", "reject"} -> MaybeRef(o.slots.resolve, r) \o MaybeRef(o.slots.reject, r)
     [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.id \in CellBuiltins -> ObjectRef(o.slots.data, r)
     [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.data = Empty -> <<>>
+    [] o.class = "builtin" /\ DOMAIN o.slots = DefaultConstructorSlots /\ o.slots.id = <<"Class", "default">> ->
+         ConcatMap(o.slots.fields, LAMBDA e : ElementRefs(e, r))
+         \o ConcatMap(o.slots.privateMethods, LAMBDA e : ElementRefs(e, r))
+         \o (IF o.slots.initializers = Empty THEN <<>> ELSE ValueRefs(o.slots.initializers, r))
     [] OTHER -> ModelStop("an object of class " \o o.class)
 ObjectRefs(o, r) ==
   MaybeRef(o.proto, r)
@@ -135,6 +141,9 @@ RenameSlots(o, number, r) ==
     [] o.class = "cell" ->
          IF DOMAIN o.slots = {"promise"} THEN [o.slots EXCEPT !.promise = RenameMaybe(@, number, r)]
          ELSE [o.slots EXCEPT !.resolve = RenameMaybe(@, number, r), !.reject = RenameMaybe(@, number, r)]
+    [] o.class = "builtin" /\ o.slots.id = <<"Class", "default">> /\ "fields" \in DOMAIN o.slots ->
+         [o.slots EXCEPT !.fields = RenameElements(@, number, r), !.privateMethods = RenameElements(@, number, r),
+                         !.initializers = IF @ = Empty THEN @ ELSE RenameValues(@, number, r)]
     [] o.class = "builtin" -> IF o.slots.id \in CellBuiltins THEN [o.slots EXCEPT !.data = RenameValue(@, number, r)] ELSE o.slots
 RenameObject(o, number, r) ==
   [o EXCEPT !.proto = RenameMaybe(@, number, r),

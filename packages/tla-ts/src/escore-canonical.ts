@@ -164,6 +164,21 @@ const isCellBuiltin = (slots: Value) => {
   return id.length === 2 && id[0] === "Promise" && CELL_BUILTINS.has(String(id[1]));
 };
 
+// The slots of a class's default constructor, a built-in that holds the class's elements.
+const DEFAULT_CONSTRUCTOR_SLOTS = [
+  ...BUILTIN_SLOTS,
+  "ctorKind",
+  "fields",
+  "initializers",
+  "privateMethods",
+  "sourceText",
+].sort();
+
+const isDefaultConstructor = (slots: Value) => {
+  const id = getList(get(slots, "id"));
+  return id.length === 2 && id[0] === "Class" && id[1] === "default";
+};
+
 const isPlainBuiltin = (slots: Value) =>
   getDomain(slots).join() === BUILTIN_SLOTS.join() &&
   (isCellBuiltin(slots) || isModelValue(get(slots, "data"), "Empty"));
@@ -206,6 +221,15 @@ const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
     maybeRef(get(slots, "reject"), realm, refs);
   } else if (objectClass === "builtin" && isPlainBuiltin(slots)) {
     if (isCellBuiltin(slots)) objectRef(get(slots, "data"), realm, refs);
+  } else if (
+    objectClass === "builtin" &&
+    isDefaultConstructor(slots) &&
+    getDomain(slots).join() === DEFAULT_CONSTRUCTOR_SLOTS.join()
+  ) {
+    getList(get(slots, "fields")).forEach((element) => elementRefs(element, realm, refs));
+    getList(get(slots, "privateMethods")).forEach((element) => elementRefs(element, realm, refs));
+    const initializers = get(slots, "initializers");
+    if (!isModelValue(initializers, "Empty")) values(initializers);
   } else {
     stop(`an object of class ${objectClass}`);
   }
@@ -441,7 +465,15 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
       case "cell":
         return mapRange(slots, renameMaybe);
       case "builtin":
-        return isCellBuiltin(slots) ? except(slots, { data: renameValue }) : slots;
+        return isDefaultConstructor(slots) && hasField(slots, "fields")
+          ? except(slots, {
+              fields: renameElements,
+              privateMethods: renameElements,
+              initializers: (inner) => (isModelValue(inner, "Empty") ? inner : renameValues(inner)),
+            })
+          : isCellBuiltin(slots)
+            ? except(slots, { data: renameValue })
+            : slots;
       default:
         return except(slots, { target: renameMaybe, handler: renameMaybe });
     }
