@@ -1110,7 +1110,6 @@ export const createEnvironment = (
       linked.modules.forEach((module, moduleName) => modules.set(moduleName, module));
       extended.push(linked);
     });
-    // SANY keeps an extended constant that the module declares again, so TLC assigns its value to that one.
     const constants = [
       ...parsed.constants
         .filter((constant) =>
@@ -1130,7 +1129,6 @@ export const createEnvironment = (
       kind: declaration.kind,
       range: declaration.location.range,
     });
-    // SymbolTable#addSymbol keeps the first symbol of a name, so SANY's Context has no declaration of a name bound before it.
     declarations
       .filter(
         (declaration) =>
