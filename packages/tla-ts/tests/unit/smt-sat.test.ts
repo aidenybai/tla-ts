@@ -190,6 +190,24 @@ describe("sat2goal", () => {
       ]),
     ).toBe(["sat", "sat", "((x #x8)", " (y #x9))"].join("\n"));
   });
+
+  it("keeps the shared terms of its propagate-values across a pop, until it preprocesses again", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(push 1)",
+        "(assert (bvsge #b0011 (bvsub #b0111 z)))",
+        "(assert (bvsge x z))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (bvsge #b0001 (bvurem x #b0101)))",
+        "(check-sat)",
+        "(get-value (x))",
+      ]),
+    ).toBe(["sat", "sat", "((x #xa))"].join("\n"));
+  });
 });
 
 describe("sat solver", () => {

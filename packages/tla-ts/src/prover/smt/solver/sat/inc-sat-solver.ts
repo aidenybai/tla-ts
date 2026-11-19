@@ -5,6 +5,7 @@ import { BitBlasterRewriter } from "../bit-blast-tactic";
 import { decConverterRefs, Goal, incConverterRefs, mkDependencyLeaf } from "../goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ProtoModel } from "../proto-model";
+import { SharedOccs } from "../propagate-values";
 import { RefVector } from "../ref-vector";
 import {
   DEFAULT_PRINT_OPTIONS,
@@ -59,6 +60,8 @@ export class IncSatSolver {
   private readonly satConverter: Sat2GoalConverter;
   private isInternalizedConverted = false;
   private readonly internalized: RefVector;
+  // m_preprocess's propagate-values keeps its shared terms until init_preprocess resets it.
+  private readonly occs: SharedOccs;
   private hasUninterpreted = false;
   private subgoals: Goal[] = [];
   private scopes: Scope[] = [];
@@ -86,6 +89,7 @@ export class IncSatSolver {
     this.converters = new Goal(manager);
     this.satConverter = new Sat2GoalConverter(manager);
     this.internalized = new RefVector(manager);
+    this.occs = new SharedOccs(manager);
   }
 
   private isClause(expr: number): boolean {
@@ -197,18 +201,20 @@ export class IncSatSolver {
     this.solver.popToBaseLevel();
     if (this.solver.isInconsistent) return L_FALSE;
     this.resetSubgoals();
+    this.occs.reset();
     const bitBlaster = this.getBitBlaster();
     const subgoals = (() => {
       if (this.isCnf) return [goal];
       try {
         const goals = (
           this.goal2sat.euf === null
-            ? mkIncSatPreprocess(this.manager, bitBlaster)
-            : mkIncSatEufPreprocess(this.manager)
+            ? mkIncSatPreprocess(this.manager, bitBlaster, this.occs)
+            : mkIncSatEufPreprocess(this.manager, this.occs)
         )(goal);
         this.isCnf = true;
         return goals;
       } catch (error) {
+        this.occs.reset();
         this.releaseBitBlaster();
         if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
         // The tactics of the preprocessing report a limit that stops their rewriters as a tactic_exception.
@@ -477,6 +483,7 @@ export class IncSatSolver {
     this.core.reset();
     this.internalized.reset();
     this.satConverter.release();
+    this.occs.reset();
     this.releaseBitBlaster();
     this.goal2sat.release();
   }

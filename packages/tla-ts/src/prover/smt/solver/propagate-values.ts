@@ -3,27 +3,48 @@ import { type Dependency, type Goal, joinDependencies } from "./goal";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
 // Quantifier bodies are included and patterns excluded.
-const getSharedOccs = (manager: AstManager, forms: number[]) => {
-  const visited = new Set<number>();
-  const shared = new Set<number>();
-  const todo = [...forms];
-  for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
-    if (visited.has(expr)) {
-      shared.add(expr);
-      continue;
-    }
-    visited.add(expr);
-    if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
-    else if (manager.kinds[expr] === KIND_QUANTIFIER) todo.push(manager.getQuantifier(expr).body);
+export class SharedOccs {
+  private readonly shared = new Set<number>();
+
+  constructor(private readonly manager: AstManager) {}
+
+  has(expr: number) {
+    return this.shared.has(expr);
   }
-  return shared;
-};
+
+  compute(forms: readonly number[]) {
+    const manager = this.manager;
+    this.reset();
+    const visited = new Set<number>();
+    const todo = [...forms];
+    for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
+      if (visited.has(expr)) {
+        if (!this.shared.has(expr)) manager.incRef(expr);
+        this.shared.add(expr);
+        continue;
+      }
+      visited.add(expr);
+      if (manager.kinds[expr] === KIND_APP) manager.pushArgs(expr, todo);
+      else if (manager.kinds[expr] === KIND_QUANTIFIER) todo.push(manager.getQuantifier(expr).body);
+    }
+  }
+
+  // m_shared is indexed by id, so a reset frees the terms in the order of their ids.
+  reset() {
+    const manager = this.manager;
+    const ids = manager.ids;
+    for (const expr of [...this.shared].sort((left, right) => ids[left] - ids[right]))
+      manager.decRef(expr);
+    this.shared.clear();
+  }
+}
 
 export const propagateValues = (
   manager: AstManager,
   goal: Goal,
   maxRounds = 4,
   options = TACTIC_REWRITER_OPTIONS,
+  heldOccs?: SharedOccs,
 ) => {
   goal.depth++;
   if (goal.isInconsistent) return;
@@ -44,7 +65,8 @@ export const propagateValues = (
     dependencies.clear();
     rewriter.setSubstitution(substitution, dependencies);
   };
-  let occs = getSharedOccs(manager, goal.forms.items);
+  const occs = heldOccs ?? new SharedOccs(manager);
+  occs.compute(goal.forms.items);
   let isModified = false;
   const process = (index: number) => {
     const current = goal.forms.items[index];
@@ -72,24 +94,25 @@ export const propagateValues = (
     )
       insert(manager.getArg(rewritten, 0), manager.getArg(rewritten, 1), dependency);
   };
-  for (let round = 0; round < maxRounds; round += 2) {
+  rounds: for (let round = 0; round < maxRounds; round += 2) {
     const size = goal.forms.size;
     for (let index = 0; index < size; index++) {
       process(index);
-      if (goal.isInconsistent) return;
+      if (goal.isInconsistent) break rounds;
     }
     if (substitution.size === 0 && !isModified) break;
     if (round + 1 >= maxRounds) break;
-    occs = getSharedOccs(manager, goal.forms.items);
+    occs.compute(goal.forms.items);
     clear();
     for (let index = goal.forms.size - 1; index >= 0; index--) {
       process(index);
-      if (goal.isInconsistent) return;
+      if (goal.isInconsistent) break rounds;
     }
     if (!isModified) break;
     clear();
     isModified = false;
-    occs = getSharedOccs(manager, goal.forms.items);
+    occs.compute(goal.forms.items);
   }
   goal.elimRedundancies();
+  if (heldOccs === undefined) occs.reset();
 };
