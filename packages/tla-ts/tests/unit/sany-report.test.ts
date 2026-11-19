@@ -1012,6 +1012,69 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("rejects the declarations of an inner module in a recursive definition section like SANY", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nRECURSIVE F(_)\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE v\n====\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 4",
+        "",
+        "line 3, col 1 to line 6, col 4 of module M",
+        "",
+        "A MODULE  may not appear within a recursive definition section.",
+        "",
+        "",
+        "line 4, col 1 to line 4, col 10 of module M",
+        "",
+        "A declaration may not appear within a recursive definition section.",
+        "",
+        "",
+        "line 5, col 1 to line 5, col 10 of module M",
+        "",
+        "A VARIABLE declaration may not appear within a recursive definition section.",
+        "",
+        "",
+        "line 2, col 11 to line 2, col 14 of module M",
+        "",
+        "Symbol F declared in RECURSIVE statement but not defined.",
+        "",
+        "",
+      ]),
+    );
+  });
+
+  it("keeps a recursive definition section open after an inner module, where SANY throws WrongInvocationException", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nRECURSIVE F(_)\n---- MODULE Inner ----\nCONSTANT c\n====\nCONSTANT d\nF(x) == x\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 3",
+        "",
+        "line 3, col 1 to line 5, col 4 of module M",
+        "",
+        "A MODULE  may not appear within a recursive definition section.",
+        "",
+        "",
+        "line 4, col 1 to line 4, col 10 of module M",
+        "",
+        "A declaration may not appear within a recursive definition section.",
+        "",
+        "",
+        "line 6, col 1 to line 6, col 10 of module M",
+        "",
+        "A declaration may not appear within a recursive definition section.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it.each([
     ["RECURSIVE F(_)\nF == 1\nA == F(1)", "line 5, col 6 to line 5, col 9", 1, 0],
     ["RECURSIVE F\nF(x) == 1\nA == F", "line 5, col 6 to line 5, col 6", 0, 1],

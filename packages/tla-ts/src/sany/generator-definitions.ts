@@ -189,8 +189,8 @@ const endOpDefNode = (
   node.location = location;
   node.preComments = preComments;
   if (node.inRecursive) {
-    generation.unresolvedCount[generation.curLevel]--;
-    generation.unresolvedSum--;
+    generation.recursion.unresolvedCount[generation.curLevel]--;
+    generation.recursion.unresolvedSum--;
   }
 };
 
@@ -274,9 +274,10 @@ export const processFunction = (
 };
 
 export const processRecursive = (generation: ModuleGeneration, declarations: Declaration[]) => {
-  if (generation.unresolvedSum === 0) generation.recursiveSections.count++;
-  generation.unresolvedCount[generation.curLevel] += declarations.length;
-  generation.unresolvedSum += declarations.length;
+  const recursion = generation.recursion;
+  if (recursion.unresolvedSum === 0) recursion.sectionCount++;
+  recursion.unresolvedCount[generation.curLevel] += declarations.length;
+  recursion.unresolvedSum += declarations.length;
   declarations.forEach((declaration) => {
     const span = getDeclarationSpan(generation.file, declaration);
     // The OpDeclNode buildParameter makes of the declaration to read its name and arity.
@@ -291,7 +292,7 @@ export const processRecursive = (generation: ModuleGeneration, declarations: Dec
       isDefined: false,
       inRecursive: true,
       inRecursiveSection: true,
-      recursiveSection: generation.recursiveSections.count,
+      recursiveSection: recursion.sectionCount,
       letInLevel: generation.curLevel,
     });
     addSymbol(generation, node);
@@ -301,16 +302,22 @@ export const processRecursive = (generation: ModuleGeneration, declarations: Dec
 };
 
 export const checkForUndefinedRecursiveOps = (generation: ModuleGeneration) => {
-  if (generation.unresolvedCount[generation.curLevel] === 0) return;
-  generation.recursiveDeclarations
-    .filter((node) => node.letInLevel === generation.curLevel && !node.isDefined)
-    .forEach((node) =>
-      generation.addError(
-        node.location,
-        `Symbol ${node.name} declared in RECURSIVE statement but not defined.`,
-      ),
-    );
-  generation.unresolvedSum -= generation.unresolvedCount[generation.curLevel];
+  const recursion = generation.recursion;
+  if (recursion.unresolvedCount[generation.curLevel] === 0) return;
+  const undefinedDeclarations = generation.recursiveDeclarations.filter(
+    (node) => node.letInLevel === generation.curLevel && !node.isDefined,
+  );
+  undefinedDeclarations.forEach((node) =>
+    generation.addError(
+      node.location,
+      `Symbol ${node.name} declared in RECURSIVE statement but not defined.`,
+    ),
+  );
+  // Deviation from SANY: Generator#checkForUndefinedRecursiveOps also closes the outer module's RECURSIVE operators at the end of an inner module, so SANY misses the rest of the section and throws WrongInvocationException at a definition in it.
+  recursion.unresolvedSum -=
+    generation.curLevel === 0
+      ? undefinedDeclarations.length
+      : recursion.unresolvedCount[generation.curLevel];
 };
 
 const processSubstitutions = (
@@ -680,7 +687,7 @@ export const checkRecursiveSection = (
   location: SourceLocation,
   type: string,
 ) => {
-  if (generation.unresolvedSum === 0) return;
+  if (generation.recursion.unresolvedSum === 0) return;
   generation.addError(
     getUnitLocation(generation.file, location),
     `${type} may not appear within a recursive definition section.`,
