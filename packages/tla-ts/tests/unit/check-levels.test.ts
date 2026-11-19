@@ -135,6 +135,100 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    [
+      "a constant module",
+      "CONSTANT Op(_), k\nK == Op(k)",
+      "I == INSTANCE Inner WITH Op <- LAMBDA p : 1, k <- x'\nU == [](I!K)\nW == LET L == INSTANCE Inner WITH Op <- LAMBDA p : 1, k <- x' IN [](L!K)\nJ == INSTANCE Inner WITH Op <- LAMBDA p : 1, k <- (x')'",
+      [
+        ["line 8, col 6 to line 8, col 12", "[] followed by action not of form [A]_v."],
+        ["line 9, col 66 to line 9, col 72", "[] followed by action not of form [A]_v."],
+        [
+          "line 10, col 51 to line 10, col 55",
+          "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+      ],
+    ],
+    [
+      "a module with variables",
+      "CONSTANT Op(_), k\nVARIABLE z\nK == Op(k)",
+      "Eq(p) == p = 1\nI == INSTANCE Inner WITH Op <- Eq, k <- [](x = 1), z <- x\nU == I!K\nJ == INSTANCE Inner WITH Op <- Eq, k <- (x')', z <- x",
+      [
+        [
+          "line 11, col 41 to line 11, col 45",
+          "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+        [
+          "line 9, col 1 to line 9, col 57",
+          "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+        ],
+        [
+          "line 9, col 1 to line 9, col 57",
+          "Level error when instantiating module 'Inner':\nThe level of the argument 0 of the operator Op' \nmust be at most 2.",
+        ],
+      ],
+    ],
+  ])(
+    "levels the definitions of an instance of %s through its substitutes like SANY",
+    async (_, inner, definitions, errors) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\n${inner}\n====\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
+  it("checks a LET instance with the LET, after its body, like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT k\nVARIABLE z\nK == k\n====\nI == INSTANCE Inner WITH k <- x, z <- x\nD == LET L == INSTANCE Inner WITH k <- x, z <- x IN [](x')\nE == [](x')\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 9, col 53 to line 9, col 58", "[] followed by action not of form [A]_v."],
+          [
+            "line 9, col 10 to line 9, col 48",
+            "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+          ],
+          ["line 10, col 6 to line 10, col 11", "[] followed by action not of form [A]_v."],
+          [
+            "line 8, col 1 to line 8, col 39",
+            "Level error in instantiating module 'Inner':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+          ],
+        ].map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("levels a LET instance's definitions through an operator parameter it substitutes like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT Op(_), k\nK == Op(k)\n====\nPr(p) == p'\nI == INSTANCE Inner WITH Op <- LAMBDA p : p, k <- 1\nU == LET L(G(_)) == INSTANCE Inner WITH Op <- G, k <- x' IN L(Pr)!K\nW(G(_)) == LET L == INSTANCE Inner WITH Op <- G, k <- x' IN L!K\nV == W(Pr)\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          ["line 9, col 61 to line 9, col 67", "L!K"],
+          ["line 11, col 6 to line 11, col 10", "W"],
+        ].map((error) => ({
+          location: `${error[0]} of module M`,
+          message: `Level error in applying operator ${error[1]}:\nThe permitted level of argument 1 of the operator argument 1 \nmust be at least 2.`,
+        })),
+      ),
+    );
+  });
+
   it("names the builtin operator a level error applies like SANY", async () => {
     await expect(
       check({
@@ -377,6 +471,50 @@ describe("level checking matches SANY", () => {
       "---- MODULE M ----\nVARIABLE x\nCONSTANT k\nRECURSIVE R(_), S(_)\nR(p) == k \\cup (LET L == {x'} IN L)\nS(p) == []x\n====",
       [["line 5, col 9 to line 5, col 35", "union"]],
     ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nAp(F(_), a) == F(a)\nRECURSIVE R(_)\nR(n) == IF n THEN TRUE ELSE Ap(LAMBDA v : R(v), n')\nX == Ap(LAMBDA v : R(v), x')\n====",
+      [
+        ["line 5, col 1 to line 5, col 51", "Argument 1 of recursive operator R is primed"],
+        ["line 6, col 6 to line 6, col 28", "argument 2"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nAp(F(_), a) == F(a)\nRECURSIVE R(_), S(_)\nR(n) == IF n THEN TRUE ELSE S(n)\nS(n) == Ap(LAMBDA v : R(v), n')\n====",
+      [["line 6, col 1 to line 6, col 31", "Argument 1 of recursive operator S is primed"]],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nA == []x\nRECURSIVE R(_)\nR(n) == IF n THEN {A!:} ELSE R(n)'\n====",
+      [
+        ["line 5, col 19 to line 5, col 23", "set"],
+        ["line 5, col 1 to line 5, col 34", "Argument 1 of recursive operator R is primed"],
+        ["line 5, col 30 to line 5, col 34", "prime"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nB == TRUE\n====\nI == INSTANCE Inner\nRECURSIVE R(_)\nR(n) == IF n THEN {[]x} ELSE I!B /\\ R(n)'\n====",
+      [
+        ["line 8, col 19 to line 8, col 23", "set"],
+        ["line 8, col 1 to line 8, col 41", "Argument 1 of recursive operator R is primed"],
+        ["line 8, col 37 to line 8, col 41", "prime"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nA == []x\nASSUME LET RECURSIVE F(_)\n           F(n) == IF n THEN {A!:} ELSE F(n)'\n       IN F(TRUE)\n====",
+      [
+        ["line 5, col 30 to line 5, col 34", "set"],
+        ["line 5, col 12 to line 5, col 45", "Argument 1 of recursive operator F is primed"],
+        ["line 5, col 41 to line 5, col 45", "prime"],
+        ["line 4, col 1 to line 6, col 17", "assume 3"],
+      ],
+    ],
+    [
+      "---- MODULE M ----\nVARIABLE x\nA == []x\nTHEOREM LET RECURSIVE F(_)\n            F(n) == IF n THEN {A!:} ELSE F(n)'\n        IN F(TRUE)\n====",
+      [
+        ["line 5, col 31 to line 5, col 35", "set"],
+        ["line 5, col 13 to line 5, col 46", "Argument 1 of recursive operator F is primed"],
+        ["line 5, col 42 to line 5, col 46", "prime"],
+      ],
+    ],
   ])("checks recursive sections first and twice like SANY: %j", async (source, errors) => {
     const messages: Record<string, string> = {
       set: "Level error in applying operator $SetEnumerate:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
@@ -386,6 +524,10 @@ describe("level checking matches SANY", () => {
         "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.",
       "assume 3":
         "Level error: assumptions must be level 0 (Constant), \nbut this one has level 3.",
+      "argument 2":
+        "Level error in applying operator Ap:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+      prime:
+        "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
     };
     await expect(check({ source, config: "" })).rejects.toThrow(
       createSanyError(
@@ -396,6 +538,54 @@ describe("level checking matches SANY", () => {
       ),
     );
   });
+
+  it.each([
+    ["EXTENDS Base\nVARIABLE x\nE == V([]x, 0)", "line 4, col 6 to line 4, col 14", "V"],
+    [
+      "EXTENDS Naturals\nVARIABLE x\nI == INSTANCE Base\nE == I!V([]x, 0)",
+      "line 5, col 6 to line 5, col 16",
+      "I!V",
+    ],
+    [
+      "EXTENDS Naturals\nVARIABLE x\nE == LET J == INSTANCE Base IN J!V([]x, 0)",
+      "line 4, col 32 to line 4, col 42",
+      "J!V",
+    ],
+    [
+      "EXTENDS Naturals\nVARIABLE x\nI == INSTANCE Mid\nE == I!U([]x)",
+      "line 5, col 6 to line 5, col 13",
+      "I!U",
+    ],
+    ["EXTENDS Mid\nVARIABLE x\nE == U([]x)", "line 4, col 6 to line 4, col 11", "U"],
+    [
+      "EXTENDS Naturals\nVARIABLE x\n---- MODULE Inner ----\nEXTENDS Naturals\nRECURSIVE V(_, _)\nV(a, n) == IF n = 0 THEN a ELSE V(a, n - 1)\n====\nI == INSTANCE Inner\nE == I!V([]x, 0)",
+      "line 10, col 6 to line 10, col 16",
+      "I!V",
+    ],
+  ])(
+    "levels a recursive operator of another module with its section in %j like SANY",
+    async (source, location, operator) => {
+      const modules: Record<string, string> = {
+        Base: "EXTENDS Naturals\nRECURSIVE V(_, _)\nV(a, n) == IF n = 0 THEN a ELSE V(a, n - 1)",
+        Mid: "EXTENDS Base\nU(a) == V(a, 1)",
+      };
+      await expect(
+        check({
+          source: `---- MODULE M ----\n${source}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name in modules ? `---- MODULE ${name} ----\n${modules[name]}\n====` : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${location} of module M`,
+            message: `Level error in applying operator ${operator}:\nThe level of argument 1 exceeds the maximum level allowed by the operator.`,
+          },
+        ]),
+      );
+    },
+  );
 
   it("checks the levels of proof steps, their facts, and the definitions they make like SANY", async () => {
     const setError =
@@ -627,6 +817,20 @@ describe("level checking matches SANY", () => {
       ],
     ],
     [
+      "THEOREM ASSUME NEW TEMPORAL f PROVE TRUE\n<1>1. CASE x = 1\n  <2>1. TAKE y \\in {x}\n  <2> QED\n<1>2. ASSUME NEW ACTION g PROVE TRUE\n  <2>1. HAVE x = 1\n  <2> QED\n<1>3. ASSUME NEW TEMPORAL h PROVE TRUE\n  <2>1. HAVE x = 1\n  <2> QED\n<1> QED",
+      [
+        [
+          "line 11, col 9 to line 11, col 18",
+          "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        ],
+        ["line 4, col 7 to line 4, col 16", "Non-constant CASE for temporal goal."],
+        [
+          "line 5, col 9 to line 5, col 22",
+          "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+        ],
+      ],
+    ],
+    [
       "THEOREM ASSUME NEW TEMPORAL F, NEW k \\in F PROVE TRUE\nTHEOREM ASSUME NEW ACTION A, NEW j \\in A PROVE TRUE",
       [["line 3, col 32 to line 3, col 42", "Level error:\nTemporal formula used as set."]],
     ],
@@ -635,6 +839,23 @@ describe("level checking matches SANY", () => {
       [
         ["line 4, col 6 to line 4, col 15", "[] followed by action not of form [A]_v."],
         ["line 5, col 6 to line 5, col 15", "<> followed by action not of form <<A>>_v."],
+      ],
+    ],
+    [
+      "Pr(p) == p'\nPrime(F(_), a) == F(a)'\nD == Prime(Pr, []x)",
+      [
+        [
+          "line 5, col 6 to line 5, col 19",
+          "Level error in applying operator Prime:\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        ],
+        [
+          "line 5, col 6 to line 5, col 19",
+          "Level error in applying operator Prime:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+        ],
+        [
+          "line 5, col 6 to line 5, col 19",
+          "Level error in applying operator Prime:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+        ],
       ],
     ],
   ])("reports every error SANY reports in %j", async (definitions, errors) => {
@@ -684,5 +905,53 @@ describe("level checking matches SANY", () => {
         end: { line: 9, column: end },
       }),
     );
+  });
+
+  const checkLetInstance = (inner: string, definitions: string) =>
+    check({
+      source: `---- MODULE M ----\nVARIABLE x\nF(b) == b'\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Inner" ? `---- MODULE Inner ----\n${inner}\n====` : undefined,
+    });
+
+  it.each([
+    [
+      "CONSTANT C(_), k\nASSUME C(k)",
+      "D(Op(_), a) == LET I == INSTANCE Inner WITH C <- Op, k <- a IN TRUE\nE == D(F, x')",
+      13,
+    ],
+    [
+      "CONSTANT C(_), k\nX == C(k)",
+      "D(C(_), k) == LET I == INSTANCE Inner IN TRUE\nE == D(F, x')",
+      13,
+    ],
+    [
+      "CONSTANT C(_, _), k, j\nASSUME C(k, j)",
+      "G(p, q) == p' /\\ q\nD(Op(_, _), a, b) == LET I == INSTANCE Inner WITH C <- Op, k <- a, j <- b IN TRUE\nE == D(G, x', x)",
+      16,
+    ],
+  ])(
+    "rejects an argument above the level a LET instance of %j allows in %j, like SANY",
+    async (inner, definitions, end) => {
+      const line = definitions.split("\n").length + 3;
+      await expect(checkLetInstance(inner, definitions)).rejects.toThrow(
+        createSanyError([
+          {
+            location: `line ${line}, col 6 to line ${line}, col ${end} of module M`,
+            message:
+              "Level error in applying operator D:\nThe level of argument 2 exceeds the maximum level allowed by the operator.",
+          },
+        ]),
+      );
+    },
+  );
+
+  it.each([
+    "D(Op(_), a) == LET I == INSTANCE Inner WITH C <- Op, k <- a IN TRUE\nE == D(F, x)",
+    "D(Op(_), a) == LET I(p) == INSTANCE Inner WITH C <- Op, k <- p IN TRUE\nE == D(F, x')",
+  ])("accepts %j, like SANY", async (definitions) => {
+    const result = await checkLetInstance("CONSTANT C(_), k\nX == C(k)", definitions);
+    expect(result.status).toBe("success");
   });
 });

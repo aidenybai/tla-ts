@@ -1082,10 +1082,15 @@ const searchLikeTlc = (element: Value, sorted: Value[]) => {
 const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
   elements.some((member) => callTracedMethod(member, () => equalsLikeTlc(member, element)));
 
+export const isNormalizedSet = (set: SetValue | MixedSetValue) =>
+  set.kind === "MixedSet" ? set.enumerated !== undefined : set.isNormalized;
+
 export const getWrittenElements = (set: SetValue | MixedSetValue) =>
-  set.kind === "MixedSet" || set.isNormalized
-    ? set.elements
-    : (set.writtenElements ?? set.elements);
+  set.kind === "MixedSet"
+    ? (set.enumerated?.elements ?? set.elements)
+    : set.isNormalized
+      ? set.elements
+      : (set.writtenElements ?? set.elements);
 
 export const markNormalized = (value: Value): void => {
   if (typeof value !== "object") return;
@@ -1159,16 +1164,25 @@ export const createSet = (elements: Value[]): SetValue => {
   return createSortedSet(unique);
 };
 
+// TLC sorts a set literal only once an operation needs it sorted, so a lazy function the sort would evaluate keeps the literal unsorted.
+let isSortingLiteral = false;
+
 export const createEnumeratedSet = (elements: Value[]): SetValue | MixedSetValue => {
   if (isAscendingIntegers(elements)) return createSortedSet(elements);
-  const set = computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
-    createSet,
-    (mixed) => ({ kind: "MixedSet", elements: mixed }),
-    elements,
-    undefined,
-  );
-  if (set.kind === "Set" && set.elements !== elements) set.writtenElements = elements;
-  return set;
+  const isOuterSorting = isSortingLiteral;
+  isSortingLiteral = true;
+  try {
+    const set = computeLikeTlcOnFailure<Value[], undefined, SetValue | MixedSetValue>(
+      createSet,
+      (mixed) => ({ kind: "MixedSet", elements: mixed }),
+      elements,
+      undefined,
+    );
+    if (set.kind === "Set" && set.elements !== elements) set.writtenElements = elements;
+    return set;
+  } finally {
+    isSortingLiteral = isOuterSorting;
+  }
 };
 
 export const EMPTY_SET = createSortedSet([]);
@@ -1680,7 +1694,14 @@ export const toFiniteSet = (value: Value): SetValue => {
   if (lazy?.enumerated) return lazy.enumerated;
   const sets = setTrace.sets;
   sets?.push(value);
-  const elements = enumerateSet(value);
+  const isOuterSorting = isSortingLiteral;
+  isSortingLiteral = isOuterSorting && lazy?.kind === "MixedSet";
+  let elements: Value[];
+  try {
+    elements = enumerateSet(value);
+  } finally {
+    isSortingLiteral = isOuterSorting;
+  }
   sets?.pop();
   const isSorted =
     typeof value === "object" &&
@@ -2207,7 +2228,9 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       cacheSet(element);
       return computeLikeTlcOnFailure(isInSortedSet, isInSortedSetLikeTlc, element, set);
     case "MixedSet":
-      return isElementOfLikeTlc(element, set.elements);
+      return set.enumerated
+        ? searchLikeTlc(element, set.enumerated.elements).isFound
+        : isElementOfLikeTlc(element, set.elements);
     case "Interval":
       if (typeof element === "number") return element >= set.low && element <= set.high;
       if (set.low <= set.high && (!isModelValue(element) || element.type !== undefined)) {
@@ -2373,6 +2396,7 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "Function") return value;
   if (typeof value === "object" && value.kind === "LazyFunction") {
     if (value.enumerated) return value.enumerated;
+    if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a lazy function");
     if (!isEnumerable(value.domain)) getCardinality(value.domain);
     if (!isSetValue(value.domain)) {
       throw new TlaEvaluationError("The domains of formal parameters must be enumerable.");
@@ -2677,7 +2701,12 @@ export const updateFunction = (
   );
   updated.writtenKeys = finite.writtenKeys;
   updated.lambdaDomain = finite.lambdaDomain;
-  if (finite.hash !== 0 && finite.hash !== UNFINGERPRINTABLE_HASH) {
+  // Hashing marks a set sorted, and TLC sorts a set that EXCEPT stores only once it fingerprints the function.
+  if (
+    finite.hash !== 0 &&
+    finite.hash !== UNFINGERPRINTABLE_HASH &&
+    !(isEnumeratedSet(next) && !isNormalizedSet(next))
+  ) {
     const nextHash = getValueHash(next);
     if (nextHash !== UNFINGERPRINTABLE_HASH) {
       const keyHash = getValueHash(finite.domain[position]);
@@ -2813,6 +2842,8 @@ export const getValueHash = (value: Value): number => {
   if (typeof value === "boolean") return value ? 0x2b7e1516 : 0x28aed2a6;
   if (typeof value === "string") return hashString(value);
   if (value.kind === "Set" || value.kind === "Function") {
+    // TLC sorts a set in place as it fingerprints it, also a union that inherited its hash, so every lookup marks it.
+    if (value.kind === "Set" && !value.isNormalized) value.isNormalized = true;
     if (value.hash === 0) value.hash = computeValueHash(value);
     return value.hash;
   }
@@ -2997,19 +3028,16 @@ const toPrintedFunction = (value: LazyFunctionValue) => {
 };
 
 export const formatNormalizedCopies = (values: Value[]) => {
-  const markedSets: SetValue[] = [];
   const writtenFunctions: [FunctionValue, Value[]][] = [];
   const copiedFunctions: LazyFunctionValue[] = [];
-  // TLC prints a deep copy, which copies functions but shares sets, so it caches only the functions inside a set.
+  // TLC prints a deep copy, which copies functions but shares sets, so a set and the functions inside it stay normalized and cached.
   const normalize = (value: Value, isWrittenOrderKept: boolean, isCopied: boolean): void => {
     if (typeof value !== "object") return;
     const normalizeInner = (inner: Value) => normalize(inner, isWrittenOrderKept, false);
     switch (value.kind) {
       case "Set":
         value.elements.forEach(normalizeInner);
-        if (value.isNormalized) return;
         value.isNormalized = true;
-        markedSets.push(value);
         return;
       case "MixedSet":
         value.elements.forEach(normalizeInner);
@@ -3019,7 +3047,7 @@ export const formatNormalizedCopies = (values: Value[]) => {
         const isRangeWrittenOrderKept = isWrittenOrderKept || getFunctionClass(value) === "lambda";
         value.range.forEach((inner) => normalize(inner, isRangeWrittenOrderKept, isCopied));
         if (isWrittenOrderKept || value.writtenKeys === undefined) return;
-        writtenFunctions.push([value, value.writtenKeys]);
+        if (isCopied) writtenFunctions.push([value, value.writtenKeys]);
         value.writtenKeys = undefined;
         return;
       }
@@ -3056,9 +3084,6 @@ export const formatNormalizedCopies = (values: Value[]) => {
     values.forEach((value) => normalize(value, false, true));
     return values.map((value) => formatValue(value, true, true));
   } finally {
-    markedSets.forEach((set) => {
-      set.isNormalized = false;
-    });
     copiedFunctions.forEach((copied) => {
       copied.enumerated = undefined;
     });

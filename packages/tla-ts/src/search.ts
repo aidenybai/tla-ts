@@ -12,6 +12,7 @@ import type {
   InitialStatesProgress,
   InitialStateViolation,
   ModuleOperator,
+  OutputLine,
   Postcondition,
   Violation,
 } from "./check";
@@ -42,6 +43,7 @@ import {
   TlaConfigError,
   TlaEvaluationError,
   TlaModuleError,
+  TlaWarningAsError,
   UNEXPECTED_EXCEPTION,
   formatRange,
 } from "./errors";
@@ -72,6 +74,7 @@ import {
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint } from "./pretty-print";
+import { parenthesizedRanges } from "./parser";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -113,6 +116,7 @@ import {
 export interface CliSettings {
   readLine?: () => string | undefined;
   runtimeInvariants?: RuntimeInvariant[];
+  errorCodes?: number[];
 }
 
 interface EnvironmentSettings
@@ -288,9 +292,11 @@ export const reportStartup = (
 
 const getInvariants = (names: string[], environment: Environment) => {
   const analyzer = createLevelAnalyzer({
-    constants: new Set(environment.constants.keys()),
+    constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
     variables: new Set(environment.variables),
     getDefinition: (name) => environment.definitions.get(name),
+    instances: environment.instances,
+    recursiveSections: environment.recursiveSections,
   });
   return names.flatMap((name) => {
     const definition = getConfigPredicate("invariant", name, environment);
@@ -628,9 +634,13 @@ const getNamedExpressions = (
     getConfigPredicate(kind, name, environment) ? [createNamedIdentifier(name, environment)] : [],
   );
 
+// SANY locates a parenthesized body at the expression inside the parentheses.
 const getBodyRange = (name: string, environment: Environment) => {
   const definition = getDefinition(name, environment);
-  return definition?.kind === "Operator" ? definition.bodyRange : undefined;
+  if (definition?.kind !== "Operator") return undefined;
+  return parenthesizedRanges.has(definition.body)
+    ? (definition.body.location.range ?? definition.bodyRange)
+    : definition.bodyRange;
 };
 
 const getPossiblePredicates = (names: string[], environment: Environment) =>
@@ -931,6 +941,36 @@ export const createCheckEnvironment = (
     runtimeInvariants: options.runtimeInvariants,
   });
   return { order, specification };
+};
+
+export const createOutputCapture = (onPrint: (text: string) => void) => {
+  let capturedLines: OutputLine[] | undefined;
+  return {
+    print: (text: string) => {
+      if (capturedLines) capturedLines.push(text);
+      else onPrint(text);
+    },
+    captureWarnings: (runtime: CheckerRuntime, errorCodes: number[] = []) => {
+      const warn = runtime.warn;
+      runtime.warn = (code, text) => {
+        // TLC's MP#printWarning fails on a warning -messagesAsErrors lists, even one whose output tla-ts holds back.
+        if (errorCodes.includes(code)) throw new TlaWarningAsError(code, text);
+        if (capturedLines) capturedLines.push({ kind: "warning", code, text });
+        else warn(code, text);
+      };
+    },
+    captureOutput: <Result>(evaluate: () => Result) => {
+      const outer = capturedLines;
+      const lines: OutputLine[] = [];
+      capturedLines = lines;
+      try {
+        return { result: evaluate(), lines };
+      } finally {
+        capturedLines = outer;
+      }
+    },
+    getCapturedLines: () => capturedLines,
+  };
 };
 
 export const prepareSearch = (options: CheckOptions) => {

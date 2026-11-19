@@ -386,14 +386,13 @@ const getActions = (
     );
   }
   if (!called) {
-    const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
-    const head =
-      name !== undefined && environment.builtins.has(name)
-        ? getStandardHead(name, environment)
-        : undefined;
+    const builtin = isLocallyResolved(expression)
+      ? undefined
+      : environment.builtins.get(getOperatorName(expression) ?? "");
+    const head = builtin && getStandardHead(builtin.name, environment);
     return [
-      name !== undefined && head
-        ? { ...createSplitAction(), name: resolveSynonym(name), head }
+      builtin && head
+        ? { ...createSplitAction(), name: resolveSynonym(builtin.name), head }
         : createSplitAction(),
     ];
   }

@@ -221,6 +221,41 @@ describe("liveness matches TLC", () => {
     },
   );
 
+  it("evaluates in each state a call whose definition ignores its variable argument, as TLC's level bound counts the argument", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences\nVARIABLE x\nG(v) == Head(<<>>) = 1\nInit == x = 0\nNext == x < 4 /\\ x' = x + 1\nProp == <>(x = 3 /\\ G(x))\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+    });
+    expect([
+      result.status,
+      result.failure?.message,
+      result.failure?.trace?.map((step) => step.state.x),
+      result.failure?.callStack
+        ?.filter((expression, index, stack) => expression !== stack[index - 1])
+        .map((expression) => {
+          const range = expression.location.range;
+          return `${range?.start.line}.${range?.start.column}-${range?.end.line}.${range?.end.column}`;
+        }),
+    ]).toEqual([
+      "error",
+      "Attempted to apply Head to the empty sequence.",
+      [0, 1, 2],
+      ["7.12-7.24", "7.21-7.24", "4.9-4.22", "4.9-4.18"],
+    ]);
+  });
+
+  it("evaluates a constant part of a definition a temporal property calls at startup, as TLC expands the call", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nS(v) == v < 0 /\\ PrintT("s")\nInit == x = 0\nNext == x < 4 /\\ x\' = x + 1\nProp == <>[]~S(x)\n====',
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(String(text)),
+    });
+    expect([result.status, printed]).toEqual(["success", ['"s"']]);
+  });
+
   it("finds the level of a spec whose initial predicate calls a recursive LET operator", async () => {
     const result = await check({
       source:
@@ -228,6 +263,47 @@ describe("liveness matches TLC", () => {
       config: "SPECIFICATION Spec",
     });
     expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+  });
+
+  it("leaves a recursive operator a temporal property calls through an operator argument unexpanded, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE s\nRECURSIVE RecOp(_)\nRecOp(n) == IF n = 0 THEN TRUE ELSE RecOp(n - 1)\nA == INSTANCE Abstract\nInit == s = 0\nNext == s' = (s + 1) % 3\nProp == A!Double(RecOp, s)\nLive == LET RECURSIVE L(_)\n            L(n) == IF n = 0 THEN TRUE ELSE L(n - 1)\n        IN  A!Double(L, s)\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop Live",
+      loadModule: (name) =>
+        name === "Abstract"
+          ? "---- MODULE Abstract ----\nVARIABLE s\nAlways(ns(_), a) == [](ns(a))\nDouble(ns(_), a) == Always(ns, a)\n===="
+          : undefined,
+    });
+    expect([result.status, result.distinctStates]).toEqual(["success", 3]);
+  });
+
+  it("evaluates a constant part of a violated temporal property again as it names the property, as TLC translates the property again", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nS(v) == v < 0 /\\ PrintT("s")\nInit == x = 0\nNext == x < 4 /\\ x\' = x + 1\nProp == <>S(x)\n====',
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(String(text)),
+    });
+    expect([result.status, result.violation?.name, printed]).toEqual([
+      "liveness-violation",
+      "Prop",
+      ['"s"', '"s"'],
+    ]);
+  });
+
+  it("checks a property that calls a recursive operator with a variable", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE s\nRECURSIVE RecOp(_)\nRecOp(n) == IF n = 0 THEN TRUE ELSE RecOp(n - 1)\nInit == s = 0\nNext == s' = (s + 1) % 3\nProp == []RecOp(s)\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+    });
+    expect([result.status, result.generatedStates, result.distinctStates]).toEqual([
+      "success",
+      4,
+      3,
+    ]);
   });
 
   it("checks a property that calls a recursive LET operator", async () => {

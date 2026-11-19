@@ -12,6 +12,8 @@ export const UNEXPECTED_EXCEPTION = getUnexpectedException("java.lang.RuntimeExc
 
 export const UNEXPECTED_EVAL_EXCEPTION = getUnexpectedException("tlc2.tool.EvalException");
 
+export const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationException");
+
 export const isStackOverflow = (error: unknown) =>
   (error instanceof RangeError && error.message === "Maximum call stack size exceeded") ||
   (error instanceof SyntaxError && error.message.endsWith(": Stack overflow"));
@@ -34,6 +36,11 @@ export interface SyntaxFailure {
 export interface SanyError {
   location: string;
   message: string;
+}
+
+// SANY drops an error it already has only when the codes match too, so two errors can share text.
+export interface CodedSanyError extends SanyError {
+  code?: string;
 }
 
 interface SanyReport {

@@ -58,7 +58,7 @@ interface TraceContext {
   tracedSteps: WeakMap<TraceStep, TracedStep>;
   captureOutput: <Result>(rebuild: () => Result) => { result: Result; lines: OutputLine[] };
   forEachInitialState: (onState: (state: Value[]) => void) => void;
-  getUncoveredInitialStates: () => Value[][];
+  findUncoveredInitialState: (isMatch: (state: Value[]) => boolean) => Value[] | undefined;
   findSuccessorAction: (
     state: Value[],
     isMatch: (successor: Successor) => boolean,
@@ -95,7 +95,9 @@ export const createTraceBuilder = (context: TraceContext) => {
     runtime.getLevel = () => level;
     runtime.getBehavior = getBehavior;
     try {
-      return search.evaluateAlias(alias, state, successor, options.isTool ?? false);
+      return captureOutput(() =>
+        search.evaluateAlias(alias, state, successor, options.isTool ?? false),
+      );
     } finally {
       runtime.getLevel = searchLevel;
       runtime.getBehavior = searchBehavior;
@@ -120,23 +122,35 @@ export const createTraceBuilder = (context: TraceContext) => {
     current.rebuilt = { state, level };
     runtime.reseedRandom();
   };
+  // TLC fingerprints a state, which evaluates the VIEW, as StatePrinter prints it and as TLCTrace's random generator seeds itself for it.
+  const getViewOutput = (state: Value[], level: number, isSeeding = false) => {
+    if (config.view === undefined) return [];
+    const rebuilt = current.rebuilt;
+    current.rebuilt = { state, level };
+    try {
+      return captureOutput(() => (isSeeding ? runtime.getRandom() : getFingerprintState(state)))
+        .lines;
+    } finally {
+      current.rebuilt = rebuilt;
+    }
+  };
   // TLC's TLCStateMut#equals compares the variables in turn, and a lazy value fails as it reaches it.
   const isEqualState = (state: Value[], successor: Value[]) =>
     state.every((value, position) => {
       const error = getFingerprintError(value);
+      // Deviation from TLC: Tool#getState skips a successor whose comparison throws a TLCRuntimeException, so TLC misses the step and reports a TLC bug(5).
       if (error) throw error;
       return isSameValue(value, successor[position]);
     });
   const findStepAction = (
     index: number,
     previous: Value[],
-    state: Value[],
+    key: Value[],
     isHeld: boolean,
     isDrawnOn = false,
   ) => {
     const expanding = { ...current };
     Object.assign(current, { index, isExpanding: true, candidate: undefined });
-    const key = isHeld ? state : getFingerprintState(state);
     const isMatch = (successor: Successor) =>
       isHeld
         ? isEqualState(key, successor.state)
@@ -167,7 +181,13 @@ export const createTraceBuilder = (context: TraceContext) => {
         ? runtime.runWithNewRandom(() => captureOutput(() => rebuildInitialState(path[0])).lines)
         : [];
     const last = steps.length - 1;
-    const findPositionAction = (position: number, isDrawnOn = false) =>
+    const isPrintFingerprinted =
+      known > 0 && !is174 && (last > 0 || traceOptions.incomplete !== undefined);
+    const findPositionAction = (
+      position: number,
+      isDrawnOn = false,
+      isHeld = known === 2 && position === last,
+    ) =>
       position === 0 || steps[position].action === "Stuttering"
         ? { result: { action: undefined }, lines: [] }
         : captureOutput(() => {
@@ -176,8 +196,8 @@ export const createTraceBuilder = (context: TraceContext) => {
                 action: findStepAction(
                   path[position - 1],
                   steps[position - 1].state,
-                  steps[position].state,
-                  known === 2 && position === last,
+                  isHeld ? steps[position].state : context.fingerprintStates[path[position]],
+                  isHeld,
                   isDrawnOn,
                 ),
               };
@@ -188,50 +208,109 @@ export const createTraceBuilder = (context: TraceContext) => {
             }
           });
     // TLC's TLCStateRandom reseeds only for another state, so TLC rebuilds the step to a known successor drawing on from where the search stopped, unless it rebuilt a step before it.
-    const stepActions = steps.map((_step, position) =>
-      findPositionAction(position, known === 2 && position === last && last === 1 && !is174),
-    );
+    const findStepActions = (start: number, end: number) =>
+      steps
+        .slice(start, end)
+        .map((_step, offset) =>
+          findPositionAction(
+            start + offset,
+            known === 2 && start + offset === last && last === 1 && !is174,
+          ),
+        );
+    const prefixActions = findStepActions(0, rebuilt);
+    const seedOutput =
+      isPrintFingerprinted && rebuilt > 1
+        ? getViewOutput(steps[rebuilt - 2].state, rebuilt - 1, true)
+        : [];
+    const stepActions = [...prefixActions, ...findStepActions(rebuilt, steps.length)];
     const outputs = stepActions.map((step) => step.lines);
-    const traceOutput = isRebuiltAgain
+    const failed = stepActions[last].result.error;
+    const traceFailure = failed && getTraceFailure(failed, outputs[last]);
+    const printed = traceFailure ? steps.slice(0, last) : steps;
+    const getAliases = () =>
+      alias === undefined
+        ? []
+        : printed.map((step, position) =>
+            getAliasState(
+              alias,
+              step.state,
+              steps[position + 1]?.state ??
+                traceOptions.incomplete ??
+                steps[loopStart ?? position].state,
+              position + 1,
+              () => steps.slice(0, position + 1).map((inner) => inner.state),
+            ),
+          );
+    const aliases = getAliases();
+    const getAliasOutput = (position: number) => aliases[position]?.lines ?? [];
+    const viewOutputs = printed.map((step, position) => ({
+      rebuilt:
+        isPrintFingerprinted && position === rebuilt && rebuilt > 0
+          ? getViewOutput(step.state, position + 1)
+          : [],
+      printed:
+        isPrintFingerprinted && (position > 0 || rebuilt === 0)
+          ? getViewOutput(step.state, position + 1)
+          : [],
+    }));
+    const rebuiltOutput = isRebuiltAgain
       ? [
+          getViewOutput(steps[last - 1].state, last, true),
           ...runtime.runWithNewRandom(() => [
             captureOutput(() => rebuildInitialState(path[0])).lines,
             ...steps
               .slice(1, last)
               .map((_step, position) => findPositionAction(position + 1).lines),
+            getViewOutput(steps[Math.max(last - 2, 0)].state, Math.max(last - 1, 1), true),
           ]),
-          findPositionAction(last, known === 2).lines,
+          findPositionAction(last, known === 2, true).lines,
         ].flat()
       : [];
-    const prefixOutput = rebuilt > 0 ? [initialOutput, ...outputs.slice(1, rebuilt)].flat() : [];
-    const failed = stepActions[last].result.error;
-    const traceFailure = failed && getTraceFailure(failed, outputs[last]);
+    // TLC's Worker#doPostCondition evaluates the alias of each state again after it rebuilds the trace.
+    const postconditionAliases = isRebuiltAgain && !traceFailure ? getAliases() : [];
+    const loopPosition = loopStart ?? 0;
+    const prefixOutput =
+      known === 0 && !is174
+        ? [
+            initialOutput,
+            ...outputs.slice(1, loopPosition + 1),
+            ...aliases.slice(0, loopPosition).map((aliased) => aliased.lines),
+            ...outputs
+              .slice(loopPosition + 1)
+              .flatMap((lines, offset) => [lines, getAliasOutput(loopPosition + offset)]),
+            getAliasOutput(last),
+          ].flat()
+        : rebuilt > 0
+          ? [initialOutput, ...outputs.slice(1, rebuilt), seedOutput].flat()
+          : [];
     return {
-      trace: (traceFailure ? steps.slice(0, last) : steps).map((step, position) => {
+      trace: printed.map((step, position) => {
         const action = stepActions[position].result.action;
+        const aliasOutput =
+          known === 0 ? [] : [...getAliasOutput(position), ...viewOutputs[position].printed];
         const traceStep: TraceStep = {
           action: step.action,
+          // Deviation from TLC: when the next-state relation no longer yields a step, as it reads TLCGet("stats"), TLCTrace#printTrace fails with a TLC bug(2) or bug(4).
           label: action && getActionLabel(action, options.version),
-          state:
-            alias === undefined
-              ? toRecord(step.state)
-              : getAliasState(
-                  alias,
-                  step.state,
-                  steps[position + 1]?.state ??
-                    traceOptions.incomplete ??
-                    steps[loopStart ?? position].state,
-                  position + 1,
-                  () => steps.slice(0, position + 1).map((inner) => inner.state),
-                ),
-          output: position === 0 ? prefixOutput : position < rebuilt ? [] : outputs[position],
+          state: alias === undefined ? toRecord(step.state) : aliases[position].result,
+          output:
+            position === 0
+              ? prefixOutput
+              : position < rebuilt
+                ? []
+                : [...viewOutputs[position].rebuilt, ...outputs[position]],
+          ...(aliasOutput.length > 0 && { aliasOutput }),
         };
         if (alias !== undefined || action) {
-          context.tracedSteps.set(traceStep, { state: toRecord(step.state), action });
+          context.tracedSteps.set(traceStep, {
+            state: toRecord(step.state),
+            action,
+            alias: postconditionAliases[position]?.result,
+          });
         }
         return traceStep;
       }),
-      traceOutput,
+      traceOutput: [...rebuiltOutput, ...postconditionAliases.flatMap((aliased) => aliased.lines)],
       ...(traceFailure && { traceFailure }),
     };
   };
@@ -257,7 +336,7 @@ export const createTraceBuilder = (context: TraceContext) => {
   const getPathStates = (path: number[], nextFailure: string) => {
     const initial = captureOutput(() =>
       isReducing || isImpure(environment)
-        ? context.getUncoveredInitialStates().find((state) => hasFingerprint(state, path[0]))
+        ? context.findUncoveredInitialState((state) => hasFingerprint(state, path[0]))
         : states[path[0]],
     ).result;
     if (!initial) throw new TlaEvaluationError(INITIAL_RECOVERY_FAILURE);
@@ -292,27 +371,29 @@ export const createTraceBuilder = (context: TraceContext) => {
   // TLCTrace#printTrace applies the alias to every state but an initial one it prints without a successor.
   const getStateTrace = (index: number, traceOptions: TraceOptions = {}): Behavior => {
     if (context.parents[index] !== -1) return getTrace(index, undefined, traceOptions);
-    const traceOutput =
-      is174 || traceOptions.isPrintedOnly
-        ? []
-        : captureOutput(() => rebuildInitialState(index)).lines;
     const state = states[index];
     if (traceOptions.incomplete !== undefined) {
       return {
         trace: toTrace([{ state, action: undefined }], [index], traceOptions).trace,
-        traceOutput,
+        traceOutput: [],
       };
     }
-    const step = { action: undefined, label: undefined, state: toRecord(state) };
+    const viewOutput = is174 ? [] : getViewOutput(state, 1);
+    const traceOutput =
+      is174 || traceOptions.isPrintedOnly
+        ? []
+        : [...getViewOutput(state, 1), ...captureOutput(() => rebuildInitialState(index)).lines];
+    const step = {
+      action: undefined,
+      label: undefined,
+      state: toRecord(state),
+      ...(viewOutput.length > 0 && { aliasOutput: viewOutput }),
+    };
     const alias = config.alias;
-    if (alias !== undefined) {
-      context.tracedSteps.set(step, {
-        state: step.state,
-        action: undefined,
-        alias: getAliasState(alias, state, state, 1, () => [state]),
-      });
-    }
-    return { trace: [step], traceOutput };
+    if (alias === undefined || traceOptions.isPrintedOnly) return { trace: [step], traceOutput };
+    const aliased = getAliasState(alias, state, state, 1, () => [state]);
+    context.tracedSteps.set(step, { state: step.state, action: undefined, alias: aliased.result });
+    return { trace: [step], traceOutput: [...traceOutput, ...aliased.lines] };
   };
   const getIncompleteStep = (
     incomplete: State,
@@ -322,10 +403,14 @@ export const createTraceBuilder = (context: TraceContext) => {
   ): TraceStep => {
     const state = toRecord(incomplete.map((value) => value ?? createModelValue("null")));
     const alias = config.alias;
+    const aliased =
+      alias === undefined
+        ? undefined
+        : getAliasState(alias, incomplete, incomplete, level, () => []);
     const traceStep = {
       ...step,
-      state:
-        alias === undefined ? state : getAliasState(alias, incomplete, incomplete, level, () => []),
+      state: aliased?.result ?? state,
+      ...(aliased && aliased.lines.length > 0 && { aliasOutput: aliased.lines }),
     };
     context.tracedSteps.set(traceStep, { state, action });
     return traceStep;

@@ -165,6 +165,10 @@ describe("name resolution matches SANY", () => {
       "D(Op(_)) == Op(42)\nG(a) == a\nF == D(G) = D(LAMBDA a : a)",
     ],
     [
+      "operator arguments in named assumptions",
+      "D(Op(_)) == Op(42)\nFoo == 1 = 1\nASSUME A == D(LAMBDA a : a) = 42\nAXIOM B == <<D(LAMBDA a : a)>> # <<>>\nASSUME C == \\A v \\in {1} : D(LAMBDA a : a) = 42 /\\ Foo!1 = 1",
+    ],
+    [
       "an operator argument to an operator of a standard module a LET instantiates",
       "ASSUME LET S == INSTANCE Sequences IN S!SelectSeq(<<1, 2>>, LAMBDA a : a = 2) = <<2>>",
     ],
@@ -179,6 +183,14 @@ describe("name resolution matches SANY", () => {
     [
       "an operator substituted before a LEMMA, which SANY rejects",
       "EXTENDS Integers\n---- MODULE Inner ----\nCONSTANT G(_, _)\n====\nI == INSTANCE Inner WITH G <- -\nLEMMA TRUE",
+    ],
+    [
+      "a selection into an ASSUME/PROVE theorem through a named instance",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nI == INSTANCE Base\nX == I!Foo!1",
+    ],
+    [
+      "a definition named like a theorem that an instance with substitutions reuses from a module without parameters, which SANY never imports",
+      "---- MODULE P ----\nTHEOREM Foo == TRUE\n====\n---- MODULE Base ----\nEXTENDS P\nCONSTANT c\n====\nFoo == 1\nINSTANCE Base WITH c <- 1",
     ],
   ])("accepts %s", async (_title, source) => {
     expect((await checkNames(source)).status).toBe("success");
@@ -1688,6 +1700,43 @@ describe("name resolution matches SANY", () => {
     });
   });
 
+  it.each([
+    [
+      "X == Foo!3",
+      "ASSUME TRUE PROVE TRUE",
+      "line 3, col 10 to line 3, col 10",
+      "Nonexistent operand specified by `argument selector 3'.",
+    ],
+    [
+      "X == Foo",
+      "ASSUME TRUE PROVE TRUE",
+      "line 3, col 6 to line 3, col 8",
+      "ASSUME/PROVE used where an expression is required.",
+    ],
+    [
+      "X == Foo!1",
+      "ASSUME NEW y PROVE y = y",
+      "line 3, col 6 to line 3, col 10",
+      "Selected a NEW declaration as an expression or operator.",
+    ],
+  ])(
+    "rejects %j of an extended %j theorem like SANY",
+    async (use, statement, location, message) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Base\n${use}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "Base"
+              ? `---- MODULE Base ----\nTHEOREM Foo == ${statement}\n====`
+              : undefined,
+        }),
+      ).rejects.toMatchObject({
+        sany: { errors: [{ location: `${location} of module M`, message }] },
+      });
+    },
+  );
+
   it("names an operator of an extended module as it is spelled", async () => {
     const modules = new Map([
       ["Inner", "---- MODULE Inner ----\nCONSTANT Op(_)\n===="],
@@ -2575,6 +2624,394 @@ describe("name resolution matches SANY", () => {
       })),
       [],
     ],
+    [
+      "a selection into a name defined twice",
+      "Foo == 1 = 1\nFoo == TRUE\nX == Foo!1",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 11 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 11 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Foo.  \nThis duplicates the one at line 2, col 1 to line 2, col 12 of module M.",
+        },
+      ],
+    ],
+    [
+      "a selection from an inner module into a name defined twice",
+      "Foo == 1 = 1\nFoo == TRUE\n---- MODULE Inner ----\nX == Foo!1\n====",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 11 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 3, col 1 to line 3, col 11 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Foo.  \nThis duplicates the one at line 2, col 1 to line 2, col 12 of module M.",
+        },
+      ],
+    ],
+    [
+      "a selection through an instance into a name its module defines twice",
+      "---- MODULE Inner ----\nFoo == 1 = 1\nLOCAL Foo == TRUE\n====\nI == INSTANCE Inner\nX == I!Foo!1",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 17 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 4, col 1 to line 4, col 17 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Foo.  \nThis duplicates the one at line 3, col 1 to line 3, col 12 of module M.",
+        },
+      ],
+    ],
+    [
+      "a selection into a theorem name an instance imported first",
+      "---- MODULE Base ----\nFoo == 1 = 1\n====\nINSTANCE Base\nTHEOREM Foo == TRUE\nX == Foo!1",
+      [
+        {
+          location: "line 6, col 1 to line 6, col 19 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 12 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection into a definition named like a later ASSUME/PROVE theorem",
+      "Foo == {1, 2, 3}\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\nX == Foo!3",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 37 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 16 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection from an inner module into an ASSUME/PROVE theorem named like a later definition",
+      "THEOREM Foo == ASSUME TRUE PROVE TRUE\nFoo == {1, 2, 3}\n---- MODULE Inner ----\nX == Foo!3\n====",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 16 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+        {
+          location: "line 3, col 1 to line 3, col 16 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 37 of module M.",
+        },
+        {
+          location: "line 5, col 10 to line 5, col 10 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection from an inner module into an ASSUME/PROVE theorem",
+      "THEOREM Foo == ASSUME TRUE PROVE TRUE\n---- MODULE Inner ----\nX == Foo!3\n====",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 10 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition named like an ASSUME/PROVE theorem a later INSTANCE imports",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nFoo == {1, 2, 3}\nINSTANCE Base\nX == Foo!3",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 37 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 16 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition named like an ASSUME/PROVE theorem an INSTANCE with substitutions imports",
+      "---- MODULE Base ----\nCONSTANT c\nTHEOREM Foo == ASSUME c PROVE TRUE\n====\nFoo == 1\nINSTANCE Base WITH c <- TRUE",
+      [
+        {
+          location: "line 7, col 1 to line 7, col 28 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 6, col 1 to line 6, col 8 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition named like an ASSUME/PROVE theorem an instanced module extends",
+      "---- MODULE P ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\n---- MODULE Base ----\nEXTENDS P\n====\nFoo == 1\nINSTANCE Base",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 37 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 8, col 1 to line 8, col 8 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection into a theorem an instance with substitutions reuses from a module without parameters, which SANY never imports",
+      "---- MODULE P ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\n---- MODULE Base ----\nEXTENDS P\nCONSTANT c\n====\nINSTANCE Base WITH c <- 1\nX == Foo!3",
+      [
+        {
+          location: "line 10, col 6 to line 10, col 8 of module M",
+          message: "Unknown operator: `Foo'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition named like one a LOCAL INSTANCE imports, at the instance",
+      "---- MODULE Base ----\nFoo == 1\n====\nLOCAL INSTANCE Base\nFoo == 2",
+      [
+        {
+          location: "line 6, col 1 to line 6, col 8 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 6, col 1 to line 6, col 8 of module M",
+          message:
+            "Multiple declarations or definitions for symbol Foo.  \nThis duplicates the one at line 5, col 1 to line 5, col 19 of module M.",
+        },
+      ],
+    ],
+    [
+      "a definition named like an ASSUME/PROVE theorem a LOCAL INSTANCE imports, at the instance",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nLOCAL INSTANCE Base\nFoo == 1",
+      [
+        {
+          location: "line 6, col 1 to line 6, col 8 of module M",
+          message: "Operator Foo already defined or declared.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 8 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 19 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an ASSUME/PROVE theorem a LOCAL INSTANCE imports after a definition of its name, at the instance",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nFoo == 1\nLOCAL INSTANCE Base",
+      [
+        {
+          location: "line 6, col 1 to line 6, col 19 of module M",
+          message:
+            "Multiply-defined symbol 'Foo': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 8 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection into an ASSUME/PROVE theorem an INSTANCE imports",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nINSTANCE Base\nX == Foo!3",
+      [
+        {
+          location: "line 6, col 10 to line 6, col 10 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection through a named instance into an ASSUME/PROVE theorem",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nI == INSTANCE Base\nX == I!Foo!3",
+      [
+        {
+          location: "line 6, col 12 to line 6, col 12 of module M",
+          message: "Nonexistent operand specified by `argument selector 3'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection through a named instance into the NEW clause of a theorem",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME NEW y PROVE y = y\n====\nI == INSTANCE Base\nX == I!Foo!1",
+      [
+        {
+          location: "line 6, col 6 to line 6, col 12 of module M",
+          message: "Selected a NEW declaration as an expression or operator.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an ASSUME/PROVE theorem a named instance imports, used as an expression",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nI == INSTANCE Base\nX == I!Foo",
+      [
+        {
+          location: "line 6, col 6 to line 6, col 10 of module M",
+          message: "ASSUME/PROVE used where an expression is required.",
+        },
+      ],
+      [],
+    ],
+    [
+      "the statement of a theorem named like an earlier definition",
+      "Foo == 1 = 1\nBar == 1\nTHEOREM Bar == Foo!1 = Undefined",
+      [
+        {
+          location: "line 4, col 24 to line 4, col 32 of module M",
+          message: "Unknown operator: `Undefined'.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 32 of module M",
+          message:
+            "Multiply-defined symbol 'Bar': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 8 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "named <*> steps, each as a semantic error",
+      "THEOREM TRUE\n<*>abc 1\n<*>def QED",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 6 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a named <+> step as a semantic error, not a parse error",
+      "THEOREM TRUE\n<1>1. TRUE\n<+>a. TRUE\n<2> QED\n<1> QED",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 5 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+      ],
+      [],
+    ],
+    [
+      "named <+> and <*> steps that take one step number",
+      "THEOREM TRUE\n<1>1. TRUE\n  <+>1. TRUE\n  <*>1. DEFINE D == 1\n  <*> QED\n<1> QED",
+      [
+        {
+          location: "line 4, col 3 to line 4, col 7 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+        {
+          location: "line 5, col 3 to line 5, col 7 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+        {
+          location: "line 5, col 3 to line 5, col 21 of module M",
+          message:
+            "Multiply-defined symbol '<2>1': this definition or declaration conflicts \nwith the one at line 4, col 3 to line 4, col 7 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a named <*> step before the errors in its body",
+      "THEOREM TRUE\n<*>a. Undefined\n<*> QED",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 5 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+        {
+          location: "line 3, col 7 to line 3, col 15 of module M",
+          message: "Unknown operator: `Undefined'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an assertion numbered like an earlier USE step, which keeps the number",
+      "Op == 1\nTHEOREM TRUE\n<1>3. USE DEF Op\n<1>3. TRUE\n  <2>1. <1>3\n  <2> QED\n<1> QED",
+      [
+        {
+          location: "line 5, col 1 to line 5, col 5 of module M",
+          message:
+            "Multiply-defined symbol '<1>3': this definition or declaration conflicts \nwith the one at line 4, col 1 to line 4, col 16 of module M.",
+        },
+        {
+          location: "line 6, col 9 to line 6, col 12 of module M",
+          message: "Step number of non-expression step used as an expression.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a DEFINE step numbered like an earlier assertion, which keeps the number",
+      "THEOREM TRUE\n<1>3. TRUE\n<1>3. DEFINE D == 1\n<1>4. TRUE\n  BY DEF <1>3\n<1> QED",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 19 of module M",
+          message:
+            "Multiply-defined symbol '<1>3': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 5 of module M.",
+        },
+        {
+          location: "line 6, col 10 to line 6, col 13 of module M",
+          message: "DEF clause entry should describe a defined operator.",
+        },
+        { location: "line 6, col 3 to line 6, col 13 of module M", message: "Empty BY" },
+      ],
+      [],
+    ],
+    [
+      "a DEFINE step numbered like an earlier PICK step",
+      "THEOREM TRUE\n<1>3. PICK y \\in {1} : TRUE\n  OBVIOUS\n<1>3. DEFINE D == y\n<1> QED",
+      [
+        {
+          location: "line 5, col 1 to line 5, col 19 of module M",
+          message:
+            "Multiply-defined symbol '<1>3': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 5 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a HIDE step numbered like an earlier SUFFICES step, after the errors in its body",
+      "THEOREM TRUE\n<1>3. SUFFICES ASSUME NEW c PROVE TRUE\n  OBVIOUS\n<1>3. HIDE DEF Init\n<1> QED",
+      [
+        {
+          location: "line 5, col 16 to line 5, col 19 of module M",
+          message: "Unknown operator: `Init'.",
+        },
+        {
+          location: "line 5, col 16 to line 5, col 19 of module M",
+          message: "DEF clause entry should describe a defined operator.",
+        },
+        {
+          location: "line 5, col 7 to line 5, col 19 of module M",
+          message: "Empty USE or HIDE statement.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 19 of module M",
+          message:
+            "Multiply-defined symbol '<1>3': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 5 of module M.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
@@ -2611,9 +3048,24 @@ describe("name resolution matches SANY", () => {
       "*** Warnings: 1\n\nline 2, col 27 to line 2, col 27 of module M\n\nMultiple declarations or definitions for symbol a.  \nThis duplicates the one at line 2, col 20 to line 2, col 20 of module M.\n\n\n",
     ],
     [
+      "two assertions with one step number",
+      "THEOREM TRUE\n<1>3. TRUE\n<1>3. CASE TRUE\n<1> QED",
+      "*** Warnings: 1\n\nline 4, col 1 to line 4, col 5 of module M\n\nMultiple declarations or definitions for symbol <1>3.  \nThis duplicates the one at line 3, col 1 to line 3, col 5 of module M.\n\n\n",
+    ],
+    [
       "a variable and a constant of two extended modules",
       "---- MODULE A ----\nVARIABLE Baz\n====\n---- MODULE B ----\nCONSTANT Baz\n====\n---- MODULE C ----\nEXTENDS A, B\nF == Baz\n====",
       "*** Warnings: 1\n\nline 6, col 10 to line 6, col 12 of module M\n\nWarning: the declaration of 'Baz' conflicts with \nits declaration at line 3, col 10 to line 3, col 12 of module M.\n\n\n",
+    ],
+    [
+      "a definition a later LOCAL INSTANCE imports, at the instance",
+      "---- MODULE Base ----\nFoo == 1\n====\nFoo == 2\nLOCAL INSTANCE Base",
+      "*** Warnings: 1\n\nline 6, col 1 to line 6, col 19 of module M\n\nMultiple declarations or definitions for symbol Foo.  \nThis duplicates the one at line 5, col 1 to line 5, col 8 of module M.\n\n\n",
+    ],
+    [
+      "a definition imported by two LOCAL INSTANCEs as one definition",
+      "---- MODULE Base ----\nFoo == 1\n====\nLOCAL INSTANCE Base\nLOCAL INSTANCE Base\nINSTANCE Base",
+      undefined,
     ],
   ])("warns of %s like SANY", async (_title, source, warnings) => {
     const printed: string[] = [];

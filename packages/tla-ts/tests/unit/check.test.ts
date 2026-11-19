@@ -3110,6 +3110,21 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("names an action by the operator of a standard module linked from its source that it applies, as TLC's Tool#getActionsAppl does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE E ----\nEXTENDS Bags, Naturals, TLCExt\nVARIABLE x\nInit == x = 0\nNext == (x < 2 /\\ x' = x + 1) \\/ BagIn(2, SetToBag({1})) \\/ TLCNoOp(FALSE)\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      coverage: 1,
+    });
+    expect(result.coverage?.relations.map((relation) => relation.label)).toEqual([
+      "Init line 4, col 1 to line 4, col 4 of module E",
+      "Next line 5, col 1 to line 5, col 4 of module E (5 10 5 28)",
+      "BagIn line 36, col 1 to line 36, col 10 of module Bags (5 34 5 56)",
+      "TLCNoOp line 138, col 1 to line 138, col 12 of module TLCExt (5 61 5 74)",
+    ]);
+  });
+
   it("counts the substitutions of an instance a subexpression is selected through, as SANY puts the instance's SubstInNode around the selection", async () => {
     const lines = formatCoverage(
       await check({
@@ -3533,6 +3548,22 @@ describe("initial predicate and next-state relation match TLC", () => {
       ),
     );
   });
+
+  it.each(["x'", "[](x = 0)"])(
+    "rejects an instanced invariant whose substitute %s is not a state predicate",
+    async (substitute) => {
+      await expect(
+        checkBody(
+          `---- MODULE N ----\nCONSTANT Op(_), k\nInv == Op(k)\n====\nVARIABLE x\nINSTANCE N WITH Op <- LAMBDA p : TRUE, k <- ${substitute}\nInit == x = 0\nNext == x' = x`,
+          "INIT Init\nNEXT Next\nINVARIANT Inv",
+        ),
+      ).rejects.toThrow(
+        new TlaConfigError(
+          "The invariant Inv is not a state predicate (one with no primes or temporal operators).",
+        ),
+      );
+    },
+  );
 
   it("binds a variable once for each time a lazy UNION streams an element", async () => {
     const set = "UNION {SUBSET {1}, {{}}}";

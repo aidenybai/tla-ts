@@ -95,7 +95,7 @@ export const createCounterExample = (
   isConsole = true,
 ) => {
   const states = stateRecords.map((state, index) =>
-    createTuple([index + 1, createRecord(Object.entries(state))]),
+    createTuple([index + 1, createTlcRecord(Object.entries(state))]),
   );
   const steps = states
     .slice(1)
@@ -201,14 +201,13 @@ export const createTlcExtOperators = (
           `In computing AssertError, a non-string expression (${describeNode(message)}) was used as the err of an AssertError(err, exp).`,
         );
       }
-      const expected = getThunk(args, 0, "AssertError")();
       try {
         getThunk(args, 1, "AssertError")();
       } catch (error) {
-        if (error instanceof TlaEvaluationError) {
-          return formatNestedMessage(error.message, runtime.isTool) === expected;
-        }
-        throw error;
+        if (!(error instanceof TlaEvaluationError)) throw error;
+        return (
+          formatNestedMessage(error.message, runtime.isTool) === getThunk(args, 0, "AssertError")()
+        );
       }
       return false;
     }),
@@ -231,12 +230,9 @@ export const createTlcExtOperators = (
       if (!context.state) return createTuple([createRecord([])]);
       return createTuple(
         runtime.getBehavior(state).map((step) => {
-          const fields = context.environment.variables.map((name, index): [string, Value] => [
-            name,
-            step[index],
-          ]);
+          const fields = Object.entries(runtime.toRecord(step));
           const action = runtime.getSimulationValue?.("action", step);
-          return createRecord(action === undefined ? fields : [["_action", action], ...fields]);
+          return createTlcRecord(action === undefined ? fields : [["_action", action], ...fields]);
         }),
       );
     }),

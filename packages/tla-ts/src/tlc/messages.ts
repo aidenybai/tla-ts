@@ -1,6 +1,5 @@
 import {
   getErrorExitCode,
-  getUnexpectedException,
   STACK_OVERFLOW_MESSAGE,
   TlaEvaluationError,
   TlaModuleError,
@@ -11,6 +10,7 @@ import {
   TOO_MANY_STATES_MESSAGE,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
+  WRONG_INVOCATION_EXCEPTION,
 } from "../errors";
 import { setExitCode } from "../exit-codes";
 import type { TlcVersion } from "./version";
@@ -119,6 +119,7 @@ export interface MessagePrinter {
   isDiffTrace: boolean;
   version: TlcVersion;
   print: (code: number, level: MessageLevel, text: string) => void;
+  printOutput: (text: string) => void;
 }
 
 interface MessagePrinterOptions {
@@ -128,6 +129,7 @@ interface MessagePrinterOptions {
   version?: TlcVersion;
   suppressedCodes?: number[];
   errorCodes?: number[];
+  onOutput?: (text: string) => void;
 }
 
 export const formatMessage = (isTool: boolean, code: number, level: MessageLevel, text: string) =>
@@ -157,6 +159,7 @@ export const createMessagePrinter = (options: MessagePrinterOptions): MessagePri
       if (isWarning) warnings.add(message);
       console.log(message);
     },
+    printOutput: options.onOutput ?? console.log,
   };
 };
 
@@ -426,8 +429,6 @@ export const withHeadline = (error: unknown, code: number, headline: string) => 
 };
 
 export const isHeadedError = (error: Error) => headedErrors.has(error);
-
-const WRONG_INVOCATION_EXCEPTION = getUnexpectedException("util.WrongInvocationException");
 
 const UNEXPECTED_HEADLINE = UNEXPECTED_EXCEPTION.slice(0, UNEXPECTED_EXCEPTION.indexOf("\n"));
 

@@ -293,6 +293,71 @@ it("shows the states of the lasso it finds past a revisited state", () => {
   ]);
 });
 
+// Deviation from TLC: TLC prints "Back to state: <Step(2) …>", the behavior's step after the lasso's third state, which goes to n = 1.
+it("names the step that closes the lasso it finds in a behavior that revisits a state", () => {
+  const lassos: [unknown[], string | undefined][] = [];
+  simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Integers\nVARIABLES n, k\nvals == <<1, 2, 1, 2, 0, 1>>\nInit == n = 0 /\\ k = 0\nStep(i) == k = i /\\ k' = k + 1 /\\ n' = vals[i + 1]\nNext == \\E i \\in 0..5 : Step(i)\nSpec == Init /\\ [][Next]_<<n, k>> /\\ WF_<<n, k>>(Next)\nProp == <>[](n # 0)\nView == n\n====",
+    config: "SPECIFICATION Spec\nPROPERTY Prop\nVIEW View\nCHECK_DEADLOCK FALSE",
+    seed: 4n,
+    traceDepth: 8,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: () => {},
+    onProgress: (progress) => {
+      if (progress.kind !== "violation") return;
+      lassos.push([
+        progress.violation.trace.map((step) => step.state.n),
+        progress.violation.loopLabel,
+      ]);
+    },
+  });
+  expect(lassos).toEqual([[[0, 1, 2], "Step(4) line 6, col 12 to line 6, col 50 of module M"]]);
+});
+
+// Deviation from TLC: TLC throws "ArrayIndexOutOfBoundsException: Index 7 out of bounds for length 7" as it looks up the behavior's eighth state.
+it("names the step that closes a lasso as long as the behavior", () => {
+  const lassos: [unknown[][], number | undefined, string | undefined][] = [];
+  simulate({
+    source:
+      "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y, k\nxs == <<1, 1, 2, 0, 0, 1>>\nys == <<0, 1, 1, 1, 0, 0>>\nInit == x = 1 /\\ y = 1 /\\ k = 0\nStep(i) == k = i /\\ k' = k + 1 /\\ x' = xs[i + 1] /\\ y' = ys[i + 1]\nNext == \\E i \\in 0..5 : Step(i)\nSpec == Init /\\ [][Next]_<<x, y, k>> /\\ WF_<<x, y, k>>(Next)\nProp == <>[][y' = 1 - y /\\ x' = x]_<<x, y>>\nView == <<x, y>>\n====",
+    config: "SPECIFICATION Spec\nPROPERTY Prop\nVIEW View\nCHECK_DEADLOCK FALSE",
+    seed: 4n,
+    traceDepth: 7,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: () => {},
+    onProgress: (progress) => {
+      if (progress.kind !== "violation") return;
+      lassos.push([
+        progress.violation.trace.map((step) => [step.state.x, step.state.y]),
+        progress.violation.loopStart,
+        progress.violation.loopLabel,
+      ]);
+    },
+  });
+  expect(lassos).toEqual([
+    [
+      [
+        [1, 1],
+        [1, 0],
+        [1, 1],
+        [2, 1],
+        [0, 1],
+        [0, 0],
+        [1, 0],
+      ],
+      0,
+      "Step(1) line 7, col 12 to line 7, col 66 of module M",
+    ],
+  ]);
+});
+
 // Deviation from TLC: TLC's LiveCheck1 goes on from no node that a revisited state reaches, so it reports no violation.
 it("finds a violation past a revisited state, which TLC's LiveCheck1 misses", () => {
   expect(getViewLassos("<<1, 0, 2, 3, 4>>", "[](n = 2 => [](n = 2))")).toEqual([
@@ -502,6 +567,38 @@ it("prints a state whose function the RL scheduler fails to fingerprint, where T
     ],
   ]);
 });
+
+it.each([false, true])(
+  "reports a set beyond -maxSetSize as TLC's WrongInvocationException and prints the summary after the behavior (generating: %s)",
+  (isGenerating) => {
+    const outputs: string[] = [];
+    const status = simulate({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == \\E k \\in {a + b : a \\in 1..4, b \\in 1..4} : x' = k\n====",
+      config: "INIT Init\nNEXT Next",
+      seed: 4n,
+      traceDepth: 3,
+      traceCount: 2n,
+      aril: 0n,
+      isGenerating,
+      scheduler: "random",
+      maxSetSize: 4,
+      onSimulation: (output) => {
+        if (output.kind === "message" && output.isError) outputs.push(output.message);
+        if (output.kind === "behavior") outputs.push("behavior");
+        if (output.kind === "summary") outputs.push("summary");
+      },
+    });
+    expect([status, outputs]).toEqual([
+      255,
+      [
+        "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a util.WrongInvocationException\n: Attempted to construct a set with too many elements (>4).",
+        "behavior",
+        "summary",
+      ],
+    ]);
+  },
+);
 
 it("keeps the incomplete step of a successor error under -difftrace, where TLC's TLCStateMut#fingerPrint crashes", () => {
   const definitions =

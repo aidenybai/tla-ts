@@ -66,10 +66,11 @@ const getInitialViolationHeadline = (
 
 const printTraceOutput = (printer: MessagePrinter, lines: OutputLine[] | undefined) =>
   lines?.forEach((line) => {
-    if (typeof line === "string") return console.log(line);
+    if (typeof line === "string") return printer.printOutput(line);
     if (line.kind === "initial-states-progress") {
       return printInitialStatesProgress(printer, line.count);
     }
+    if (line.kind === "warning") return printer.print(line.code, MESSAGE_LEVEL.warning, line.text);
     const headline = getInitialViolationHeadline(line.status, line.name);
     printer.print(
       headline.code,
@@ -106,6 +107,7 @@ const printTrace = (
   try {
     trace.forEach((step, index) => {
       if (index > 0 || isRebuiltAfterHeading) printTraceOutput(printer, step.output);
+      printTraceOutput(printer, step.aliasOutput);
       const isDiffed =
         printer.isDiffTrace &&
         index > 0 &&
@@ -357,7 +359,7 @@ const printLivenessEnd = (printer: MessagePrinter, timing: Timing) => {
 
 const printPostcondition = (printer: MessagePrinter, postcondition: Postcondition | undefined) => {
   if (!postcondition) return;
-  if (postcondition.counts) console.log(postcondition.counts);
+  if (postcondition.counts) printer.printOutput(postcondition.counts);
   printer.print(
     postcondition.code,
     MESSAGE_LEVEL.error,
@@ -429,7 +431,8 @@ const printViolation = (status: CheckStatus, violation: Violation, printer: Mess
   const isCounterExample = isProperty || isLasso;
   const isRebuiltFirst = isCounterExample && printer.version !== "1.7.4";
   if (isRebuiltFirst) printTraceOutput(printer, violation.trace[0]?.output);
-  if (violation.counts) console.log(violation.counts);
+  if (violation.counts) printer.printOutput(violation.counts);
+  if (isInitial) printTraceOutput(printer, violation.trace[0].aliasOutput);
   if (headline) {
     const text = isInitial
       ? `${headline.text}\n${formatState(violation.trace[0].state)}`

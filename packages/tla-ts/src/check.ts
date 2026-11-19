@@ -61,6 +61,7 @@ import {
   addActionCoverage,
   createCheckEnvironment,
   createMissingOperatorError,
+  createOutputCapture,
   createSearch,
   getIncompleteSuccessorMessage,
   findAssumptionViolation,
@@ -69,6 +70,7 @@ import {
   STOP_WALK,
   walkCoveredSuccessors,
   withNextStateExitCode,
+  type CliSettings,
   type CoveredAction,
 } from "./search";
 import {
@@ -194,7 +196,13 @@ export interface InitialStateViolation {
   state: Record<string, Value>;
 }
 
-export type OutputLine = string | InitialStatesProgress | InitialStateViolation;
+export interface EvaluationWarning {
+  kind: "warning";
+  code: number;
+  text: string;
+}
+
+export type OutputLine = string | InitialStatesProgress | InitialStateViolation | EvaluationWarning;
 
 export type CheckProgress =
   | { kind: "parsed" }
@@ -217,7 +225,7 @@ export type CheckProgress =
     }
   | { kind: "liveness-finished" }
   | { kind: "sequential-fallback"; string: string }
-  | { kind: "warning"; code: number; text: string }
+  | EvaluationWarning
   | { kind: "violation"; status: CheckStatus; violation: Violation }
   | ({ kind: "java-override" } & JavaOverride);
 
@@ -243,6 +251,8 @@ export interface TraceStep {
   state: Record<string, Value>;
   /** What the spec prints before this step as TLC rebuilds the trace, and before it for the first. */
   output?: OutputLine[];
+  /** What the ALIAS and VIEW print as TLC evaluates them right before it prints this step. */
+  aliasOutput?: OutputLine[];
 }
 
 export interface Violation {
@@ -368,30 +378,20 @@ const PROGRESS_INTERVAL = 60_000;
 const LIVENESS_GROWTH = 0.1;
 const LIVENESS_RATIO = 0.2;
 
-const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefined): CheckResult => {
+const searchStates = (
+  options: CheckOptions & CliSettings,
+  stateWriter: StateWriter | undefined,
+): CheckResult => {
   const config =
     typeof options.config === "string"
       ? parseConfig(options.config, options.version)
       : options.config;
-  const onPrint = options.onPrint ?? console.log;
-  let capturedLines: OutputLine[] | undefined;
-  const print = (text: string) => {
-    if (capturedLines) capturedLines.push(text);
-    else onPrint(text);
-  };
-  const captureOutput = <Result>(rebuild: () => Result) => {
-    const outer = capturedLines;
-    const lines: OutputLine[] = [];
-    capturedLines = lines;
-    try {
-      return { result: rebuild(), lines };
-    } finally {
-      capturedLines = outer;
-    }
-  };
-  const created = createCheckEnvironment(config, options, print);
+  const output = createOutputCapture(options.onPrint ?? console.log);
+  const captureOutput = output.captureOutput;
+  const created = createCheckEnvironment(config, options, output.print);
   const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
+  output.captureWarnings(specification.environment.runtime, options.errorCodes);
   const coverage =
     options.coverage === undefined
       ? undefined
@@ -640,7 +640,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const addReplayed = createReplayedStates();
     return getReplayFailure(environment, (tracing) => {
       replayInitialStates(coverage ? coverageInits : getDescription().inits, tracing, (state) => {
-        reportInitialStatesProgress(replayedCount, (progress) => capturedLines?.push(progress));
+        reportInitialStatesProgress(replayedCount, (progress) =>
+          output.getCapturedLines()?.push(progress),
+        );
         replayedCount++;
         runtime.generatedStates = replayedCount;
         if (deferred.length > 0) return;
@@ -651,11 +653,11 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
             liveness?.addInitialState(states.length, state, tracing);
           };
           search.checkReplayedInitialState(state, tracing, addFingerprint, (violation) => {
-            const traced = traces.toTrace([{ action: undefined, state }], []).trace[0].state;
-            capturedLines?.push({
+            const traced = traces.toTrace([{ action: undefined, state }], []).trace[0];
+            output.getCapturedLines()?.push(...(traced.aliasOutput ?? []), {
               kind: "initial-state-violation",
               ...violation,
-              state: traced,
+              state: traced.state,
             });
             if (!options.isContinued || violation.status !== "invariant-violation") {
               throw STOP_REPLAY;
@@ -814,23 +816,53 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
   const canonicalizeState = coverage ? (state: Value[]) => state : createCanonicalizer();
 
   const toRecord = search.toRecord;
-  const getUncoveredInitialStates = () =>
-    spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
-  const forEachSpecInitialState = (onState: (state: Value[]) => void) => {
-    if (coverage) {
-      replayInitialStates(coverageInits, environment, onState, rejectIncompleteInitialState);
-      return;
+  // TLC's TLCGet("level") is 0 in the initial predicate and 1 in an initial state, also as TLC rebuilds one for a trace while it explores another state.
+  let rebuiltInitLevel = -1;
+  const rebuildInit = <Result>(rebuild: () => Result) => {
+    rebuiltInitLevel = 0;
+    try {
+      return rebuild();
+    } finally {
+      rebuiltInitLevel = -1;
     }
-    if (spec.init === undefined) return;
-    forEachInitialState(
-      spec.init,
-      environment,
-      (state) => {
-        onState(state);
-        return false;
-      },
-      spec.scope,
-    );
+  };
+  const findUncoveredInitialState = (isMatch: (state: Value[]) => boolean) => {
+    const init = spec.init;
+    return init === undefined
+      ? undefined
+      : rebuildInit(() => {
+          const initialStates = getInitialStates(init, environment, spec.scope);
+          rebuiltInitLevel = 1;
+          return initialStates.find(isMatch);
+        });
+  };
+  const forEachSpecInitialState = (onState: (state: Value[]) => void) => {
+    const onRebuiltState = (state: Value[]) => {
+      rebuiltInitLevel = 1;
+      onState(state);
+      rebuiltInitLevel = 0;
+    };
+    rebuildInit(() => {
+      if (coverage) {
+        replayInitialStates(
+          coverageInits,
+          environment,
+          onRebuiltState,
+          rejectIncompleteInitialState,
+        );
+        return;
+      }
+      if (spec.init === undefined) return;
+      forEachInitialState(
+        spec.init,
+        environment,
+        (state) => {
+          onRebuiltState(state);
+          return false;
+        },
+        spec.scope,
+      );
+    });
   };
   const isUnfingerprintable = (state: Value[]) => {
     try {
@@ -1006,7 +1038,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     tracedSteps,
     captureOutput,
     forEachInitialState: forEachSpecInitialState,
-    getUncoveredInitialStates,
+    findUncoveredInitialState,
     findSuccessorAction,
   });
   const getPath = (index: number): Value[][] =>
@@ -1044,6 +1076,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
       const explored = source !== -1 ? source : current.isExpanding ? current.index : -1;
       return explored === -1 ? 0 : depths[explored];
     }
+    if (rebuiltInitLevel !== -1) return rebuiltInitLevel;
     const rebuilt = current.rebuilt;
     if (rebuilt) return state === rebuilt.state ? rebuilt.level : rebuilt.level + 1;
     if (source !== -1) return state === states[source] ? depths[source] : depths[source] + 1;
@@ -1534,9 +1567,7 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     liveSuccessors: LiveSuccessor[],
     source: GraphState | undefined,
   ) => {
-    if (liveness && source && (is174 || options.dump?.stuttering)) {
-      stateWriter?.writeStuttering(source);
-    }
+    if (liveness && source) stateWriter?.writeStuttering(source);
     const accepted = liveness?.addState(index, states[index], liveSuccessors);
     if (!liveness || !accepted) return undefined;
     // Deviation from TLC: under -continue, TLC's LiveCheck throws an InvariantViolatedException after it reports the property, which its Worker reports as unexpected.
@@ -1731,7 +1762,9 @@ const searchStates = (options: CheckOptions, stateWriter: StateWriter | undefine
     const isStuttering = cycleStart === cycleEnd;
     const loop = isStuttering
       ? { result: undefined, lines: [] }
-      : captureOutput(() => traces.findStepAction(cycleEnd, lastState, states[cycleStart], false));
+      : captureOutput(() =>
+          traces.findStepAction(cycleEnd, lastState, fingerprintStates[cycleStart], false),
+        );
     const back =
       isStuttering || loop.result
         ? undefined

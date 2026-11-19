@@ -64,6 +64,7 @@ import {
   getKeyName,
   getParamArities,
   isBefore,
+  isSameSanyError,
   isTheoremDefinition,
   isUnresolved,
   KEY_SEPARATOR,
@@ -89,12 +90,16 @@ import {
 } from "./standard-modules";
 import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
 import { createModuleSubexpressions, resolveInstanceSubexpressions } from "./subexpressions";
-import { checkModuleLevels, createLevelAnalyzer } from "./levels";
 import {
-  createInstanceChecker,
-  type InstanceCheck,
-  type KeyedDeclaration,
-} from "./substitution-levels";
+  checkModuleLevels,
+  createLevelAnalyzer,
+  type InstanceCopy,
+  type InstanceLevelCheck,
+  type InstanceSubstitutes,
+  type LetInstance,
+  type SectionMember,
+} from "./levels";
+import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
 import { createDefinitionFacts } from "./dependencies";
 import { createTlcOrder, type TlcOrder } from "./tlc/order";
@@ -149,6 +154,9 @@ export interface InstanceAction {
 
 const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
 
+// TLC evaluates the definitions of these modules that it doesn't override, such as Bags' SubBag.
+const SOURCE_STANDARD_MODULES = new Set(["Bags", "Randomization", "TLCExt"]);
+
 // SANY's SubstInNode and APSubstInNode word the error for a body they can't substitute in apart.
 const SUBSTITUTION_ERRORS = [
   {
@@ -170,7 +178,6 @@ export interface LinkedModule {
   exported: Symbols;
   modules: Map<string, LinkedModule>;
   extended: LinkedModule[];
-  facts: Set<string>;
 }
 
 interface ModuleScope {
@@ -315,23 +322,42 @@ export const createEnvironment = (
     });
   let copyCount = 0;
   const createName = (name: string) => `${name}#${copyCount++}`;
-  const instanceChecks: InstanceCheck[] = [];
+  const instanceChecks: InstanceLevelCheck[] = [];
   const warnings: SanyError[] = [];
-  const checkInstance = createInstanceChecker((name) => {
-    const linked = checkedModules.get(name) ?? getLinkedModule(name, name);
-    return {
-      constants: linked.constants,
-      variables: linked.variables,
-      definitions: [
-        ...new Set(
-          [...linked.visible.values()].flatMap((symbol) => definitions.get(symbol.key) ?? []),
-        ),
-      ],
-      assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
-      theorems: linked.module.theorems,
-      getDefinition: (symbol) => definitions.get(linked.visible.get(symbol)?.key ?? symbol),
-    };
-  });
+  const instanceCopies = new WeakMap<Definition, InstanceCopy>();
+  const letInstances = new Map<string, LetInstance>();
+  const recursiveSections = new WeakMap<Definition, SectionMember[]>();
+  const createInstanceCopy = (
+    sourceKey: string,
+    module: string,
+    substitutes: InstanceSubstitutes,
+  ): InstanceCopy | undefined => {
+    const source = definitions.get(sourceKey);
+    return source && { ...substitutes, source, module };
+  };
+  const instanceLevels = createInstanceChecker(
+    (name) => {
+      const linked = checkedModules.get(name) ?? getLinkedModule(name, name);
+      return {
+        constants: linked.constants,
+        variables: linked.variables,
+        definitions: [
+          ...new Set(
+            [...linked.visible.values()].flatMap((symbol) => definitions.get(symbol.key) ?? []),
+          ),
+        ],
+        assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
+        theorems: linked.module.theorems,
+        getDefinition: (symbol) => definitions.get(linked.visible.get(symbol)?.key ?? symbol),
+      };
+    },
+    {
+      getCopy: (definition) => instanceCopies.get(definition),
+      getLetInstance: (instance) =>
+        instance.location.range && letInstances.get(formatRange(instance.location.range)),
+    },
+    recursiveSections,
+  );
   const instanceActions = new Map<string, InstanceAction>();
   const instanceNames = new Map<string, string>();
   const qualifiedNames = new Map<string, string>();
@@ -339,7 +365,7 @@ export const createEnvironment = (
   const addStandardModule = (name: string): Symbols | undefined => {
     const cached = standardExports.get(name);
     if (cached) return cached;
-    const operators = getStandardOperators(name, options.print, runtime, options.files, builtins);
+    const operators = getStandardOperators(name, options.print, runtime, options.files);
     if (!operators) return undefined;
     STANDARD_DEPENDENCIES.get(name)?.forEach(addStandardModule);
     const exported: Symbols = new Map();
@@ -365,7 +391,7 @@ export const createEnvironment = (
   const getStandardSymbols = (name: string) => {
     const dependencies = STANDARD_DEPENDENCIES.get(name) ?? [];
     if (
-      name === "TLCExt" ||
+      SOURCE_STANDARD_MODULES.has(name) ||
       [name, ...dependencies].some((module) => options.loadModule?.(module) !== undefined)
     )
       return undefined;
@@ -450,12 +476,16 @@ export const createEnvironment = (
       ),
       ...levelChecks.flatMap((check) => check.check(check !== levelChecks.at(-1))),
     ].filter(
-      (error, index, all) =>
-        all.findIndex(
-          (other) => other.location === error.location && other.message === error.message,
-        ) === index,
+      (error, index, all) => all.findIndex((other) => isSameSanyError(other, error)) === index,
     );
-    if (levelErrors.length > 0) throw createSanyError(levelErrors, false, undefined, warnings);
+    if (levelErrors.length > 0) {
+      throw createSanyError(
+        levelErrors.map((error) => ({ location: error.location, message: error.message })),
+        false,
+        undefined,
+        warnings,
+      );
+    }
     return { linked, closure };
   };
 
@@ -489,22 +519,17 @@ export const createEnvironment = (
         isKeepLazy: context.isKeepLazy,
       });
     };
-    getJavaOverrides(
-      name,
-      options.print,
-      runtime,
-      options.files,
-      builtins,
-      evaluateReplaced,
-    )?.forEach((operator) => {
-      const symbol = top.linked.visible.get(operator.name);
-      if (symbol?.kind !== "Definition") return;
-      if (symbol.arity !== operator.arity && ANNOTATED_OVERRIDE_MODULES.has(name)) return;
-      const definition = definitions.get(symbol.key);
-      if (definition) replaced.set(operator.name, definition);
-      builtins.set(symbol.key, operator);
-      definitions.delete(symbol.key);
-    });
+    getJavaOverrides(name, options.print, runtime, options.files, evaluateReplaced)?.forEach(
+      (operator) => {
+        const symbol = top.linked.visible.get(operator.name);
+        if (symbol?.kind !== "Definition") return;
+        if (symbol.arity !== operator.arity && ANNOTATED_OVERRIDE_MODULES.has(name)) return;
+        const definition = definitions.get(symbol.key);
+        if (definition) replaced.set(operator.name, definition);
+        builtins.set(symbol.key, operator);
+        definitions.delete(symbol.key);
+      },
+    );
     linkedModules.set(name, top.linked);
     dependencies.set(name, top.closure);
     useModule(name, top.closure);
@@ -549,9 +574,6 @@ export const createEnvironment = (
     const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
     if (standardSymbols) return getStandardInstanceSymbols(instance, standardSymbols);
     const linked = nested ?? getLinkedModule(instance.module, module.name);
-    linked.facts.forEach((name) =>
-      unit.facts.add(instance.name === undefined ? name : `${instance.name}!${name}`),
-    );
     const declarations = getDeclarations(linked);
     const suffix = `#${copyCount++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
@@ -579,18 +601,32 @@ export const createEnvironment = (
         warnings: [],
       });
     }
-    instanceChecks.push({
-      module: instance.module,
-      instancer: module.name,
-      lets: [],
-      substitutions,
-      location: instance.location,
-    });
     const params = instance.params.map((param) => ({ ...param, name: `${param.name}${suffix}` }));
     params.forEach((param) => instanceParams.add(param));
     const replacements = new Map(
       [...substitutions].map((entry) => [entry[0], renameLocals(entry[1], renamed)]),
     );
+    const substitutes = {
+      params,
+      substitutions: new Map(
+        declarations.flatMap((declaration): [string, Expression][] => {
+          const replacement = replacements.get(declaration.name);
+          return replacement ? [[declaration.key, replacement]] : [];
+        }),
+      ),
+    };
+    instanceChecks.push({
+      location: instance.location,
+      check: () =>
+        instanceLevels.checkInstance({
+          module: instance.module,
+          instancer: module.name,
+          lets: [],
+          substitutions,
+          location: instance.location,
+        }),
+      substitutes,
+    });
     const frame = declarations.length > 0 ? getSubstitutionFrame(instance) : undefined;
     if (frame) {
       setFrameSubstitutions(
@@ -605,12 +641,7 @@ export const createEnvironment = (
     }
     const instantiation = createInstantiation({
       params,
-      substitutions: new Map(
-        declarations.flatMap((declaration): [string, Expression][] => {
-          const replacement = replacements.get(declaration.name);
-          return replacement ? [[declaration.key, replacement]] : [];
-        }),
-      ),
+      substitutions: substitutes.substitutions,
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
       getOuterDefinition: (key) =>
@@ -620,6 +651,8 @@ export const createEnvironment = (
         const key = createName(`${name}@${module.name}`);
         const definition = create(key);
         definitions.set(key, definition);
+        const copy = createInstanceCopy(source, instance.module, substitutes);
+        if (copy) instanceCopies.set(definition, copy);
         if (declarations.length > 0) substitutedDefinitions.add(definition);
         if (instance.name !== undefined) {
           instanceNames.set(key, `${instance.name}!${instanceNames.get(source) ?? name}`);
@@ -677,7 +710,13 @@ export const createEnvironment = (
         .filter(
           (entry) =>
             !declared.has(entry[0]) &&
-            (instance.name !== undefined || entry[1].kind !== "Instance"),
+            (instance.name !== undefined ||
+              (entry[1].kind !== "Instance" &&
+                // SANY reuses a theorem that a module with parameters got from one without, but never adds its name.
+                (instance.isLocal ||
+                  declarations.length === 0 ||
+                  entry[1].kind !== "Theorem" ||
+                  parameterized.get(entry[1].key) === true))),
         )
         .map((entry): [string, ModuleSymbol] => {
           if (instance.name === undefined) {
@@ -689,11 +728,17 @@ export const createEnvironment = (
                 params: entry[1].params,
                 kind: entry[1].kind,
                 range:
-                  parameterized.get(entry[1].key) === true
+                  instance.isLocal || parameterized.get(entry[1].key) === true
                     ? instance.location.range
                     : entry[1].range,
+                // SANY copies what a LOCAL INSTANCE imports to the instance, but a copy from a module without parameters stays the same definition.
+                sourceRange:
+                  instance.isLocal && parameterized.get(entry[1].key) !== true
+                    ? entry[1].range
+                    : undefined,
                 functionArity:
                   parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,
+                goal: entry[1].goal,
               },
             ];
           }
@@ -709,6 +754,7 @@ export const createEnvironment = (
               ],
               kind: entry[1].kind,
               functionArity: declarations.length > 0 ? undefined : entry[1].functionArity,
+              goal: entry[1].goal,
             },
           ];
         }),
@@ -780,7 +826,7 @@ export const createEnvironment = (
         name: declaration.name,
         location,
       };
-    instanceChecks.push({
+    const instanceCheck = {
       module: instance.module,
       instancer,
       lets,
@@ -788,7 +834,7 @@ export const createEnvironment = (
         declarations.map((declaration) => [declaration.name, getReplacement(declaration)]),
       ),
       location,
-    });
+    };
     const instanceParamNames = new Set(instance.params.map((param) => param.name));
     const isParameterDependent = (declaration: OperatorParam) =>
       mentionsName(getReplacement(declaration), instanceParamNames);
@@ -811,34 +857,48 @@ export const createEnvironment = (
       };
     });
     const copies: Definition[] = [];
+    const localCopies = new Map<string, InstanceCopy>();
+    const createLocalSubstitution = (declaration: KeyedDeclaration): Expression =>
+      !isParameterDependent(declaration)
+        ? createLocalIdentifier(`${declaration.name}${suffix}`, location)
+        : {
+            kind: "Apply",
+            operator: `${declaration.name}${suffix}`,
+            args: createLocalArguments(instance.params, location),
+            location,
+            resolution: LOCAL_RESOLUTION,
+          };
+    const substitutes = {
+      params: instance.params,
+      substitutions: new Map(
+        declarations.map((declaration): [string, Expression] => [
+          declaration.key,
+          explicitSubstitutions.get(declaration.name) ?? createLocalSubstitution(declaration),
+        ]),
+      ),
+    };
     const instantiation = createInstantiation({
       params: instance.params,
       substitutions: new Map(
         declarations.map((declaration): [string, Expression] => [
           declaration.key,
-          !isParameterDependent(declaration)
-            ? createLocalIdentifier(`${declaration.name}${suffix}`, location)
-            : {
-                kind: "Apply",
-                operator: `${declaration.name}${suffix}`,
-                args: createLocalArguments(instance.params, location),
-                location,
-                resolution: LOCAL_RESOLUTION,
-              },
+          createLocalSubstitution(declaration),
         ]),
       ),
       variables: new Set(linked.variables),
       getDefinition: (key) => definitions.get(key),
       getOuterDefinition: () => undefined,
       isParameterized: (key) => parameterized.get(key) === true,
-      addDefinition: (_source, name, create) => {
+      addDefinition: (source, name, create) => {
         const key = `${name}${KEY_SEPARATOR}${instance.module}${suffix}.${copies.length}`;
         const definition = create(key);
-        copies.push(
+        const copy =
           definition.kind === "Operator"
             ? { ...definition, name: key }
-            : createLocalFunction(definition, key),
-        );
+            : createLocalFunction(definition, key);
+        copies.push(copy);
+        const instanceCopy = createInstanceCopy(source, instance.module, substitutes);
+        if (instanceCopy) localCopies.set(key, instanceCopy);
         return key;
       },
       createName,
@@ -868,6 +928,8 @@ export const createEnvironment = (
         if (definition) {
           const operator =
             definition.kind === "Operator" ? definition : createLocalFunction(definition, name);
+          const instanceCopy = localCopies.get(key);
+          if (copy && instanceCopy) localCopies.set(name, instanceCopy);
           return {
             ...operator,
             name,
@@ -877,6 +939,17 @@ export const createEnvironment = (
         const ownParams = createArgumentParams(entry[1].arity, entry[1].params);
         return createLocalAlias(name, key, [...instance.params, ...ownParams], ownParams, location);
       });
+    if (instance.location.range) {
+      letInstances.set(formatRange(instance.location.range), {
+        copies: localCopies,
+        params: instance.params,
+        substitutions: new Map(
+          declarations.map((declaration) => [declaration.key, getReplacement(declaration)]),
+        ),
+        getArgParams: () => instanceLevels.getArgParams(instance.module),
+        check: () => instanceLevels.checkInstance(instanceCheck),
+      });
+    }
     return [...substitutionDefinitions, ...copies, ...exported];
   };
 
@@ -929,7 +1002,6 @@ export const createEnvironment = (
         });
       });
     const exported: Symbols = new Map();
-    const facts = new Set<string>();
     const modules = new Map<string, LinkedModule>();
     const extended: LinkedModule[] = [];
     const getKey = (item: { name: string }) => `${item.name}${KEY_SEPARATOR}${scope.id}`;
@@ -963,7 +1035,6 @@ export const createEnvironment = (
         variableLocations.push(linked.variableLocations[index]);
       });
       mergeExtended(linked.exported);
-      linked.facts.forEach((name) => facts.add(name));
       linked.modules.forEach((module, moduleName) => modules.set(moduleName, module));
       extended.push(linked);
     });
@@ -1033,7 +1104,6 @@ export const createEnvironment = (
           (nested) => nested.name === name && isBefore(nested.location, location),
         ),
       instanced,
-      facts,
       reports,
       warnings: scope.warnings,
     });
@@ -1067,6 +1137,15 @@ export const createEnvironment = (
         const definition = symbol && definitions.get(symbol.key);
         return definition ? { ...definition, name } : scope.getDefinition(name);
       },
+      (name, location) =>
+        bound.has(name) ||
+        parsed.instances.some(
+          (instance) =>
+            isBefore(instance.location, location) && instanced.get(instance)?.has(name) === true,
+        ) ||
+        declarations.some(
+          (declaration) => declaration.name === name && isBefore(declaration.location, location),
+        ),
     );
     const linkNested = (nested: Module) => {
       const visibleModules = getVisibleModules();
@@ -1134,9 +1213,10 @@ export const createEnvironment = (
         (instance) =>
           getStandardSymbols(instance.module) ?? getLinkedModule(instance.module, parsed.name),
       );
-    const resolved = resolveModule(module, getUnit(module));
+    const unit = getUnit(module);
+    const resolved = resolveModule(module, unit);
     scope.errors.push(...resolved.errors);
-    module.definitions.forEach((definition) => {
+    unit.definitions.forEach((definition) => {
       const key = getKey(definition);
       definitions.set(key, definition);
       parameterized.set(key, !isParameterFree);
@@ -1149,6 +1229,19 @@ export const createEnvironment = (
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
+    resolved.boundTheorems.forEach((theorem) => {
+      const key = getKey(theorem);
+      parameterized.set(key, !isParameterFree);
+      const symbol: ModuleSymbol = {
+        key,
+        arity: 0,
+        kind: "Theorem",
+        range: theorem.location.range,
+        goal: theorem.goal,
+      };
+      visible.set(theorem.name, symbol);
+      exported.set(theorem.name, symbol);
+    });
     const linked = {
       module,
       constants,
@@ -1158,25 +1251,20 @@ export const createEnvironment = (
       exported,
       modules,
       extended,
-      facts: new Set([
-        ...facts,
-        ...[...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
-      ]),
     };
     if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
-    const checks = instanceChecks
-      .splice(firstCheck)
-      .map((check) => ({ location: check.location, check: () => checkInstance(check) }));
     scope.levelChecks.push(
       checkModuleLevels(
         module,
         {
-          constants: new Set(constants.map((constant) => constant.key)),
+          constants: new Map(constants.map((constant) => [constant.key, constant.arity])),
           variables: new Set(variables),
           getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
+          instances: instanceLevels.instances,
+          recursiveSections,
         },
-        checks,
+        instanceChecks.splice(firstCheck),
         warnings,
       ),
     );
@@ -1300,14 +1388,18 @@ export const createEnvironment = (
     evaluators: new WeakMap(),
     entryEvaluators: new WeakMap(),
     definitionEvaluators: new WeakMap(),
+    instances: instanceLevels.instances,
+    recursiveSections,
   };
   const analyzer = createLevelAnalyzer({
-    constants: new Set(constants.keys()),
+    constants: new Map([...constants.keys()].map((key) => [key, 0])),
     variables: new Set([
       ...variables,
       ...["TLCGet", "Trace", "CounterExample"].filter((name) => builtins.has(name)),
     ]),
     getDefinition: (name) => getDefinition(name, environment),
+    instances: instanceLevels.instances,
+    recursiveSections,
   });
   const getEvaluationError = (body: Expression) => {
     try {

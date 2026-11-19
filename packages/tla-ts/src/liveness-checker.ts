@@ -273,14 +273,11 @@ const getLiveFormula = (
   const fairness = temporals.map((item) =>
     toLiveExpression(item.expression, item.scope, environment),
   );
-  const checks = properties.map((property) =>
-    toLiveExpression(property.expression, property.scope, environment),
+  const negations = properties.map((property) =>
+    createUnary("Not", toLiveExpression(property.expression, property.scope, environment)),
   );
-  const negations = checks.map((check) => createUnary("Not", check));
   const violation = negations.length === 1 ? negations[0] : createJunction("Or", negations);
-  const formula =
-    fairness.length === 0 ? violation : createJunction("And", [...fairness, violation]);
-  return { formula, checks };
+  return fairness.length === 0 ? violation : createJunction("And", [...fairness, violation]);
 };
 
 export type LiveAtom = LiveState | LiveEnabled | LiveAction;
@@ -348,9 +345,9 @@ const isSharingResults = (formula: LiveExpression, environment: Environment) => 
     : !hasRepeatedEffects(environment);
 };
 
+// Liveness#findViolatedProperties translates each property again, which evaluates its constant parts again.
 const getViolatedProperties = (
   properties: TemporalProperty[],
-  checks: LiveExpression[],
   path: Value[][],
   cycleStart: number,
   environment: Environment,
@@ -358,9 +355,15 @@ const getViolatedProperties = (
 ) => [
   ...new Set(
     properties
-      .filter((_property, position) => {
+      .filter((property) => {
         try {
-          return !evaluateOnLasso(checks[position], path, cycleStart, 0, environment);
+          return !evaluateOnLasso(
+            toLiveExpression(property.expression, property.scope, environment),
+            path,
+            cycleStart,
+            0,
+            environment,
+          );
         } catch (error) {
           if (!failures || !(error instanceof TlaEvaluationError)) throw error;
           failures.push(error);
@@ -377,10 +380,10 @@ export const createLivenessChecks = (
   environment: Environment,
 ): LivenessChecks | undefined => {
   if (properties.length === 0) return undefined;
-  const live = getLiveFormula(properties, temporals, environment);
-  const solutions = getSolutions(live.formula);
+  const formula = getLiveFormula(properties, temporals, environment);
+  const solutions = getSolutions(formula);
   const atoms = getInterpretedAtoms(environment);
-  const isShared = isSharingResults(live.formula, environment);
+  const isShared = isSharingResults(formula, environment);
   return {
     solutions,
     findTraceViolation: (trace, fingerprints) => {
@@ -390,7 +393,6 @@ export const createLivenessChecks = (
       const failures: TlaEvaluationError[] = [];
       const violated = getViolatedProperties(
         properties,
-        live.checks,
         lasso.positions.map((position) => trace[position]),
         lasso.cyclePosition - 1,
         environment,
@@ -408,9 +410,9 @@ export const createLivenessChecker = (
   search: SearchGraph<Value[]>,
 ): LivenessChecker | undefined => {
   if (properties.length === 0) return undefined;
-  const live = getLiveFormula(properties, temporals, environment);
-  const isShared = isSharingResults(live.formula, environment);
-  const solutions = getSolutions(live.formula);
+  const formula = getLiveFormula(properties, temporals, environment);
+  const isShared = isSharingResults(formula, environment);
+  const solutions = getSolutions(formula);
   const tracing: Tracing = { atoms: getInterpretedAtoms(environment), replay: undefined };
   const graph = createLiveGraph(
     solutions,
@@ -459,7 +461,7 @@ export const createLivenessChecker = (
     getStateCounts: graph.getStateCounts,
     findViolation: graph.findViolation,
     getViolatedProperties: (path, cycleStart) =>
-      getViolatedProperties(properties, live.checks, path, cycleStart, environment),
+      getViolatedProperties(properties, path, cycleStart, environment),
   };
 };
 
