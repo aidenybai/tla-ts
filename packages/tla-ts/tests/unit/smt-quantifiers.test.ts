@@ -271,6 +271,18 @@ describe("the model checker, as Z3 5.3.2 counts its steps", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 187)"]);
   });
+
+  it("makes its context on a check that finds no quantifier relevant", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (or (> a 3) (forall ((x Int)) (> (f x) x))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 362)"]);
+  });
 });
 
 describe("the preprocessing setup_AUFLIA turns on, as Z3 5.3.2 runs it", () => {

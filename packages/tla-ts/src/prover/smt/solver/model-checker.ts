@@ -202,10 +202,8 @@ export class ModelChecker {
     return true;
   }
 
-  private checkQuantifier(quantifier: number, model: ProtoModel) {
+  private checkQuantifier(aux: AuxContext, quantifier: number, model: ProtoModel) {
     const manager = this.manager;
-    const aux = this.aux ?? new AuxContext(this.context);
-    this.aux = aux;
     aux.push();
     const sks = new RefVector(manager);
     const isSatisfied = this.checkInScope(aux, quantifier, model, sks);
@@ -251,7 +249,7 @@ export class ModelChecker {
     diseqs.reset();
   }
 
-  private checkQuantifiers(model: ProtoModel) {
+  private checkQuantifiers(aux: AuxContext, model: ProtoModel) {
     const context = this.context;
     let isFoundRelevant = false;
     let numFailures = 0;
@@ -262,7 +260,7 @@ export class ModelChecker {
       )
         continue;
       isFoundRelevant = true;
-      if (!this.checkQuantifier(quantifier, model)) numFailures++;
+      if (!this.checkQuantifier(aux, quantifier, model)) numFailures++;
     }
     return { isFoundRelevant, numFailures };
   }
@@ -273,12 +271,14 @@ export class ModelChecker {
     if (this.iterationIndex >= this.context.params.mbqiMaxIterations) return false;
     this.value2expr = null;
     model.compress();
-    const first = this.checkQuantifiers(model);
+    const aux = this.aux ?? new AuxContext(this.context);
+    this.aux = aux;
+    const first = this.checkQuantifiers(aux, model);
     if (first.isFoundRelevant) this.iterationIndex++;
     this.maxCexs += MBQI_MAX_CEXS;
     let numFailures = first.numFailures;
     if (numFailures === 0 && !this.context.validateModel(model))
-      numFailures = 1 + this.checkQuantifiers(model).numFailures;
+      numFailures = 1 + this.checkQuantifiers(aux, model).numFailures;
     if (numFailures === 0) model.cleanup();
     return numFailures === 0;
   }
