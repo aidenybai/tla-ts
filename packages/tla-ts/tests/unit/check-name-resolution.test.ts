@@ -169,6 +169,10 @@ describe("name resolution matches SANY", () => {
       "D(Op(_)) == Op(42)\nFoo == 1 = 1\nASSUME A == D(LAMBDA a : a) = 42\nAXIOM B == <<D(LAMBDA a : a)>> # <<>>\nASSUME C == \\A v \\in {1} : D(LAMBDA a : a) = 42 /\\ Foo!1 = 1",
     ],
     [
+      "an operator argument in a bound set several names share",
+      "EXTENDS Naturals\nAp1(F(_)) == F(1)\nASSUME (\\A a, b \\in Ap1(LAMBDA p : {p, 2}) : a = b) = FALSE /\\ {<<a, b>> : a, b \\in Ap1(LAMBDA p : {p})} = {<<1, 1>>} /\\ [a, b \\in Ap1(LAMBDA p : {p}) |-> a + b][1, 1] = 2",
+    ],
+    [
       "an operator argument to an operator of a standard module a LET instantiates",
       "ASSUME LET S == INSTANCE Sequences IN S!SelectSeq(<<1, 2>>, LAMBDA a : a = 2) = <<2>>",
     ],
@@ -1871,6 +1875,96 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "a constant and a variable named after imported operators, and refers to the operators",
+      "EXTENDS Sequences\nVARIABLE Seq\nCONSTANT Len\nA == Seq(1, 2)\nB == Len",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Seq': this definition or declaration conflicts \nwith the one at line 20, col 1 to line 20, col 41 of module Sequences.",
+        },
+        {
+          location: "line 4, col 10 to line 4, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 25, col 1 to line 25, col 44 of module Sequences.",
+        },
+        {
+          location: "line 5, col 9 to line 5, col 14 of module M",
+          message: "The operator Seq requires 1 arguments.",
+        },
+        {
+          location: "line 6, col 6 to line 6, col 8 of module M",
+          message: "The operator Len requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a variable named after a constant operator, and refers to the constant",
+      "CONSTANT G(_)\nVARIABLE G\nA == G",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'G': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 13 of module M.",
+        },
+        {
+          location: "line 4, col 6 to line 4, col 6 of module M",
+          message: "The operator G requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a constant named after an operator an instance imports, and refers to the operator",
+      "---- MODULE Inner ----\nF(a) == a\n====\nINSTANCE Inner\nCONSTANT F\nA == F",
+      [
+        {
+          location: "line 6, col 10 to line 6, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'F': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 9 of module M.",
+        },
+        {
+          location: "line 7, col 6 to line 7, col 6 of module M",
+          message: "The operator F requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a variable named after a definition, and an inner module that refers to the definition",
+      "Op(a) == a\nVARIABLE Op\n---- MODULE Inner ----\nA == Op\n====",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 5, col 6 to line 5, col 7 of module M",
+          message: "The operator Op requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance of operators already declared and defined, and an inner module that refers to the first ones",
+      "CONSTANT Seq\nLen == 1\nINSTANCE Sequences\n---- MODULE Inner ----\nA == <<Seq, Len>>\n====",
+      [
+        {
+          location: "line 20, col 1 to line 20, col 41 of module Sequences",
+          message:
+            "Multiply-defined symbol 'Seq': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 12 of module M.",
+        },
+        {
+          location: "line 25, col 1 to line 25, col 44 of module Sequences",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 8 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
       "an operator parameter named after a definition",
       "B == 1\nF(B) == B",
       [
@@ -2152,6 +2246,124 @@ describe("name resolution matches SANY", () => {
         {
           location: "line 3, col 1 to line 3, col 17 of module M",
           message: "Function name `f' already defined or declared.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a function named after a constant, whose body uses its bound name",
+      "CONSTANT F\nF[n \\in {1}] == n",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 17 of module M",
+          message: "Function name `F' already defined or declared.",
+        },
+        {
+          location: "line 3, col 17 to line 3, col 17 of module M",
+          message: "Unknown operator: `n'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a function named after a definition, whose body applies the definition",
+      "F(a) == a\nF[n \\in {1}] == F(n)",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 20 of module M",
+          message: "Function name `F' already defined or declared.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a LET function named after an operator parameter, whose body uses its bound name",
+      "A(F) == LET F[n \\in {1}] == n IN TRUE",
+      [
+        {
+          location: "line 2, col 13 to line 2, col 29 of module M",
+          message: "Function name `F' already defined or declared.",
+        },
+        {
+          location: "line 2, col 29 to line 2, col 29 of module M",
+          message: "Unknown operator: `n'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance parameter named after a constant, before the instance's substitutions",
+      "CONSTANT k\n---- MODULE Inner ----\nCONSTANT c\n====\nG(k) == INSTANCE Inner WITH d <- 1",
+      [
+        {
+          location: "line 6, col 3 to line 6, col 3 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 6, col 29 to line 6, col 29 of module M",
+          message:
+            "Identifier 'd' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 34 of module M",
+          message:
+            "Substitution missing for symbol c declared at line 4, col 10 to line 4, col 10 of module M \nand instantiated in module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "declarations after a RECURSIVE declaration whose name is taken, which a definition doesn't close",
+      "VARIABLE F\nRECURSIVE F(_)\nF(a) == a\nCONSTANT c",
+      [
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message:
+            "Multiply-defined symbol 'F': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message: "Operator F already defined or declared.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'F': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 10 of module M",
+          message: "A declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message: "Symbol F declared in RECURSIVE statement but not defined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a LET instance parameter named after a constant, before the instance's substitutions",
+      "CONSTANT k\n---- MODULE Inner ----\nCONSTANT c\n====\nI == INSTANCE Inner WITH c <- 1\nA == LET G(k) == INSTANCE Inner WITH d <- 1 IN 1",
+      [
+        {
+          location: "line 7, col 12 to line 7, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 7, col 38 to line 7, col 38 of module M",
+          message:
+            "Identifier 'd' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+        {
+          location: "line 7, col 10 to line 7, col 43 of module M",
+          message:
+            "Substitution missing for symbol c declared at line 4, col 10 to line 4, col 10 of module M \nand instantiated in module M.",
         },
       ],
       [],
@@ -3100,6 +3312,289 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "a RECURSIVE operator named after a constant, whose definition uses the constant",
+      "CONSTANT k\nRECURSIVE k(_)\nk(a) == k",
+      [
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message: "Operator k already defined or declared.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message: "Symbol k declared in RECURSIVE statement but not defined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a RECURSIVE operator named after a constant, and a definition before it that uses the constant",
+      "CONSTANT k\nRECURSIVE k(_)\nF == k\nk(a) == 1",
+      [
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 9 of module M",
+          message: "Operator k already defined or declared.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message: "Symbol k declared in RECURSIVE statement but not defined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an inner module that uses an instance with parameters without arguments",
+      "---- MODULE A ----\n====\nI(a) == INSTANCE A\n---- MODULE In ----\nF == I\n====",
+      [
+        {
+          location: "line 6, col 6 to line 6, col 6 of module M",
+          message: "The operator I requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an inner module that declares a constant named after an instance",
+      "---- MODULE A ----\n====\nI == INSTANCE A\n---- MODULE In ----\nCONSTANT I\n====",
+      [
+        {
+          location: "line 6, col 10 to line 6, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 4, col 1 to line 4, col 15 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a substitution of an operator that a variable redeclares",
+      "EXTENDS Sequences\nVARIABLE Len\n---- MODULE C ----\nCONSTANT c\n====\nINSTANCE C WITH c <- Len",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 25, col 1 to line 25, col 44 of module Sequences.",
+        },
+        {
+          location: "line 7, col 22 to line 7, col 24 of module M",
+          message: "The operator Len requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a substitution of an operator that a variable and a definition redeclare",
+      "EXTENDS Sequences\nVARIABLE Len\nLen == 1\n---- MODULE C ----\nCONSTANT c\n====\nINSTANCE C WITH c <- Len",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 25, col 1 to line 25, col 44 of module Sequences.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 8 of module M",
+          message: "Operator Len already defined or declared.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 8 of module M",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 25, col 1 to line 25, col 44 of module Sequences.",
+        },
+        {
+          location: "line 8, col 22 to line 8, col 24 of module M",
+          message: "The operator Len requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance of a constant that conflicts with a definition before the module",
+      "Op(k) == k\n---- MODULE In ----\nCONSTANT Op, S\n====\nINSTANCE In WITH S <- 1",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance of a constant that conflicts with a definition before it",
+      "---- MODULE In ----\nOp(k) == k\nCONSTANT Op, S\n====\nINSTANCE In WITH S <- 1",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a substitution for a constant that conflicts with a definition before it",
+      "---- MODULE In ----\nOp(k) == k\nCONSTANT Op, S\n====\nINSTANCE In WITH Op <- 1, S <- 1",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 10 of module M.",
+        },
+        {
+          location: "line 6, col 18 to line 6, col 19 of module M",
+          message:
+            "Identifier 'Op' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance of a constant that conflicts with an instance before it",
+      "---- MODULE A ----\n====\n---- MODULE In ----\nI == INSTANCE A\nCONSTANT I\n====\nINSTANCE In",
+      [
+        {
+          location: "line 6, col 10 to line 6, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 15 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance of a constant that conflicts with a theorem before it",
+      "---- MODULE In ----\nTHEOREM Op == TRUE\nCONSTANT Op, S\n====\nINSTANCE In WITH S <- 1",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 18 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a substitution for a constant that conflicts with an operator before the module",
+      "EXTENDS Sequences\n---- MODULE In ----\nCONSTANT Len, S\n====\nINSTANCE In WITH Len <- 1, S <- 1",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 25, col 1 to line 25, col 44 of module Sequences.",
+        },
+        {
+          location: "line 6, col 18 to line 6, col 20 of module M",
+          message:
+            "Identifier 'Len' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance of a variable that conflicts with a constant",
+      "---- MODULE In ----\nCONSTANT k\nVARIABLE k\n====\nINSTANCE In",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 3, col 10 to line 3, col 10 of module M.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 11 of module M",
+          message:
+            "Substitution missing for symbol k declared at line 3, col 10 to line 3, col 10 of module M \nand instantiated in module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an inner module that uses an ASSUME/PROVE theorem as an expression",
+      "THEOREM T == ASSUME NEW a, a \\in {1} PROVE a = a\n---- MODULE In ----\nF == T\n====",
+      [
+        {
+          location: "line 4, col 6 to line 4, col 6 of module M",
+          message: "ASSUME/PROVE used where an expression is required.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an inner module that selects the NEW of an ASSUME/PROVE theorem",
+      "THEOREM T == ASSUME NEW a, a \\in {1} PROVE a = a\n---- MODULE In ----\nF == T!1\n====",
+      [
+        {
+          location: "line 4, col 6 to line 4, col 8 of module M",
+          message: "Selected a NEW declaration as an expression or operator.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an inner module that selects an assumption past the NEW of an ASSUME/PROVE theorem",
+      "THEOREM T == ASSUME NEW a, a \\in {1} PROVE a = a\n---- MODULE In ----\nF == T!2\n====",
+      [
+        {
+          location: "line 4, col 8 to line 4, col 8 of module M",
+          message:
+            "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an extended constant that an instance's operator after it redeclares",
+      "---- MODULE Z ----\nOp(a) == a\n====\n---- MODULE A ----\nCONSTANT Op\nINSTANCE Z\n====\n---- MODULE B ----\nEXTENDS A\nF == Op(1)\n====",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 6, col 10 to line 6, col 11 of module M.",
+        },
+        {
+          location: "line 11, col 8 to line 11, col 10 of module M",
+          message: "The operator Op requires 0 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an extended constant that an instance's name after it redeclares",
+      "---- MODULE Z ----\n====\n---- MODULE A ----\nCONSTANT I\nI == INSTANCE Z\n====\n---- MODULE B ----\nEXTENDS A\nF == I\n====",
+      [
+        {
+          location: "line 6, col 1 to line 6, col 15 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 5, col 10 to line 5, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
@@ -3163,6 +3658,21 @@ describe("name resolution matches SANY", () => {
       onPrint: (text) => printed.push(text),
     });
     expect([result.status, printed[0]]).toEqual(["success", warnings]);
+  });
+
+  it("assigns a constant that a module declares again after EXTENDS like TLC", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS A\nCONSTANT N\nVARIABLE x\nInit == x = N\nNext == x' = x\n====",
+      config: "CONSTANT N = 1\nINIT Init\nNEXT Next",
+      loadModule: (name) => (name === "A" ? "---- MODULE A ----\nCONSTANT N\n====" : undefined),
+      onPrint: (text) => printed.push(text),
+    });
+    expect([result.status, printed[0]]).toEqual([
+      "success",
+      "*** Warnings: 1\n\nline 3, col 10 to line 3, col 10 of module M\n\nMultiple declarations or definitions for symbol N.  \nThis duplicates the one at line 2, col 10 to line 2, col 10 of module A.\n\n\n",
+    ]);
   });
 
   it("reports RECURSIVE declarations it never defines like SANY", async () => {

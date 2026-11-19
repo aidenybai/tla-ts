@@ -539,7 +539,7 @@ const generateLet = (
   const context = createContext();
   return withContext(generation, context, () => {
     generation.curLevel++;
-    generation.unresolvedCount[generation.curLevel] = 0;
+    generation.recursion.unresolvedCount[generation.curLevel] = 0;
     const opDefs: (OpDefNode | ThmOrAssumpDefNode)[] = [];
     const instances: InstanceNode[] = [];
     getLetUnits(generation.file, expression).forEach((unit) => {

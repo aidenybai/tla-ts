@@ -71,6 +71,7 @@ interface LocalName extends Binding {
 }
 
 interface ModuleBinding extends Binding {
+  key?: string;
   position: SourceLocation;
   isPending?: boolean;
 }
@@ -322,14 +323,16 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
   const binding = getModuleBinding(name, unit, undefined);
   const isVisible =
     definition !== undefined &&
-    (definition === unit.self
-      ? definition.isRecursive
-      : definition.isRecursive
-        ? binding !== undefined
-        : isBefore(definition.location, unit.location) &&
-          (binding === undefined || !isBefore(binding.position, definition.location)));
+    (definition.isRecursive
+      ? binding?.isPending === true || isSameRange(binding?.range, definition.location.range)
+      : definition !== unit.self &&
+        isBefore(definition.location, unit.location) &&
+        (binding === undefined || !isBefore(binding.position, definition.location)));
   return isVisible ? definition : undefined;
 };
+
+const hasKey = (binding: ModuleBinding | undefined): binding is ModuleBinding & ModuleSymbol =>
+  binding?.key !== undefined;
 
 const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   const definition = getVisibleDefinition(name, unit);
@@ -348,6 +351,7 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   if (binding?.isPending) {
     return { key: name, arity: binding.arity, params: binding.params, kind: binding.kind };
   }
+  if (hasKey(binding)) return binding;
   return binding ? unit.imported.get(name) : undefined;
 };
 
@@ -1024,7 +1028,7 @@ const getSymbolArity = (
 };
 
 const resolveBounds = (bounds: Bound[], scope: LocalName | undefined, unit: Unit) => {
-  bounds.forEach((bound) => resolveExpression(bound.set, scope, unit));
+  getBoundSets(bounds).forEach((set) => resolveExpression(set, scope, unit));
   return bounds.reduce(
     (current, bound) =>
       bindNames(current, getPatternNames(bound.pattern), bound.pattern.ranges, unit),
@@ -1093,10 +1097,20 @@ const resolveDefinition = (
     current.params = getParamArities(definition);
   }
   if (definition.kind === "Function") {
+    const isTaken = current !== undefined && !isDeclared;
+    const isTakenByDefinition =
+      isTaken &&
+      !current.isPending &&
+      (current.kind === "Definition" || current.kind === "Instance");
     // SANY names a function declared RECURSIVE by its definition in the body, and any other by a parameter of its own.
+    // Generator#processFunction gives a function whose name is taken no such parameter, and its bound names only when a definition took the name.
     resolveExpression(
       definition.body,
-      { name, kind: "Parameter", arity: 0, range, parent: inner, isSelf: !isDeclared },
+      !isTaken
+        ? { name, kind: "Parameter", arity: 0, range, parent: inner, isSelf: !isDeclared }
+        : isTakenByDefinition
+          ? inner
+          : scope,
       unit,
     );
     markRecursiveConstructions(definition.body, name);
@@ -2386,6 +2400,11 @@ const resolveStep = (
   }
 };
 
+export const getTheoremGoal = (theorem: Theorem): Goal | undefined =>
+  theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
+    ? { statement: theorem.statement, isSuffices: false, isInProof: false, keyword: undefined }
+    : undefined;
+
 const resolveTheorem = (
   theorem: Theorem,
   unit: Unit,
@@ -2393,10 +2412,7 @@ const resolveTheorem = (
   isDefinitionBody: boolean,
 ) => {
   const scope = isDefinitionBody ? undefined : resolveStatement(theorem.statement, undefined, unit);
-  const goal =
-    theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
-      ? { statement: theorem.statement, isSuffices: false, isInProof: false, keyword: undefined }
-      : undefined;
+  const goal = getTheoremGoal(theorem);
   if (theorem.name !== undefined) {
     bindModuleName(
       bindings,
@@ -2446,44 +2462,38 @@ export const isTheoremDefinition = (module: Module, definition: Definition) =>
       item.location.column === definition.location.column,
   );
 
-const createSymbols = (module: Module, unit: ModuleUnit) => {
-  const symbols = new Map([...CORE_SYMBOLS, ...unit.imported]);
-  module.constants.forEach((constant) =>
-    symbols.set(constant.name, {
-      key: unit.getKey(constant),
-      arity: constant.arity,
-      kind: "Constant",
-      range: constant.location.range,
-    }),
-  );
-  module.variables.forEach((variable) =>
-    symbols.set(variable.name, {
-      key: variable.name,
-      arity: 0,
-      kind: "Variable",
-      range: variable.location.range,
-    }),
-  );
-  return symbols;
-};
+const getDeclarationSymbol = (
+  declaration: Declaration,
+  kind: "Constant" | "Variable",
+  getKey: (item: { name: string }) => string,
+): ModuleSymbol => ({
+  key: kind === "Constant" ? getKey(declaration) : declaration.name,
+  arity: declaration.arity,
+  kind,
+  range: declaration.location.range,
+});
+
+const createSymbols = (module: Module, unit: ModuleUnit) =>
+  new Map([
+    ...CORE_SYMBOLS,
+    ...unit.imported,
+    ...module.constants.map((constant): [string, ModuleSymbol] => [
+      constant.name,
+      getDeclarationSymbol(constant, "Constant", unit.getKey),
+    ]),
+    ...module.variables.map((variable): [string, ModuleSymbol] => [
+      variable.name,
+      getDeclarationSymbol(variable, "Variable", unit.getKey),
+    ]),
+  ]);
 
 const checkSubstitutions = (
   instance: Instance,
   declarations: Declaration[],
   instancer: string,
-  outer: LocalName | undefined,
+  scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  const scope = instance.params.reduce<LocalName | undefined>(
-    (parent, param) => ({
-      name: param.name,
-      arity: param.arity,
-      kind: "Parameter",
-      range: param.location?.range,
-      parent,
-    }),
-    outer,
-  );
   const reportArity = (declaration: Declaration, location: string) =>
     unit.errors.push({
       location,
@@ -2623,7 +2633,13 @@ const checkSubstitutions = (
 
 const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
   const instanced = unit.getInstance(instance);
-  checkSubstitutions(instance, instanced.declarations, instanced.instancer, scope, unit);
+  checkSubstitutions(
+    instance,
+    instanced.declarations,
+    instanced.instancer,
+    bindParams(scope, instance.params, unit),
+    unit,
+  );
   return [...instanced.symbols].reduce(
     (parent, entry) => bindName(parent, entry[0], entry[1], unit),
     scope,
@@ -2633,66 +2649,54 @@ const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit:
 export const resolveSubstitutions = (
   instance: Instance,
   declarations: Declaration[],
-  module: Module,
+  symbols: Symbols,
+  instancer: string,
   unit: ModuleUnit,
 ) => {
-  const imported = createSymbols(module, unit);
-  const positions = new Map(
-    [...module.constants, ...module.variables].map((declaration) => [
-      declaration.name,
-      declaration.location,
-    ]),
-  );
+  const imported = new Map([...CORE_SYMBOLS, ...symbols]);
   const report: ModuleReport = { location: instance.location, errors: [], warnings: [] };
   unit.reports.push(report);
-  return checkSubstitutions(instance, declarations, module.name, undefined, {
-    imported,
-    linkTheorem: unit.linkTheorem,
-    getInstance: unit.getInstance,
-    definitions: unit.definitions,
-    getKey: unit.getKey,
-    isModuleKnown: unit.isModuleKnown,
-    location: instance.location,
-    self: undefined,
-    bindings: {
-      get: (name): ModuleBinding | undefined => {
-        const other = module.instances.findLast((candidate) => candidate.name === name);
-        if (other) {
-          return {
-            kind: "Instance",
-            arity: other.params.length,
-            range: other.location.range,
-            position: other.location,
-          };
-        }
-        const definition = unit.definitions.get(name);
-        if (definition) {
-          return {
-            kind: "Definition",
-            arity: getArity(definition),
-            range: definition.location.range,
-            position: definition.location,
-          };
-        }
-        const symbol = imported.get(name);
-        return symbol && { ...symbol, position: positions.get(name) ?? MODULE_START };
+  return checkSubstitutions(
+    instance,
+    declarations,
+    instancer,
+    instance.params.reduce<LocalName | undefined>(
+      (parent, param) => ({
+        name: param.name,
+        arity: param.arity,
+        kind: "Parameter",
+        range: param.location?.range,
+        parent,
+      }),
+      undefined,
+    ),
+    {
+      imported,
+      linkTheorem: unit.linkTheorem,
+      getInstance: unit.getInstance,
+      definitions: unit.definitions,
+      getKey: unit.getKey,
+      isModuleKnown: unit.isModuleKnown,
+      location: instance.location,
+      self: undefined,
+      bindings: {
+        get: (name): ModuleBinding | undefined => {
+          const symbol = imported.get(name);
+          return symbol && { ...symbol, position: MODULE_START };
+        },
+        keys: () => imported.keys(),
       },
-      keys: () => [
-        ...imported.keys(),
-        ...unit.definitions.keys(),
-        ...module.instances.flatMap((other) => (other.name === undefined ? [] : [other.name])),
-      ],
+      errors: report.errors,
+      warnings: report.warnings,
+      hasLabelScope: false,
+      isLabelForbidden: false,
+      isInExcept: false,
+      labelParams: [],
+      labels: new Set(),
+      isGenerated: false,
+      goalOperands: unit.goalOperands,
     },
-    errors: report.errors,
-    warnings: report.warnings,
-    hasLabelScope: false,
-    isLabelForbidden: false,
-    isInExcept: false,
-    labelParams: [],
-    labels: new Set(),
-    isGenerated: false,
-    goalOperands: unit.goalOperands,
-  });
+  );
 };
 
 interface SemanticUnit {
@@ -2774,7 +2778,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         bindModuleName(
           bindings,
           declaration.name,
-          { kind, arity: declaration.arity, range: declaration.location.range },
+          getDeclarationSymbol(declaration, kind, inner.getKey),
           inner,
         ),
       ),
@@ -2802,7 +2806,9 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           {
             location: section.location,
             check: (errors) => {
-              if (declarations.some((declared) => declared.binding?.isPending)) {
+              if (
+                declarations.some((declared) => !declared.binding || declared.binding.isPending)
+              ) {
                 errors.push({
                   location: formatRange(range),
                   message: `${section.type} may not appear within a recursive definition section.`,
@@ -2812,6 +2818,11 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           },
         ];
       }),
+      ...module.instances.map((instance) =>
+        createCheck(instance.location, undefined, false, (inner) =>
+          bindParams(undefined, instance.params, inner),
+        ),
+      ),
       ...unit.reports.map((report) => ({
         location: report.location,
         check: (errors: SanyError[], warnings: SanyError[]) => {
@@ -2862,7 +2873,6 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.instances.map((instance) =>
         createCheck(instance.location, undefined, false, (inner) => {
-          bindParams(undefined, instance.params, inner);
           unit.instanced
             .get(instance)
             ?.forEach((symbol, name) => bindModuleName(bindings, name, symbol, inner));
