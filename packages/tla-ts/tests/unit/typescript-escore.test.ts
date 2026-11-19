@@ -503,6 +503,39 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("throws what a promise capability's reject function throws", () => {
+    const getSource = (expected: string) => `
+      class Rejecting {
+        constructor(executor: (resolve: () => void, reject: () => void) => void) {
+          executor(
+            () => {},
+            () => {
+              throw new Error("from reject");
+            },
+          );
+        }
+        static resolve() {
+          throw new Error("from resolve");
+        }
+      }
+      let caught = "none";
+      try {
+        Promise.race.call(Rejecting, [1]);
+      } catch (error) {
+        caught = (error as Error).message;
+      }
+      if (caught !== "${expected}") throw new Error(caught);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("from reject"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("none"))).message).toContain(THREW);
+    });
+  });
+
   describe("runs each timer of no delay as a task once the jobs before it ran", () => {
     const getSource = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
