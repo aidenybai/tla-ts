@@ -78,6 +78,7 @@ export class FuncInterp {
   private entryTable = new Map<string, FuncEntry>();
   elseExpr: number | null = null;
   private interp: number | null = null;
+  private arrayInterp: number | null = null;
 
   constructor(
     private manager: AstManager,
@@ -125,7 +126,9 @@ export class FuncInterp {
 
   private resetInterpCache() {
     if (this.interp !== null) this.manager.decRef(this.interp);
+    if (this.arrayInterp !== null) this.manager.decRef(this.arrayInterp);
     this.interp = null;
+    this.arrayInterp = null;
   }
 
   private releaseEntry(entry: FuncEntry) {
@@ -244,8 +247,18 @@ export class FuncInterp {
     return this.entries.length + 1 === 2;
   }
 
-  // get_array_interp: an interpretation that is not ground becomes a lambda.
+  // Z3 keeps the array, so the subterms it shares with other values stay shared.
   getArrayInterp(decl: number) {
+    if (this.arrayInterp !== null) return this.arrayInterp;
+    const arrayInterp = this.mkArrayInterp(decl);
+    if (arrayInterp === undefined) return undefined;
+    this.manager.incRef(arrayInterp);
+    this.arrayInterp = arrayInterp;
+    return arrayInterp;
+  }
+
+  // An interpretation that is not ground becomes a lambda, as in Z3.
+  private mkArrayInterp(decl: number) {
     const manager = this.manager;
     const elseExpr = this.elseExpr;
     if (elseExpr === null) return undefined;

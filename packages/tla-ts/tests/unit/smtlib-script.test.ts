@@ -1927,6 +1927,40 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("keeps the array of a function interpretation as Z3 does", () => {
+    expect(
+      run([
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a1 (Array Int Int))",
+        "(declare-const a2 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(declare-const i1 Int)",
+        "(assert (= (store a1 i1 (select a2 i0)) a2))",
+        "(assert (= (store a2 i0 i0) a0))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a1 () (Array Int Int)",
+        "    ((as const (Array Int Int)) 2))",
+        "  (define-fun i1 () Int",
+        "    3)",
+        "  (define-fun a2 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 2) 3 4))",
+        "  (define-fun i0 () Int",
+        "    3)",
+        "  (define-fun a0 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 2) 3 3))",
+        ")",
+      ].join("\n"),
+      "(:rlimit 270)",
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
