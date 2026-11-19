@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
+import { simulate } from "../../src/simulate";
 import { checkFixture } from "./check-harness";
 
 const checkCounterExample = async (configName: string) => {
@@ -166,6 +167,69 @@ describe("POSTCONDITION after a state that leaves a variable unassigned", () => 
         ].join("\n"),
       ],
       "Postcondition Post at line 6, col 9 to line 6, col 39 of module M is false.",
+    ]);
+  });
+});
+
+const STATE_ORDER_SOURCE =
+  "---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLES x, s, r\nInit == x = 0 /\\ s = 0 /\\ r = 0\nNext == x < 2 /\\ x' = x + 1 /\\ UNCHANGED <<s, r>>\nInv == x < 2 \\/ PrintT(ToString(Trace))\nBound == x < 2\nPost == PrintT(ToString(CounterExample.state))\n====";
+const STATE_ORDER_CONFIG =
+  "INIT Init\nNEXT Next\nINVARIANT Inv\nINVARIANT Bound\nPOSTCONDITION Post";
+const STATE_ORDER_COUNTER_EXAMPLE =
+  '"{<<1, [r |-> 0, s |-> 0, x |-> 0]>>, <<2, [r |-> 0, s |-> 0, x |-> 1]>>, <<3, [r |-> 0, s |-> 0, x |-> 2]>>}"';
+
+describe("the state records of Trace and CounterExample match TLC", () => {
+  it("keeps the variables in TLC's order, which ToString and JSON show unsorted", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source: STATE_ORDER_SOURCE,
+      config: STATE_ORDER_CONFIG,
+      onPrint: (text) => printed.push(text),
+    });
+    expect([...printed, ...(result.violation?.postconditionOutput ?? [])]).toEqual([
+      '"<<[r |-> 0, s |-> 0, x |-> 0], [r |-> 0, s |-> 0, x |-> 1], [r |-> 0, s |-> 0, x |-> 2]>>"',
+      STATE_ORDER_COUNTER_EXAMPLE,
+    ]);
+  });
+
+  it("keeps the records PrintT sorted in the set of states for ToString and JsonSerialize", async () => {
+    const printed: string[] = [];
+    const written = new Map<string, string>();
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt, Json\nVARIABLES x, s, r\nInit == x = 0 /\\ s = 0 /\\ r = 0\nNext == x < 2 /\\ x\' = x + 1 /\\ UNCHANGED <<s, r>>\nInv == x < 2\nPost == PrintT(CounterExample.state) /\\ PrintT(ToString(CounterExample.state)) /\\ JsonSerialize("p.json", CounterExample)\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post",
+      onPrint: (text) => printed.push(text),
+      writeFile: (path, content) => written.set(path, String(content)),
+    });
+    expect([...printed, ...(result.violation?.postconditionOutput ?? [])]).toEqual([
+      "{ <<1, [x |-> 0, s |-> 0, r |-> 0]>>,\n  <<2, [x |-> 1, s |-> 0, r |-> 0]>>,\n  <<3, [x |-> 2, s |-> 0, r |-> 0]>> }",
+      '"{<<1, [x |-> 0, s |-> 0, r |-> 0]>>, <<2, [x |-> 1, s |-> 0, r |-> 0]>>, <<3, [x |-> 2, s |-> 0, r |-> 0]>>}"',
+    ]);
+    expect(written.get("p.json")).toBe(
+      '{"action":[[[1,{"x":0,"s":0,"r":0}],{"name":"Next","location":{"beginLine":5,"beginColumn":9,"endLine":5,"endColumn":49,"module":"M"}},[2,{"x":1,"s":0,"r":0}]],[[2,{"x":1,"s":0,"r":0}],{"name":"Next","location":{"beginLine":5,"beginColumn":9,"endLine":5,"endColumn":49,"module":"M"}},[3,{"x":2,"s":0,"r":0}]]],"state":[[1,{"x":0,"s":0,"r":0}],[2,{"x":1,"s":0,"r":0}],[3,{"x":2,"s":0,"r":0}]]}',
+    );
+  });
+
+  it("puts the action of a simulated state before its variables", () => {
+    const printed: string[] = [];
+    simulate({
+      source: STATE_ORDER_SOURCE,
+      config: STATE_ORDER_CONFIG,
+      seed: 4n,
+      traceDepth: 5,
+      traceCount: 1n,
+      aril: 0n,
+      isGenerating: false,
+      scheduler: "random",
+      onPrint: (text) => printed.push(text),
+      onSimulation: () => {},
+    });
+    const getAction = (name: string, line: number, endColumn: number) =>
+      `_action |-> [name |-> \\"${name}\\", location |-> [beginLine |-> ${line}, beginColumn |-> 9, endLine |-> ${line}, endColumn |-> ${endColumn}, module |-> \\"M\\"]]`;
+    expect(printed).toEqual([
+      `"<<[${getAction("Init", 4, 31)}, r |-> 0, s |-> 0, x |-> 0], [${getAction("Next", 5, 49)}, r |-> 0, s |-> 0, x |-> 1], [${getAction("Next", 5, 49)}, r |-> 0, s |-> 0, x |-> 2]>>"`,
+      STATE_ORDER_COUNTER_EXAMPLE,
     ]);
   });
 });

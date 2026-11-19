@@ -60,6 +60,7 @@ import {
   getSortedUnion,
   getValueKey,
   getWrittenElements,
+  isNormalizedSet,
   isEqualLikeTlc,
   createEnumeratedSet,
   createNormalizedSet,
@@ -96,7 +97,7 @@ type ReducibleSet = SetValue | MixedSetValue | IntervalValue;
 const isMixedSet = (value: Value) => typeof value === "object" && value.kind === "MixedSet";
 
 const isNormalizedReducible = (set: ReducibleSet) =>
-  set.kind === "Interval" || (set.kind === "Set" && set.isNormalized);
+  set.kind === "Interval" || isNormalizedSet(set);
 
 const combineReducible = (
   operator: SetOperationValue["operator"],
