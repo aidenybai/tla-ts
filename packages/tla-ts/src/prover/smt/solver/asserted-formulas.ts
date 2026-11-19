@@ -254,7 +254,7 @@ export class AssertedFormulas {
     this.names.release();
     this.formulas.reset();
     this.macros.release();
-    this.bvSharing.release();
+    this.bvSharing.reset();
     this.rewriter.reset();
     this.substitution.cleanup();
   }
@@ -265,6 +265,7 @@ export class AssertedFormulas {
     this.boundsElim.release();
     this.termIteElim.release();
     this.patternInference.release();
+    this.bvSharing.release();
     this.substitution.release();
     this.rewriter.release();
   }

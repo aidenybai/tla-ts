@@ -2293,6 +2293,31 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
     ]);
   });
 
+  it("frees the pairs and caches of bv sharing after the theories", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(declare-const z (_ BitVec 8))",
+        "(push)",
+        "(assert (= (bvadd x y z (bvmul x z)) #x01))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or q p r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
   // cmd_context's m_check_sat_result keeps the finite-domain solver that answered past
   // reset-assertions, and the next assert frees it.
   it("keeps the solver of the last check-sat until the next assert", () => {
