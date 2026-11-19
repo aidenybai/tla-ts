@@ -84,7 +84,7 @@ export const CodeContent = () => {
   return (
     <code
       ref={contentRef}
-      className="@container relative w-full min-w-0 font-mono text-[13px]/[1.7] text-foreground"
+      className="@container relative w-full min-w-0 font-mono text-code/[1.7] text-foreground"
     >
       {code.source.lines
         .map((tokens, index) => ({ tokens, number: index + 1 }))
@@ -108,7 +108,7 @@ export const CodeContent = () => {
                 />
               )
             }
-            className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number === 1 && "pr-14")}
+            className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number <= 2 && "pr-14")}
           />
         ))}
     </code>
