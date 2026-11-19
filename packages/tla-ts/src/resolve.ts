@@ -2462,6 +2462,31 @@ export const isTheoremDefinition = (module: Module, definition: Definition) =>
       item.location.column === definition.location.column,
   );
 
+interface RecursiveDeclaration {
+  declaration: Declaration;
+  isTaken: boolean;
+}
+
+// SANY counts a RECURSIVE declaration whose name is taken, and nothing defines it.
+const getOpenRecursive = (
+  module: Module,
+  declarations: RecursiveDeclaration[],
+  location: SourceLocation,
+) =>
+  declarations.filter(
+    (declared) =>
+      isBefore(declared.declaration.location, location) &&
+      (declared.isTaken ||
+        !module.definitions.some(
+          (definition) =>
+            definition.name === declared.declaration.name &&
+            isBefore(declared.declaration.location, definition.location) &&
+            isBefore(definition.location, location) &&
+            (definition.kind === "Operator" || declared.declaration.arity === 0) &&
+            !isTheoremDefinition(module, definition),
+        )),
+  );
+
 const getDeclarationSymbol = (
   declaration: Declaration,
   kind: "Constant" | "Variable",
@@ -2740,7 +2765,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     ]),
   );
   const recursive = new Set<Binding>();
-  const declarations: { declaration: Declaration; binding: ModuleBinding | undefined }[] = [];
+  const declarations: RecursiveDeclaration[] = [];
   const createCheck = (
     location: SourceLocation,
     self: Definition | undefined,
@@ -2806,9 +2831,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           {
             location: section.location,
             check: (errors) => {
-              if (
-                declarations.some((declared) => !declared.binding || declared.binding.isPending)
-              ) {
+              if (getOpenRecursive(module, declarations, section.location).length > 0) {
                 errors.push({
                   location: formatRange(range),
                   message: `${section.type} may not appear within a recursive definition section.`,
@@ -2854,7 +2877,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
               bindings.set(declaration.name, binding);
               recursive.add(binding);
             }
-            declarations.push({ declaration, binding: isBound ? binding : undefined });
+            declarations.push({ declaration, isTaken: !isBound });
           }),
         ),
       ...module.definitions.map((definition) =>
@@ -2914,9 +2937,13 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       {
         location: module.location.range?.end ?? module.location,
         check: (errors: SanyError[]) =>
-          declarations.forEach((item) => {
+          getOpenRecursive(
+            module,
+            declarations,
+            module.location.range?.end ?? module.location,
+          ).forEach((item) => {
             const range = item.declaration.location.range;
-            if (range && (!item.binding || item.binding.isPending)) {
+            if (range) {
               errors.push({
                 location: formatRange(range),
                 message: `Symbol ${resolveSynonym(item.declaration.name)} declared in RECURSIVE statement but not defined.`,
