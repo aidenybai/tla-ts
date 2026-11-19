@@ -564,6 +564,30 @@ const isVariable = (expression: Expression, rewrite: Rewrite, bound: Map<string,
   !isLocallyResolved(expression) &&
   rewrite.instantiation.variables.has(expression.name);
 
+const getLetVariable = (
+  expression: Expression,
+  rewrite: Rewrite,
+  bound: Map<string, string>,
+  lets: ReadonlyMap<string, Definition>,
+): string | undefined => {
+  if (expression.kind === "Let") {
+    const definitions = expression.definitions.map((definition): [string, Definition] => [
+      definition.name,
+      definition,
+    ]);
+    return getLetVariable(expression.body, rewrite, bound, new Map([...lets, ...definitions]));
+  }
+  if (expression.kind !== "Identifier") return undefined;
+  if (isVariable(expression, rewrite, bound)) return expression.name;
+  const isLocal = isLocallyResolved(expression);
+  const definition = isLocal
+    ? lets.get(expression.name)
+    : rewrite.instantiation.getDefinition(expression.name);
+  return definition?.kind === "Operator" && definition.params.length === 0
+    ? getLetVariable(definition.body, rewrite, isLocal ? bound : new Map(), lets)
+    : undefined;
+};
+
 const getUnchangedVariables = (
   expression: Expression,
   rewrite: Rewrite,
@@ -574,6 +598,11 @@ const getUnchangedVariables = (
       getUnchangedVariables(element, rewrite, bound),
     );
     return names.every((element) => element !== undefined) ? names.flat() : undefined;
+  }
+  if (expression.kind === "Let") {
+    // TLC's Tool#getVar finds one variable through a LET, which it never splits as a tuple.
+    const name = getLetVariable(expression, rewrite, bound, new Map());
+    return name === undefined ? undefined : [name];
   }
   if (expression.kind !== "Identifier") return undefined;
   if (isVariable(expression, rewrite, bound)) return [expression.name];

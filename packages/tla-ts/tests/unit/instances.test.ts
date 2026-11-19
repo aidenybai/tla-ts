@@ -565,6 +565,24 @@ describe("INSTANCE matches TLC", () => {
       ],
     ]);
   });
+
+  it.each(["(LET k == d IN k)", "<<LET k == d IN k>>", "dk"])(
+    "keeps the variable a LET names under UNCHANGED %s in an instanced ENABLED, as TLC's Tool#getVar finds it",
+    async (unchanged) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nI == INSTANCE Inner WITH c <- x, d <- y\nInit == x = 0 /\\ y = 0\nNext == x < 3 /\\ x' = x + 1 /\\ UNCHANGED y\nInv == I!Can\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        loadModule: (name) =>
+          name === "Inner"
+            ? `---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLES c, d\ndk == LET k == d IN k\nA == c < 2 /\\ c' = c + 1 /\\ UNCHANGED ${unchanged}\nCan == ENABLED <<A>>_<<c, d>>\n====`
+            : undefined,
+      });
+      expect([result.violation?.name, result.violation?.trace.map((step) => step.state.x)]).toEqual(
+        ["Inv", [0, 1, 2]],
+      );
+    },
+  );
 });
 
 const INNER_MODULES: Record<string, string> = {
