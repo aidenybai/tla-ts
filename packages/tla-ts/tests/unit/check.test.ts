@@ -3230,6 +3230,46 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "LET I2 == Init IN I2",
+      "I2",
+      "6, col 13 to line 6, col 14",
+      "6,\n          beginColumn |-> 19,\n          endLine |-> 6,\n          endColumn |-> 22",
+    ],
+    [
+      "LET I2 == Init IN LET I3 == I2 IN I3",
+      "I3",
+      "6, col 31 to line 6, col 32",
+      "6,\n          beginColumn |-> 37,\n          endLine |-> 6,\n          endColumn |-> 38",
+    ],
+    [
+      "LET I2 == x = 0 /\\ y = 0 IN I2",
+      "I2",
+      "6, col 13 to line 6, col 14",
+      "6,\n          beginColumn |-> 19,\n          endLine |-> 6,\n          endColumn |-> 32",
+    ],
+  ])(
+    "takes the initial predicate of Spec == %s /\\ [][Next]_<<x, y>> whole and names it by the LET definition, as TLC's SpecProcessor does",
+    async (init, name, range, location) => {
+      const source = `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nInit == x = 0 /\\ y \\in {0, 1}\nNext == x < 3 /\\ x' = x + 1 /\\ y' = y\nSpec == ${init} /\\ [][Next]_<<x, y>>\nASSUME PrintT(TLCGet("spec").inits)\n====`;
+      const printed: string[] = [];
+      await check({ source, config: "SPECIFICATION Spec", onPrint: (text) => printed.push(text) });
+      const result = await check({
+        source,
+        config: "SPECIFICATION Spec",
+        coverage: 1,
+        onPrint: () => {},
+      });
+      expect([printed, result.coverage?.relations[0].label]).toEqual([
+        [
+          `{ [ name |-> "${name}",\n    location |->\n        [ beginLine |-> ${location},\n          module |-> "M" ] ] }`,
+        ],
+        `${name} line ${range} of module M`,
+      ]);
+    },
+  );
+
   it("counts a recursive function of an instance of an instance at its definition once", async () => {
     const lines = await getCoverageLines(
       "---- MODULE G ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES a, b\nD == \\E e \\in {0, K % 4} : a' = e /\\ b' = b\nRf[n \\in 0..2] == IF n = 0 THEN K ELSE Rf[n - 1] + (a % 2)\n====\n---- MODULE Mid ----\nEXTENDS Naturals\nCONSTANT L\nVARIABLES p, q\nII == INSTANCE Inner WITH K <- L + 1, a <- p, b <- q\n====\nMd == INSTANCE Mid WITH L <- 1, p <- x, q <- y\nInit == x = 0 /\\ y = 0\nNext == Md!II!D\nInv == Md!II!Rf[2] > 0\n====",

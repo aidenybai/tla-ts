@@ -534,12 +534,23 @@ const describeSpecification = (
     ...createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope),
     location: substitutionFrame?.location ?? conjunct.location,
   });
-  const unwrapped = unwrapBinding(expression, scope, environment);
+  const letDefinition = getLetDefinition(expression, scope);
+  const thunk = letDefinition?.kind === "Operator" ? getThunk(expression, scope) : undefined;
+  const unwrapped = thunk ? undefined : unwrapBinding(expression, scope, environment);
   if (unwrapped) {
     recurse(unwrapped.expression, unwrapped.scope);
     return;
   }
-  const called = resolveClosure(expression, scope, environment);
+  const called: Closure | undefined =
+    letDefinition && thunk
+      ? {
+          kind: "Closure",
+          name: letDefinition.name,
+          params: [],
+          body: thunk.expression,
+          scope: thunk.scope,
+        }
+      : resolveClosure(expression, scope, environment);
   if (called && isConstantDefinition(called, environment)) return;
   const calledFrames = called
     ? [...frames, ...(substitutionFrames.get(called.body) ?? [])]
@@ -553,7 +564,7 @@ const describeSpecification = (
       description.inits.push({
         ...createConjunct(called.name, called.body, called.scope),
         ...(name === undefined
-          ? undefined
+          ? getDefinitionRanges(letDefinition)
           : substitutionFrame
             ? getDefinitionRanges(getDefinition(name, environment))
             : instanceActions.get(name)),
