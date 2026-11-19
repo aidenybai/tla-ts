@@ -2487,19 +2487,9 @@ const checkSubstitutions = (
   instance: Instance,
   declarations: Declaration[],
   instancer: string,
-  outer: LocalName | undefined,
+  scope: LocalName | undefined,
   unit: Unit,
 ) => {
-  const scope = instance.params.reduce<LocalName | undefined>(
-    (parent, param) => ({
-      name: param.name,
-      arity: param.arity,
-      kind: "Parameter",
-      range: param.location?.range,
-      parent,
-    }),
-    outer,
-  );
   const reportArity = (declaration: Declaration, location: string) =>
     unit.errors.push({
       location,
@@ -2639,7 +2629,13 @@ const checkSubstitutions = (
 
 const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
   const instanced = unit.getInstance(instance);
-  checkSubstitutions(instance, instanced.declarations, instanced.instancer, scope, unit);
+  checkSubstitutions(
+    instance,
+    instanced.declarations,
+    instanced.instancer,
+    bindParams(scope, instance.params, unit),
+    unit,
+  );
   return [...instanced.symbols].reduce(
     (parent, entry) => bindName(parent, entry[0], entry[1], unit),
     scope,
@@ -2661,54 +2657,69 @@ export const resolveSubstitutions = (
   );
   const report: ModuleReport = { location: instance.location, errors: [], warnings: [] };
   unit.reports.push(report);
-  return checkSubstitutions(instance, declarations, module.name, undefined, {
-    imported,
-    linkTheorem: unit.linkTheorem,
-    getInstance: unit.getInstance,
-    definitions: unit.definitions,
-    getKey: unit.getKey,
-    isModuleKnown: unit.isModuleKnown,
-    location: instance.location,
-    self: undefined,
-    bindings: {
-      get: (name): ModuleBinding | undefined => {
-        const other = module.instances.findLast((candidate) => candidate.name === name);
-        if (other) {
-          return {
-            kind: "Instance",
-            arity: other.params.length,
-            range: other.location.range,
-            position: other.location,
-          };
-        }
-        const definition = unit.definitions.get(name);
-        if (definition) {
-          return {
-            kind: "Definition",
-            arity: getArity(definition),
-            range: definition.location.range,
-            position: definition.location,
-          };
-        }
-        const symbol = imported.get(name);
-        return symbol && { ...symbol, position: positions.get(name) ?? MODULE_START };
+  return checkSubstitutions(
+    instance,
+    declarations,
+    module.name,
+    instance.params.reduce<LocalName | undefined>(
+      (parent, param) => ({
+        name: param.name,
+        arity: param.arity,
+        kind: "Parameter",
+        range: param.location?.range,
+        parent,
+      }),
+      undefined,
+    ),
+    {
+      imported,
+      linkTheorem: unit.linkTheorem,
+      getInstance: unit.getInstance,
+      definitions: unit.definitions,
+      getKey: unit.getKey,
+      isModuleKnown: unit.isModuleKnown,
+      location: instance.location,
+      self: undefined,
+      bindings: {
+        get: (name): ModuleBinding | undefined => {
+          const other = module.instances.findLast((candidate) => candidate.name === name);
+          if (other) {
+            return {
+              kind: "Instance",
+              arity: other.params.length,
+              range: other.location.range,
+              position: other.location,
+            };
+          }
+          const definition = unit.definitions.get(name);
+          if (definition) {
+            return {
+              kind: "Definition",
+              arity: getArity(definition),
+              range: definition.location.range,
+              position: definition.location,
+            };
+          }
+          const symbol = imported.get(name);
+          return symbol && { ...symbol, position: positions.get(name) ?? MODULE_START };
+        },
+        keys: () => [
+          ...imported.keys(),
+          ...unit.definitions.keys(),
+          ...module.instances.flatMap((other) => (other.name === undefined ? [] : [other.name])),
+        ],
       },
-      keys: () => [
-        ...imported.keys(),
-        ...unit.definitions.keys(),
-        ...module.instances.flatMap((other) => (other.name === undefined ? [] : [other.name])),
-      ],
+      errors: report.errors,
+      warnings: report.warnings,
+      hasLabelScope: false,
+      isLabelForbidden: false,
+      isInExcept: false,
+      labelParams: [],
+      labels: new Set(),
+      isGenerated: false,
+      goalOperands: unit.goalOperands,
     },
-    errors: report.errors,
-    warnings: report.warnings,
-    hasLabelScope: false,
-    isLabelForbidden: false,
-    isInExcept: false,
-    labelParams: [],
-    labels: new Set(),
-    isGenerated: false,
-    goalOperands: unit.goalOperands,
-  });
+  );
 };
 
 interface SemanticUnit {
@@ -2828,6 +2839,11 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           },
         ];
       }),
+      ...module.instances.map((instance) =>
+        createCheck(instance.location, undefined, false, (inner) =>
+          bindParams(undefined, instance.params, inner),
+        ),
+      ),
       ...unit.reports.map((report) => ({
         location: report.location,
         check: (errors: SanyError[], warnings: SanyError[]) => {
@@ -2878,7 +2894,6 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.instances.map((instance) =>
         createCheck(instance.location, undefined, false, (inner) => {
-          bindParams(undefined, instance.params, inner);
           unit.instanced
             .get(instance)
             ?.forEach((symbol, name) => bindModuleName(bindings, name, symbol, inner));

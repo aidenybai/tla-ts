@@ -2292,6 +2292,50 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "an instance parameter named after a constant, before the instance's substitutions",
+      "CONSTANT k\n---- MODULE Inner ----\nCONSTANT c\n====\nG(k) == INSTANCE Inner WITH d <- 1",
+      [
+        {
+          location: "line 6, col 3 to line 6, col 3 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 6, col 29 to line 6, col 29 of module M",
+          message:
+            "Identifier 'd' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 34 of module M",
+          message:
+            "Substitution missing for symbol c declared at line 4, col 10 to line 4, col 10 of module M \nand instantiated in module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a LET instance parameter named after a constant, before the instance's substitutions",
+      "CONSTANT k\n---- MODULE Inner ----\nCONSTANT c\n====\nI == INSTANCE Inner WITH c <- 1\nA == LET G(k) == INSTANCE Inner WITH d <- 1 IN 1",
+      [
+        {
+          location: "line 7, col 12 to line 7, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 7, col 38 to line 7, col 38 of module M",
+          message:
+            "Identifier 'd' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+        {
+          location: "line 7, col 10 to line 7, col 43 of module M",
+          message:
+            "Substitution missing for symbol c declared at line 4, col 10 to line 4, col 10 of module M \nand instantiated in module M.",
+        },
+      ],
+      [],
+    ],
+    [
       "an operator named after a function",
       "f[n \\in {1}] == n\nf == 1",
       [
