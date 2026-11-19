@@ -205,6 +205,22 @@ describe("the CLI takes TLC's -dump flag", () => {
     ]);
   });
 
+  it("leaves only the header TLC writes as it starts in the dot file of a simulation", () => {
+    const directory = createDirectory();
+    runCli([
+      "-simulate",
+      "num=1",
+      "-depth",
+      "3",
+      "-dump",
+      "dot,colorize",
+      join(directory, "Counter"),
+    ]);
+    expect(readFileSync(join(directory, "Counter.dot"), "utf8")).toBe(
+      'strict digraph DiskGraph {\nnode [shape=box,style=rounded]\nedge [colorscheme="paired12"]\nnodesep=0.35;\nsubgraph cluster_graph {\ncolor="white";\n',
+    );
+  });
+
   it("takes the options of a dot format", () => {
     const directory = createDirectory();
     runCli(["-dump", "dot,actionlabels,strict,stuttering,constrained", join(directory, "Counter")]);

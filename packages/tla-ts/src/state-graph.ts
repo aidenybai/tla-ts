@@ -86,20 +86,23 @@ const createPlainWriter = (dump: StateDump, writeFile: WriteFile): StateWriter =
   };
 };
 
+export const getDotHeader = (dump: StateDump, version: TlcVersion | undefined) =>
+  [
+    "strict digraph DiskGraph {\n",
+    version === "1.7.4" ? "" : "node [shape=box,style=rounded]\n",
+    dump.colorize ? `edge [colorscheme="${COLOR_SCHEME}"]\n` : "",
+    "nodesep=0.35;\n",
+    "subgraph cluster_graph {\n",
+    'color="white";\n',
+  ].join("");
+
 const createDotWriter = (
   dump: StateDump,
   writeFile: WriteFile,
   version: TlcVersion | undefined,
 ): StateWriter => {
   const is174 = version === "1.7.4";
-  const lines = [
-    "strict digraph DiskGraph {\n",
-    is174 ? "" : "node [shape=box,style=rounded]\n",
-    dump.colorize ? `edge [colorscheme="${COLOR_SCHEME}"]\n` : "",
-    "nodesep=0.35;\n",
-    "subgraph cluster_graph {\n",
-    'color="white";\n',
-  ];
+  const lines = [getDotHeader(dump, version)];
   const ranks = new Map<number, Set<bigint>>();
   const colors = new Map<string, number>();
   // Deviation from TLC: it keys an edge by the XOR of its fingerprints, which merges distinct edges.
