@@ -119,6 +119,7 @@ export interface MessagePrinter {
   isDiffTrace: boolean;
   version: TlcVersion;
   print: (code: number, level: MessageLevel, text: string) => void;
+  printOutput: (text: string) => void;
 }
 
 interface MessagePrinterOptions {
@@ -128,6 +129,7 @@ interface MessagePrinterOptions {
   version?: TlcVersion;
   suppressedCodes?: number[];
   errorCodes?: number[];
+  onOutput?: (text: string) => void;
 }
 
 export const formatMessage = (isTool: boolean, code: number, level: MessageLevel, text: string) =>
@@ -157,6 +159,7 @@ export const createMessagePrinter = (options: MessagePrinterOptions): MessagePri
       if (isWarning) warnings.add(message);
       console.log(message);
     },
+    printOutput: options.onOutput ?? console.log,
   };
 };
 

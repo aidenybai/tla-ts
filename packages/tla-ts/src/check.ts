@@ -251,7 +251,7 @@ export interface TraceStep {
   state: Record<string, Value>;
   /** What the spec prints before this step as TLC rebuilds the trace, and before it for the first. */
   output?: OutputLine[];
-  /** What the ALIAS prints as TLC evaluates it right before it prints this step. */
+  /** What the ALIAS and VIEW print as TLC evaluates them right before it prints this step. */
   aliasOutput?: OutputLine[];
 }
 
@@ -1567,9 +1567,7 @@ const searchStates = (
     liveSuccessors: LiveSuccessor[],
     source: GraphState | undefined,
   ) => {
-    if (liveness && source && (is174 || options.dump?.stuttering)) {
-      stateWriter?.writeStuttering(source);
-    }
+    if (liveness && source) stateWriter?.writeStuttering(source);
     const accepted = liveness?.addState(index, states[index], liveSuccessors);
     if (!liveness || !accepted) return undefined;
     // Deviation from TLC: under -continue, TLC's LiveCheck throws an InvariantViolatedException after it reports the property, which its Worker reports as unexpected.
@@ -1764,7 +1762,9 @@ const searchStates = (
     const isStuttering = cycleStart === cycleEnd;
     const loop = isStuttering
       ? { result: undefined, lines: [] }
-      : captureOutput(() => traces.findStepAction(cycleEnd, lastState, states[cycleStart], false));
+      : captureOutput(() =>
+          traces.findStepAction(cycleEnd, lastState, fingerprintStates[cycleStart], false),
+        );
     const back =
       isStuttering || loop.result
         ? undefined
