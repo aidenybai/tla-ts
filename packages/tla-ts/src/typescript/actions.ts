@@ -19293,26 +19293,29 @@ const translateLoop = (
     isComma(comma) &&
     !path.scope.results.has(comma)
   ) {
-    return translateExpressionStatement(comma.left, path, context, frame, (after) => {
-      const value = translateExpression(comma.right, after.scope, context);
-      return translateLoop(
-        loop,
-        {
-          ...after,
-          scope: {
-            ...after.scope,
-            results: new Map([
-              ...after.scope.results,
-              [comma, value],
-              ...(comma === head ? [] : [[head, value] as const]),
-            ]),
+    // The second operand makes its objects as a statement does.
+    return translateExpressionStatement(comma.left, path, context, frame, (after) =>
+      allocate(comma.right, after, context, (allocated) => {
+        const value = translateExpression(comma.right, allocated.scope, context);
+        return translateLoop(
+          loop,
+          {
+            ...allocated,
+            scope: {
+              ...allocated.scope,
+              results: new Map([
+                ...allocated.scope.results,
+                [comma, value],
+                ...(comma === head ? [] : [[head, value] as const]),
+              ]),
+            },
           },
-        },
-        context,
-        frame,
-        continueWith,
-      );
-    });
+          context,
+          frame,
+          continueWith,
+        );
+      }),
+    );
   }
   const isYielding = frame.yieldTo !== undefined && hasYield(loop.statement);
   // A state machine runs a while, a do-while, a for, or a for-of that yields as jumps to its head.

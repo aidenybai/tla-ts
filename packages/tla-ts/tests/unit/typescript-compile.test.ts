@@ -58378,4 +58378,25 @@ describe("runs the script's methods in a conversion inside at most one other", (
       expect((await checkModel(getLive("5555,0"))).failure?.message).toContain("5555,3333");
     });
   });
+
+  describe("makes the objects of the second operand of a comma in a for-in head", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      let count = 0;
+      for (const key in (count++, { first: 0, second: 1 })) box.seen.push(key + count);
+      for (var name in (box.seen.push("pushed"), { only: 2 })) box.seen.push(name);
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+    const expected = "first1,second1,pushed,only";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      const wrong = expected.replaceAll("1", "0");
+      expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
+    });
+  });
 });
