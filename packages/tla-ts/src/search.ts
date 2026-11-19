@@ -789,6 +789,7 @@ export interface Search {
   isSymmetric: boolean;
   isConstrained: boolean;
   isNextReplayed: boolean;
+  isTraceRebuildShown: boolean;
   getTypedChecks: (liveness: Solution[] | undefined) =>
     | {
         init: Expression;
@@ -1503,6 +1504,18 @@ export const createSearch = (
       spec.next !== undefined &&
       (scopeExpressions === undefined ||
         isExpressionImpure([spec.next, ...scopeExpressions], environment, "replayed")),
+    isTraceRebuildShown:
+      scopeExpressions === undefined ||
+      isExpressionImpure(
+        [
+          ...(spec.init ? [spec.init] : []),
+          ...(spec.next ? [spec.next] : []),
+          ...(view ? [view.expression] : []),
+          ...scopeExpressions,
+        ],
+        environment,
+        "replayed",
+      ),
     getTypedChecks: (liveness) => {
       const isInterpreted =
         coverage !== undefined ||

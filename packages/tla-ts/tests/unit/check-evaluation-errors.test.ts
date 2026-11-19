@@ -1050,6 +1050,48 @@ describe("evaluation errors match TLC", () => {
     expect(result.failure?.message).toContain(message);
   });
 
+  it.each([
+    [
+      "an invariant",
+      "Inv == ENABLED (y' = 1 - y /\\ UNCHANGED (IF z = 2 THEN 0 ELSE x))",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      "z",
+      75,
+      undefined,
+    ],
+    [
+      "an invariant under coverage",
+      "Inv == ENABLED (y' = 1 - y /\\ UNCHANGED (IF z = 2 THEN 0 ELSE x))",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      "z",
+      75,
+      1,
+    ],
+    [
+      "a fair action",
+      "A == y' = y /\\ UNCHANGED (x + 1)\nSpec == Init /\\ [][Next]_<<x, y, z>> /\\ WF_<<x, y, z>>(A)\nProp == <>(x = 5)",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+      "x",
+      255,
+      undefined,
+    ],
+  ])(
+    "words an unassigned variable under UNCHANGED of an expression in ENABLED in %s like TLC",
+    async (_place, definitions, config, variable, exitCode, coverage) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y, z\nInit == x = 0 /\\ y = 0 /\\ z = 0\nNext == x' = 1 - x /\\ UNCHANGED <<y, z>>\n${definitions}\n====`,
+        config,
+        coverage,
+      });
+      expect([result.failure?.message, result.failure?.exitCode]).toEqual([
+        expect.stringContaining(
+          `The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable ${variable} occurring in the state formula v.\n`,
+        ),
+        exitCode,
+      ]);
+    },
+  );
+
   const checkFairPrint = (action: string, config: string, version: TlcVersion) =>
     check({
       source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(x) /\\ ${action}\nSpec == Init /\\ [][A]_x /\\ WF_x(A)\nP == [](x = 0 => <>(x = 1))\nInv == x < 1\n====`,

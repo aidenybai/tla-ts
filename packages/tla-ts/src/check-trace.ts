@@ -238,6 +238,8 @@ export const createTraceBuilder = (context: TraceContext) => {
                 traceOptions.incomplete ??
                 steps[loopStart ?? position].state,
               position + 1,
+              // Deviation from TLC: TLCTrace#printTrace gives the ALIAS an empty Trace when the trace is an initial state and its successor.
+              // Deviation from TLC: LiveWorker#printTrace leaves each state of a lasso's prefix out of the Trace its ALIAS reads.
               () => steps.slice(0, position + 1).map((inner) => inner.state),
             ),
           );
@@ -353,11 +355,29 @@ export const createTraceBuilder = (context: TraceContext) => {
     }
     return steps;
   };
-  const getTrace = (index: number, lastSuccessor?: Successor, traceOptions: TraceOptions = {}) => {
+  const getIndexPath = (index: number) => {
     const path: number[] = [];
     for (let position = index; position !== -1; position = context.parents[position]) {
       path.unshift(position);
     }
+    return path;
+  };
+  // TLCExt#getTrace rebuilds the path from fingerprints, which evaluates Init and the actions again.
+  // Deviation from TLC: TLCExt#getTrace leaves a rebuilt state current, so later draws and Trace in the same step start from it.
+  // Deviation from TLC: TLCExt#getTrace draws for the initial state from the current state's seed, so it misses a random one and throws a NullPointerException.
+  const rebuildPath = (index: number) => {
+    const path = getIndexPath(index);
+    if (path.length === 0) return;
+    runtime.runWithNewRandom(() => {
+      rebuildInitialState(path[0]);
+      for (let position = 1; position < path.length; position++) {
+        const source = path[position - 1];
+        findStepAction(source, states[source], context.fingerprintStates[path[position]], false);
+      }
+    });
+  };
+  const getTrace = (index: number, lastSuccessor?: Successor, traceOptions: TraceOptions = {}) => {
+    const path = getIndexPath(index);
     const steps =
       isReducing && path.length > 1
         ? getPathStates(path, INITIAL_RECOVERY_FAILURE)
@@ -424,5 +444,6 @@ export const createTraceBuilder = (context: TraceContext) => {
     getStateTrace,
     getIncompleteStep,
     getPathSteps,
+    rebuildPath,
   };
 };

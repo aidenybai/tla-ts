@@ -635,6 +635,8 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const back = found.backPosition === undefined ? undefined : trace[found.backPosition];
     const lasso = found.positions.map((position) => trace[position]);
     const loopStart = back ? found.cyclePosition - 1 : lasso.length - 1;
+    // Deviation from TLC: LiveCheck1#printErrorTrace gives the ALIAS each state's predecessor as its successor, which throws a NullPointerException at the initial state.
+    // Deviation from TLC: LiveCheck1#printErrorTrace rebuilds the cycle from aliased states, which throws a NullPointerException for an ALIAS that drops a variable.
     const steps = toTraceSteps(lasso);
     const loopAction = back ? toActionValue(back.action) : createActionRecord(undefined);
     return {

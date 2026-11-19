@@ -322,28 +322,36 @@ const proceedItems = (
   return isChanged(replay, items, partial) && proceed(replay, items.rest, partial, items.node);
 };
 
-const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
+const evaluateInPartial = (
+  replay: Replay,
+  node: number,
+  expression: Expression,
+  scope: Scope | undefined,
+  partial: State,
+) => {
   const environment = replay.environment;
+  try {
+    return evaluateAt(replay, node, expression, {
+      environment,
+      scope,
+      state: partial,
+      next: undefined,
+    });
+  } catch (error) {
+    throw replay.isEnabled
+      ? toUnspecifiedSubscriptError(error, environment.runtime.version)
+      : error;
+  }
+};
+
+const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
   const before = evaluateAt(replay, item.node, item.expression, {
-    environment,
+    environment: replay.environment,
     scope: item.scope,
     state: replay.current,
     next: undefined,
   });
-  const after = (() => {
-    try {
-      return evaluateAt(replay, item.node, item.expression, {
-        environment,
-        scope: item.scope,
-        state: partial,
-        next: undefined,
-      });
-    } catch (error) {
-      throw replay.isEnabled
-        ? toUnspecifiedSubscriptError(error, environment.runtime.version)
-        : error;
-    }
-  })();
+  const after = evaluateInPartial(replay, item.node, item.expression, item.scope, partial);
   try {
     return !isEqualLikeTlc(before, after);
   } catch (error) {
@@ -979,19 +987,13 @@ const visitUnchanged = (
         );
       }
     }
-    const environment = replay.environment;
     const before = evaluateAt(replay, node, expression, {
-      environment,
+      environment: replay.environment,
       scope,
       state: replay.current,
       next: undefined,
     });
-    const after = evaluateAt(replay, node, expression, {
-      environment,
-      scope,
-      state: partial,
-      next: undefined,
-    });
+    const after = evaluateInPartial(replay, node, expression, scope, partial);
     return isEqualLikeTlc(before, after) && proceed(replay, items, partial, node);
   });
 
