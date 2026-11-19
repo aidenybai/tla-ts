@@ -59,6 +59,7 @@ export class QuantifierInfo {
   }
 
   release() {
+    this.resetTheOne();
     releaseCondMacros(this.manager, this.condMacros);
     this.manager.decRef(this.flatQ);
   }
@@ -219,6 +220,7 @@ export class QuantifierInfo {
 
   resetTheOne() {
     this.theOne = null;
+    for (const set of this.uvarInstSets ?? []) set?.release();
     this.uvarInstSets = null;
   }
 }

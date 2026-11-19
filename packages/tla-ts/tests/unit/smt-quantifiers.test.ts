@@ -184,6 +184,28 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
       "(:rlimit 65)",
     ]);
   });
+
+  it("frees the instantiation sets of a quantifier's macro", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(declare-sort U 0)",
+        "(declare-fun f (U) U)",
+        "(declare-fun g (U) U)",
+        "(declare-fun h (U U) U)",
+        "(declare-fun p (U) Bool)",
+        "(declare-const c1 U)",
+        "(declare-const c3 U)",
+        "(assert (forall ((x U)) (p x)))",
+        "(assert (forall ((x U) (y U)) (! (= x (h y x)) :pattern ((f x) (g y)) :qid q2)))",
+        "(assert (p (h c3 (g c1))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1301)", "sat", "(:rlimit 2581)"]);
+  });
 });
 
 describe("e-matching, as Z3 5.3.2 counts its steps", () => {
