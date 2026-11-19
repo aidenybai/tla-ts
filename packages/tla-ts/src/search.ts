@@ -116,9 +116,7 @@ import {
 
 export interface CliSettings {
   readLine?: () => string | undefined;
-  /** Prints to TLC's console, never to -userFile, the prompts TLC prints as it reads standard input, under their message code if any. */
   printPrompt?: (text: string, code?: number) => void;
-  /** TLC's -userFile, to which PrintT writes a value without line breaks. */
   hasUserFile?: boolean;
   runtimeInvariants?: RuntimeInvariant[];
   errorCodes?: number[];
@@ -966,7 +964,6 @@ export const createOutputCapture = (onPrint: (text: string) => void) => {
         if (capturedLines) capturedLines.push({ kind: "warning", code, text });
         else warn(code, text);
       };
-      // TLC prints a prompt as it replays a step, among the output tla-ts holds back until then.
       runtime.printPrompt = (text, code) => {
         if (capturedLines) capturedLines.push(formatPrompt(runtime.isTool, text, code));
         else printPrompt(text, code);
