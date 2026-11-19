@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
-import { checkFixture } from "./check-harness";
+import { checkFixture, formatCallStackLines } from "./check-harness";
 
 const printTrace = async (definitions: string, config = "") => {
   const prints: string[] = [];
@@ -164,13 +164,9 @@ describe("TLCExt matches TLC", () => {
         "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nA == x' = x + 1\nB == x' = Len(x)\nNext == A \\/ B\nConstr == Len(Trace) < 3\n====",
       config: "INIT Init\nNEXT Next\nCONSTRAINT Constr",
     });
-    const ranges = result.failure?.callStack?.flatMap((expression) => {
-      const range = expression.location.range;
-      return range ? [`${range.start.line}:${range.start.column}-${range.end.column}`] : [];
-    });
-    expect([
-      result.failure?.exitCode,
-      ranges?.filter((range, index) => range !== ranges[index - 1]),
-    ]).toEqual([255, ["6:6-16", "6:11-16"]]);
+    expect([result.failure?.exitCode, formatCallStackLines(result)]).toEqual([
+      255,
+      ["Line 6, column 6 to line 6, column 16 in M", "Line 6, column 11 to line 6, column 16 in M"],
+    ]);
   });
 });
