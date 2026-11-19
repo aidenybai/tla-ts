@@ -368,4 +368,19 @@ describe("liveness matches TLC", () => {
       ]).toEqual(["liveness-violation", "H", 3, 6, 5]);
     },
   );
+
+  it("takes the next-state relation of Spec == LET N == [][Inc \\/ Dec]_vars IN Init /\\ N under coverage, as TLC's SpecProcessor expands the LET", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nvars == <<x, y>>\nInc == x < 3 /\\ x' = x + 1 /\\ y' = y\nDec == x > 0 /\\ x' = x - 1 /\\ y' = y\nInit == x = 0 /\\ y \\in {0, 1}\nSpec == LET N == [][Inc \\/ Dec]_vars IN Init /\\ N\nInv == x < 3\n====",
+      config: "SPECIFICATION Spec\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      coverage: 1,
+    });
+    expect([
+      result.status,
+      result.violation?.trace.length,
+      result.generatedStates,
+      result.distinctStates,
+    ]).toEqual(["invariant-violation", 4, 9, 7]);
+  });
 });
