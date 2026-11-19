@@ -298,6 +298,7 @@ export const createEnvironment = (
   const unresolvedBodyKeys = new Set<string>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
+  const goalOperands = new WeakMap<Expression, Expression[]>();
   const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
@@ -735,6 +736,11 @@ export const createEnvironment = (
                   parameterized.get(entry[1].key) === true))),
         )
         .map((entry): [string, ModuleSymbol] => {
+          const isSubstituted =
+            entry[1].isSubstituted === true ||
+            (entry[1].kind === "Theorem" &&
+              declarations.length > 0 &&
+              (instance.name !== undefined || parameterized.get(entry[1].key) === true));
           if (instance.name === undefined) {
             return [
               entry[0],
@@ -755,6 +761,7 @@ export const createEnvironment = (
                 functionArity:
                   parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,
                 goal: entry[1].goal,
+                isSubstituted,
               },
             ];
           }
@@ -771,6 +778,7 @@ export const createEnvironment = (
               kind: entry[1].kind,
               functionArity: declarations.length > 0 ? undefined : entry[1].functionArity,
               goal: entry[1].goal,
+              isSubstituted,
             },
           ];
         }),
@@ -1122,6 +1130,7 @@ export const createEnvironment = (
       instanced,
       reports,
       warnings: scope.warnings,
+      goalOperands,
     });
     const getSymbolsBefore = (location: SourceLocation): Symbols =>
       [

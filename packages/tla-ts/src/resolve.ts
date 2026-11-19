@@ -45,6 +45,7 @@ interface Binding {
   range?: SourceRange;
   functionArity?: number;
   goal?: Goal;
+  isSubstituted?: boolean;
   sourceRange?: SourceRange;
   nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
 }
@@ -96,6 +97,7 @@ interface Unit {
   labelParams: string[];
   labels: Set<string>;
   isGenerated: boolean;
+  goalOperands: WeakMap<Expression, Expression[]>;
 }
 
 export interface SelectionArguments {
@@ -351,6 +353,12 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
 const isFact = (name: string, unit: Unit) => unit.bindings.get(name)?.kind === "Theorem";
 
 const getGoal = (name: string, unit: Unit) => unit.bindings.get(name)?.goal;
+
+const isAssumeProveTheorem = (name: string, scope: LocalName | undefined, unit: Unit) => {
+  const binding = lookupLocal(scope, name) ?? unit.bindings.get(name);
+  // SANY sees no ASSUME/PROVE in a theorem whose body an instance wraps in its substitutions.
+  return binding?.goal?.statement.kind === "AssumeProve" && !binding.isSubstituted;
+};
 
 const findBinding = (name: string, scope: LocalName | undefined, unit: Unit): Binding | undefined =>
   lookupLocal(scope, name) ?? findSymbol(name, unit);
@@ -723,13 +731,14 @@ const checkSelection = (
       }
       const sets = binder?.sets;
       const operands =
-        expression.kind === "Identifier"
+        unit.goalOperands.get(expression) ??
+        (expression.kind === "Identifier"
           ? []
           : sets
             ? sets.length > 0
               ? sets
               : undefined
-            : getOperands(expression);
+            : getOperands(expression));
       if (!operands) return node;
       const isExcept = expression.kind === "Except";
       const position = getPosition(isExcept ? expression.updates.length + 1 : operands.length);
@@ -852,7 +861,14 @@ const checkReference = (
     const goal =
       (nameLength === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
     if (goal) {
-      return { node: checkSelection(expression, selectors, nameLength, goal, unit, isFact) };
+      const node = checkSelection(expression, selectors, nameLength, goal, unit, isFact);
+      if (!node) emptyExpressions.add(expression);
+      if (node && node.kind !== "NewSymbol" && node.kind !== "AssumeProve") {
+        const args = selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
+        // SANY applies a LAMBDA to a selection's arguments, or wraps a selection without them in $Nop.
+        unit.goalOperands.set(expression, args.length > 0 ? args : [node]);
+      }
+      return { node };
     }
   }
   return undefined;
@@ -929,7 +945,8 @@ const getSymbolArity = (
     expression.resolution = local.isSelf ? SELF_RESOLUTION : LOCAL_RESOLUTION;
   }
   if (local) return local.arity;
-  if (getGoal(name, unit)?.statement.kind === "AssumeProve") return 0;
+  const binding = unit.bindings.get(name);
+  if (binding?.goal?.statement.kind === "AssumeProve") return binding.arity;
   const symbol = findSymbol(name, unit);
   if (symbol) {
     if (expression.kind === "Identifier") expression.name = symbol.key;
@@ -1403,6 +1420,10 @@ const matchArgument = (
   if (arg.kind === "OperatorReference" && argArity !== undefined && argArity !== expected) {
     reportOperatorArity(name, argArity);
   }
+  if (argArity === expected && isAssumeProveTheorem(name, scope, unit)) {
+    report(range, "ASSUME/PROVE used where an expression is required.");
+    return false;
+  }
   // Deviation from SANY: OpDefNode#matchingOpArgOperand reads as many parameters as a RECURSIVE declaration gives and crashes when the definition has fewer.
   return argArity === expected && argParams.every((param) => param === 0);
 };
@@ -1448,6 +1469,13 @@ const resolveApply = (
       isSelection ? { ...unit, isGenerated: false } : unit,
     );
   });
+  if (isAssumeProveTheorem(operator, scope, unit) && expression.location.range) {
+    unit.errors.push({
+      location: formatRange(expression.location.range),
+      message: "ASSUME/PROVE used where an expression is required.",
+    });
+    return;
+  }
   if (
     isArgumentCountReported(
       callee,
@@ -1570,8 +1598,7 @@ const resolveExpression = (
         ) {
           emptyExpressions.add(expression);
         }
-        const local = lookupLocal(scope, name);
-        if ((local ? local.goal : getGoal(name, unit))?.statement.kind === "AssumeProve") {
+        if (isAssumeProveTheorem(name, scope, unit)) {
           unit.errors.push({
             location: formatRange(getSpelledNameRange(expression, name)),
             message: "ASSUME/PROVE used where an expression is required.",
@@ -1847,13 +1874,21 @@ const isSubexpressionReported = (
     });
     return true;
   }
-  if (head.kind === "Name" && expression.selectors[1].kind !== "Name" && range) {
+  if (head.kind === "Name" && range && lastRange) {
     const local = lookupLocal(scope, head.name);
     const binding = local ?? findSymbol(head.name, unit);
-    if ((binding === undefined && !isFact(head.name, unit)) || binding?.kind === "Instance") {
+    const isUnknown = binding === undefined && !isFact(head.name, unit);
+    if (expression.selectors[1].kind !== "Name" && (isUnknown || binding?.kind === "Instance")) {
       unit.errors.push({
         location: formatRange(range),
         message: `Unknown operator: \`${resolveSynonym(head.name)}'.`,
+      });
+      return true;
+    }
+    if (isUnknown && !isInstance) {
+      unit.errors.push({
+        location: formatRange({ module: range.module, start: range.start, end: lastRange.end }),
+        message: `Unknown operator: \`${resolveSynonym(names.join("!"))}'.`,
       });
       return true;
     }
@@ -2393,6 +2428,7 @@ export interface ModuleUnit {
   instanced: Map<Instance, Symbols>;
   reports: ModuleReport[];
   warnings: SanyError[];
+  goalOperands: WeakMap<Expression, Expression[]>;
 }
 
 export const MODULE_START: SourceLocation = { line: 0, column: 0 };
@@ -2649,6 +2685,7 @@ export const resolveSubstitutions = (
     labelParams: [],
     labels: new Set(),
     isGenerated: false,
+    goalOperands: unit.goalOperands,
   });
 };
 
@@ -2719,6 +2756,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         labelParams: [],
         labels: new Set(),
         isGenerated: false,
+        goalOperands: unit.goalOperands,
       }),
   });
   const isDefinitionBody = (statement: Expression | AssumeProve) =>
