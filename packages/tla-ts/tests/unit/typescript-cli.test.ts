@@ -187,6 +187,24 @@ describe("the CLI with TypeScript files", () => {
     expect(result.stdout).toContain("4 distinct states found");
   });
 
+  it("reads a file that a project's model imports without an extension, as Node reads it with one", () => {
+    const getModel = (total: number, specifier: string) =>
+      `import { STEP } from "${specifier}";\n\nif (4 + STEP !== ${total}) throw new Error("total");\n`;
+    const directory = copyFixtures("project");
+    const nodeDirectory = copyFixtures("project");
+    [directory, nodeDirectory].forEach((innerDirectory) =>
+      writeFileSync(join(innerDirectory, "step.ts"), "export const STEP = 3;\n"),
+    );
+    writeFileSync(join(directory, "model.ts"), getModel(7, "./step"));
+    writeFileSync(join(directory, "wrong.ts"), getModel(8, "./step"));
+    writeFileSync(join(nodeDirectory, "model.ts"), getModel(7, "./step.ts"));
+    writeFileSync(join(nodeDirectory, "wrong.ts"), getModel(8, "./step.ts"));
+    expect(runNode(nodeDirectory, "model.ts").status).toBe(0);
+    expect(runCli(directory, ["model.ts"]).status).toBe(0);
+    expect(runNode(nodeDirectory, "wrong.ts").status).toBe(1);
+    expect(runCli(directory, ["wrong.ts"]).status).toBe(1);
+  });
+
   it("checks the module that re-exports names", () => {
     expect(runCli(copyFixtures("project"), ["barrel.ts"]).status).toBe(0);
   });

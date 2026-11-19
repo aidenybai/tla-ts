@@ -299,16 +299,17 @@ const createVarFunctionsFile = (
 // The module that a file's literal names, for a file whose imports load as Node loads them where
 // isValue: TypeScript's resolution, where TypeScript compiles the module's code itself or only
 // types read it, and else the file that Node loads, as a package or JavaScript, though a package
-// may give its types, which isDeclared tells.
+// may give its types, which isDeclared tells. containingFile is the file's path as TypeScript
+// resolves from it, which a model's own file, named as the CLI is given it, may not be.
 const resolveLiteral = (
   literal: ts.StringLiteralLike,
+  containingFile: string,
   containingSourceFile: ts.SourceFile,
   isValue: boolean,
   options: ts.CompilerOptions,
   host: ts.CompilerHost,
   redirectedReference: ts.ResolvedProjectReference | undefined,
 ): { module: ts.ResolvedModuleWithFailedLookupLocations; isDeclared: boolean } => {
-  const containingFile = containingSourceFile.fileName;
   const resolved =
     isJavaScriptFile(containingFile) && isValue
       ? undefined
@@ -390,8 +391,15 @@ export const createFileResolver = (path: string) => {
   const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
   const host = ts.createCompilerHost(options);
   return (literal: ts.StringLiteralLike) =>
-    resolveLiteral(literal, literal.getSourceFile(), true, options, host, undefined).module
-      .resolvedModule?.resolvedFileName;
+    resolveLiteral(
+      literal,
+      literal.getSourceFile().fileName,
+      literal.getSourceFile(),
+      true,
+      options,
+      host,
+      undefined,
+    ).module.resolvedModule?.resolvedFileName;
 };
 
 // Type checks a model, with the files it imports, and throws their type errors. A file of a project
@@ -446,6 +454,7 @@ export const createProgram = (
       literals.map((literal) => {
         const resolution = resolveLiteral(
           literal,
+          containingFile,
           containingSourceFile,
           valueFiles === undefined || valueFiles.has(containingFile),
           resolutionOptions,
