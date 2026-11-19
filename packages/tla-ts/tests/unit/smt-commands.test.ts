@@ -2431,6 +2431,32 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
     ]);
   });
 
+  it("keeps the formulas the nested equalities replace in the model trail", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-const w Int)",
+        "(assert (or (and (= w z) (< (+ z w) w)) (<= x (+ z y)) (= y z)))",
+        "(assert (> (+ z x) 2))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or p q r)",
+      "  (or (not p) q)",
+      "  (or q r)",
+      "  (or (not p) q (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
   it("keeps the solver of the last check-sat until the next assert", () => {
     expect(
       run([
