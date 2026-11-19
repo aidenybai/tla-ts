@@ -18,6 +18,7 @@ import {
 } from "./common-js";
 import { rejectEarlyErrors } from "./early-errors";
 import { typeJavaScript } from "./javascript-types";
+import { isJsxFile, rewriteJsx } from "./jsx";
 import { createProgramNodes, withNameSymbols } from "./program-nodes";
 import { rewriteNameDeletes } from "./name-deletes";
 import { rewriteWithStatements } from "./with-statements";
@@ -434,6 +435,23 @@ export const createProgram = (
       : createFile(fileName, text, languageVersion);
   const host =
     libraries === undefined ? ts.createCompilerHost(options) : createLibraryHost(libraries);
+  // Deviation from TypeScript: without a project, which gives the option that JSX compiles by, it
+  // compiles as a bundler's default, the option react-jsx.
+  const jsxOptions: ts.CompilerOptions =
+    project === undefined ? { ...options, jsx: ts.JsxEmit.ReactJSX } : options;
+  // The files that hold JSX, which compile as the calls that TypeScript emits for it, and the
+  // text of each file that may hold it, which every program of the model reads.
+  const jsxFiles = new Set<string>();
+  const jsxCalls = new Map<string, string>();
+  const getJsxCalls = (fileName: string, text: string) => {
+    if (!isJsxFile(fileName)) return text;
+    const known = jsxCalls.get(fileName);
+    if (known !== undefined) return known;
+    const calls = rewriteJsx(fileName, text, jsxOptions, host);
+    jsxCalls.set(fileName, calls);
+    if (calls !== text) jsxFiles.add(fileName);
+    return calls;
+  };
   // Whether a module that Node loads as JavaScript gave its types from a declaration file, which
   // type checks the code that imports it.
   let isDeclared = false;
@@ -475,6 +493,8 @@ export const createProgram = (
     valueFiles: ReadonlySet<string> | undefined,
     // The texts of the JavaScript files whose types tla-ts made any where they may not hold.
     typedTexts: ReadonlyMap<string, string>,
+    // Whether the files keep their JSX, which TypeScript type checks.
+    isJsxKept = false,
   ) => {
     const programHost: ts.CompilerHost & SourceRedirectingHost = {
       ...host,
@@ -502,7 +522,10 @@ export const createProgram = (
         }
         return createVarFunctionsFile(
           fileName,
-          assignParameterProperties(fileName, file.text),
+          assignParameterProperties(
+            fileName,
+            isJsxKept ? file.text : getJsxCalls(fileName, file.text),
+          ),
           languageVersion,
         );
       },
@@ -513,7 +536,12 @@ export const createProgram = (
     };
     return ts.createProgram({
       rootNames: [...rootNames, JSON_DECLARATIONS.path],
-      options,
+      // With the options that JSX compiles by, TypeScript has every module import the functions
+      // that JSX calls, which only a file that holds JSX loads, by the import that its calls come
+      // with.
+      options: isJsxKept
+        ? jsxOptions
+        : { ...options, jsx: ts.JsxEmit.Preserve, jsxImportSource: undefined },
       projectReferences: project?.projectReferences,
       host: programHost,
     });
@@ -523,7 +551,10 @@ export const createProgram = (
     if (file === undefined) throw new TlaTypeScriptError(`Can't read ${path}`);
     return file;
   };
-  const firstText = declareFileVarFunctions(path, assignParameterProperties(path, source));
+  const firstText = declareFileVarFunctions(
+    path,
+    assignParameterProperties(path, getJsxCalls(path, source)),
+  );
   const firstProgram = createTypeScriptProgram(roots, firstText, new Set(), undefined, new Map());
   const firstSourceFile = getModelSourceFile(firstProgram);
   const syntaxErrors = firstProgram.getSyntacticDiagnostics(firstSourceFile);
@@ -587,10 +618,32 @@ export const createProgram = (
         getModelFiles(program).flatMap((file) =>
           isJavaScriptFile(file.fileName)
             ? program.getSyntacticDiagnostics(file)
-            : ts.getPreEmitDiagnostics(program, file),
+            : jsxFiles.has(file.fileName)
+              ? []
+              : ts.getPreEmitDiagnostics(program, file),
         ),
       )
       .filter(isReported);
+  // A file that holds JSX type checks as it's written, against the declarations of its packages,
+  // rather than as the calls that it compiles as.
+  const getJsxDiagnostics = (rootNames: string[]) => {
+    const program = createTypeScriptProgram(
+      rootNames,
+      source,
+      globals,
+      new Set(),
+      typed.typedTexts,
+      true,
+    );
+    return ts
+      .sortAndDeduplicateDiagnostics(
+        [...jsxFiles].flatMap((fileName) => {
+          const file = program.getSourceFile(fileName);
+          return file === undefined ? [] : ts.getPreEmitDiagnostics(program, file);
+        }),
+      )
+      .filter(isReported);
+  };
   // TypeScript reads the code of a package that gives its types in declarations as JavaScript,
   // whose values it doesn't type, so the TypeScript that imports it type checks against the
   // declarations, while tla-ts runs the package's JavaScript.
@@ -640,7 +693,14 @@ export const createProgram = (
               diagnostic.file === undefined || !isJavaScriptFile(diagnostic.file.fileName),
           ),
         ];
-  if (diagnostics.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(diagnostics, host));
+  const jsxDiagnostics = jsxFiles.size === 0 ? [] : getJsxDiagnostics(roots);
+  const reported = [
+    ...diagnostics,
+    ...(project === undefined || jsxDiagnostics.length === 0
+      ? jsxDiagnostics
+      : getJsxDiagnostics(projectRoots)),
+  ];
+  if (reported.length > 0) throw new TlaTypeScriptError(ts.formatDiagnostics(reported, host));
   const sourceFile = getModelSourceFile(program);
   const files = getModelFiles(program).filter((file) => !file.isDeclarationFile);
   const nodes = createProgramNodes(program.getTypeChecker(), files);
