@@ -307,14 +307,16 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
   collectAwaits(sourceFile);
   const awaited = awaits.length === 1 ? getLocation(awaits[0]) : undefined;
   const unsettledText = awaited === undefined ? undefined : `${UNSETTLED_AWAIT_WARNING}${awaited}`;
-  const isScriptFile = isScript(sourceFile);
-  const model = isScriptFile ? undefined : compileModelToEscore(source, path, runtime);
+  // A module whose exported functions the model calls none of runs as a script.
+  const model = isScript(sourceFile) ? undefined : compileModelToEscore(source, path, runtime);
+  const isScriptFile = model === undefined || model.isScript;
   const spec =
-    model ??
-    compileToEscore(source, path, runtime, isModule, {
-      steps: getEscoreScriptSteps(siteLocations, unsettledText, url, lines),
-      entries: [],
-    });
+    model !== undefined && !model.isScript
+      ? model
+      : compileToEscore(source, path, runtime, isModule, {
+          steps: getEscoreScriptSteps(siteLocations, unsettledText, url, lines),
+          entries: [],
+        });
   return {
     path,
     specPath: join(dirname(path), `${spec.name}.tla`),

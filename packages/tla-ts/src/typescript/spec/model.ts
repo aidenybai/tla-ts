@@ -13,7 +13,14 @@ import { foldNames } from "./library";
 import type { EscoreRuntime } from "./prepare";
 
 export interface EscoreModel extends EscoreSpec {
+  isScript: false;
   variables: StateVariable[];
+  notes: string[];
+}
+
+// A module whose exported functions the model calls none of, which runs as a script does.
+export interface EscoreScript {
+  isScript: true;
   notes: string[];
 }
 
@@ -238,7 +245,7 @@ export const compileModelToEscore = (
   library?: Library,
   // Whether the state may lower out of ESCore's heap, which a test turns off to check the heap.
   isLowerable = true,
-): EscoreModel => {
+): EscoreModel | EscoreScript => {
   // The module's text with its JSX the calls it compiles to, which the steps run.
   const text = getJsxText(fileName, source);
   const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
@@ -251,9 +258,7 @@ export const compileModelToEscore = (
         !statement.isTypeOnly),
   );
   const today = frameModel(source, fileName, library);
-  if (today.isScript) {
-    throw new TlaTypeScriptError("tla-ts compiles a script, not a model, to ESCore this way");
-  }
+  if (today.isScript) return { isScript: true, notes: today.notes };
   const module = today.source;
   const config = parseConfig(today.config);
   // The binding of the function that each of the spec's names calls.
@@ -1224,6 +1229,7 @@ export const compileModelToEscore = (
     config: configLines.join("\n"),
     loadModule: (name) =>
       name === "ProgramCode" ? finalCode : name === "ESCanonical" ? CANONICAL_MODULE : undefined,
+    isScript: false,
     variables: today.variables,
     notes,
   };

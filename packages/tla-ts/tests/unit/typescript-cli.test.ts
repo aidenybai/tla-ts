@@ -162,6 +162,11 @@ describe("the CLI with TypeScript files", () => {
       'const fail = async () => {\n  throw new Error("in");\n};\nfail().catch(() => {});\n',
     ],
     [
+      "an error in a module whose exported functions it calls none of",
+      'export const apply = (f: () => number) => f();\nconst total = [1].length;\nif (total !== 2) throw new RangeError("total " + total);\n',
+      'export const apply = (f: () => number) => f();\nconst total = [1].length;\nif (total !== 1) throw new RangeError("total " + total);\n',
+    ],
+    [
       "a throw in an async function",
       "const fail = async () => {\n  throw 1;\n};\nfail();\n",
       "const fail = async () => {\n  throw 1;\n};\nfail().catch(() => {});\n",

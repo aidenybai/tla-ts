@@ -45,20 +45,26 @@ export const compileEscore = (
 ): CompiledSpec => {
   const fileName = options.fileName ?? "spec.ts";
   const sourceFile = ts.createSourceFile(fileName, options.source, ts.ScriptTarget.ESNext, true);
-  const spec = isScript(sourceFile)
-    ? compileToEscore(
-        options.source,
-        fileName,
-        runtime,
-        ts.sys === undefined ? isModuleFile(sourceFile) : isEsModule(sourceFile),
-        { steps: SCRIPT_STEPS, entries: [] },
-      )
+  // A module whose exported functions the model calls none of runs as a script.
+  const model = isScript(sourceFile)
+    ? undefined
     : compileModelToEscore(options.source, fileName, runtime, library);
+  const isScriptFile = model === undefined || model.isScript;
+  const spec =
+    model !== undefined && !model.isScript
+      ? model
+      : compileToEscore(
+          options.source,
+          fileName,
+          runtime,
+          ts.sys === undefined ? isModuleFile(sourceFile) : isEsModule(sourceFile),
+          { steps: SCRIPT_STEPS, entries: [] },
+        );
   return {
     name: spec.name,
     source: parseModule(spec.source),
     // A spec without variables has a next-state action that TLC reads only within a formula.
-    config: isScript(sourceFile)
+    config: isScriptFile
       ? spec.config.replace("INIT Init\nNEXT Next", "SPECIFICATION Spec")
       : spec.config,
     loadModule: spec.loadModule,
