@@ -161,9 +161,12 @@ const DEFINITIONS = [
       module == OrdinaryObjectCreate(exports.s, Intrinsic(exports.s, "ObjectPrototype"))
       made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(exports))
       require == CreateBuiltinFunction(made.s, <<"Module", "require">>, 1, N("require"), id)
-      f == CodeFunctionCreate(require.s, Intrinsic(require.s, "FunctionPrototype"), node.code, FALSE, s.globalEnv, NoPrivateEnvironment)
+      moduleProxy == CommonJsProxy(require.s, Val(module), <<[trap |-> SV("get"), method |-> "moduleExportsGet"],
+                                                              [trap |-> SV("set"), method |-> "moduleExportsSet"]>>)
+      requireProxy == CommonJsProxy(moduleProxy.s, Val(require), <<[trap |-> SV("apply"), method |-> "requireApply"]>>)
+      f == CodeFunctionCreate(requireProxy.s, Intrinsic(requireProxy.s, "FunctionPrototype"), node.code, FALSE, s.globalEnv, NoPrivateEnvironment)
       r == Call([f.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE]) @@ @], f.v, Val(exports),
-                <<Val(exports), Val(require), Val(module), Str(node.filename), Str(node.dirname)>>)
+                <<Val(exports), Val(requireProxy), Val(moduleProxy), Str(node.filename), Str(node.dirname)>>)
   IN IF IsAbrupt(r) THEN Abrupt([r.s EXCEPT !.required = [i \\in DOMAIN @ \\ {id} |-> @[i]]], r.c)
      ELSE Get([r.s EXCEPT !.required[id].loaded = TRUE], Val(module), SV("exports"))`,
   // getExportsForCircularRequire of Node's CommonJS loader, which gives the exports of a module
@@ -174,6 +177,51 @@ const DEFINITIONS = [
   LET esModule == Get(s, exports, SV("__esModule")) IN
   IF IsAbrupt(esModule) \\/ ToBooleanValue(Val(esModule)) THEN IF IsAbrupt(esModule) THEN esModule ELSE Ok(esModule.s, exports)
   ELSE Assert(FALSE, "tla-ts can't give the exports of a CommonJS module in a cycle the prototype that Node gives them")`,
+  // The module or the require that a CommonJS module's code reaches: a proxy whose handler stops at
+  // every operation but its allowed traps, as Node's Module and require have more than the
+  // runtime's, which the allowed ones don't reach: a read or write of module.exports, and a call of
+  // require.
+  `CommonJsProxy(s, target, allowed) ==
+  LET handler == OrdinaryObjectCreate(s, Null)
+      stop == CreateBuiltinFunction(handler.s, <<"Module", "commonJsStop">>, 0, <<>>, Empty)
+  IN ProxyCreate(AllowTraps(DefineTraps(stop.s, Val(handler), Val(stop), CommonJsTraps), Val(handler), allowed),
+                 target, Val(handler))`,
+  `CommonJsTraps ==
+  <<SV("getPrototypeOf"), SV("setPrototypeOf"), SV("isExtensible"), SV("preventExtensions"), SV("getOwnPropertyDescriptor"),
+    SV("defineProperty"), SV("has"), SV("get"), SV("set"), SV("deleteProperty"), SV("ownKeys"), SV("apply"), SV("construct")>>`,
+  `DefineTraps(s, handler, trap, names) ==
+  IF names = <<>> THEN s ELSE DefineTraps(CreateDataProperty(s, handler, Head(names), trap).s, handler, trap, Tail(names))`,
+  `AllowTraps(s, handler, allowed) ==
+  IF allowed = <<>> THEN s ELSE
+  LET f == CreateBuiltinFunction(s, <<"Module", Head(allowed).method>>, 0, <<>>, Empty) IN
+  AllowTraps(CreateDataProperty(f.s, handler, Head(allowed).trap, Val(f)).s, handler, Tail(allowed))`,
+  // The host's globals that a module program names and ESCore's realm lacks, on the global object as
+  // the host's own context has them, where a module runs: each a proxy whose handler stops at every
+  // operation, whose target is a function where the host's global is one, or undefined where the
+  // host's is. A global that the host gives with a getter has one that gives the proxy, and a
+  // setter that stops.
+  `DefineHostGlobals(s, globals) ==
+  LET handler == OrdinaryObjectCreate(s, Null)
+      stop == CreateBuiltinFunction(handler.s, <<"Module", "hostStop">>, 0, <<>>, Empty)
+  IN DefineHostGlobalsWith(DefineTraps(stop.s, Val(handler), Val(stop), CommonJsTraps), Val(handler), Val(stop), globals)`,
+  `DefineHostGlobalsWith(s, handler, stop, globals) ==
+  IF globals = <<>> THEN Ok(s, Empty) ELSE
+  LET g == Head(globals)
+      target == IF g.kind = "function" THEN Ok(s, stop) ELSE OrdinaryObjectCreate(s, Null)
+      proxy == IF g.kind = "undefined" THEN Ok(target.s, Undefined) ELSE ProxyCreate(target.s, Val(target), handler)
+      getter == CreateBuiltinFunction(proxy.s, <<"Module", "hostGlobal">>, 0, <<>>, Val(proxy))
+      d == IF g.isAccessor
+           THEN DefinePropertyOrThrow(getter.s, Intrinsic(s, "GlobalObject"), Str(g.name), AccessorDesc(Val(getter), stop, g.enumerable, g.configurable))
+           ELSE DefinePropertyOrThrow(proxy.s, Intrinsic(s, "GlobalObject"), Str(g.name), DataDesc(Val(proxy), g.writable, g.enumerable, g.configurable))
+  IN IF IsAbrupt(d) THEN d ELSE DefineHostGlobalsWith(d.s, handler, stop, Tail(globals))`,
+  // The properties of the host's built-ins that a module program names and ESCore's realm lacks,
+  // each an accessor that stops, on the intrinsic that holds it.
+  `DefineHostProperties(s, properties) ==
+  IF properties = <<>> THEN Ok(s, Empty) ELSE
+  LET p == Head(properties)
+      stop == CreateBuiltinFunction(s, <<"Module", "hostStop">>, 0, <<>>, Empty)
+      d == DefinePropertyOrThrow(stop.s, Intrinsic(s, p.owner), Str(p.key), AccessorDesc(Val(stop), Val(stop), p.enumerable, TRUE))
+  IN IF IsAbrupt(d) THEN d ELSE DefineHostProperties(d.s, Tail(properties))`,
   // Module.prototype.require of Node's CommonJS loader for the module of the file referrer, which
   // loads the file of a specifier that its code requires.
   `Require(s, referrer, id) ==
@@ -351,7 +399,19 @@ const HOST_PATCHES = [
     name: "ModuleBuiltin",
     from: `    [] m = "importEvaluated" -> ResolveImport(s, data)`,
     to: `    [] m = "importEvaluated" -> ResolveImport(s, data)
-    [] m = "require" -> Require(s, data, Arg(args, 1))`,
+    [] m = "require" -> Require(s, data, Arg(args, 1))
+    [] m = "moduleExportsGet" ->
+         IF Arg(args, 2) # SV("exports") THEN Assert(FALSE, "tla-ts can't use a CommonJS module's module other than for module.exports")
+         ELSE Get(s, Arg(args, 1), SV("exports"))
+    [] m = "moduleExportsSet" ->
+         IF Arg(args, 2) # SV("exports") THEN Assert(FALSE, "tla-ts can't use a CommonJS module's module other than for module.exports")
+         ELSE ResultThen(True, Set(s, Arg(args, 1), SV("exports"), Arg(args, 3), TRUE))
+    [] m = "requireApply" ->
+         LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
+         IF IsAbrupt(list) THEN list ELSE Call(list.s, Arg(args, 1), Arg(args, 2), Val(list))
+    [] m = "hostGlobal" -> Ok(s, data)
+    [] m = "hostStop" -> Assert(FALSE, "tla-ts can't run a global of the host that ESCore leaves out")
+    [] m = "commonJsStop" -> Assert(FALSE, "tla-ts can't use a CommonJS module's module or require other than for module.exports and a call")`,
   },
   // A program's functions hold their source text as the program's code gives it, which
   // SourceUnits makes code units of when a program reads it.
@@ -443,24 +503,26 @@ export const getHostOnlyGlobals = (library: Library, host: object = HOST_GLOBAL)
   return [...Object.getOwnPropertyNames(host), ...HOST_TIMERS].filter((name) => !realm.has(name));
 };
 
-// The keys of the host's built-ins that ESCore's realm has nowhere, such as V8's
-// Error.captureStackTrace, at whose names a compile stops.
-export const getHostOnlyKeys = (library: Library) => {
+// The properties of the host's built-ins whose keys ESCore's realm has nowhere, such as V8's
+// Error.captureStackTrace, by the intrinsic that holds each, with whether the host's enumerates it.
+export const getHostOnlyProperties = (library: Library) => {
   const known = new Set(
     [...library.definitions.values()].flatMap((definition) =>
       [...definition.text.matchAll(/\bSV\("([^"]+)"\)/g)].map((match) => match[1]),
     ),
   );
-  return [
-    ...new Set(
-      [...new Set(library.properties.map((property) => property.owner))].flatMap((owner) => {
-        const object = owner === "GlobalObject" ? undefined : getHostObject(owner);
-        return object === undefined
-          ? []
-          : Object.getOwnPropertyNames(object).filter((key) => !known.has(key));
-      }),
-    ),
-  ];
+  return [...new Set(library.properties.map((property) => property.owner))].flatMap((owner) => {
+    const object = owner === "GlobalObject" ? undefined : getHostObject(owner);
+    return object === undefined
+      ? []
+      : Object.getOwnPropertyNames(object)
+          .filter((key) => !known.has(key))
+          .map((key) => ({
+            owner,
+            key,
+            isEnumerable: Object.getOwnPropertyDescriptor(object, key)?.enumerable === true,
+          }));
+  });
 };
 
 export const getRealmDefinitions = (library: Library): GeneratedDefinition[] => {

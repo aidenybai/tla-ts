@@ -241,6 +241,41 @@ describe("compiles modules by specializing ESCore", () => {
   });
 });
 
+describe("gives a module the host's globals that ESCore lacks, which stop where its code uses them", () => {
+  const getFiles = (expected: string) => ({
+    "main.js": getMain(
+      `const log = [];
+      function warn(error) { console.warn(error); Error.captureStackTrace(error); }
+      log.push(typeof setImmediate, typeof console, typeof Buffer, typeof process, "process" in globalThis, typeof warn, "stackTraceLimit" in Error);`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    expect(
+      (await checkModules(getFiles("function,object,function,object,true,function,true"))).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (await checkModules(getFiles("function,object,object,object,true,function,true"))).message,
+    ).toContain(THREW);
+  });
+
+  it("stops at a call of a global", async () => {
+    expect((await checkModules({ "main.js": "setImmediate(() => {});" })).message).toContain(
+      "tla-ts can't run a global of the host",
+    );
+  });
+
+  it("stops at a read of a built-in's property that only the host has", async () => {
+    expect((await checkModules({ "main.js": "Error.stackTraceLimit;" })).message).toContain(
+      "tla-ts can't run a global of the host",
+    );
+  });
+});
+
 describe("compiles CommonJS modules as Node loads them", () => {
   // A CommonJS module that requires others, of a package without a type.
   const getFiles = (main: string, expected: string) => ({
@@ -319,8 +354,31 @@ describe("compiles CommonJS modules as Node loads them", () => {
 
     it("stops at another use of process", async () => {
       expect((await checkModules(getFiles("log.push(process.argv);", ""))).message).toContain(
-        "tla-ts can't run the host's process",
+        "tla-ts can't run a global of the host",
       );
+    });
+  });
+
+  describe("stops at the module object and require only where the code uses more of them", () => {
+    const main = `function load() { return module[("require" + Math.random()).slice(0, 7)]("timers"); }
+      log.push(typeof module, typeof require, typeof load, require("./counter.js").next());`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getFiles(main, "object,function,function,1"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles(main, "object,object,function,1"))).message).toContain(
+        THREW,
+      );
+    });
+
+    it("stops where the code runs", async () => {
+      expect(
+        (await checkModules(getFiles(`${main} load();`, "object,function,function,1"))).message,
+      ).toContain("tla-ts can't use a CommonJS module's module");
     });
   });
 

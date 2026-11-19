@@ -217,9 +217,29 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
   return files;
 };
 
-// The groups of ESCore's parts that a module runs on: its loading, linking, and evaluation, and
-// the promise of its evaluation.
-const MODULE_GROUPS = new Set(["86-promise.tla", "88-modules.tla"]);
+// The host's globals of the names given, as the records that DefineHostGlobals defines them by:
+// each one's kind, as typeof gives the value that the host's own context has, and its attributes. A
+// global whose value is another primitive is left out.
+const getHostGlobals = (names: readonly string[]) =>
+  names.flatMap((name) => {
+    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
+    const value: unknown =
+      descriptor === undefined || "value" in descriptor
+        ? descriptor?.value
+        : Reflect.get(globalThis, name);
+    const kind = value === undefined ? "undefined" : value === null ? "null" : typeof value;
+    return descriptor === undefined || !["function", "object", "undefined"].includes(kind)
+      ? []
+      : [
+          `[name |-> N("${name}"), kind |-> "${kind}", isAccessor |-> ${getBoolean(!("value" in descriptor))}, writable |-> ${getBoolean(descriptor.writable === true)}, enumerable |-> ${getBoolean(descriptor.enumerable === true)}, configurable |-> ${getBoolean(descriptor.configurable === true)}]`,
+        ];
+  });
+
+const getBoolean = (value: boolean) => (value ? "TRUE" : "FALSE");
+
+// The groups of ESCore's parts that a module runs on: its loading, linking, and evaluation, the
+// promise of its evaluation, and the proxies that stand for what of the host ESCore lacks.
+const MODULE_GROUPS = new Set(["79-proxy.tla", "86-promise.tla", "88-modules.tla"]);
 
 // Compiles a TypeScript script or module to a spec whose Init runs it as ESCore runs a script or a
 // host its entry module: the realm, then the program, then the jobs it queued. An uncaught exception
@@ -251,10 +271,12 @@ export const compileToEscore = (
   if (timerValue !== undefined) {
     throw new TlaTypeScriptError("tla-ts can't read the value of setTimeout", timerValue);
   }
-  const hostOnly =
-    (isModule ? runtime.hostOnlyModuleGlobals : runtime.hostOnlyGlobals).find((name) =>
-      program.identifiers.has(name),
-    ) ?? runtime.hostOnlyKeys.find((key) => program.words.has(key));
+  // A module program's host globals and built-ins' properties that ESCore's realm lacks stop where
+  // its code reaches them, and a script's, where its code names them.
+  const hostOnly = isModule
+    ? undefined
+    : (runtime.hostOnlyGlobals.find((name) => program.identifiers.has(name)) ??
+      runtime.hostOnlyProperties.find((property) => program.words.has(property.key))?.key);
   if (hostOnly !== undefined) {
     throw new TlaTypeScriptError(
       `tla-ts can't run the host's ${hostOnly}, which ESCore leaves out`,
@@ -295,6 +317,22 @@ export const compileToEscore = (
             : definition;
         }),
         {
+          name: "HostGlobals",
+          arity: 0,
+          text: `HostGlobals == <<${getHostGlobals(runtime.hostOnlyModuleGlobals.filter((name) => isModule && program.words.has(name))).join(", ")}>>`,
+        },
+        {
+          name: "HostProperties",
+          arity: 0,
+          text: `HostProperties == <<${runtime.hostOnlyProperties
+            .filter((property) => isModule && program.words.has(property.key))
+            .map(
+              (property) =>
+                `[owner |-> "${property.owner}", key |-> N("${property.key}"), enumerable |-> ${getBoolean(property.isEnumerable)}]`,
+            )
+            .join(", ")}>>`,
+        },
+        {
           name: "SourceUnits",
           arity: 1,
           text: isStringSource ? "SourceUnits(t) == StringUnits(t)" : "SourceUnits(t) == t",
@@ -306,10 +344,12 @@ export const compileToEscore = (
           // to run, as Node does.
           text:
             files[0].kind === "module"
-              ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
-              : isQueuing
-                ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
-                : "RunProgram(s) == Program(s)",
+              ? `RunProgram(s) == LET g == DefineHostGlobals(s, HostGlobals) IN IF IsAbrupt(g) THEN g ELSE LET h == DefineHostProperties(g.s, HostProperties) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
+              : isModule
+                ? `RunProgram(s) == LET g == DefineHostGlobals(s, HostGlobals) IN IF IsAbrupt(g) THEN g ELSE LET h == DefineHostProperties(g.s, HostProperties) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
+                : isQueuing
+                  ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
+                  : "RunProgram(s) == Program(s)",
         },
         {
           name: "CallBuiltin",

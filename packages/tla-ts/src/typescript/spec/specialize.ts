@@ -411,40 +411,6 @@ const isModuleItem = (node: ts.Statement) =>
 const getDeclaredName = (node: ts.FunctionDeclaration | ts.ClassDeclaration) =>
   node.name?.text ?? "*default*";
 
-// A name that a CommonJS module's code reads of the function that Node wraps the code in, other
-// than as the runtime's wrapper gives it: module other than for module.exports, require other than
-// as a call of a string, and, at the wrapper's top level, arguments.
-const isWrapperRead = (node: ts.Identifier, isTopLevel: boolean) => {
-  const parent = node.parent;
-  const isPropertyName =
-    ((ts.isPropertyAccessExpression(parent) ||
-      ts.isPropertyAssignment(parent) ||
-      ts.isMethodDeclaration(parent) ||
-      ts.isPropertyDeclaration(parent) ||
-      ts.isAccessor(parent)) &&
-      parent.name === node) ||
-    (ts.isBindingElement(parent) && parent.propertyName === node) ||
-    ts.isLabeledStatement(parent) ||
-    ts.isBreakOrContinueStatement(parent);
-  if (isPropertyName) return false;
-  if (node.text === "module") {
-    return !(
-      ts.isPropertyAccessExpression(parent) &&
-      parent.expression === node &&
-      parent.name.text === "exports"
-    );
-  }
-  if (node.text === "require") {
-    return !(
-      ts.isCallExpression(parent) &&
-      parent.expression === node &&
-      parent.arguments.length === 1 &&
-      ts.isStringLiteralLike(parent.arguments[0])
-    );
-  }
-  return isTopLevel && node.text === "arguments";
-};
-
 // Whether a module's code awaits outside its functions (HasTopLevelAwait, §16.2.1.7.1), where a
 // computed key of a method or a field still runs.
 const hasTopLevelAwait = (node: ts.Node): boolean => {
@@ -602,9 +568,8 @@ export const specialize = (
     ts.forEachChild(node, countNames);
   };
   files.forEach((file) => countNames(file.sourceFile));
-  // Whether the program's process is Node's, which a module's code reads only as typeof process
-  // and process.env.NAME, where no file declares process and a module runs in Node's context, whose
-  // global object has it. A read of process otherwise stops the compile.
+  // Whether the program's process is Node's, whose env a module's code reads, where no file
+  // declares process and a module runs in Node's context, whose global object has it.
   const isHostProcess =
     typeof process !== "undefined" &&
     files[0].kind !== "script" &&
@@ -1158,14 +1123,6 @@ export const specialize = (
       }[operator];
       const operand = value(node.operand, scope);
       return defineCode("Unary", `UnaryThen("${name}", ${operand("s", "ctx")})`);
-    }
-    if (
-      ts.isTypeOfExpression(node) &&
-      isHostProcess &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "process"
-    ) {
-      return (state) => `Ok(${state}, ${getStr("object")})`;
     }
     if (ts.isTypeOfExpression(node)) {
       const operand = reference(node.expression, scope);
@@ -2565,10 +2522,9 @@ export const specialize = (
   };
 
   // A CommonJS module's code: the function that Node wraps the module's code in, which RequireFile
-  // calls with the module's exports, require, module, __filename and __dirname (§ Module wrapper,
-  // lib/internal/modules/cjs/loader.js). Its code may read module only for module.exports, call
-  // require only of a string, and not read the wrapper's arguments, as the runtime's module and
-  // require have only what those need of Node's.
+  // calls with the module's exports, require, module, __filename and __dirname, as Node's loader
+  // does (lib/internal/modules/cjs/loader.js). Its code may not read the wrapper's arguments
+  // object, whose callee is the runtime's function rather than Node's.
   const commonJsCode = (file: ProgramFile, number: number) => {
     const statement = file.sourceFile.statements[0];
     const wrapper =
@@ -2578,18 +2534,10 @@ export const specialize = (
     if (wrapper === undefined || !ts.isFunctionExpression(wrapper)) {
       throw new TlaTypeScriptError("tla-ts can't read this CommonJS module", statement);
     }
-    const findEscape = (node: ts.Node, isTopLevel: boolean): ts.Node | undefined => {
-      if (ts.isIdentifier(node) && isWrapperRead(node, isTopLevel)) return node;
-      const isNested = ts.isFunctionLike(node) && !ts.isArrowFunction(node);
-      return ts.forEachChild(node, (child) => findEscape(child, isTopLevel && !isNested));
-    };
-    const escape = wrapper.body.statements
-      .map((current) => findEscape(current, true))
-      .find((node) => node !== undefined);
-    if (escape !== undefined) {
+    if (getMayUseArguments(wrapper.body)) {
       throw new TlaTypeScriptError(
-        `tla-ts can't use a CommonJS module's ${escape.getText()} other than as Node's ${escape.getText() === "require" ? "require of a string" : "module.exports"}`,
-        escape,
+        "tla-ts can't read the arguments of the function that Node wraps a CommonJS module in",
+        statement,
       );
     }
     const code = functionCode(
