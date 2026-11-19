@@ -9,11 +9,11 @@
 [![version](https://img.shields.io/npm/v/tla-ts?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 [![downloads](https://img.shields.io/npm/dt/tla-ts.svg?style=flat&colorA=000000&colorB=000000)](https://npmjs.com/package/tla-ts)
 
-Formally verify TypeScript code with [TLA+](https://lamport.azurewebsites.net/tla/tla.html).
+Formally verify TypeScript code with [TLA+](https://github.com/tlaplus/tlaplus).
 
 Under the hood, TLA-ts is a transpiler that turns TypeScript/JavaScript into TLA+. It uses a 1:1 reimplementation of [TLC](https://github.com/tlaplus/tlaplus)/[TLAPM](https://proofs.tlapl.us) in TypeScript that runs 2× faster.
 
-[View playground](https://tla-ts.aidenybai.com)
+[View playground](https://tla-ts.com)
 
 ## How it works
 
@@ -55,7 +55,7 @@ small == count < 3 \* violated after three calls to increment
 Paste this prompt into your coding agent:
 
 ```text
-Read https://tla-ts.aidenybai.com/llms.txt, then use TLA-ts to formally verify the TypeScript code in this project. Show me each violation it finds with the steps that cause it, and ask before you change any code.
+Read https://tla-ts.com/llms.txt, then use TLA-ts to formally verify the TypeScript code in this project. Show me each violation it finds with the steps that cause it, and ask before you change any code.
 ```
 
 Or install it yourself:

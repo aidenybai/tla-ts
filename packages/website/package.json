@@ -4,10 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vp dev",
-    "build": "vp build",
+    "dev": "pnpm font && vp dev",
+    "build": "pnpm font && vp build",
     "preview": "vp preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "font": "bun scripts/subset-fonts.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
@@ -25,7 +26,8 @@
     "react-dom": "^19.2.0",
     "react-resizable-panels": "^4.21.0",
     "tla-ts": "workspace:*",
-    "torph": "^0.1.3"
+    "torph": "^0.1.3",
+    "zustand": "^5.1.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.3.3",
@@ -33,6 +35,7 @@
     "@types/react-dom": "^19.2.0",
     "@typescript/typescript6": "6.0.2",
     "@vitejs/plugin-react": "^5.1.0",
+    "subset-font": "^2.9.0",
     "tailwindcss": "4.3.3",
     "typescript": "^7.0.2",
     "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",

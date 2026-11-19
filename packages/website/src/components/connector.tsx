@@ -3,6 +3,7 @@ import { cn } from "cn";
 
 // An arrow bends only this close to the other pane, so it stays off the code on other lines.
 const BEND_WIDTH_PX = 96;
+const HEAD_LENGTH_PX = 4;
 
 interface Link {
   name: string;
@@ -11,6 +12,7 @@ interface Link {
   bendX: number;
   toX: number;
   toY: number;
+  headAngle: number;
 }
 
 interface Box {
@@ -55,6 +57,27 @@ const getBoxes = (container: Element, paneName: string) => {
   return boxes;
 };
 
+// A steep curve has left its level end tangent well before the head, so the head takes the
+// direction the curve has one head length back.
+const getHeadAngle = (bendX: number, fromY: number, toX: number, toY: number) => {
+  const middleX = (bendX + toX) / 2;
+  for (let progress = 0.99; progress > 0; progress -= 0.01) {
+    const rest = 1 - progress;
+    const backX =
+      toX -
+      (rest ** 3 * bendX + 3 * rest * progress * middleX * (rest + progress) + progress ** 3 * toX);
+    const backY =
+      toY -
+      (rest ** 3 * fromY +
+        3 * rest ** 2 * progress * fromY +
+        3 * rest * progress ** 2 * toY +
+        progress ** 3 * toY);
+    if (Math.hypot(backX, backY) >= HEAD_LENGTH_PX)
+      return (Math.atan2(backY, backX) * 180) / Math.PI;
+  }
+  return 0;
+};
+
 export const Connector = (props: ConnectorProps) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const [links, setLinks] = useState<Link[]>([]);
@@ -72,19 +95,21 @@ export const Connector = (props: ConnectorProps) => {
         names.flatMap((name) => {
           const source = sources.get(name);
           const output = outputs.get(name);
-          return source && output && !source.isClipped
-            ? {
-                name,
-                fromX: source.right - origin.left + 6,
-                fromY: source.middle - origin.top,
-                bendX: Math.max(
-                  source.right - origin.left + 6,
-                  output.left - origin.left + 10 - BEND_WIDTH_PX,
-                ),
-                toX: output.left - origin.left + 10,
-                toY: output.middle - origin.top,
-              }
-            : [];
+          if (!source || !output || source.isClipped) return [];
+          const fromX = source.right - origin.left + 6;
+          const fromY = source.middle - origin.top;
+          const toX = output.left - origin.left + 10;
+          const toY = output.middle - origin.top;
+          const bendX = Math.max(fromX, toX - BEND_WIDTH_PX);
+          return {
+            name,
+            fromX,
+            fromY,
+            bendX,
+            toX,
+            toY,
+            headAngle: getHeadAngle(bendX, fromY, toX, toY),
+          };
         }),
       );
     };
@@ -116,7 +141,7 @@ export const Connector = (props: ConnectorProps) => {
           key={link.name}
           stroke={props.colors[link.name]}
           className={cn(
-            "transition-opacity duration-150 ease-out",
+            "transition-opacity duration-150 ease-out starting:opacity-0",
             props.hoveredName !== undefined && props.hoveredName !== link.name && "opacity-15",
           )}
         >
@@ -125,7 +150,8 @@ export const Connector = (props: ConnectorProps) => {
             strokeWidth="1.5"
           />
           <path
-            d={`M ${link.toX - 4} ${link.toY - 2.5} L ${link.toX} ${link.toY} L ${link.toX - 4} ${link.toY + 2.5}`}
+            d={`M ${-HEAD_LENGTH_PX} -2.5 L 0 0 L ${-HEAD_LENGTH_PX} 2.5`}
+            transform={`translate(${link.toX} ${link.toY}) rotate(${link.headAngle})`}
             strokeWidth="1.25"
           />
         </g>
