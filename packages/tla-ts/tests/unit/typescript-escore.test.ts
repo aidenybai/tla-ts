@@ -873,12 +873,67 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource(expected))).message).toContain(THREW);
     });
 
-    it("stops at a constructor, which reads locale data", async () => {
-      expect((await checkScript("new Intl.Collator();")).message).toContain("tla-ts can't");
+    it("stops at a constructor whose options it leaves out", async () => {
+      expect((await checkScript("new Intl.NumberFormat();")).message).toContain("tla-ts can't");
     });
 
     it("stops at a locale that the program doesn't write", async () => {
       const source = 'Intl.getCanonicalLocales(["en", "US"].join("-"));';
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("constructs the Intl objects whose options read no locale data", () => {
+    const getSource = (expected: string) => `
+      const read: string[] = [];
+      const options = new Proxy(
+        {},
+        {
+          get: (target, key) => {
+            read.push(String(key));
+            return Reflect.get(target, key);
+          },
+        },
+      );
+      const collator = new Intl.Collator(["EN-us"], options);
+      class Lists extends Intl.ListFormat {}
+      let errors = "";
+      for (const run of [
+        () => new Intl.Segmenter([], { granularity: "line" as "word" }),
+        () => new Intl.DisplayNames([], {} as Intl.DisplayNamesOptions),
+        () => new Intl.RelativeTimeFormat([], { numberingSystem: "ab" }),
+        () => new Intl.ListFormat([], 5 as Intl.ListFormatOptions),
+        () => Intl.Collator.prototype.resolvedOptions.call(new Intl.Segmenter()),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [
+        read.join(),
+        collator instanceof Intl.Collator,
+        Object.getPrototypeOf(new Lists()) === Lists.prototype,
+        Reflect.apply(Intl.Collator, undefined, []) instanceof Intl.Collator,
+        errors,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const read = "usage,localeMatcher,collation,numeric,caseFirst,sensitivity,ignorePunctuation";
+
+    it("agrees with Node", async () => {
+      const expected = `${read}|true|true|true|RangeError;TypeError;RangeError;TypeError;TypeError;`;
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const expected = `${read}|true|true|true|RangeError;TypeError;TypeError;TypeError;TypeError;`;
+      expect((await checkScript(getSource(expected))).message).toContain(THREW);
+    });
+
+    it("stops at a method, which reads locale data", async () => {
+      const source = "new Intl.Collator().resolvedOptions();";
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });

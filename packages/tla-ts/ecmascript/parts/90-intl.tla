@@ -1,8 +1,8 @@
 \* ECMA-402's Intl, which engine262 lacks, without its locale data: the namespace, its constructors
 \* and their prototypes, as the spec lays them out, and what each of their functions does before it
-\* reads locale data, or with what HostLocale gives of it. A constructor stops before it makes an
-\* object, so no Intl object exists, and each prototype method throws the TypeError of
-\* RequireInternalSlot.
+\* reads locale data, or with what HostLocale gives of it. The constructors of IntlConstructorOptions
+\* read their options and make an object that holds them; the others stop. A method of an Intl
+\* object stops, and on another value throws the TypeError of RequireInternalSlot.
 
 \* The constructors that a call without new constructs too (ECMA-402's normative optional
 \* constructor mode), and the methods that UnwrapNumberFormat and UnwrapDateTimeFormat read their
@@ -16,6 +16,121 @@ IntlConstructors ==
    "DisplayNames", "Segmenter", "DurationFormat"}
 IntlSupportedLocalesOf == {c \o ".supportedLocalesOf" : c \in IntlConstructors}
 IntlServiceOf(m) == CHOOSE c \in IntlConstructors : c \o ".supportedLocalesOf" = m
+
+\* The service of each method of an Intl prototype.
+IntlMethodServices ==
+  ("Collator.compare" :> "Collator")
+  @@ ("Collator.resolvedOptions" :> "Collator")
+  @@ ("DateTimeFormat.format" :> "DateTimeFormat")
+  @@ ("DateTimeFormat.formatRange" :> "DateTimeFormat")
+  @@ ("DateTimeFormat.formatRangeToParts" :> "DateTimeFormat")
+  @@ ("DateTimeFormat.formatToParts" :> "DateTimeFormat")
+  @@ ("DateTimeFormat.resolvedOptions" :> "DateTimeFormat")
+  @@ ("DisplayNames.of" :> "DisplayNames")
+  @@ ("DisplayNames.resolvedOptions" :> "DisplayNames")
+  @@ ("DurationFormat.format" :> "DurationFormat")
+  @@ ("DurationFormat.formatToParts" :> "DurationFormat")
+  @@ ("DurationFormat.resolvedOptions" :> "DurationFormat")
+  @@ ("ListFormat.format" :> "ListFormat")
+  @@ ("ListFormat.formatToParts" :> "ListFormat")
+  @@ ("ListFormat.resolvedOptions" :> "ListFormat")
+  @@ ("Locale.baseName" :> "Locale")
+  @@ ("Locale.calendar" :> "Locale")
+  @@ ("Locale.caseFirst" :> "Locale")
+  @@ ("Locale.collation" :> "Locale")
+  @@ ("Locale.firstDayOfWeek" :> "Locale")
+  @@ ("Locale.getCalendars" :> "Locale")
+  @@ ("Locale.getCollations" :> "Locale")
+  @@ ("Locale.getHourCycles" :> "Locale")
+  @@ ("Locale.getNumberingSystems" :> "Locale")
+  @@ ("Locale.getTextInfo" :> "Locale")
+  @@ ("Locale.getTimeZones" :> "Locale")
+  @@ ("Locale.getWeekInfo" :> "Locale")
+  @@ ("Locale.hourCycle" :> "Locale")
+  @@ ("Locale.language" :> "Locale")
+  @@ ("Locale.maximize" :> "Locale")
+  @@ ("Locale.minimize" :> "Locale")
+  @@ ("Locale.numberingSystem" :> "Locale")
+  @@ ("Locale.numeric" :> "Locale")
+  @@ ("Locale.region" :> "Locale")
+  @@ ("Locale.script" :> "Locale")
+  @@ ("Locale.toString" :> "Locale")
+  @@ ("NumberFormat.format" :> "NumberFormat")
+  @@ ("NumberFormat.formatRange" :> "NumberFormat")
+  @@ ("NumberFormat.formatRangeToParts" :> "NumberFormat")
+  @@ ("NumberFormat.formatToParts" :> "NumberFormat")
+  @@ ("NumberFormat.resolvedOptions" :> "NumberFormat")
+  @@ ("PluralRules.resolvedOptions" :> "PluralRules")
+  @@ ("PluralRules.select" :> "PluralRules")
+  @@ ("PluralRules.selectRange" :> "PluralRules")
+  @@ ("RelativeTimeFormat.format" :> "RelativeTimeFormat")
+  @@ ("RelativeTimeFormat.formatToParts" :> "RelativeTimeFormat")
+  @@ ("RelativeTimeFormat.resolvedOptions" :> "RelativeTimeFormat")
+  @@ ("Segmenter.resolvedOptions" :> "Segmenter")
+  @@ ("Segmenter.segment" :> "Segmenter")
+
+\* The options that the constructors of the services below read, in their order, each with its key,
+\* its kind: "string" with the values it may take, "boolean", or "type", a string that must be a
+\* type sequence of UTS 35, and whether the constructor throws a TypeError where it's undefined.
+IntlOption(key, kind, values, required) == [key |-> key, kind |-> kind, values |-> values, required |-> required]
+IntlMatcherOption == IntlOption(SV("localeMatcher"), "string", {N("lookup"), N("best fit")}, FALSE)
+IntlStyleOption == IntlOption(SV("style"), "string", {N("long"), N("short"), N("narrow")}, FALSE)
+IntlConstructorOptions ==
+  [Collator |->
+     <<IntlOption(SV("usage"), "string", {N("sort"), N("search")}, FALSE), IntlMatcherOption,
+       IntlOption(SV("collation"), "type", {}, FALSE), IntlOption(SV("numeric"), "boolean", {}, FALSE),
+       IntlOption(SV("caseFirst"), "string", {N("upper"), N("lower"), N("false")}, FALSE),
+       IntlOption(SV("sensitivity"), "string", {N("base"), N("accent"), N("case"), N("variant")}, FALSE),
+       IntlOption(SV("ignorePunctuation"), "boolean", {}, FALSE)>>,
+   ListFormat |->
+     <<IntlMatcherOption, IntlOption(SV("type"), "string", {N("conjunction"), N("disjunction"), N("unit")}, FALSE),
+       IntlStyleOption>>,
+   Segmenter |-> <<IntlMatcherOption, IntlOption(SV("granularity"), "string", {N("grapheme"), N("word"), N("sentence")}, FALSE)>>,
+   RelativeTimeFormat |->
+     <<IntlMatcherOption, IntlOption(SV("numberingSystem"), "type", {}, FALSE), IntlStyleOption,
+       IntlOption(SV("numeric"), "string", {N("always"), N("auto")}, FALSE)>>,
+   DisplayNames |->
+     <<IntlMatcherOption, IntlOption(SV("style"), "string", {N("narrow"), N("short"), N("long")}, FALSE),
+       IntlOption(SV("type"), "string", {N("language"), N("region"), N("script"), N("currency"), N("calendar"), N("dateTimeField")}, TRUE),
+       IntlOption(SV("fallback"), "string", {N("code"), N("none")}, FALSE),
+       IntlOption(SV("languageDisplay"), "string", {N("dialect"), N("standard")}, FALSE)>>]
+
+\* Whether units are a type sequence: alphanumeric runs of 3 to 8, joined by hyphens.
+IsAlphaNumeric(c) == (c >= 48 /\ c <= 57) \/ (c >= 65 /\ c <= 90) \/ (c >= 97 /\ c <= 122)
+IsTypeSequenceFrom(u, i, run) ==
+  CASE i > Len(u) -> run >= 3 /\ run <= 8
+    [] u[i] = 45 -> run >= 3 /\ run <= 8 /\ IsTypeSequenceFrom(u, i + 1, 0)
+    [] OTHER -> IsAlphaNumeric(u[i]) /\ IsTypeSequenceFrom(u, i + 1, run + 1)
+
+\* GetOption of each option of a list from the ith on, into acc, the value of each by its key, or
+\* Empty where it's undefined.
+ReadIntlOptions(s, options, list, i, acc) ==
+  IF i > Len(list) THEN Ok(s, acc) ELSE
+  LET option == list[i]
+      value == Get(s, options, option.key)
+  IN IF IsAbrupt(value) THEN value
+     ELSE IF Val(value) = Undefined THEN
+       IF option.required THEN ThrowTypeError(value.s) ELSE ReadIntlOptions(value.s, options, list, i + 1, acc @@ (option.key :> Empty))
+     ELSE IF option.kind = "boolean" THEN ReadIntlOptions(value.s, options, list, i + 1, acc @@ (option.key :> ToBooleanValue(Val(value))))
+     ELSE LET str == ToStr(value.s, Val(value)) IN IF IsAbrupt(str) THEN str
+     ELSE IF IF option.kind = "type" THEN ~IsTypeSequenceFrom(Val(str).value, 1, 0) ELSE Val(str).value \notin option.values
+     THEN ThrowError(str.s, "RangeError")
+     ELSE ReadIntlOptions(str.s, options, list, i + 1, acc @@ (option.key :> Val(str).value))
+
+\* The constructor of a service of IntlConstructorOptions: OrdinaryCreateFromConstructor, then
+\* CanonicalizeLocaleList and the options, which DisplayNames, ListFormat, and Segmenter take as
+\* GetOptionsObject does and the others as CoerceOptionsToObject does. The object holds them, as no method reads them without
+\* the locale data that ResolveLocale reads.
+IntlConstruct(s, service, newTarget, locales, options) ==
+  LET o == OrdinaryCreateFromConstructor(s, newTarget, "Intl" \o service \o "Prototype", "intl" \o service,
+                                         [locales |-> <<>>, options |-> Empty]) IN IF IsAbrupt(o) THEN o ELSE
+  LET requested == CanonicalizeLocaleList(o.s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET opts == CASE options = Undefined -> OrdinaryObjectCreate(requested.s, Null)
+                [] service \in {"DisplayNames", "ListFormat", "Segmenter"} /\ ~IsObject(options) -> ThrowTypeError(requested.s)
+                [] OTHER -> ToObject(requested.s, options)
+  IN IF IsAbrupt(opts) THEN opts ELSE
+  LET read == ReadIntlOptions(opts.s, Val(opts), IntlConstructorOptions[service], 1, <<>>) IN IF IsAbrupt(read) THEN read
+  ELSE Ok(SetSlots(read.s, Val(o), [locales |-> Val(requested), options |-> Val(read)]), Val(o))
 
 \* CanonicalizeLocaleList (ECMA-402 §9.2.1), as a list of canonical tags, which reads whether a tag
 \* is valid and its canonical form from HostLocale. A list longer than any a program makes stops,
@@ -177,12 +292,12 @@ IntlProperties ==
      M("IntlDurationFormatPrototype", SV("formatToParts"), "Intl", "DurationFormat.formatToParts", 1),
      V("IntlDurationFormatPrototype", SymToStringTag, SV("Intl.DurationFormat"), FALSE, FALSE, TRUE) >>
 
-\* Intl's functions. A method on an Intl prototype throws the TypeError of RequireInternalSlot, as
-\* no Intl object exists, but where it unwraps its receiver first: an object that inherits from the
+\* Intl's functions. Where a method unwraps its receiver first, an object that inherits from the
 \* constructor's prototype, through which it would read %Intl%.[[FallbackSymbol]], stops.
 IntlBuiltin(s, f, m, this, args, nt) ==
   CASE m \in IntlConstructors ->
          IF nt = Undefined /\ m \notin IntlCallableConstructors THEN ThrowTypeError(s)
+         ELSE IF m \in DOMAIN IntlConstructorOptions THEN IntlConstruct(s, m, IF nt = Undefined THEN f ELSE nt, Arg(args, 1), Arg(args, 2))
          ELSE Unsupported(s, N("Unsupported: an Intl constructor, which reads locale data"))
     [] m = "getCanonicalLocales" ->
          LET list == CanonicalizeLocaleList(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list
@@ -200,4 +315,6 @@ IntlBuiltin(s, f, m, this, args, nt) ==
          LET inherits == OrdinaryHasInstance(s, Intrinsic(s, IntlUnwrappingMethods[m]), this) IN IF IsAbrupt(inherits) THEN inherits
          ELSE IF Val(inherits) = True THEN Unsupported(inherits.s, N("Unsupported: an object that Intl unwraps"))
          ELSE ThrowTypeError(inherits.s)
+    [] IsObject(this) /\ O(s, this).class = "intl" \o IntlMethodServices[m] ->
+         Unsupported(s, N("Unsupported: an Intl object's method, which reads locale data"))
     [] OTHER -> ThrowTypeError(s)
