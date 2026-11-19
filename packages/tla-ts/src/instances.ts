@@ -571,56 +571,6 @@ const isVariable = (expression: Expression, rewrite: Rewrite, bound: Map<string,
   !isLocallyResolved(expression) &&
   rewrite.instantiation.variables.has(expression.name);
 
-const getLetVariable = (
-  expression: Expression,
-  rewrite: Rewrite,
-  bound: Map<string, string>,
-  lets: ReadonlyMap<string, Definition>,
-): string | undefined => {
-  if (expression.kind === "Let") {
-    const definitions = expression.definitions.map((definition): [string, Definition] => [
-      definition.name,
-      definition,
-    ]);
-    return getLetVariable(expression.body, rewrite, bound, new Map([...lets, ...definitions]));
-  }
-  if (expression.kind !== "Identifier") return undefined;
-  if (isVariable(expression, rewrite, bound)) return expression.name;
-  const isLocal = isLocallyResolved(expression);
-  const definition = isLocal
-    ? lets.get(expression.name)
-    : rewrite.instantiation.getDefinition(expression.name);
-  return definition?.kind === "Operator" && definition.params.length === 0
-    ? getLetVariable(definition.body, rewrite, isLocal ? bound : new Map(), lets)
-    : undefined;
-};
-
-const getUnchangedVariables = (
-  expression: Expression,
-  rewrite: Rewrite,
-  bound: Map<string, string>,
-): string[] | undefined => {
-  if (expression.kind === "Tuple") {
-    const names = expression.elements.map((element) =>
-      getUnchangedVariables(element, rewrite, bound),
-    );
-    return names.every((element) => element !== undefined) ? names.flat() : undefined;
-  }
-  if (expression.kind === "Let") {
-    // TLC's Tool#getVar finds one variable through a LET, which it never splits as a tuple.
-    const name = getLetVariable(expression, rewrite, bound, new Map());
-    return name === undefined ? undefined : [name];
-  }
-  if (expression.kind !== "Identifier") return undefined;
-  if (isVariable(expression, rewrite, bound)) return [expression.name];
-  const definition = isLocallyResolved(expression)
-    ? undefined
-    : rewrite.instantiation.getDefinition(expression.name);
-  return definition?.kind === "Operator" && definition.params.length === 0
-    ? getUnchangedVariables(definition.body, rewrite, new Map())
-    : undefined;
-};
-
 const substituteInEnabled = (
   expression: Expression,
   rewrite: Rewrite,
@@ -665,29 +615,7 @@ const substituteInEnabled = (
       location,
     };
   }
-  if (expression.kind !== "Unchanged") return undefined;
-  const names = getUnchangedVariables(expression.expression, rewrite, bound);
-  if (names === undefined || names.length === 0) return undefined;
-  const operands = names.map((name): Expression => ({
-    kind: "Apply",
-    operator: "=",
-    args: [
-      {
-        kind: "Prime",
-        expression: {
-          kind: "Identifier",
-          name: getEnabledVariableName(name),
-          location: expression.location,
-        },
-        location: expression.location,
-      },
-      substitute({ kind: "Identifier", name, location: expression.location }, rewrite, bound),
-    ],
-    location: expression.location,
-  }));
-  return operands.length === 1
-    ? operands[0]
-    : { kind: "And", operands, location: expression.location };
+  return undefined;
 };
 
 export const createLocalIdentifier = (name: string, location: SourceLocation): Expression => ({

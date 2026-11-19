@@ -658,6 +658,24 @@ describe("INSTANCE matches TLC", () => {
 
   it.each([
     [
+      "A == c' = c + 1 /\\ UNCHANGED <<c, d>>\nCan == ENABLED A",
+      getChangedWarning("c", "line 7, col 32 to line 7, col 32"),
+    ],
+    [
+      "A == c' = c + 1 /\\ UNCHANGED (LET k == c IN k)\nCan == ENABLED <<A>>_<<c, d>>",
+      getChangedWarning("c", "line 7, col 31 to line 7, col 45"),
+    ],
+  ])(
+    "warns about a changed variable of an instance that its ENABLED keeps unchanged, as TLC's Tool#enabledUnchanged does: %s",
+    async (inner, warning) => {
+      const outcome = ["invariant-violation", [0], [warning]];
+      expect(await getInstancedEnabledOutcome(inner, "x", undefined)).toEqual(outcome);
+      expect(await getInstancedEnabledOutcome(inner, "x", 1_000_000)).toEqual(outcome);
+    },
+  );
+
+  it.each([
+    [
       "A == c' = c + 1 /\\ UNCHANGED (LET k == <<d>> IN k)\nCan == ENABLED <<A>>_<<c, d>>",
       [
         "Line 10, column 9 to line 10, column 22 in M",

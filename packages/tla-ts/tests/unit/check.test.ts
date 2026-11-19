@@ -3534,6 +3534,17 @@ ASSUME TLCFP(a) = -887695703
 
   it.each([
     [
+      "K2",
+      "UNCHANGED <<d>>",
+      "UNCHANGED d",
+      [
+        "||line 8, col 32 to line 8, col 46 of module K2: 2",
+        "||line 9, col 10 to line 9, col 29 of module K2: 1",
+        "||line 9, col 34 to line 9, col 50 of module K2: 2",
+        "||line 10, col 30 to line 10, col 40 of module K2: 0",
+      ],
+    ],
+    [
       "K4",
       "d' = d",
       "d' = d",
@@ -3559,6 +3570,28 @@ ASSUME TLCFP(a) = -887695703
         `||line 8, col 9 to line 8, col 13 of module ${name}: 3`,
         `||line 8, col 18 to line 8, col 27 of module ${name}: 2`,
         ...lines,
+      ]);
+    },
+  );
+
+  it.each([
+    ["P2", "Prop == []H!CanFlip", "PROPERTY Prop", "line 14, col 11 to line 14, col 19"],
+    ["P4", "Inv == H!CanFlip", "INVARIANT Inv", "line 14, col 8 to line 14, col 16"],
+  ])(
+    "counts UNCHANGED of an instance's variable in its ENABLED in %s, as TLC's Tool#enabledUnchanged evaluates it",
+    async (name, definition, config, location) => {
+      const result = await check({
+        source: `---- MODULE ${name} ----\nEXTENDS Integers\nVARIABLES x, y\n---- MODULE Hi ----\nEXTENDS Integers\nVARIABLES c, d\nFlip == d' = 1 - d /\\ UNCHANGED c\nCanFlip == ENABLED Flip\n====\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ UNCHANGED y\nSpec == Init /\\ [][Next]_<<x, y>>\nH == INSTANCE Hi WITH c <- x, d <- y\n${definition}\n====`,
+        config: `SPECIFICATION Spec\n${config}\nCHECK_DEADLOCK FALSE`,
+        coverage: 1,
+      });
+      expect(formatCoverage(result)?.at(-1)).toEqual([
+        `${location} of module ${name}: 3`,
+        `|line 13, col 28 to line 13, col 28 of module ${name}: 3`,
+        `|line 13, col 36 to line 13, col 36 of module ${name}: 3`,
+        `|line 8, col 12 to line 8, col 23 of module ${name}: 3`,
+        `||line 7, col 9 to line 7, col 18 of module ${name}: 3`,
+        `||line 7, col 23 to line 7, col 33 of module ${name}: 3`,
       ]);
     },
   );
