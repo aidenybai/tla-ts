@@ -318,7 +318,6 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const node = nodes.get(state);
     return node ? getTrace(node, search.getTlcOrder()).map((step) => step.state) : [state];
   };
-  // Unlike a Worker after a violation, TLC's Simulator lets a postcondition the configuration can't use fail the run.
   const reportPostcondition = () => {
     const postcondition = search.findPostconditionViolation();
     if (!postcondition) return undefined;
@@ -762,7 +761,6 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     }
   }
   isOnWorker = false;
-  // The Simulator's thread draws on from where it computed the initial states.
   runtime.getRandom = getSimulatorRandom;
   const printed = errors.findIndex(
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),

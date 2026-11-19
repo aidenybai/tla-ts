@@ -534,7 +534,6 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   const dumpPath = dump?.path;
   if (dumpPath !== undefined) {
     try {
-      // TLC's DotStateWriter writes its header as TLC starts, which is all -simulate leaves in the file.
       writeFileSync(dumpPath, dump?.dot ? getDotHeader(dump, version) : "");
     } catch {
       console.log(`Error: Unable to write to file ${dumpPath}`);

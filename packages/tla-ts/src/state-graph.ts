@@ -189,7 +189,6 @@ const createDotWriter = (
     },
     writeSuccessor: (state, successor, isSeen, action) =>
       writeEdge(state, successor, isSeen, true, action),
-    // TLC's DFIDModelChecker passes no action, so DotStateWriter gives the edge no attributes.
     writeUnlabeledSuccessor: (state, successor, isSeen) =>
       writeEdge(state, successor, isSeen, false),
     writeConstrained: (state, successor, action, constraint) =>
