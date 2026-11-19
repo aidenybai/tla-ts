@@ -66,7 +66,8 @@ const ready = new Promise((resolve) => {
 beforeAll(() => ready, 60_000);
 
 // Checks a program whose entry is main.js, in a directory of its files, whose package makes each
-// JavaScript file an ES module, as Node runs them.
+// JavaScript file an ES module unless the files give a package.json of their own, as Node runs
+// them.
 const checkModules = (files: Record<string, string>) => {
   const directory = mkdtempSync(join(tmpdir(), "escore-modules-"));
   directories.push(directory);
@@ -237,5 +238,72 @@ describe("compiles modules by specializing ESCore", () => {
         ).message,
       ).toBeUndefined();
     });
+  });
+});
+
+describe("compiles CommonJS modules as Node loads them", () => {
+  // A CommonJS module that requires others, of a package without a type.
+  const getFiles = (main: string, expected: string) => ({
+    "package.json": "{}",
+    "main.js": `const log = [];
+      ${main}
+      const result = log.join();
+      if (result !== "${expected}") throw new Error(result);`,
+    "counter.js": "let count = 0; exports.next = () => ++count;",
+    "a.js": `exports.__esModule = true;
+      exports.name = "a";
+      const b = require("./b.js");
+      exports.fromB = b.seen;`,
+    "b.js": `const a = require("./a.js");
+      module.exports = { seen: a.name + ":" + a.fromB };`,
+    "throws.js": `globalThis.loads = (globalThis.loads || 0) + 1;
+      throw new Error("load " + globalThis.loads);`,
+    "plain.js": `exports.name = "plain"; require("./reads-plain.js");`,
+    "reads-plain.js": `require("./plain.js");`,
+  });
+
+  describe("runs each module once, with its exports as this, and requires again after a throw", () => {
+    const main = `const counter = require("./counter.js");
+      const again = require("./counter");
+      log.push(counter === again, counter.next(), again.next(), this === exports, __filename.endsWith("main.js"));
+      try { require("./throws.js"); } catch (error) { log.push(error.message); }
+      try { require("./throws.js"); } catch (error) { log.push(error.message); }`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getFiles(main, "true,1,2,true,true,load 1,load 2"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkModules(getFiles(main, "true,1,2,true,true,load 1,load 1"))).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("gives a module in a cycle the exports so far of the module that requires it", () => {
+    const main = `const a = require("./a.js");
+      log.push(a.name, a.fromB);`;
+
+    it("agrees with Node", async () => {
+      expect((await checkModules(getFiles(main, "a,a:undefined"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles(main, "a,a:a"))).message).toContain(THREW);
+    });
+
+    it("stops where Node gives a cycle's exports a prototype of its own", async () => {
+      expect((await checkModules(getFiles('require("./plain.js");', ""))).message).toContain(
+        "tla-ts can't give the exports of a CommonJS module in a cycle",
+      );
+    });
+  });
+
+  it("stops at a module object's property other than exports", async () => {
+    expect((await checkModules(getFiles("log.push(module.id);", "."))).message).toContain(
+      "tla-ts can't use a CommonJS module's module",
+    );
   });
 });

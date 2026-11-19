@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
+import { createJavaScriptFile, isCommonJsFile } from "../common-js";
 import { createFileResolver } from "../program";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
@@ -129,23 +130,59 @@ const transpile = (source: string, fileName: string, isModule: boolean) => {
   );
 };
 
-// The specifier of each import and export of a file, with the literal that names it.
-const getSpecifiers = (sourceFile: ts.SourceFile) =>
-  new Map(
-    sourceFile.statements.flatMap((statement) =>
-      (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) &&
-      statement.moduleSpecifier !== undefined &&
-      ts.isStringLiteral(statement.moduleSpecifier)
-        ? [[statement.moduleSpecifier.text, statement.moduleSpecifier] as const]
-        : [],
-    ),
-  );
+// The specifier of each import and export of a module, or each require of a string of a CommonJS
+// module, with the literal that names it.
+const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => {
+  const specifiers = new Map<string, ts.StringLiteralLike>();
+  const visit = (node: ts.Node): void => {
+    const literal =
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && kind === "module"
+        ? node.moduleSpecifier
+        : ts.isCallExpression(node) &&
+            kind === "commonjs" &&
+            ts.isIdentifier(node.expression) &&
+            node.expression.text === "require" &&
+            node.arguments.length === 1
+          ? node.arguments[0]
+          : undefined;
+    if (literal !== undefined && ts.isStringLiteralLike(literal)) {
+      specifiers.set(literal.text, literal);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return specifiers;
+};
 
-// A program's files: the script, or the module and each file that its imports load, as the
-// model's resolver finds them, each once, by path.
+// The function that Node wraps a CommonJS module's code in, as its loader writes it.
+const WRAPPER = ["(function (exports, require, module, __filename, __dirname) { ", "\n});"];
+
+// Whether Node loads a file as an ES module or as CommonJS: TypeScript's code as a module, as
+// tla-ts compiles it, unless it's a .cts file, and JavaScript as its extension, its package's type,
+// or its syntax tells.
+const getKind = (path: string, text: string): ProgramFile["kind"] =>
+  /\.[cm]?tsx?$/.test(path)
+    ? path.endsWith(".cts")
+      ? "commonjs"
+      : "module"
+    : isCommonJsFile(createJavaScriptFile(path, text, ts.ScriptTarget.ESNext))
+      ? "commonjs"
+      : "module";
+
+// A program's files: the script, or the module and each file that its imports and requires load,
+// as the model's resolver finds them, each once, by path. A require of a file that Node reads as
+// other than code, such as JSON, loads none.
 const loadFiles = (source: string, fileName: string, isModule: boolean): ProgramFile[] => {
-  if (!isModule)
-    return [{ sourceFile: transpile(source, fileName, false), isModule, targets: new Map() }];
+  if (!isModule) {
+    return [
+      {
+        sourceFile: transpile(source, fileName, false),
+        path: fileName,
+        kind: "script",
+        targets: new Map(),
+      },
+    ];
+  }
   const resolve = createFileResolver(fileName);
   const getRealPath = (path: string) => ts.sys.realpath?.(ts.sys.resolvePath(path)) ?? path;
   const entry = ts.sys.fileExists(fileName) ? getRealPath(fileName) : fileName;
@@ -154,19 +191,28 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
   const files: ProgramFile[] = [];
   for (const path of numbers.keys()) {
     const text = path === entry ? source : readFileSync(path, "utf8");
-    const written = getSpecifiers(ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true));
-    const sourceFile = transpile(text, path, true);
+    const kind = getKind(path, text);
+    const written = getSpecifiers(
+      ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true),
+      kind,
+    );
+    // Node reads a hashbang as a comment.
+    const code = text.replace(/^#!.*/, (line) => " ".repeat(line.length));
+    const sourceFile =
+      kind === "commonjs"
+        ? transpile(`${WRAPPER[0]}${code}${WRAPPER[1]}`, path, false)
+        : transpile(code, path, true);
     const targets = new Map(
-      [...getSpecifiers(sourceFile).keys()].flatMap((specifier) => {
+      [...getSpecifiers(sourceFile, kind).keys()].flatMap((specifier) => {
         const literal = written.get(specifier);
         const found = literal === undefined ? undefined : resolve(literal);
-        if (found === undefined) return [];
+        if (found === undefined || !/\.([cm]?[jt]sx?)$/.test(found)) return [];
         const target = getRealPath(found);
         if (!numbers.has(target)) numbers.set(target, numbers.size + 1);
         return [[specifier, numbers.get(target) ?? 0] as const];
       }),
     );
-    files.push({ sourceFile, isModule, targets });
+    files.push({ sourceFile, path, kind, targets });
   }
   return files;
 };
@@ -258,11 +304,12 @@ export const compileToEscore = (
           arity: 1,
           // A host exits with an error where its entry module still awaits once nothing is left
           // to run, as Node does.
-          text: isModule
-            ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
-            : isQueuing
-              ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
-              : "RunProgram(s) == Program(s)",
+          text:
+            files[0].kind === "module"
+              ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
+              : isQueuing
+                ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
+                : "RunProgram(s) == Program(s)",
         },
         {
           name: "CallBuiltin",

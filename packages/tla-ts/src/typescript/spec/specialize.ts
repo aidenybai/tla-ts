@@ -49,11 +49,13 @@ interface LexicalDeclaration {
   fn: ts.FunctionDeclaration | undefined;
 }
 
-// A file of a program: a script, or a module whose requests load the files at the indices of the
-// program's files that targets gives by specifier, starting at 1.
+// A file of a program at its path: a script, an ES module, or a CommonJS module, whose code is the
+// function that Node wraps it in, its only statement. A module's requests and requires load the
+// files at the indices of the program's files that targets gives by specifier, starting at 1.
 export interface ProgramFile {
   sourceFile: ts.SourceFile;
-  isModule: boolean;
+  path: string;
+  kind: "script" | "module" | "commonjs";
   targets: ReadonlyMap<string, number>;
 }
 
@@ -407,6 +409,40 @@ const isModuleItem = (node: ts.Statement) =>
 // The name a module's declaration binds, *default* for a default export without a name.
 const getDeclaredName = (node: ts.FunctionDeclaration | ts.ClassDeclaration) =>
   node.name?.text ?? "*default*";
+
+// A name that a CommonJS module's code reads of the function that Node wraps the code in, other
+// than as the runtime's wrapper gives it: module other than for module.exports, require other than
+// as a call of a string, and, at the wrapper's top level, arguments.
+const isWrapperRead = (node: ts.Identifier, isTopLevel: boolean) => {
+  const parent = node.parent;
+  const isPropertyName =
+    ((ts.isPropertyAccessExpression(parent) ||
+      ts.isPropertyAssignment(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isAccessor(parent)) &&
+      parent.name === node) ||
+    (ts.isBindingElement(parent) && parent.propertyName === node) ||
+    ts.isLabeledStatement(parent) ||
+    ts.isBreakOrContinueStatement(parent);
+  if (isPropertyName) return false;
+  if (node.text === "module") {
+    return !(
+      ts.isPropertyAccessExpression(parent) &&
+      parent.expression === node &&
+      parent.name.text === "exports"
+    );
+  }
+  if (node.text === "require") {
+    return !(
+      ts.isCallExpression(parent) &&
+      parent.expression === node &&
+      parent.arguments.length === 1 &&
+      ts.isStringLiteralLike(parent.arguments[0])
+    );
+  }
+  return isTopLevel && node.text === "arguments";
+};
 
 // Whether a module's code awaits outside its functions (HasTopLevelAwait, §16.2.1.7.1), where a
 // computed key of a method or a field still runs.
@@ -2337,6 +2373,12 @@ export const specialize = (
     return define("Script", ["s"], steps.join("\n  "));
   };
 
+  // The files of a module's specifiers, as a function from each specifier's code units.
+  const getTargets = (file: ProgramFile) =>
+    file.targets.size === 0
+      ? "<<>>"
+      : [...file.targets].map((target) => `(${getUnits(target[0])} :> ${target[1]})`).join(" @@ ");
+
   // A Source Text Module Record's fields that ParseModule (§16.2.1.7.1) reads of the module's code,
   // as ESCore's ImportEntries, ExportEntries, ModuleRequests, and ModuleRequestPhases give them, the
   // file of each request, and the module's body, which RunBody runs; and the declarations that
@@ -2488,21 +2530,69 @@ export const specialize = (
     definitions.push({
       name: `ModuleNode${number}`,
       arity: 0,
-      text: `ModuleNode${number} == [file |-> ${number}, body |-> [code |-> ${bodies.length}], hasTopLevelAwait |-> ${getBool(hasTopLevelAwait(file.sourceFile))}, imports |-> ${getSequence(imports)}, exports |-> ${getSequence(exports)}, requests |-> ${getSequence(dedupedRequests)}, phases |-> ${getSequence(dedupedRequests.map((request) => `[request |-> ${request}, phase |-> "evaluation"]`))}, targets |-> ${file.targets.size === 0 ? "<<>>" : [...file.targets].map((entry) => `(${getUnits(entry[0])} :> ${entry[1]})`).join(" @@ ")}]`,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "module", body |-> [code |-> ${bodies.length}], hasTopLevelAwait |-> ${getBool(hasTopLevelAwait(file.sourceFile))}, imports |-> ${getSequence(imports)}, exports |-> ${getSequence(exports)}, requests |-> ${getSequence(dedupedRequests)}, phases |-> ${getSequence(dedupedRequests.map((request) => `[request |-> ${request}, phase |-> "evaluation"]`))}, targets |-> ${getTargets(file)}]`,
     });
     return declarations;
   };
 
+  // A CommonJS module's code: the function that Node wraps the module's code in, which RequireFile
+  // calls with the module's exports, require, module, __filename and __dirname (§ Module wrapper,
+  // lib/internal/modules/cjs/loader.js). Its code may read module only for module.exports, call
+  // require only of a string, and not read the wrapper's arguments, as the runtime's module and
+  // require have only what those need of Node's.
+  const commonJsCode = (file: ProgramFile, number: number) => {
+    const statement = file.sourceFile.statements[0];
+    const wrapper =
+      ts.isExpressionStatement(statement) && ts.isParenthesizedExpression(statement.expression)
+        ? statement.expression.expression
+        : undefined;
+    if (wrapper === undefined || !ts.isFunctionExpression(wrapper)) {
+      throw new TlaTypeScriptError("tla-ts can't read this CommonJS module", statement);
+    }
+    const findEscape = (node: ts.Node, isTopLevel: boolean): ts.Node | undefined => {
+      if (ts.isIdentifier(node) && isWrapperRead(node, isTopLevel)) return node;
+      const isNested = ts.isFunctionLike(node) && !ts.isArrowFunction(node);
+      return ts.forEachChild(node, (child) => findEscape(child, isTopLevel && !isNested));
+    };
+    const escape = wrapper.body.statements
+      .map((current) => findEscape(current, true))
+      .find((node) => node !== undefined);
+    if (escape !== undefined) {
+      throw new TlaTypeScriptError(
+        `tla-ts can't use a CommonJS module's ${escape.getText()} other than as Node's ${escape.getText() === "require" ? "require of a string" : "module.exports"}`,
+        escape,
+      );
+    }
+    const code = functionCode(
+      { node: wrapper, parameters: wrapper.parameters, body: wrapper.body, kind: "normal" },
+      { isStrict: false, isClassBody: false, isAsyncGenerator: false },
+    );
+    const directory = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), 1));
+    definitions.push({
+      name: `ModuleNode${number}`,
+      arity: 0,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "commonjs", code |-> ${code}, filename |-> ${getUnits(file.path)}, dirname |-> ${getUnits(directory)}, targets |-> ${getTargets(file)}]`,
+    });
+    return undefined;
+  };
+
   const entry = files[0];
-  const moduleDeclarations = entry.isModule
-    ? files.map((file, index) => moduleCode(file, index + 1))
-    : [];
-  if (!entry.isModule && files.length > 1) {
+  if (entry.kind === "script" && files.length > 1) {
     throw new TlaTypeScriptError("tla-ts can't compile a script that loads modules to ESCore yet");
   }
-  const program = entry.isModule
-    ? "RunModuleNode(s, ModuleNode(1))"
-    : `${script(entry.sourceFile)}(s)`;
+  const moduleDeclarations = files.map((file, index) =>
+    file.kind === "module"
+      ? moduleCode(file, index + 1)
+      : file.kind === "commonjs"
+        ? commonJsCode(file, index + 1)
+        : undefined,
+  );
+  const program =
+    entry.kind === "module"
+      ? "RunModuleNode(s, ModuleNode(1))"
+      : entry.kind === "commonjs"
+        ? "RequireFile(s, 1)"
+        : `${script(entry.sourceFile)}(s)`;
   definitions.push({
     name: "CallCode",
     arity: 5,
@@ -2543,12 +2633,22 @@ export const specialize = (
     {
       name: "ModuleNode",
       arity: 1,
-      text: `ModuleNode(id) ==\n  ${moduleDeclarations.length === 0 ? `Assert(FALSE, "tla-ts can't load a module the program doesn't have")` : getDispatch("id", 1, moduleDeclarations.length, (number) => `ModuleNode${number}`)}`,
+      text: `ModuleNode(id) ==\n  ${entry.kind === "script" ? `Assert(FALSE, "tla-ts can't load a module the program doesn't have")` : getDispatch("id", 1, files.length, (number) => `ModuleNode${number}`)}`,
     },
     {
       name: "ModuleDeclarations",
       arity: 3,
-      text: `ModuleDeclarations(s, ctx, node) ==\n  ${moduleDeclarations.length === 0 ? `Assert(FALSE, "tla-ts can't link a module the program doesn't have")` : getDispatch("node.file", 1, moduleDeclarations.length, (number) => `${moduleDeclarations[number - 1]}(s, ctx)`)}`,
+      text: `ModuleDeclarations(s, ctx, node) ==\n  ${getDispatch(
+        "node.file",
+        1,
+        moduleDeclarations.length,
+        (number) => {
+          const declarations = moduleDeclarations[number - 1];
+          return declarations === undefined
+            ? `Assert(FALSE, "tla-ts can't link a module the program doesn't have")`
+            : `${declarations}(s, ctx)`;
+        },
+      )}`,
     },
     { name: "Program", arity: 1, text: `Program(s) == ${program}` },
   );

@@ -131,7 +131,9 @@ const DEFINITIONS = [
   // HostLoadImportedModule (§16.2.1.10) for a program's host, which loads the module of the file
   // that the referrer's request names, made the first time the host loads it in the realm.
   `HostLoadModuleFrom(s, referrer, request) ==
-  LoadModuleNode(s, ModuleNode(ModuleAt(s, referrer).node.targets[request.specifier]))`,
+  LET node == ModuleNode(ModuleAt(s, referrer).node.targets[request.specifier]) IN
+  IF node.kind # "module" THEN Assert(FALSE, "tla-ts can't import a CommonJS module yet")
+  ELSE LoadModuleNode(s, node)`,
   `LoadModuleNode(s, node) ==
   IF <<s.realmId, node.file>> \\in DOMAIN s.moduleIds THEN Ok(s, s.moduleIds[<<s.realmId, node.file>>])
   ELSE LET m == Len(s.modules) + 1 IN
@@ -144,6 +146,40 @@ const DEFINITIONS = [
   IN IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowValue(loading.s, Slots(loading.s, Val(loading)).result) ELSE
      LET link == ModuleLink(loading.s, Val(loaded)) IN
      IF IsAbrupt(link) THEN link ELSE ModuleEvaluate(link.s, Val(loaded))`,
+  // Module._load of Node's CommonJS loader (lib/internal/modules/cjs/loader.js) for a file of the
+  // program, which require calls: the exports of the module, whose code runs the first time, in
+  // the function Node wraps it in, with this as its exports; and, for a module whose code still
+  // runs, its exports so far. The state's required holds each module object and whether its code
+  // ran, and forgets a module whose code threw.
+  `RequireFile(s, id) ==
+  IF id \\in DOMAIN s.required THEN
+    LET exports == Get(s, s.required[id].module, SV("exports")) IN
+    IF IsAbrupt(exports) \\/ s.required[id].loaded THEN exports ELSE CircularExports(exports.s, Val(exports))
+  ELSE LET node == ModuleNode(id) IN
+  IF node.kind # "commonjs" THEN Assert(FALSE, "tla-ts can't require an ES module yet") ELSE
+  LET exports == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+      module == OrdinaryObjectCreate(exports.s, Intrinsic(exports.s, "ObjectPrototype"))
+      made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(exports))
+      require == CreateBuiltinFunction(made.s, <<"Module", "require">>, 1, N("require"), id)
+      f == CodeFunctionCreate(require.s, Intrinsic(require.s, "FunctionPrototype"), node.code, FALSE, s.globalEnv, NoPrivateEnvironment)
+      r == Call([f.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE]) @@ @], f.v, Val(exports),
+                <<Val(exports), Val(require), Val(module), Str(node.filename), Str(node.dirname)>>)
+  IN IF IsAbrupt(r) THEN Abrupt([r.s EXCEPT !.required = [i \\in DOMAIN @ \\ {id} |-> @[i]]], r.c)
+     ELSE Get([r.s EXCEPT !.required[id].loaded = TRUE], Val(module), SV("exports"))`,
+  // getExportsForCircularRequire of Node's CommonJS loader, which gives the exports of a module
+  // whose code still runs a prototype that warns of each property that it lacks, where they are
+  // an object of Object.prototype that doesn't mark itself an ES module's.
+  `CircularExports(s, exports) ==
+  IF ~IsObject(exports) \\/ O(s, exports).class = "proxy" \\/ O(s, exports).proto # Intrinsic(s, "ObjectPrototype") THEN Ok(s, exports) ELSE
+  LET esModule == Get(s, exports, SV("__esModule")) IN
+  IF IsAbrupt(esModule) \\/ ToBooleanValue(Val(esModule)) THEN IF IsAbrupt(esModule) THEN esModule ELSE Ok(esModule.s, exports)
+  ELSE Assert(FALSE, "tla-ts can't give the exports of a CommonJS module in a cycle the prototype that Node gives them")`,
+  // Module.prototype.require of Node's CommonJS loader for the module of the file referrer, which
+  // loads the file of a specifier that its code requires.
+  `Require(s, referrer, id) ==
+  IF ~IsString(id) \\/ id.value \\notin DOMAIN ModuleNode(referrer).targets
+  THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
+  ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,
   `Unsupported(s, what) == Assert(FALSE, "tla-ts can't run a part of ECMAScript that ESCore leaves out")`,
 ];
 
@@ -310,6 +346,13 @@ const HOST_PATCHES = [
     from: "EvaluateDisposing(then.s, ModuleContext(ModuleAt(s, m).env), ModuleItems(ModuleAt(s, m).node))",
     to: "RunBody(then.s, ModuleContext(ModuleAt(s, m).env), ModuleAt(s, m).node.body)",
   },
+  // The require that a CommonJS module's code calls.
+  {
+    name: "ModuleBuiltin",
+    from: `    [] m = "importEvaluated" -> ResolveImport(s, data)`,
+    to: `    [] m = "importEvaluated" -> ResolveImport(s, data)
+    [] m = "require" -> Require(s, data, Arg(args, 1))`,
+  },
   // A program's functions hold their source text as the program's code gives it, which
   // SourceUnits makes code units of when a program reads it.
   {
@@ -389,6 +432,13 @@ export const getHostOnlyGlobals = (library: Library, host: object = HOST_GLOBAL)
       .filter((property) => property.owner === "GlobalObject")
       .map((property) => property.key),
     "setTimeout",
+    // The parameters of the function that Node wraps a CommonJS module's code in, which the process
+    // that compiles may hold as globals.
+    "exports",
+    "require",
+    "module",
+    "__filename",
+    "__dirname",
   ]);
   return [...Object.getOwnPropertyNames(host), ...HOST_TIMERS].filter((name) => !realm.has(name));
 };
