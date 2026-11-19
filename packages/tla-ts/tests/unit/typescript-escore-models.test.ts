@@ -136,6 +136,20 @@ const EXAMPLES = join(import.meta.dirname, "../fixtures/typescript/examples");
 const getCounts = (result: ModelResult) => [result.status, result.distinct, result.generated];
 
 describe("checks a module's exported functions as a model on ESCore", () => {
+  // A model without state variables or actions has one state, which TLC checks no deadlock of.
+  describe("checks the calls of a model without state", () => {
+    const getSource = (expected: number) =>
+      `const memo = [1, 2];\nexport const isTotal = () => memo.reduce((sum, value) => sum + value, 0) === ${expected};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(3)))).toEqual(["success", 1, 1]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource(4)))).toEqual(["invariant-violation", 1, 1]);
+    });
+  });
+
   // A model that imports a file runs as an ES module, with the module it imports beside it.
   describe("checks the exported functions of a model that imports a file", () => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-plan-"));
