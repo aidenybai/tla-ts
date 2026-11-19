@@ -1405,7 +1405,6 @@ export class Context extends Internalizer {
       if (!this.isRelevant(atom)) continue;
       const expr = isNegated(literal) ? manager.mkNot(atom) : atom;
       manager.incRef(expr);
-      // is_ground holds for no quantifier, so validate_model never evaluates one.
       const value = manager.isGroundApp(expr) ? model.eval(expr, false) : -1;
       if (value !== -1) manager.decRef(value);
       manager.decRef(expr);
@@ -1545,7 +1544,6 @@ export class Context extends Internalizer {
     this.searchLevel++;
   }
 
-  // context::push internalizes and propagates the assertions before it opens the scope.
   internalizeAndPush(asserted: AssertedFormulas) {
     const wasConsistent = !this.isInconsistent();
     this.internalizeAssertions(asserted);

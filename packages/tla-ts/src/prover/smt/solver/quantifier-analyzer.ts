@@ -64,7 +64,6 @@ export class QuantifierInfo {
     this.manager.decRef(this.flatQ);
   }
 
-  // model_finder::checkpoint reads the context's cancel flag, which counts a step.
   checkpoint() {
     if (this.context.checkCanceled())
       throw new SmtTacticError(this.manager.limit.getCancelMessage());

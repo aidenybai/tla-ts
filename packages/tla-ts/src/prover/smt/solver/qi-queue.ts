@@ -202,7 +202,6 @@ export class QiQueue {
   private instanceNext: number[] = [];
   private bindingOwners: number[] = [];
   private lemmas: RefVector;
-  // The variables of the cost parser, then the cost function. smt.qi.new_gen is the variable cost.
   private costExprs: number[];
   numInstances = 0;
 
@@ -211,6 +210,7 @@ export class QiQueue {
     this.checker = new Checker(context);
     this.costExprs = manager.mkQiCostExprs();
     for (const expr of this.costExprs) manager.incRef(expr);
+    // smt.qi.new_gen is the variable cost, so the queue holds that variable twice.
     manager.incRef(this.costExprs[0]);
     this.subst = new VarSubst(manager, true);
     this.lemmas = new RefVector(manager);
@@ -258,8 +258,6 @@ export class QiQueue {
     });
   }
 
-  // qi_queue::instantiate reads the cancel flag for each entry and every hundred entries checks
-  // the resource limits, which counts steps too.
   instantiate() {
     const context = this.context;
     const entries = this.newEntries;
@@ -340,7 +338,6 @@ export class QiQueue {
     shrink(this.scopes, offset);
   }
 
-  // ~qi_queue frees the variables of its cost parser, then the new generation and cost functions.
   release() {
     const manager = this.context.manager;
     const costExprs = this.costExprs;

@@ -384,13 +384,10 @@ interface CheckResult {
   core: number[] | undefined;
   // check_sat_result::reason_unknown, where the port tracks it.
   reasonUnknown?: string;
-  // cmd_context's m_check_sat_result keeps the solver that answered alive: the current solver
-  // while isHoldingSolver, then the solver that reset-assertions or set-logic replaced.
   isHoldingSolver: boolean;
   heldSolver: SolverParts | undefined;
 }
 
-// The parts of the solver that cmd_context makes, which it frees together.
 interface SolverParts {
   kernel: SmtKernel | undefined;
   satSolver: IncSatSolver | undefined;
@@ -432,7 +429,6 @@ interface ScriptState {
   kernel: SmtKernel | undefined;
   satSolver: IncSatSolver | undefined;
   fdSolver: FdSolver | undefined;
-  // undefined once making the solver failed, which leaves cmd_context without one.
   strategy: string | undefined;
   tactic: Tactic | undefined;
   tacticDestructors: (() => void)[];
@@ -738,7 +734,6 @@ export const runSmtlibScript = (
     // only get that answer.
     if (state.objectives.length > 0 && optimize(extra, end)) return;
     const strategy = state.strategy;
-    // cmd_context answers unknown without a solver.
     if (strategy === undefined) {
       print("unknown");
       return;
@@ -892,8 +887,6 @@ export const runSmtlibScript = (
     const logic = state.logic;
     const parameters = settings.parameters;
     const isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
-    // smt_strategic_solver_factory builds the default tactic before the solvers, and its errors
-    // leave cmd_context with the solver it had.
     const defaultTactic = parameters.get("tactic.default_tactic");
     const sexpr = defaultTactic === undefined ? undefined : readDefaultTactic(defaultTactic);
     const destructors: (() => void)[] = [];
@@ -956,10 +949,7 @@ export const runSmtlibScript = (
       state.fdSolver?.push();
     }
   };
-  // cmd_context keeps no solver until it makes the next one.
   const detachSolver = (): SolverParts => {
-    // The finite-domain solver of QF_FD stands alone. Any other solver is combined with a
-    // tactic2solver, which keeps its own copy of the assertions.
     const assertions = new RefVector(state.manager);
     if (state.fdSolver === undefined)
       for (const assertion of state.assertions) assertions.push(assertion);
@@ -992,8 +982,6 @@ export const runSmtlibScript = (
     check.isHoldingSolver = false;
     check.heldSolver = parts;
   };
-  // ~combined_solver frees its smt or sat solver, then tactic2solver its model converter, tactic,
-  // result, last assertions and assertions.
   const releaseSolver = (parts: SolverParts) => {
     parts.kernel?.release();
     parts.satSolver?.release();
@@ -1496,7 +1484,6 @@ export const runSmtlibScript = (
         const inits: (() => void)[] = [];
         const builder = compileTactic(getTacticEnvironment(destructors, [], inits), list.items[1]);
         const tactic = builder.build(params);
-        // The command gives its tactic the parameters through using_params.
         for (const init of inits) init();
         const goal = getCommandGoal(builder.isTrackingDependencies, list.end);
         clearCheck();
@@ -1713,8 +1700,6 @@ export const runSmtlibScript = (
         checkArgumentCount(list, 0);
         resetOptimizer();
         releaseObjectives(0, 0);
-        // cmd_context::reset_assertions drops the solver before it makes the next one, and pushes
-        // the scopes once it has dropped the assertions.
         if (state.isProofsEnabled !== undefined) {
           dropSolver(detachSolver());
           resetKernel();

@@ -21,8 +21,6 @@ export class DefaultQuantifierManager {
   private finder: ModelFinder;
   private checker: ModelChecker;
 
-  // default_qm_plugin makes the model finder and checker whether smt.mbqi is on or not, and reads
-  // smt.mbqi each time they would run.
   constructor(private context: Context) {
     this.qiQueue = new QiQueue(context);
     const onMatch = (quantifier: number, bindings: Enode[], maxGeneration: number) =>

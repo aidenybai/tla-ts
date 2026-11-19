@@ -333,7 +333,6 @@ export class Interpreter {
             bindings.push(binding);
             this.updateMaxGeneration(binding);
           }
-          // ON_MATCH reads the cancel flag before it reports the match.
           if (context.checkCanceled()) return false;
           this.onMatch(instr.quantifier, bindings, this.maxGeneration);
           break;

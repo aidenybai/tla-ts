@@ -66,7 +66,6 @@ export class BitBlaster {
     return expr === this.manager.trueExpr || expr === this.manager.falseExpr;
   }
 
-  // bool_rewriter frees the temporaries of each call as it returns.
   private endRewrite(result: number, outer: number) {
     this.manager.incRef(result);
     this.manager.endTemporaries(outer);

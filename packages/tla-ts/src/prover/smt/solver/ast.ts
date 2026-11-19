@@ -560,11 +560,8 @@ const Z3_SMALL_IDS = new Map([
   [OP_U_ACOS, 71],
 ]);
 
-const FIRST_DECLARED_SMALL_ID = 143;
+const FIRST_FREE_SMALL_ID = 142;
 
-// qi_queue's cost parser: cost, min_top_generation, max_top_generation, instances, size, depth,
-// generation, quant_generation, weight, vars, pattern_width, total_instances, scope,
-// nested_quantifiers and cs_factor.
 const NUM_QI_COST_VARS = 15;
 const QI_COST_GENERATION = 6;
 const QI_COST_WEIGHT = 8;
@@ -704,10 +701,9 @@ export class AstManager {
   private appHandles = new Int32Array(1024).fill(-1);
   private appHashes = new Int32Array(1024);
   private numApps = 0;
-  // The 1-bit zero made at startup takes the last small id before the declared ones.
-  private nextSmallId = FIRST_DECLARED_SMALL_ID - 1;
+  private nextSmallId = FIRST_FREE_SMALL_ID;
   private freeSmallIds: number[] = [];
-  private numDecls = FIRST_DECLARED_SMALL_ID - 1;
+  private numDecls = FIRST_FREE_SMALL_ID;
   private signatureDecls = new Map<number | string, SignatureDecl>();
   private declRefCounts: number[] = [];
   readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
@@ -772,9 +768,7 @@ export class AstManager {
     this.eulerExpr = this.mkApp(OP_E, [], SORT_REAL);
     this.incRef(this.piExpr);
     this.incRef(this.eulerExpr);
-    // cmd_context makes its smt solver as Z3 starts, so what the solver makes is older than any
-    // declared term: the 1-bit zero of bit2int, which equalities put first, then the variables and
-    // the cost function of qi_queue. The manager holds them until cmd_context makes its solver.
+    // Z3 makes its first smt solver before any declared term, so the manager makes its terms first.
     this.startupExprs = [this.mkBvNumeral(0n, 1), ...this.mkQiCostExprs()];
     for (const expr of this.startupExprs) this.incRef(expr);
   }
@@ -783,7 +777,6 @@ export class AstManager {
     return this.refCounts[expr];
   }
 
-  // The port makes no expression for Z3's undef, which takes id 0.
   getNumAsts() {
     return this.numLive + 1 + this.numDecls;
   }
@@ -808,17 +801,14 @@ export class AstManager {
     this.numDecls--;
   }
 
-  // The solver the port makes holds what it shares with these. The rest go last to first, so the
-  // next expressions take their ids in order, as in Z3, which never made them.
+  // Last to first, so the next expressions take the ids in order, as if Z3 never made them.
   dropStartupExprs() {
     for (const expr of this.startupExprs.reverse()) this.decRef(expr);
     this.startupExprs = [];
   }
 
-  // qi_queue's cost parser makes a real variable for each quantity a cost function reads, then
-  // parses smt.qi.cost as (+ weight generation).
   mkQiCostExprs() {
-    const vars = Array.from({ length: NUM_QI_COST_VARS }, (_, index) =>
+    const vars = Array.from({ length: NUM_QI_COST_VARS }, (_value, index) =>
       this.mkVar(index, SORT_REAL),
     );
     return [

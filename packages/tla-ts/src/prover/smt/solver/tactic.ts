@@ -127,7 +127,6 @@ export interface TacticEnvironment {
   hasDefinitions: () => boolean;
   destructors: (() => void)[];
   cleanups: (() => void)[];
-  // What updt_params does to each tactic, which makes the simplifier a tactic has freed.
   inits: (() => void)[];
 }
 
@@ -1747,8 +1746,6 @@ const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
       (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
     }
   } catch (error) {
-    // and_then's buffer frees the subgoals no result keeps, first to last, and then its caller's
-    // buffer frees the results.
     for (const subgoal of goals) if (!results.includes(subgoal)) subgoal.release();
     for (const result of results) result.release();
     throw error;
@@ -1821,7 +1818,6 @@ const checkHasArgument = (list: SmtList, combinator: string) => {
     );
 };
 
-// nary_tactical frees its children first to last, where and-then frees its last child first.
 const buildFirstToLast = (
   environment: TacticEnvironment,
   children: TacticBuilder[],
@@ -2034,7 +2030,6 @@ const compile = (
       const own = getParams(child, sexpr.items, isInternal);
       return {
         ...mergeDescrs([child]),
-        // using_params_tactical gives its child the parameters as it is made.
         build: (params) => {
           const start = environment.inits.length;
           const tactic = child.build(new Map([...params, ...own]));
@@ -2055,7 +2050,6 @@ const compile = (
         build: (params) => runOrElse([child.build(params), (goal) => [goal]]),
       };
     }
-    // mk_default_tactic makes the tactic of a logic when its branch first runs.
     case "lazy": {
       if (!isInternal)
         throw new SmtParseError(`invalid tactic, unknown tactic combinator lazy`, sexpr.end);

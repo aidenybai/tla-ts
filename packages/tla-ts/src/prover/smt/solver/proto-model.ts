@@ -257,7 +257,6 @@ export class FuncInterp {
     return arrayInterp;
   }
 
-  // An interpretation that is not ground becomes a lambda, as in Z3.
   private mkArrayInterp(decl: number) {
     const manager = this.manager;
     const elseExpr = this.elseExpr;
@@ -1081,8 +1080,6 @@ export class ProtoModel {
     }
     this.funcInterps.clear();
     this.funcDecls = [];
-    // The values its factories made stay with the proto model, except the universes of the
-    // uninterpreted sorts.
     for (const entry of this.values)
       if (this.manager.isUninterpretedSort(entry[0]))
         for (const value of entry[1]) model.registerValue(value);

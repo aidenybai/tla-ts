@@ -193,8 +193,6 @@ class Bv1BlasterRewriter extends RewriterTpl {
   }
 }
 
-// dependent_expr_state_tactic makes its simplifier when it gets parameters or runs, and frees it
-// after each run.
 export const createBv1Blast = (manager: AstManager) => {
   let rewriter: Bv1BlasterRewriter | undefined;
   const init = () => {

@@ -50,7 +50,6 @@ class AuxContext {
     this.asserted.pop();
   }
 
-  // context::assert_expr_core counts a step, and drops the formula once the limit is spent.
   assert(formula: number) {
     if (this.context.checkCanceled()) return;
     this.context.popToBaseLevel();

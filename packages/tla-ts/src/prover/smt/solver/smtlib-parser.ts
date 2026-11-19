@@ -892,8 +892,7 @@ export const createCommandReader = (text: string) => {
     const open = readOpen();
     return open === undefined ? undefined : readList(open);
   };
-  // parse_sexpr reads one s-expression, which may be an atom.
-  const readSExpr = (): SExpr => {
+  const readSExpr = () => {
     const token = take();
     if (token === undefined)
       throw new SmtParseError(

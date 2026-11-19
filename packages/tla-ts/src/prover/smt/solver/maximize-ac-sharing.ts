@@ -84,7 +84,6 @@ export class MaxBvSharing extends RewriterTpl {
     );
   }
 
-  // Z3's reset clears only the pairs, so the rewriter keeps its caches until the release.
   reset() {
     this.pairCache.clear();
   }
