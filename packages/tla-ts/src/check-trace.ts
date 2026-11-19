@@ -123,7 +123,7 @@ export const createTraceBuilder = (context: TraceContext) => {
     runtime.reseedRandom();
   };
   // TLC fingerprints a state, which evaluates the VIEW, as StatePrinter prints it and as TLCTrace's random generator seeds itself for it.
-  const getViewOutput = (state: Value[], level: number, isSeeding = false): OutputLine[] => {
+  const getViewOutput = (state: Value[], level: number, isSeeding = false) => {
     if (config.view === undefined) return [];
     const rebuilt = current.rebuilt;
     current.rebuilt = { state, level };
@@ -142,7 +142,6 @@ export const createTraceBuilder = (context: TraceContext) => {
       if (error) throw error;
       return isSameValue(value, successor[position]);
     });
-  // A held state is matched by its values, any other by the fingerprint the search stored for it, as TLC does.
   const findStepAction = (
     index: number,
     previous: Value[],
@@ -219,7 +218,6 @@ export const createTraceBuilder = (context: TraceContext) => {
           ),
         );
     const prefixActions = findStepActions(0, rebuilt);
-    // TLCTrace#getTrace seeds the generator it set aside before it restores it, for the state it rebuilt the last step from.
     const seedOutput =
       isPrintFingerprinted && rebuilt > 1
         ? getViewOutput(steps[rebuilt - 2].state, rebuilt - 1, true)
@@ -245,7 +243,6 @@ export const createTraceBuilder = (context: TraceContext) => {
           );
     const aliases = getAliases();
     const getAliasOutput = (position: number) => aliases[position]?.lines ?? [];
-    // StatePrinter fingerprints each state but an initial state TLCTrace rebuilt, and TLCTrace#printTrace fingerprints the last state it rebuilds from a fingerprint once more first.
     const viewOutputs = printed.map((step, position) => ({
       rebuilt:
         isPrintFingerprinted && position === rebuilt && rebuilt > 0
@@ -256,7 +253,6 @@ export const createTraceBuilder = (context: TraceContext) => {
           ? getViewOutput(step.state, position + 1)
           : [],
     }));
-    // Worker#doPostCondition rebuilds the steps before the last from their fingerprints, and the last from its values.
     const rebuiltOutput = isRebuiltAgain
       ? [
           getViewOutput(steps[last - 1].state, last, true),
@@ -382,7 +378,6 @@ export const createTraceBuilder = (context: TraceContext) => {
         traceOutput: [],
       };
     }
-    // StatePrinter fingerprints the state as it prints it, and Worker#doPostCondition fingerprints it again to rebuild it.
     const viewOutput = is174 ? [] : getViewOutput(state, 1);
     const traceOutput =
       is174 || traceOptions.isPrintedOnly

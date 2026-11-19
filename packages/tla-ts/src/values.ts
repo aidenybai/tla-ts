@@ -1082,7 +1082,6 @@ const searchLikeTlc = (element: Value, sorted: Value[]) => {
 const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
   elements.some((member) => callTracedMethod(member, () => equalsLikeTlc(member, element)));
 
-// TLC sorts a set literal in place the first time an operation needs it sorted.
 export const isNormalizedSet = (set: SetValue | MixedSetValue) =>
   set.kind === "MixedSet" ? set.enumerated !== undefined : set.isNormalized;
 
@@ -2843,7 +2842,7 @@ export const getValueHash = (value: Value): number => {
   if (typeof value === "boolean") return value ? 0x2b7e1516 : 0x28aed2a6;
   if (typeof value === "string") return hashString(value);
   if (value.kind === "Set" || value.kind === "Function") {
-    // TLC sorts a set in place as it fingerprints it. A union inherits its hash unsorted, so this marks every lookup.
+    // TLC sorts a set in place as it fingerprints it, also a union that inherited its hash, so every lookup marks it.
     if (value.kind === "Set") value.isNormalized = true;
     if (value.hash === 0) value.hash = computeValueHash(value);
     return value.hash;
