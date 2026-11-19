@@ -217,10 +217,18 @@ const DEFINITIONS = [
   `RequireFile(s, id) ==
   IF id \\in DOMAIN s.required THEN
     LET exports == Get(s, s.required[id].module, SV("exports")) IN
-    IF IsAbrupt(exports) \\/ s.required[id].loaded THEN exports ELSE CircularExports(exports.s, Val(exports))
+    IF IsAbrupt(exports) \\/ s.required[id].loaded THEN exports
+    ELSE IF ModuleNode(id).kind = "module" THEN Assert(FALSE, "tla-ts can't require an ES module in a cycle, where Node throws")
+    ELSE CircularExports(exports.s, Val(exports))
   ELSE LET node == ModuleNode(id) IN
   IF node.kind = "json" THEN JsonExports(s, node) ELSE
-  IF node.kind # "commonjs" THEN Assert(FALSE, "tla-ts can't require an ES module yet") ELSE
+  IF node.kind = "module" THEN
+    LET module == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+        r == RequireEsm([module.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE]) @@ @], node)
+        made == IF IsAbrupt(r) THEN r ELSE CreateDataProperty(r.s, Val(module), SV("exports"), Val(r))
+    IN IF IsAbrupt(made) THEN Abrupt([made.s EXCEPT !.required = [i \\in DOMAIN @ \\ {id} |-> @[i]]], made.c)
+       ELSE Ok([made.s EXCEPT !.required[id].loaded = TRUE], Val(r))
+  ELSE
   LET exports == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
       module == OrdinaryObjectCreate(exports.s, Intrinsic(exports.s, "ObjectPrototype"))
       made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(exports))
@@ -235,6 +243,51 @@ const DEFINITIONS = [
                 <<Val(exports), Val(requireProxy), Val(moduleProxy), Str(node.filename), Str(node.dirname)>>)
   IN IF IsAbrupt(r) THEN Abrupt([r.s EXCEPT !.required = [i \\in DOMAIN @ \\ {id} |-> @[i]]], r.c)
      ELSE Get([r.s EXCEPT !.required[id].loaded = TRUE], Val(module), SV("exports"))`,
+  // require of an ES module, as Node's loaders run it (loadESMFromCJS, importSyncForRequire and
+  // populateCJSExportsFromESM): the module loaded, linked, and evaluated at once, which a graph that
+  // awaits at its top level can't be, where Node throws, and its exports: its export named
+  // module.exports, or its namespace, or, where it exports a default and no __esModule, the
+  // namespace of its facade, which exports its names, its default, and __esModule as true.
+  `RequireEsm(s, node) ==
+  LET loaded == LoadModuleNode(s, node) IN
+  IF IsAbrupt(loaded) THEN loaded ELSE
+  LET m == Val(loaded) IN
+  IF ModuleAt(loaded.s, m).status \\in {"evaluating", "evaluating-async"}
+  THEN Assert(FALSE, "tla-ts can't require an ES module in a cycle, where Node throws") ELSE
+  LET evaluated == EvaluateNow(loaded.s, m) IN
+  IF IsAbrupt(evaluated) THEN evaluated ELSE
+  LET ns == GetModuleNamespace(evaluated.s, m, FALSE)
+      whole == HasOwnProperty(ns.s, Val(ns), SV("module.exports"))
+      default == IF IsAbrupt(whole) THEN whole ELSE HasOwnProperty(whole.s, Val(ns), SV("default"))
+      esModule == IF IsAbrupt(default) THEN default ELSE HasOwnProperty(default.s, Val(ns), SV("__esModule"))
+  IN CASE IsAbrupt(esModule) -> esModule
+       [] Val(whole) = True -> Get(esModule.s, Val(ns), SV("module.exports"))
+       [] Val(default) = False \\/ Val(esModule) = True -> Ok(esModule.s, Val(ns))
+       [] node.facade = 0 -> Assert(FALSE, "tla-ts can't make the facade of an ES module that Node gives a require of it")
+       [] OTHER ->
+            LET facade == LoadModuleNode(esModule.s, ModuleNode(node.facade))
+                done == IF IsAbrupt(facade) THEN facade ELSE EvaluateNow(facade.s, Val(facade))
+            IN IF IsAbrupt(done) THEN done ELSE GetModuleNamespace(done.s, Val(facade), FALSE)`,
+  // A module loaded, linked, and evaluated at once, as Node's ModuleJobSync runs it for a require,
+  // which throws what the evaluation threw. A graph that awaits at its top level stops, where Node
+  // throws.
+  `EvaluateNow(s, m) ==
+  LET loading == LoadRequestedModules(s, m) IN
+  IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowValue(loading.s, Slots(loading.s, Val(loading)).result) ELSE
+  LET link == ModuleLink(loading.s, m) IN
+  IF IsAbrupt(link) THEN link
+  ELSE IF IsAsyncGraph(link.s, <<m>>, {}) THEN Assert(FALSE, "tla-ts can't require an ES module that awaits at its top level, where Node throws") ELSE
+  LET promise == ModuleEvaluate(link.s, m)
+      slots == Slots(promise.s, Val(promise))
+  IN IF slots.state = "rejected" THEN ThrowValue(SetSlots(promise.s, Val(promise), [isHandled |-> TRUE]), slots.result)
+     ELSE Ok(promise.s, Empty)`,
+  // Whether a module or one that it requests, of the modules given and those they request, awaits at
+  // its top level (IsGraphAsync of V8's modules).
+  `IsAsyncGraph(s, modules, seen) ==
+  IF modules = <<>> THEN FALSE ELSE
+  LET m == Head(modules) rec == ModuleAt(s, m) IN
+  IF m \\in seen \\/ rec.kind # "source" THEN IsAsyncGraph(s, Tail(modules), seen \\cup {m})
+  ELSE rec.hasTLA \\/ IsAsyncGraph(s, Tail(modules) \\o MapSeq(rec.requests, LAMBDA r : rec.loaded[r]), seen \\cup {m})`,
   // getExportsForCircularRequire of Node's CommonJS loader, which gives the exports of a module
   // whose code still runs a prototype that warns of each property that it lacks, where they are
   // an object of Object.prototype that doesn't mark itself an ES module's.

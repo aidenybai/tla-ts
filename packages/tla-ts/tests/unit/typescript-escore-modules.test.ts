@@ -624,6 +624,55 @@ describe("compiles CommonJS modules as Node loads them", () => {
     });
   });
 
+  describe("requires an ES module as Node does", () => {
+    const getRequiring = (expected: string) => ({
+      ...getFiles(
+        `const withDefault = require("./with-default.mjs");
+        const again = require("./with-default.mjs");
+        const named = require("./named.mjs");
+        log.push(withDefault === again, Object.keys(withDefault).join("|"), withDefault.__esModule, withDefault.default(), Object.prototype.toString.call(withDefault));
+        log.push(Object.keys(named).join("|"), named.__esModule, require("./whole.mjs"));
+        try { require("./throws.mjs"); } catch (error) { log.push(error.message); }`,
+        expected,
+      ),
+      "with-default.mjs": 'export default function () { return "d"; } export const x = 1;',
+      "named.mjs": "export const y = 2; export const z = 3;",
+      "whole.mjs": 'const value = "whole"; export { value as "module.exports" };',
+      "throws.mjs": 'throw new Error("esm failed");',
+    });
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModules(
+            getRequiring("true,__esModule|default|x,true,d,[object Module],y|z,,whole,esm failed"),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkModules(
+            getRequiring("true,default|x,true,d,[object Module],y|z,,whole,esm failed"),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+
+    it("stops at a module that awaits at its top level, where Node throws", async () => {
+      expect(
+        (
+          await checkModules({
+            ...getFiles('require("./waits.mjs");', ""),
+            "waits.mjs": "await null;",
+          })
+        ).message,
+      ).toContain("tla-ts can't require an ES module that awaits");
+    });
+  });
+
   describe("loads a JSON file for an import of type json and a require, sharing its value", () => {
     const getJson = (expected: string) => ({
       ...getFiles("", ""),

@@ -242,8 +242,18 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
     }
     return names;
   };
+  // The facade of each ES module that a CommonJS module requires, by its path, as Node's
+  // createRequiredModuleFacade writes it, whose namespace a require gives where the module exports
+  // a default.
+  const facades = new Map<string, string>();
   for (const path of numbers.keys()) {
-    const text = path === entry ? source : readFileSync(path, "utf8");
+    const original = facades.get(path);
+    const text =
+      original !== undefined
+        ? `export * from ${JSON.stringify(original)};\nexport { default } from ${JSON.stringify(original)};\nexport const __esModule = true;\n`
+        : path === entry
+          ? source
+          : readFileSync(path, "utf8");
     if (path.endsWith(".json")) {
       files.push({
         sourceFile: ts.createSourceFile(path, "", ts.ScriptTarget.ESNext),
@@ -273,6 +283,16 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
         if (found === undefined || !/\.([cm]?[jt]sx?|json)$/.test(found)) return [];
         const target = getRealPath(found);
         if (!numbers.has(target)) numbers.set(target, numbers.size + 1);
+        const facade = `${target}.facade.mjs`;
+        if (
+          kind === "commonjs" &&
+          !target.endsWith(".json") &&
+          !facades.has(facade) &&
+          getKind(target, readFileSync(target, "utf8")) === "module"
+        ) {
+          facades.set(facade, target);
+          numbers.set(facade, numbers.size + 1);
+        }
         return [[specifier, numbers.get(target) ?? 0] as const];
       }),
     );
@@ -284,7 +304,7 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
       exportNames: kind === "commonjs" ? getWrapperNames(preparse(path, text)) : [],
     });
   }
-  return files;
+  return files.map((file) => ({ ...file, facade: numbers.get(`${file.path}.facade.mjs`) }));
 };
 
 // A property of the host's global object or of one of its built-ins, as the record that DefineHost

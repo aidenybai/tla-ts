@@ -62,6 +62,8 @@ export interface ProgramFile {
   targets: ReadonlyMap<string, number>;
   // The names that Node's ModuleWrap of a CommonJS module exports, which its lexer finds.
   exportNames: readonly string[];
+  // The file of an ES module's facade, which a require of it gives the namespace of.
+  facade?: number;
 }
 
 export interface SpecializedProgram {
@@ -2529,7 +2531,7 @@ export const specialize = (
     definitions.push({
       name: `ModuleNode${number}`,
       arity: 0,
-      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "module", body |-> [code |-> ${bodies.length}], hasTopLevelAwait |-> ${getBool(hasTopLevelAwait(file.sourceFile))}, imports |-> ${getSequence(imports)}, exports |-> ${getSequence(exports)}, requests |-> ${getSequence(dedupedRequests)}, phases |-> ${getSequence(dedupedRequests.map((request) => `[request |-> ${request}, phase |-> "evaluation"]`))}, targets |-> ${getTargets(file)}]`,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "module", facade |-> ${file.facade ?? 0}, body |-> [code |-> ${bodies.length}], hasTopLevelAwait |-> ${getBool(hasTopLevelAwait(file.sourceFile))}, imports |-> ${getSequence(imports)}, exports |-> ${getSequence(exports)}, requests |-> ${getSequence(dedupedRequests)}, phases |-> ${getSequence(dedupedRequests.map((request) => `[request |-> ${request}, phase |-> "evaluation"]`))}, targets |-> ${getTargets(file)}]`,
     });
     return declarations;
   };
