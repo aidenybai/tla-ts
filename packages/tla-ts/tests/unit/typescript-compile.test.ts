@@ -57445,3 +57445,59 @@ describe("lists the keys of an error-typed value that holds an instance of a cla
     expect((await checkModel(getCounts("1,1,0"))).failure?.message).toContain("seen 0,0,0");
   });
 });
+
+describe("reads a value whose intersection type is an error's as the error it holds", () => {
+  const getSource = (expected: string) => `
+    const box = { seen: "" };
+    class Failure extends Error {
+      code = 7;
+      getKind() {
+        return "failure";
+      }
+    }
+    type Coded = Error & { code: number };
+    const failure = new Failure("x") as Coded;
+    const plain = new Error("y") as Coded;
+    box.seen = [
+      failure.message,
+      failure.name,
+      failure.code,
+      failure.message.length,
+      failure instanceof Failure,
+      failure instanceof TypeError,
+      Object.keys(failure).join(),
+      plain.message,
+      plain.name,
+      plain instanceof Error,
+    ].join();
+    if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+  `;
+  // A read of a heap error's message, which TLC once took as a record's field.
+  const getReads = (expected: string) => `
+    const box = { seen: "" };
+    class Failure extends Error {
+      getKind() {
+        return "failure";
+      }
+    }
+    const error = new Failure("boom") as Error & { getKind(): string };
+    box.seen = [error.message, error.name].join();
+    if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+  `;
+
+  it("agrees with Node", async () => {
+    expect(
+      (await checkModel(getSource("x,Error,7,1,true,false,code,y,Error,true"))).failure,
+    ).toBeUndefined();
+    expect((await checkModel(getReads("boom,Error"))).failure).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (await checkModel(getSource("x,Error,7,1,true,true,code,y,Error,true"))).failure?.message,
+    ).toContain("seen x,Error,7,1,true,false,code,y,Error,true");
+    expect((await checkModel(getReads("boom,TypeError"))).failure?.message).toContain(
+      "seen boom,Error",
+    );
+  });
+});

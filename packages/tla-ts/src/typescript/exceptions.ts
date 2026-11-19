@@ -400,10 +400,19 @@ export const isCaughtRead = (node: ts.Expression, context: Context): boolean =>
 
 // A value of a native error's type, such as a caught one that a cast or a narrowing reads as an
 // error, which may be an object that the heap holds as well as an error that stays a record.
+// The symbol of a value's type, or of the member of an intersection that is an error's, as
+// Error & { code: number } is an Error, whose value is an error at runtime.
+const getErrorTypeSymbol = (node: ts.Expression, context: Context) => {
+  const type = context.checker.getNonNullableType(context.checker.getTypeAtLocation(node));
+  return (
+    (type.isIntersection() ? type.types : [])
+      .map((member) => member.getSymbol())
+      .find((symbol) => getErrorClass(symbol, context) !== undefined) ?? type.getSymbol()
+  );
+};
+
 export const isNativeErrorValue = (node: ts.Expression, context: Context) => {
-  const symbol = context.checker
-    .getNonNullableType(context.checker.getTypeAtLocation(node))
-    .getSymbol();
+  const symbol = getErrorTypeSymbol(node, context);
   return symbol !== undefined && isNative(symbol);
 };
 
@@ -553,8 +562,7 @@ export const translateInstanceOf = (node: ts.BinaryExpression, scope: Scope, con
   const subclasses = set(getSubclasses(node, classes[0], context));
   // A value of an error's type is a record, but where the heap holds objects it may be an instance
   // of a class that extends an error, which the heap holds.
-  const isErrorTyped =
-    getErrorClass(context.checker.getTypeAtLocation(node.left).getSymbol(), context) !== undefined;
+  const isErrorTyped = getErrorClass(getErrorTypeSymbol(node.left, context), context) !== undefined;
   if (isErrorTyped && context.heap === undefined) {
     return apply("\\in", [field(value, "constructor"), subclasses]);
   }
