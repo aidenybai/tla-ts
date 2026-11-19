@@ -99,6 +99,7 @@ import { createTlcOrder } from "./tlc/order";
 import { getPrimedRanges, walkSuccessors } from "./tlc/replay";
 import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from "./tlc/fingerprint";
 import type { TlcVersion } from "./tlc/version";
+import { TLC_RUNTIME_STRINGS } from "./tlc/jar-data";
 import type { GraphState } from "./state-graph";
 import {
   ALIAS_EVAL_ERROR,
@@ -109,6 +110,7 @@ import {
   isFunctionValue,
   isUpdatedElementOf,
   markNormalized,
+  rankString,
   setAliasName,
   setStringOrder,
   setValueOptions,
@@ -289,6 +291,8 @@ export const reportStartup = (
     onProgress?.({ kind: "java-override", ...override }),
   );
   evaluateStartupDefinitions(specification.startupDefinitions, environment);
+  // TLC interns these as it creates the checker, after SpecProcessor evaluates the constant definitions.
+  TLC_RUNTIME_STRINGS.forEach(rankString);
   config.invariants.forEach((name) => {
     if (!getConfigPredicate("invariant", name, environment)) {
       onProgress?.({ kind: "constant-level-invariant", name });
@@ -951,7 +955,11 @@ export const createCheckEnvironment = (
   );
   setValueOptions(options);
   setFingerprintPolynomial(options.fingerprintPolynomial ?? 0);
-  if (isStringOrderFrozen) freezeStringOrder();
+  if (isStringOrderFrozen) {
+    // The workers of a parallel check never call reportStartup, and their orders must agree.
+    TLC_RUNTIME_STRINGS.forEach(rankString);
+    freezeStringOrder();
+  }
   const specification = createEnvironment(config, {
     source: options.source,
     loadModule: options.loadModule,

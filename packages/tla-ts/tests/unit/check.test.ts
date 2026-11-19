@@ -773,6 +773,20 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates, result.depth]).toEqual([115, 97, 6]);
   });
 
+  it("ranks the strings that constant definitions create before those TLC interns as it creates the checker", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE R1 ----\nEXTENDS TLC, Sequences\nVARIABLE x\nS == {"st" \\o "ate", "ac" \\o "tion"}\nT == {"lo" \\o "cation", "na" \\o "me"}\nASSUME PrintT(<<S, T>>)\nASSUME PrintT({"tag" \\o "s", "ta" \\o "g", "dur" \\o "ation"})\nInit == x = 0\nNext == UNCHANGED x\n====',
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([
+      '<<{"state", "action"}, {"location", "name"}>>',
+      '{"tag", "duration", "tags"}',
+    ]);
+  });
+
   it("does not carry one check's string order into the next", async () => {
     const earlier = await checkModule(
       'Picked == CHOOSE s \\in {"zzq", "aaq"} : TRUE\nASSUME Picked = "zzq"',
