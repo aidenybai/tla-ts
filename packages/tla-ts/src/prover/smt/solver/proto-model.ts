@@ -398,8 +398,6 @@ export class ProtoModel {
   // variables a function interpretation numbers from the first argument.
   addRecFuns() {
     const manager = this.manager;
-    for (const entry of manager.macros)
-      if (!this.constInterps.has(entry[0])) this.registerConst(entry[0], entry[1]);
     for (const def of manager.recFunDefs.values()) {
       if (def.rhs === -1 || this.constInterps.has(def.decl) || this.funcInterps.has(def.decl))
         continue;
@@ -775,7 +773,7 @@ export class ProtoModel {
         ]);
       }
       for (const [decl, value] of this.constInterps)
-        if (!manager.recFunDefs.has(decl) && !manager.macros.has(decl)) collectDeps(decl, [value]);
+        if (!manager.recFunDefs.has(decl)) collectDeps(decl, [value]);
       sort.sort();
       const rewriter = new Rewriter(manager, TACTIC_REWRITER_OPTIONS);
       for (const decl of sort.sorted) {
