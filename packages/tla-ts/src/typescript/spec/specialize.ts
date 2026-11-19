@@ -56,8 +56,16 @@ interface LexicalDeclaration {
 export interface ProgramFile {
   sourceFile: ts.SourceFile;
   path: string;
-  kind: "script" | "module" | "commonjs";
+  // A JSON file's sourceFile is empty, and its text is its JSON, where JSON.parse reads it.
+  kind: "script" | "module" | "commonjs" | "json" | "host";
+  json?: string;
   targets: ReadonlyMap<string, number>;
+  // The names that Node's ModuleWrap of a CommonJS module exports, which its lexer finds.
+  exportNames: readonly string[];
+  // The file of an ES module's facade, which a require of it gives the namespace of.
+  facade?: number;
+  // Whether the file has an early error, for which Node throws a SyntaxError where it loads it.
+  isRejected?: boolean;
 }
 
 export interface SpecializedProgram {
@@ -772,8 +780,21 @@ export const specialize = (
         `LET thisEnv == GetThisEnvironment(s, ctx.lex) IN SuperCallThen(thisEnv, O(s, E(s, thisEnv).fn).proto, E(s, thisEnv).newTarget, ${args("s", "ctx")})`,
       );
     }
+    // EvaluateImportCall (§13.3.10.2), whose specifier and options the host takes, as V8 gives
+    // them to Node's import, with the file of the code that calls it as the referrer.
     if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-      throw new TlaTypeScriptError("tla-ts can't compile import() to ESCore yet", node);
+      if (!files.some((file) => file.kind === "host")) {
+        throw new TlaTypeScriptError("tla-ts can't compile import() outside a module", node);
+      }
+      const specifier = value(node.arguments[0], scope);
+      const options =
+        node.arguments.length > 1
+          ? value(node.arguments[1], scope)
+          : (state: string) => `Ok(${state}, Undefined)`;
+      return defineCode(
+        "ImportCall",
+        `LET r == ${specifier("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE LET o == ${options("r.s", "ctx")} IN IF IsAbrupt(o) THEN o ELSE HostImportCall(o.s, ${fileNumbers.get(node.getSourceFile())}, Val(r), Val(o))`,
+      );
     }
     const callee = ts.isParenthesizedExpression(node.expression)
       ? node.expression.expression
@@ -2374,16 +2395,23 @@ export const specialize = (
   const moduleCode = (file: ProgramFile, number: number) => {
     const statements = file.sourceFile.statements;
     const scope: Scope = { isStrict: true, isClassBody: false, isAsyncGenerator: false };
+    // ModuleRequest (§16.2.1.4), with the attributes of its with clause (WithClauseToAttributes,
+    // §16.2.2.4), a function from each key to its value.
     const getRequest = (node: ts.ImportDeclaration | ts.ExportDeclaration) => {
-      if (node.attributes !== undefined) {
-        throw new TlaTypeScriptError("tla-ts can't import a module with attributes yet", node);
-      }
       const specifier = node.moduleSpecifier;
       if (specifier === undefined || !ts.isStringLiteral(specifier)) return undefined;
       if (!file.targets.has(specifier.text)) {
         throw new TlaTypeScriptError(`tla-ts can't load the module ${specifier.text}`, node);
       }
-      return `[specifier |-> ${getUnits(specifier.text)}, attributes |-> NoAttributes]`;
+      const attributes = (node.attributes?.elements ?? []).map((element) =>
+        ts.isStringLiteral(element.value)
+          ? `(${getUnits(element.name.text)} :> ${getUnits(element.value.text)})`
+          : undefined,
+      );
+      if (attributes.some((attribute) => attribute === undefined)) {
+        throw new TlaTypeScriptError("tla-ts can't read this import attribute", node);
+      }
+      return `[specifier |-> ${getUnits(specifier.text)}, attributes |-> ${attributes.length === 0 ? "NoAttributes" : attributes.join(" @@ ")}]`;
     };
     const imports: string[] = [];
     const importedNames: string[] = [];
@@ -2399,32 +2427,7 @@ export const specialize = (
           statement,
         );
       }
-      // Node finds the names a CommonJS module exports by reading its code, other than default.
-      const specifier =
-        ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)
-          ? statement.moduleSpecifier
-          : undefined;
-      const target =
-        specifier !== undefined && ts.isStringLiteral(specifier)
-          ? files[(file.targets.get(specifier.text) ?? 0) - 1]
-          : undefined;
       const clause = ts.isImportDeclaration(statement) ? statement.importClause : undefined;
-      const exported = ts.isExportDeclaration(statement) ? statement.exportClause : undefined;
-      if (
-        target?.kind === "commonjs" &&
-        (clause?.namedBindings !== undefined ||
-          (ts.isExportDeclaration(statement) &&
-            (exported === undefined ||
-              !ts.isNamedExports(exported) ||
-              exported.elements.some(
-                (element) => (element.propertyName ?? element.name).text !== "default",
-              ))))
-      ) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't import names other than default from a CommonJS module, which Node finds by reading its code",
-          statement,
-        );
-      }
       if (ts.isImportDeclaration(statement)) {
         const request = getRequest(statement);
         if (request === undefined) continue;
@@ -2543,7 +2546,7 @@ export const specialize = (
     definitions.push({
       name: `ModuleNode${number}`,
       arity: 0,
-      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "module", body |-> [code |-> ${bodies.length}], hasTopLevelAwait |-> ${getBool(hasTopLevelAwait(file.sourceFile))}, imports |-> ${getSequence(imports)}, exports |-> ${getSequence(exports)}, requests |-> ${getSequence(dedupedRequests)}, phases |-> ${getSequence(dedupedRequests.map((request) => `[request |-> ${request}, phase |-> "evaluation"]`))}, targets |-> ${getTargets(file)}]`,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "module", facade |-> ${file.facade ?? 0}, body |-> [code |-> ${bodies.length}], hasTopLevelAwait |-> ${getBool(hasTopLevelAwait(file.sourceFile))}, imports |-> ${getSequence(imports)}, exports |-> ${getSequence(exports)}, requests |-> ${getSequence(dedupedRequests)}, phases |-> ${getSequence(dedupedRequests.map((request) => `[request |-> ${request}, phase |-> "evaluation"]`))}, targets |-> ${getTargets(file)}]`,
     });
     return declarations;
   };
@@ -2553,6 +2556,14 @@ export const specialize = (
   // does (lib/internal/modules/cjs/loader.js). Its code may not read the wrapper's arguments
   // object, whose callee is the runtime's function rather than Node's.
   const commonJsCode = (file: ProgramFile, number: number) => {
+    const directory = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), 1));
+    const getNode = (code: string) =>
+      `ModuleNode${number} == [file |-> ${number}, kind |-> "commonjs", code |-> ${code}, filename |-> ${getUnits(file.path)}, dirname |-> ${getUnits(directory)}, targets |-> ${getTargets(file)}, exportNames |-> ${getSequence(file.exportNames.map(getUnits))}]`;
+    // A module with an early error has no code, which Node fails to compile where it runs it.
+    if (file.isRejected === true) {
+      definitions.push({ name: `ModuleNode${number}`, arity: 0, text: getNode("None") });
+      return undefined;
+    }
     const statement = file.sourceFile.statements[0];
     const wrapper =
       ts.isExpressionStatement(statement) && ts.isParenthesizedExpression(statement.expression)
@@ -2571,25 +2582,70 @@ export const specialize = (
       { node: wrapper, parameters: wrapper.parameters, body: wrapper.body, kind: "normal" },
       { isStrict: false, isClassBody: false, isAsyncGenerator: false },
     );
-    const directory = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), 1));
-    definitions.push({
-      name: `ModuleNode${number}`,
-      arity: 0,
-      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "commonjs", code |-> ${code}, filename |-> ${getUnits(file.path)}, dirname |-> ${getUnits(directory)}, targets |-> ${getTargets(file)}]`,
-    });
+    definitions.push({ name: `ModuleNode${number}`, arity: 0, text: getNode(code) });
     return undefined;
   };
 
   const entry = files[0];
+  // A script that calls import() loads the files of its specifiers.
   if (entry.kind === "script" && files.length > 1) {
-    throw new TlaTypeScriptError("tla-ts can't compile a script that loads modules to ESCore yet");
+    definitions.push({
+      name: "ModuleNode1",
+      arity: 0,
+      text: `ModuleNode1 == [file |-> 1, kind |-> "script", targets |-> ${getTargets(entry)}]`,
+    });
   }
+  // A JSON file's node: its text without a byte order mark, which Node strips, where it's valid.
+  const jsonCode = (file: ProgramFile, number: number) => {
+    definitions.push({
+      name: `ModuleNode${number}`,
+      arity: 0,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "json", isValid |-> ${getBool(file.json !== undefined)}, text |-> ${getUnits((file.json ?? "").replace(/^\uFEFF/, ""))}]`,
+    });
+    return undefined;
+  };
+  // An ES module with an early error, which Node fails to parse where it loads it.
+  const rejectedCode = (number: number) => {
+    definitions.push({
+      name: `ModuleNode${number}`,
+      arity: 0,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "rejected"]`,
+    });
+    return undefined;
+  };
+  // The host's code for import(), the function that NODE_IMPORT is, which SetupHostImport calls.
+  const hostCode = (file: ProgramFile, number: number) => {
+    const statement = file.sourceFile.statements[0];
+    const wrapper =
+      ts.isExpressionStatement(statement) && ts.isParenthesizedExpression(statement.expression)
+        ? statement.expression.expression
+        : undefined;
+    if (wrapper === undefined || !ts.isFunctionExpression(wrapper)) {
+      throw new TlaTypeScriptError("tla-ts can't read the host's code for import()", statement);
+    }
+    const code = functionCode(
+      { node: wrapper, parameters: wrapper.parameters, body: wrapper.body, kind: "normal" },
+      { isStrict: true, isClassBody: false, isAsyncGenerator: false },
+    );
+    definitions.push({
+      name: `ModuleNode${number}`,
+      arity: 0,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "host", code |-> ${code}]`,
+    });
+    return undefined;
+  };
   const moduleDeclarations = files.map((file, index) =>
-    file.kind === "module"
-      ? moduleCode(file, index + 1)
-      : file.kind === "commonjs"
-        ? commonJsCode(file, index + 1)
-        : undefined,
+    file.kind === "host"
+      ? hostCode(file, index + 1)
+      : file.kind === "module"
+        ? file.isRejected === true
+          ? rejectedCode(index + 1)
+          : moduleCode(file, index + 1)
+        : file.kind === "commonjs"
+          ? commonJsCode(file, index + 1)
+          : file.kind === "json"
+            ? jsonCode(file, index + 1)
+            : undefined,
   );
   const program =
     entry.kind === "module"
@@ -2637,7 +2693,7 @@ export const specialize = (
     {
       name: "ModuleNode",
       arity: 1,
-      text: `ModuleNode(id) ==\n  ${entry.kind === "script" ? `Assert(FALSE, "tla-ts can't load a module the program doesn't have")` : getDispatch("id", 1, files.length, (number) => `ModuleNode${number}`)}`,
+      text: `ModuleNode(id) ==\n  ${files.length === 1 && entry.kind === "script" ? `Assert(FALSE, "tla-ts can't load a module the program doesn't have")` : getDispatch("id", 1, files.length, (number) => `ModuleNode${number}`)}`,
     },
     {
       name: "ModuleDeclarations",

@@ -216,30 +216,32 @@ const isPropertyName = (node: ts.Identifier) => {
 // Rejects programs that JavaScript rejects as it parses, where TypeScript accepts them, and stops at
 // those that it accepts only outside strict mode, where tla-ts doesn't follow them.
 export const rejectEarlyErrors = (sourceFile: ts.SourceFile) => {
-  // A module's top-level functions are lexical declarations, which no other declaration repeats.
+  // A module's imports and top-level functions are lexical declarations too, which no other
+  // declaration repeats.
   if (isModuleFile(sourceFile)) {
-    const names = new Set<string>();
-    const vars = new Set(
-      sourceFile.statements.flatMap((statement) =>
-        ts.isVariableStatement(statement) &&
-        (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0
-          ? statement.declarationList.declarations.flatMap((declaration) =>
-              getBindingNames(declaration.name),
-            )
-          : [],
-      ),
-    );
-    sourceFile.statements.forEach((statement) => {
-      const name =
-        ts.isFunctionDeclaration(statement) && statement.body !== undefined
-          ? statement.name
-          : undefined;
-      if (name === undefined) return;
-      if (names.has(name.text) || vars.has(name.text)) {
-        reject(`Identifier '${name.text}' has already been declared`, name);
-      }
-      names.add(name.text);
+    const imported = sourceFile.statements.flatMap((statement) => {
+      const clause = ts.isImportDeclaration(statement) ? statement.importClause : undefined;
+      if (clause === undefined || clause.isTypeOnly) return [];
+      const bindings = clause.namedBindings;
+      return [
+        ...(clause.name === undefined ? [] : [clause.name.text]),
+        ...(bindings === undefined
+          ? []
+          : ts.isNamespaceImport(bindings)
+            ? [bindings.name.text]
+            : bindings.elements
+                .filter((element) => !element.isTypeOnly)
+                .map((element) => element.name.text)),
+      ];
     });
+    const lexical = [...imported, ...getLexicalNames(sourceFile.statements, false)];
+    const vars = sourceFile.statements
+      .filter((statement) => !ts.isModuleDeclaration(statement))
+      .flatMap(getVarNames);
+    const clash = lexical.find(
+      (name, position) => lexical.indexOf(name) !== position || vars.includes(name),
+    );
+    if (clash !== undefined) reject(`Identifier '${clash}' has already been declared`, sourceFile);
   }
   const visit = (node: ts.Node) => {
     if (ts.isRegularExpressionLiteral(node)) {
