@@ -25,6 +25,8 @@ export class SmtKernel {
       intHammerPeriod: params.intHammerPeriod,
       isArithPropagatingEqs: params.isArithPropagatingEqs,
       qiCost: params.qiCost,
+      qiEagerThreshold: params.qiEagerThreshold,
+      qiLazyThreshold: params.qiLazyThreshold,
     });
     this.setup = params.setup;
     this.isCoreMinimizing = params.isCoreMinimizing ?? false;

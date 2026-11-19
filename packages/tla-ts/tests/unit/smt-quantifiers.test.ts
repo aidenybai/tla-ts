@@ -277,6 +277,69 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
   });
 });
 
+const getThresholdScript = (options: string[], check: string) => [
+  ...options,
+  "(declare-fun f (Int) Int)",
+  "(declare-fun g (Int) Int)",
+  "(declare-fun h (Int) Int)",
+  "(declare-const a Int)",
+  "(declare-const b Int)",
+  "(declare-const c Int)",
+  "(assert (forall ((x Int)) (! (= (h x) (h (h x))) :pattern ((h x)) :weight 25 :qid q0)))",
+  "(assert (forall ((x Int)) (! (<= (g x) (g (h x))) :pattern ((g x)) :weight 25)))",
+  "(assert (forall ((x Int)) (! (<= (f x) (f x)) :pattern ((f x)) :weight 25)))",
+  "(assert (> (f (g 0)) (f (g c))))",
+  "(assert (> a c))",
+  check,
+  "(get-info :rlimit)",
+];
+
+describe("the instantiation thresholds, as Z3 5.3.2 reads them", () => {
+  it("instantiates eagerly up to smt.qi.eager_threshold", () => {
+    expect(
+      run(
+        getThresholdScript(
+          ["(set-logic UFLIA)", "(set-option :smt.qi.eager_threshold 50.0)"],
+          "(check-sat)",
+        ),
+      ),
+    ).toEqual(["sat", "(:rlimit 3299)"]);
+  });
+
+  it("reads qi.eager_threshold as a parameter of the smt tactic", () => {
+    expect(
+      run(getThresholdScript([], "(check-sat-using (using-params smt :qi.eager_threshold 50.0))")),
+    ).toEqual(["sat", "(:rlimit 3118)"]);
+  });
+
+  it("instantiates at the final check up to smt.qi.lazy_threshold", () => {
+    expect(
+      run(
+        getThresholdScript(
+          ["(set-option :auto_config false)", "(set-option :smt.qi.lazy_threshold 100.0)"],
+          "(check-sat)",
+        ),
+      ),
+    ).toEqual(["sat", "(:rlimit 3276)"]);
+  });
+
+  it("puts the lazy threshold back to 20 in setup_AUFLIA", () => {
+    expect(
+      run([
+        "(set-logic UFLIA)",
+        "(set-option :smt.qi.lazy_threshold 100.0)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int)) (! (<= (g x) (f (g x))) :pattern ((g x)) :weight 25)))",
+        "(assert (distinct 0 (f (g a))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 473)"]);
+  });
+});
+
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {
   it("pushes its context as the kernel does", () => {
     expect(

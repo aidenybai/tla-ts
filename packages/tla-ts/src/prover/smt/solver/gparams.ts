@@ -207,6 +207,11 @@ export const isDoubleParameter = (name: string) => {
   return found.kinds?.doubles.split(" ").includes(found.parameter) === true;
 };
 
+export const getDoubleParameter = (parameters: ReadonlyMap<string, string>, name: string) => {
+  const value = parameters.get(name);
+  return value === undefined ? undefined : Number(value);
+};
+
 // Z3's rational parser skips any character it doesn't expect.
 const getDigits = (text: string) => BigInt(`0${text.replace(/[^0-9]/g, "")}`);
 
