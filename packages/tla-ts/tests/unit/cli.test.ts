@@ -1314,8 +1314,17 @@ describe("the CLI takes several specs and globs", () => {
 });
 
 describe("the CLI prints messages for a program to read like TLC", () => {
-  const runTool = (name: string) =>
-    runCli("tool-output", name, ["-tool", "-workers", "1", "-fp", "0", "-lncheck", "final"]);
+  const runTool = (name: string, args: string[] = []) =>
+    runCli("tool-output", name, [
+      "-tool",
+      "-workers",
+      "1",
+      "-fp",
+      "0",
+      "-lncheck",
+      "final",
+      ...args,
+    ]);
 
   it("prints again what the spec prints as it rebuilds a safety trace", () => {
     const result = runTool("Steps");
@@ -1378,6 +1387,77 @@ describe("the CLI prints messages for a program to read like TLC", () => {
       getAlias(0),
       getAlias(1),
       getAlias(2),
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+  });
+
+  const getView = (value: number, level: number) => `<<"view", ${value}, ${level}>>`;
+
+  it("evaluates the VIEW as TLC fingerprints the states of a trace it prints and rebuilds, and seeds its random generator for them", () => {
+    const result = runTool("ViewSteps");
+    expect(result.status).toBe(11);
+    expect(getToolSequence(result.stdout)).toEqual([
+      "2262",
+      "2187",
+      "2220",
+      "2219",
+      "2185",
+      "2189",
+      getView(0, 1),
+      getView(1, 1),
+      "2190",
+      getView(1, 2),
+      getView(2, 2),
+      getView(3, 3),
+      "2114",
+      getView(0, 1),
+      getView(1, 1),
+      getView(2, 2),
+      getView(1, 1),
+      "2121",
+      "2217",
+      getView(2, 2),
+      "2217",
+      getView(3, 3),
+      getView(3, 3),
+      getView(3, 3),
+      "2217",
+      getView(2, 2),
+      getView(0, 1),
+      getView(1, 1),
+      getView(2, 2),
+      getView(1, 1),
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+  });
+
+  it("evaluates the VIEW as TLC fingerprints an initial state it prints alone and rebuilds", () => {
+    const result = runTool("ViewSteps", ["-config", "ViewInitial.cfg"]);
+    expect(result.status).toBe(11);
+    expect(getToolSequence(result.stdout)).toEqual([
+      "2262",
+      "2187",
+      "2220",
+      "2219",
+      "2185",
+      "2189",
+      getView(0, 1),
+      getView(1, 1),
+      "2190",
+      getView(1, 2),
+      "2114",
+      "2121",
+      getView(1, 1),
+      "2217",
+      getView(1, 1),
+      getView(0, 1),
+      getView(1, 1),
       "2200",
       "2199",
       "2194",

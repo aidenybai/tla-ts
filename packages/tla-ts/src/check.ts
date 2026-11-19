@@ -251,7 +251,7 @@ export interface TraceStep {
   state: Record<string, Value>;
   /** What the spec prints before this step as TLC rebuilds the trace, and before it for the first. */
   output?: OutputLine[];
-  /** What the ALIAS prints as TLC evaluates it right before it prints this step. */
+  /** What the ALIAS and VIEW print as TLC evaluates them right before it prints this step. */
   aliasOutput?: OutputLine[];
 }
 
@@ -1762,7 +1762,9 @@ const searchStates = (
     const isStuttering = cycleStart === cycleEnd;
     const loop = isStuttering
       ? { result: undefined, lines: [] }
-      : captureOutput(() => traces.findStepAction(cycleEnd, lastState, states[cycleStart], false));
+      : captureOutput(() =>
+          traces.findStepAction(cycleEnd, lastState, fingerprintStates[cycleStart], false),
+        );
     const back =
       isStuttering || loop.result
         ? undefined
