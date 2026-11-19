@@ -61,6 +61,7 @@ import {
   collectSemanticErrors,
   compareLocations,
   getArity,
+  getBoundNames,
   getFunctionArity,
   getKeyName,
   getParamArities,
@@ -196,6 +197,12 @@ interface ModuleScope {
   warnings: SanyError[];
   levelChecks: ReturnType<typeof checkModuleLevels>[];
 }
+
+// Generator#processFunction looks a function's name up among its own bound names, so x[x \in S] defines nothing unless RECURSIVE x took the name first.
+const isDefining = (definition: Definition) =>
+  definition.kind !== "Function" ||
+  definition.isRecursive ||
+  !getBoundNames(definition.bounds).includes(definition.name);
 
 const createModuleRedefinedError = (module: Module) =>
   new TlaSyntaxError(
@@ -1193,7 +1200,10 @@ export const createEnvironment = (
       bound,
       // SANY keeps the first of two definitions of a name.
       definitions: new Map(
-        module.definitions.toReversed().map((definition) => [definition.name, definition]),
+        module.definitions
+          .filter(isDefining)
+          .toReversed()
+          .map((definition) => [definition.name, definition]),
       ),
       getKey,
       isModuleKnown: (name, location) =>
@@ -1293,7 +1303,7 @@ export const createEnvironment = (
         link: () =>
           bindBefore(declaration.name, getDeclarationSymbol(declaration), declaration.location),
       })),
-      ...parsed.definitions.map((definition) => ({
+      ...parsed.definitions.filter(isDefining).map((definition) => ({
         location: definition.location,
         link: () =>
           bindBefore(definition.name, getDefinitionSymbol(definition), definition.location),

@@ -3595,6 +3595,36 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "a use of a function named like its own bound name",
+      "f[f \\in {1}] == 1\nG == f",
+      [
+        {
+          location: "line 2, col 1 to line 2, col 17 of module M",
+          message: "Function name `f' already defined or declared.",
+        },
+        {
+          location: "line 3, col 6 to line 3, col 6 of module M",
+          message: "Unknown operator: `f'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an inner module's use of a function named like its own bound name",
+      "f[f \\in {1}] == 1\n---- MODULE In ----\nG == f\n====",
+      [
+        {
+          location: "line 2, col 1 to line 2, col 17 of module M",
+          message: "Function name `f' already defined or declared.",
+        },
+        {
+          location: "line 4, col 6 to line 4, col 6 of module M",
+          message: "Unknown operator: `f'.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
