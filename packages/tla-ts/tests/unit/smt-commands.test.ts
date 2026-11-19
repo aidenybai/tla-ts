@@ -1377,6 +1377,42 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", ""]);
   });
 
+  it("answers get-consequences under QF_BV with the incremental sat solver", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 3))",
+        "(declare-const y (_ BitVec 3))",
+        "(declare-const p Bool)",
+        "(get-consequences ((bvule y x)) (x))",
+        "(get-info :reason-unknown)",
+        "(get-consequences (p) (p x))",
+      ]),
+    ).toEqual([
+      "unknown",
+      "",
+      '(:reason-unknown "(sat.giveup interpreted functions sent to SAT solver (declare-fun bvule ((_ BitVec 3) (_ BitVec 3)) Bool)',
+      ')")',
+      "sat",
+      "",
+    ]);
+  });
+
+  it("checks with the incremental sat solver after get-consequences under QF_BV", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(assert (bvult (bvmul x y) #x5))",
+        "(assert (bvult #x3 (bvadd x y)))",
+        "(get-consequences () ())",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toEqual(["sat", "", "sat", "((x #x4)", " (y #x1))"]);
+  });
+
   it("runs the commands after a check that timed out", () => {
     expect(
       run(

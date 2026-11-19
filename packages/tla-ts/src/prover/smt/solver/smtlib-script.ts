@@ -1548,6 +1548,12 @@ export const runSmtlibScript = (
         manager.limit.restart(deadline);
         manager.limit.push(settings.rlimit);
         const names = state.names.filter((name) => name !== -1);
+        const printConsequences = (result: number, consequences: RefVector) => {
+          print(getVerdict(result));
+          print("");
+          for (const consequence of consequences.items) display(consequence);
+          consequences.reset();
+        };
         try {
           const fdSolver = state.fdSolver;
           if (fdSolver !== undefined) {
@@ -1559,10 +1565,23 @@ export const runSmtlibScript = (
               reasonUnknown: fdSolver.reasonUnknown,
               isHoldingSolver: true,
             });
-            print(getVerdict(found.result));
-            print("");
-            for (const consequence of found.consequences.items) display(consequence);
-            found.consequences.reset();
+            printConsequences(found.result, found.consequences);
+            return;
+          }
+          // The combined solver answers get-consequences with its incremental solver, and stays with it.
+          state.isIncremental = true;
+          const satSolver = state.satSolver;
+          const satFound = useSatSolver((solver) => solver.getConsequences(assumptions, vars));
+          if (satSolver !== undefined && satFound !== undefined) {
+            const consequences = new RefVector(manager);
+            for (const consequence of satFound.consequences) consequences.push(consequence);
+            setCheck(satFound.result, {
+              satSolver,
+              core: satFound.result === L_FALSE ? [...satSolver.getUnsatCore()] : undefined,
+              reasonUnknown: satSolver.reasonUnknown,
+              isHoldingSolver: true,
+            });
+            printConsequences(satFound.result, consequences);
             return;
           }
           const kernel = state.kernel ?? new SmtKernel(manager, getKernelParams());
@@ -1575,10 +1594,7 @@ export const runSmtlibScript = (
             reasonUnknown: kernel.context.getLastFailureMessage(),
             isHoldingSolver: true,
           });
-          print(getVerdict(found.result));
-          print("");
-          for (const consequence of found.consequences.items) display(consequence);
-          found.consequences.reset();
+          printConsequences(found.result, found.consequences);
         } catch (error) {
           if (!(error instanceof SmtCanceledError || isStackOverflow(error))) throw error;
           const reasonUnknown = getCancelMessage(deadline);
