@@ -2277,6 +2277,7 @@ export const runSmtlibScript = (
             (optionName !== ":lp.int_hammer_period" || !isParameter))
         )
           throw new SmtUnsupportedError(`the option ${optionName}`);
+        checkArgumentCount(list, 2);
       },
     ],
     [

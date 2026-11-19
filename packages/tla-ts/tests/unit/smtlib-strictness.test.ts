@@ -856,6 +856,22 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       '(:reason-unknown "max. resource limit exceeded")',
     ]);
   });
+
+  it("sets an option before it finds too many arguments", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 3 4)",
+        "(get-option :smt.random_seed)",
+        "(set-option :print-success true 3)",
+        "(get-option :print-success)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 32: invalid command, too many arguments")',
+      "3",
+      '(error "line 3 column 32: invalid command, too many arguments")',
+      "true",
+    ]);
+  });
 });
 
 describe("the terms the reader makes and frees, in Z3's order", () => {
