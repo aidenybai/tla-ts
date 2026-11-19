@@ -7102,10 +7102,33 @@ const isInGeneric = (node: ts.Node | undefined) =>
     (ancestor) => ts.isFunctionLike(ancestor) && (ancestor.typeParameters?.length ?? 0) > 0,
   ) !== undefined;
 
+// Whether a type names a type parameter, itself or in a union's members, a reference's type
+// arguments, or its calls' parameters and results, a few levels deep.
+const namesTypeParameter = (type: ts.Type, checker: ts.TypeChecker, depth = 3): boolean => {
+  const inner = [
+    ...(type.isUnionOrIntersection() ? type.types : []),
+    ...((type.flags & ts.TypeFlags.Object) !== 0 &&
+    ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0
+      ? checker.getTypeArguments(type as ts.TypeReference)
+      : []),
+    ...type
+      .getCallSignatures()
+      .flatMap((signature) => [
+        ...signature.getParameters().map((parameter) => checker.getTypeOfSymbol(parameter)),
+        signature.getReturnType(),
+      ]),
+  ];
+  return (
+    (type.flags & ts.TypeFlags.TypeParameter) !== 0 ||
+    (depth > 0 && inner.some((member) => namesTypeParameter(member, checker, depth - 1)))
+  );
+};
+
 // Whether a function fits a callee where one's type names the type parameters of a generic
 // function around it, which TypeScript relates to no other type: where the callee's calls pass the
 // arguments that the function needs. The call still runs it only where the value holds it. A
 // callee's own function binds what it holds, so only one that a closure reads may hold another.
+// A type that names no type parameter is one that TypeScript relates, so its fit is TypeScript's.
 const isGenericFit = (
   candidate: FunctionNode,
   callee: ts.Expression,
@@ -7118,7 +7141,11 @@ const isGenericFit = (
     ts.findAncestor(callee.parent, ts.isFunctionLike) !==
       ts.findAncestor(declaration.parent, ts.isFunctionLike);
   return (
-    (isInGeneric(candidate) || (isCaptured && isInGeneric(declaration))) &&
+    ((isInGeneric(candidate) &&
+      namesTypeParameter(context.checker.getTypeAtLocation(candidate), context.checker)) ||
+      (isCaptured &&
+        isInGeneric(declaration) &&
+        types.some((type) => namesTypeParameter(type, context.checker)))) &&
     types.every((type) =>
       type
         .getCallSignatures()

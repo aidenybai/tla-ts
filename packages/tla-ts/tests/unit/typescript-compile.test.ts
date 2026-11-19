@@ -57318,3 +57318,62 @@ describe("constructs the class that a function returns where a call runs it once
     ).toThrow("tla-ts can't make a class in code that may run more than once");
   });
 });
+
+describe("runs a generic function's closure only where its type fits the call", () => {
+  // A closure that a generic function makes, whose type names no type parameter, isn't a candidate
+  // for a callback's call that only TypeScript's types would rule out, as a map's callback is.
+  const getSource = (expected: string) => `
+    "use strict";
+    type ArrayKind = Int8ArrayConstructor | Uint8ArrayConstructor;
+    type BigArrayKind = BigInt64ArrayConstructor;
+    type AnyArrayKind = ArrayKind | BigArrayKind;
+    type ArgFactory = (TA: AnyArrayKind, primitiveOrIterable: unknown) => unknown;
+    type BoundArgFactory = (primitiveOrIterable: unknown) => any;
+    type ArrayTest<C> = (TA: C, makeCtorArg: BoundArgFactory) => void;
+    const box = { seen: [] as string[] };
+    const kinds: ArrayKind[] = [Int8Array, Uint8Array];
+    const makePassthrough = (TA: AnyArrayKind, primitiveOrIterable: unknown) => primitiveOrIterable;
+    const makeCopy = (TA: AnyArrayKind, primitiveOrIterable: unknown) => [
+      ...(primitiveOrIterable as unknown[]),
+    ];
+    const factories: ArgFactory[] = [makePassthrough, makeCopy];
+    function testWithAll<C extends AnyArrayKind>(f: ArrayTest<C>, constructors: C[]) {
+      for (let k = 0; k < factories.length; ++k) {
+        const argFactory = factories[k];
+        for (let i = 0; i < constructors.length; ++i) {
+          const constructor = constructors[i];
+          f(constructor, function (primitiveOrIterable: unknown) {
+            return argFactory(constructor, primitiveOrIterable);
+          });
+        }
+      }
+    }
+    function testWithKinds(f: ArrayTest<ArrayKind>, constructors?: ArrayKind[]) {
+      testWithAll(f, constructors || kinds);
+    }
+    function testWithBigKinds(f: ArrayTest<BigArrayKind>) {
+      testWithAll(f, [BigInt64Array]);
+    }
+    testWithKinds(function (TA, makeCtorArg) {
+      const sample = new TA(makeCtorArg([42, 43]));
+      const results: IArguments[] = [];
+      sample.map(function () {
+        results.push(arguments);
+        return 0;
+      });
+      box.seen.push(results.length + ":" + results[1][0] + ":" + results[1][1]);
+    });
+    const seen = box.seen.join();
+    if (seen !== "${expected}") throw new Error("seen " + seen);
+  `;
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource("2:43:1,2:43:1,2:43:1,2:43:1"))).failure).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect((await checkModel(getSource("2:43:0,2:43:1,2:43:1,2:43:1"))).failure?.message).toContain(
+      "seen 2:43:1,2:43:1,2:43:1,2:43:1",
+    );
+  });
+});
