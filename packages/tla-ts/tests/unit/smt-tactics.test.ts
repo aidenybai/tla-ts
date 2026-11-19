@@ -3022,6 +3022,22 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ]);
   });
 
+  it("reports a scanner error in tactic.default_tactic at the start of its token", () => {
+    const runDefaultTactic = (lines: string[]) =>
+      run([...lines, "(declare-const x Int)", "(assert (> x 0))", "(check-sat)"]);
+    expect(runDefaultTactic(['(set-option :tactic.default_tactic "(then |abc")'])).toEqual([
+      '(error ": line 1 column 7: unexpected end of quoted symbol")',
+      "sat",
+    ]);
+    expect(
+      runDefaultTactic(['(set-option :tactic.default_tactic "(then', "  |ab", 'cd")']),
+    ).toEqual(['(error ": line 3 column 2: unexpected end of quoted symbol")', "sat"]);
+    expect(runDefaultTactic(['(set-option :tactic.default_tactic "(then simplify) #")'])).toEqual([
+      "(error \": line 1 column 17: invalid bit-vector literal, expecting 'x' or 'b'\")",
+      "sat",
+    ]);
+  });
+
   it("parses tactic.default_tactic as a user's tactic, without the lazy combinator", () => {
     expect(
       run([

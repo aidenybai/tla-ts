@@ -874,13 +874,15 @@ export const runSmtlibScript = (
       ...result,
     };
   };
-  // parse_sexpr reports its own errors under an empty file name and gives no tactic.
+  // parse_sexpr_ref reports an error at the token it scans, under an empty file name.
   const readDefaultTactic = (text: string) => {
+    const reader = createCommandReader(text);
     try {
-      return createCommandReader(text).readSExpr();
+      return reader.readSExpr();
     } catch (error) {
       if (!(error instanceof SmtParseError)) throw error;
-      print(`(error ": line ${error.line} column ${error.column}: ${error.message}")`);
+      const position = reader.getTokenPosition();
+      print(`(error ": line ${position.line} column ${position.column}: ${error.message}")`);
       return undefined;
     }
   };
