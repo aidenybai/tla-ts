@@ -108,12 +108,67 @@ LMethod(c, m, args) ==
          IF i = 0 THEN [c |-> c, v |-> False]
          ELSE [c |-> [c EXCEPT !.keys = SubSeq(@, 1, i - 1) \o SubSeq(@, i + 1, Len(@)),
                                !.vals = SubSeq(@, 1, i - 1) \o SubSeq(@, i + 1, Len(@))], v |-> True]
-    [] OTHER -> [c |-> LBail, v |-> LBail]`);
+    [] OTHER -> [c |-> LBail, v |-> LBail]
+\* A callback's results on an array's elements and their indices, in order.
+LResults(elems, F(_, _)) == [i \in DOMAIN elems |-> F(elems[i], IntV(i - 1))]
+\* The index of the first result that bails or fails test, or 0, where the method that calls the
+\* callback stops.
+LFirst(rs, test(_)) ==
+  LET stops == {i \in DOMAIN rs : rs[i].type = "bail" \/ ~test(rs[i])} IN
+  IF stops = {} THEN 0 ELSE CHOOSE i \in stops : \A k \in stops : i <= k
+\* Array.prototype.every and some, which stop at the first result that fails or passes.
+LEvery(c, F(_, _)) ==
+  IF c.type # "larray" THEN LBail ELSE
+  LET rs == LResults(c.elems, F)
+      i == LFirst(rs, LTruthy)
+  IN IF i = 0 THEN True ELSE IF rs[i].type = "bail" THEN LBail ELSE False
+LSome(c, F(_, _)) ==
+  IF c.type # "larray" THEN LBail ELSE
+  LET rs == LResults(c.elems, F)
+      i == LFirst(rs, LAMBDA r : ~LTruthy(r))
+  IN IF i = 0 THEN False ELSE IF rs[i].type = "bail" THEN LBail ELSE True
+\* Array.prototype.map and filter, whose array ArraySpeciesCreate makes an array's constructor's.
+\* filter's, as slice's, holds the elements of the array it's called on, which a store then owns.
+LMap(c, F(_, _)) == IF c.type # "larray" THEN LBail ELSE LArray(LResults(c.elems, F))
+LFilter(c, F(_, _)) ==
+  IF c.type # "larray" THEN LBail ELSE
+  LET rs == LResults(c.elems, F) IN
+  IF \E i \in DOMAIN rs : rs[i].type = "bail" THEN LBail ELSE
+  LET kept == SelectSeq([i \in DOMAIN rs |-> i], LAMBDA i : LTruthy(rs[i]))
+  IN LArray([j \in DOMAIN kept |-> c.elems[kept[j]]])
+\* An index of Array.prototype.slice, relative to the end where it's negative, or -1 where it
+\* isn't an integer.
+LRelative(v, n, default) ==
+  CASE v.type = "undefined" -> default
+    [] v.type = "number" /\ v.value.k = "int" ->
+         IF v.value.i < 0 THEN (IF n + v.value.i < 0 THEN 0 ELSE n + v.value.i)
+         ELSE IF v.value.i < n THEN v.value.i ELSE n
+    [] OTHER -> -1
+LSlice(c, start, end) ==
+  IF c.type # "larray" THEN LBail ELSE
+  LET n == Len(c.elems)
+      k == LRelative(start, n, 0)
+      f == LRelative(end, n, n)
+  IN IF k < 0 \/ f < 0 THEN LBail
+     ELSE LArray([j \in 1..(IF f > k THEN f - k ELSE 0) |-> c.elems[k + j]])
+\* Array.from of an array-like object of a length alone, which reads undefined at each index.
+LFrom(length, F(_, _)) ==
+  IF length.type = "number" /\ length.value.k = "int" /\ length.value.i >= 0 /\ length.value.i <= 65536
+  THEN LArray([i \in 1..length.value.i |-> F(Undefined, IntV(i - 1))])
+  ELSE LBail`);
 
 // The methods LMethod runs, which change the receiver where they're in MUTATORS. ESCore's step
 // counts a call of a mutator on what existed before it as a write, as ModelCallBuiltin does.
 const METHODS = new Set(["push", "pop", "shift", "includes", "has", "add", "delete", "get", "set"]);
 const MUTATORS = new Set(["push", "pop", "shift", "add", "delete", "set"]);
+
+// The array methods that call an arrow function on each element, by their operators.
+const CALLBACK_METHODS = new Map([
+  ["every", "LEvery"],
+  ["some", "LSome"],
+  ["map", "LMap"],
+  ["filter", "LFilter"],
+]);
 
 const ARITHMETIC = new Map([
   [ts.SyntaxKind.PlusToken, "+"],
@@ -242,6 +297,50 @@ export const getNativeFunctions = (
         );
   };
 
+  // An arrow function that a method calls on each element and its index, as a TLA+ LAMBDA of
+  // them that gives its result, owned where the method keeps it, and writes nothing.
+  const compileCallback = (
+    node: ts.Expression | undefined,
+    scope: Scope,
+    isOwned: boolean,
+  ): string | undefined => {
+    if (
+      node === undefined ||
+      !ts.isArrowFunction(node) ||
+      node.parameters.length > 2 ||
+      node.parameters.some(
+        (parameter) =>
+          !ts.isIdentifier(parameter.name) ||
+          parameter.initializer !== undefined ||
+          parameter.dotDotDotToken !== undefined,
+      ) ||
+      (ts.getModifiers(node) ?? []).length > 0
+    ) {
+      return undefined;
+    }
+    const params = [fresh("p"), fresh("p")];
+    const locals = new Map(scope.locals);
+    node.parameters.forEach((parameter, index) =>
+      locals.set((parameter.name as ts.Identifier).text, params[index]),
+    );
+    const inner = { ...scope, locals };
+    const state = { isPure: true };
+    const body = ts.isBlock(node.body)
+      ? (() => {
+          const text = compileStatements(
+            node.body.statements,
+            inner,
+            (m, w) => result(m, w, "Undefined"),
+            state,
+          );
+          return text === undefined ? undefined : { text: `LValue(${text})`, isFresh: false };
+        })()
+      : compileExpression(node.body, inner);
+    return body === undefined || !state.isPure
+      ? undefined
+      : `LAMBDA ${params.join(", ")} : ${isOwned && !body.isFresh ? `LOwn(${body.text})` : body.text}`;
+  };
+
   // A call of a module function that writes nothing, whose parameters it's given in order.
   const compileCall = (node: ts.CallExpression, scope: Scope): Value | undefined => {
     const callee = getCallee(node.expression, scope);
@@ -256,9 +355,57 @@ export const getNativeFunctions = (
         isFresh: false,
       };
     }
-    // A method that doesn't change its receiver, on any lowered value.
+    // Array.from({ length }, callback), where Array is the realm's.
+    const source = node.arguments[0];
+    if (
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Array" &&
+      !scope.locals.has("Array") &&
+      !bindings.has("Array") &&
+      !functions.has("Array") &&
+      node.expression.name.text === "from" &&
+      node.arguments.length === 2 &&
+      source !== undefined &&
+      ts.isObjectLiteralExpression(source) &&
+      source.properties.length === 1 &&
+      ts.isPropertyAssignment(source.properties[0]) &&
+      ts.isIdentifier(source.properties[0].name) &&
+      source.properties[0].name.text === "length"
+    ) {
+      const length = compileExpression(source.properties[0].initializer, scope);
+      const callback = compileCallback(node.arguments[1], scope, true);
+      return length === undefined || callback === undefined
+        ? undefined
+        : { text: `LFrom(${length.text}, ${callback})`, isFresh: true };
+    }
     if (ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.name)) {
       const method = node.expression.name.text;
+      const iterating = CALLBACK_METHODS.get(method);
+      if (iterating !== undefined || method === "slice") {
+        const receiver = compileExpression(node.expression.expression, scope);
+        if (receiver === undefined) return undefined;
+        if (method === "slice") {
+          const args = compileArguments(node.arguments, scope, false);
+          return args === undefined || args.length > 2
+            ? undefined
+            : {
+                text: `LSlice(${receiver.text}, ${args[0] ?? "Undefined"}, ${args[1] ?? "Undefined"})`,
+                isFresh: false,
+              };
+        }
+        const callback =
+          node.arguments.length === 1
+            ? compileCallback(node.arguments[0], scope, method === "map")
+            : undefined;
+        return callback === undefined || iterating === undefined
+          ? undefined
+          : {
+              text: `${iterating}(${receiver.text}, ${callback})`,
+              isFresh: method === "map",
+            };
+      }
+      // A method that doesn't change its receiver, on any lowered value.
       if (!METHODS.has(method) || MUTATORS.has(method)) return undefined;
       const receiver = compileExpression(node.expression.expression, scope);
       const args = compileArguments(node.arguments, scope, false);

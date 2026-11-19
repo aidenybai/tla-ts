@@ -457,4 +457,34 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       ]);
     });
   });
+
+  describe("runs an array's methods with an arrow function natively, as ESCore runs them", () => {
+    const source = `
+      let cells = [false, false, false];
+      let steps = 0;
+      export const flip = (index: 0 | 1 | 2) => {
+        if (steps >= 3) return;
+        cells = cells.map((cell, at) => (at === index ? !cell : cell));
+        steps += 1;
+      };
+      export const isBalanced = () =>
+        Array.from({ length: 3 }, (_, at) => at).some((at) =>
+          cells.slice(0, at).every((cell) => !cell),
+        ) && cells.filter((cell) => cell).length <= steps;
+    `;
+
+    it("gives what ESCore gives in every call, as TLC counts", async () => {
+      const counts = ["deadlock", 12, 25];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a native filter that keeps what fails", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "LAMBDA i : LTruthy(rs[i])",
+        "LAMBDA i : ~LTruthy(rs[i])",
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+  });
 });
