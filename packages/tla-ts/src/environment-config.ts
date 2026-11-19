@@ -1,5 +1,5 @@
 import type { Definition } from "./ast";
-import type { ConfigValue, ModelConfig } from "./config";
+import type { ConfigValue, ConstantAssignment, ModelConfig } from "./config";
 import {
   TlaConfigError,
   TlaEvaluationError,
@@ -26,6 +26,12 @@ import {
 export interface CopySource {
   source: string;
   prefix: number;
+}
+
+interface ConfigTable {
+  name: string;
+  module?: string;
+  rows: ConstantAssignment[];
 }
 
 interface LinkedSpecification {
@@ -165,36 +171,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
           linked.builtins.get(key)?.arity ??
           0);
   };
-  const constants = new Map<string, Value>();
-  const setOperator = (key: string, operator: Builtin) => {
-    linked.builtins.set(key, operator);
-    linked.definitions.delete(key);
-    constants.delete(key);
-  };
-  const setValue = (name: string, configValue: ConfigValue, keys: string[]) => {
-    const value = toConstantValue(configValue);
-    markNormalized(value);
-    keys.forEach((key) => {
-      const arity = getKeyArity(key);
-      if (arity === 0) constants.set(key, value);
-      else
-        setOperator(key, {
-          kind: "Builtin",
-          name,
-          arity,
-          evaluate: () => value,
-          evaluateUnary: undefined,
-          evaluateBinary: undefined,
-          isLazy: true,
-        });
-    });
-  };
-  config.constants
-    .filter((assignment) => assignment.args === undefined)
-    .forEach((assignment) =>
-      setValue(assignment.name, assignment.value, getScopedKeys(assignment)),
-    );
-  const tables = new Map<string, { name: string; module?: string; rows: [Value[], Value][] }>();
+  const tables = new Map<string, ConfigTable>();
   const addRows = (isRoot: boolean) =>
     config.constants.forEach((assignment) => {
       if (assignment.args === undefined || (assignment.module === undefined) !== isRoot) return;
@@ -204,12 +181,12 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
         module: assignment.module,
         rows: [],
       };
-      if (table.rows.length > 0 && table.rows[0][0].length !== assignment.args.length) {
+      if (table.rows.length > 0 && table.rows[0].args?.length !== assignment.args.length) {
         throw new TlaConfigError(
           `The arity of the operator ${assignment.name} is inconsistent in the configuration file.`,
         );
       }
-      table.rows.push([assignment.args.map(toConstantValue), toConstantValue(assignment.value)]);
+      table.rows.push(assignment);
       tables.set(tableKey, table);
     });
   addRows(true);
@@ -235,11 +212,6 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     );
   }
   addRows(false);
-  tables.forEach((table) =>
-    getScopedKeys(table).forEach((key) =>
-      setOperator(key, createOperatorTable(table.name, getKeyArity(key), table.rows)),
-    ),
-  );
   // ModelConfig keeps the last <- of a name for each module.
   const lastSubstitutions = [
     ...new Map(
@@ -249,29 +221,6 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       ]),
     ).values(),
   ];
-  // Defns holds the value of a definition the configuration assigns one, and a <- of that definition takes the value.
-  const rootValues = new Map(
-    config.constants
-      .filter((assignment) => assignment.module === undefined && assignment.args === undefined)
-      .map((assignment) => [assignment.name, assignment]),
-  );
-  lastSubstitutions.forEach((substitution) => {
-    const assignment = rootValues.get(substitution.target);
-    if (assignment) {
-      setValue(substitution.name, assignment.value, getSubstitutedKeys(substitution));
-    }
-  });
-  const substitutions = new Map(
-    lastSubstitutions
-      .filter((substitution) => !rootValues.has(substitution.target))
-      .flatMap((substitution) =>
-        getSubstitutedKeys(substitution).map((key): [string, string] => [
-          key,
-          getRootKey(substitution.target),
-        ]),
-      ),
-  );
-  [...substitutions.keys()].forEach((key) => constants.delete(key));
   // Defns holds the value of a definition the configuration assigns one, so TLC checks no arity against it.
   const getTargetArity = (target: string) => {
     const definition = linked.definitions.get(getRootKey(target));
@@ -348,23 +297,95 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       `In the configuration file, the module name ${unknownModule} is not a module in the specification.`,
     );
   }
-  // SpecProcessor#processConstantDefns then checks the arity of a definition substituted for a constant, module by module.
-  [
-    ...new Set(
-      getModuleOrder(linked.root, new Set()).flatMap((module) =>
-        linked.order.getDeclarationOrder(
-          "constant",
-          module === linked.root ? undefined : module.module.name,
-        ),
+  const constants = new Map<string, Value>();
+  const setOperator = (key: string, operator: Builtin) => {
+    linked.builtins.set(key, operator);
+    linked.definitions.delete(key);
+    constants.delete(key);
+  };
+  const setValue = (name: string, configValue: ConfigValue, keys: string[]) => {
+    const value = toConstantValue(configValue);
+    markNormalized(value);
+    keys.forEach((key) => {
+      const arity = getKeyArity(key);
+      if (arity === 0) constants.set(key, value);
+      else
+        setOperator(key, {
+          kind: "Builtin",
+          name,
+          arity,
+          evaluate: () => value,
+          evaluateUnary: undefined,
+          evaluateBinary: undefined,
+          isLazy: true,
+        });
+    });
+  };
+  const setTable = (table: ConfigTable) => {
+    const rows = table.rows.map((row): [Value[], Value] => [
+      (row.args ?? []).map(toConstantValue),
+      toConstantValue(row.value),
+    ]);
+    getScopedKeys(table).forEach((key) =>
+      setOperator(key, createOperatorTable(table.name, getKeyArity(key), rows)),
+    );
+  };
+  // ModelConfig keeps the last value of a name for each module.
+  const values = new Map(
+    config.constants
+      .filter((assignment) => assignment.args === undefined)
+      .map((assignment) => [`${assignment.module ?? ""}!${assignment.name}`, assignment]),
+  );
+  // SpecProcessor#processConstantDefns then normalizes the value of each constant and checks the arity of a definition substituted for one, module by module.
+  const constantOrder = new Set(
+    getModuleOrder(linked.root, new Set()).flatMap((module) =>
+      linked.order.getDeclarationOrder(
+        "constant",
+        module === linked.root ? undefined : module.module.name,
       ),
     ),
-  ].forEach((name) => {
+  );
+  constantOrder.forEach((name) => {
     const target = overrides.get(name);
-    if (target === undefined) return;
+    if (target === undefined) {
+      const assignment = values.get(`!${name}`);
+      const table = tables.get(`!${name}`);
+      if (assignment) setValue(name, assignment.value, getScopedKeys(assignment));
+      if (table) setTable(table);
+      return;
+    }
     const targetArity = getTargetArity(target);
     const arity = linked.root.constants.find((constant) => constant.name === name)?.arity;
     if (targetArity !== undefined && targetArity !== arity) throw createArityError(name, target);
   });
+  const isOrdered = (item: { name: string; module?: string }) =>
+    item.module === undefined && constantOrder.has(item.name);
+  values.forEach((assignment) => {
+    if (!isOrdered(assignment)) {
+      setValue(assignment.name, assignment.value, getScopedKeys(assignment));
+    }
+  });
+  tables.forEach((table) => {
+    if (!isOrdered(table)) setTable(table);
+  });
+  // Defns holds the value of a definition the configuration assigns one, and a <- of that definition takes the value.
+  lastSubstitutions.forEach((substitution) => {
+    const assignment = values.get(`!${substitution.target}`);
+    if (assignment) {
+      setValue(substitution.name, assignment.value, getSubstitutedKeys(substitution));
+    }
+  });
+  const substitutions = new Map(
+    lastSubstitutions
+      .filter((substitution) => !values.has(`!${substitution.target}`))
+      .flatMap((substitution) =>
+        getSubstitutedKeys(substitution).map((key): [string, string] => [
+          key,
+          getRootKey(substitution.target),
+        ]),
+      ),
+  );
+  [...substitutions.keys()].forEach((key) => constants.delete(key));
   const scopedKeys = new Set(
     [...config.constants, ...config.substitutions]
       .filter((item) => item.module !== undefined)

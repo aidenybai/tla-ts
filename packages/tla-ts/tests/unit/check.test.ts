@@ -1730,6 +1730,57 @@ ASSUME TLCFP(a) = -887695703
     expect(statuses).toEqual(["success", "success", "success"]);
   });
 
+  it("normalizes the value of each constant after the checks of <-, in TLC's order", async () => {
+    const getCompareError = (string: string, other: number) =>
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}Attempted to compare string "${string}" with non-string:\n${other}`,
+      );
+    const cases = [
+      [
+        "CONSTANTS N, B",
+        'CONSTANT N = {1, "a"} B <- Nope',
+        new TlaConfigError(
+          "The configuration file substitutes for B with the undefined identifier Nope.",
+        ),
+      ],
+      [
+        "CONSTANTS N, B",
+        'CONSTANT N = {1, "a"}',
+        new TlaConfigError(
+          "The constant parameter B is not assigned a value by the configuration file.",
+        ),
+      ],
+      [
+        "CONSTANTS N, B\nOp(a) == a",
+        'CONSTANT N = {1, "a"} B <- Op',
+        new TlaConfigError(
+          "The configuration file substitutes for B with Op of different number of arguments.",
+        ),
+      ],
+      ["CONSTANTS N, B\nOp(a) == a", 'CONSTANT B = {1, "a"} N <- Op', getCompareError("a", 1)],
+      ["CONSTANTS N, B", 'CONSTANT N = {1, "a"} B = {2, "b"}', getCompareError("b", 2)],
+    ] as const;
+    for (const [body, config, error] of cases) {
+      await expect(checkModule(body, config)).rejects.toThrow(error);
+    }
+    const statuses = await Promise.all(
+      [
+        ["CONSTANT N\nASSUME N = 2", 'CONSTANT N = {1, "a"}\nCONSTANT N = 2'],
+        ["CONSTANT N\nDef == 3\nASSUME N = 3", 'CONSTANT N = {1, "a"} N <- Def'],
+      ].map(async (item) => (await checkModule(item[0], item[1])).status),
+    );
+    expect(statuses).toEqual(["success", "success"]);
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Zed\nCONSTANT C\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+        config: 'INIT Init\nNEXT Next\nCONSTANT C = {1, "a"} Z = {2, "b"}',
+        loadModule: (name) =>
+          name === "Zed" ? "---- MODULE Zed ----\nCONSTANT Z\n====" : undefined,
+      }),
+    ).rejects.toThrow(getCompareError("b", 2));
+  });
+
   it("reports a table's set that mixes types as the unexpected exception TLC throws", async () => {
     await expect(checkModule("CONSTANT F(_)", 'CONSTANT F(1) = {1, "a"}')).rejects.toThrow(
       new TlaEvaluationError(
