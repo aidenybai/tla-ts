@@ -2829,7 +2829,9 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
           {
             location: section.location,
             check: (errors) => {
-              if (declarations.some((declared) => declared.binding?.isPending)) {
+              if (
+                declarations.some((declared) => !declared.binding || declared.binding.isPending)
+              ) {
                 errors.push({
                   location: formatRange(range),
                   message: `${section.type} may not appear within a recursive definition section.`,

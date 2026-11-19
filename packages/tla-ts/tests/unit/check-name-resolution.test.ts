@@ -2314,6 +2314,39 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "declarations after a RECURSIVE declaration whose name is taken, which a definition doesn't close",
+      "VARIABLE F\nRECURSIVE F(_)\nF(a) == a\nCONSTANT c",
+      [
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message:
+            "Multiply-defined symbol 'F': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message: "Operator F already defined or declared.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 9 of module M",
+          message:
+            "Multiply-defined symbol 'F': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 5, col 1 to line 5, col 10 of module M",
+          message: "A declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 10 of module M",
+          message: "A VARIABLE declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message: "Symbol F declared in RECURSIVE statement but not defined.",
+        },
+      ],
+      [],
+    ],
+    [
       "a LET instance parameter named after a constant, before the instance's substitutions",
       "CONSTANT k\n---- MODULE Inner ----\nCONSTANT c\n====\nI == INSTANCE Inner WITH c <- 1\nA == LET G(k) == INSTANCE Inner WITH d <- 1 IN 1",
       [
