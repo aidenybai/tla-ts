@@ -189,6 +189,7 @@ export class IncSatSolver {
     this.solver.popToBaseLevel();
     if (this.solver.isInconsistent) return L_FALSE;
     this.goal2sat.run(forms);
+    this.satConverter.flushSmc(this.solver, this.goal2sat.atoms);
     return this.checkUninterpreted();
   }
 
@@ -225,6 +226,7 @@ export class IncSatSolver {
     incConverterRefs(subgoal.converters);
     this.converters.converters = [...this.converters.converters, ...subgoal.converters];
     this.goal2sat.runGoal(subgoal, this.dep2asm);
+    this.satConverter.flushSmc(this.solver, this.goal2sat.atoms);
     return this.checkUninterpreted();
   }
 

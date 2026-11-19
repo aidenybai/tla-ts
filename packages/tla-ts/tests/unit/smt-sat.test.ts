@@ -173,6 +173,23 @@ describe("sat2goal", () => {
       ].join("\n"),
     );
   });
+
+  it("keeps the atoms of popped variables until their variables are reused, as flush_smc does", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(push 1)",
+        "(assert (bvsge (bvadd #x8 x) (bvsub #b0011 y)))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (= x (bvadd y (bvashr y #x4))))",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toBe(["sat", "sat", "((x #x8)", " (y #x9))"].join("\n"));
+  });
 });
 
 describe("sat solver", () => {
