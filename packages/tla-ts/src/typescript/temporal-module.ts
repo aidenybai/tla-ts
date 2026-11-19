@@ -3882,6 +3882,12 @@ LOCAL TLocaleField(field, style, date, time) ==
        [] field = "day" -> TNumeral(date[3], style)
        [] field = "weekday" -> TNamed(TWeekdayNames[TDayOfWeek(date)], style)
        [] field = "era" -> CASE style = "long" -> "Anno Domini" [] style = "short" -> "AD" [] OTHER -> "A"
+       [] field = "dayPeriod" /\ style \in {"flexible long", "flexible narrow"} ->
+            CASE time[1] < 12 -> "in the morning"
+              [] time[1] = 12 -> IF style = "flexible narrow" THEN "n" ELSE "noon"
+              [] time[1] < 18 -> "in the afternoon"
+              [] time[1] < 21 -> "in the evening"
+              [] OTHER -> "at night"
        [] field = "dayPeriod" -> IF time[1] < 12 THEN "AM" ELSE "PM"
        [] field = "minute" -> TNumeral(time[2], style)
        [] field = "second" -> TNumeral(time[3], style)
@@ -3964,6 +3970,38 @@ LOCAL TLocaleString(heap, kind, slots, locales, options) ==
        [] kind # "PlainTime" /\ (date[1] < 1583 \/ date[1] > 9999) ->
             Assert(FALSE, "tla-ts can't format a date before 1583 or after 9999 as Node does")
        [] OTHER -> TOk(TLocaleText(format, 1, date, time))
+
+\* An Intl.DateTimeFormat's format or formatToParts of a Date or a number, where the object holds the
+\* pattern of its literal English options: format's text of the time in UTC, which tla-ts takes local
+\* time to be, or a RangeError for an invalid time. It stops where the object's method is another
+\* function, at another value, which it would convert by running code or by reading the clock, at an
+\* object of another locale, at a date before 1583 or after 9999, and at the parts of a valid time.
+DateTimeFormatOf(heap, receiver, value, method) ==
+  LET pattern == Lookup(heap, receiver).pattern
+      time == CASE IsDate(heap, value) -> Lookup(heap, value).time
+                [] OTHER -> TimeFromNumber(value)
+      year == DateField(time, "FullYear")
+  IN CASE ~IntlReceives(heap, "DateTimeFormat", receiver)
+            \/ IF method = "format"
+               THEN Get(heap, receiver, "format") # Lookup(heap, receiver).bound
+               ELSE ~HoldsBuiltIn(heap, receiver, "formatToParts",
+                                  "Intl.DateTimeFormat.prototype.formatToParts") ->
+            Assert(FALSE, "tla-ts can't call this " \o method)
+       [] value = Undefined -> Assert(FALSE, "tla-ts can't read the clock")
+       [] ~(TypeOf(value) = "number" \/ /\ IsDate(heap, value)
+                                        /\ HoldsBuiltIn(heap, value, "valueOf", "Date.prototype.valueOf")
+                                        /\ HoldsBuiltIn(heap, value, WellKnownSymbol("toPrimitive"),
+                                                        "Date.prototype.@@toPrimitive")) ->
+            Assert(FALSE, "tla-ts can't format this value as a date")
+       [] time = NaN -> TFail("RangeError")
+       [] method = "formatToParts" -> Assert(FALSE, "tla-ts can't make the parts of a formatted date")
+       [] pattern = Undefined -> Assert(FALSE, "tla-ts can't format a date in a locale other than English")
+       [] year < 1583 \/ year > 9999 ->
+            Assert(FALSE, "tla-ts can't format a date before 1583 or after 9999 as Node does")
+       [] OTHER ->
+            TOk(TLocaleText(pattern, 1, <<year, DateField(time, "Month") + 1, DateField(time, "Date")>>,
+                            <<DateField(time, "Hours"), DateField(time, "Minutes"),
+                              DateField(time, "Seconds"), DateField(time, "Milliseconds")>>))
 
 \* A call of a Temporal prototype's method on a receiver.
 TemporalMethod(heap, kind, method, receiver, arguments, prototype) ==

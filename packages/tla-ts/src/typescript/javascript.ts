@@ -5847,10 +5847,12 @@ ErrorToString(heap, ref) ==
        [] OTHER -> nameText \\o ": " \\o messageText
 
 \\* An object that an Intl constructor makes, of a kind, which holds the function that its compare
-\\* or format getter gives, bound to it, or Undefined, and the pairs of the options that its
-\\* resolvedOptions gives, or Undefined where they read locale data.
-IntlObject(prototype, kind, bound, resolved) ==
-  [EmptyObject EXCEPT !.prototype = prototype] @@ [intl |-> kind, bound |-> bound, resolved |-> resolved]
+\\* or format getter gives, bound to it, or Undefined, the pairs of the options that its
+\\* resolvedOptions gives, or Undefined where they read locale data, and a DateTimeFormat's pattern,
+\\* or Undefined where tla-ts doesn't record it.
+IntlObject(prototype, kind, bound, resolved, pattern) ==
+  [EmptyObject EXCEPT !.prototype = prototype]
+    @@ [intl |-> kind, bound |-> bound, resolved |-> resolved, pattern |-> pattern]
 
 \\* The object that resolvedOptions makes of the options that an Intl object holds.
 IntlResolvedObject(heap, receiver) == PairsObject(heap.objects[receiver[Ref]].resolved)

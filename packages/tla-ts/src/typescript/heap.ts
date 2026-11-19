@@ -118,7 +118,12 @@ import { isDescriptorsRead, isProxyOperation } from "./protocols";
 import { getReached } from "./aliasing";
 import { isObjectOperand } from "./conversions";
 import { createStateScope, type Scope } from "./scope";
-import { getIntlOutcome, getLocalesOutcome, getResolvedOptions } from "./locales";
+import {
+  getDateTimePattern,
+  getIntlOutcome,
+  getLocalesOutcome,
+  getResolvedOptions,
+} from "./locales";
 import { BUILT_INS } from "./built-ins";
 import {
   apply,
@@ -2288,6 +2293,12 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
                       ]),
                     ),
                   ),
+              intl.pattern?.fields === undefined
+                ? getUndefined(context)
+                : record("Record", [
+                    { name: "fields", value: tuple(intl.pattern.fields.map(string)) },
+                    { name: "styles", value: tuple((intl.pattern.styles ?? []).map(string)) },
+                  ]),
             ],
             context,
           ),
@@ -2920,6 +2931,10 @@ const getIntlConstruction = (node: ts.Node, context: Context) => {
         name,
         outcome,
         resolved: localesPath === undefined ? getResolvedOptions(name, tags, read) : undefined,
+        pattern:
+          localesPath === undefined && name === "DateTimeFormat"
+            ? getDateTimePattern(tags, read)
+            : undefined,
         options: isOptionsLiteral ? options : undefined,
         locales: localesPath === undefined ? undefined : { path: localesPath, method, isCall },
       };
@@ -2930,7 +2945,7 @@ const getIntlConstruction = (node: ts.Node, context: Context) => {
 export const getNewIntl = (node: ts.Node, context: Context) => {
   const construction = getIntlConstruction(node, context);
   return construction?.outcome === "" && construction.locales === undefined
-    ? { name: construction.name, resolved: construction.resolved }
+    ? { name: construction.name, resolved: construction.resolved, pattern: construction.pattern }
     : undefined;
 };
 
@@ -3671,6 +3686,57 @@ export const getResolvedOptionsCall = (node: ts.Node, context: Context) => {
     ) &&
     BUILT_INS[`Intl.${symbol.name}.prototype.resolvedOptions`] !== undefined
     ? { kind: symbol.name, receiver }
+    : undefined;
+};
+
+// A DateTimeFormat's format or formatToParts of a value that runs no code to read, as
+// dtf.format(date) is, where the receiver's type is the object that new Intl.DateTimeFormat makes.
+export const getDateTimeFormatCall = (node: ts.Node, context: Context) => {
+  if (
+    context.heap === undefined ||
+    !isMethodCall(node) ||
+    !["format", "formatToParts"].includes(node.expression.name.text) ||
+    node.arguments.length > 1
+  ) {
+    return undefined;
+  }
+  const receiver = skipCasts(node.expression.expression);
+  const argument = node.arguments.at(0);
+  const symbol = context.checker.getTypeAtLocation(receiver).getSymbol();
+  const isRead = (value: ts.Expression): boolean => {
+    const inner = skipCasts(value);
+    return (
+      isInertValue(inner) ||
+      (ts.isElementAccessExpression(inner) &&
+        ts.isIdentifier(skipCasts(inner.expression)) &&
+        isInertValue(skipCasts(inner.argumentExpression))) ||
+      (ts.isPropertyAccessExpression(inner) &&
+        getBuiltIn(inner.expression, context) === "Number") ||
+      (ts.isPrefixUnaryExpression(inner) &&
+        [ts.SyntaxKind.MinusToken, ts.SyntaxKind.PlusToken].includes(inner.operator) &&
+        isRead(inner.operand)) ||
+      (ts.isBinaryExpression(inner) &&
+        [
+          ts.SyntaxKind.PlusToken,
+          ts.SyntaxKind.MinusToken,
+          ts.SyntaxKind.AsteriskToken,
+          ts.SyntaxKind.SlashToken,
+        ].includes(inner.operatorToken.kind) &&
+        isNumberLike(inner, context) &&
+        isRead(inner.left) &&
+        isRead(inner.right))
+    );
+  };
+  return ts.isIdentifier(receiver) &&
+    symbol?.name === "DateTimeFormat" &&
+    (symbol.declarations ?? []).length > 0 &&
+    (symbol.declarations ?? []).every(
+      (declaration) =>
+        declaration.getSourceFile().isDeclarationFile &&
+        ts.findAncestor(declaration, ts.isModuleDeclaration)?.name.getText() === "Intl",
+    ) &&
+    (argument === undefined || (!ts.isSpreadElement(argument) && isRead(argument)))
+    ? { receiver, argument, method: node.expression.name.text }
     : undefined;
 };
 

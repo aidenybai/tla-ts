@@ -1,3 +1,5 @@
+import { DATE_FORMAT_KEYS, DATE_FORMATS } from "./date-formats";
+
 // IsStructurallyValidLanguageTag of ECMA-402: whether a tag is a Unicode BCP 47 locale identifier
 // of UTS 35, without its backwards compatibility syntax, and without a duplicate variant or
 // singleton. It reads no locale data. It gives undefined for a tag whose Unicode extension repeats a
@@ -370,9 +372,46 @@ export const getIntlOutcome = (
     ...tags.map(getTagOutcome),
     ...constructor.checks.map((check) => check(options)),
   ]);
-  return outcome === "" && constructor.unchecked.some((key) => options.get(key) !== undefined)
+  if (outcome !== "" || !constructor.unchecked.some((key) => options.get(key) !== undefined)) {
+    return outcome;
+  }
+  // A DateTimeFormat of English locales throws or makes its object as Node does for the options
+  // whose pattern tla-ts records.
+  const pattern = name === "DateTimeFormat" ? getDateTimePattern(locales, options) : undefined;
+  return pattern === undefined
     ? undefined
-    : outcome;
+    : pattern.error === undefined
+      ? ""
+      : pattern.error === "RangeError" || pattern.error === "TypeError"
+        ? pattern.error
+        : undefined;
+};
+
+// The pattern that a DateTimeFormat of literal English locales and options formats a time in UTC
+// with, or the error that its constructor throws, which DATE_FORMATS records, or undefined for
+// another locale, or for options that it doesn't record.
+export const getDateTimePattern = (
+  locales: LiteralValue | readonly LiteralValue[],
+  options: Options,
+) => {
+  const given = [...options].filter((entry) => entry[1] !== undefined);
+  return getResolvedLocale("DateTimeFormat", locales) === undefined ||
+    given.some(
+      (entry) =>
+        entry[0] !== "localeMatcher" &&
+        !(entry[0] === "timeZone" && entry[1] === "UTC") &&
+        !DATE_FORMAT_KEYS.includes(entry[0]),
+    )
+    ? undefined
+    : DATE_FORMATS[
+        [
+          "DateTimeFormat",
+          "gregory",
+          ...DATE_FORMAT_KEYS.filter((key) => options.get(key) !== undefined).map(
+            (key) => `${key}=${String(options.get(key))}`,
+          ),
+        ].join("|")
+      ];
 };
 
 // What Intl.getCanonicalLocales, or a constructor's supportedLocalesOf, throws for literal locales

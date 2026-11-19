@@ -98,6 +98,7 @@ import { classifySharedHelpers } from "./shared-calls";
 import { TlaTypeScriptError } from "../errors";
 import { getUnlistedParameter, translateStep } from "./steps";
 import { TIME_ZONES } from "./time-zones";
+import { findMadeKeys } from "./made-keys";
 import { DATE_FORMATS } from "./date-formats";
 import {
   apply,
@@ -1041,6 +1042,7 @@ export const compile = (
         node.expression.getText() !== "Symbol") ||
       (ts.isElementAccessExpression(node) &&
         ["Symbol.dispose", "Symbol.asyncDispose"].includes(node.argumentExpression.getText()));
+    context.madeKeys = findMadeKeys(program.files, program.checker);
     context.isStackMethodHeld = program.files.some(
       (file) =>
         findNodes(
@@ -1433,17 +1435,21 @@ export const compile = (
         [],
         tuple(
           /\btoLocaleString\b/.test(sourceFile.text) && /\bTemporal\b/.test(sourceFile.text)
-            ? Object.entries(DATE_FORMATS).map(([key, format]) =>
-                record("Record", [
-                  { name: "key", value: string(key) },
-                  ...(format.error === undefined
-                    ? [
-                        { name: "fields", value: tuple((format.fields ?? []).map(string)) },
-                        { name: "styles", value: tuple((format.styles ?? []).map(string)) },
-                        { name: "isZoned", value: boolean(format.isZoned === true) },
-                      ]
-                    : [{ name: "error", value: string(format.error) }]),
-                ]),
+            ? Object.entries(DATE_FORMATS).flatMap(([key, format]) =>
+                key.startsWith("DateTimeFormat|")
+                  ? []
+                  : [
+                      record("Record", [
+                        { name: "key", value: string(key) },
+                        ...(format.error === undefined
+                          ? [
+                              { name: "fields", value: tuple((format.fields ?? []).map(string)) },
+                              { name: "styles", value: tuple((format.styles ?? []).map(string)) },
+                              { name: "isZoned", value: boolean(format.isZoned === true) },
+                            ]
+                          : [{ name: "error", value: string(format.error) }]),
+                      ]),
+                    ],
               )
             : [],
         ),

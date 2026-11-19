@@ -41280,15 +41280,14 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("0,2,1"))).failure?.message).toContain("seen 0,2,3");
     });
 
-    it("stops at an element of one", async () => {
+    it("reads an element of one", async () => {
       const result = await checkModel(`
         const seen: unknown[] = [];
         const getFirst = (value: string | unknown[]) => value[0];
-        seen.push(getFirst([1]));
+        seen.push(getFirst([1]), getFirst("ab"));
+        if (seen.join() !== "1,a") throw new Error("seen " + seen.join());
       `);
-      expect(result.failure?.message).toContain(
-        "tla-ts can't read an element of a string or an array here",
-      );
+      expect(result.failure).toBeUndefined();
     });
   });
 
@@ -56747,6 +56746,141 @@ describe("BigInts", () => {
       expect((await checkModel(getSource("a,a,true"))).failure?.message).toContain(
         "result a,b,true",
       );
+    });
+  });
+
+  describe("runs a call through a cast of a key that nothing makes as the built-in it reads", () => {
+    const getSource = (expected: string) => `
+      const store: { [key: string]: unknown } = {};
+      function expectThrow(run: () => unknown): string {
+        try {
+          run();
+        } catch (error) {
+          return error instanceof TypeError ? "type" : "other";
+        }
+        return "none";
+      }
+      function first() { return 1; }
+      (store.__defineGetter__ as (...args: unknown[]) => unknown)("key", first);
+      const seen = [
+        expectThrow(function () { (store.__defineGetter__ as (...args: unknown[]) => unknown)("key", 1); }),
+        expectThrow(function () { (store.__defineSetter__ as (...args: unknown[]) => unknown)("key", 2); }),
+        expectThrow(function () { (store.__defineGetter__ as (...args: unknown[]) => unknown)("other", first); }),
+        expectThrow(function () { (store.__defineSetter__ as (...args: unknown[]) => unknown)("key", first); }),
+        expectThrow(function () { (store.__defineGetter__ as (...args: unknown[]) => unknown)("key", "x"); }),
+        expectThrow(function () { (store.__defineSetter__ as (...args: unknown[]) => unknown)("key", null); }),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("type,type,none,none,type,type"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects a definition that doesn't throw", async () => {
+      expect(
+        (await checkModel(getSource("none,type,none,none,type,type"))).failure?.message,
+      ).toContain("seen type,type,none,none,type,type");
+    });
+  });
+
+  describe("runs a function that a key a script makes holds through a cast", () => {
+    const getSource = (expected: string) => `
+      const target: { [key: string]: unknown } = {};
+      function twice(value: number) { return value * 2; }
+      Object.defineProperty(target, "doubled", { value: twice });
+      const named = "tri" + "pled";
+      target[named] = function (value: number) { return value * 3; };
+      const seen = [
+        (target.doubled as (value: number) => number)(4),
+        (target.tripled as (value: number) => number)(4),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("8,12"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("8,8"))).failure?.message).toContain("seen 8,12");
+    });
+  });
+
+  describe("reads an element of a value that may be a string or an array by a number", () => {
+    const getSource = (expected: string) => `
+      function arrayAt(arr: string | unknown[], relIndex: number) {
+        var realIndex = relIndex < 0 ? arr.length + relIndex : relIndex;
+        if (realIndex < 0 || realIndex >= arr.length) return undefined;
+        return arr[realIndex];
+      }
+      const seen = [arrayAt("abc", -1), arrayAt(["x", "y"], 0), arrayAt("abc", 5), arrayAt(["x"], 1)].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("c,x,,"))).failure).toBeUndefined();
+    });
+
+    it("rejects another element", async () => {
+      await expect(checkModel(getSource("c,y,,"))).rejects.toThrow("seen c,x,,");
+    });
+  });
+
+  describe("formats a Date or a number with an English Intl.DateTimeFormat", () => {
+    const getSource = (expected: string) => `
+      const dtf = new Intl.DateTimeFormat("en");
+      const fractional = new Intl.DateTimeFormat("en", {
+        minute: "numeric",
+        second: "numeric",
+        fractionalSecondDigits: 2,
+      });
+      const timed = new Intl.DateTimeFormat(undefined, {
+        hour: "numeric",
+        minute: "numeric",
+        second: "numeric",
+      });
+      const period = new Intl.DateTimeFormat("en", { dayPeriod: "narrow" });
+      const inputs = [
+        new Date(2019, 7, 10, 1, 2, 3, 234),
+        new Date(2017, 11, 12, 12, 30),
+        new Date(2017, 11, 12, 22),
+      ];
+      let thrown = "none";
+      try {
+        timed.format(NaN);
+      } catch (error) {
+        thrown = error instanceof RangeError ? "range" : "other";
+      }
+      const seen = [
+        dtf.format(0),
+        fractional.format(inputs[0]),
+        timed.format(-0.9),
+        timed.format(13 * 3600000 + 5),
+        period.format(inputs[1]),
+        period.format(inputs[2]),
+        thrown,
+      ].join("|");
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("1/1/1970|02:03.23|12:00:00 AM|1:00:00 PM|n|at night|range")))
+          .failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects noon's long day period where the narrow one is n", async () => {
+      expect(
+        (
+          await checkModel(
+            getSource("1/1/1970|02:03.23|12:00:00 AM|1:00:00 PM|noon|at night|range"),
+          )
+        ).failure?.message,
+      ).toContain("seen 1/1/1970|02:03.23|12:00:00 AM|1:00:00 PM|n|at night|range");
     });
   });
 });
