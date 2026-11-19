@@ -235,6 +235,9 @@ export const HOOKS = new Map([
   ["RunBody", "s, ctx, body"],
   ["ResumeCode", "args, r"],
   ["HostTimeZone", "key"],
+  ["HostFileLocation", "file"],
+  ["HostEntryFrames", "file"],
+  ["HostDefaultStackTraceLimit", "file"],
   ["ModuleNode", "id"],
   ["ModuleDeclarations", "s, ctx, node"],
 ]);

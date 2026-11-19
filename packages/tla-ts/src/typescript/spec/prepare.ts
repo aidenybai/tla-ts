@@ -150,7 +150,8 @@ const getOverrides = (library: Library) => [
       .replace("HeapOf(IntrinsicObjects(0, 1))", "InitialObjects")
       .replace(
         "jobs |-> <<>>,",
-        "jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty, written |-> FALSE, writeMark |-> [objects |-> 0, environments |-> 0], hostImport |-> Empty, frame |-> <<>>,",
+        // The task that runs, below whose frames a stack trace ends (STACK_DEFINITIONS).
+        'jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty, written |-> FALSE, writeMark |-> [objects |-> 0, environments |-> 0], hostImport |-> Empty, frame |-> <<>>, task |-> [kind |-> "main"],',
       ),
   },
   {

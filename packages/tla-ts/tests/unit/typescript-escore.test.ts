@@ -29,7 +29,7 @@ const worker = new Worker(
   parentPort.on("message", async (spec) => {
     const loaded = await loading;
     try {
-      const compiled = loaded.compileToEscore(spec.source, "spec.ts", loaded.runtime);
+      const compiled = loaded.compileToEscore(spec.source, spec.fileName, loaded.runtime, spec.isModule);
       const code = compiled.loadModule("ProgramCode").replace("\\n====", "\\n" + spec.appended + "\\n====");
       const result = await loaded.check({
         ...compiled,
@@ -69,7 +69,22 @@ const checkScript = (source: string, isStrict = true, appended = "") =>
     worker.postMessage({
       id: pending.length,
       source: `${isStrict ? '"use strict";' : ""}\n${source}`,
+      fileName: "spec.ts",
+      isModule: false,
       appended,
+    });
+    pending.push(resolve);
+  });
+
+// Checks an ES module at /tla-ts/stack.ts, the entry Node runs, as node /tla-ts/stack.ts would.
+const checkModule = (source: string) =>
+  new Promise<ScriptResult>((resolve) => {
+    worker.postMessage({
+      id: pending.length,
+      source,
+      fileName: "/tla-ts/stack.ts",
+      isModule: true,
+      appended: "",
     });
     pending.push(resolve);
   });
@@ -286,7 +301,10 @@ describe("compiles scripts by specializing ESCore", () => {
     const getSource = (expected: string) => `
       class Shape {
         sides = 0;
-        constructor(public name: string) {}
+        name: string;
+        constructor(name: string) {
+          this.name = name;
+        }
         get label() { return this.name + ":" + this.sides; }
         static make(name: string) { return new this(name); }
       }
@@ -889,10 +907,112 @@ describe("compiles scripts by specializing ESCore", () => {
       ).toContain(THREW);
     });
 
-    it("stops where a program reads the stack that Node writes", async () => {
+    it("stops where a script reads a frame, whose location a host gives it", async () => {
       expect(
         (await checkScript('if (new Error("m").stack === undefined) throw 1;')).message,
-      ).toContain("tla-ts can't read an error's stack as Node writes it");
+      ).toContain("tla-ts can't tell the location Node gives this file");
+    });
+  });
+
+  // Each program's stack text, as Node 26 writes it for node /tla-ts/stack.ts.
+  describe("writes an error's stack as Node 26 does", () => {
+    const cases = [
+      {
+        name: "the top level of an entry module and the frames Node runs it from",
+        program: 'const result = new Error("m").stack;',
+        expected:
+          "Error: m\n    at file:///tla-ts/stack.ts:1:16\n    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)\n    at async node:internal/modules/esm/loader:650:26\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:105:5)",
+      },
+      {
+        name: "a named function's frame and an anonymous function's location",
+        program:
+          'function named() { return [1].map(() => new Error(""))[0]; }\nconst result = named().stack;',
+        expected:
+          "Error\n    at file:///tla-ts/stack.ts:1:41\n    at Array.map (<anonymous>)\n    at named (file:///tla-ts/stack.ts:1:31)\n    at file:///tla-ts/stack.ts:2:16\n    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)\n    at async node:internal/modules/esm/loader:650:26\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:105:5)",
+      },
+      {
+        name: "a method's frame by its receiver's type and the key it's called by",
+        program:
+          'const key = "~effect/Effect/stackProbe";\nconst probe = { [key]: function stackProbe() { return new Error(); } };\nError.stackTraceLimit = 1;\nconst result = probe[key]().stack;',
+        expected:
+          "Error\n    at Object.stackProbe [as ~effect/Effect/stackProbe] (file:///tla-ts/stack.ts:2:55)",
+      },
+      {
+        name: "a class's methods, a constructor called by new, and a default one",
+        program:
+          "class Base { error: Error; constructor() { this.error = new Error(); } static make() { return new Derived(); } }\nclass Derived extends Base {}\nconst result = Base.make().error.stack;",
+        expected:
+          "Error\n    at new Base (file:///tla-ts/stack.ts:1:57)\n    at new Derived (file:///tla-ts/stack.ts:2:1)\n    at Base.make (file:///tla-ts/stack.ts:1:95)\n    at file:///tla-ts/stack.ts:3:21\n    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)\n    at async node:internal/modules/esm/loader:650:26\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:105:5)",
+      },
+      {
+        name: "the frames a built-in shows and those it hides",
+        program:
+          "function cb(this: unknown) { return new Error(); }\nconst result = [cb].map((f) => f.call(new Map()))[0].stack;",
+        expected:
+          "Error\n    at Map.cb (file:///tla-ts/stack.ts:1:37)\n    at file:///tla-ts/stack.ts:2:34\n    at Array.map (<anonymous>)\n    at file:///tla-ts/stack.ts:2:21\n    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)\n    at async node:internal/modules/esm/loader:650:26\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:105:5)",
+      },
+      {
+        name: "a generator's body above its next",
+        program:
+          'function* steps() { yield new Error("g"); }\nError.stackTraceLimit = 1;\nconst named = steps().next().value.stack;\nError.stackTraceLimit = 10;\nconst result = named + "|" + (function* () { yield new Error(); })().next().value.stack;',
+        expected:
+          "Error: g\n    at steps (file:///tla-ts/stack.ts:1:27)|Error\n    at file:///tla-ts/stack.ts:5:52\n    at Generator.next (<anonymous>)\n    at file:///tla-ts/stack.ts:5:70\n    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)\n    at async node:internal/modules/esm/loader:650:26\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:105:5)",
+      },
+      {
+        name: "the frame of a promise job's function",
+        program:
+          'let result = "";\nPromise.resolve().then(function job() { result = new Error().stack ?? ""; });\nawait null;',
+        expected: "Error\n    at job (file:///tla-ts/stack.ts:2:50)",
+      },
+      {
+        name: "Error.stackTraceLimit and the header of an error that a program renames",
+        program:
+          'Error.stackTraceLimit = 0;\nconst zero = new Error("z").stack;\n(Error as { stackTraceLimit: unknown }).stackTraceLimit = "3";\nconst none = new Error("z").stack;\nError.stackTraceLimit = 1.9;\nconst late = new Error("a");\nlate.message = "b";\nlate.name = "N";\nconst result = [zero, none, late.stack].join("|");',
+        expected: "Error: z||N: b\n    at file:///tla-ts/stack.ts:6:14",
+      },
+    ];
+    const getSource = (program: string, expected: string) =>
+      `${program}\nif (result !== ${JSON.stringify(expected)}) throw new Error(result);`;
+
+    for (const entry of cases) {
+      it(`agrees with Node on ${entry.name}`, async () => {
+        expect(
+          (await checkModule(getSource(entry.program, entry.expected))).message,
+        ).toBeUndefined();
+      });
+
+      it(`rejects another result for ${entry.name}`, async () => {
+        const wrong = entry.expected.replace(
+          /:(\d+)\b(?!.*:\d+:\d+)/s,
+          (_, column) => `:${Number(column) + 1}`,
+        );
+        expect((await checkModule(getSource(entry.program, wrong))).message).toContain(THREW);
+      });
+    }
+
+    it("stops at what tla-ts can't tell of a frame", async () => {
+      const stops = [
+        [
+          "const o = { get g() { return new Error(); } };\no.g.stack;",
+          "the position V8 gives this frame",
+        ],
+        [
+          "function* steps() { yield new Error(); }\nsteps().next().value.stack;",
+          "the constructor name V8 gives this object",
+        ],
+        [
+          "async function f() { await null; return new Error(); }\n(await f()).stack;",
+          "tla-ts can't",
+        ],
+        ["const f = [() => new Error()][0];\nf().stack;", "the name V8 infers for this function"],
+        [
+          "Error.prepareStackTrace = () => 1;\nnew Error().stack;",
+          "a program's Error.prepareStackTrace",
+        ],
+      ];
+      for (const [source, stop] of stops) {
+        expect((await checkModule(source)).message).toContain(stop);
+      }
     });
   });
 
@@ -1075,12 +1195,13 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  // Node runs a .ts file with its types stripped to whitespace.
   describe("gives a function's source text, of a script a TLA+ string can hold or not", () => {
     const getSource = (text: string, expected: string) => `
       const f = (a: number) => a + 1;
       const g = () => "${text}";
       const result = [String(f), String(g)].join("|");
-      if (result !== '(a) => a + 1|() => "${text}"' + "${expected}") throw new Error(result);
+      if (result !== '(a        ) => a + 1|() => "${text}"' + "${expected}") throw new Error(result);
     `;
 
     it("agrees with Node", async () => {
@@ -1091,6 +1212,57 @@ describe("compiles scripts by specializing ESCore", () => {
     it("rejects another result", async () => {
       expect((await checkScript(getSource("e", "!"))).message).toContain(THREW);
       expect((await checkScript(getSource("\u00e9", "!"))).message).toContain(THREW);
+    });
+  });
+
+  // Node runs a .ts file with its types stripped to whitespace, as its stripTypeScriptTypes gives,
+  // and rejects the syntax that only a transform could remove.
+  describe("gives each function the source text that Node strips its types from", () => {
+    const program = [
+      "const arrow = <T,>(value: T, rest?: number): T => value;",
+      "class Box<T> implements Iterable<T> {",
+      "  private readonly items: T[] = [];",
+      "  declare tag: string;",
+      "  public add(item: T): this { this.items.push(item!); return this; }",
+      "  get size(): number { return this.items.length; }",
+      "  set size(value: number) {}",
+      "  *[Symbol.iterator](): Iterator<T> { yield* this.items; }",
+      "}",
+      "const object = { get first(): number { return 1; }, method<T>(this: unknown, value: T) { return value as T; } };",
+      "function generic<T extends object = {}>(value: T): asserts value is T {}",
+      'const getter = Object.getOwnPropertyDescriptor(Box.prototype, "size")!.get!;',
+      'const result = [arrow, Box, Box.prototype.add, getter, Box.prototype[Symbol.iterator], Object.getOwnPropertyDescriptor(object, "first")!.get!, object.method, generic].map(String);',
+    ].join("\n");
+    const expected = [
+      "(value   , rest         )    => value",
+      "class Box                           {\n                   items      = [];\n                      \n         add(item   )       { this.items.push(item ); return this; }\n  get size()         { return this.items.length; }\n  set size(value        ) {}\n  *[Symbol.iterator]()              { yield* this.items; }\n}",
+      "add(item   )       { this.items.push(item ); return this; }",
+      "get size()         { return this.items.length; }",
+      "*[Symbol.iterator]()              { yield* this.items; }",
+      "get first()         { return 1; }",
+      "method   (               value   ) { return value     ; }",
+      "function generic                       (value   )                     {}",
+    ];
+    const getSource = (texts: string[]) =>
+      `${program}\nif (JSON.stringify(result) !== ${JSON.stringify(JSON.stringify(texts))}) throw new Error(JSON.stringify(result));`;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const wrong = expected.map((text) => text.replaceAll(/ +/g, " "));
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    });
+
+    it("rejects an enum and a namespace as Node does", async () => {
+      expect((await checkScript("enum Color { Red }")).message).toContain(
+        "TypeScript enum is not supported in strip-only mode",
+      );
+      expect((await checkScript("namespace N { export const x = 1; }")).message).toContain(
+        "TypeScript namespace declaration is not supported in strip-only mode",
+      );
+      expect((await checkScript("namespace N { export type T = 1; }")).message).toBeUndefined();
     });
   });
 

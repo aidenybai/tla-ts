@@ -61,7 +61,7 @@ const DEFINITIONS = [
   // timers of no delay.
   `RunTimers(s) ==
   IF s.timers = <<>> THEN Ok(s, Undefined) ELSE
-  LET r == Call([s EXCEPT !.timers = Tail(@)], Head(s.timers), Undefined, <<>>) IN IF IsAbrupt(r) THEN r ELSE
+  LET r == Call([s EXCEPT !.timers = Tail(@), !.task = [kind |-> "timer"]], Head(s.timers), Undefined, <<>>) IN IF IsAbrupt(r) THEN r ELSE
   LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE
   LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTimers(u.s)`,
   // An error's own stack accessor, as V8 gives each error one, of the two functions that the realm
@@ -554,8 +554,338 @@ export const getSourceString = (text: string) => {
   return { text: `"${spelled}"`, patches };
 };
 
+// V8's stack traces as Node 26 writes them: each call's frame records the position of the call in
+// the frame below, an error constructor captures the frames of the state's calls, and the error's
+// stack accessor writes their text when a program first reads it.
+const STACK_DEFINITIONS = [
+  // A call that a program's code makes, from the position <<file, line, column>> that V8 gives it,
+  // which the call's frame keeps.
+  `CallArgumentsAt(site, f, this, r) ==
+  IF IsAbrupt(r) THEN r
+  ELSE IF ~IsCallable(r.s, f) THEN ThrowTypeError(r.s)
+  ELSE CallObjectAt(r.s, f, this, Val(r), site)`,
+  `NewArgumentsAt(site, constructor, r) ==
+  IF IsAbrupt(r) THEN r
+  ELSE IF ~IsConstructor(r.s, constructor) THEN ThrowTypeError(r.s)
+  ELSE ConstructObjectAt(r.s, constructor, Val(r), constructor, site)`,
+  // SuperCallThen, from the position of the super call.
+  `SuperCallAt(site, thisEnv, func, newTarget, args) ==
+  IF IsAbrupt(args) THEN args
+  ELSE IF ~IsConstructor(args.s, func) THEN ThrowTypeError(args.s)
+  ELSE LET result == ConstructObjectAt(args.s, func, Val(args), newTarget, site) IN
+     IF IsAbrupt(result) THEN result ELSE
+     LET b == BindThisValue(result.s, thisEnv, Val(result)) IN
+     IF IsAbrupt(b) THEN b ELSE
+     LET i == InitializeInstanceElements(b.s, Val(result), E(b.s, thisEnv).fn) IN
+     IF IsAbrupt(i) THEN i ELSE Ok(i.s, Val(result))`,
+  // CallObject and ConstructObject of a function that a call of a program's code reaches, whose
+  // frame keeps the call's position; a proxy's or a wrapped function's, of which V8 has no frame,
+  // drops it.
+  `CallObjectAt(s, f, this, args, site) ==
+  LET o == O(s, f) IN
+  CASE o.class = "builtin" -> InCallerRealm(s, CallBuiltin(EnterRealm(PushFrame(s, f, this, args, FALSE, site), o.slots.realm), f, o.slots.id, this, args, Undefined))
+    [] o.class = "bound" -> CallObjectAt(s, o.slots.target, o.slots.this, o.slots.args \\o args, site)
+    [] o.class = "function" -> InCallerRealm(s, OrdinaryCall(EnterRealm(PushFrame(s, f, this, args, FALSE, site), o.slots.realm), f, this, args))
+    [] OTHER -> CallObject(s, f, this, args)`,
+  `ConstructObjectAt(s, f, args, newTarget, site) ==
+  LET o == O(s, f) IN
+  CASE o.class = "builtin" -> InCallerRealm(s, CallBuiltin(EnterRealm(PushFrame(s, f, newTarget, args, TRUE, site), o.slots.realm), f, o.slots.id, Undefined, args, newTarget))
+    [] o.class = "bound" ->
+         ConstructObjectAt(s, o.slots.target, o.slots.args \\o args, IF SameValue(f, newTarget) THEN o.slots.target ELSE newTarget, site)
+    [] o.class = "function" -> InCallerRealm(s, OrdinaryConstruct(PushFrame(s, f, newTarget, args, TRUE, site), f, args, newTarget))
+    [] OTHER -> ConstructObject(s, f, args, newTarget)`,
+  // The frame of a call of f, a built-in or ECMAScript function, with its this value, or new.target
+  // where new made it, and the position in the frame below of the call, or <<>> where the call is
+  // ESCore's own, as V8 records each frame of a stack.
+  `PushFrame(s, f, this, args, isNew, site) ==
+  [s EXCEPT !.callers = [f |-> f, args |-> args, this |-> this, isNew |-> isNew, site |-> site, next |-> s.callers]]`,
+  // The value of a data property of an object or the objects it inherits from, Undefined for an
+  // accessor or past a proxy, and Absent where none has it (JSReceiver::GetDataProperty).
+  `DataOnChain(s, o, k) ==
+  IF o = Null THEN Absent
+  ELSE IF O(s, o).class = "proxy" THEN Undefined
+  ELSE LET d == OrdinaryGetOwnProperty(O(s, o), k) IN
+       IF d = Absent THEN DataOnChain(s, O(s, o).proto, k)
+       ELSE IF IsDataDescriptor(d) THEN d.value ELSE Undefined`,
+  // Error.stackTraceLimit as V8 reads it when it makes an error (Isolate::GetStackTraceLimit): a
+  // number clamped to 0..2^31-1, or -1 for no stack at all. Its key is the host's, which a module
+  // program's realm has and a script's lacks, where Node's is 10.
+  `StackTraceLimit(s) ==
+  LET v == DataOnChain(s, Intrinsic(s, "Error"), Str(N("stackTraceLimit"))) IN
+  IF v = Absent THEN HostDefaultStackTraceLimit(1) ELSE
+  IF ~IsNumber(v) THEN -1 ELSE
+  LET n == NumToIntegerOrInfinity(v.value) IN
+  IF ~NumLess(n, NumFromInt(2147483647)) THEN 2147483647
+  ELSE IF NumLess(n, NumFromInt(0)) THEN 0
+  ELSE NumToInt(n)`,
+  // The error constructors, whose frame V8 skips at the top of an error's stack.
+  `IsErrorConstructor(s, f) ==
+  O(s, f).class = "builtin" /\\
+  (O(s, f).slots.id \\in {<<"Error", "constructor">>, <<"AggregateError", "constructor">>} \\/ O(s, f).slots.id[1] = "NativeError")`,
+  // The stack that an error constructor captures of the frames that called it, which the error's
+  // stack reads as text (ErrorUtils::Construct): its frames from those of the calls of the state,
+  // to skip until new.target's, or the first, the limit, and the task that runs. An error whose
+  // new.target is its constructor is one V8 made for the constructor itself, as madeBy marks.
+  `CaptureStack(s, o, newTarget) ==
+  IF s.callers = Null \\/ ~IsErrorConstructor(s, s.callers.f) THEN s ELSE
+  LET target == IF IsObject(newTarget) /\\ O(s, newTarget).class \\in {"function", "builtin"} THEN newTarget ELSE Empty
+      trace == [callers |-> s.callers, target |-> target, limit |-> StackTraceLimit(s), task |-> s.task, realm |-> s.realmId]
+  IN SetO(s, o, [O(s, o) EXCEPT !.slots = (IF SameValue(newTarget, s.callers.f) THEN [trace |-> trace, madeBy |-> newTarget] ELSE [trace |-> trace]) @@ @])`,
+  // An error's stack as Node writes it, once, when a program first reads it: Node's
+  // prepareStackTraceCallback, which defers to a program's Error.prepareStackTrace, and otherwise
+  // writes the header of Error.prototype.toString, which reads the error's name and message, and
+  // the frames V8 captured.
+  `FormatStack(s, error, t) ==
+  IF t.realm # 1 \\/ s.realmId # 1 THEN Assert(FALSE, "tla-ts can't read the stack of an error of another realm as Node writes it") ELSE
+  LET e == Get(s, Intrinsic(s, "GlobalObject"), SV("Error")) IN IF IsAbrupt(e) THEN e ELSE
+  LET p == CASE IsNullish(Val(e)) -> Ok(e.s, Undefined)
+              [] IsObject(Val(e)) -> Get(e.s, Val(e), SV("prepareStackTrace"))
+              [] OTHER -> Assert(FALSE, "tla-ts can't read prepareStackTrace of a global Error that isn't an object") IN
+  IF IsAbrupt(p) THEN p ELSE
+  LET q == Get(p.s, Intrinsic(p.s, "Error"), SV("prepareStackTrace")) IN IF IsAbrupt(q) THEN q ELSE
+  IF IsCallable(q.s, Val(p)) \\/ IsCallable(q.s, Val(q)) THEN Assert(FALSE, "tla-ts can't run a program's Error.prepareStackTrace") ELSE
+  IF ProxyOnChain(q.s, error) THEN Assert(FALSE, "tla-ts can't ask a proxy whether an error is one of Node's") ELSE
+  LET header == ErrorBuiltin(q.s, Undefined, "toString", error, <<>>, Undefined) IN IF IsAbrupt(header) THEN header ELSE
+  Ok(header.s, Str(Val(header).value \\o JoinFrames(WalkFrames(header.s, t, t.callers, <<>>, [skipping |-> TRUE, count |-> 0, lines |-> <<>>]))))`,
+  `ProxyOnChain(s, o) == o # Null /\\ (O(s, o).class = "proxy" \\/ ProxyOnChain(s, O(s, o).proto))`,
+  `JoinFrames(lines) == IF lines = <<>> THEN <<>> ELSE <<10>> \\o N("    at ") \\o Head(lines) \\o JoinFrames(Tail(lines))`,
+  // The built-ins that run a function with no frame of their own on V8's stack, and those whose
+  // frame V8 shows, as Node 26 does.
+  `HiddenBuiltins == {<<"Function", "call">>, <<"Function", "apply">>, <<"Reflect", "apply">>, <<"Reflect", "construct">>}`,
+  `ShownBuiltins ==
+  {<<"Error", "constructor">>, <<"AggregateError", "constructor">>} \\cup {<<"NativeError", e>> : e \\in Range(NativeErrors)} \\cup
+  {<<"Array", m>> : m \\in {"map", "forEach", "filter", "some", "every", "find", "findIndex", "findLast", "findLastIndex",
+                            "flatMap", "reduce", "reduceRight", "sort", "toSorted", "join", "from"}} \\cup
+  {<<"String", "replace">>, <<"String", "replaceAll">>, <<"String", "constructor">>, <<"Number", "constructor">>,
+   <<"JSON", "parse">>, <<"JSON", "stringify">>, <<"Promise", "constructor">>, <<"Promise", "resolve">>,
+   <<"Map", "forEach">>, <<"Set", "forEach">>, <<"Map", "groupBy">>,
+   <<"Object", "assign">>, <<"Object", "keys">>, <<"Object", "fromEntries">>, <<"Object", "groupBy">>}`,
+  // The methods of a generator that run its body, whose frame V8 shows above theirs.
+  `GeneratorResumes == {<<"Generator", "next">>, <<"Generator", "return">>, <<"Generator", "throw">>}`,
+  // The frames of a stack, from the frame of the call e, whose position is pos, down
+  // (CallSiteBuilder): a frame of a built-in that V8 hides counts for nothing, as a class's default
+  // constructor that a derived class's super calls, which V8 skips; and one that tla-ts can't tell
+  // stops, but where V8 skips it anyway.
+  `WalkFrames(s, t, e, pos, r) ==
+  IF r.count >= t.limit THEN r.lines
+  ELSE IF e = Null THEN BottomFrames(s, t, pos, r)
+  ELSE LET o == O(s, e.f)
+           frame == [kind |-> o.class, f |-> e.f, this |-> e.this, isNew |-> e.isNew, pos |-> pos]
+       IN CASE o.class = "function" -> WalkFrames(s, t, e.next, e.site, VisitFrame(s, t, frame, r))
+            [] o.class = "builtin" /\\ o.slots.id \\in HiddenBuiltins -> WalkFrames(s, t, e.next, e.site, r)
+            [] o.class = "builtin" /\\ o.slots.id \\in GeneratorResumes ->
+                 WalkFrames(s, t, e.next, e.site, VisitFrame(s, t, frame, VisitFrame(s, t, GeneratorFrame(s, e.this, pos), r)))
+            [] o.class = "builtin" /\\ o.slots.id \\in ShownBuiltins -> WalkFrames(s, t, e.next, e.site, VisitFrame(s, t, frame, r))
+            [] o.class = "builtin" /\\ o.slots.id = <<"Class", "default">> ->
+                 IF SameValue(e.this, e.f) THEN WalkFrames(s, t, e.next, e.site, VisitFrame(s, t, [frame EXCEPT !.kind = "default"], r))
+                 ELSE WalkFrames(s, t, e.next, e.site, r)
+            [] r.skipping /\\ t.target # Empty /\\ ~SameValue(e.f, t.target) -> WalkFrames(s, t, e.next, e.site, r)
+            [] OTHER -> Assert(FALSE, "tla-ts can't tell whether Node shows this frame of a stack")`,
+  // The frame of a generator's body, which its function has, with its this value.
+  `GeneratorFrame(s, gen, pos) ==
+  LET ctx == O(s, gen).slots.ctx IN
+  [kind |-> "function", f |-> ctx.fn, this |-> E(s, GetThisEnvironment(s, ctx.lex)).this, isNew |-> FALSE, pos |-> pos]`,
+  // A frame that V8 counts, past those it skips until new.target's function, or the first
+  // (CallSiteBuilder::ShouldIncludeFrame).
+  `VisitFrame(s, t, frame, r) ==
+  IF r.count >= t.limit THEN r
+  ELSE IF r.skipping THEN
+    IF t.target = Empty \\/ (frame.kind \\in {"function", "builtin", "default"} /\\ SameValue(frame.f, t.target)) THEN [r EXCEPT !.skipping = FALSE] ELSE r
+  ELSE [r EXCEPT !.count = @ + 1, !.lines = Append(@, FrameText(s, frame))]`,
+  // The frames below a program's: the top level of an entry module and the host's frames that run
+  // it, nothing below a promise job's function but async frames, which stop, and in a job, code at
+  // the top level, which a resumed async body or module is, stops.
+  `BottomFrames(s, t, pos, r) ==
+  CASE t.task.kind = "main" ->
+         LET top == VisitFrame(s, t, [kind |-> "top", pos |-> pos], r) IN
+         IF top.count >= t.limit THEN top.lines
+         ELSE IF HostEntryFrames(1) = Empty THEN Assert(FALSE, "tla-ts can't tell the frames that Node runs this program from")
+         ELSE VisitHostFrames(s, t, HostEntryFrames(1), top).lines
+    [] t.task.kind = "reaction" /\\ pos = <<>> ->
+         IF t.task.promise # Empty /\\ O(s, t.task.promise).slots.state = "pending" /\\
+            Len(O(s, t.task.promise).slots.fulfillReactions) = 1 /\\
+            O(s, t.task.promise).slots.fulfillReactions[1].handler # Empty /\\
+            O(s, O(s, t.task.promise).slots.fulfillReactions[1].handler).class = "builtin"
+         THEN Assert(FALSE, "tla-ts can't write the async frames of a stack as Node does")
+         ELSE r.lines
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell the frames below this job's as Node writes them")`,
+  `VisitHostFrames(s, t, lines, r) ==
+  IF lines = <<>> THEN r ELSE VisitHostFrames(s, t, Tail(lines), VisitFrame(s, t, [kind |-> "host", text |-> Head(lines)], r))`,
+  // A frame's text (SerializeJSStackFrame), where a built-in's location is <anonymous>, and a
+  // class's default constructor's is the class's.
+  `FrameText(s, frame) ==
+  CASE frame.kind = "host" -> frame.text
+    [] frame.kind = "top" -> Location(frame.pos)
+    [] frame.kind = "builtin" -> CallText(s, frame, N("<anonymous>"))
+    [] frame.kind = "default" -> CallText(s, frame, Location(O(s, frame.f).slots.data))
+    [] OTHER -> CallText(s, frame, Location(frame.pos))`,
+  // Where a frame is, as Node gives its file and V8 its line and column.
+  `Location(pos) ==
+  IF pos = <<>> THEN Assert(FALSE, "tla-ts can't tell the position V8 gives this frame") ELSE
+  IF HostFileLocation(pos[1]) = Empty THEN Assert(FALSE, "tla-ts can't tell the location Node gives this file") ELSE
+  HostFileLocation(pos[1]) \\o <<58>> \\o NumToString(NumFromInt(pos[2])) \\o <<58>> \\o NumToString(NumFromInt(pos[3]))`,
+  `CallText(s, frame, location) ==
+  LET name == FunctionName(s, frame.f) IN
+  IF ~frame.isNew /\\ ~IsToplevel(s, frame.this) THEN MethodCallText(s, frame, name) \\o N(" (") \\o location \\o N(")")
+  ELSE IF frame.isNew THEN N("new ") \\o (IF name = <<>> THEN N("<anonymous>") ELSE name) \\o N(" (") \\o location \\o N(")")
+  ELSE IF name # <<>> THEN name \\o N(" (") \\o location \\o N(")")
+  ELSE location`,
+  // A frame's receiver that makes it no method call: none, or the global object.
+  `IsToplevel(s, v) == IsNullish(v) \\/ SameValue(v, Intrinsic(s, "GlobalObject"))`,
+  // AppendMethodCall.
+  `MethodCallText(s, frame, name) ==
+  IF name # <<>> THEN
+    (IF IsIdentifierUnits(name) /\\ TypeName(s, frame.this) # <<>> /\\ TypeName(s, frame.this) # name
+     THEN TypeName(s, frame.this) \\o <<46>> ELSE <<>>) \\o name \\o
+    (IF MethodName(s, frame.f, frame.this) # <<>> /\\ ~EndsWithMethodName(name, MethodName(s, frame.f, frame.this))
+     THEN N(" [as ") \\o MethodName(s, frame.f, frame.this) \\o N("]") ELSE <<>>)
+  ELSE (IF TypeName(s, frame.this) # <<>> THEN TypeName(s, frame.this) \\o <<46>> ELSE <<>>) \\o
+       (IF MethodName(s, frame.f, frame.this) # <<>> THEN MethodName(s, frame.f, frame.this) ELSE N("<anonymous>"))`,
+  // Whether a name is subject or ends in it after a . or a space.
+  `EndsWithMethodName(subject, pattern) ==
+  \\/ subject = pattern
+  \\/ /\\ Len(subject) > Len(pattern)
+     /\\ SubSeq(subject, Len(subject) - Len(pattern) + 1, Len(subject)) = pattern
+     /\\ subject[Len(subject) - Len(pattern)] \\in {32, 46}`,
+  // String::IsIdentifier, by code unit.
+  `IsIdentifierUnits(u) ==
+  u # <<>> /\\ IdentifierUnit(u[1], TRUE) /\\ \\A i \\in 2..Len(u) : IdentifierUnit(u[i], FALSE)`,
+  `IdentifierUnit(c, isStart) ==
+  \\/ (c >= 65 /\\ c <= 90) \\/ (c >= 97 /\\ c <= 122) \\/ c = 36 \\/ c = 95
+  \\/ (~isStart /\\ c >= 48 /\\ c <= 57)
+  \\/ (c >= 128 /\\ RxIsIdentifierChar(c, isStart))`,
+  // The name of a function that a frame shows (JSFunction::GetDebugName): its name property where
+  // it's a String that V8 holds as one, which a function a computed key names does, and otherwise
+  // the name its literal has or V8 infers; a class's initializers have names of their own.
+  `FunctionName(s, f) ==
+  LET o == O(s, f)
+      d == OrdinaryGetOwnProperty(o, SV("name"))
+      isString == d # Absent /\\ IsDataDescriptor(d) /\\ IsString(d.value)
+  IN CASE o.class = "builtin" -> IF isString THEN d.value.value ELSE o.slots.initialName
+       [] o.class = "function" /\\ "naming" \\in DOMAIN o.slots.body ->
+            IF o.slots.body.naming.naming \\in {"instanceInit", "staticInit"} THEN o.slots.body.naming.sfi
+            ELSE IF isString /\\ (d.value.value # <<>> \\/ o.slots.body.naming.naming # "anonymous") THEN d.value.value
+            ELSE LiteralName(o.slots.body.naming)
+       [] OTHER -> Assert(FALSE, "tla-ts can't tell the name V8 gives this function")`,
+  // The name of a function's literal, or the name V8 infers for it (SharedFunctionInfo::DebugName).
+  `LiteralName(naming) ==
+  IF naming.sfi # <<>> THEN naming.sfi
+  ELSE IF naming.inferred = Empty THEN Assert(FALSE, "tla-ts can't tell the name V8 infers for this function")
+  ELSE naming.inferred`,
+  `SfiNameOf(s, f) ==
+  CASE O(s, f).class = "builtin" -> O(s, f).slots.initialName
+    [] O(s, f).class = "function" /\\ "naming" \\in DOMAIN O(s, f).slots.body -> LiteralName(O(s, f).slots.body.naming)
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell the name V8 gives this function")`,
+  // The type of a frame's receiver (CallSiteInfo::GetTypeName).
+  `TypeName(s, v) ==
+  CASE IsNumber(v) -> N("Number")
+    [] IsString(v) -> N("String")
+    [] IsBoolean(v) -> N("Boolean")
+    [] IsSymbol(v) -> N("Symbol")
+    [] IsBigInt(v) -> N("BigInt")
+    [] O(s, v).class = "proxy" -> N("Proxy")
+    [] O(s, v).class \\in {"function", "builtin"} /\\ FunctionName(s, v) # <<>> -> FunctionName(s, v)
+    [] OTHER -> ConstructorName(s, v)`,
+  // The name of the constructor of each kind of object that a built-in constructor makes.
+  `NaturalNames ==
+  [map |-> N("Map"), set |-> N("Set"), weakMap |-> N("WeakMap"), weakSet |-> N("WeakSet"), weakRef |-> N("WeakRef"),
+   promise |-> N("Promise"), date |-> N("Date"), regexp |-> N("RegExp"), boolean |-> N("Boolean"),
+   number |-> N("Number"), dataView |-> N("DataView"), array |-> N("Array"), function |-> N("Function"),
+   builtin |-> N("Function"), bound |-> N("Function")]`,
+  // JSReceiver::GetConstructorName: the name of the constructor of V8's map of the object where V8
+  // made it for that constructor and it's no prototype, and otherwise that of its
+  ``,
+  // toStringTag or of the constructor of what it inherits from. tla-ts knows the first only where
+  // the object records its maker, and stops where the two differ.
+  `ConstructorName(s, o) ==
+  LET a == ChainConstructorName(s, o, o)
+      b == MapConstructorName(s, o)
+  IN IF b = <<>> \\/ b = a THEN a ELSE Assert(FALSE, "tla-ts can't tell the constructor name V8 gives this object")`,
+  `MapConstructorName(s, o) ==
+  LET obj == O(s, o) IN
+  CASE "madeBy" \\in DOMAIN obj.slots -> IF SfiNameOf(s, obj.slots.madeBy) = N("Object") THEN <<>> ELSE SfiNameOf(s, obj.slots.madeBy)
+    [] obj.class \\in {"ordinary", "error"} -> <<>>
+    [] obj.class = "generator" -> IF SfiNameOf(s, obj.slots.ctx.fn) = N("Object") THEN <<>> ELSE SfiNameOf(s, obj.slots.ctx.fn)
+    [] obj.class \\in DOMAIN NaturalNames -> NaturalNames[obj.class]
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell the constructor name V8 gives this object")`,
+  `ChainConstructorName(s, receiver, cur) ==
+  IF cur = Null \\/ O(s, cur).class = "proxy" THEN ClassName(s, receiver) ELSE
+  LET tag == OwnDataValue(O(s, cur), SymToStringTag)
+      c == IF SameValue(cur, receiver) THEN Absent ELSE OwnDataValue(O(s, cur), SV("constructor"))
+  IN IF tag # Absent /\\ IsString(tag) THEN tag.value
+     ELSE IF c # Absent /\\ IsObject(c) /\\ O(s, c).class \\in {"function", "builtin"} /\\ SfiNameOf(s, c) \\notin {<<>>, N("Object")}
+     THEN SfiNameOf(s, c)
+     ELSE ChainConstructorName(s, receiver, O(s, cur).proto)`,
+  `OwnDataValue(obj, k) ==
+  LET d == OrdinaryGetOwnProperty(obj, k) IN IF d = Absent \\/ ~IsDataDescriptor(d) THEN Absent ELSE d.value`,
+  // JSReceiver::class_name.
+  `ClassName(s, o) ==
+  CASE O(s, o).class = "ordinary" -> N("Object")
+    [] O(s, o).class = "error" -> N("Error")
+    [] O(s, o).class \\in DOMAIN NaturalNames -> NaturalNames[O(s, o).class]
+    [] OTHER -> Assert(FALSE, "tla-ts can't tell the class name V8 gives this object")`,
+  // The key a frame's function is called by on its receiver (CallSiteInfo::GetMethodName): the name
+  // of its literal, without get or set, or after the last . of the name V8 infers, where the
+  // receiver or what it inherits holds the function there, and otherwise the one enumerable key
+  // that holds it. Where tla-ts can't tell the name V8 infers, the key that holds the function,
+  // where there is no other, is the one.
+  `MethodName(s, f, v) ==
+  IF O(s, f).class = "function" /\\ "naming" \\in DOMAIN O(s, f).slots.body /\\
+     O(s, f).slots.body.naming.naming \\in {"instanceInit", "staticInit"} THEN <<>> ELSE
+  LET start == ReceiverStart(s, v)
+      literal == IF O(s, f).class = "builtin" THEN O(s, f).slots.initialName
+                 ELSE IF "naming" \\in DOMAIN O(s, f).slots.body THEN O(s, f).slots.body.naming.sfi
+                 ELSE Assert(FALSE, "tla-ts can't tell the name V8 gives this function")
+      isPrefixed == Len(literal) > 4 /\\ SubSeq(literal, 1, 4) \\in {N("get "), N("set ")}
+  IN IF isPrefixed THEN LookupMethodName(s, start, start, f, SubSeq(literal, 5, Len(literal)))
+     ELSE IF literal # <<>> THEN LookupMethodName(s, start, start, f, literal)
+     ELSE IF O(s, f).class = "builtin" THEN InferMethodName(s, start, f, [n |-> 0, key |-> <<>>])
+     ELSE IF O(s, f).slots.body.naming.inferred # Empty THEN LookupMethodName(s, start, start, f, AfterLastDot(O(s, f).slots.body.naming.inferred))
+     ELSE LET inferred == InferMethodName(s, start, f, [n |-> 0, key |-> <<>>]) IN
+          IF KeysHolding(s, start, f) \\subseteq {inferred} THEN inferred
+          ELSE Assert(FALSE, "tla-ts can't tell the name V8 infers for this function")`,
+  // The object a lookup on a receiver starts at: the receiver, or a primitive's prototype, which
+  // holds what its wrapper would.
+  `ReceiverStart(s, v) ==
+  CASE IsNumber(v) -> Intrinsic(s, "NumberPrototype")
+    [] IsString(v) -> Intrinsic(s, "StringPrototype")
+    [] IsBoolean(v) -> Intrinsic(s, "BooleanPrototype")
+    [] IsSymbol(v) -> Intrinsic(s, "SymbolPrototype")
+    [] IsBigInt(v) -> Intrinsic(s, "BigIntPrototype")
+    [] OTHER -> v`,
+  `AfterLastDot(u) == IF \\E i \\in DOMAIN u : u[i] = 46 THEN SubSeq(u, (CHOOSE i \\in DOMAIN u : u[i] = 46 /\\ \\A j \\in DOMAIN u : u[j] = 46 => j <= i) + 1, Len(u)) ELSE u`,
+  // Whether a descriptor holds f.
+  `HoldsFunction(d, f) == IF IsDataDescriptor(d) THEN SameValue(d.value, f) ELSE d.get = f \\/ d.set = f`,
+  // The name where the first object of the chain from start that has it holds f there, and
+  // otherwise InferMethodName.
+  `LookupMethodName(s, start, o, f, name) ==
+  IF name = <<>> \\/ o = Null \\/ O(s, o).class = "proxy" THEN InferMethodName(s, start, f, [n |-> 0, key |-> <<>>])
+  ELSE LET d == OrdinaryGetOwnProperty(O(s, o), Str(name)) IN
+       IF d = Absent THEN LookupMethodName(s, start, O(s, o).proto, f, name)
+       ELSE IF HoldsFunction(d, f) THEN name ELSE InferMethodName(s, start, f, [n |-> 0, key |-> <<>>])`,
+  // InferMethodName: the one enumerable String key, but for an index, of the chain from o that
+  // holds f, or none where there are more.
+  `InferMethodName(s, o, f, acc) ==
+  IF o = Null \\/ O(s, o).class = "proxy" THEN (IF acc.n = 1 THEN acc.key ELSE <<>>)
+  ELSE InferMethodName(s, O(s, o).proto, f, InferKeys(O(s, o), SelectSeq(O(s, o).keys, IsString), f, acc))`,
+  `InferKeys(obj, keys, f, acc) ==
+  IF keys = <<>> THEN acc
+  ELSE LET d == OrdinaryGetOwnProperty(obj, Head(keys))
+           matches == d # Absent /\\ d.enumerable = True /\\ HoldsFunction(d, f)
+       IN InferKeys(obj, Tail(keys), f,
+                    IF ~matches THEN acc
+                    ELSE IF acc.n = 0 THEN [n |-> 1, key |-> Head(keys).value]
+                    ELSE IF acc.key = Head(keys).value THEN acc ELSE [n |-> 2, key |-> <<>>])`,
+  // Every key of the chain from o, past a proxy, that holds f.
+  `KeysHolding(s, o, f) ==
+  IF o = Null \\/ O(s, o).class = "proxy" THEN {}
+  ELSE {k.value : k \\in {k \\in Range(OwnKeysOf(O(s, o))) : IsString(k) /\\ HoldsFunction(OrdinaryGetOwnProperty(O(s, o), k), f)}} \\cup
+       KeysHolding(s, O(s, o).proto, f)`,
+];
+
 export const RUNTIME_DEFINITIONS: GeneratedDefinition[] = [
   ...DEFINITIONS,
+  ...STACK_DEFINITIONS,
   // The code units of a TLA+ string's characters.
   `StringUnits(t) == [i \\in 1..Len(t) |-> CharacterUnits[SubSeq(t, i, i)]]`,
   // The code unit of each character that a TLA+ string can hold.
@@ -680,16 +1010,84 @@ const HOST_PATCHES = [
     to: `    [] m = "getStack" ->
          IF ~IsObject(this) \\/ O(s, this).class # "error" THEN Ok(s, Undefined)
          ELSE IF "stack" \\in DOMAIN O(s, this).slots THEN Ok(s, O(s, this).slots.stack)
-         ELSE Assert(FALSE, "tla-ts can't read an error's stack as Node writes it")
+         ELSE IF "trace" \\notin DOMAIN O(s, this).slots THEN Assert(FALSE, "tla-ts can't read an error's stack as Node writes it")
+         ELSE IF O(s, this).slots.trace.limit < 0 THEN Ok(s, Undefined)
+         ELSE LET text == FormatStack(s, this, O(s, this).slots.trace) IN
+              IF IsAbrupt(text) THEN text ELSE Ok(SetO(text.s, this, [O(text.s, this) EXCEPT !.slots = [stack |-> Val(text)] @@ @]), Val(text))
     [] m = "setStack" ->
          IF ~IsObject(this) \\/ O(s, this).class # "error" THEN Ok(s, Undefined)
          ELSE Ok(SetO(s, this, [O(s, this) EXCEPT !.slots = [stack |-> Arg(args, 1)] @@ @]), Undefined)`,
   },
   {
     name: "ErrorConstructor",
-    from: `LET msg == IF message = Undefined THEN Ok(o.s, Empty) ELSE ToStr(o.s, message) IN`,
+    from: `LET msg == IF message = Undefined THEN Ok(o.s, Empty) ELSE ToStr(o.s, message) IN
+  IF IsAbrupt(msg) THEN msg ELSE
+  LET m == IF Val(msg) = Empty THEN Ok(msg.s, Empty) ELSE CreateMethodProperty(msg.s, Val(o), SV("message"), Val(msg)) IN
+  LET c == InstallErrorCause(m.s, Val(o), options) IN
+  IF IsAbrupt(c) THEN c ELSE Ok(c.s, Val(o))`,
     to: `LET withStack == InstallStack(o.s, Val(o))
-      msg == IF message = Undefined THEN Ok(withStack, Empty) ELSE ToStr(withStack, message) IN`,
+      msg == IF message = Undefined THEN Ok(withStack, Empty) ELSE ToStr(withStack, message) IN
+  IF IsAbrupt(msg) THEN msg ELSE
+  LET m == IF Val(msg) = Empty THEN Ok(msg.s, Empty) ELSE CreateMethodProperty(msg.s, Val(o), SV("message"), Val(msg)) IN
+  LET c == InstallErrorCause(m.s, Val(o), options) IN
+  IF IsAbrupt(c) THEN c ELSE Ok(CaptureStack(c.s, Val(o), newTarget), Val(o))`,
+  },
+  // Each call's frame records its this value and whether new made it.
+  {
+    name: "CallObject",
+    from: `  CASE o.class = "builtin" -> InCallerRealm(s, CallBuiltin(EnterRealm(PushCaller(s, f, args), o.slots.realm), f, o.slots.id, this, args, Undefined))
+    [] o.class = "bound" -> Call(s, o.slots.target, o.slots.this, o.slots.args \\o args)
+    [] o.class = "proxy" -> ProxyCall(s, f, this, args)
+    [] o.class = "wrapped" -> InCallerRealm(s, OrdinaryWrappedFunctionCall(EnterRealm(s, o.slots.realm), f, this, args))
+    [] OTHER -> InCallerRealm(s, OrdinaryCall(EnterRealm(PushCaller(s, f, args), o.slots.realm), f, this, args))`,
+    to: `  CASE o.class = "builtin" -> InCallerRealm(s, CallBuiltin(EnterRealm(PushFrame(s, f, this, args, FALSE, <<>>), o.slots.realm), f, o.slots.id, this, args, Undefined))
+    [] o.class = "bound" -> Call(s, o.slots.target, o.slots.this, o.slots.args \\o args)
+    [] o.class = "proxy" -> ProxyCall(s, f, this, args)
+    [] o.class = "wrapped" -> InCallerRealm(s, OrdinaryWrappedFunctionCall(EnterRealm(s, o.slots.realm), f, this, args))
+    [] OTHER -> InCallerRealm(s, OrdinaryCall(EnterRealm(PushFrame(s, f, this, args, FALSE, <<>>), o.slots.realm), f, this, args))`,
+  },
+  {
+    name: "ConstructObject",
+    from: `  CASE o.class = "builtin" -> InCallerRealm(s, CallBuiltin(EnterRealm(PushCaller(s, f, args), o.slots.realm), f, o.slots.id, Undefined, args, newTarget))
+    [] o.class = "bound" ->
+         Construct(s, o.slots.target, o.slots.args \\o args,
+                   IF SameValue(f, newTarget) THEN o.slots.target ELSE newTarget)
+    [] o.class = "proxy" -> ProxyConstruct(s, f, args, newTarget)
+    [] OTHER -> InCallerRealm(s, OrdinaryConstruct(PushCaller(s, f, args), f, args, newTarget))`,
+    to: `  CASE o.class = "builtin" -> InCallerRealm(s, CallBuiltin(EnterRealm(PushFrame(s, f, newTarget, args, TRUE, <<>>), o.slots.realm), f, o.slots.id, Undefined, args, newTarget))
+    [] o.class = "bound" ->
+         Construct(s, o.slots.target, o.slots.args \\o args,
+                   IF SameValue(f, newTarget) THEN o.slots.target ELSE newTarget)
+    [] o.class = "proxy" -> ProxyConstruct(s, f, args, newTarget)
+    [] OTHER -> InCallerRealm(s, OrdinaryConstruct(PushFrame(s, f, newTarget, args, TRUE, <<>>), f, args, newTarget))`,
+  },
+  // An object that a base constructor makes for itself, whose map V8 makes for that constructor,
+  // which names the object's type in a stack trace.
+  {
+    name: "DefaultConstructorCall",
+    from: `ELSE OrdinaryCreateFromConstructor(s, newTarget, "ObjectPrototype", "ordinary", [none |-> TRUE])`,
+    to: `ELSE OrdinaryCreateFromConstructor(s, newTarget, "ObjectPrototype", "ordinary", IF SameValue(f, newTarget) THEN [none |-> TRUE, madeBy |-> f] ELSE [none |-> TRUE])`,
+  },
+  {
+    name: "OrdinaryConstruct",
+    from: `OrdinaryCreateFromConstructor(s, newTarget, "ObjectPrototype", "ordinary", [none |-> TRUE])`,
+    to: `OrdinaryCreateFromConstructor(s, newTarget, "ObjectPrototype", "ordinary", IF SameValue(f, newTarget) THEN [none |-> TRUE, madeBy |-> f] ELSE [none |-> TRUE])`,
+  },
+  // A job's task, below whose function V8 has no frames, but async ones of the promise a reaction
+  // job settles.
+  {
+    name: "RunJob",
+    from: `        r == Call(fns.s, job.then, job.thenable, <<fns.resolve, fns.reject>>)
+    IN IF IsAbrupt(r) THEN Call(r.s, fns.reject, Undefined, <<r.c.value>>) ELSE r
+  ELSE
+    LET reaction == job.reaction
+        result == CASE reaction.handler # Empty -> Call(s, reaction.handler, Undefined, <<job.argument>>)`,
+    to: `        r == Call([fns.s EXCEPT !.task = [kind |-> "thenable"]], job.then, job.thenable, <<fns.resolve, fns.reject>>)
+    IN IF IsAbrupt(r) THEN Call(r.s, fns.reject, Undefined, <<r.c.value>>) ELSE r
+  ELSE
+    LET reaction == job.reaction
+        task == [kind |-> "reaction", promise |-> IF reaction.capability = Empty THEN Empty ELSE reaction.capability.promise]
+        result == CASE reaction.handler # Empty -> Call([s EXCEPT !.task = task], reaction.handler, Undefined, <<job.argument>>)`,
   },
   // An error that ESCore throws itself, whose message Node writes as host text. It holds the mark
   // hostMessage, at which reading its message or listing its own keys stops.
@@ -1182,5 +1580,5 @@ export const getHostTimeZone = (text: string) => {
     : `HostTimeZone(key) ==\n  CASE ${arms.join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`;
 };
 
-const getUnitsOf = (text: string) =>
+export const getUnitsOf = (text: string) =>
   `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;

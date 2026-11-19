@@ -583,6 +583,231 @@ const getFunctionKey = (node: ts.Node) => {
     : undefined;
 };
 
+// The reserved words that V8's scanner gives tokens of their own, which, as a callee's last token,
+// make a call's position in a stack trace its ( rather than the callee's name.
+const RESERVED_WORDS = new Set([
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "function",
+  "if",
+  "import",
+  "in",
+  "instanceof",
+  "new",
+  "null",
+  "return",
+  "switch",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typeof",
+  "var",
+  "void",
+  "while",
+  "with",
+]);
+
+// The words that V8's scanner gives tokens of their own among its identifiers, which a tagged
+// template's position doesn't take as its tag's name.
+const CONTEXTUAL_WORDS = new Set([
+  "get",
+  "set",
+  "using",
+  "of",
+  "accessor",
+  "async",
+  "await",
+  "yield",
+  "let",
+  "static",
+  "implements",
+  "interface",
+  "package",
+  "private",
+  "protected",
+  "public",
+]);
+
+const isCallableName = (node: ts.Node | undefined): node is ts.Identifier =>
+  node !== undefined && ts.isIdentifier(node) && !RESERVED_WORDS.has(node.text);
+
+// The offset that V8 gives a call, new, or tagged template as its position in a stack trace
+// (ParserBase::ParseLeftHandSideContinuation): a call's callee's last token where that is an
+// identifier or super, and its ( otherwise; a new's new; a tagged template's tag's name where its
+// last token is an identifier, and its template otherwise. A tag that calls has none here.
+const getCallOffset = (
+  node: ts.CallExpression | ts.NewExpression | ts.TaggedTemplateExpression,
+): number | undefined => {
+  if (ts.isNewExpression(node)) return node.getStart();
+  if (ts.isTaggedTemplateExpression(node)) {
+    const hasCall = (expression: ts.Expression): boolean =>
+      ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)
+        ? hasCall(expression.expression)
+        : !ts.isIdentifier(expression) && expression.kind !== ts.SyntaxKind.ThisKeyword;
+    if (hasCall(node.tag)) return undefined;
+    const name = ts.isPropertyAccessExpression(node.tag) ? node.tag.name : node.tag;
+    return isCallableName(name) && !CONTEXTUAL_WORDS.has(name.text)
+      ? name.getStart()
+      : node.template.getStart();
+  }
+  const callee = node.expression;
+  if (callee.kind === ts.SyntaxKind.SuperKeyword) return callee.getStart();
+  const name =
+    node.questionDotToken !== undefined
+      ? undefined
+      : ts.isPropertyAccessExpression(callee)
+        ? callee.name
+        : callee;
+  if (isCallableName(name)) return name.getStart();
+  return node
+    .getChildren()
+    .find((child) => child.kind === ts.SyntaxKind.OpenParenToken && child.pos >= callee.end)
+    ?.getStart();
+};
+
+// Whether an expression holds syntax at which V8's FuncNameInferrer may name the functions it
+// waits on: a function, class, object literal, or assignment.
+const hasNamingSyntax = (node: ts.Node): boolean =>
+  ts.isFunctionLike(node) ||
+  ts.isClassLike(node) ||
+  ts.isObjectLiteralExpression(node) ||
+  (ts.isBinaryExpression(node) &&
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+    node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
+  ts.forEachChild(node, hasNamingSyntax) === true;
+
+// The names that V8's FuncNameInferrer gathers of an assignment's target, a property path of
+// identifiers and this, without prototype, where the target is one.
+const getTargetNames = (node: ts.Expression): string[] | undefined => {
+  if (ts.isIdentifier(node)) return [node.text];
+  if (node.kind === ts.SyntaxKind.ThisKeyword) return [];
+  if (ts.isPropertyAccessExpression(node) && node.questionDotToken === undefined) {
+    const names = getTargetNames(node.expression);
+    return names === undefined || node.name.text === "prototype"
+      ? names
+      : [...names, node.name.text];
+  }
+  if (ts.isElementAccessExpression(node) && node.questionDotToken === undefined) {
+    const names = getTargetNames(node.expression);
+    const key = node.argumentExpression;
+    const isName =
+      ts.isStringLiteral(key) &&
+      !(/^(0|[1-9]\d*)$/.test(key.text) && Number(key.text) < 4294967295);
+    return names === undefined ? undefined : [...names, isName ? key.text : "<computed>"];
+  }
+  return undefined;
+};
+
+// The name V8 infers for an anonymous function or class where it's sure (FuncNameInferrer): none
+// as a call's callee or argument, which the call takes out of those to name, where no later
+// argument names it first, and the target's path where a statement assigns it to a property in
+// code that V8 parses on its own, as it does a function that isn't parenthesized, and so not
+// called at once.
+const getInferredName = (node: ts.Node): string | undefined => {
+  const value =
+    ts.findAncestor(node, (ancestor) => !ts.isParenthesizedExpression(ancestor.parent)) ?? node;
+  const outer = value.parent;
+  if (ts.isCallExpression(outer)) {
+    const index = outer.arguments.findIndex((argument) => argument === value);
+    return outer.arguments.slice(index + 1).some(hasNamingSyntax) ? undefined : "";
+  }
+  if (
+    !ts.isBinaryExpression(outer) ||
+    outer.right !== value ||
+    !ts.isExpressionStatement(outer.parent) ||
+    ![
+      ts.SyntaxKind.EqualsToken,
+      ts.SyntaxKind.BarBarEqualsToken,
+      ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+      ts.SyntaxKind.QuestionQuestionEqualsToken,
+    ].includes(outer.operatorToken.kind)
+  ) {
+    return undefined;
+  }
+  const enclosing = ts.findAncestor(
+    outer.parent,
+    (ancestor) => ts.isFunctionLike(ancestor) || ts.isClassStaticBlockDeclaration(ancestor),
+  );
+  if (
+    enclosing !== undefined &&
+    (ts.isClassStaticBlockDeclaration(enclosing) || ts.isParenthesizedExpression(enclosing.parent))
+  ) {
+    return undefined;
+  }
+  return getTargetNames(outer.left)?.join(".");
+};
+
+// The name that a function or class has as its literal's in V8, which its syntax gives it, or none,
+// and whether a computed key names it as it runs instead.
+interface LiteralName {
+  name: string | undefined;
+  isComputed: boolean;
+}
+
+const getKeyName = (name: ts.PropertyName): LiteralName => ({
+  name: ts.isComputedPropertyName(name)
+    ? undefined
+    : ts.isPrivateIdentifier(name)
+      ? name.text
+      : getLiteralKey(name),
+  isComputed: ts.isComputedPropertyName(name),
+});
+
+// The name that the context of a function or class gives it as NamedEvaluation does: a binding's,
+// a property's, a field's, or default.
+const getContextName = (node: ts.Node): LiteralName => {
+  const value =
+    ts.findAncestor(node, (ancestor) => !ts.isParenthesizedExpression(ancestor.parent)) ?? node;
+  const outer = value.parent;
+  const named = (name: string | undefined) => ({ name, isComputed: false });
+  if (
+    (ts.isVariableDeclaration(outer) || ts.isBindingElement(outer) || ts.isParameter(outer)) &&
+    outer.initializer === value &&
+    ts.isIdentifier(outer.name)
+  ) {
+    return named(outer.name.text);
+  }
+  if (
+    ts.isBinaryExpression(outer) &&
+    outer.right === value &&
+    ts.isIdentifier(outer.left) &&
+    [
+      ts.SyntaxKind.EqualsToken,
+      ts.SyntaxKind.BarBarEqualsToken,
+      ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+      ts.SyntaxKind.QuestionQuestionEqualsToken,
+    ].includes(outer.operatorToken.kind)
+  ) {
+    return named(outer.left.text);
+  }
+  if (ts.isShorthandPropertyAssignment(outer) && outer.objectAssignmentInitializer === value) {
+    return named(outer.name.text);
+  }
+  if (ts.isPropertyAssignment(outer) && outer.initializer === value) {
+    return !ts.isComputedPropertyName(outer.name) && getLiteralKey(outer.name) === "__proto__"
+      ? named(undefined)
+      : getKeyName(outer.name);
+  }
+  if (ts.isPropertyDeclaration(outer) && outer.initializer === value) return getKeyName(outer.name);
+  return named(ts.isExportAssignment(outer) ? "default" : undefined);
+};
+
 // Whether a function is a generator, async, or both, as ESCore's function kinds name it.
 type Flavor = "normal" | "generator" | "async" | "asyncGenerator";
 
@@ -668,6 +893,28 @@ export const specialize = (
   // the declaration starts in the program.
   const getSite = (node: ts.Node) => (fileStarts.get(node.getSourceFile()) ?? 0) + node.getStart();
 
+  // The position V8 gives a call, new, or tagged template in a stack trace, as <<file, line, column>>
+  // of its file as Node runs it, or <<>> where tla-ts can't tell it.
+  const getCallSite = (
+    node: ts.CallExpression | ts.NewExpression | ts.TaggedTemplateExpression,
+  ) => {
+    const offset = getCallOffset(node);
+    return offset === undefined ? "<<>>" : getPosition(node, offset);
+  };
+
+  // The position of an offset of a node's file as V8 gives it, whose CommonJS code starts after the
+  // function that wraps it here, and which a class's default constructor has as its frame's.
+  const getPosition = (node: ts.Node, offset: number) => {
+    const sourceFile = node.getSourceFile();
+    const file = fileNumbers.get(sourceFile) ?? 1;
+    const position = sourceFile.getLineAndCharacterOfPosition(offset);
+    const wrapper =
+      position.line === 0 && files[file - 1].kind === "commonjs"
+        ? sourceFile.text.indexOf("{ ") + 2
+        : 0;
+    return `<<${file}, ${position.line + 1}, ${position.character + 1 - wrapper}>>`;
+  };
+
   // A node's source text, as its file's number and the range of the file's text it spans, which
   // SourceUnits makes code units of when a program reads it.
   const getSourceText = (node: ts.Node) =>
@@ -680,15 +927,62 @@ export const specialize = (
     isStrict: boolean,
     length: number,
     sourceText: string,
+    naming: string,
     flavor: Flavor = "normal",
     isBare = false,
   ) => {
     definitions.push({
       name: `CodeRecord${id}`,
       arity: 0,
-      text: `CodeRecord${id} == [id |-> ${id}, strict |-> ${getBool(isStrict)}, kind |-> "${flavor}", length |-> ${length}, sourceText |-> ${sourceText}, bare |-> ${getBool(isBare)}]`,
+      text: `CodeRecord${id} == [id |-> ${id}, strict |-> ${getBool(isStrict)}, kind |-> "${flavor}", length |-> ${length}, sourceText |-> ${sourceText}, naming |-> ${naming}, bare |-> ${getBool(isBare)}]`,
     });
     return `CodeRecord${id}`;
+  };
+
+  // How V8 names a function in a stack trace: by the name its literal has (sfi), or, without one,
+  // the name its parser infers, Empty where tla-ts can't tell; by the name a computed key gave it
+  // as it ran, which its name property holds; and a class's initializers by names of their own.
+  const getNaming = (node: ts.Node, kind: string, literal: LiteralName) => {
+    if (literal.isComputed) return `[naming |-> "runtime", sfi |-> <<>>, inferred |-> Empty]`;
+    if (literal.name !== undefined && literal.name !== "") {
+      return `[naming |-> "${kind}", sfi |-> ${getUnits(literal.name)}, inferred |-> Empty]`;
+    }
+    const inferred = getInferredName(node);
+    return `[naming |-> "anonymous", sfi |-> <<>>, inferred |-> ${inferred === undefined ? "Empty" : getUnits(inferred)}]`;
+  };
+
+  const getFunctionNaming = (fn: FunctionLike) => {
+    const node = fn.node;
+    if (fn.kind === "staticBlock") {
+      return getNaming(node, "staticInit", { name: "<static_initializer>", isComputed: false });
+    }
+    if (
+      (fn.kind === "method" || fn.kind === "get" || fn.kind === "set") &&
+      (ts.isMethodDeclaration(node) || ts.isAccessor(node))
+    ) {
+      const key = getKeyName(node.name);
+      return getNaming(node, "static", {
+        name: fn.kind === "method" ? key.name : `${fn.kind} ${key.name ?? ""}`,
+        isComputed: key.isComputed,
+      });
+    }
+    if (fn.kind === "constructor" && ts.isClassLike(node.parent)) {
+      const name = node.parent.name?.text;
+      return getNaming(
+        node.parent,
+        "static",
+        name !== undefined || ts.isClassDeclaration(node.parent)
+          ? { name: name ?? "default", isComputed: false }
+          : getContextName(node.parent),
+      );
+    }
+    return getNaming(
+      node,
+      "static",
+      ts.isFunctionDeclaration(node) || (ts.isFunctionExpression(node) && node.name !== undefined)
+        ? { name: node.name?.text ?? "default", isComputed: false }
+        : getContextName(node),
+    );
   };
 
   const define = (prefix: string, parameters: string[], body: string) => {
@@ -865,7 +1159,7 @@ export const specialize = (
     if (node.expression.kind === ts.SyntaxKind.SuperKeyword) {
       return defineCode(
         "SuperCall",
-        `LET thisEnv == GetThisEnvironment(s, ctx.lex) IN SuperCallThen(thisEnv, O(s, E(s, thisEnv).fn).proto, E(s, thisEnv).newTarget, ${args("s", "ctx")})`,
+        `LET thisEnv == GetThisEnvironment(s, ctx.lex) IN SuperCallAt(${getCallSite(node)}, thisEnv, O(s, E(s, thisEnv).fn).proto, E(s, thisEnv).newTarget, ${args("s", "ctx")})`,
       );
     }
     // EvaluateImportCall (§13.3.10.2), whose specifier and options the host takes, as V8 gives
@@ -900,7 +1194,7 @@ export const specialize = (
           : `IF IsNullish(Val(c)) THEN Abrupt(c.s, Completion("nullish", Undefined, Empty)) ELSE `;
       return defineCode(
         "Call",
-        `LET c == ${fn("s", "ctx")} IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsThen(Val(c), Undefined, FALSE, ${args("c.s", "ctx")})`,
+        `LET c == ${fn("s", "ctx")} IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsAt(${getCallSite(node)}, Val(c), Undefined, ${args("c.s", "ctx")})`,
       );
     }
     const base = reference(node.expression, scope);
@@ -910,7 +1204,7 @@ export const specialize = (
         : `IF IsNullish(Val(c).f) THEN Abrupt(c.s, Completion("nullish", Undefined, Empty)) ELSE `;
     return defineCode(
       "Call",
-      `LET c == CalleeThen(${base("s", "ctx")}) IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsThen(Val(c).f, Val(c).this, FALSE, ${args("c.s", "ctx")})`,
+      `LET c == CalleeThen(${base("s", "ctx")}) IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsAt(${getCallSite(node)}, Val(c).f, Val(c).this, ${args("c.s", "ctx")})`,
     );
   };
 
@@ -1227,7 +1521,7 @@ export const specialize = (
       const args = argumentList(node.arguments ?? [], scope);
       return defineCode(
         "New",
-        `LET r == ${callee("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE NewArgumentsThen(Val(r), ${args("r.s", "ctx")})`,
+        `LET r == ${callee("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE NewArgumentsAt(${getCallSite(node)}, Val(r), ${args("r.s", "ctx")})`,
       );
     }
     if (ts.isMetaProperty(node)) {
@@ -1433,7 +1727,7 @@ export const specialize = (
         "LET f == GetValue(r.s, Val(r)) IN IF IsAbrupt(f) THEN f ELSE",
         `LET object == GetTemplateObject(f.s, <<0, ${templateSites}>>, [TemplateCookedList |-> ${getSequence(cooked)}, TemplateRawList |-> ${getSequence(raw)}]) IN`,
         `LET a == ${args("object.s", "ctx")} IN IF IsAbrupt(a) THEN a ELSE`,
-        "CallArgumentsThen(Val(f), CallThisValue(object.s, Val(r)), FALSE, Ok(a.s, <<Val(object)>> \\o Val(a)))",
+        `CallArgumentsAt(${getCallSite(node)}, Val(f), CallThisValue(object.s, Val(r)), Ok(a.s, <<Val(object)>> \\o Val(a)))`,
       ].join("\n  "),
     );
   };
@@ -1649,7 +1943,21 @@ export const specialize = (
       id,
       body: `Code${id}(s, f, ctx, args) ==\n  LET v == ${evaluation("s", "ctx")} IN IF IsAbrupt(v) THEN v ELSE Abrupt(v.s, Completion("return", Val(v), Empty))`,
     };
-    return defineRecord(id, true, 0, getSourceText(node));
+    const isStatic =
+      ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ===
+      true;
+    return defineRecord(
+      id,
+      true,
+      0,
+      getSourceText(node),
+      isStatic
+        ? getNaming(node, "staticInit", { name: "<static_initializer>", isComputed: false })
+        : getNaming(node, "instanceInit", {
+            name: "<instance_members_initializer>",
+            isComputed: false,
+          }),
+    );
   };
 
   // InstantiateOrdinaryFunctionExpression (§15.2.5) and InstantiateArrowFunctionExpression
@@ -1999,6 +2307,7 @@ export const specialize = (
       isStrict,
       length === -1 ? parameters.length : length,
       fn.kind === "staticBlock" ? "<<>>" : getSourceText(node),
+      getFunctionNaming(fn),
       flavor,
       isBare,
     );
@@ -2045,7 +2354,7 @@ export const specialize = (
       `LET parents == ${heritage === undefined ? `Ok(h.s, [proto |-> Intrinsic(h.s, "ObjectPrototype"), ctor |-> Intrinsic(h.s, "FunctionPrototype")])` : "ClassParents(h.s, Val(h))"} IN IF IsAbrupt(parents) THEN parents ELSE`,
       "LET proto == OrdinaryObjectCreate(parents.s, Val(parents).proto) IN",
       constructor === undefined
-        ? `LET made == LET a == Alloc(proto.s, BuiltinObject(Val(parents).ctor, <<"Class", "default">>, 0, FunctionNameUnits(proto.s, ${className}), TRUE, Empty, proto.s.realmId)) IN Ok(a.s, a.v) IN`
+        ? `LET made == LET a == Alloc(proto.s, BuiltinObject(Val(parents).ctor, <<"Class", "default">>, 0, FunctionNameUnits(proto.s, ${className}), TRUE, ${getPosition(node, node.getStart())}, proto.s.realmId)) IN Ok(a.s, a.v) IN`
         : `LET made == LET m == CodeFunctionCreate(proto.s, Val(parents).ctor, ${functionCode({ node: constructor, parameters: constructor.parameters, body: constructor.body, kind: "constructor" }, scope)}, FALSE, cctx.lex, cctx.priv) IN Ok(SetFunctionName(MakeClassConstructor(MakeMethod(m.s, m.v, Val(proto)), m.v), m.v, ${className}, <<>>), m.v) IN`,
       "LET F == Val(made)",
       "    s2 == MakeConstructor(made.s, F, FALSE, Val(proto))",

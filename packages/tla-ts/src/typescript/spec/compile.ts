@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { createJavaScriptFile, isCommonJsFile } from "../common-js";
@@ -7,10 +9,11 @@ import { createFileResolver } from "../program";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
-import { getHostTimeZone, getTlaString, LOCALE_METHODS } from "./runtime";
+import { getHostTimeZone, getTlaString, getUnitsOf, LOCALE_METHODS } from "./runtime";
 import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
 import { getNumber, type ProgramFile, specialize } from "./specialize";
+import { stripTypes } from "./strip-types";
 import { suspendDefinitions } from "./suspend";
 
 export interface EscoreSpec {
@@ -106,41 +109,54 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
   return { sorted, recursive };
 };
 
-// JavaScript of a file of TypeScript's code, which keeps its imports and exports. A module is one
-// where it neither imports nor exports too, where await at its top level awaits, which its
-// JavaScript marks with an empty export.
-const transpile = (source: string, fileName: string, isModule: boolean) => {
-  const transpiled = ts.transpileModule(source, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ESNext,
-      module: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.Preserve,
-      moduleDetection: isModule ? ts.ModuleDetectionKind.Force : ts.ModuleDetectionKind.Legacy,
-      useDefineForClassFields: true,
-      // A script runs in strict mode only where it says so, which TypeScript 6 deprecates.
-      alwaysStrict: false,
-      ignoreDeprecations: "6.0",
+// The JavaScript that Node runs of a file: a .ts file's code with its types replaced by whitespace,
+// as Node strips them, which keeps its positions and its functions' source texts, and a .js file's
+// code as it is. A module is one where it neither imports nor exports too, where await at its top
+// level awaits, which its JavaScript marks with an empty export after its code. A CommonJS
+// module's JavaScript is in the function that Node wraps it in, where a .js file may return.
+const transpile = (source: string, fileName: string, isModule: boolean, wrapper = ["", ""]) => {
+  const isTypeScript = /\.[cm]?ts$/.test(fileName);
+  const transpiled = ts.transpileModule(
+    isTypeScript ? source : `${wrapper[0]}${source}${wrapper[1]}`,
+    {
+      compilerOptions: {
+        target: ts.ScriptTarget.ESNext,
+        module: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.Preserve,
+        moduleDetection: isModule ? ts.ModuleDetectionKind.Force : ts.ModuleDetectionKind.Legacy,
+        // A script runs in strict mode only where it says so, which TypeScript 6 deprecates.
+        alwaysStrict: false,
+        ignoreDeprecations: "6.0",
+      },
+      // TypeScript fails on a file that imports itself by the name it transpiles under, which
+      // keeps only the file's extension.
+      fileName: `/tla-ts/transpiled${/\.[^./]*$/.exec(fileName)?.[0] ?? ""}`,
+      reportDiagnostics: true,
     },
-    // TypeScript fails on a file that imports itself by the name it transpiles under, which
-    // keeps only the file's extension.
-    fileName: `/tla-ts/transpiled${/\.[^./]*$/.exec(fileName)?.[0] ?? ""}`,
-    reportDiagnostics: true,
-  });
+  );
   const error = transpiled.diagnostics?.find(
     (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
   );
   if (error !== undefined) {
     throw new TlaTypeScriptError(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
   }
-  return ts.createSourceFile(
-    fileName.replace(/\.[cm]?tsx?$/, ".js"),
-    transpiled.outputText,
-    {
-      languageVersion: ts.ScriptTarget.ESNext,
-      impliedNodeFormat: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.CommonJS,
-    },
-    true,
-    ts.ScriptKind.JS,
-  );
+  const code = isTypeScript
+    ? stripTypes(
+        ts.createSourceFile(fileName, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS),
+      )
+    : source;
+  return `${wrapper[0]}${code}${wrapper[1]}`;
+};
+
+const parse = (code: string, fileName: string, isModule: boolean) => {
+  const name = fileName.replace(/\.[cm]?tsx?$/, ".js");
+  const options: ts.CreateSourceFileOptions = {
+    languageVersion: ts.ScriptTarget.ESNext,
+    impliedNodeFormat: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.CommonJS,
+  };
+  const sourceFile = ts.createSourceFile(name, code, options, true, ts.ScriptKind.JS);
+  return !isModule || ts.isExternalModule(sourceFile)
+    ? sourceFile
+    : ts.createSourceFile(name, `${code}\nexport {};\n`, options, true, ts.ScriptKind.JS);
 };
 
 // Whether a file's code has an early error, for which Node throws a SyntaxError where it loads the
@@ -222,7 +238,7 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
   if (isScript && !/\bimport\s*\(/.test(source)) {
     return [
       {
-        sourceFile: transpile(source, fileName, false),
+        sourceFile: parse(transpile(source, fileName, false), fileName, false),
         path: fileName,
         kind: "script",
         targets: new Map(),
@@ -302,8 +318,8 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
     const code = text.replace(/^#!.*/, (line) => " ".repeat(line.length));
     const sourceFile =
       kind === "commonjs"
-        ? transpile(`${WRAPPER[0]}${code}${WRAPPER[1]}`, path, false)
-        : transpile(code, path, kind !== "script");
+        ? parse(transpile(code, path, false, WRAPPER), path, false)
+        : parse(transpile(code, path, kind !== "script"), path, kind !== "script");
     // Node loads none of the requests of a file that it fails to parse.
     const isRejected = path !== entry && kind !== "script" && hasEarlyError(sourceFile);
     const targets = new Map(
@@ -350,7 +366,11 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
     ? [
         ...withFacades,
         {
-          sourceFile: transpile(NODE_IMPORT, "node-import.js", false),
+          sourceFile: parse(
+            transpile(NODE_IMPORT, "node-import.js", false),
+            "node-import.js",
+            false,
+          ),
           path: "node:internal/modules/esm/import",
           kind: "host" as const,
           targets: new Map(),
@@ -427,6 +447,26 @@ const isConstructor = (value: unknown) => {
 };
 
 const getBoolean = (value: boolean) => (value ? "TRUE" : "FALSE");
+
+// The frames of Node 26 below the top level of the ES module it runs as its entry, where V8's stack
+// trace ends: the module job that evaluates the module, and the async frames of the loader that
+// awaits it.
+const ENTRY_MODULE_FRAMES = [
+  "ModuleJob.run (node:internal/modules/esm/module_job:569:25)",
+  "async node:internal/modules/esm/loader:650:26",
+  "async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:105:5)",
+];
+
+// Where Node places a file's code in a stack trace: a file URL, but for a JavaScript file that Node
+// loads as CommonJS, its path; none for a script, which tla-ts doesn't know how a host runs.
+const getHostFileLocation = (file: ProgramFile) =>
+  file.kind === "script"
+    ? "Empty"
+    : getUnitsOf(
+        file.kind === "commonjs" && !/\.[cm]?ts$/.test(file.path)
+          ? resolve(file.path)
+          : pathToFileURL(resolve(file.path)).href,
+      );
 
 // The groups of ESCore's parts that a module runs on: its loading, linking, and evaluation, the
 // promise of its evaluation, and the proxies that stand for what of the host ESCore lacks.
@@ -528,7 +568,12 @@ export const compileToEscore = (
                     ),
                   ),
                 ...runtime.hostOnlyProperties
-                  .filter((property) => program.words.has(property.key))
+                  // Error.stackTraceLimit, which an error's stack reads, is always the host's.
+                  .filter(
+                    (property) =>
+                      program.words.has(property.key) ||
+                      (property.owner === "Error" && property.key === "stackTraceLimit"),
+                  )
                   .flatMap((property) =>
                     getHostProperty(property.owner, property.key, property.descriptor, undefined),
                   ),
@@ -542,6 +587,22 @@ export const compileToEscore = (
           text: program.words.has("Temporal")
             ? getHostTimeZone(files.map((file) => file.sourceFile.text).join("\n"))
             : `HostTimeZone(key) == [found |-> "unknown"]`,
+        },
+        {
+          name: "HostFileLocation",
+          arity: 1,
+          text: `HostFileLocation(file) ==\n  CASE ${files.map((file, index) => `file = ${index + 1} -> ${getHostFileLocation(file)}`).join("\n    [] ")}`,
+        },
+        {
+          name: "HostDefaultStackTraceLimit",
+          arity: 1,
+          // A script, whose realm lacks the host's Error.stackTraceLimit, has Node's default.
+          text: `HostDefaultStackTraceLimit(file) == ${isModule ? -1 : 10}`,
+        },
+        {
+          name: "HostEntryFrames",
+          arity: 1,
+          text: `HostEntryFrames(file) == ${files[0].kind === "module" ? `<<${ENTRY_MODULE_FRAMES.map(getUnitsOf).join(", ")}>>` : "Empty"}`,
         },
         {
           name: "RunProgram",
