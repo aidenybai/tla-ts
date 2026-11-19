@@ -131,12 +131,33 @@ const DEFINITIONS = [
   `ModuleRequestPhases(node) == node.phases`,
   // HostLoadImportedModule (§16.2.1.10) for a program's host, which loads the module of the file
   // that the referrer's request names, made the first time the host loads it in the realm.
+  // Node loads a JSON file only for a request of type json, and loads no other file for one, which
+  // it rejects with a TypeError.
   `HostLoadModuleFrom(s, referrer, request) ==
-  LoadModuleNode(s, ModuleNode(ModuleAt(s, referrer).node.targets[request.specifier]))`,
+  LET node == ModuleNode(ModuleAt(s, referrer).node.targets[request.specifier])
+      type == IF N("type") \\in DOMAIN request.attributes THEN request.attributes[N("type")] ELSE <<>>
+  IN IF (node.kind = "json") # (type = N("json")) \\/ type \\notin {<<>>, N("json")} THEN ThrowTypeError(s)
+     ELSE LoadModuleNode(s, node)`,
+  // The exports of a JSON file, which Node's CommonJS loader and its ESM loader share: the value of
+  // its JSON, the first time either loads it, made a loaded module of the CommonJS cache.
+  `JsonExports(s, node) ==
+  IF node.file \\in DOMAIN s.required THEN Get(s, s.required[node.file].module, SV("exports"))
+  ELSE IF ~node.isValid THEN Assert(FALSE, "tla-ts can't load a JSON file that JSON.parse rejects, whose error Node names the file in")
+  ELSE LET v == JSONParse(s, Str(node.text), Undefined) IN
+  IF IsAbrupt(v) THEN v ELSE
+  LET module == OrdinaryObjectCreate(v.s, Intrinsic(v.s, "ObjectPrototype"))
+      made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(v))
+  IN Ok([made.s EXCEPT !.required = (node.file :> [module |-> Val(module), loaded |-> TRUE]) @@ @], Val(v))`,
   // A CommonJS module that an ES module imports is a Synthetic Module Record whose default export
   // is the module's exports, as Node's ModuleWrap for it gives them.
   `LoadModuleNode(s, node) ==
   IF <<s.realmId, node.file>> \\in DOMAIN s.moduleIds THEN Ok(s, s.moduleIds[<<s.realmId, node.file>>])
+  ELSE IF node.kind = "json" THEN
+    LET exports == JsonExports(s, node) IN
+    IF IsAbrupt(exports) THEN exports ELSE
+    LET m == Len(exports.s.modules) + 1
+        record == ModuleRecord("synthetic", None, Val(exports), <<>>, <<>>, FALSE, <<>>, <<>>, <<>>, <<>>)
+    IN Ok([exports.s EXCEPT !.modules = Append(@, record), !.moduleIds = (<<s.realmId, node.file>> :> m) @@ @], m)
   ELSE LET m == Len(s.modules) + 1
            record == IF node.kind = "commonjs"
                      THEN ModuleRecord("synthetic", node, Undefined, <<>>, <<>>, FALSE, <<>>, <<>>, <<>>, <<>>)
@@ -198,6 +219,7 @@ const DEFINITIONS = [
     LET exports == Get(s, s.required[id].module, SV("exports")) IN
     IF IsAbrupt(exports) \\/ s.required[id].loaded THEN exports ELSE CircularExports(exports.s, Val(exports))
   ELSE LET node == ModuleNode(id) IN
+  IF node.kind = "json" THEN JsonExports(s, node) ELSE
   IF node.kind # "commonjs" THEN Assert(FALSE, "tla-ts can't require an ES module yet") ELSE
   LET exports == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
       module == OrdinaryObjectCreate(exports.s, Intrinsic(exports.s, "ObjectPrototype"))

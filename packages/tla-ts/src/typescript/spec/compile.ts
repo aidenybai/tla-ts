@@ -170,6 +170,16 @@ const getKind = (path: string, text: string): ProgramFile["kind"] =>
       ? "commonjs"
       : "module";
 
+// Whether JSON.parse reads a text, as Node's does where it loads a JSON file.
+const isJson = (text: string) => {
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 // The names that Node's ModuleWrap of a CommonJS module exports: its lexer's, then default and
 // module.exports.
 const getWrapperNames = (names: ReadonlySet<string>) => [
@@ -234,6 +244,17 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
   };
   for (const path of numbers.keys()) {
     const text = path === entry ? source : readFileSync(path, "utf8");
+    if (path.endsWith(".json")) {
+      files.push({
+        sourceFile: ts.createSourceFile(path, "", ts.ScriptTarget.ESNext),
+        path,
+        kind: "json",
+        targets: new Map(),
+        exportNames: [],
+        json: isJson(text.replace(/^\uFEFF/, "")) ? text : undefined,
+      });
+      continue;
+    }
     const kind = getKind(path, text);
     const written = getSpecifiers(
       ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true),
@@ -249,7 +270,7 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
       [...getSpecifiers(sourceFile, kind).keys()].flatMap((specifier) => {
         const literal = written.get(specifier);
         const found = literal === undefined ? undefined : resolve(literal);
-        if (found === undefined || !/\.([cm]?[jt]sx?)$/.test(found)) return [];
+        if (found === undefined || !/\.([cm]?[jt]sx?|json)$/.test(found)) return [];
         const target = getRealPath(found);
         if (!numbers.has(target)) numbers.set(target, numbers.size + 1);
         return [[specifier, numbers.get(target) ?? 0] as const];
@@ -388,6 +409,8 @@ export const compileToEscore = (
     program.identifiers.has("setTimeout");
   const isIncluded = (gate: EscoreRuntime["gates"][number]) =>
     (isModule && MODULE_GROUPS.has(gate.group)) ||
+    // A JSON file's exports are what JSON.parse gives.
+    (gate.group === "77-json.tla" && files.some((file) => file.kind === "json")) ||
     // A TextEncoder's encode makes a Uint8Array.
     (isModule && gate.group === "84" && program.words.has("TextEncoder")) ||
     [...gate.triggers].some((word) => program.words.has(word));

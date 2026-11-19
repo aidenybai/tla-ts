@@ -624,6 +624,43 @@ describe("compiles CommonJS modules as Node loads them", () => {
     });
   });
 
+  describe("loads a JSON file for an import of type json and a require, sharing its value", () => {
+    const getJson = (expected: string) => ({
+      ...getFiles("", ""),
+      "package.json": '{ "type": "module" }',
+      "data.json": '\ufeff{"a": [1, 2], "__proto__": 3}',
+      "main.js": getMain(
+        `import data from "./data.json" with { type: "json" };
+        import * as ns from "./data.json" with { type: "json" };
+        import { fromRequire } from "./reader.cjs";
+        const log = [JSON.stringify(data), Object.keys(ns).join(), fromRequire === data, Object.getOwnPropertyNames(data).join()];`,
+        expected,
+      ),
+      "reader.cjs": 'exports.fromRequire = require("./data.json");',
+    });
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getJson('{\\"a\\":[1,2],\\"__proto__\\":3},default,true,a,__proto__')))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkModules(getJson('{\\"a\\":[1,2],\\"__proto__\\":3},default,false,a,__proto__')))
+          .message,
+      ).toContain(THREW);
+    });
+
+    it("fails as Node does at an import of JSON without its type", async () => {
+      expect(
+        (await checkModules({ "main.js": 'import data from "./data.json";', "data.json": "1" }))
+          .message,
+      ).toContain(THREW);
+    });
+  });
+
   describe("gives an ES module the names that Node's lexer finds a CommonJS module exports", () => {
     const getNamed = (expected: string) => ({
       ...getFiles("", ""),

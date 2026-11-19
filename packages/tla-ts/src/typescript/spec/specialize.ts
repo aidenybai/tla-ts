@@ -56,7 +56,9 @@ interface LexicalDeclaration {
 export interface ProgramFile {
   sourceFile: ts.SourceFile;
   path: string;
-  kind: "script" | "module" | "commonjs";
+  // A JSON file's sourceFile is empty, and its text is its JSON, where JSON.parse reads it.
+  kind: "script" | "module" | "commonjs" | "json";
+  json?: string;
   targets: ReadonlyMap<string, number>;
   // The names that Node's ModuleWrap of a CommonJS module exports, which its lexer finds.
   exportNames: readonly string[];
@@ -2376,16 +2378,23 @@ export const specialize = (
   const moduleCode = (file: ProgramFile, number: number) => {
     const statements = file.sourceFile.statements;
     const scope: Scope = { isStrict: true, isClassBody: false, isAsyncGenerator: false };
+    // ModuleRequest (§16.2.1.4), with the attributes of its with clause (WithClauseToAttributes,
+    // §16.2.2.4), a function from each key to its value.
     const getRequest = (node: ts.ImportDeclaration | ts.ExportDeclaration) => {
-      if (node.attributes !== undefined) {
-        throw new TlaTypeScriptError("tla-ts can't import a module with attributes yet", node);
-      }
       const specifier = node.moduleSpecifier;
       if (specifier === undefined || !ts.isStringLiteral(specifier)) return undefined;
       if (!file.targets.has(specifier.text)) {
         throw new TlaTypeScriptError(`tla-ts can't load the module ${specifier.text}`, node);
       }
-      return `[specifier |-> ${getUnits(specifier.text)}, attributes |-> NoAttributes]`;
+      const attributes = (node.attributes?.elements ?? []).map((element) =>
+        ts.isStringLiteral(element.value)
+          ? `(${getUnits(element.name.text)} :> ${getUnits(element.value.text)})`
+          : undefined,
+      );
+      if (attributes.some((attribute) => attribute === undefined)) {
+        throw new TlaTypeScriptError("tla-ts can't read this import attribute", node);
+      }
+      return `[specifier |-> ${getUnits(specifier.text)}, attributes |-> ${attributes.length === 0 ? "NoAttributes" : attributes.join(" @@ ")}]`;
     };
     const imports: string[] = [];
     const importedNames: string[] = [];
@@ -2561,12 +2570,23 @@ export const specialize = (
   if (entry.kind === "script" && files.length > 1) {
     throw new TlaTypeScriptError("tla-ts can't compile a script that loads modules to ESCore yet");
   }
+  // A JSON file's node: its text without a byte order mark, which Node strips, where it's valid.
+  const jsonCode = (file: ProgramFile, number: number) => {
+    definitions.push({
+      name: `ModuleNode${number}`,
+      arity: 0,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "json", isValid |-> ${getBool(file.json !== undefined)}, text |-> ${getUnits((file.json ?? "").replace(/^\uFEFF/, ""))}]`,
+    });
+    return undefined;
+  };
   const moduleDeclarations = files.map((file, index) =>
     file.kind === "module"
       ? moduleCode(file, index + 1)
       : file.kind === "commonjs"
         ? commonJsCode(file, index + 1)
-        : undefined,
+        : file.kind === "json"
+          ? jsonCode(file, index + 1)
+          : undefined,
   );
   const program =
     entry.kind === "module"
