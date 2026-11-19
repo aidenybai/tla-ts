@@ -1415,11 +1415,7 @@ export const createSearch = (
           .join("")
       : prettyPrint(formatValue(getViewValue(expression, state)));
   const holdsActionConstraint = (constraint: NamedExpression, state: Value[], next: State) =>
-    holdsLikeTlc(
-      constraint.expression,
-      getContext(environment, state, next),
-      (expression) => `${UNEXPECTED_EXCEPTION}${getExpectedBoolean(expression, environment)}`,
-    );
+    holdsLikeTlc(constraint.expression, getContext(environment, state, next));
   const toRecord = (state: Value[]): Record<string, Value> => {
     const record = Object.fromEntries(
       getTlcOrder().map((index) => [environment.variables[index], state[index]]),

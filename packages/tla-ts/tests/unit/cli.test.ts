@@ -1755,3 +1755,41 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     expect(result.stdout).toContain("6. Line 5, column 26 to line 5, column 26 in PromotedWarning");
   });
 });
+
+describe("the CLI reports an ACTION_CONSTRAINT that is not a boolean like TLC", () => {
+  const getError = (args: string[]) => {
+    const lines = runCliWith("tool-output", ["ActionConstraintValue.tla", ...args]).stdout.split(
+      "\n",
+    );
+    return lines.slice(
+      lines.findIndex((line) => line.startsWith("Error: ")),
+      lines.indexOf("Error: The behavior up to this point is:"),
+    );
+  };
+  const expected =
+    "TLC expected a boolean value, but did not find one. line 10, col 8 to line 10, col 33 of module ActionConstraintValue";
+
+  it("in a breadth-first search, which wraps it once as an unexpected exception", () => {
+    expect(getError([])).toEqual([
+      "Error: TLC threw an unexpected exception.",
+      "This was probably caused by an error in the spec or model.",
+      "See the User Output or TLC Console for clues to what happened.",
+      "The exception was a java.lang.RuntimeException",
+      `: ${expected}`,
+    ]);
+  });
+
+  it("in a simulation, whose SimulationWorker reports the EvalException of Tool#isInActions", () => {
+    expect(getError(["-simulate", "num=1", "-depth", "4"])).toEqual([`Error: ${expected}`]);
+  });
+
+  it("in a depth-first search, which wraps it once as the failure of the next states", () => {
+    expect(getError(["-dfid", "4"])).toEqual([
+      "Error: TLC threw an unexpected exception.",
+      "This was probably caused by an error in the spec or model.",
+      "The error occurred when TLC was computing the set of next states.",
+      "The exception was a java.lang.RuntimeException",
+      `: ${expected}`,
+    ]);
+  });
+});
