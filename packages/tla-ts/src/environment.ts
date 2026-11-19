@@ -1458,6 +1458,7 @@ export const createEnvironment = (
         range: declaration.location.range,
       };
       parameterized.set(symbol.key, !isParameterFree);
+      unresolvedBodyKeys.add(symbol.key);
       visible.set(declaration.name, symbol);
       exported.set(declaration.name, symbol);
     });

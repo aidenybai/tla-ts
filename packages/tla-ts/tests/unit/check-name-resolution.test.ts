@@ -5733,6 +5733,24 @@ describe("name resolution matches SANY", () => {
         ],
       ],
     ],
+    [
+      "instances that substitute into a RECURSIVE operator that nothing defines",
+      "---- MODULE A ----\nCONSTANT c\nRECURSIVE G\n====\nI == INSTANCE A WITH c <- 1\nINSTANCE A WITH c <- 2",
+      [
+        [
+          "line 4, col 11 to line 4, col 11",
+          "Symbol G declared in RECURSIVE statement but not defined.",
+        ],
+        [
+          "line 6, col 1 to line 6, col 27",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+        [
+          "line 7, col 1 to line 7, col 22",
+          "Substitution error, probably due to error \nin module being instantiated.",
+        ],
+      ],
+    ],
   ])("reports a body SANY fails to generate in %s", async (_description, source, errors) => {
     await expect(checkNames(source)).rejects.toThrow(
       createSanyError(
