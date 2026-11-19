@@ -75,6 +75,7 @@ import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty 
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
+import { substitutionFrames, withSubstitutionFrames } from "./instances";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -553,10 +554,15 @@ const getProperties = (
       const conjunct = item.expression;
       if (isConstantTrue(item, environment, "property")) return;
       const partName = item.name ?? name;
+      const withFrames = (check: Expression) =>
+        withSubstitutionFrames(
+          check,
+          item.frames.filter((frame) => !substitutionFrames.get(check)?.includes(frame)),
+        );
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
         properties.actionProperties.push({
           name: partName,
-          box: conjunct.expression,
+          box: withFrames(conjunct.expression),
           action: conjunct.expression.action,
           subscript: conjunct.expression.subscript,
           scope: item.scope,
@@ -574,7 +580,7 @@ const getProperties = (
             : undefined;
         properties.invariants.push({
           name: operator?.name ?? (body.kind === "Identifier" ? body.name : partName),
-          expression: body,
+          expression: withFrames(body),
           scope: item.scope,
         });
         return;
@@ -583,7 +589,7 @@ const getProperties = (
       if (level < ACTION_LEVEL) {
         properties.initialPredicates.push({
           name: partName,
-          expression: conjunct,
+          expression: withFrames(conjunct),
           scope: item.scope,
         });
         return;

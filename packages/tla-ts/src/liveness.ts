@@ -36,7 +36,7 @@ import {
   type Thunk,
 } from "./evaluate";
 import { letDefinitions } from "./coverage";
-import { mapChildren } from "./instances";
+import { mapChildren, substitutionFrames } from "./instances";
 import { getKeyName } from "./resolve";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { isEnabled } from "./successors";
@@ -63,6 +63,7 @@ export interface ScopedExpression {
 interface ExpandedExpression extends ScopedExpression {
   name: string | undefined;
   path: string[];
+  frames: Expression[];
 }
 
 export interface TemporalProperty extends ScopedExpression {
@@ -74,6 +75,7 @@ interface Expansion {
   path: string[];
   expanding: Set<Definition>;
   isSubstituted: boolean;
+  frames: Expression[];
 }
 
 const MAXIMUM_EXPANSION_DEPTH = 100;
@@ -247,7 +249,13 @@ export const expandTemporal = (
   scope: Scope | undefined,
   environment: Environment,
   isProperty: boolean,
-  expansion: Expansion = { name: undefined, path: [], expanding: new Set(), isSubstituted: false },
+  expansion: Expansion = {
+    name: undefined,
+    path: [],
+    expanding: new Set(),
+    isSubstituted: false,
+    frames: [],
+  },
 ): ExpandedExpression[] => {
   const expand = (
     child: Expression,
@@ -266,6 +274,12 @@ export const expandTemporal = (
       isSubstituted:
         expansion.isSubstituted ||
         (definition !== undefined && environment.substitutedDefinitions.has(definition)),
+      frames: [
+        ...expansion.frames,
+        ...(substitutionFrames.get(child) ?? []).filter(
+          (frame) => !expansion.frames.includes(frame),
+        ),
+      ],
     });
   if (expression.kind === "And") {
     return expression.operands.flatMap((operand) => expand(operand, scope, describeRange(operand)));
@@ -351,7 +365,9 @@ export const expandTemporal = (
     if (expanded.length === 0) throw createTautologyError();
     return expanded;
   }
-  return [{ expression, scope, name: expansion.name, path: expansion.path }];
+  return [
+    { expression, scope, name: expansion.name, path: expansion.path, frames: expansion.frames },
+  ];
 };
 
 // TLC takes a formula apart through a LET without binding its definitions, so it evaluates an impure one again at each reference.

@@ -254,7 +254,8 @@ export const getCoverageLabel = (
   const range = getRelationRange(expression);
   const label = actionHead ? name : definition?.name;
   if (label === undefined || !head) {
-    return `Action ${range ? formatRange(range) : "Unknown location"}`;
+    const actionRange = getPredicateRange(expression) ?? range;
+    return `Action ${actionRange ? formatRange(actionRange) : "Unknown location"}`;
   }
   const isBody = actionHead
     ? isSameRange(actionBody, getPredicateRange(expression))
