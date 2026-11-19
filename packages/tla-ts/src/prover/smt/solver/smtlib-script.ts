@@ -917,7 +917,6 @@ export const runSmtlibScript = (
     state.tacticInits = inits;
     state.strategy = getLogicStrategy(logic, isProofsEnabled);
     state.isSolverProducingModels = settings.isProducingModels;
-    // smt_strategic_solver_factory makes the tactic of the logic before its solvers.
     state.manager.dropStartupExprs();
     state.tactic =
       tactic ??

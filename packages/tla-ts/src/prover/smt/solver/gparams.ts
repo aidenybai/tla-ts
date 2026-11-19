@@ -207,7 +207,7 @@ export const isDoubleParameter = (name: string) => {
   return found.kinds?.doubles.split(" ").includes(found.parameter) === true;
 };
 
-// rational's parser skips any character it doesn't expect.
+// Z3's rational parser skips any character it doesn't expect.
 const getDigits = (text: string) => BigInt(`0${text.replace(/[^0-9]/g, "")}`);
 
 const getDouble = (value: string, token: SExpr) => {

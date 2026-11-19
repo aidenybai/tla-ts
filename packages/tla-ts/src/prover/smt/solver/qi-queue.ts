@@ -16,7 +16,7 @@ const getConstantCost = (text: string | undefined) => {
   return Rational.fromDecimal(text);
 };
 
-// cost_evaluator reads a numeral as the float quotient of its int64 numerator and denominator.
+// Z3 costs a numeral as the float quotient of its int64 numerator and denominator.
 const getFloat = (value: bigint) => Math.fround(Number(BigInt.asIntN(64, value)));
 
 interface Entry {

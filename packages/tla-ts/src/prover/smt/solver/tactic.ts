@@ -1742,9 +1742,9 @@ const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
   if (goals.length === 1) {
     const subgoal = goals[0];
     if (subgoal.isDecided()) return goals;
-    const subresults: Goal[] = [];
+    let subresults: Goal[] = [];
     try {
-      subresults.push(...second(subgoal));
+      subresults = second(subgoal);
       return subresults;
     } finally {
       if (subgoal !== goal && !subresults.includes(subgoal)) subgoal.release();

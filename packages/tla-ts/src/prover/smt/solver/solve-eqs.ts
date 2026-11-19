@@ -555,9 +555,11 @@ export class SolveEqs {
     return eqs;
   }
 
-  // m_next keeps a reference to the term of each equation it copies.
   private resetNext() {
-    for (const eqs of this.next) for (const eq of eqs) this.manager.decRef(eq.term);
+    for (let index = 0; index < this.next.length; index++) {
+      const eqs = this.next[index];
+      for (let eqIndex = 0; eqIndex < eqs.length; eqIndex++) this.manager.decRef(eqs[eqIndex].term);
+    }
     this.next = [];
   }
 
@@ -715,9 +717,9 @@ export class SolveEqs {
     } while (this.substIds.length > 0 && count < 20 && limit.inc());
     if (limit.inc() && this.options.isContextSolve && !goal.isProofsEnabled) {
       this.runRound(() => this.collectNestedEqualities());
-      // The model trail keeps the formulas the nested equalities replaced.
       if (this.substitution.size > 0)
-        for (const form of this.oldForms.items) this.pinned.push(form);
+        for (let index = 0; index < this.oldForms.size; index++)
+          this.pinned.push(this.oldForms.items[index]);
     }
     this.eqTerms.reset();
     this.oldForms.reset();
