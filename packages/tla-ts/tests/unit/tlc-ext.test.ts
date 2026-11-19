@@ -128,6 +128,15 @@ describe("TLCExt matches TLC", () => {
     ).toEqual(["1", "2", "3", "4"]);
   });
 
+  // Deviation from TLC: TLC throws 'Cannot read field "state" because "sinfo" is null'.
+  it("reads Trace past a random initial state, unlike TLC", async () => {
+    expect(
+      await printTrace(
+        "Init == x = RandomElement(1..1000)\nNext == Len(Trace) < 3 /\\ x' = x + 1 /\\ PrintT(x)",
+      ),
+    ).toEqual(["731", "732", "731"]);
+  });
+
   // Deviation from TLC: it prints n = 0 for both states.
   it("reads Trace in an ALIAS of an initial state and its successor as the path to each, unlike TLC", async () => {
     const result = await check({

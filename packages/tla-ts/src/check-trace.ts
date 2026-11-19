@@ -364,6 +364,7 @@ export const createTraceBuilder = (context: TraceContext) => {
   };
   // TLCExt#getTrace rebuilds the path from fingerprints, which evaluates Init and the actions again.
   // Deviation from TLC: TLCExt#getTrace leaves a rebuilt state current, so later draws and Trace in the same step start from it.
+  // Deviation from TLC: TLCExt#getTrace draws for the initial state from the current state's seed, so it misses a random one and throws a NullPointerException.
   const rebuildPath = (index: number) => {
     const path = getIndexPath(index);
     if (path.length === 0) return;
