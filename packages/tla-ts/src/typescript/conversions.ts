@@ -3,6 +3,7 @@ import type { Expression } from "../ast";
 import { allocate, type Frame, type Path, throwTypeError, translateJoined } from "./actions";
 import {
   type Context,
+  type FunctionNode,
   findNodes,
   getAccessorFunctions,
   getParameters,
@@ -862,6 +863,15 @@ const toPrimitive = (
     );
   const isObject = (current: Path, inner: Expression) =>
     useJavaScript("IsObjectIn", [getHeap(current.scope, site, context), inner], context);
+  // A conversion inside the methods of two conversions that run one inside the other calls none of
+  // the script's methods, as each would run every other in turn, so it stops where it converts an
+  // object.
+  const getCandidates = (methods: readonly FunctionNode[]) =>
+    ["toString", "valueOf", "@@toPrimitive"].flatMap((key) =>
+      getMethods(site, key, context).filter((method) => frame.inlining.has(method)),
+    ).length >= 2
+      ? []
+      : methods;
   const ordinary = (current: Path, names: readonly string[]): Formula => {
     const name = names[0];
     if (name === undefined) return throwWith(current);
@@ -874,7 +884,7 @@ const toPrimitive = (
         ]),
         callValue(
           site,
-          getMethods(site, name, context),
+          getCandidates(getMethods(site, name, context)),
           method,
           value,
           [],
@@ -912,7 +922,7 @@ const toPrimitive = (
           ]),
           callValue(
             site,
-            getExoticMethods(site, context),
+            getCandidates(getExoticMethods(site, context)),
             exotic,
             value,
             [string(hint)],

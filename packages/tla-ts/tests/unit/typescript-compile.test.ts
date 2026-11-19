@@ -57715,3 +57715,43 @@ describe("rejects a private name after ?., which TypeScript's parser rejects", (
     );
   });
 });
+
+describe("runs the script's methods in a conversion inside at most one other", () => {
+  const getSource = (expected: string) => `
+    let calls: any = "";
+    const first = {
+      toString() { calls += "a"; return {}; },
+      valueOf() { calls += "b"; return 1; },
+    };
+    const second = {
+      toString() { calls += "c"; return "2"; },
+    };
+    const third = {
+      toString() { calls += "e"; return "3 " + String(second); },
+    };
+    const texts = [String(first), String(third)].join();
+    if (texts + ";" + calls !== "${expected}") throw new Error("result " + texts + ";" + calls);
+  `;
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource("1,3 2;abec"))).failure).toBeUndefined();
+  });
+
+  it("rejects another order of calls", async () => {
+    expect((await checkModel(getSource("1,3 2;abce"))).failure?.message).toContain(
+      "result 1,3 2;abec",
+    );
+  });
+
+  it("stops at a third conversion inside the others", async () => {
+    const source = `
+      const inner = { toString: () => "c" };
+      const middle = { toString: () => "b " + String(inner) };
+      const outer = { toString: () => "a " + String(middle) };
+      if (String(outer) !== "a b c") throw new Error("result " + String(outer));
+    `;
+    expect((await checkModel(source)).failure?.message).toContain(
+      "tla-ts can't tell what this method gives where it converts an object",
+    );
+  });
+});
