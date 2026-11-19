@@ -66,6 +66,19 @@ describe("_POSSIBLE matches TLC", () => {
     );
   });
 
+  it("pretty-prints the counts _PrintCounts and _CheckName print, as TLC's PrintT does", async () => {
+    const lines: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, _Possible\nVARIABLE x\nInit == x = 0\nNext == x\' = (x + 1) % 3 /\\ _Track(x = 1, "ReachesTheFirstLongState") /\\ _Track(x = 2, "ReachesTheSecondLongState") /\\ _Track(x = 7, "ReachesTheThirdLongStateNever")\nPost == _PrintCounts /\\ _CheckName("ReachesTheThirdLongStateNever")\n====',
+      config: "INIT Init\nNEXT Next\nPOSTCONDITION Post",
+      onPrint: (text) => lines.push(text),
+    });
+    const counts =
+      "[ ReachesTheFirstLongState |-> 1,\n  ReachesTheSecondLongState |-> 1,\n  ReachesTheThirdLongStateNever |-> 0 ]";
+    expect([result.status, lines]).toEqual(["postcondition-violation", [counts, counts]]);
+  });
+
   it("checks _POSSIBLE after a violation without changing its status", async () => {
     const result = await checkModule(
       "Unreachable == x = 5\nInv == x < 2",

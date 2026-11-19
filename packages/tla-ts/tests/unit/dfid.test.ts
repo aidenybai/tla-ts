@@ -1,4 +1,5 @@
 import { expect, it } from "vite-plus/test";
+import type { CheckProgress } from "../../src";
 import { checkDepthFirst, type DepthFirstOutput } from "../../src/dfid";
 
 const searchDepthFirst = (body: string, coverage?: number) => {
@@ -111,5 +112,22 @@ it("replays the step whose invariant fails to evaluate with the actions it count
       ],
     ],
     "3 states generated, 2 distinct states found.",
+  ]);
+});
+
+it("warns about symmetry during liveness checking whenever the configuration declares it, as TLC's Tool#hasSymmetry asks", () => {
+  const progress: CheckProgress[] = [];
+  checkDepthFirst({
+    source:
+      "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSym == Permutations({a})\nLive == <>(x = a)\n====",
+    config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym\nPROPERTY Live",
+    maxDepth: 3,
+    onOutput: () => {},
+    onProgress: (event) => {
+      if (event.kind === "liveness-initializing") progress.push(event);
+    },
+  });
+  expect(progress).toEqual([
+    { kind: "liveness-initializing", isSymmetric: true, isConstrained: false },
   ]);
 });

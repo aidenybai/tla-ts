@@ -256,3 +256,7 @@ export const prettyPrint = (text: string) => {
 
   return format(tree, WIDTH, 0, "") ?? text;
 };
+
+// TLC writes the value of PrintT to -userFile with a line break, which PrettyPrint#mypp leaves unformatted.
+export const prettyPrintT = (text: string, hasUserFile: boolean) =>
+  hasUserFile ? text : prettyPrint(text);

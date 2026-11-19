@@ -656,7 +656,7 @@ export const getStandardOperators = (
     case "Bags":
       return withJavaMethods("Bags", BAGS_OPERATORS);
     case "TLCExt":
-      return withJavaMethods("TLCExt", createTlcExtOperators(print, runtime));
+      return withJavaMethods("TLCExt", createTlcExtOperators(runtime));
     default:
       return undefined;
   }

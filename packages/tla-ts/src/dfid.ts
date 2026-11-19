@@ -130,7 +130,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   if (temporalProperties.length > 0) {
     options.onProgress?.({
       kind: "liveness-initializing",
-      isSymmetric: search.isSymmetric,
+      isSymmetric: config.symmetry !== undefined,
       isConstrained: search.isConstrained,
     });
     const branches = withLivenessExitCode(() =>

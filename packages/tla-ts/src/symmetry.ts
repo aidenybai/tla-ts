@@ -1,9 +1,10 @@
 import type { BoundPattern, Expression } from "./ast";
 import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
-import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { MESSAGE_CODE } from "./tlc/messages";
+import { EXIT_STATUS, setExitCode, withErrorExitCode } from "./exit-codes";
+import { MESSAGE_CODE, withUnexpectedException } from "./tlc/messages";
 import { evaluate, getRootKey, type Environment } from "./evaluate";
+import { parenthesizedRanges } from "./parser";
 import { getKeyName } from "./resolve";
 import {
   compareValues,
@@ -12,6 +13,7 @@ import {
   createSortedFunction,
   createSortedSet,
   isEnumerable,
+  isEnumeratedSet,
   isFunctionValue,
   isModelValue,
   isSetValue,
@@ -58,35 +60,41 @@ const toImages = (value: Value) => {
 
 const getBoundImage = (pattern: BoundPattern, set: Expression | undefined) => {
   const names = pattern.kind === "Name" ? pattern.name : `<<${pattern.names.join(",")}>>`;
-  return set ? `${names}\\in${getExpressionImage(set)}` : names;
+  return set ? `${names}\\in${getOperandImage(set)}` : names;
 };
 
 const getExpressionImage = (expression: Expression): string => {
   if (expression.kind === "Identifier") return getKeyName(expression.name);
   if (expression.kind === "Number") return expression.text ?? String(expression.value);
   if (expression.kind === "SetEnumeration") {
-    return `{${expression.elements.map(getExpressionImage).join(",")}}`;
+    return `{${expression.elements.map(getOperandImage).join(",")}}`;
   }
   if (expression.kind === "Choose") {
-    return `CHOOSE${getBoundImage(expression.pattern, expression.set)}:${getExpressionImage(expression.body)}`;
+    return `CHOOSE${getBoundImage(expression.pattern, expression.set)}:${getOperandImage(expression.body)}`;
   }
   if (expression.kind === "Tuple")
-    return `<<${expression.elements.map(getExpressionImage).join(",")}>>`;
+    return `<<${expression.elements.map(getOperandImage).join(",")}>>`;
   if (expression.kind === "Record") {
     const fields = expression.fields.map(
-      (field) => `${field.name}|->${getExpressionImage(field.value)}`,
+      (field) => `${field.name}|->${getOperandImage(field.value)}`,
     );
     return `[${fields.join(",")}]`;
   }
   if (expression.kind === "FunctionConstruction") {
     const bounds = expression.bounds.map((bound) => getBoundImage(bound.pattern, bound.set));
-    return `[${bounds.join(",")}|->${getExpressionImage(expression.body)}]`;
+    return `[${bounds.join(",")}|->${getOperandImage(expression.body)}]`;
   }
   if (expression.kind !== "Apply") return "";
-  const args = expression.args.map(getExpressionImage);
+  const args = expression.args.map(getOperandImage);
   const operator = getKeyName(expression.operator);
   return /^[A-Za-z_]/.test(operator) ? `${operator}(${args.join(",")})` : args.join(operator);
 };
+
+// SANY gives a parenthesized expression the syntax node inside the parentheses, so only an operand keeps them.
+const getOperandImage = (expression: Expression) =>
+  parenthesizedRanges.has(expression)
+    ? `(${getExpressionImage(expression)})`
+    : getExpressionImage(expression);
 
 const isPermutations = (
   expression: Expression,
@@ -112,11 +120,14 @@ export const getSymmetryGroup = (
   }
   const evaluateConstant = (expression: Expression) =>
     evaluate(expression, { environment, scope: undefined, state: undefined, next: undefined });
-  const value = evaluateConstant(definition.body);
-  if (!isSetValue(value) || !isEnumerable(value)) {
+  const value = withErrorExitCode(() =>
+    withUnexpectedException(() => evaluateConstant(definition.body)),
+  );
+  if (!isEnumeratedSet(value)) {
     throw createSymmetryError("The symmetry operator must specify a set of functions.");
   }
   const elements = toFiniteSet(value).elements;
+  // Deviation from TLC: Tool#getSymmetryPerms asks for each value to be a FcnRcdValue, so it rejects a tuple, a record and a function it keeps lazy.
   if (!elements.every(isFunctionValue)) {
     throw createSymmetryError("The symmetry values must be function records.");
   }
@@ -131,7 +142,9 @@ export const getSymmetryGroup = (
   const warnSmallSets = (offenders: Expression[]) => {
     if (offenders.length === 0) return;
     const names = offenders.map((offender) => {
-      const image = getExpressionImage(isPermutations(offender) ? offender.args[0] : offender);
+      const image = isPermutations(offender)
+        ? getOperandImage(offender.args[0])
+        : getExpressionImage(offender);
       return configNames.get(image) ?? image;
     });
     const isPlural = offenders.length > 1;

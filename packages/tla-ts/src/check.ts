@@ -391,7 +391,7 @@ const searchStates = (
   const created = createCheckEnvironment(config, options, output.print);
   const specification = created.specification;
   reportStartup(specification, config, options.onProgress);
-  output.captureWarnings(specification.environment.runtime, options.errorCodes);
+  output.captureMessages(specification.environment.runtime, options.errorCodes);
   const coverage =
     options.coverage === undefined
       ? undefined
@@ -700,7 +700,7 @@ const searchStates = (
   if (search.properties.liveness.length > 0) {
     options.onProgress?.({
       kind: "liveness-initializing",
-      isSymmetric: search.isSymmetric,
+      isSymmetric: config.symmetry !== undefined,
       isConstrained: search.isConstrained,
     });
   }

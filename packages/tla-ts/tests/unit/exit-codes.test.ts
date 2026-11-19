@@ -57,6 +57,12 @@ describe("CLI exit codes match TLC", () => {
     expect(await getFailureExitCode(STEP, config)).toBe(151);
   });
 
+  it("exits with 255 for a symmetry that fails to evaluate", async () => {
+    const config = "INIT Init\nNEXT Next\nSYMMETRY P";
+    expect(await getFailureExitCode(`${STEP}\nP == {1 \\div 0}`, config)).toBe(255);
+    expect(await getFailureExitCode(`${STEP}\nP == {CHOOSE v \\in {} : TRUE}`, config)).toBe(255);
+  });
+
   it("exits with 255 for a box over a state predicate in the specification", async () => {
     const config = "SPECIFICATION Spec";
     expect(
