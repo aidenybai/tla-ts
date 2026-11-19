@@ -812,6 +812,137 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("disposes a using declaration's resources once its scope completes", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const resource = (name: string) => ({
+        [Symbol.dispose]() {
+          log.push("dispose " + name);
+        },
+      });
+      {
+        using first = resource("a"),
+          second = resource("b");
+        using none = null;
+        log.push("body");
+      }
+      function returning() {
+        using held = resource("c");
+        return "ret";
+      }
+      log.push(returning());
+      for (using each of [resource("d1"), resource("d2")]) log.push("iter");
+      for (using head = resource("e"), unused = null; !log.includes("for"); ) log.push("for");
+      try {
+        using throwing = {
+          [Symbol.dispose]() {
+            throw new Error("g");
+          },
+        };
+        throw new Error("body");
+      } catch (error) {
+        log.push(error.constructor.name + ":" + error.error.message + "/" + error.suppressed.message);
+      }
+      try {
+        using bad = 1 as unknown as Disposable;
+      } catch (error) {
+        log.push(error.constructor.name);
+      }
+      const result = log.join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "body,dispose b,dispose a,dispose c,ret,iter,dispose d1,iter,dispose d2,for,dispose e,SuppressedError:g/body,TypeError",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "body,dispose a,dispose b,dispose c,ret,iter,dispose d1,iter,dispose d2,for,dispose e,SuppressedError:g/body,TypeError",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("awaits the disposal of an await using declaration's resources", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const resource = (name: string) => ({
+        async [Symbol.asyncDispose]() {
+          await null;
+          log.push("dispose " + name);
+        },
+      });
+      const syncOnly = {
+        [Symbol.dispose]() {
+          log.push("sync");
+        },
+      };
+      async function run() {
+        {
+          await using first = resource("a"),
+            second = syncOnly;
+          await using none = undefined;
+          log.push("body");
+        }
+        for (await using each of [resource("c")]) log.push("iter");
+        for await (await using each of [resource("d")]) log.push("iter2");
+        log.push("end");
+      }
+      run().then(() => {
+        if (log.join() !== "${expected}") throw new Error(log.join());
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("body,sync,dispose a,iter,dispose c,iter2,dispose d,end")))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("body,dispose a,sync,iter,dispose c,iter2,dispose d,end")))
+          .message,
+      ).toContain(THREW);
+    });
+
+    const getModule = (expected: string) => `
+      const log: string[] = [];
+      {
+        await using held = {
+          async [Symbol.asyncDispose]() {
+            log.push("disposed");
+          },
+        };
+        log.push("body");
+      }
+      if (log.join() !== "${expected}") throw new Error(log.join());
+    `;
+
+    it("agrees with Node where a module's code awaits the disposal", async () => {
+      expect((await checkModule(getModule("body,disposed"))).message).toBeUndefined();
+    });
+
+    it("rejects another result where a module's code awaits the disposal", async () => {
+      expect((await checkModule(getModule("body"))).message).toContain(THREW);
+    });
+  });
+
   describe("awaits the value that an async generator returns", () => {
     const getSource = (expected: string) => `
       const actual: string[] = [];

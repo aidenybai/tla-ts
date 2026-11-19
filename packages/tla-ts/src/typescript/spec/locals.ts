@@ -76,7 +76,11 @@ const isReaching = (node: ts.Node, isArrow: boolean): boolean => {
         (ts.isVariableDeclarationList(node.initializer) &&
           node.initializer.declarations.length === 0))) ||
     ts.isEnumDeclaration(node) ||
-    ts.isModuleDeclaration(node)
+    ts.isModuleDeclaration(node) ||
+    // A using declaration's resources are its environment's.
+    (ts.isVariableDeclarationList(node) &&
+      ((node.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.Using ||
+        (node.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.AwaitUsing))
   ) {
     return true;
   }

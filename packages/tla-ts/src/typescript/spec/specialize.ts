@@ -253,13 +253,29 @@ const containsExpression = (node: ts.Node): boolean =>
 const isLexical = (list: ts.VariableDeclarationList) =>
   (list.flags & ts.NodeFlags.BlockScoped) !== 0;
 
-const isConst = (list: ts.VariableDeclarationList) =>
-  (list.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.Const;
-
 const isUsing = (list: ts.VariableDeclarationList) => {
   const kind = list.flags & ts.NodeFlags.BlockScoped;
   return kind === ts.NodeFlags.Using || kind === ts.NodeFlags.AwaitUsing;
 };
+
+// IsConstantDeclaration (§8.2.4): a const, using, or await using declaration.
+const isConst = (list: ts.VariableDeclarationList) =>
+  (list.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.Const || isUsing(list);
+
+// The kind of the resources that a declaration's bindings add (DeclarationKind in ESCore).
+const getResourceKind = (list: ts.VariableDeclarationList) =>
+  (list.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.AwaitUsing
+    ? "async-dispose"
+    : isUsing(list)
+      ? "sync-dispose"
+      : "normal";
+
+// Whether a statement list declares resources in the environment that it runs in (HasUsing in
+// ESCore).
+const hasUsing = (statements: readonly ts.Statement[]) =>
+  statements.some(
+    (statement) => ts.isVariableStatement(statement) && isUsing(statement.declarationList),
+  );
 
 // VarScopedDeclarations (§8.2.7) of a function body or script: the var names, and the function
 // declarations at its top level, in order.
@@ -326,12 +342,6 @@ const getLexicalDeclarations = (statements: readonly ts.Statement[], isBlock: bo
   statements.flatMap((statement): LexicalDeclaration[] => {
     const inner = ts.isLabeledStatement(statement) ? statement.statement : statement;
     if (ts.isVariableStatement(inner) && isLexical(inner.declarationList)) {
-      if (isUsing(inner.declarationList)) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't compile a using declaration to ESCore yet",
-          inner,
-        );
-      }
       return [
         {
           names: getDeclaredNames(inner.declarationList),
@@ -455,7 +465,12 @@ const getDeclaredName = (node: ts.FunctionDeclaration | ts.ClassDeclaration) =>
 // Whether a module's code awaits outside its functions (HasTopLevelAwait, §16.2.1.7.1), where a
 // computed key of a method or a field still runs.
 const hasTopLevelAwait = (node: ts.Node): boolean => {
-  if (ts.isAwaitExpression(node) || (ts.isForOfStatement(node) && node.awaitModifier !== undefined))
+  if (
+    ts.isAwaitExpression(node) ||
+    (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||
+    (ts.isVariableDeclarationList(node) &&
+      (node.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.AwaitUsing)
+  )
     return true;
   if (ts.isClassStaticBlockDeclaration(node)) return false;
   if (ts.isFunctionLike(node) || ts.isPropertyDeclaration(node)) {
@@ -2540,6 +2555,9 @@ export const specialize = (
   // Variable statements (§14.3.2.1) and let and const declarations (§14.3.1.2).
   const declarationList = (list: ts.VariableDeclarationList, scope: Scope): Code => {
     const isLet = isLexical(list);
+    const kind = getResourceKind(list);
+    // A using declaration reads its values' @@dispose or @@asyncDispose.
+    if (kind !== "normal") words.add(kind === "sync-dispose" ? "dispose" : "asyncDispose");
     const steps: string[] = [];
     let state = "s";
     list.declarations.forEach((declaration, index) => {
@@ -2573,7 +2591,9 @@ export const specialize = (
           isLet
             ? assigned === undefined
               ? `InitializeReferencedBinding(${lhs}.s, Val(${lhs}), Undefined)`
-              : `InitializeReferencedThen(Val(${lhs}), ${assigned})`
+              : kind === "normal"
+              ? `InitializeReferencedThen(Val(${lhs}), ${assigned})`
+              : `InitializeThen("${kind}", Val(${lhs}), ${assigned})`
             : `PutValueThen(Val(${lhs}), ${assigned})`
         } IN IF IsAbrupt(${result}) THEN ${result} ELSE`,
       );
@@ -2606,7 +2626,11 @@ export const specialize = (
         results[results.length - 1],
       ].join("\n  "),
     );
-    return (state, context) => `${name}(${state}, ${context})`;
+    // A block's, function body's, or module's resources are disposed of once its statements
+    // complete (EvaluateDisposing in ESCore).
+    return hasUsing(statements)
+      ? (state, context) => `DisposeThen(${context}.lex, ${name}(${state}, ${context}))`
+      : (state, context) => `${name}(${state}, ${context})`;
   };
 
   // Blocks (§14.2.2) and BlockDeclarationInstantiation (§14.2.3). A block that declares nothing
@@ -2720,7 +2744,7 @@ export const specialize = (
       }
       return defineCode(
         "For",
-        `LET env == NewDeclarativeEnvironment(s, ctx.lex) loopCtx == WithLex(ctx, env.e) IN BreakTargetThen(ForDeclarationThen(loopCtx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> ${lets}], ${declaration(resetSlots(`BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))})`, slots), "loopCtx")}))`,
+        `LET env == NewDeclarativeEnvironment(s, ctx.lex) loopCtx == WithLex(ctx, env.e) IN BreakTargetThen(${isUsing(initializer) ? "DisposeThen(env.e, " : "("}ForDeclarationThen(loopCtx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> ${lets}], ${declaration(resetSlots(`BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))})`, slots), "loopCtx")})))`,
       );
     }
     const init =
@@ -2785,7 +2809,14 @@ export const specialize = (
         bind = `ResultThen(ctx, LocalInitialize(value.s, ${slot}, Val(value)))`;
       } else if (isLexical(initializer)) {
         tdz = names;
-        bind = `LET env == NewDeclarativeEnvironment(value.s, ctx.lex) iterCtx == WithLex(ctx, env.e) s1 == BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))}) IN ResultThen(iterCtx, ${pattern("s1", "iterCtx", "Val(value)", "env.e")})`;
+        // A using declaration's binding adds its value's resource first (ForInOfBind in ESCore).
+        const kind = getResourceKind(initializer);
+        if (kind !== "normal") words.add(kind === "sync-dispose" ? "dispose" : "asyncDispose");
+        bind = `LET env == NewDeclarativeEnvironment(value.s, ctx.lex) iterCtx == WithLex(ctx, env.e) s1 == BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))}) IN ResultThen(iterCtx, ${
+          kind === "normal"
+            ? pattern("s1", "iterCtx", "Val(value)", "env.e")
+            : `LET added == AddDisposableResource(s1, env.e, Val(value), "${kind}") IN IF IsAbrupt(added) THEN added ELSE ${pattern("added.s", "iterCtx", "Val(value)", "env.e")}`
+        })`;
       } else if (ts.isIdentifier(declaration.name)) {
         bind = `ResultThen(ctx, AssignToThen(Val(value), ${nameReference(declaration.name, scope)("value.s", "ctx")}))`;
       } else {
@@ -2806,7 +2837,11 @@ export const specialize = (
       "LET done == IteratorComplete(r.s, Val(r)) IN IF IsAbrupt(done) THEN done ELSE IF Val(done) THEN Ok(done.s, v) ELSE",
       `LET value == Get(done.s, Val(r), SV("value")) IN IF IsAbrupt(value) THEN value ELSE`,
       `LET bound == ${bind} IN IF IsAbrupt(bound) THEN ForInOfClose(loop, it, bound) ELSE`,
-      `ForInOfStatementThen(ctx, loop, it, v, ${body("bound.s", "Val(bound)")})`,
+      `ForInOfStatementThen(ctx, loop, it, v, ${
+        ts.isVariableDeclarationList(initializer) && isUsing(initializer)
+          ? `DisposeThen(Val(bound).lex, ${body("bound.s", "Val(bound)")})`
+          : body("bound.s", "Val(bound)")
+      })`,
     ].join("\n    ");
     const expression = value(node.expression, scope);
     // §B.3.5: a var's initializer in a for-in head assigns the var before the head's expression.

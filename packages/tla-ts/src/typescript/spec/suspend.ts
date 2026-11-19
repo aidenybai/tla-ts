@@ -13,8 +13,9 @@ interface CodeDefinition {
 }
 
 // The steps whose results suspend the body that evaluates them: a yield, a delegated yield, an
-// await, and an async generator's return, which awaits its value.
-const SUSPENDING = ["YieldThen", "YieldStarThen", "AwaitThen", "ReturnThen"];
+// await, an async generator's return, which awaits its value, and the disposal of an await using
+// declaration's resources, which awaits each one's result.
+const SUSPENDING = ["YieldThen", "YieldStarThen", "AwaitThen", "ReturnThen", "DisposeThen"];
 
 const LOCATION = { line: 0, column: 0 };
 
