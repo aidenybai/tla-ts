@@ -779,9 +779,15 @@ export class NlsatSolver {
     let best: number | null = null;
     let result = L_TRUE;
     for (const clause of this.clauses) {
+      const literals = clause.literals;
       // Z3 evaluates the literals again for each test, and each evaluation counts steps.
-      const isFalse = clause.literals.every((literal) => this.value(literal) === L_FALSE);
-      if (clause.literals.some((literal) => this.value(literal) === L_TRUE)) continue;
+      let isFalse = true;
+      for (let index = 0; isFalse && index < literals.length; index++)
+        isFalse = this.value(literals[index]) === L_FALSE;
+      let isTrue = false;
+      for (let index = 0; !isTrue && index < literals.length; index++)
+        isTrue = this.value(literals[index]) === L_TRUE;
+      if (isTrue) continue;
       if (!isFalse) {
         result = L_UNDEF;
         continue;
