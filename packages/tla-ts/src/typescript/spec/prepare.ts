@@ -309,6 +309,23 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
       !realm.has(definition.name),
   );
   const stubGroups = new Map(stubs.map((stub) => [stub.name, stub.group]));
+  // The stubs of other groups that a group's operators reach, through any operators between, which
+  // a spec with the group keeps.
+  const getReachedStubs = (group: string) => {
+    const visited = new Set<string>();
+    const visit = (name: string): void => {
+      if (visited.has(name)) return;
+      visited.add(name);
+      getDependencies(library.definitions.get(name)?.text ?? "").forEach(visit);
+    };
+    [...library.definitions.values()]
+      .filter((definition) => definition.group === group)
+      .forEach((definition) => visit(definition.name));
+    return [...visited].filter((name) => {
+      const stubGroup = stubGroups.get(name);
+      return stubGroup !== undefined && stubGroup !== group;
+    });
+  };
   return {
     modules: modules.slice(0, -1),
     getView,
@@ -325,18 +342,7 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
       stubs: stubs
         .filter((stub) => stub.group === entry[0])
         .map((stub) => ({ name: stub.name, arity: stub.arity })),
-      reached: [
-        ...new Set(
-          [...library.definitions.values()]
-            .filter((definition) => definition.group === entry[0])
-            .flatMap((definition) =>
-              getDependencies(definition.text).filter((name) => {
-                const group = stubGroups.get(name);
-                return group !== undefined && group !== entry[0];
-              }),
-            ),
-        ),
-      ],
+      reached: getReachedStubs(entry[0]),
     })),
     hostOnlyGlobals: getHostOnlyGlobals(library),
     hostOnlyModuleGlobals: getHostOnlyGlobals(library, globalThis),

@@ -306,12 +306,16 @@ const checkSpec = async (
     try {
       if (compiledConfig !== undefined) return parseConfig(compiledConfig, version);
       const contents = readFileSync(configPath, "utf8");
-      return parseConfig(
-        configPath.endsWith(".tla")
-          ? getEmbeddedConfig(contents, configPath.replaceAll(".tla", ""))
-          : contents,
-        version,
-      );
+      const given = configPath.endsWith(".tla")
+        ? getEmbeddedConfig(contents, configPath.replaceAll(".tla", ""))
+        : contents;
+      // A spec of prepared modules keeps the constants that its own config assigns, which its
+      // runtime reads, under the config -config names.
+      const kept =
+        compiled?.isPrepared === true
+          ? compiled.config.split("\n").filter((line) => line.startsWith("CONSTANT"))
+          : [];
+      return parseConfig([given, ...kept].join("\n"), version);
     } catch (error) {
       if (!(error instanceof TlaConfigError)) throw error;
       return error;
@@ -364,36 +368,44 @@ const checkSpec = async (
     );
   }
   const rootSource = compiled && printModule(compiled.source);
-  const sany = getSanyReport(
-    specPath,
-    reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
-    {
-      fileName: specName,
-      rootSource,
-      describeFile: createFileDescriber(
-        specPath,
-        directories,
-        java,
-        args.metadir,
-        version,
-        compiled && resolve(compiled.path),
-      ),
-      version,
-      rootExtendees: [
-        ...getOperatorModules("postcondition"),
-        ...(traceSpec?.traceFile === undefined ? [] : ["_TLCTrace"]),
-        ...args.invariants.flatMap((invariant) => invariant.modules),
-        ...getOperatorModules("constraint"),
-        ...getOperatorModules("view").slice(0, 1),
-      ],
-      suppressedCodes: args.suppressedCodes,
-      errorCodes: args.errorCodes,
-      onPrint: (text) => process.stdout.write(text),
-      onPrintError: (text) => process.stderr.write(text),
-    },
-  );
-  const specification = sany.specification;
-  if (sany.isFailed || specification === undefined) {
+  // A spec compiled on ESCore is checked from its prepared modules, which SANY's report can't parse
+  // from their texts, so its report is the line of the file it compiles.
+  if (compiled?.isPrepared === true) {
+    console.log(`Parsing file ${resolve(compiled.path)}`);
+  }
+  const sany =
+    compiled?.isPrepared === true
+      ? undefined
+      : getSanyReport(
+          specPath,
+          reportMissingFile ? reportMissingModules174(loadModule, reportMissingFile) : loadModule,
+          {
+            fileName: specName,
+            rootSource,
+            describeFile: createFileDescriber(
+              specPath,
+              directories,
+              java,
+              args.metadir,
+              version,
+              compiled && resolve(compiled.path),
+            ),
+            version,
+            rootExtendees: [
+              ...getOperatorModules("postcondition"),
+              ...(traceSpec?.traceFile === undefined ? [] : ["_TLCTrace"]),
+              ...args.invariants.flatMap((invariant) => invariant.modules),
+              ...getOperatorModules("constraint"),
+              ...getOperatorModules("view").slice(0, 1),
+            ],
+            suppressedCodes: args.suppressedCodes,
+            errorCodes: args.errorCodes,
+            onPrint: (text) => process.stdout.write(text),
+            onPrintError: (text) => process.stderr.write(text),
+          },
+        );
+  const specification = sany?.specification;
+  if (sany !== undefined && (sany.isFailed || specification === undefined)) {
     printCheckProgress(printer, { kind: "parsed" }, timing, directory);
     printParsingFailed();
     printFinished();
@@ -410,13 +422,16 @@ const checkSpec = async (
     }
     const userFile = args.userFile;
     const standardModules = getSanyStandardModules(version);
-    const invariants = addRuntimeInvariants(
-      source,
-      specification.root,
-      args.invariants,
-      (name) => loadModule(name) ?? standardModules.get(name) ?? extractModule(source, name),
-      version,
-    );
+    const invariants =
+      specification === undefined
+        ? { names: args.invariants.map((invariant) => invariant.expression), source }
+        : addRuntimeInvariants(
+            source,
+            specification.root,
+            args.invariants,
+            (name) => loadModule(name) ?? standardModules.get(name) ?? extractModule(source, name),
+            version,
+          );
     config.invariants.push(...invariants.names);
     const options: CheckOptions = {
       workers: args.workers,
@@ -443,8 +458,12 @@ const checkSpec = async (
       version,
       onProgress: (progress) => printCheckProgress(printer, progress, timing, directory),
       onPrint: userFile === undefined ? undefined : (text) => appendFileSync(userFile, `${text}\n`),
-      // A compiled spec is checked as the module the compiler built, unless -inv adds to its text.
-      source: compiled && invariants.source === source ? compiled.source : invariants.source,
+      // A compiled spec is checked as the module the compiler built, unless -inv adds to its text,
+      // and a spec of prepared modules from its text, whose strings the check ranks with theirs.
+      source:
+        compiled && !compiled.isPrepared && invariants.source === source
+          ? compiled.source
+          : invariants.source,
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
       loadModule,

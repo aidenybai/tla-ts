@@ -1,5 +1,5 @@
-\* The Temporal types (Temporal §3 to §10) and Temporal.Now, on the ISO calendar and the fixed-offset
-\* time zones of 89-temporal-dates.
+\* The Temporal types (Temporal §3 to §10) and Temporal.Now, on the calendars and the time zones of
+\* 89-temporal-dates and 89-temporal-calendars.
 \* A Temporal.PlainDate has class "temporalDate" and slots [date, calendar].
 CreateTemporalDate(s, date, calendar, newTarget) ==
   IF ~ISODateWithinLimits(date) THEN ThrowError(s, "RangeError")
@@ -21,10 +21,10 @@ ToTemporalDateRecord(s, item, options) ==
                                   [] OTHER -> ZonedDateTimeISODateTime(s, item).date,
                        calendar |-> o.slots.calendar])
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET date == CalendarDateFromFields(overflow.s, Val(fields), Val(overflow)) IN
+         LET date == CalendarDateFromFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN
          IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "plain-date-time") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -33,26 +33,6 @@ ToTemporalDateRecord(s, item, options) ==
        LET read == ReadOverflowOption(calendar.s, options) IN IF IsAbrupt(read) THEN read ELSE
        LET date == [year |-> Val(parsed).year, month |-> Val(parsed).month, day |-> Val(parsed).day] IN
        IF ISODateWithinLimits(date) THEN Ok(read.s, [date |-> date, calendar |-> Val(calendar)]) ELSE ThrowError(read.s, "RangeError")
-
-\* The fields a calendar date record (CalendarISOToDate) gives the getters of PlainDate and kin.
-CalendarDateGetter(s, date, m) ==
-  CASE m = "era" \/ m = "eraYear" -> Ok(s, Undefined)
-    [] m = "year" -> Ok(s, IntV(date.year))
-    [] m = "month" -> Ok(s, IntV(date.month))
-    [] m = "monthCode" -> Ok(s, Str(CreateMonthCode(date.month, FALSE)))
-    [] m = "day" -> Ok(s, IntV(date.day))
-    [] m = "dayOfWeek" -> Ok(s, IntV(ISODayOfWeek(date)))
-    [] m = "dayOfYear" -> Ok(s, IntV(ISODayOfYear(date)))
-    [] m = "weekOfYear" -> Ok(s, IntV(ISOWeekOfYear(date).week))
-    [] m = "yearOfWeek" -> Ok(s, IntV(ISOWeekOfYear(date).year))
-    [] m = "daysInWeek" -> Ok(s, IntV(7))
-    [] m = "daysInMonth" -> Ok(s, IntV(ISODaysInMonth(date.year, date.month)))
-    [] m = "daysInYear" -> Ok(s, IntV(IF IsLeapYear(date.year) THEN 366 ELSE 365))
-    [] m = "monthsInYear" -> Ok(s, IntV(12))
-    [] m = "inLeapYear" -> Ok(s, Bool(IsLeapYear(date.year)))
-CalendarDateGetters ==
-  {"era", "eraYear", "year", "month", "monthCode", "day", "dayOfWeek", "dayOfYear", "weekOfYear", "yearOfWeek",
-   "daysInWeek", "daysInMonth", "daysInYear", "monthsInYear", "inLeapYear"}
 
 \* DifferenceTemporalPlainDate.
 DifferenceTemporalPlainDate(s, operation, plain, other, options) ==
@@ -64,9 +44,9 @@ DifferenceTemporalPlainDate(s, operation, plain, other, options) ==
   LET st == Val(settings)
       from == [date |-> plain.date, time |-> MidnightTimeRecord]
       to == [date |-> Val(o).date, time |-> MidnightTimeRecord]
-      diff == CombineDateAndTimeDuration(CalendarDateUntil(plain.date, Val(o).date, st.largestUnit), TI(0))
+      diff == CombineDateAndTimeDuration(CalendarDateUntil(plain.calendar, plain.date, Val(o).date, st.largestUnit), TI(0))
       rounded == IF st.smallestUnit = TUDay /\ st.roundingIncrement = 1 THEN Ok(settings.s, diff)
-                 ELSE RoundRelativeDuration(settings.s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty,
+                 ELSE RoundRelativeDuration(settings.s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty, plain.calendar,
                                             st.largestUnit, st.roundingIncrement, st.smallestUnit, st.roundingMode)
   IN IF IsAbrupt(rounded) THEN rounded ELSE
   LET f == DurationFieldsFromInternal(Val(rounded), TUDay) IN
@@ -80,7 +60,7 @@ AddDurationToDate(s, operation, plain, durationLike, options) ==
       opts == GetOptionsObject(d.s, options)
   IN IF IsAbrupt(opts) THEN opts ELSE
   LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-  LET result == CalendarDateAdd(overflow.s, plain.date, dateDuration, Val(overflow)) IN
+  LET result == CalendarDateAdd(overflow.s, plain.calendar, plain.date, dateDuration, Val(overflow)) IN
   IF IsAbrupt(result) THEN result ELSE CreateTemporalDate(result.s, Val(result), plain.calendar, Empty)
 
 \* ToTimeRecordOrMidnight.
@@ -109,25 +89,25 @@ PlainDateBuiltin(s, f, m, this, args, nt) ==
     [] OTHER ->
          LET plain == O(s, this).slots
              date == plain.date
-         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, date, m)
+         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, plain.calendar, date, m)
               [] m = "calendarId" -> Ok(s, Str(plain.calendar))
               [] m = "toPlainYearMonth" ->
-                   LET ym == CalendarYearMonthFromFields(s, ISODateToFields(date, "date"), N("constrain")) IN
+                   LET ym == CalendarYearMonthFromFields(s, plain.calendar, ISODateToFields(plain.calendar, date, "date"), N("constrain")) IN
                    IF IsAbrupt(ym) THEN ym ELSE CreateTemporalYearMonth(ym.s, Val(ym), plain.calendar, Empty)
               [] m = "toPlainMonthDay" ->
-                   LET md == CalendarMonthDayFromFields(s, ISODateToFields(date, "date"), N("constrain")) IN
+                   LET md == CalendarMonthDayFromFields(s, plain.calendar, ISODateToFields(plain.calendar, date, "date"), N("constrain")) IN
                    IF IsAbrupt(md) THEN md ELSE CreateTemporalMonthDay(md.s, Val(md), plain.calendar, Empty)
               [] m \in {"add", "subtract"} -> AddDurationToDate(s, m, plain, Arg(args, 1), Arg(args, 2))
               [] m = "with" ->
                    LET isPartial == IsPartialTemporalObject(s, Arg(args, 1)) IN IF IsAbrupt(isPartial) THEN isPartial
                    ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-                   LET partial == PrepareCalendarFields(isPartial.s, Arg(args, 1), DateFieldNames, "partial") IN
+                   LET partial == PrepareCalendarFields(isPartial.s, plain.calendar, Arg(args, 1), DateFieldNames, "partial") IN
                    IF IsAbrupt(partial) THEN partial ELSE
-                   LET fields == CalendarMergeFields(ISODateToFields(date, "date"), Val(partial))
+                   LET fields == CalendarMergeFields(ISODateToFields(plain.calendar, date, "date"), Val(partial))
                        opts == GetOptionsObject(partial.s, Arg(args, 2))
                    IN IF IsAbrupt(opts) THEN opts ELSE
                    LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                   LET r == CalendarDateFromFields(overflow.s, fields, Val(overflow)) IN
+                   LET r == CalendarDateFromFields(overflow.s, plain.calendar, fields, Val(overflow)) IN
                    IF IsAbrupt(r) THEN r ELSE CreateTemporalDate(r.s, Val(r), plain.calendar, Empty)
               [] m = "withCalendar" ->
                    LET calendar == ToTemporalCalendarIdentifier(s, Arg(args, 1)) IN
@@ -144,7 +124,9 @@ PlainDateBuiltin(s, f, m, this, args, nt) ==
                    LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                    LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                    ELSE Ok(show.s, Str(TemporalDateToString(date, plain.calendar, Val(show))))
-              [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalDateToString(date, plain.calendar, N("auto"))))
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "PlainDate", plain, Arg(args, 1), Arg(args, 2), TemporalDateToString(date, plain.calendar, N("auto")))
+              [] m = "toJSON" -> Ok(s, Str(TemporalDateToString(date, plain.calendar, N("auto"))))
               [] m = "valueOf" -> ThrowTypeError(s)
 
 \* Temporal.PlainDate.prototype.toZonedDateTime.
@@ -179,11 +161,11 @@ ToTemporalDateTimeRecord(s, item, options) ==
                                       [] OTHER -> ZonedDateTimeISODateTime(s, item),
                        calendar |-> o.slots.calendar])
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames \cup CalendarTimeFieldNames, "no-required-fields") IN
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames \cup CalendarTimeFieldNames, "no-required-fields") IN
          IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET dt == InterpretTemporalDateTimeFields(overflow.s, Val(fields), Val(overflow)) IN IF IsAbrupt(dt) THEN dt
+         LET dt == InterpretTemporalDateTimeFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN IF IsAbrupt(dt) THEN dt
          ELSE IF ISODateTimeWithinLimits(Val(dt)) THEN Ok(dt.s, [dateTime |-> Val(dt), calendar |-> Val(calendar)])
          ELSE ThrowError(dt.s, "RangeError")
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
@@ -202,8 +184,8 @@ RoundISODateTime(dt, increment, unit, mode) ==
   [date |-> AddDaysToISODate(dt.date, TIToInt(rounded.days)), time |-> rounded.time]
 
 \* The fields of a date-time, for CalendarMergeFields.
-ISODateTimeToFields(dt) ==
-  [ISODateToFields(dt.date, "date") EXCEPT !.hour = TI(dt.time.hour), !.minute = TI(dt.time.minute),
+ISODateTimeToFields(cal, dt) ==
+  [ISODateToFields(cal, dt.date, "date") EXCEPT !.hour = TI(dt.time.hour), !.minute = TI(dt.time.minute),
                                            !.second = TI(dt.time.second), !.millisecond = TI(dt.time.millisecond),
                                            !.microsecond = TI(dt.time.microsecond), !.nanosecond = TI(dt.time.nanosecond)]
 
@@ -219,7 +201,7 @@ DifferenceTemporalPlainDateTime(s, operation, plain, other, options) ==
   IF IsAbrupt(settings) THEN settings
   ELSE IF CompareISODateTime(plain.dateTime, Val(o).dateTime) = 0 THEN CreateTemporalDuration(settings.s, ZeroDurationFields, Empty) ELSE
   LET st == Val(settings)
-      diff == DifferencePlainDateTimeWithRounding(settings.s, plain.dateTime, Val(o).dateTime, st.largestUnit,
+      diff == DifferencePlainDateTimeWithRounding(settings.s, plain.dateTime, Val(o).dateTime, plain.calendar, st.largestUnit,
                                                   st.roundingIncrement, st.smallestUnit, st.roundingMode)
   IN IF IsAbrupt(diff) THEN diff
      ELSE CreateTemporalDuration(diff.s, SinceFields(operation, DurationFieldsFromInternal(Val(diff), st.largestUnit)), Empty)
@@ -231,7 +213,7 @@ AddDurationToDateTime(s, operation, plain, durationLike, options) ==
       timeResult == AddTime(plain.dateTime.time, internal.time)
       dateDuration == CheckedDateDuration(overflow.s, <<internal.date[1], internal.date[2], internal.date[3], timeResult.days>>)
   IN IF IsAbrupt(dateDuration) THEN dateDuration ELSE
-  LET added == CalendarDateAdd(dateDuration.s, plain.dateTime.date, Val(dateDuration), Val(overflow)) IN IF IsAbrupt(added) THEN added
+  LET added == CalendarDateAdd(dateDuration.s, plain.calendar, plain.dateTime.date, Val(dateDuration), Val(overflow)) IN IF IsAbrupt(added) THEN added
   ELSE CreateTemporalDateTime(added.s, [date |-> Val(added), time |-> timeResult.time], plain.calendar, Empty)
 
 \* The smallestUnit and roundingIncrement of round on PlainDateTime and ZonedDateTime: a time unit
@@ -282,17 +264,17 @@ PlainDateTimeBuiltin(s, f, m, this, args, nt) ==
     [] OTHER ->
          LET plain == O(s, this).slots
              dt == plain.dateTime
-         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, dt.date, m)
+         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, plain.calendar, dt.date, m)
               [] m \in {"hour", "minute", "second", "millisecond", "microsecond", "nanosecond"} -> Ok(s, IntV(dt.time[m]))
               [] m = "calendarId" -> Ok(s, Str(plain.calendar))
               [] m = "with" ->
                    LET isPartial == IsPartialTemporalObject(s, Arg(args, 1)) IN IF IsAbrupt(isPartial) THEN isPartial
                    ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-                   LET partial == PrepareCalendarFields(isPartial.s, Arg(args, 1), DateFieldNames \cup CalendarTimeFieldNames, "partial") IN
+                   LET partial == PrepareCalendarFields(isPartial.s, plain.calendar, Arg(args, 1), DateFieldNames \cup CalendarTimeFieldNames, "partial") IN
                    IF IsAbrupt(partial) THEN partial ELSE
                    LET opts == GetOptionsObject(partial.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                    LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                   LET r == InterpretTemporalDateTimeFields(overflow.s, CalendarMergeFields(ISODateTimeToFields(dt), Val(partial)), Val(overflow)) IN
+                   LET r == InterpretTemporalDateTimeFields(overflow.s, plain.calendar, CalendarMergeFields(ISODateTimeToFields(plain.calendar, dt), Val(partial)), Val(overflow)) IN
                    IF IsAbrupt(r) THEN r ELSE CreateTemporalDateTime(r.s, Val(r), plain.calendar, Empty)
               [] m = "withPlainTime" ->
                    LET time == ToTimeRecordOrMidnight(s, Arg(args, 1)) IN IF IsAbrupt(time) THEN time
@@ -317,7 +299,10 @@ PlainDateTimeBuiltin(s, f, m, this, args, nt) ==
                        result == RoundISODateTime(dt, precision.increment, precision.unit, Val(o).mode)
                    IN IF ~ISODateTimeWithinLimits(result) THEN ThrowError(o.s, "RangeError")
                       ELSE Ok(o.s, Str(FormatISODateTime(result, plain.calendar, precision.precision, Val(show))))
-              [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto"))))
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "PlainDateTime", plain, Arg(args, 1), Arg(args, 2),
+                                          FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto")))
+              [] m = "toJSON" -> Ok(s, Str(FormatISODateTime(dt, plain.calendar, TPrecisionAuto, N("auto"))))
               [] m = "valueOf" -> ThrowTypeError(s)
               [] m = "toZonedDateTime" ->
                    LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN IF IsAbrupt(tz) THEN tz ELSE
@@ -360,11 +345,11 @@ ToTemporalZonedDateTimeRecord(s, item, options) ==
     IF O(s, item).class = "temporalZonedDateTime" THEN
       LET read == GetZonedOptions(s, options, N("reject")) IN IF IsAbrupt(read) THEN read ELSE Ok(read.s, O(s, item).slots)
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset", "timeZone"},
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset", "timeZone"},
                                              "time-zone") IN
          IF IsAbrupt(fields) THEN fields ELSE
          LET o == GetZonedOptions(fields.s, options, N("reject")) IN IF IsAbrupt(o) THEN o ELSE
-         LET dt == InterpretTemporalDateTimeFields(o.s, Val(fields), Val(o).overflow) IN IF IsAbrupt(dt) THEN dt ELSE
+         LET dt == InterpretTemporalDateTimeFields(o.s, Val(calendar), Val(fields), Val(o).overflow) IN IF IsAbrupt(dt) THEN dt ELSE
          LET offsetString == Val(fields).offset
              ns == InterpretISODateTimeOffset(dt.s, Val(dt).date, Val(dt).time, IF offsetString = Empty THEN "wall" ELSE "option",
                                               IF offsetString = Empty THEN TI(0) ELSE Val(ParseDateTimeUTCOffset(dt.s, offsetString)),
@@ -424,7 +409,7 @@ DifferenceTemporalZonedDateTime(s, operation, z, other, options) ==
     ELSE CreateTemporalDuration(diff.s, SinceFields(operation, DurationFieldsFromInternal(Val(diff), st.largestUnit)), Empty)
   ELSE IF ~TimeZoneEquals(z.timeZone, Val(o).timeZone) THEN ThrowError(settings.s, "RangeError")
   ELSE IF z.epochNs = Val(o).epochNs THEN CreateTemporalDuration(settings.s, ZeroDurationFields, Empty)
-  ELSE LET diff == DifferenceZonedDateTimeWithRounding(settings.s, z.epochNs, Val(o).epochNs, z.timeZone, st.largestUnit,
+  ELSE LET diff == DifferenceZonedDateTimeWithRounding(settings.s, z.epochNs, Val(o).epochNs, z.timeZone, z.calendar, st.largestUnit,
                                                        st.roundingIncrement, st.smallestUnit, st.roundingMode) IN
        IF IsAbrupt(diff) THEN diff
        ELSE CreateTemporalDuration(diff.s, SinceFields(operation, DurationFieldsFromInternal(Val(diff), TUHour)), Empty)
@@ -432,7 +417,7 @@ AddDurationToZonedDateTime(s, operation, z, durationLike, options) ==
   LET d == ToTemporalDurationFields(s, durationLike) IN IF IsAbrupt(d) THEN d ELSE
   LET opts == GetOptionsObject(d.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
   LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-  LET ns == AddZonedDateTime(overflow.s, z.epochNs, z.timeZone,
+  LET ns == AddZonedDateTime(overflow.s, z.epochNs, z.timeZone, z.calendar,
                              ToInternalDurationRecord(IF operation = "subtract" THEN NegatedDurationFields(Val(d)) ELSE Val(d)),
                              Val(overflow))
   IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
@@ -462,14 +447,14 @@ RoundZonedDateTime(s, z, roundToArg) ==
 WithZonedDateTime(s, z, item, options) ==
   LET isPartial == IsPartialTemporalObject(s, item) IN IF IsAbrupt(isPartial) THEN isPartial
   ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-  LET partial == PrepareCalendarFields(isPartial.s, item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset"}, "partial") IN
+  LET partial == PrepareCalendarFields(isPartial.s, z.calendar, item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset"}, "partial") IN
   IF IsAbrupt(partial) THEN partial ELSE
   LET dt == GetISODateTimeFor(z.timeZone, z.epochNs)
-      fields == CalendarMergeFields([ISODateTimeToFields(dt) EXCEPT !.offset = FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone, z.epochNs))],
+      fields == CalendarMergeFields([ISODateTimeToFields(z.calendar, dt) EXCEPT !.offset = FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone, z.epochNs))],
                                     Val(partial))
       o == GetZonedOptions(partial.s, options, N("prefer"))
   IN IF IsAbrupt(o) THEN o ELSE
-  LET result == InterpretTemporalDateTimeFields(o.s, fields, Val(o).overflow) IN IF IsAbrupt(result) THEN result ELSE
+  LET result == InterpretTemporalDateTimeFields(o.s, z.calendar, fields, Val(o).overflow) IN IF IsAbrupt(result) THEN result ELSE
   LET ns == InterpretISODateTimeOffset(result.s, Val(result).date, Val(result).time, "option",
                                        Val(ParseDateTimeUTCOffset(result.s, fields.offset)), z.timeZone, Val(o).disambiguation,
                                        Val(o).offset, "match-exactly")
@@ -505,7 +490,7 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
     [] OTHER ->
          LET z == O(s, this).slots
              dt == GetISODateTimeFor(z.timeZone, z.epochNs)
-         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, dt.date, m)
+         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, z.calendar, dt.date, m)
               [] m \in {"hour", "minute", "second", "millisecond", "microsecond", "nanosecond"} -> Ok(s, IntV(dt.time[m]))
               [] m = "calendarId" -> Ok(s, Str(z.calendar))
               [] m = "timeZoneId" -> Ok(s, Str(z.timeZone.id))
@@ -548,7 +533,10 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
                    LET precision == ToSecondsStringPrecisionRecord(Val(unit), Val(digits)) IN
                    Ok(showTimeZone.s, Str(TemporalZonedDateTimeToString(z, precision.precision, Val(show), Val(showTimeZone), Val(showOffset),
                                                                         precision.increment, precision.unit, Val(mode))))
-              [] m \in {"toLocaleString", "toJSON"} ->
+              [] m = "toLocaleString" ->
+                   TemporalToLocaleString(s, "ZonedDateTime", z, Arg(args, 1), Arg(args, 2),
+                                          TemporalZonedDateTimeToString(z, TPrecisionAuto, N("auto"), N("auto"), N("auto"), 1, TUNanosecond, N("trunc")))
+              [] m = "toJSON" ->
                    Ok(s, Str(TemporalZonedDateTimeToString(z, TPrecisionAuto, N("auto"), N("auto"), N("auto"), 1, TUNanosecond, N("trunc"))))
               [] m = "valueOf" -> ThrowTypeError(s)
               [] m = "startOfDay" ->
@@ -651,7 +639,9 @@ InstantBuiltin(s, f, m, this, args, nt) ==
                 LET precision == ToSecondsStringPrecisionRecord(Val(o).unit, Val(o).digits) IN
                 Ok(tz.s, Str(TemporalInstantToString(RoundEpochNanoseconds(ns, precision.increment, precision.unit, Val(o).mode),
                                                      Val(tz), precision.precision)))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalInstantToString(ns, Empty, TPrecisionAuto)))
+           [] m = "toLocaleString" ->
+                TemporalToLocaleString(s, "Instant", O(s, this).slots, Arg(args, 1), Arg(args, 2), TemporalInstantToString(ns, Empty, TPrecisionAuto))
+           [] m = "toJSON" -> Ok(s, Str(TemporalInstantToString(ns, Empty, TPrecisionAuto)))
            [] m = "valueOf" -> ThrowTypeError(s)
            [] m = "toZonedDateTimeISO" ->
                 LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN
@@ -670,10 +660,10 @@ ToTemporalYearMonthRecord(s, item, options) ==
     IF O(s, item).class = "temporalYearMonth" THEN
       LET read == ReadOverflowOption(s, options) IN IF IsAbrupt(read) THEN read ELSE Ok(read.s, O(s, item).slots)
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, YearMonthFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, YearMonthFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET date == CalendarYearMonthFromFields(overflow.s, Val(fields), Val(overflow)) IN
+         LET date == CalendarYearMonthFromFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN
          IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "year-month") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -682,7 +672,7 @@ ToTemporalYearMonthRecord(s, item, options) ==
        IN IF IsAbrupt(calendar) THEN calendar ELSE
        LET read == ReadOverflowOption(calendar.s, options) IN IF IsAbrupt(read) THEN read
        ELSE IF ~ISOYearMonthWithinLimits([year |-> r.year, month |-> r.month, day |-> r.day]) THEN ThrowError(read.s, "RangeError")
-       ELSE LET date == CalendarYearMonthFromFields(read.s, ISODateToFields([year |-> r.year, month |-> r.month, day |-> r.day], "year-month"),
+       ELSE LET date == CalendarYearMonthFromFields(read.s, Val(calendar), ISODateToFields(Val(calendar), [year |-> r.year, month |-> r.month, day |-> r.day], "year-month"),
                                                     N("constrain")) IN
             IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
 
@@ -696,7 +686,7 @@ TemporalMonthDayToString(md, show) ==
   TwoDigits(md.date.month) \o <<45>> \o TwoDigits(md.date.day) \o FormatCalendarAnnotation(md.calendar, show)
 
 \* The first day of a year-month, as CalendarDateFromFields gives it.
-YearMonthFirstDay(s, date) == CalendarDateFromFields(s, [ISODateToFields(date, "year-month") EXCEPT !.day = TI(1)], N("constrain"))
+YearMonthFirstDay(s, cal, date) == CalendarDateFromFields(s, cal, [ISODateToFields(cal, date, "year-month") EXCEPT !.day = TI(1)], N("constrain"))
 
 \* DifferenceTemporalPlainYearMonth and AddDurationToYearMonth.
 DifferenceTemporalPlainYearMonth(s, operation, ym, other, options) ==
@@ -706,15 +696,15 @@ DifferenceTemporalPlainYearMonth(s, operation, ym, other, options) ==
   LET settings == GetDifferenceSettings(opts.s, operation, Val(opts), "date", {TUWeek, TUDay}, TUMonth, TUYear) IN
   IF IsAbrupt(settings) THEN settings
   ELSE IF CompareISODate(ym.date, Val(o).date) = 0 THEN CreateTemporalDuration(settings.s, ZeroDurationFields, Empty) ELSE
-  LET thisDate == YearMonthFirstDay(settings.s, ym.date) IN IF IsAbrupt(thisDate) THEN thisDate ELSE
-  LET otherDate == YearMonthFirstDay(thisDate.s, Val(o).date) IN IF IsAbrupt(otherDate) THEN otherDate ELSE
+  LET thisDate == YearMonthFirstDay(settings.s, ym.calendar, ym.date) IN IF IsAbrupt(thisDate) THEN thisDate ELSE
+  LET otherDate == YearMonthFirstDay(thisDate.s, ym.calendar, Val(o).date) IN IF IsAbrupt(otherDate) THEN otherDate ELSE
   LET st == Val(settings)
-      until == CalendarDateUntil(Val(thisDate), Val(otherDate), st.largestUnit)
+      until == CalendarDateUntil(ym.calendar, Val(thisDate), Val(otherDate), st.largestUnit)
       duration == CombineDateAndTimeDuration(<<until[1], until[2], TI(0), TI(0)>>, TI(0))
       from == [date |-> Val(thisDate), time |-> MidnightTimeRecord]
       rounded == IF st.smallestUnit = TUMonth /\ st.roundingIncrement = 1 THEN Ok(otherDate.s, duration)
                  ELSE RoundRelativeDuration(otherDate.s, duration, GetUTCEpochNanoseconds(from),
-                                            GetUTCEpochNanoseconds([date |-> Val(otherDate), time |-> MidnightTimeRecord]), from, Empty,
+                                            GetUTCEpochNanoseconds([date |-> Val(otherDate), time |-> MidnightTimeRecord]), from, Empty, ym.calendar,
                                             st.largestUnit, st.roundingIncrement, st.smallestUnit, st.roundingMode)
   IN IF IsAbrupt(rounded) THEN rounded
      ELSE CreateTemporalDuration(rounded.s, SinceFields(operation, DurationFieldsFromInternal(Val(rounded), TUDay)), Empty)
@@ -725,27 +715,27 @@ AddDurationToYearMonth(s, operation, ym, durationLike, options) ==
   IN IF IsAbrupt(opts) THEN opts ELSE
   LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow
   ELSE IF internal.date[3].mag # <<>> \/ internal.date[4].mag # <<>> \/ internal.time.mag # <<>> THEN ThrowError(overflow.s, "RangeError") ELSE
-  LET date == YearMonthFirstDay(overflow.s, ym.date) IN IF IsAbrupt(date) THEN date ELSE
-  LET added == CalendarDateAdd(date.s, Val(date), internal.date, Val(overflow)) IN IF IsAbrupt(added) THEN added ELSE
-  LET result == CalendarYearMonthFromFields(added.s, ISODateToFields(Val(added), "year-month"), Val(overflow)) IN
+  LET date == YearMonthFirstDay(overflow.s, ym.calendar, ym.date) IN IF IsAbrupt(date) THEN date ELSE
+  LET added == CalendarDateAdd(date.s, ym.calendar, Val(date), internal.date, Val(overflow)) IN IF IsAbrupt(added) THEN added ELSE
+  LET result == CalendarYearMonthFromFields(added.s, ym.calendar, ISODateToFields(ym.calendar, Val(added), "year-month"), Val(overflow)) IN
   IF IsAbrupt(result) THEN result ELSE CreateTemporalYearMonth(result.s, Val(result), ym.calendar, Empty)
 
 \* The getters of PlainYearMonth.
 YearMonthGetters == {"era", "eraYear", "year", "month", "monthCode", "daysInYear", "daysInMonth", "monthsInYear", "inLeapYear"}
 
 \* The with of PlainYearMonth and PlainMonthDay: the merged fields of a partial object.
-MergedPartialFields(s, fields, item, names) ==
+MergedPartialFields(s, cal, fields, item, names) ==
   LET isPartial == IsPartialTemporalObject(s, item) IN IF IsAbrupt(isPartial) THEN isPartial
   ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-  LET partial == PrepareCalendarFields(isPartial.s, item, names, "partial") IN
+  LET partial == PrepareCalendarFields(isPartial.s, cal, item, names, "partial") IN
   IF IsAbrupt(partial) THEN partial ELSE Ok(partial.s, CalendarMergeFields(fields, Val(partial)))
 
 \* The toPlainDate of PlainYearMonth and PlainMonthDay: the date of the fields merged with the
 \* named fields of an object.
 MergedPlainDate(s, fields, item, names, calendar) ==
   IF ~IsObject(item) THEN ThrowTypeError(s) ELSE
-  LET input == PrepareCalendarFields(s, item, names, "no-required-fields") IN IF IsAbrupt(input) THEN input ELSE
-  LET date == CalendarDateFromFields(input.s, CalendarMergeFields(fields, Val(input)), N("constrain")) IN
+  LET input == PrepareCalendarFields(s, calendar, item, names, "no-required-fields") IN IF IsAbrupt(input) THEN input ELSE
+  LET date == CalendarDateFromFields(input.s, calendar, CalendarMergeFields(fields, Val(input)), N("constrain")) IN
   IF IsAbrupt(date) THEN date ELSE CreateTemporalDate(date.s, Val(date), calendar, Empty)
 
 PlainYearMonthBuiltin(s, f, m, this, args, nt) ==
@@ -771,14 +761,14 @@ PlainYearMonthBuiltin(s, f, m, this, args, nt) ==
     [] ~HasClass(s, this, "temporalYearMonth") -> ThrowTypeError(s)
     [] OTHER ->
          LET ym == O(s, this).slots IN
-         CASE m \in YearMonthGetters -> CalendarDateGetter(s, ym.date, m)
+         CASE m \in YearMonthGetters -> CalendarDateGetter(s, ym.calendar, ym.date, m)
            [] m = "calendarId" -> Ok(s, Str(ym.calendar))
            [] m = "with" ->
-                LET fields == MergedPartialFields(s, ISODateToFields(ym.date, "year-month"), Arg(args, 1), YearMonthFieldNames) IN
+                LET fields == MergedPartialFields(s, ym.calendar, ISODateToFields(ym.calendar, ym.date, "year-month"), Arg(args, 1), YearMonthFieldNames) IN
                 IF IsAbrupt(fields) THEN fields ELSE
                 LET opts == GetOptionsObject(fields.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                LET date == CalendarYearMonthFromFields(overflow.s, Val(fields), Val(overflow)) IN
+                LET date == CalendarYearMonthFromFields(overflow.s, ym.calendar, Val(fields), Val(overflow)) IN
                 IF IsAbrupt(date) THEN date ELSE CreateTemporalYearMonth(date.s, Val(date), ym.calendar, Empty)
            [] m \in {"add", "subtract"} -> AddDurationToYearMonth(s, m, ym, Arg(args, 1), Arg(args, 2))
            [] m \in {"until", "since"} -> DifferenceTemporalPlainYearMonth(s, m, ym, Arg(args, 1), Arg(args, 2))
@@ -789,9 +779,10 @@ PlainYearMonthBuiltin(s, f, m, this, args, nt) ==
                 LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                 ELSE Ok(show.s, Str(TemporalYearMonthToString(ym, Val(show))))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalYearMonthToString(ym, N("auto"))))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainYearMonth", ym, Arg(args, 1), Arg(args, 2), TemporalYearMonthToString(ym, N("auto")))
+           [] m = "toJSON" -> Ok(s, Str(TemporalYearMonthToString(ym, N("auto"))))
            [] m = "valueOf" -> ThrowTypeError(s)
-           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(ym.date, "year-month"), Arg(args, 1), {"day"}, ym.calendar)
+           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(ym.calendar, ym.date, "year-month"), Arg(args, 1), {"day"}, ym.calendar)
 
 \* PlainMonthDay (Temporal §10). A Temporal.PlainMonthDay has class "temporalMonthDay" and slots
 \* [date, calendar], with a reference year.
@@ -806,10 +797,10 @@ ToTemporalMonthDayRecord(s, item, options) ==
     IF O(s, item).class = "temporalMonthDay" THEN
       LET read == ReadOverflowOption(s, options) IN IF IsAbrupt(read) THEN read ELSE Ok(read.s, O(s, item).slots)
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET date == CalendarMonthDayFromFields(overflow.s, Val(fields), Val(overflow)) IN
+         LET date == CalendarMonthDayFromFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN
          IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "month-day") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -817,7 +808,11 @@ ToTemporalMonthDayRecord(s, item, options) ==
            calendar == CanonicalizeCalendar(parsed.s, IF r.calendar = Empty THEN ISO8601 ELSE r.calendar)
        IN IF IsAbrupt(calendar) THEN calendar ELSE
        LET read == ReadOverflowOption(calendar.s, options) IN IF IsAbrupt(read) THEN read
-       ELSE Ok(read.s, [date |-> [year |-> 1972, month |-> r.month, day |-> r.day], calendar |-> Val(calendar)])
+       ELSE IF Val(calendar) = ISO8601 THEN Ok(read.s, [date |-> [year |-> 1972, month |-> r.month, day |-> r.day], calendar |-> ISO8601])
+       ELSE LET isoDate == [year |-> r.year, month |-> r.month, day |-> r.day] IN
+            IF ~ISODateWithinLimits(isoDate) THEN ThrowError(read.s, "RangeError") ELSE
+            LET date == CalendarMonthDayFromFields(read.s, Val(calendar), ISODateToFields(Val(calendar), isoDate, "month-day"), N("constrain")) IN
+            IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
 
 PlainMonthDayBuiltin(s, f, m, this, args, nt) ==
   CASE m = "constructor" ->
@@ -838,14 +833,14 @@ PlainMonthDayBuiltin(s, f, m, this, args, nt) ==
     [] ~HasClass(s, this, "temporalMonthDay") -> ThrowTypeError(s)
     [] OTHER ->
          LET md == O(s, this).slots IN
-         CASE m \in {"monthCode", "day"} -> CalendarDateGetter(s, md.date, m)
+         CASE m \in {"monthCode", "day"} -> CalendarDateGetter(s, md.calendar, md.date, m)
            [] m = "calendarId" -> Ok(s, Str(md.calendar))
            [] m = "with" ->
-                LET fields == MergedPartialFields(s, ISODateToFields(md.date, "month-day"), Arg(args, 1), DateFieldNames) IN
+                LET fields == MergedPartialFields(s, md.calendar, ISODateToFields(md.calendar, md.date, "month-day"), Arg(args, 1), DateFieldNames) IN
                 IF IsAbrupt(fields) THEN fields ELSE
                 LET opts == GetOptionsObject(fields.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                LET date == CalendarMonthDayFromFields(overflow.s, Val(fields), Val(overflow)) IN
+                LET date == CalendarMonthDayFromFields(overflow.s, md.calendar, Val(fields), Val(overflow)) IN
                 IF IsAbrupt(date) THEN date ELSE CreateTemporalMonthDay(date.s, Val(date), md.calendar, Empty)
            [] m = "equals" ->
                 LET other == ToTemporalMonthDayRecord(s, Arg(args, 1), Undefined) IN IF IsAbrupt(other) THEN other
@@ -854,9 +849,10 @@ PlainMonthDayBuiltin(s, f, m, this, args, nt) ==
                 LET opts == GetOptionsObject(s, Arg(args, 1)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET show == GetTemporalShowCalendarNameOption(opts.s, Val(opts)) IN IF IsAbrupt(show) THEN show
                 ELSE Ok(show.s, Str(TemporalMonthDayToString(md, Val(show))))
-           [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalMonthDayToString(md, N("auto"))))
+           [] m = "toLocaleString" -> TemporalToLocaleString(s, "PlainMonthDay", md, Arg(args, 1), Arg(args, 2), TemporalMonthDayToString(md, N("auto")))
+           [] m = "toJSON" -> Ok(s, Str(TemporalMonthDayToString(md, N("auto"))))
            [] m = "valueOf" -> ThrowTypeError(s)
-           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(md.date, "month-day"), Arg(args, 1), {"year"}, md.calendar)
+           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(md.calendar, md.date, "month-day"), Arg(args, 1), {"year"}, md.calendar)
 
 \* Temporal.Now (Temporal §2). The system time zone is UTC, and the system time is the clock Date
 \* reads, in milliseconds.

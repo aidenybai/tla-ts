@@ -129,6 +129,20 @@ RunModuleFrom(harness, specifier, directory, canSuspend, parses) ==
 \* "unknown" where it may have one that this table leaves out. engine262 has none but UTC.
 HostTimeZone(key) == [found |-> "rejected"]
 
+\* HostDateFormat(key): how the host's Intl formats a Temporal object's toLocaleString for a key of
+\* its kind, its calendar, and its options (DateFormatKey): found is "format", with the fields and
+\* styles of an English pattern and whether a time zone option leaves the pattern as it is, or
+\* "error", with the name of the error that it throws. Else found is "unknown" where the host's
+\* table leaves the key out, and "none" where the host has no Intl, as engine262 has none.
+HostDateFormat(key) == [found |-> "none"]
+
+\* HostLocale(tag): what the host's Intl gives of a locale tag's units. found is "locale", with its
+\* canonical form (CanonicalizeUnicodeLocaleId) and the services whose supportedLocalesOf support it
+\* with the lookup matcher and with the best fit one, and those where the two differ, which the
+\* table leaves out, or "invalid", where it isn't a structurally valid language tag. Else found is
+\* "unknown", as engine262 has no locale data.
+HostLocale(tag) == [found |-> "unknown"]
+
 \* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
 \* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==

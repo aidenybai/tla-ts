@@ -875,6 +875,19 @@ export const specialize = (
       files.slice(0, index).reduce((start, other) => start + other.sourceFile.text.length, 0),
     ]),
   );
+  // Each throw statement's number in its file, from 1, in the order of the file's text, which
+  // stays the order of the throws in the file the program was transpiled from.
+  const throwIndexes = new Map(
+    files.flatMap((file) => {
+      const throws: ts.Node[] = [];
+      const collect = (node: ts.Node): void => {
+        if (ts.isThrowStatement(node)) throws.push(node);
+        ts.forEachChild(node, collect);
+      };
+      collect(file.sourceFile);
+      return throws.map((node, index) => [node, index + 1] as const);
+    }),
+  );
   const definitions: GeneratedDefinition[] = [];
   const words = new Set<string>();
   const identifiers = new Set<string>();
@@ -2485,7 +2498,8 @@ export const specialize = (
     }
     if (ts.isThrowStatement(node)) {
       const thrown = value(node.expression, scope);
-      return (state, context) => `ThrowThen(${thrown(state, context)})`;
+      const site = `<<${fileNumbers.get(node.getSourceFile()) ?? 0}, ${throwIndexes.get(node) ?? 0}>>`;
+      return (state, context) => `ThrowAtThen(${site}, ${thrown(state, context)})`;
     }
     if (ts.isBreakStatement(node) || ts.isContinueStatement(node)) {
       const type = ts.isBreakStatement(node) ? "break" : "continue";

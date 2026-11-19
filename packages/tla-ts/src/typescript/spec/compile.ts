@@ -9,7 +9,14 @@ import { createFileResolver } from "../program";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
-import { getHostTimeZone, getTlaString, getUnitsOf, LOCALE_METHODS } from "./runtime";
+import {
+  getHostDateFormat,
+  getHostLocale,
+  getHostTimeZone,
+  getTlaString,
+  getUnitsOf,
+  LOCALE_METHODS,
+} from "./runtime";
 import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
 import { getNumber, type ProgramFile, specialize } from "./specialize";
@@ -38,9 +45,10 @@ interface CodeDefinition {
 }
 
 // A program's definitions with each one whose text is another's but for its name and the names of
-// definitions merged before it merged into the first, and with each literal sequence of numbers,
-// such as a name's code units, a definition of its own, so that a check reads each one once. A
-// sequence of the code units of characters that a TLA+ string can hold is that string's units.
+// definitions merged before it merged into the first, but for the hooks, which the config names,
+// and with each literal sequence of numbers, such as a name's code units, a definition of its own,
+// so that a check reads each one once. A sequence of the code units of characters that a TLA+
+// string can hold is that string's units.
 const getStringUnits = (sequence: string) => {
   const text = getTlaString(String.fromCharCode(...(sequence.match(/\d+/g) ?? []).map(Number)));
   return text === undefined ? undefined : `StringUnits(${text})`;
@@ -52,6 +60,7 @@ const compact = (definitions: readonly CodeDefinition[]) => {
   const rename = (text: string) =>
     text.replace(/\b[A-Za-z_][A-Za-z0-9_]*\b/g, (name) => merged.get(name) ?? name);
   for (const definition of definitions) {
+    if (HOOKS.has(definition.name.replace(/^Program/, ""))) continue;
     const key = `${definition.arity} ${rename(definition.text).slice(definition.name.length)}`;
     const first = firsts.get(key);
     if (first === undefined) firsts.set(key, definition.name);
@@ -589,6 +598,16 @@ export const compileToEscore = (
             : `HostTimeZone(key) == [found |-> "unknown"]`,
         },
         {
+          name: "HostDateFormat",
+          arity: 1,
+          text: getHostDateFormat(program.words),
+        },
+        {
+          name: "HostLocale",
+          arity: 1,
+          text: getHostLocale(files.map((file) => file.sourceFile.text).join("\n"), program.words),
+        },
+        {
           name: "HostFileLocation",
           arity: 1,
           text: `HostFileLocation(file) ==\n  CASE ${files.map((file, index) => `file = ${index + 1} -> ${getHostFileLocation(file)}`).join("\n    [] ")}`,
@@ -608,10 +627,12 @@ export const compileToEscore = (
           name: "RunProgram",
           arity: 1,
           // A host exits with an error where its entry module still awaits once nothing is left
-          // to run, as Node does.
+          // to run, which the completion's target marks, and reports the rejection of its entry
+          // module's evaluation as an uncaught exception, before any other promise's rejection, as
+          // Node does.
           text:
             files[0].kind === "module"
-              ? `RunProgram(s) == LET h == ${hostImport} IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
+              ? `RunProgram(s) == LET h == ${hostImport} IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE IF Slots(j.s, Val(p)).state = "rejected" THEN Abrupt(j.s, Completion("throw", Slots(j.s, Val(p)).result, [kind |-> "module"])) ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN LET e == ThrowError(t.s, "Error") IN [e EXCEPT !.c.target = [kind |-> "unsettled"]] ELSE t`
               : isModule
                 ? `RunProgram(s) == LET h == ${hostImport} IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
                 : hostFile !== 0

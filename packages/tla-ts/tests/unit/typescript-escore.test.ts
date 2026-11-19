@@ -870,6 +870,283 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "runs the calendars other than ISO 8601",
+    () => {
+      const getSource = (expected: string) => `
+      const hebrew = Temporal.PlainDate.from({ year: 5784, monthCode: "M05L", day: 30, calendar: "hebrew" });
+      const reiwa = Temporal.PlainDate.from({ era: "reiwa", eraYear: 1, month: 5, day: 1, calendar: "japanese" });
+      const umalqura = Temporal.PlainDate.from("2024-03-11[u-ca=islamic-umalqura]");
+      const coptic = Temporal.PlainYearMonth.from({ year: 1740, month: 13, calendar: "coptic" });
+      const persian = Temporal.PlainMonthDay.from({ monthCode: "M12", day: 30, calendar: "persian" });
+      let rejected = "none";
+      try {
+        Temporal.PlainDate.from({ year: 5785, monthCode: "M05L", day: 1, calendar: "hebrew" }, { overflow: "reject" });
+      } catch (error) {
+        rejected = (error as Error).name;
+      }
+      const result = [
+        hebrew.toString(),
+        hebrew.month,
+        hebrew.monthsInYear,
+        hebrew.add({ years: 1 }).monthCode,
+        hebrew.until("2027-01-05[u-ca=hebrew]", { largestUnit: "years" }).toString(),
+        reiwa.subtract({ days: 1 }).era,
+        reiwa.subtract({ days: 1 }).eraYear,
+        umalqura.year + "-" + umalqura.month + "-" + umalqura.day,
+        umalqura.daysInMonth,
+        coptic.daysInMonth,
+        coptic.toString(),
+        persian.toString(),
+        rejected,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected =
+          "2024-03-10[u-ca=hebrew]|6|13|M06|P2Y9M26D|heisei|31|1445-9-1|30|5|2024-09-06[u-ca=coptic]|1972-03-20[u-ca=persian]|RangeError";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected =
+          "2024-03-10[u-ca=hebrew]|6|13|M06|P2Y9M26D|heisei|31|1445-9-1|30|6|2024-09-06[u-ca=coptic]|1972-03-20[u-ca=persian]|RangeError";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at the Chinese calendar, whose tables ESCore doesn't hold", async () => {
+        const source = 'Temporal.PlainDate.from("2024-03-11[u-ca=chinese]");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "formats Temporal's toLocaleString through the host's recorded English patterns",
+    () => {
+      const getSource = (expected: string) => `
+      const date = new Temporal.PlainDate(2024, 12, 26);
+      const time = new Temporal.PlainTime(14, 5, 9, 321);
+      const instant = Temporal.Instant.from("2024-12-26T11:46:40.321Z");
+      const read: string[] = [];
+      const options = new Proxy(
+        { month: "long" },
+        {
+          get: (target, key) => {
+            read.push(String(key));
+            return Reflect.get(target, key);
+          },
+        },
+      );
+      let errors = "";
+      for (const make of [
+        () => date.toLocaleString("en", { month: "longer" } as unknown as Intl.DateTimeFormatOptions),
+        () => date.toLocaleString("en", { timeStyle: "short" }),
+        () => time.toLocaleString("en", { dateStyle: "short" }),
+        () => Temporal.PlainDate.prototype.toLocaleString.call(time),
+      ]) {
+        try {
+          make();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [
+        date.toLocaleString(),
+        date.toLocaleString("en", options),
+        read.join(","),
+        time.toLocaleString("en-US", { hourCycle: "h23", hour: "numeric" }),
+        instant.toLocaleString("en", { dateStyle: "full", timeStyle: "short" }),
+        errors,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+      const read =
+        "localeMatcher,calendar,numberingSystem,hour12,hourCycle,timeZone,weekday,era,year,month,day,dayPeriod,hour,minute,second,fractionalSecondDigits,timeZoneName,formatMatcher,dateStyle,timeStyle";
+
+      it("agrees with Node", async () => {
+        const expected = `12/26/2024|December|${read}|14|Thursday, December 26, 2024 at 11:46 AM|RangeError;TypeError;TypeError;TypeError;`;
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = `12/26/2024|December|${read}|14|Thursday, December 26, 2024 at 11:46 PM|RangeError;TypeError;TypeError;TypeError;`;
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a locale other than English", async () => {
+        const source = 'new Temporal.PlainDate(2024, 12, 26).toLocaleString("de");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe("lays Intl out as ECMA-402 does, without its locale data", () => {
+    const getSource = (expected: string) => `
+      let errors = "";
+      for (const run of [
+        () => Reflect.apply(Intl.PluralRules, undefined, []),
+        () => Intl.ListFormat.prototype.format.call({}, []),
+        () => Intl.supportedValuesOf("colors" as "unit"),
+        () => Intl.getCanonicalLocales([1 as unknown as string]),
+        () => Reflect.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, "format")?.get?.call(5),
+        () => Intl.Collator.supportedLocalesOf([], { localeMatcher: "first" as "lookup" }),
+        () => Intl.getCanonicalLocales("en_US"),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [
+        Object.prototype.toString.call(Intl),
+        Intl.Collator.length,
+        Intl.DisplayNames.length,
+        Intl.Locale.name,
+        Object.getOwnPropertyNames(Intl.Locale.prototype).length,
+        Object.prototype.toString.call(Intl.Segmenter.prototype),
+        Intl.getCanonicalLocales().length,
+        Intl.Collator.supportedLocalesOf([]).length,
+        Intl.getCanonicalLocales(["EN-us", "en-US", "art-lojban"]).join(),
+        Intl.ListFormat.supportedLocalesOf(["art-lojban", "en-US"], { localeMatcher: "lookup" }).join(),
+        errors,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "[object Intl]|0|2|Locale|22|[object Intl.Segmenter]|0|0|en-US,jbo|en-US|TypeError;TypeError;RangeError;TypeError;TypeError;RangeError;RangeError;";
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const expected =
+        "[object Intl]|0|2|Locale|22|[object Intl.Segmenter]|0|0|en-US,jbo|jbo,en-US|TypeError;TypeError;RangeError;TypeError;TypeError;RangeError;RangeError;";
+      expect((await checkScript(getSource(expected))).message).toContain(THREW);
+    });
+
+    it("stops at a constructor whose options it leaves out", async () => {
+      expect((await checkScript("new Intl.NumberFormat();")).message).toContain("tla-ts can't");
+    });
+
+    it("stops at a locale that the program doesn't write", async () => {
+      const source = 'Intl.getCanonicalLocales(["en", "US"].join("-"));';
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("constructs the Intl objects whose options read no locale data", () => {
+    const getSource = (expected: string) => `
+      const read: string[] = [];
+      const options = new Proxy(
+        {},
+        {
+          get: (target, key) => {
+            read.push(String(key));
+            return Reflect.get(target, key);
+          },
+        },
+      );
+      const collator = new Intl.Collator(["EN-us"], options);
+      class Lists extends Intl.ListFormat {}
+      let errors = "";
+      for (const run of [
+        () => new Intl.Segmenter([], { granularity: "line" as "word" }),
+        () => new Intl.DisplayNames([], {} as Intl.DisplayNamesOptions),
+        () => new Intl.RelativeTimeFormat([], { numberingSystem: "ab" }),
+        () => new Intl.ListFormat([], 5 as Intl.ListFormatOptions),
+        () => Intl.Collator.prototype.resolvedOptions.call(new Intl.Segmenter()),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [
+        read.join(),
+        collator instanceof Intl.Collator,
+        Object.getPrototypeOf(new Lists()) === Lists.prototype,
+        Reflect.apply(Intl.Collator, undefined, []) instanceof Intl.Collator,
+        errors,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const read = "usage,localeMatcher,collation,numeric,caseFirst,sensitivity,ignorePunctuation";
+
+    it("agrees with Node", async () => {
+      const expected = `${read}|true|true|true|RangeError;TypeError;RangeError;TypeError;TypeError;`;
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const expected = `${read}|true|true|true|RangeError;TypeError;TypeError;TypeError;TypeError;`;
+      expect((await checkScript(getSource(expected))).message).toContain(THREW);
+    });
+
+    it("stops at a method, which reads locale data", async () => {
+      const source = "new Intl.Collator().resolvedOptions();";
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("constructs an Intl.DateTimeFormat from its options", () => {
+    const getSource = (expected: string) => `
+      const read: string[] = [];
+      const options = new Proxy(
+        {},
+        {
+          get: (target, key) => {
+            read.push(String(key));
+            return Reflect.get(target, key);
+          },
+        },
+      );
+      const format = new Intl.DateTimeFormat(["en-US"], options);
+      let errors = "";
+      for (const run of [
+        () => new Intl.DateTimeFormat([], { dateStyle: "short", hour: "numeric" }),
+        () => new Intl.DateTimeFormat([], { calendar: "ab" }),
+        () => new Intl.DateTimeFormat([], { fractionalSecondDigits: 4 as 3 }),
+        () => new Intl.DateTimeFormat([], { timeZone: "+01:00:30" }),
+        () => Intl.DateTimeFormat.prototype.formatToParts.call({}),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [
+        read.join(),
+        format instanceof Intl.DateTimeFormat,
+        Reflect.apply(Intl.DateTimeFormat, {}, []) instanceof Intl.DateTimeFormat,
+        errors,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const read =
+      "localeMatcher,calendar,numberingSystem,hour12,hourCycle,timeZone,weekday,era,year,month,day,dayPeriod,hour,minute,second,fractionalSecondDigits,timeZoneName,formatMatcher,dateStyle,timeStyle";
+
+    it("agrees with Node", async () => {
+      const expected = `${read}|true|true|TypeError;RangeError;RangeError;RangeError;TypeError;`;
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const expected = `${read}|true|true|TypeError;RangeError;TypeError;RangeError;TypeError;`;
+      expect((await checkScript(getSource(expected))).message).toContain(THREW);
+    });
+
+    it("stops where a call without new chains an instance, as Intl's legacy symbol does", async () => {
+      const source = "Intl.DateTimeFormat.call(new Intl.DateTimeFormat());";
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
+    });
+  });
+
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `
       const error = new Error("m");

@@ -351,3 +351,66 @@ describe("the CLI with TypeScript files", () => {
     expect(wrong.stderr).toContain("Error: seen 14");
   });
 });
+
+// TLA_TS_ESCORE checks a TypeScript file by specializing ESCore instead.
+describe("the CLI with TypeScript files on ESCore", () => {
+  const runEscore = (directory: string, args: string[]) =>
+    spawnSync("bun", [CLI, ...args], {
+      cwd: directory,
+      encoding: "utf8",
+      env: { ...process.env, TLA_TS_ESCORE: "1" },
+    });
+
+  // Each script has a variant that catches what it throws, which exits as a script that finishes.
+  it.each([
+    ["a primitive", "throw 42;\n", "try {\n  throw 42;\n} catch {}\n"],
+    [
+      "a primitive in a function",
+      'const fail = () => {\n  throw "in";\n};\nfail();\n',
+      'const fail = () => {\n  throw "in";\n};\ntry {\n  fail();\n} catch {}\n',
+    ],
+    [
+      "a primitive in an ES module",
+      'await Promise.resolve();\nthrow "after";\n',
+      'await Promise.resolve();\ntry {\n  throw "after";\n} catch {}\n',
+    ],
+    [
+      "a rejection with a string",
+      'Promise.reject("no");\n',
+      'Promise.reject("no").catch(() => {});\n',
+    ],
+  ])("exits with Node's code and stderr where a script leaves %s uncaught", (_, script, caught) => {
+    const directory = copyFixtures("passing");
+    writeFileSync(join(directory, "uncaught.ts"), script);
+    const result = runEscore(directory, ["uncaught.ts"]);
+    expect(getExit(result)).toEqual(getExit(runNode(directory, "uncaught.ts")));
+    expect(result.status).toBe(1);
+    writeFileSync(join(directory, "caught.ts"), caught);
+    expect(getExit(runEscore(directory, ["caught.ts"]))).toEqual([0, ""]);
+  });
+
+  it("exits with Node's warning where a module's top-level await never settles", () => {
+    const directory = copyFixtures("passing");
+    const script =
+      "let count = 0;\nif (count === 0) {\n  await new Promise(() => {});\n  count = 1;\n}\n";
+    writeFileSync(join(directory, "stuck.ts"), script);
+    const result = runEscore(directory, ["stuck.ts"]);
+    expect(getExit(result)).toEqual(getExit(runNode(directory, "stuck.ts")));
+    expect(result.status).toBe(13);
+    writeFileSync(
+      join(directory, "settled.ts"),
+      script.replace("new Promise(() => {})", "Promise.resolve()"),
+    );
+    expect(getExit(runEscore(directory, ["settled.ts"]))).toEqual([0, ""]);
+  });
+
+  it("stops where a script leaves an error uncaught, whose stack V8 writes", () => {
+    const directory = copyFixtures("passing");
+    writeFileSync(join(directory, "error.ts"), 'throw new RangeError("total");\n');
+    const result = runEscore(directory, ["error.ts"]);
+    expect(result.status).not.toBe(1);
+    expect(result.stdout).toContain(
+      "tla-ts can't print what Node prints for this uncaught exception",
+    );
+  });
+});

@@ -1,6 +1,7 @@
 import { runInNewContext } from "node:vm";
 import { TlaError } from "../../errors";
 import type { GeneratedDefinition, Library } from "./library";
+import { DATE_FORMATS } from "../date-formats";
 import { TIME_ZONES } from "../time-zones";
 
 // The ESCore operators that a compiled spec defines its own way, each a port of ESCore's with
@@ -47,13 +48,15 @@ const DEFINITIONS = [
   `ArrayElementResult(array, key, r) ==
   IF IsAbrupt(r) THEN r ELSE CreateDataPropertyOrThrow(r.s, array, key, Val(r))`,
   // The end of a program once its jobs ran: a throw of the reason of the first promise rejected
-  // that nothing handles, as the host that runs the program reports it.
+  // that nothing handles, as the host that runs the program reports it, which the completion's
+  // target marks as a rejection.
   `UnhandledRejection(s) ==
   LET rejected == {i \\in 1..s.objs.size :
                      LET o == HeapGet(s.objs, i) IN
                      o.class = "promise" /\\ o.slots.state = "rejected" /\\ ~o.slots.isHandled}
   IN IF rejected = {} THEN Ok(s, Undefined)
-     ELSE ThrowValue(s, HeapGet(s.objs, CHOOSE i \\in rejected : \\A j \\in rejected : i <= j).slots.result)`,
+     ELSE Abrupt(s, Completion("throw", HeapGet(s.objs, CHOOSE i \\in rejected : \\A j \\in rejected : i <= j).slots.result,
+                               [kind |-> "rejection"]))`,
   // A throw of the reason of a rejected promise, which the host handles, as it throws it instead.
   `ThrowRejection(s, promise) ==
   ThrowValue(SetSlots(s, promise, [isHandled |-> TRUE]), Slots(s, promise).result)`,
@@ -932,10 +935,9 @@ export const INTERPRETER = new Set([
 ]);
 
 // Where ESCore, which has no Intl, as engine262 has none, and a host with ICU, as Node, answer
-// differently, a compiled spec stops: at a calendar other than ISO 8601, at a named time zone that
-// the host's recorded table leaves out, and at a date string in none of the formats that ECMA-262
-// defines, which a host may still read. The method names CallBuiltin stops at are the
-// locale-sensitive built-ins'.
+// differently, a compiled spec stops: at a named time zone that the host's recorded table leaves
+// out, and at a date string in none of the formats that ECMA-262 defines, which a host may still
+// read. The method names CallBuiltin stops at are the locale-sensitive built-ins'.
 export const LOCALE_METHODS = [
   "toLocaleString",
   "toLocaleDateString",
@@ -948,16 +950,6 @@ export const LOCALE_METHODS = [
 const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 
 const HOST_PATCHES = [
-  {
-    name: "CanonicalizeCalendar",
-    from: `ELSE ThrowError(s, "RangeError")`,
-    to: `ELSE Unsupported(s, <<>>)`,
-  },
-  {
-    name: "ParseISODateTime",
-    from: `TPLower(calendar.calendar) # N("iso8601") THEN ThrowError(s, "RangeError")`,
-    to: `TPLower(calendar.calendar) # N("iso8601") THEN Unsupported(s, <<>>)`,
-  },
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
   // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
   // host does too in its default locale, unless that locale tailors case, and in no locale given.
@@ -1347,16 +1339,16 @@ const getHostObject = (owner: string): object | undefined => {
   if (owner === "GlobalObject") return HOST_GLOBAL;
   const isPrototype = owner.endsWith("Prototype");
   const base = isPrototype ? owner.slice(0, -"Prototype".length) : owner;
-  const temporal: unknown = Reflect.get(HOST_GLOBAL, "Temporal");
+  // An intrinsic of a namespace, such as TemporalPlainDate or IntlCollator, is the namespace's.
+  const namespace = ["Temporal", "Intl"].find((name) => base.startsWith(name) && base !== name);
+  const holder: unknown =
+    namespace === undefined ? HOST_GLOBAL : Reflect.get(HOST_GLOBAL, namespace);
   const found: unknown =
     base === "TypedArray"
       ? Object.getPrototypeOf(Reflect.get(HOST_GLOBAL, "Int8Array"))
-      : base.startsWith("Temporal") &&
-          base !== "Temporal" &&
-          typeof temporal === "object" &&
-          temporal !== null
-        ? Reflect.get(temporal, base.slice("Temporal".length))
-        : Reflect.get(HOST_GLOBAL, base);
+      : typeof holder === "object" && holder !== null
+        ? Reflect.get(holder, namespace === undefined ? base : base.slice(namespace.length))
+        : undefined;
   if ((typeof found !== "object" && typeof found !== "function") || found === null)
     return undefined;
   const object: unknown = isPrototype ? Reflect.get(found, "prototype") : found;
@@ -1579,6 +1571,101 @@ export const getHostTimeZone = (text: string) => {
   return arms.length === 0
     ? `HostTimeZone(key) == [found |-> "unknown"]`
     : `HostTimeZone(key) ==\n  CASE ${arms.join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`;
+};
+
+// The program's HostDateFormat: the English patterns of Temporal's toLocaleString that Node 26
+// recorded (date-formats.ts) for the kinds of object the program names, where it formats a Temporal
+// object, and the host's default locale and time zone are the table's, English and UTC. Any other
+// key may be one that the host formats and the table leaves out.
+export const getHostDateFormat = (words: ReadonlySet<string>) => {
+  const defaults = new Intl.DateTimeFormat().resolvedOptions();
+  const entries =
+    words.has("Temporal") &&
+    words.has("toLocaleString") &&
+    defaults.locale === "en-US" &&
+    defaults.timeZone === "UTC"
+      ? Object.entries(DATE_FORMATS).filter(([key]) => {
+          const kind = key.slice(0, key.indexOf("|"));
+          return kind !== "DateTimeFormat" && words.has(kind);
+        })
+      : [];
+  const getEntry = (format: (typeof DATE_FORMATS)[string]) =>
+    format.error === undefined
+      ? `[found |-> "format", fields |-> <<${(format.fields ?? []).map((field) => `"${field}"`).join(", ")}>>, styles |-> <<${(format.styles ?? []).map((style, index) => (format.fields?.[index] === "literal" ? getUnitsOf(style) : `"${style}"`)).join(", ")}>>, isZoned |-> ${format.isZoned === true ? "TRUE" : "FALSE"}]`
+      : `[found |-> "error", error |-> "${format.error}"]`;
+  return entries.length === 0
+    ? `HostDateFormat(key) == [found |-> "unknown"]`
+    : `HostDateFormat(key) ==\n  LET table == ${entries.map(([key, format]) => `("${key}" :> ${getEntry(format)})`).join("\n    @@ ")}\n  IN IF key \\in DOMAIN table THEN table[key] ELSE [found |-> "unknown"]`;
+};
+
+// The services of Intl whose supportedLocalesOf HostLocale answers for.
+const LOCALE_SERVICES = [
+  "Collator",
+  "DateTimeFormat",
+  "DisplayNames",
+  "DurationFormat",
+  "ListFormat",
+  "NumberFormat",
+  "PluralRules",
+  "RelativeTimeFormat",
+  "Segmenter",
+];
+
+// What the host's Intl gives of a tag: its canonical form and the services that support it with
+// each locale matcher, or undefined where it isn't a structurally valid language tag.
+const getLocale = (tag: string) => {
+  const canonical = (() => {
+    try {
+      return Intl.getCanonicalLocales(tag)[0];
+    } catch {
+      return undefined;
+    }
+  })();
+  if (canonical === undefined) return undefined;
+  const getSupported = (localeMatcher: string) =>
+    LOCALE_SERVICES.filter((service) => {
+      const supported: unknown = Reflect.apply(
+        Reflect.get(Reflect.get(Intl, service), "supportedLocalesOf"),
+        undefined,
+        [canonical, { localeMatcher }],
+      );
+      return Array.isArray(supported) && supported.length > 0;
+    });
+  const lookup = getSupported("lookup");
+  const bestFit = getSupported("best fit");
+  return {
+    canonical,
+    lookup,
+    bestFit,
+    differs: LOCALE_SERVICES.filter(
+      (service) => lookup.includes(service) !== bestFit.includes(service),
+    ),
+  };
+};
+
+// The program's HostLocale: for each string it writes that may be a locale tag, and each one's
+// canonical form, what the host's Intl gives of it, where the program names Intl. Any other tag
+// stops, which the host may hold data of.
+export const getHostLocale = (text: string, words: ReadonlySet<string>) => {
+  const tags = words.has("Intl")
+    ? [...new Set([...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]))]
+    : [];
+  const entries = new Map<string, string>();
+  for (const tag of tags) {
+    const locale = getLocale(tag);
+    if (locale === undefined) {
+      entries.set(tag, `[found |-> "invalid"]`);
+      continue;
+    }
+    const getSet = (services: string[]) =>
+      `{${services.map((service) => `"${service}"`).join(", ")}}`;
+    const entry = `[found |-> "locale", canonical |-> ${getUnitsOf(locale.canonical)}, lookup |-> ${getSet(locale.lookup)}, bestFit |-> ${getSet(locale.bestFit)}, differs |-> ${getSet(locale.differs)}]`;
+    entries.set(tag, entry);
+    if (!entries.has(locale.canonical)) entries.set(locale.canonical, entry);
+  }
+  return entries.size === 0
+    ? `HostLocale(tag) == [found |-> "unknown"]`
+    : `HostLocale(tag) ==\n  CASE ${[...entries].map(([tag, entry]) => `tag = ${getUnitsOf(tag)} -> ${entry}`).join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`;
 };
 
 export const getUnitsOf = (text: string) =>

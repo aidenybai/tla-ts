@@ -17,6 +17,7 @@ import {
   getValueDeclaration,
 } from "./context";
 import { TlaTypeScriptError } from "../errors";
+import { MODULE_UNCAUGHT_LOCATION, TRACE_UNCAUGHT_HINT } from "../exit-codes";
 import { translateExpression } from "./expressions";
 import { getHeap, translateObjectValue } from "./heap";
 import { getGeneratorPrototypeRef, translateBuiltInInstanceOf } from "./intrinsics";
@@ -132,8 +133,6 @@ export const getNodeLocation = (node: ts.Node, isUrl: boolean) => {
 
 const PRIMITIVE_TYPES = new Set(["string", "number", "boolean", "bigint", "undefined", "null"]);
 
-const TRACE_UNCAUGHT = "\n(Use `node --trace-uncaught ...` to show where the exception was thrown)";
-
 // The name that Node gives an error of a class as it prints the error: the class's name, or that
 // and the native class's in brackets where the class's name doesn't hold it.
 const getErrorHeader = (classes: ts.Symbol[]) => {
@@ -204,13 +203,11 @@ export const getUncaughtText = (statement: ts.ThrowStatement, scope: Scope, cont
   return apply("\\o", [
     apply("\\o", [
       string(
-        isModule
-          ? "\nnode:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n"
-          : `\n${getNodeLocation(statement, false)}\n`,
+        isModule ? `\n${MODULE_UNCAUGHT_LOCATION}\n` : `\n${getNodeLocation(statement, false)}\n`,
       ),
       useJavaScript("StringOf", [translateExpression(thrown, scope, context)], context),
     ]),
-    string(TRACE_UNCAUGHT),
+    string(`\n${TRACE_UNCAUGHT_HINT}`),
   ]);
 };
 
