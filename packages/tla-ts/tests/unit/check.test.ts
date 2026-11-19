@@ -1705,6 +1705,26 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("evaluates the function a postcondition from another module defines again after the search, as TLC's ParameterizedSpecObj does", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      loadModule: (name) =>
+        name === "Extra"
+          ? '---- MODULE Extra ----\nEXTENDS TLC\nP[i \\in {PrintT("dom")}] == TRUE\n===='
+          : undefined,
+      moduleOperators: [{ kind: "postcondition", module: "Extra", operator: "P" }],
+      onPrint: (text) => printed.push(text),
+    });
+    expect([result.status, printed, result.violation?.message]).toEqual([
+      "postcondition-violation",
+      ['"dom"', '"dom"'],
+      "Evaluating postcondition P at line 3, col 1 to line 3, col 32 of module Extra failed.\nTLC expected a boolean value, but did not find one. line 3, col 1 to line 3, col 32 of module Extra",
+    ]);
+  });
+
   it("rebuilds the step to a successor under a VIEW once, as TLC's TLCTrace#printTrace does", async () => {
     const result = await check({
       source:

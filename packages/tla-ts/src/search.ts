@@ -75,7 +75,7 @@ import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty 
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
-import { substitutionFrames, withSubstitutionFrames } from "./instances";
+import { getOperatorDefinition, substitutionFrames, withSubstitutionFrames } from "./instances";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -651,7 +651,7 @@ const getNamedExpressions = (
 // SANY locates a parenthesized body at the expression inside the parentheses.
 const getBodyRange = (name: string, environment: Environment) => {
   const definition = getDefinition(name, environment);
-  if (definition?.kind !== "Operator") return undefined;
+  if (definition?.kind !== "Operator") return definition?.location.range;
   return parenthesizedRanges.has(definition.body)
     ? (definition.body.location.range ?? definition.bodyRange)
     : definition.bodyRange;
@@ -1756,7 +1756,8 @@ export const createSearch = (
         throw setExitCode(new TlaEvaluationError(rejection), EXIT_STATUS.configParseError);
       }
       const findViolation = (name: string, key: string) => {
-        const body = getDefinition(key, environment)?.body;
+        const definition = getDefinition(key, environment);
+        const body = definition && getOperatorDefinition(definition).body;
         const failure = getConstantFailure(
           (context) => holdsLikeTlc(body ?? createIdentifier(key), context),
           environment,
