@@ -826,7 +826,11 @@ export const compileModelToEscore = (
     const body = definition?.kind === "Operator" ? definition.body : undefined;
     const bounds = getBounds(name, body);
     const check = defineCheck(name, isCallCheck(body) ? "ReturnsOf" : "HoldsOf", bounds);
-    steps.push(`${name} == ${quantify(bounds, check(current, boundNames(bounds)))}`);
+    const holds = quantify(bounds, check(current, boundNames(bounds)));
+    // An @assume that reads state holds in the initial states, as today's invariant checks it.
+    steps.push(
+      `${name} == ${exported.get(name)?.tags.has("assume") === true ? `TLCGet("level") > 1 \\/ ${holds}` : holds}`,
+    );
   };
   config.invariants.forEach(defineInvariant);
   config.constraints.forEach(defineInvariant);

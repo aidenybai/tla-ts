@@ -166,6 +166,29 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("checks an assumption that reads the state in the initial states only", () => {
+    const getSource = (length: number) => `
+      interface Box {
+        items: number[];
+      }
+      let state: Box = { items: [] };
+      export const add = (value: 0 | 1) => {
+        const list = state.items;
+        if (list.length < 2) list.push(value);
+      };
+      /** @assume */
+      export const isFresh = () => state.items.length === ${length};
+    `;
+
+    it("holds where the initial state satisfies it", async () => {
+      expect(getCounts(await checkModel(getSource(0)))).toEqual(["deadlock", 7, 7]);
+    });
+
+    it("fails where the initial state doesn't", async () => {
+      expect(getCounts(await checkModel(getSource(1)))).toEqual(["invariant-violation", 1, 1]);
+    });
+  });
+
   describe("drops what a step leaves behind and numbers the rest as the heap's graph does", () => {
     const getSource = (bound: number) => `
       /** @noDeadlock */
