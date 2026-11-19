@@ -411,7 +411,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   };
   const stack: StateEntry[] = [];
   const successorStack: StateEntry[][] = [];
-  // Deviation from TLC: DFIDModelChecker writes no trace and sets no current state, so TLCExt#getTrace fails with a NullPointerException past an initial state.
+  // Deviation from TLC: DFIDModelChecker sets no current state, so TLCExt#getTrace throws a NullPointerException past an initial state.
   runtime.getBehavior = (state) => [
     ...stack.slice(0, (levels.get(state) ?? 1) - 1).map((entry) => entry.state),
     state,

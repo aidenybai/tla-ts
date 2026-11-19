@@ -362,8 +362,8 @@ export const createTraceBuilder = (context: TraceContext) => {
     }
     return path;
   };
-  // TLCExt#getTrace has TLCTrace rebuild the states up to one, which evaluates the initial predicate and the actions again.
-  // Deviation from TLC: getTrace leaves the state it rebuilt the last step from current, though it restores the state for one it hasn't written, so a later draw in the same step seeds from that state and a later Trace of a successor ends there.
+  // TLCExt#getTrace rebuilds the path from fingerprints, which evaluates Init and the actions again.
+  // Deviation from TLC: TLCExt#getTrace leaves a rebuilt state current, so later draws and Trace in the same step start from it.
   const rebuildPath = (index: number) => {
     const path = getIndexPath(index);
     if (path.length === 0) return;

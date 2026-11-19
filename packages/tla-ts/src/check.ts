@@ -682,7 +682,7 @@ const searchStates = (
       if (deferred.length > 0) throw deferred[0];
     });
   };
-  // Deviation from TLC: ModelChecker replays a failed step on its main thread, where getTrace in a constraint throws a NullPointerException, so TLC reports the constraint's positions.
+  // Deviation from TLC: ModelChecker's main-thread replay throws a NullPointerException in TLCExt#getTrace, so TLC blames a constraint that reads Trace.
   const replayNext = (index: number) =>
     getReplayFailure(environment, (tracing) => {
       const state = states[index];
@@ -1080,7 +1080,7 @@ const searchStates = (
     exploredFingerprintStates.push(fingerprintState);
     runtime.distinctStates++;
   };
-  // TLCExt#getTrace rebuilds the states before one TLC has written, as Worker writes a successor before its invariants, else those before the state it expands.
+  // TLCExt#getTrace rebuilds through the expanded state only for a successor Worker has written, before its invariants.
   const getTracedParent = (state: Value[], index: number) => {
     if (index !== -1) return parents[index];
     if (state !== current.candidate || current.index === -1) return -1;

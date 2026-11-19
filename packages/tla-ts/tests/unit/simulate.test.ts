@@ -317,7 +317,7 @@ const getAliasLasso = (body: string, config: string) => {
   return lassos;
 };
 
-// Deviation from TLC: it fails with a NullPointerException, and with p |-> IF x = 0 THEN -1 ELSE x' it gives p = 0, 1, 2 past the initial state.
+// Deviation from TLC: TLC throws 'Cannot invoke "tlc2.tool.TLCState.lookup(util.UniqueString)" because "s" is null'.
 it("reads a primed variable in the ALIAS of a lasso as the successor's, unlike TLC", () => {
   expect(
     getAliasLasso(
@@ -337,7 +337,7 @@ it("reads a primed variable in the ALIAS of a lasso as the successor's, unlike T
   ]);
 });
 
-// Deviation from TLC: it fails with a NullPointerException as it fingerprints the alias of the cycle's second state.
+// Deviation from TLC: TLC throws 'Cannot invoke "tlc2.value.IValue.fingerPrint(long)" because "minVals[i]" is null'.
 it("prints the cycle of a lasso with an ALIAS that leaves out a variable, unlike TLC", () => {
   expect(
     getAliasLasso(

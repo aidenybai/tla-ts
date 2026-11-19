@@ -94,7 +94,7 @@ describe("TLCExt matches TLC", () => {
     ]);
   });
 
-  // Deviation from TLC: it prints 773, 484, 773, 773, 773, 484, 484, as the rebuild leaves its last state current and the draws after Trace seed from it.
+  // Deviation from TLC: it prints 773, 484, 773, 773, 773, 484, 484.
   it("draws after Trace as for the state the search expands, unlike TLC", async () => {
     expect(
       await printTrace(
@@ -103,7 +103,7 @@ describe("TLCExt matches TLC", () => {
     ).toEqual(["773", "484", "773", "203", "773", "484", "921"]);
   });
 
-  // Deviation from TLC: it prints 1, 2, 3, 2, as the successor's trace then ends at the state the rebuild left current.
+  // Deviation from TLC: it prints 1, 2, 3, 2.
   it("reads the path to a successor after the action reads Trace, unlike TLC", async () => {
     expect(
       await printTrace(
@@ -113,7 +113,7 @@ describe("TLCExt matches TLC", () => {
     ).toEqual(["1", "2", "3", "4"]);
   });
 
-  // Deviation from TLC: it prints n = 0 for both states, though n = 1, 2, 3 for a trace of three.
+  // Deviation from TLC: it prints n = 0 for both states.
   it("reads Trace in an ALIAS of an initial state and its successor as the path to each, unlike TLC", async () => {
     const result = await check({
       source:
@@ -123,7 +123,7 @@ describe("TLCExt matches TLC", () => {
     expect(result.violation?.trace.map((step) => step.state.n)).toEqual([1, 2]);
   });
 
-  // Deviation from TLC: it prints n = 0, 1, 2, 4 under BFS, and n = 1, 2, 3, 4 under -simulate.
+  // Deviation from TLC: it prints n = 0, 1, 2, 4.
   it("reads Trace in an ALIAS of a liveness counterexample as the path to each state, unlike TLC", async () => {
     const result = await check({
       source:

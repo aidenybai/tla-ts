@@ -1504,7 +1504,6 @@ export const createSearch = (
       spec.next !== undefined &&
       (scopeExpressions === undefined ||
         isExpressionImpure([spec.next, ...scopeExpressions], environment, "replayed")),
-    // TLCTrace rebuilds a state by evaluating the initial predicate, the next-state relation and the VIEW again.
     isTraceRebuildShown:
       scopeExpressions === undefined ||
       isExpressionImpure(
