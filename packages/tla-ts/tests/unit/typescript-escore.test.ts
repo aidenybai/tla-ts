@@ -574,7 +574,8 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("agrees with Node", async () => {
       expect(
-        (await checkScript(getSource(`${Date.parse("10/31/2010 08:00")},NaN,NaN,-3600000`))).message,
+        (await checkScript(getSource(`${Date.parse("10/31/2010 08:00")},NaN,NaN,-3600000`)))
+          .message,
       ).toBeUndefined();
     });
 

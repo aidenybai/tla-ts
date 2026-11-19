@@ -340,7 +340,9 @@ export const getCallBuiltin = (
       ...INVOKING_FAMILIES,
     ]
       .map((family) => `"${family}"`)
-      .join(", ")}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
+      .join(
+        ", ",
+      )}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
     ...families.map(
       (family, index) =>
         `  ${index === 0 ? "CASE" : "  []"} id[1] = "${family.name}" -> ${family.name}Builtin(s, f, id[2], this, args, nt)`,

@@ -649,7 +649,10 @@ const loosen = () => {
         ts.isParenthesizedExpression(nullable);
       if (!isOperand) edits.set(nullable.getStart(), "(");
       // The assertion comes before a cast that another error puts at the same end, as of new's.
-      edits.set(nullable.getEnd(), `${isOperand ? "!" : ")!"}${edits.get(nullable.getEnd()) ?? ""}`);
+      edits.set(
+        nullable.getEnd(),
+        `${isOperand ? "!" : ")!"}${edits.get(nullable.getEnd()) ?? ""}`,
+      );
     }
     // A variable that holds an object literal may get properties that the literal lacks.
     const accessed =

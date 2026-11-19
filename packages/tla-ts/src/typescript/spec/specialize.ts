@@ -2592,8 +2592,8 @@ export const specialize = (
             ? assigned === undefined
               ? `InitializeReferencedBinding(${lhs}.s, Val(${lhs}), Undefined)`
               : kind === "normal"
-              ? `InitializeReferencedThen(Val(${lhs}), ${assigned})`
-              : `InitializeThen("${kind}", Val(${lhs}), ${assigned})`
+                ? `InitializeReferencedThen(Val(${lhs}), ${assigned})`
+                : `InitializeThen("${kind}", Val(${lhs}), ${assigned})`
             : `PutValueThen(Val(${lhs}), ${assigned})`
         } IN IF IsAbrupt(${result}) THEN ${result} ELSE`,
       );
@@ -2854,8 +2854,8 @@ export const specialize = (
       initialized !== undefined
         ? `LET d == ${initialized("s", "ctx")} IN IF IsAbrupt(d) THEN d ELSE ${expression("d.s", "ctx")}`
         : tdz.length === 0
-        ? `${expression(resetSlots("s", tdzSlots), "ctx")}`
-        : `LET env == NewDeclarativeEnvironment(s, ctx.lex) IN ${expression(`BlockBindNames(env.s, env.e, ${getSequence(tdz.map(getUnits))}, FALSE)`, "WithLex(ctx, env.e)")}`;
+          ? `${expression(resetSlots("s", tdzSlots), "ctx")}`
+          : `LET env == NewDeclarativeEnvironment(s, ctx.lex) IN ${expression(`BlockBindNames(env.s, env.e, ${getSequence(tdz.map(getUnits))}, FALSE)`, "WithLex(ctx, env.e)")}`;
     return defineCode(
       "ForInOf",
       `BreakTargetThen(ForInOfHeadThen(ctx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> <<>>, it |-> Empty, iterationKind |-> "${isEnumerate ? "enumerate" : isAwait ? "async-iterate" : "iterate"}", iteratorKind |-> "${isAwait ? "async" : "sync"}"], ${head}))`,

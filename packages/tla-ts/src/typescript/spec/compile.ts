@@ -620,7 +620,10 @@ export const compileToEscore = (
         {
           name: "HostParseDate",
           arity: 1,
-          text: getHostParseDate(files.map((file) => file.sourceFile.text).join("\n"), program.words),
+          text: getHostParseDate(
+            files.map((file) => file.sourceFile.text).join("\n"),
+            program.words,
+          ),
         },
         {
           name: "HostLocale",
