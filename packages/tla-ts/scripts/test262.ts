@@ -16,7 +16,7 @@ import { getIndexedKind, INDEX_PARAMETERS, SET_LIKE_METHODS } from "../src/types
 import { compile } from "../src/typescript/compile";
 import { printModule } from "../src/printer";
 import { compileToEscore } from "../src/typescript/spec/compile";
-import { prepareRuntime } from "../src/typescript/spec/prepare";
+import { type EscoreRuntime, prepareRuntime } from "../src/typescript/spec/prepare";
 import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
 
 type Outcome = "pass" | "wrong" | "untranslatable" | "skipped";
@@ -4208,6 +4208,37 @@ const ESCORE =
     ? undefined
     : prepareRuntime(join(import.meta.dirname, "../ecmascript"));
 
+// Compiles a test's program with the ESCore backend. The harness merges namespaces into its
+// functions, which Node's type stripping rejects, so the backend, as Node here, runs the
+// JavaScript that TypeScript emits, which a linked test's own file holds too, for an import of it.
+// A test that runs as JavaScript runs as it is.
+const compileForEscore = (
+  program: string,
+  path: string,
+  isModule: boolean,
+  runtime: EscoreRuntime,
+) => {
+  if (!path.endsWith(".ts")) return compileToEscore(program, path, runtime, isModule);
+  const transpiled = ts.transpileModule(program, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ESNext,
+      module: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.Preserve,
+      moduleDetection: isModule ? ts.ModuleDetectionKind.Force : ts.ModuleDetectionKind.Legacy,
+      alwaysStrict: false,
+      ignoreDeprecations: "6.0",
+    },
+    reportDiagnostics: true,
+  });
+  const error = transpiled.diagnostics?.find(
+    (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
+  );
+  if (error !== undefined) {
+    throw new TlaTypeScriptError(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
+  }
+  if (existsSync(path)) writeFileSync(path, transpiled.outputText);
+  return compileToEscore(transpiled.outputText, path, runtime, isModule);
+};
+
 // Compiles a program and checks it, where a TypeScript error gives the run that onTypeError makes.
 const checkProgram = async (
   id: string,
@@ -4221,7 +4252,7 @@ const checkProgram = async (
     const spec =
       ESCORE === undefined
         ? compile(program, path)
-        : compileToEscore(program, path, ESCORE, isModule);
+        : compileForEscore(program, path, isModule, ESCORE);
     const compiled = performance.now();
     const result = await check({ ...spec, onPrint: () => {} });
     if (process.env.TLA_TS_STATS !== undefined) {
@@ -4338,7 +4369,12 @@ const runJavaScriptTest = async (
     return { testPath, harness: modules.harness, test: modules.test };
   };
   const tla = writeTree(join(JAVASCRIPT_DIRECTORY, "tla"), "harness.ts");
-  writeFileSync(join(JAVASCRIPT_DIRECTORY, "tla", "harness.ts"), tla.harness);
+  // The ESCore backend runs the harness's JavaScript, as Node does, as its namespaces can't be
+  // stripped.
+  writeFileSync(
+    join(JAVASCRIPT_DIRECTORY, "tla", "harness.ts"),
+    ESCORE === undefined ? tla.harness : transpileModule(tla.harness),
+  );
   const node = writeTree(join(JAVASCRIPT_DIRECTORY, "node"), "harness.js");
   writeFileSync(join(JAVASCRIPT_DIRECTORY, "node", "harness.js"), transpileModule(node.harness));
   const run = spawnSync(

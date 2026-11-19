@@ -149,7 +149,10 @@ describe("compiles scripts by specializing ESCore", () => {
     const getSource = (expected: string) => `
       class Shape {
         sides = 0;
-        constructor(public name: string) {}
+        name: string;
+        constructor(name: string) {
+          this.name = name;
+        }
         get label() { return this.name + ":" + this.sides; }
         static make(name: string) { return new this(name); }
       }
@@ -901,12 +904,13 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  // Node runs a .ts file with its types stripped to whitespace.
   describe("gives a function's source text, of a script a TLA+ string can hold or not", () => {
     const getSource = (text: string, expected: string) => `
       const f = (a: number) => a + 1;
       const g = () => "${text}";
       const result = [String(f), String(g)].join("|");
-      if (result !== '(a) => a + 1|() => "${text}"' + "${expected}") throw new Error(result);
+      if (result !== '(a        ) => a + 1|() => "${text}"' + "${expected}") throw new Error(result);
     `;
 
     it("agrees with Node", async () => {
@@ -917,6 +921,57 @@ describe("compiles scripts by specializing ESCore", () => {
     it("rejects another result", async () => {
       expect((await checkScript(getSource("e", "!"))).message).toContain(THREW);
       expect((await checkScript(getSource("\u00e9", "!"))).message).toContain(THREW);
+    });
+  });
+
+  // Node runs a .ts file with its types stripped to whitespace, as its stripTypeScriptTypes gives,
+  // and rejects the syntax that only a transform could remove.
+  describe("gives each function the source text that Node strips its types from", () => {
+    const program = [
+      "const arrow = <T,>(value: T, rest?: number): T => value;",
+      "class Box<T> implements Iterable<T> {",
+      "  private readonly items: T[] = [];",
+      "  declare tag: string;",
+      "  public add(item: T): this { this.items.push(item!); return this; }",
+      "  get size(): number { return this.items.length; }",
+      "  set size(value: number) {}",
+      "  *[Symbol.iterator](): Iterator<T> { yield* this.items; }",
+      "}",
+      "const object = { get first(): number { return 1; }, method<T>(this: unknown, value: T) { return value as T; } };",
+      "function generic<T extends object = {}>(value: T): asserts value is T {}",
+      'const getter = Object.getOwnPropertyDescriptor(Box.prototype, "size")!.get!;',
+      'const result = [arrow, Box, Box.prototype.add, getter, Box.prototype[Symbol.iterator], Object.getOwnPropertyDescriptor(object, "first")!.get!, object.method, generic].map(String);',
+    ].join("\n");
+    const expected = [
+      "(value   , rest         )    => value",
+      "class Box                           {\n                   items      = [];\n                      \n         add(item   )       { this.items.push(item ); return this; }\n  get size()         { return this.items.length; }\n  set size(value        ) {}\n  *[Symbol.iterator]()              { yield* this.items; }\n}",
+      "add(item   )       { this.items.push(item ); return this; }",
+      "get size()         { return this.items.length; }",
+      "*[Symbol.iterator]()              { yield* this.items; }",
+      "get first()         { return 1; }",
+      "method   (               value   ) { return value     ; }",
+      "function generic                       (value   )                     {}",
+    ];
+    const getSource = (texts: string[]) =>
+      `${program}\nif (JSON.stringify(result) !== ${JSON.stringify(JSON.stringify(texts))}) throw new Error(JSON.stringify(result));`;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const wrong = expected.map((text) => text.replaceAll(/ +/g, " "));
+      expect((await checkScript(getSource(wrong))).message).toContain(THREW);
+    });
+
+    it("rejects an enum and a namespace as Node does", async () => {
+      expect((await checkScript("enum Color { Red }")).message).toContain(
+        "TypeScript enum is not supported in strip-only mode",
+      );
+      expect((await checkScript("namespace N { export const x = 1; }")).message).toContain(
+        "TypeScript namespace declaration is not supported in strip-only mode",
+      );
+      expect((await checkScript("namespace N { export type T = 1; }")).message).toBeUndefined();
     });
   });
 

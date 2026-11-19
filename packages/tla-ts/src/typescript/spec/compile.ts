@@ -8,6 +8,7 @@ import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
 import { getHostTimeZone, getTlaString, LOCALE_METHODS } from "./runtime";
 import { getNumber, type ProgramFile, specialize } from "./specialize";
+import { stripTypes } from "./strip-types";
 import { suspendDefinitions } from "./suspend";
 
 export interface EscoreSpec {
@@ -96,38 +97,62 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
   return { sorted, recursive };
 };
 
-// JavaScript of a file of TypeScript's code, which keeps its imports and exports. A module is one
-// where it neither imports nor exports too, where await at its top level awaits, which its
-// JavaScript marks with an empty export.
-const transpile = (source: string, fileName: string, isModule: boolean) => {
-  const transpiled = ts.transpileModule(source, {
-    compilerOptions: {
-      target: ts.ScriptTarget.ESNext,
-      module: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.Preserve,
-      moduleDetection: isModule ? ts.ModuleDetectionKind.Force : ts.ModuleDetectionKind.Legacy,
-      useDefineForClassFields: true,
-      // A script runs in strict mode only where it says so, which TypeScript 6 deprecates.
-      alwaysStrict: false,
-      ignoreDeprecations: "6.0",
+// The JavaScript that Node runs of a file: a .ts file's code with its types replaced by whitespace,
+// as Node strips them, which keeps its positions and its functions' source texts, and a .js file's
+// code as it is. A module is one where it neither imports nor exports too, where await at its top
+// level awaits, which its JavaScript marks with an empty export after its code. A CommonJS
+// module's JavaScript is in the function that Node wraps it in, where a .js file may return.
+const transpile = (source: string, fileName: string, isModule: boolean, wrapper = ["", ""]) => {
+  const isTypeScript = /\.[cm]?ts$/.test(fileName);
+  const transpiled = ts.transpileModule(
+    isTypeScript ? source : `${wrapper[0]}${source}${wrapper[1]}`,
+    {
+      compilerOptions: {
+        target: ts.ScriptTarget.ESNext,
+        module: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.Preserve,
+        moduleDetection: isModule ? ts.ModuleDetectionKind.Force : ts.ModuleDetectionKind.Legacy,
+        // A script runs in strict mode only where it says so, which TypeScript 6 deprecates.
+        alwaysStrict: false,
+        ignoreDeprecations: "6.0",
+      },
+      // TypeScript fails on a file that imports itself by the name it transpiles under, which
+      // keeps only the file's extension.
+      fileName: `/tla-ts/transpiled${/\.[^./]*$/.exec(fileName)?.[0] ?? ""}`,
+      reportDiagnostics: true,
     },
-    // TypeScript fails on a file that imports itself by the name it transpiles under, which
-    // keeps only the file's extension.
-    fileName: `/tla-ts/transpiled${/\.[^./]*$/.exec(fileName)?.[0] ?? ""}`,
-    reportDiagnostics: true,
-  });
+  );
   const error = transpiled.diagnostics?.find(
     (diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error,
   );
   if (error !== undefined) {
     throw new TlaTypeScriptError(ts.flattenDiagnosticMessageText(error.messageText, "\n"));
   }
-  return ts.createSourceFile(
-    fileName.replace(/\.[cm]?tsx?$/, ".js"),
-    transpiled.outputText,
+  const code = isTypeScript
+    ? stripTypes(
+        ts.createSourceFile(fileName, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS),
+      )
+    : source;
+  return `${wrapper[0]}${code}${wrapper[1]}`;
+};
+
+const parse = (code: string, fileName: string, isModule: boolean) => {
+  const name = fileName.replace(/\.[cm]?tsx?$/, ".js");
+  const sourceFile = ts.createSourceFile(
+    name,
+    code,
     ts.ScriptTarget.ESNext,
     true,
     ts.ScriptKind.JS,
   );
+  return !isModule || ts.isExternalModule(sourceFile)
+    ? sourceFile
+    : ts.createSourceFile(
+        name,
+        `${code}\nexport {};\n`,
+        ts.ScriptTarget.ESNext,
+        true,
+        ts.ScriptKind.JS,
+      );
 };
 
 // The specifier of each import and export of a module, or each require of a string of a CommonJS
@@ -176,7 +201,7 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
   if (!isModule) {
     return [
       {
-        sourceFile: transpile(source, fileName, false),
+        sourceFile: parse(transpile(source, fileName, false), fileName, false),
         path: fileName,
         kind: "script",
         targets: new Map(),
@@ -200,8 +225,8 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
     const code = text.replace(/^#!.*/, (line) => " ".repeat(line.length));
     const sourceFile =
       kind === "commonjs"
-        ? transpile(`${WRAPPER[0]}${code}${WRAPPER[1]}`, path, false)
-        : transpile(code, path, true);
+        ? parse(transpile(code, path, false, WRAPPER), path, false)
+        : parse(transpile(code, path, true), path, true);
     const targets = new Map(
       [...getSpecifiers(sourceFile, kind).keys()].flatMap((specifier) => {
         const literal = written.get(specifier);
