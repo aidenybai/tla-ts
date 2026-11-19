@@ -3773,6 +3773,29 @@ describe("initial predicate and next-state relation match TLC", () => {
     ]);
   });
 
+  it("takes a LET definition without parameters that prints or asserts for an action of the initial predicate and the next-state relation, as TLC's Tool does", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == LET A == x = 0 /\\ PrintT("init") IN A\nNext == LET B == x < 3 /\\ Assert(x < 5, "m") /\\ x\' = x + 1 IN B\nInv == x < 2\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([
+      result.status,
+      result.violation?.trace.map((step) => [step.state.x, step.label]),
+      prints,
+    ]).toEqual([
+      "invariant-violation",
+      [
+        [0, undefined],
+        [1, "B line 5, col 18 to line 5, col 58 of module M"],
+        [2, "B line 5, col 18 to line 5, col 58 of module M"],
+      ],
+      ['"init"'],
+    ]);
+  });
+
   it("reports initial states without a next-state action", async () => {
     await expect(checkBody("VARIABLE x\nInit == x \\in {1, 2}", "INIT Init")).rejects.toThrow(
       /No next state actions defined to generate successor states from/,
