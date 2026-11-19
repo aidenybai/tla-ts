@@ -252,15 +252,16 @@ export const getCoverageLabel = (
       : environment.definitions.get(getRootKey(name, environment));
   const head = actionHead ?? (definition?.kind === "Operator" ? definition.head : undefined);
   const range = getRelationRange(expression);
+  const actual = getPredicateRange(expression) ?? range;
   const label = actionHead ? name : definition?.name;
   if (label === undefined || !head) {
-    return `Action ${range ? formatRange(range) : "Unknown location"}`;
+    return `Action ${actual ? formatRange(actual) : "Unknown location"}`;
   }
   const isBody = actionHead
     ? isSameRange(actionBody, getPredicateRange(expression))
     : definition && isSameRange(getRelationRange(definition.body), range);
-  if (isBody || !range) return `${label} ${formatRange(head)}`;
-  return `${label} ${formatRange(head)} (${range.start.line} ${range.start.column} ${range.end.line} ${range.end.column})`;
+  if (isBody || !actual) return `${label} ${formatRange(head)}`;
+  return `${label} ${formatRange(head)} (${actual.start.line} ${actual.start.column} ${actual.end.line} ${actual.end.column})`;
 };
 
 const getRangeKey = (range: SourceRange) =>

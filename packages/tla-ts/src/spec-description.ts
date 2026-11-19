@@ -1,6 +1,8 @@
 import { isEvaluatedAtStartup } from "./dependencies";
 import {
   getAssumeProveBody,
+  getChildren,
+  getDefinitionExpressions,
   isLocallyResolved,
   type Definition,
   type Expression,
@@ -10,7 +12,13 @@ import {
 import type { ModelConfig } from "./config";
 import { getCoverageCounts, getDistinctCount, letDefinitions, type CoverageKind } from "./coverage";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { substitutionFrames, withSubstitutionFrames } from "./instances";
+import {
+  frameSubstitutions,
+  getSubstitutedName,
+  isSubstitutionDefinition,
+  substitutionFrames,
+  withSubstitutionFrames,
+} from "./instances";
 import type { InstanceAction } from "./environment";
 import { formatRange, TlaError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import {
@@ -28,6 +36,7 @@ import {
 } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { bindLetDefinitions, getLevel } from "./liveness";
+import { EMPTY_STATE } from "./runtime";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
 import { LITERAL_KINDS } from "./tlc/replay";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -111,6 +120,13 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined) 
   environment,
   scope,
   state: undefined,
+  next: undefined,
+});
+
+const getSplitContext = (environment: Environment, scope: Scope | undefined) => ({
+  environment,
+  scope,
+  state: EMPTY_STATE,
   next: undefined,
 });
 
@@ -262,7 +278,7 @@ const getInstanceActions = (
     return callAction();
   }
   return tryCollect(() => {
-    const values = args.map((arg) => evaluate(arg, getConstantContext(environment, scope)));
+    const values = args.map((arg) => evaluate(arg, getSplitContext(environment, scope)));
     return [
       {
         ...instanceAction,
@@ -341,23 +357,19 @@ const getActions = (
       return tryCollect(
         () => {
           const actions: SpecAction[] = [];
-          forEachBinding(
-            expression.bounds,
-            getConstantContext(environment, scope),
-            (boundScope) => {
-              actions.push(
-                ...getActions(
-                  expression.body,
-                  boundScope,
-                  closure,
-                  environment,
-                  instanceActions,
-                  definition,
-                ),
-              );
-              return false;
-            },
-          );
+          forEachBinding(expression.bounds, getSplitContext(environment, scope), (boundScope) => {
+            actions.push(
+              ...getActions(
+                expression.body,
+                boundScope,
+                closure,
+                environment,
+                instanceActions,
+                definition,
+              ),
+            );
+            return false;
+          });
           return actions.length === 0 ? [createSplitAction()] : actions;
         },
         () => [createSplitAction()],
@@ -425,7 +437,7 @@ const getActions = (
         name: called.params[index].name,
         binding: {
           kind: "Value",
-          value: evaluate(arg, getConstantContext(environment, scope)),
+          value: evaluate(arg, getSplitContext(environment, scope)),
         },
         parent: current,
       }),
@@ -442,18 +454,62 @@ const getActions = (
   }, callAction);
 };
 
+// TLC bounds the level of a definition without the substitutions of its instances, so an instance's declaration counts as a variable only by the name of a root variable.
+const isVariableBound = (
+  expression: Expression,
+  environment: Environment,
+  visited: Set<Definition>,
+): boolean => {
+  const substituted = getSubstitutedName(expression);
+  if (substituted !== undefined) return environment.variableIndex.has(substituted);
+  if (expression.kind === "Enabled") return true;
+  const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
+  if (name !== undefined && environment.variableIndex.has(name)) return true;
+  const definition = name === undefined ? undefined : getDefinition(name, environment);
+  if (definition?.kind === "Operator" && !visited.has(definition)) {
+    visited.add(definition);
+    if (isVariableBound(definition.body, environment, visited)) return true;
+  }
+  const children =
+    expression.kind === "Let"
+      ? [
+          ...expression.definitions
+            .filter((item) => !isSubstitutionDefinition(item))
+            .flatMap(getDefinitionExpressions),
+          expression.body,
+        ]
+      : getChildren(expression);
+  return children.some((child) => isVariableBound(child, environment, visited));
+};
+
 const describeSpecification = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
+  instanceActions: Map<string, InstanceAction>,
   description: SpecDescription,
   next: NextItem[],
   frames: Expression[] = [],
 ): void => {
   const recurse = (inner: Expression, innerScope: Scope | undefined, innerFrames = frames) =>
-    describeSpecification(inner, innerScope, environment, description, next, innerFrames);
-  const createConjunct = (name: string, conjunct: Expression, conjunctScope: Scope | undefined) =>
-    createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope);
+    describeSpecification(
+      inner,
+      innerScope,
+      environment,
+      instanceActions,
+      description,
+      next,
+      innerFrames,
+    );
+  const substitutionFrame = frames.find((frame) => frameSubstitutions.has(frame));
+  const createConjunct = (
+    name: string,
+    conjunct: Expression,
+    conjunctScope: Scope | undefined,
+  ) => ({
+    ...createAction(name, withSubstitutionFrames(conjunct, frames), conjunctScope),
+    location: substitutionFrame?.location ?? conjunct.location,
+  });
   const unwrapped = unwrapBinding(expression, scope, environment);
   if (unwrapped) {
     recurse(unwrapped.expression, unwrapped.scope);
@@ -465,8 +521,19 @@ const describeSpecification = (
     ? [...frames, ...(substitutionFrames.get(called.body) ?? [])]
     : frames;
   if (called && called.params.length === 0) {
-    if (getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL) {
-      description.inits.push(createConjunct(called.name, called.body, called.scope));
+    if (
+      getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL &&
+      (!substitutionFrame || isVariableBound(called.body, environment, new Set()))
+    ) {
+      const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
+      description.inits.push({
+        ...createConjunct(called.name, called.body, called.scope),
+        ...(name === undefined
+          ? undefined
+          : substitutionFrame
+            ? getDefinitionRanges(getDefinition(name, environment))
+            : instanceActions.get(name)),
+      });
       return;
     }
     recurse(called.body, called.scope, calledFrames);
@@ -576,7 +643,14 @@ export const getSpecDescription = (
       ? undefined
       : getOperatorDefinition(config.specification, environment);
   if (specification) {
-    describeSpecification(specification.body, undefined, environment, description, next);
+    describeSpecification(
+      specification.body,
+      undefined,
+      environment,
+      instanceActions,
+      description,
+      next,
+    );
     next.forEach((item) =>
       description.actions.push(
         ...(item.frames.length > 0

@@ -19,7 +19,7 @@ import {
   prepareSearch,
   reportAssumptionViolation,
 } from "./search";
-import { createStateWriter } from "./state-graph";
+import { createLivenessDump, createStateWriter } from "./state-graph";
 import { forEachInitialState, forEachSuccessor, getSuccessors, type Successor } from "./successors";
 import {
   formatNestedMessage,
@@ -136,10 +136,16 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     });
     const branches = withLivenessExitCode(() =>
       withUnexpectedException(() =>
-        createLivenessChecker(temporalProperties, search.spec.temporals, environment, {
-          getFingerprint: () => 0,
-          forEachActionSuccessors: () => {},
-        }),
+        createLivenessChecker(
+          temporalProperties,
+          search.spec.temporals,
+          environment,
+          { getFingerprint: () => 0, forEachActionSuccessors: () => {} },
+          // TLC opens the liveness dump, which it never closes, before it refuses to check liveness.
+          options.dump?.dot
+            ? createLivenessDump(options.dump, options.writeFile, options.version).createWriter
+            : undefined,
+        ),
       ),
     )?.branches;
     if (branches) options.onProgress?.({ kind: "liveness-prepared", branches });

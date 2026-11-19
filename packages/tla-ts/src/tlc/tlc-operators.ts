@@ -15,7 +15,12 @@ import {
   overrideWithJava,
   toEnumeratedSet,
 } from "../builtins";
-import { getNamedRegisters, NAMED_REGISTER_PREFIX, type CheckerRuntime } from "../runtime";
+import {
+  EMPTY_STATE,
+  getNamedRegisters,
+  NAMED_REGISTER_PREFIX,
+  type CheckerRuntime,
+} from "../runtime";
 import { createActionRecord, createTlcRecord, setTlcValue } from "./tlcext-operators";
 import { getRandomElement } from "./random";
 import {
@@ -47,7 +52,16 @@ const getRegisterFunction = <Key extends Value>(registers: Map<Key, Value>) =>
     [...registers].map((entry): [Value, Value] => [entry[0], createTuple([entry[1]])]),
   );
 
-const CHECKER_KEYS = new Set(["diameter", "generated", "distinct", "queue", "stats", "config"]);
+const CHECKER_KEYS = new Set([
+  "diameter",
+  "generated",
+  "distinct",
+  "queue",
+  "stats",
+  "config",
+  "all",
+  "all:named",
+]);
 const TLC_174_KEYS = new Set(["diameter", "distinct", "queue", "duration", "level"]);
 const CHECKER_KEYS_174 = new Set(["diameter", "distinct", "queue", "level"]);
 
@@ -59,14 +73,14 @@ const getRuntimeValue = (
   const isUndefined =
     runtime.version === "1.7.4"
       ? !TLC_174_KEYS.has(key) || (!runtime.isStarted && CHECKER_KEYS_174.has(key))
-      : !runtime.isStarted && CHECKER_KEYS.has(key);
+      : (!runtime.isStarted || state === EMPTY_STATE) && CHECKER_KEYS.has(key);
   if (isUndefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
   const simulated = runtime.getSimulationValue?.(key, state);
   if (simulated !== undefined) return simulated;
   const duration = Math.floor((Date.now() - runtime.startedAt) / 1000);
   switch (key) {
     case "level":
-      return state === undefined ? 0 : runtime.getLevel(state);
+      return state === undefined ? 0 : state === EMPTY_STATE ? 1 : runtime.getLevel(state);
     case "diameter":
       return runtime.diameter;
     case "generated":
@@ -275,8 +289,8 @@ export const createTlcOperators = (
         ),
         "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
       ),
-  defineStateOperator("TLCSet", 2, (args) => {
-    setTlcValue(runtime, getValue(args, 0, "TLCSet"), getValue(args, 1, "TLCSet"));
+  defineStateOperator("TLCSet", 2, (args, context) => {
+    setTlcValue(runtime, getValue(args, 0, "TLCSet"), getValue(args, 1, "TLCSet"), context?.state);
     return true;
   }),
   defineConstant("Any", ANY_SET),

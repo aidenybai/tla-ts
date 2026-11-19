@@ -3043,6 +3043,159 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts the checks a property implies through an instance of an instance under the substitutions of both, as TLC's SpecProcessor wraps each check in them", async () => {
+    const result = await check({
+      source:
+        "---- MODULE S2 ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = (x + 1) % 3 /\\ y' = y\nMd == INSTANCE Mid WITH Top <- 2, p <- x, q <- y\nRefines == Md!MSpec\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY Refines",
+      coverage: 1,
+      loadModule: (name) =>
+        name === "Mid"
+          ? "---- MODULE Mid ----\nCONSTANT Top\nVARIABLES p, q\nG == INSTANCE Hi WITH Max <- Top, c <- p, d <- q\nMSpec == G!HSpec\n===="
+          : name === "Hi"
+            ? "---- MODULE Hi ----\nEXTENDS Integers\nCONSTANT Max\nVARIABLES c, d\nhv == <<c, d>>\nHInit == c = 0 /\\ d = 0\nHNext == (c < Max /\\ c' = c + 1 /\\ d' = d) \\/ (c = Max /\\ c' = 0 /\\ d' = d)\nHSpec == HInit /\\ [][HNext]_hv\n===="
+            : undefined,
+    });
+    const lines = formatCoverage(result);
+    expect(
+      result.coverage?.relations
+        .slice(2)
+        .map((relation, index) => [relation.label, lines?.[index + 2]]),
+    ).toEqual([
+      [
+        "Action line 6, col 1 to line 6, col 48 of module S2",
+        [
+          "line 6, col 40 to line 6, col 40 of module S2: 1",
+          "line 4, col 40 to line 4, col 40 of module Mid: 1",
+          "line 6, col 10 to line 6, col 14 of module Hi: 1",
+        ],
+      ],
+      [
+        "Action line 6, col 1 to line 6, col 48 of module S2",
+        [
+          "line 6, col 48 to line 6, col 48 of module S2: 1",
+          "line 4, col 48 to line 4, col 48 of module Mid: 1",
+          "line 6, col 19 to line 6, col 23 of module Hi: 1",
+        ],
+      ],
+      [
+        "Action line 6, col 1 to line 6, col 48 of module S2",
+        [
+          "line 6, col 40 to line 6, col 40 of module S2: 6",
+          "line 6, col 48 to line 6, col 48 of module S2: 6",
+          "line 4, col 30 to line 4, col 32 of module Mid: 3",
+          "line 4, col 40 to line 4, col 40 of module Mid: 6",
+          "line 4, col 48 to line 4, col 48 of module Mid: 6",
+          "line 8, col 21 to line 8, col 30 of module Hi: 3",
+          "|line 8, col 22 to line 8, col 26 of module Hi: 3",
+          "||line 7, col 10 to line 7, col 75 of module Hi: 3",
+          "|||line 7, col 11 to line 7, col 41 of module Hi: 3",
+          "||||line 7, col 11 to line 7, col 31 of module Hi: 3",
+          "|||||line 7, col 11 to line 7, col 17 of module Hi: 3",
+          "|||||line 7, col 22 to line 7, col 31 of module Hi: 2",
+          "||||line 7, col 36 to line 7, col 41 of module Hi: 2",
+          "|||line 7, col 48 to line 7, col 74 of module Hi: 1",
+        ],
+      ],
+    ]);
+  });
+
+  it("evaluates an action property it implies through an instance under the substitutions, which TLC lists first in the call stack of an error", async () => {
+    const result = await check({
+      source:
+        "---- MODULE S7 ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 - x /\\ y' = y\nB == INSTANCE Bad2 WITH c <- x, d <- y\nRefines == B!HSpec\n====",
+      config: "INIT Init\nNEXT Next\nPROPERTY Refines",
+      loadModule: (name) =>
+        name === "Bad2"
+          ? "---- MODULE Bad2 ----\nEXTENDS Integers\nVARIABLES c, d\nHInit == c = 0\nHNext == c' = 1 - c /\\ d' = d \\div c\nHSpec == HInit /\\ [][HNext]_<<c, d>>\n===="
+          : undefined,
+    });
+    expect(formatCallStackLines(result)).toEqual([
+      "Line 6, column 1 to line 6, column 38 in S7",
+      "Line 6, column 21 to line 6, column 36 in Bad2",
+      "Line 6, column 22 to line 6, column 26 in Bad2",
+      "Line 5, column 10 to line 5, column 36 in Bad2",
+      "Line 5, column 24 to line 5, column 36 in Bad2",
+      "Line 5, column 29 to line 5, column 36 in Bad2",
+    ]);
+  });
+
+  const LO_MODULE =
+    "---- MODULE Lo ----\nEXTENDS Integers\nCONSTANT Max\nVARIABLES c, d\nhv == <<c, d>>\nOne == c = 0\nTwo == c = 0 /\\ d \\in {0, 1}\nStep == c < Max /\\ c' = c + 1 /\\ d' = d\nSpec1 == One /\\ d = 0 /\\ [][Step]_hv\nSpec2 == Two /\\ [][Step]_hv\n====";
+
+  it.each([
+    [
+      "splits it where the instance's variables have names the root module doesn't declare",
+      "U1",
+      "x, y",
+      "Max <- 2, c <- x, d <- y",
+      [
+        "Action line 4, col 1 to line 4, col 46 of module U1 0:0",
+        "Action line 4, col 1 to line 4, col 46 of module U1 6:6",
+        "Action line 4, col 1 to line 4, col 46 of module U1 4:8",
+      ],
+      'UnnamedAction",\n    location |->\n        [ beginLine |-> 4,\n          beginColumn |-> 1,\n          endLine |-> 4,\n          endColumn |-> 46,\n          module |-> "U1" ] ] }',
+    ],
+    [
+      "keeps it whole where the root module declares variables of their names",
+      "U2",
+      "c, d",
+      "Max <- 2",
+      [
+        "Two line 7, col 1 to line 7, col 3 of module Lo (4 1 4 30) 6:6",
+        "Action line 4, col 1 to line 4, col 30 of module U2 4:8",
+      ],
+      'Two",\n    location |->\n        [ beginLine |-> 4,\n          beginColumn |-> 1,\n          endLine |-> 4,\n          endColumn |-> 30,\n          module |-> "U2" ] ] }',
+    ],
+  ])(
+    "takes the initial predicate of a specification from an instance at the instance, and %s, as TLC's SpecProcessor bounds its level without the substitutions",
+    async (_title, module, variables, substitutions, labels, printed) => {
+      const prints: string[] = [];
+      const result = await check({
+        source: `---- MODULE ${module} ----\nEXTENDS Integers, TLC\nVARIABLES ${variables}\nL == INSTANCE Lo WITH ${substitutions}\nSpec == L!Spec2\nASSUME PrintT(TLCGet("spec").inits)\n====`,
+        config: "SPECIFICATION Spec",
+        coverage: 1,
+        onPrint: (text) => prints.push(text),
+        loadModule: (name) => (name === "Lo" ? LO_MODULE : undefined),
+      });
+      expect([
+        result.coverage?.relations.map(
+          (relation) => `${relation.label} ${relation.distinct}:${relation.generated}`,
+        ),
+        prints,
+      ]).toEqual([
+        labels,
+        [`{ [ coverage |-> [generated |-> 0, distinct |-> 0],\n    name |-> "${printed}`],
+      ]);
+    },
+  );
+
+  it("names the initial predicate a specification takes from an instance directly by the instance, as TLC names the definition the instance adds", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE U3 ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nL == INSTANCE Lo WITH Max <- 2, c <- x, d <- y\nSpec == L!Two /\\ [][L!Step]_<<x, y>>\nASSUME PrintT(TLCGet("spec").inits)\n====',
+      config: "SPECIFICATION Spec",
+      coverage: 1,
+      onPrint: (text) => prints.push(text),
+      loadModule: (name) => (name === "Lo" ? LO_MODULE : undefined),
+    });
+    expect([
+      result.coverage?.relations.map(
+        (relation) => `${relation.label} ${relation.distinct}:${relation.generated}`,
+      ),
+      prints,
+    ]).toEqual([
+      [
+        "L!Two line 4, col 1 to line 4, col 1 of module U3 6:6",
+        "L!Step line 4, col 1 to line 4, col 1 of module U3 4:8",
+      ],
+      [
+        '{ [ coverage |-> [generated |-> 0, distinct |-> 0],\n    name |-> "L!Two",\n    location |->\n        [ beginLine |-> 4,\n          beginColumn |-> 1,\n          endLine |-> 4,\n          endColumn |-> 46,\n          module |-> "U3" ] ] }',
+      ],
+    ]);
+  });
+
   it("counts a recursive function of an instance of an instance at its definition once", async () => {
     const lines = await getCoverageLines(
       "---- MODULE G ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES a, b\nD == \\E e \\in {0, K % 4} : a' = e /\\ b' = b\nRf[n \\in 0..2] == IF n = 0 THEN K ELSE Rf[n - 1] + (a % 2)\n====\n---- MODULE Mid ----\nEXTENDS Naturals\nCONSTANT L\nVARIABLES p, q\nII == INSTANCE Inner WITH K <- L + 1, a <- p, b <- q\n====\nMd == INSTANCE Mid WITH L <- 1, p <- x, q <- y\nInit == x = 0 /\\ y = 0\nNext == Md!II!D\nInv == Md!II!Rf[2] > 0\n====",

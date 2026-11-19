@@ -327,6 +327,24 @@ describe("the call stack of a replayed failure matches TLC", () => {
       expect(result.violationOutDegrees?.slice(0, 2)).toEqual(outDegrees);
     },
   );
+
+  it.each([
+    ["", 2],
+    ["\nINVARIANT Inv", 1],
+  ])(
+    "queues a successor that only the rerun finds when it holds the invariants, as TLC's doNext does (config %j)",
+    async (invariant, queuedStates) => {
+      const result = await checkSpec(
+        `Init == x = 0\nNext == (x' = IF TLCGet("stats").distinct < 2 THEN 1 ELSE 2) \\/ (TLCGet(1) >= 0 /\\ x' = 3)\nInv == x # 2`,
+        `INIT Init\nNEXT Next${invariant}`,
+      );
+      expect([result.generatedStates, result.distinctStates, result.queuedStates]).toEqual([
+        2,
+        3,
+        queuedStates,
+      ]);
+    },
+  );
 });
 
 describe("the replay of a failed initial state matches TLC", () => {
