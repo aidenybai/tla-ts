@@ -2810,6 +2810,40 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ].join("\n"),
     ]);
   });
+
+  // proto_model::mk_model leaves the values of the factories to the proto model, which ~context
+  // frees before bit2int's 1-bit zero.
+  it("frees the values of the proto model with the kernel of the smt tactic", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult a b))",
+        "(assert (= (bvadd a b) #x9))",
+        "(check-sat-using smt)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or (and p q) (and (not p) r) (and q (not r))))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(goals",
+        "(goal",
+        "  (not (bvule b a))",
+        "  (= a (bvadd #x9 (bvmul #xf b)))",
+        "  (or r p q)",
+        "  (or (not p) q (not r))",
+        "  (or (not p) q)",
+        "  (or r q)",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
 });
 
 describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {

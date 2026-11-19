@@ -1066,8 +1066,11 @@ export class ProtoModel {
     }
     this.funcInterps.clear();
     this.funcDecls = [];
+    // The values its factories made stay with the proto model, except the universes of the
+    // uninterpreted sorts.
     for (const entry of this.values)
-      if (!isArithSort(entry[0])) for (const value of entry[1]) model.registerValue(value);
+      if (this.manager.isUninterpretedSort(entry[0]))
+        for (const value of entry[1]) model.registerValue(value);
     for (const entry of this.universes) model.registerUsort(entry[0], entry[1].items);
     return model;
   }
