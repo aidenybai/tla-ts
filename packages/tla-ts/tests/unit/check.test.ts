@@ -1105,6 +1105,27 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("warns about symmetry during liveness checking whenever the configuration declares it, as TLC's Tool#hasSymmetry asks", async () => {
+    const progress: CheckProgress[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSym == Permutations({a})\nLive == <>(x = a)\n====",
+      config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym\nPROPERTY Live",
+      onProgress: (event) => {
+        if (event.kind === "warning" || event.kind === "liveness-initializing")
+          progress.push(event);
+      },
+    });
+    expect(progress).toEqual([
+      {
+        kind: "warning",
+        code: 2300,
+        text: "The set {a} has been defined to be a symmetry set but contains less than two elements.",
+      },
+      { kind: "liveness-initializing", isSymmetric: true, isConstrained: false },
+    ]);
+  });
+
   it.each([
     ["no permutation", "{}", 2],
     ["one permutation it names by a definition", "Swap", 1],

@@ -700,7 +700,7 @@ const searchStates = (
   if (search.properties.liveness.length > 0) {
     options.onProgress?.({
       kind: "liveness-initializing",
-      isSymmetric: search.isSymmetric,
+      isSymmetric: config.symmetry !== undefined,
       isConstrained: search.isConstrained,
     });
   }
