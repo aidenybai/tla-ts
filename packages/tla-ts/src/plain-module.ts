@@ -58,7 +58,7 @@ export const checkPlainModule = (
   ) {
     return undefined;
   }
-  // An index for each parameter name, as a bit of a set of them.
+  // An index for each parameter name of the definition being walked, as a bit of a set of them.
   const bits = new Map<string, number>();
   const getBit = (name: string) => {
     const bit = bits.get(name) ?? bits.size;
@@ -328,6 +328,7 @@ export const checkPlainModule = (
       return undefined;
     }
     locals.length = 0;
+    bits.clear();
     maxima.fill(TEMPORAL_LEVEL);
     for (const param of definition.params) {
       const bit = getBit(param.name);
