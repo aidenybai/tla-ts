@@ -1022,7 +1022,8 @@ const LOCAL_PATCHES = [
     name: "GetValue",
     from: `IF v.type # "reference" THEN Ok(s, v)`,
     to: `IF v.type # "reference" THEN Ok(s, v)
-  ELSE IF v.base.type = "local" THEN LocalValue(s, v.base.slot)`,
+  ELSE IF v.base.type = "local" THEN LocalValue(s, v.base.slot)
+  ELSE IF v.base.type = "object" /\\ OwnNamedData(O(s, v.base), v.name, GetClasses) THEN Ok(s, O(s, v.base).props[NamedBucket][v.name].value)`,
   },
   {
     name: "PutValue",
@@ -1031,7 +1032,9 @@ const LOCAL_PATCHES = [
   ELSE IF v.base.type = "local" THEN
     IF s.frame[v.base.slot] = Empty THEN ThrowError(s, "ReferenceError")
     ELSE IF v.base.constant THEN ThrowTypeError(s)
-    ELSE LocalInitialize(s, v.base.slot, w)`,
+    ELSE LocalInitialize(s, v.base.slot, w)
+  ELSE IF v.base.type = "object" /\\ v.this = Empty /\\ OwnNamedData(O(s, v.base), v.name, SetClasses) /\\ O(s, v.base).props[NamedBucket][v.name].writable = True
+  THEN Ok(SetO(s, v.base, [O(s, v.base) EXCEPT !.props[NamedBucket][v.name].value = w]), Empty)`,
   },
   {
     name: "InitializeReferencedBinding",
@@ -1072,6 +1075,29 @@ export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => 
       text: definition.text.replace(patch.from, patch.to),
     };
   }),
+  // An object's own data property of a key that names no array index, which an object of a class
+  // other than these holds as an ordinary object does: [[Get]] gives its value, and [[Set]] with the
+  // object as the receiver, where the property is writable, replaces its value and nothing else.
+  {
+    name: "GetClasses",
+    arity: 0,
+    text: `GetClasses == {"proxy", "arguments", "typedArray", "namespace", "string"}`,
+  },
+  {
+    name: "SetClasses",
+    arity: 0,
+    text: `SetClasses == GetClasses \\cup {"array"}`,
+  },
+  {
+    name: "OwnNamedData",
+    arity: 3,
+    text: `OwnNamedData(o, k, exotic) ==
+  /\\ o.class \\notin exotic
+  /\\ k.type = "string"
+  /\\ NamedBucket \\in DOMAIN o.props
+  /\\ k \\in DOMAIN o.props[NamedBucket]
+  /\\ IsDataDescriptor(o.props[NamedBucket][k])`,
+  },
   {
     name: "LocalReference",
     arity: 4,

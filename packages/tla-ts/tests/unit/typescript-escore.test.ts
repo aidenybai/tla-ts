@@ -204,6 +204,42 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("reads and writes an ordinary object's own data properties as [[Get]] and [[Set]] do", () => {
+    const getSource = (expected: string) => `
+      const o: any = { a: 1, b: "x" };
+      o.a = o.a + 1;
+      o.c = 3;
+      const frozen = Object.freeze({ k: 1 });
+      let threw = "";
+      try { (frozen as any).k = 2; } catch (error) { threw = (error as Error).constructor.name; }
+      const arr: any = [1, 2];
+      arr.length = 1;
+      arr.extra = 5;
+      class Point { x: number; constructor(x: number) { this.x = x; } get double() { return this.x * 2; } }
+      const p = new Point(3);
+      p.x = p.x + 1;
+      const proto = { inherited: 7 };
+      const child: any = Object.create(proto);
+      child.inherited = 8;
+      const setterHost = { set v(n: number) { (this as any).w = n * 10; } } as any;
+      setterHost.v = 2;
+      const result = [o.a, o.b, o.c, threw, arr.length, arr.extra, p.x, p.double, child.inherited, proto.inherited, setterHost.w, "abc".length].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("2,x,3,TypeError,1,5,4,8,8,7,20,3"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("2,x,3,TypeError,1,5,4,8,8,7,20,4"))).message).toContain(
+        THREW,
+      );
+    });
+  });
+
   describe("calls a function that only a value at run time picks", () => {
     const getSource = (expected: string) => `
       const handlers = [(value: number) => value * 2, (value: number) => value + 100];
