@@ -134,7 +134,7 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
         .replace("HeapOf(IntrinsicObjects(0, 1))", "InitialObjects")
         .replace(
           "jobs |-> <<>>,",
-          "jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty,",
+          "jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty, hostImport |-> Empty,",
         ),
     },
     {

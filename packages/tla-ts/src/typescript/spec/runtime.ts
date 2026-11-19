@@ -288,6 +288,45 @@ const DEFINITIONS = [
   LET m == Head(modules) rec == ModuleAt(s, m) IN
   IF m \\in seen \\/ rec.kind # "source" THEN IsAsyncGraph(s, Tail(modules), seen \\cup {m})
   ELSE rec.hasTLA \\/ IsAsyncGraph(s, Tail(modules) \\o MapSeq(rec.requests, LAMBDA r : rec.loaded[r]), seen \\cup {m})`,
+  // The host's code for import(), NODE_IMPORT's function, called with the host's functions that it
+  // takes, whose result the state keeps as the function that import() calls.
+  `SetupHostImport(s, id) ==
+  LET f == CodeFunctionCreate(s, Intrinsic(s, "FunctionPrototype"), ModuleNode(id).code, FALSE, s.globalEnv, NoPrivateEnvironment)
+      fns == HostImportFunctions(f.s, <<"hostLoad", "hostDependencies", "hostIsInstantiated", "hostInstantiate", "hostEvaluate", "hostNamespace">>, <<>>)
+      r == Call(fns.s, f.v, Undefined, fns.v)
+  IN IF IsAbrupt(r) THEN r ELSE Ok([r.s EXCEPT !.hostImport = Val(r)], Empty)`,
+  `HostImportFunctions(s, methods, acc) ==
+  IF methods = <<>> THEN [s |-> s, v |-> acc] ELSE
+  LET f == CreateBuiltinFunction(s, <<"Module", Head(methods)>>, 0, <<>>, Empty) IN
+  HostImportFunctions(f.s, Tail(methods), Append(acc, Val(f)))`,
+  // EvaluateImportCall (§13.3.10.2) as V8 runs it, once the call's specifier and options are
+  // evaluated: the specifier as a string and the options' attributes, a throw of either rejecting
+  // the call's promise, then the call's promise resolved with the promise of the host's code for
+  // import(), with the file of the code that calls it, so that it settles a job after the host's,
+  // as the order of Node's jobs shows.
+  `HostImportCall(s, file, specifier, options) ==
+  LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise"))
+      str == ToStr(cap.s, specifier)
+      attributes == IF IsAbrupt(str) THEN str ELSE NodeImportAttributes(str.s, options)
+  IN IF IsAbrupt(attributes) THEN RejectWith(attributes, Val(cap)) ELSE
+  LET host == Call(attributes.s, s.hostImport, Undefined,
+                   <<Val(str), IntV(file), IF N("type") \\in DOMAIN Val(attributes) THEN Str(Val(attributes)[N("type")]) ELSE Undefined>>)
+      resolved == IF IsAbrupt(host) THEN host ELSE Call(host.s, Val(cap).resolve, Undefined, <<Val(host)>>)
+  IN IF IsAbrupt(resolved) THEN resolved ELSE Ok(resolved.s, Val(cap).promise)`,
+  // The attributes of import()'s options, as V8 reads them, where each is type, which Node's loader
+  // supports and rejects others of later.
+  `NodeImportAttributes(s, options) ==
+  IF options = Undefined THEN Ok(s, NoAttributes)
+  ELSE IF ~IsObject(options) THEN ThrowTypeError(s) ELSE
+  LET with == Get(s, options, SV("with")) IN
+  IF IsAbrupt(with) \\/ Val(with) = Undefined THEN IF IsAbrupt(with) THEN with ELSE Ok(with.s, NoAttributes)
+  ELSE IF ~IsObject(Val(with)) THEN ThrowTypeError(with.s) ELSE
+  LET entries == EnumerableOwnProperties(with.s, Val(with), "pair")
+      pairs == Range(Val(entries))
+  IN IF IsAbrupt(entries) THEN entries
+     ELSE IF \\E pair \\in pairs : ~IsString(pair[2]) THEN ThrowTypeError(entries.s)
+     ELSE IF \\E pair \\in pairs : pair[1].value # N("type") THEN Assert(FALSE, "tla-ts can't import a module with an attribute other than type, which Node rejects later")
+     ELSE Ok(entries.s, [key \\in {pair[1].value : pair \\in pairs} |-> (CHOOSE pair \\in pairs : pair[1].value = key)[2].value])`,
   // getExportsForCircularRequire of Node's CommonJS loader, which gives the exports of a module
   // whose code still runs a prototype that warns of each property that it lacks, where they are
   // an object of Object.prototype that doesn't mark itself an ES module's.
@@ -609,6 +648,19 @@ const HOST_PATCHES = [
     from: "EvaluateDisposing(then.s, ModuleContext(ModuleAt(s, m).env), ModuleItems(ModuleAt(s, m).node))",
     to: "RunBody(then.s, ModuleContext(ModuleAt(s, m).env), ModuleAt(s, m).node.body)",
   },
+  // A Synthetic Module Record that import() evaluates as the root of its graph evaluates as one
+  // that a graph does.
+  {
+    name: "ModuleEvaluate",
+    from: `LET cap == NewPromiseCapability(SyntheticEvaluate(s, m0), Intrinsic(s, "Promise"))
+           resolved == Call(cap.s, Val(cap).resolve, Undefined, <<Undefined>>)
+       IN Ok(resolved.s, Val(cap).promise)`,
+    to: `LET evaluated == SyntheticEvaluateThen(s, m0, Empty)
+           cap == NewPromiseCapability(evaluated.s, Intrinsic(evaluated.s, "Promise"))
+           settled == IF IsAbrupt(evaluated) THEN Call(cap.s, Val(cap).reject, Undefined, <<evaluated.c.value>>)
+                      ELSE Call(cap.s, Val(cap).resolve, Undefined, <<Undefined>>)
+       IN Ok(settled.s, Val(cap).promise)`,
+  },
   // A Synthetic Module Record links once, as Node's does, so that a CommonJS module that a later
   // link reaches keeps its exports.
   {
@@ -671,6 +723,27 @@ const HOST_PATCHES = [
          IF ~IsObject(this) \\/ O(s, this).class # "proxy" \\/ O(s, O(s, this).slots.target).slots # [hostName |-> N("TextEncoder")]
          THEN HostStop(N("TextEncoder"))
          ELSE TextEncode(s, IF Arg(args, 1) = Undefined THEN EmptyStr ELSE Arg(args, 1))
+    [] m = "hostLoad" ->
+         LET referrer == ModuleNode(NumToSmallInt(Arg(args, 1).value))
+             specifier == Arg(args, 2).value
+         IN IF specifier \\notin DOMAIN referrer.targets THEN Assert(FALSE, "tla-ts can't import a module other than a file that a string names") ELSE
+         LET node == ModuleNode(referrer.targets[specifier]) IN
+         IF (node.kind = "json") # (Arg(args, 3) = SV("json")) \\/ Arg(args, 3) \\notin {Undefined, SV("json")}
+         THEN Assert(FALSE, "tla-ts can't import a module of another type than its attributes', where Node's error names it") ELSE
+         LET loaded == LoadModuleNode(s, node) IN
+         IF IsAbrupt(loaded) THEN loaded ELSE
+         LET loading == LoadRequestedModules(loaded.s, Val(loaded)) IN
+         IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowValue(loading.s, Slots(loading.s, Val(loading)).result)
+         ELSE Ok(loading.s, IntV(Val(loaded)))
+    [] m = "hostDependencies" ->
+         LET rec == ModuleAt(s, NumToSmallInt(Arg(args, 1).value)) IN
+         CreateArrayFromList(s, IF rec.kind = "source" THEN MapSeq(rec.requests, LAMBDA r : IntV(rec.loaded[r])) ELSE <<>>)
+    [] m = "hostIsInstantiated" ->
+         LET rec == ModuleAt(s, NumToSmallInt(Arg(args, 1).value)) IN
+         Ok(s, Bool(IF rec.kind = "source" THEN rec.status \\in {"linked", "evaluating", "evaluating-async", "evaluated"} ELSE rec.env # 0))
+    [] m = "hostInstantiate" -> ResultThen(Undefined, ModuleLink(s, NumToSmallInt(Arg(args, 1).value)))
+    [] m = "hostEvaluate" -> ModuleEvaluate(s, NumToSmallInt(Arg(args, 1).value))
+    [] m = "hostNamespace" -> GetModuleNamespace(s, NumToSmallInt(Arg(args, 1).value), FALSE)
     [] m = "processGet" ->
          IF Arg(args, 2) \\notin {SV("getBuiltinModule"), SV("hrtime")} THEN HostStop(N("process")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
     [] m = "getBuiltinModule" ->

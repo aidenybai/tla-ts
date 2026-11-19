@@ -8,6 +8,7 @@ import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
 import { getHostTimeZone, getTlaString, LOCALE_METHODS } from "./runtime";
 import { parseCommonJs } from "./cjs-lexer";
+import { NODE_IMPORT } from "./node-import";
 import { getNumber, type ProgramFile, specialize } from "./specialize";
 import { suspendDefinitions } from "./suspend";
 
@@ -139,13 +140,15 @@ const getSpecifiers = (sourceFile: ts.SourceFile, kind: ProgramFile["kind"]) => 
     const literal =
       (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && kind === "module"
         ? node.moduleSpecifier
-        : ts.isCallExpression(node) &&
-            kind === "commonjs" &&
-            ts.isIdentifier(node.expression) &&
-            node.expression.text === "require" &&
-            node.arguments.length === 1
+        : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
           ? node.arguments[0]
-          : undefined;
+          : ts.isCallExpression(node) &&
+              kind === "commonjs" &&
+              ts.isIdentifier(node.expression) &&
+              node.expression.text === "require" &&
+              node.arguments.length === 1
+            ? node.arguments[0]
+            : undefined;
     if (literal !== undefined && ts.isStringLiteralLike(literal)) {
       specifiers.set(literal.text, literal);
     }
@@ -304,7 +307,29 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
       exportNames: kind === "commonjs" ? getWrapperNames(preparse(path, text)) : [],
     });
   }
-  return files.map((file) => ({ ...file, facade: numbers.get(`${file.path}.facade.mjs`) }));
+  const withFacades = files.map((file) => ({
+    ...file,
+    facade: numbers.get(`${file.path}.facade.mjs`),
+  }));
+  // A program that calls import() runs Node's code for it.
+  const isImporting = files.some((file) => {
+    const visit = (node: ts.Node): boolean =>
+      (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) ||
+      (ts.forEachChild(node, visit) ?? false);
+    return visit(file.sourceFile);
+  });
+  return isImporting
+    ? [
+        ...withFacades,
+        {
+          sourceFile: transpile(NODE_IMPORT, "node-import.js", false),
+          path: "node:internal/modules/esm/import",
+          kind: "host" as const,
+          targets: new Map(),
+          exportNames: [],
+        },
+      ]
+    : withFacades;
 };
 
 // A property of the host's global object or of one of its built-ins, as the record that DefineHost
@@ -448,6 +473,12 @@ export const compileToEscore = (
   // one token rather than one for each code unit.
   const sourceStrings = files.map((file) => getTlaString(file.sourceFile.text));
   const isStringSource = sourceStrings.every((text) => text !== undefined);
+  // The host's globals, then, where the program calls import(), the host's code for it.
+  const hostFile = files.findIndex((file) => file.kind === "host") + 1;
+  const hostImport =
+    hostFile === 0
+      ? "DefineHost(s, HostProperties)"
+      : `LET g == DefineHost(s, HostProperties) IN IF IsAbrupt(g) THEN g ELSE SetupHostImport(g.s, ${hostFile})`;
   const runJobs =
     "LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE";
   const definitions = compact(
@@ -502,9 +533,9 @@ export const compileToEscore = (
           // to run, as Node does.
           text:
             files[0].kind === "module"
-              ? `RunProgram(s) == LET h == DefineHost(s, HostProperties) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
+              ? `RunProgram(s) == LET h == ${hostImport} IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
               : isModule
-                ? `RunProgram(s) == LET h == DefineHost(s, HostProperties) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
+                ? `RunProgram(s) == LET h == ${hostImport} IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
                 : isQueuing
                   ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
                   : "RunProgram(s) == Program(s)",

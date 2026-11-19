@@ -246,6 +246,59 @@ describe("compiles modules by specializing ESCore", () => {
     });
   });
 
+  describe("runs import() in the jobs that Node's loader takes", () => {
+    // A module that counts jobs as they run and logs when each import() settles.
+    const getImporting = (imports: string, expected: string) => ({
+      "main.js": `import "./static.js";
+        const log = [];
+        globalThis.order = log;
+        let tick = 0;
+        globalThis.tick = () => tick;
+        const spin = () => { if (tick < 40) { tick++; Promise.resolve().then(spin); } };
+        spin();
+        ${imports}
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+      "static.js": "export const s = 1;",
+      "fresh.js":
+        'export const f = 1; globalThis.order.push("body@" + globalThis.tick()); Promise.resolve().then(() => globalThis.order.push("job@" + globalThis.tick()));',
+      "deep.js": 'import "./leaf.js"; export const deep = 1;',
+      "leaf.js": "export const leaf = 1;",
+      "throws.js": 'throw new Error("bad");',
+      "counter.cjs": "exports.count = 1;",
+    });
+    const imports = `import("./static.js").then(() => log.push("static@" + tick));
+      import("./fresh.js").then((ns) => log.push("fresh@" + tick + ":" + Object.keys(ns)));
+      import("./deep.js").then(() => log.push("deep@" + tick));
+      import("./counter.cjs").then((ns) => log.push("cjs@" + tick + ":" + ns.count));
+      import("./throws.js").catch((error) => log.push("rejected@" + tick + ":" + error.message));`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModules(
+            getImporting(
+              imports,
+              "body@6,job@7,static@9,fresh@12:f,cjs@12:1,rejected@12:bad,deep@14",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect(
+        (
+          await checkModules(
+            getImporting(
+              imports,
+              "body@6,job@7,static@9,fresh@12:f,cjs@12:1,deep@14,rejected@12:bad",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+  });
+
   describe("fails as Node does where a module throws or imports a name no module exports", () => {
     it("rejects a module that throws", async () => {
       expect(

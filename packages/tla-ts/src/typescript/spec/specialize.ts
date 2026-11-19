@@ -57,7 +57,7 @@ export interface ProgramFile {
   sourceFile: ts.SourceFile;
   path: string;
   // A JSON file's sourceFile is empty, and its text is its JSON, where JSON.parse reads it.
-  kind: "script" | "module" | "commonjs" | "json";
+  kind: "script" | "module" | "commonjs" | "json" | "host";
   json?: string;
   targets: ReadonlyMap<string, number>;
   // The names that Node's ModuleWrap of a CommonJS module exports, which its lexer finds.
@@ -778,8 +778,21 @@ export const specialize = (
         `LET thisEnv == GetThisEnvironment(s, ctx.lex) IN SuperCallThen(thisEnv, O(s, E(s, thisEnv).fn).proto, E(s, thisEnv).newTarget, ${args("s", "ctx")})`,
       );
     }
+    // EvaluateImportCall (§13.3.10.2), whose specifier and options the host takes, as V8 gives
+    // them to Node's import, with the file of the code that calls it as the referrer.
     if (node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-      throw new TlaTypeScriptError("tla-ts can't compile import() to ESCore yet", node);
+      if (!files.some((file) => file.kind === "host")) {
+        throw new TlaTypeScriptError("tla-ts can't compile import() outside a module", node);
+      }
+      const specifier = value(node.arguments[0], scope);
+      const options =
+        node.arguments.length > 1
+          ? value(node.arguments[1], scope)
+          : (state: string) => `Ok(${state}, Undefined)`;
+      return defineCode(
+        "ImportCall",
+        `LET r == ${specifier("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE LET o == ${options("r.s", "ctx")} IN IF IsAbrupt(o) THEN o ELSE HostImportCall(o.s, ${fileNumbers.get(node.getSourceFile())}, Val(r), Val(o))`,
+      );
     }
     const callee = ts.isParenthesizedExpression(node.expression)
       ? node.expression.expression
@@ -2581,14 +2594,37 @@ export const specialize = (
     });
     return undefined;
   };
+  // The host's code for import(), the function that NODE_IMPORT is, which SetupHostImport calls.
+  const hostCode = (file: ProgramFile, number: number) => {
+    const statement = file.sourceFile.statements[0];
+    const wrapper =
+      ts.isExpressionStatement(statement) && ts.isParenthesizedExpression(statement.expression)
+        ? statement.expression.expression
+        : undefined;
+    if (wrapper === undefined || !ts.isFunctionExpression(wrapper)) {
+      throw new TlaTypeScriptError("tla-ts can't read the host's code for import()", statement);
+    }
+    const code = functionCode(
+      { node: wrapper, parameters: wrapper.parameters, body: wrapper.body, kind: "normal" },
+      { isStrict: true, isClassBody: false, isAsyncGenerator: false },
+    );
+    definitions.push({
+      name: `ModuleNode${number}`,
+      arity: 0,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "host", code |-> ${code}]`,
+    });
+    return undefined;
+  };
   const moduleDeclarations = files.map((file, index) =>
-    file.kind === "module"
-      ? moduleCode(file, index + 1)
-      : file.kind === "commonjs"
-        ? commonJsCode(file, index + 1)
-        : file.kind === "json"
-          ? jsonCode(file, index + 1)
-          : undefined,
+    file.kind === "host"
+      ? hostCode(file, index + 1)
+      : file.kind === "module"
+        ? moduleCode(file, index + 1)
+        : file.kind === "commonjs"
+          ? commonJsCode(file, index + 1)
+          : file.kind === "json"
+            ? jsonCode(file, index + 1)
+            : undefined,
   );
   const program =
     entry.kind === "module"
