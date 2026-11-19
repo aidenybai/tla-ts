@@ -189,6 +189,18 @@ describe("name resolution matches SANY", () => {
       "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nI == INSTANCE Base\nX == I!Foo!1",
     ],
     [
+      "an ASSUME/PROVE theorem a named instance substitutes into, used as an expression",
+      "---- MODULE Base ----\nCONSTANT c\nTHEOREM Foo == ASSUME NEW y PROVE y = c\n====\nI == INSTANCE Base WITH c <- 1\nX == I!Foo\nLEMMA I!Foo",
+    ],
+    [
+      "an ASSUME/PROVE theorem an instance with a parameter substitutes into, used as an expression or operator",
+      "---- MODULE Base ----\nCONSTANT c\nTHEOREM Foo == ASSUME NEW y PROVE y = c\n====\nJ(p) == INSTANCE Base WITH c <- p\nY == J(1)!Foo\nOp(G(_)) == 1\nZ == Op(J!Foo)",
+    ],
+    [
+      "an ASSUME/PROVE theorem an unnamed instance substitutes into, used as an expression",
+      "---- MODULE Base ----\nCONSTANT c\nTHEOREM Foo == ASSUME NEW y PROVE y = c\n====\nINSTANCE Base WITH c <- 1\nX == Foo",
+    ],
+    [
       "a definition named like a theorem that an instance with substitutions reuses from a module without parameters, which SANY never imports",
       "---- MODULE P ----\nTHEOREM Foo == TRUE\n====\n---- MODULE Base ----\nEXTENDS P\nCONSTANT c\n====\nFoo == 1\nINSTANCE Base WITH c <- 1",
     ],
@@ -2862,6 +2874,25 @@ describe("name resolution matches SANY", () => {
         {
           location: "line 6, col 6 to line 6, col 10 of module M",
           message: "ASSUME/PROVE used where an expression is required.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an ASSUME/PROVE theorem an instance with a parameter imports, used as an expression or operator",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME NEW y PROVE y = y\n====\nI(p) == INSTANCE Base\nX == I(1)!Foo\nOp(G(_)) == 1\nZ == Op(I!Foo)",
+      [
+        {
+          location: "line 6, col 6 to line 6, col 13 of module M",
+          message: "ASSUME/PROVE used where an expression is required.",
+        },
+        {
+          location: "line 8, col 9 to line 8, col 13 of module M",
+          message: "ASSUME/PROVE used where an expression is required.",
+        },
+        {
+          location: "line 8, col 6 to line 8, col 14 of module M",
+          message: "Argument number 1 to operator 'Op' \nshould be a 1-parameter operator.",
         },
       ],
       [],

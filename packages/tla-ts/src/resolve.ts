@@ -45,6 +45,7 @@ interface Binding {
   range?: SourceRange;
   functionArity?: number;
   goal?: Goal;
+  isSubstituted?: boolean;
   sourceRange?: SourceRange;
   nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
 }
@@ -351,6 +352,12 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
 const isFact = (name: string, unit: Unit) => unit.bindings.get(name)?.kind === "Theorem";
 
 const getGoal = (name: string, unit: Unit) => unit.bindings.get(name)?.goal;
+
+const isAssumeProveTheorem = (name: string, scope: LocalName | undefined, unit: Unit) => {
+  const binding = lookupLocal(scope, name) ?? unit.bindings.get(name);
+  // SANY sees no ASSUME/PROVE in a theorem whose body an instance wraps in its substitutions.
+  return binding?.goal?.statement.kind === "AssumeProve" && !binding.isSubstituted;
+};
 
 const findBinding = (name: string, scope: LocalName | undefined, unit: Unit): Binding | undefined =>
   lookupLocal(scope, name) ?? findSymbol(name, unit);
@@ -929,7 +936,8 @@ const getSymbolArity = (
     expression.resolution = local.isSelf ? SELF_RESOLUTION : LOCAL_RESOLUTION;
   }
   if (local) return local.arity;
-  if (getGoal(name, unit)?.statement.kind === "AssumeProve") return 0;
+  const binding = unit.bindings.get(name);
+  if (binding?.goal?.statement.kind === "AssumeProve") return binding.arity;
   const symbol = findSymbol(name, unit);
   if (symbol) {
     if (expression.kind === "Identifier") expression.name = symbol.key;
@@ -1403,6 +1411,10 @@ const matchArgument = (
   if (arg.kind === "OperatorReference" && argArity !== undefined && argArity !== expected) {
     reportOperatorArity(name, argArity);
   }
+  if (argArity === expected && isAssumeProveTheorem(name, scope, unit)) {
+    report(range, "ASSUME/PROVE used where an expression is required.");
+    return false;
+  }
   // Deviation from SANY: OpDefNode#matchingOpArgOperand reads as many parameters as a RECURSIVE declaration gives and crashes when the definition has fewer.
   return argArity === expected && argParams.every((param) => param === 0);
 };
@@ -1448,6 +1460,13 @@ const resolveApply = (
       isSelection ? { ...unit, isGenerated: false } : unit,
     );
   });
+  if (isAssumeProveTheorem(operator, scope, unit) && expression.location.range) {
+    unit.errors.push({
+      location: formatRange(expression.location.range),
+      message: "ASSUME/PROVE used where an expression is required.",
+    });
+    return;
+  }
   if (
     isArgumentCountReported(
       callee,
@@ -1570,8 +1589,7 @@ const resolveExpression = (
         ) {
           emptyExpressions.add(expression);
         }
-        const local = lookupLocal(scope, name);
-        if ((local ? local.goal : getGoal(name, unit))?.statement.kind === "AssumeProve") {
+        if (isAssumeProveTheorem(name, scope, unit)) {
           unit.errors.push({
             location: formatRange(getSpelledNameRange(expression, name)),
             message: "ASSUME/PROVE used where an expression is required.",
