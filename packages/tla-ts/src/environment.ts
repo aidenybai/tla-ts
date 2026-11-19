@@ -1449,6 +1449,18 @@ export const createEnvironment = (
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
+    resolved.boundRecursive.forEach((declaration) => {
+      const symbol: ModuleSymbol = {
+        key: getKey(declaration),
+        arity: declaration.arity,
+        params: Array(declaration.arity).fill(0),
+        kind: "Definition",
+        range: declaration.location.range,
+      };
+      parameterized.set(symbol.key, !isParameterFree);
+      visible.set(declaration.name, symbol);
+      exported.set(declaration.name, symbol);
+    });
     resolved.boundTheorems.forEach((theorem) => {
       const key = getKey(theorem);
       parameterized.set(key, !isParameterFree);

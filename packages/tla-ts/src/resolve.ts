@@ -3037,6 +3037,10 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         !outerBindings.has(definition.name) &&
         isSameRange(bindings.get(definition.name)?.range, definition.location.range),
     ),
+    // SANY keeps the OpDefNode of a RECURSIVE declaration that nothing defines, so other modules see it.
+    boundRecursive: declarations
+      .filter((item) => !item.isTaken && bindings.get(item.declaration.name)?.isPending === true)
+      .map((item) => item.declaration),
     boundTheorems: module.theorems.flatMap((theorem) => {
       if (theorem.name === undefined) return [];
       const binding = bindings.get(theorem.name);

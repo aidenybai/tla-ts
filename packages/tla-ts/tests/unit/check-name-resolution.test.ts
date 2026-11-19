@@ -3851,6 +3851,36 @@ describe("name resolution matches SANY", () => {
         },
       ],
     ],
+    [
+      "an instance's uses of a RECURSIVE operator that nothing defines",
+      "---- MODULE A ----\nRECURSIVE G\n====\nI == INSTANCE A\nU == I!G(1)\nV == I!G",
+      [
+        {
+          location: "line 3, col 11 to line 3, col 11 of module M",
+          message: "Symbol G declared in RECURSIVE statement but not defined.",
+        },
+        {
+          location: "line 6, col 9 to line 6, col 11 of module M",
+          message: "The operator I!G requires 0 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an extending module's uses of a RECURSIVE operator that nothing defines",
+      "---- MODULE A ----\nRECURSIVE G(_)\n====\n---- MODULE B ----\nEXTENDS A\nU == G(1)\nV == G\n====",
+      [
+        {
+          location: "line 3, col 11 to line 3, col 14 of module M",
+          message: "Symbol G declared in RECURSIVE statement but not defined.",
+        },
+        {
+          location: "line 8, col 6 to line 8, col 6 of module M",
+          message: "The operator G requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
