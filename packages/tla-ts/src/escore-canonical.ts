@@ -146,7 +146,27 @@ const PLAIN_CLASSES = new Set([
   "date",
   "bigint",
   "symbol",
+  "namespace",
 ]);
+
+// The built-in functions whose data is the cell of a promise's resolving functions or capability.
+const CELL_BUILTINS = new Set(["resolveFunction", "rejectFunction", "capabilityExecutor"]);
+
+const BUILTIN_SLOTS = ["constructor", "data", "id", "initialName", "realm"];
+
+const getDomain = (record: Value) =>
+  toFiniteFunction(record)
+    .domain.map((key) => String(key))
+    .sort();
+
+const isCellBuiltin = (slots: Value) => {
+  const id = getList(get(slots, "id"));
+  return id.length === 2 && id[0] === "Promise" && CELL_BUILTINS.has(String(id[1]));
+};
+
+const isPlainBuiltin = (slots: Value) =>
+  getDomain(slots).join() === BUILTIN_SLOTS.join() &&
+  (isCellBuiltin(slots) || isModelValue(get(slots, "data"), "Empty"));
 
 const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
   const objectClass = getString(object, "class");
@@ -176,6 +196,16 @@ const slotRefs = (object: Value, realm: Realm, refs: number[]) => {
   } else if (objectClass === "proxy") {
     maybeRef(get(slots, "target"), realm, refs);
     maybeRef(get(slots, "handler"), realm, refs);
+  } else if (objectClass === "promise") {
+    if (getString(slots, "state") === "pending") stop("a pending promise");
+    maybeRef(get(slots, "result"), realm, refs);
+  } else if (objectClass === "cell" && getDomain(slots).join() === "promise") {
+    maybeRef(get(slots, "promise"), realm, refs);
+  } else if (objectClass === "cell" && getDomain(slots).join() === "reject,resolve") {
+    maybeRef(get(slots, "resolve"), realm, refs);
+    maybeRef(get(slots, "reject"), realm, refs);
+  } else if (objectClass === "builtin" && isPlainBuiltin(slots)) {
+    if (isCellBuiltin(slots)) objectRef(get(slots, "data"), realm, refs);
   } else {
     stop(`an object of class ${objectClass}`);
   }
@@ -252,7 +282,23 @@ const environmentRefs = (environment: Value, realm: Realm, refs: number[]) => {
     maybeRef(get(environment, "newTarget"), realm, refs);
   } else if (kind === "object") objectRef(get(environment, "obj"), realm, refs);
   else if (kind === "global") maybeRef(get(environment, "this"), realm, refs);
+  else if (kind === "module") bindingRefs(get(environment, "b"), realm, refs);
   else stop(`an environment of kind ${kind}`);
+};
+
+// What a module record refers to: its environment, its namespaces, its import.meta, a synthetic
+// module's value, its module source, the capability of its evaluation, and what it threw.
+const moduleRefs = (module: Value, realm: Realm, refs: number[]) => {
+  const environment = get(module, "env");
+  if (environment !== 0) environmentRef(environment, realm, refs);
+  ["namespace", "deferredNamespace", "meta", "value", "moduleSource", "error"].forEach((field) =>
+    maybeRef(get(module, field), realm, refs),
+  );
+  const capability = get(module, "capability");
+  if (isModelValue(capability, "Empty")) return;
+  objectRef(get(capability, "promise"), realm, refs);
+  maybeRef(get(capability, "resolve"), realm, refs);
+  maybeRef(get(capability, "reject"), realm, refs);
 };
 
 const NULL = createRecord([["type", "null"]]);
@@ -265,10 +311,12 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
     !valuesEqual(get(state, "callers"), NULL) ||
     getList(get(state, "realms")).length > 1 ||
     !isEmptyList("waiters") ||
-    !isEmptyList("disposables") ||
-    !isEmptyList("modules")
+    !isEmptyList("disposables")
   ) {
     stop("pending work");
+  }
+  if (toFiniteFunction(get(state, "required")).domain.length > 0) {
+    stop("a module that require loaded");
   }
   const objs = get(state, "objs");
   const envs = get(state, "envs");
@@ -297,6 +345,7 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
     .map((key, position) => ({ key: Number(key), value: templates.range[position] }))
     .sort((left, right) => left.key - right.key)
     .forEach((entry) => objectRef(entry.value, realm, queue));
+  getList(get(state, "modules")).forEach((module) => moduleRefs(module, realm, queue));
   // The breadth-first walk, whose queue grows at its end as each node it numbers adds the nodes
   // that node refers to.
   const numbers = new Map<number, number>();
@@ -387,6 +436,12 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
                 .map(renameMaybe),
             ),
         });
+      case "promise":
+        return except(slots, { result: renameMaybe });
+      case "cell":
+        return mapRange(slots, renameMaybe);
+      case "builtin":
+        return isCellBuiltin(slots) ? except(slots, { data: renameValue }) : slots;
       default:
         return except(slots, { target: renameMaybe, handler: renameMaybe });
     }
@@ -418,7 +473,7 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
     const kind = getString(environment, "kind");
     return except(
       environment,
-      kind === "declarative" || kind === "catch"
+      kind === "declarative" || kind === "catch" || kind === "module"
         ? { outer: renameEnvironment, b: renameBindings }
         : kind === "function"
           ? {
@@ -454,6 +509,29 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
     envs: () => createHeap(environments),
     envsHeld: () => environments.length,
     templates: (inner) => mapRange(inner, renameValue),
+    modules: (inner) =>
+      createTuple(
+        getList(inner).map((module) =>
+          except(module, {
+            env: (environment) =>
+              environment === 0 ? environment : renameEnvironment(environment),
+            namespace: renameMaybe,
+            deferredNamespace: renameMaybe,
+            meta: renameMaybe,
+            value: renameMaybe,
+            moduleSource: renameMaybe,
+            error: renameMaybe,
+            capability: (capability) =>
+              isModelValue(capability, "Empty")
+                ? capability
+                : createRecord([
+                    ["promise", renameValue(get(capability, "promise"))],
+                    ["resolve", renameMaybe(get(capability, "resolve"))],
+                    ["reject", renameMaybe(get(capability, "reject"))],
+                  ]),
+          }),
+        ),
+      ),
     hoisted: (inner) =>
       createSet(
         toFiniteSet(inner)

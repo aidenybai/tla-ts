@@ -173,6 +173,29 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       expect(result.message).toContain('"two"');
     });
 
+    // The module records and the module's environment stay in the state, which the canonical
+    // form numbers both natively and in TLA+ alike.
+    describe("keeps the state of a module whose step writes it", () => {
+      const getBody = (operator: string) =>
+        `let count = 0;\nexport const tick = () => {\n  count = count === flip(0) + 1 ? 0 : count + 1;\n};\nexport const isBounded = () => count ${operator} 2;\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("<=")))).toEqual(["success", 3, 4]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("<")))).toEqual(["invariant-violation", 3, 3]);
+      });
+
+      it("numbers the state natively as ESCanonical does", async () => {
+        const source = `import { flip } from "./flip";\n${getBody("<=")}`;
+        writeFileSync(join(directory, "compared.ts"), source);
+        expect(
+          getCounts(await checkModel(source, join(directory, "compared.ts"), "compared")),
+        ).toEqual(["success", 3, 4]);
+      });
+    });
+
     it("calls none of the functions whose parameters take values it can't list", async () => {
       expect(
         getCounts(

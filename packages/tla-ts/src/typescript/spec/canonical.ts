@@ -28,7 +28,10 @@ ElementRefs(e, r) ==
       ELSE MaybeRef(e.init, r) \o ConcatMap(e.initializers, LAMBDA x : MaybeRef(x, r)))
 ValueRefs(seq, r) == ConcatMap(seq, LAMBDA x : MaybeRef(x, r))
 \* The classes whose slots hold no object or environment, but an ordinary object's initializers.
-PlainClasses == {"ordinary", "array", "error", "boolean", "number", "string", "date", "bigint", "symbol"}
+PlainClasses == {"ordinary", "array", "error", "boolean", "number", "string", "date", "bigint", "symbol", "namespace"}
+\* The built-in functions whose data is the cell of a promise's resolving functions or capability.
+CellBuiltins == {<<"Promise", "resolveFunction">>, <<"Promise", "rejectFunction">>, <<"Promise", "capabilityExecutor">>}
+BuiltinSlots == {"id", "constructor", "data", "realm", "initialName"}
 SlotRefs(o, r) ==
   CASE o.class \in PlainClasses ->
          IF "initializers" \in DOMAIN o.slots THEN ValueRefs(o.slots.initializers, r) ELSE <<>>
@@ -42,6 +45,12 @@ SlotRefs(o, r) ==
          ConcatMap(o.slots.mapData, LAMBDA e : IF e = Empty THEN <<>> ELSE MaybeRef(e.key, r) \o MaybeRef(e.value, r))
     [] o.class = "set" -> ValueRefs(o.slots.setData, r)
     [] o.class = "proxy" -> MaybeRef(o.slots.target, r) \o MaybeRef(o.slots.handler, r)
+    [] o.class = "promise" ->
+         IF o.slots.state = "pending" THEN ModelStop("a pending promise") ELSE MaybeRef(o.slots.result, r)
+    [] o.class = "cell" /\ DOMAIN o.slots = {"promise"} -> MaybeRef(o.slots.promise, r)
+    [] o.class = "cell" /\ DOMAIN o.slots = {"resolve", "reject"} -> MaybeRef(o.slots.resolve, r) \o MaybeRef(o.slots.reject, r)
+    [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.id \in CellBuiltins -> ObjectRef(o.slots.data, r)
+    [] o.class = "builtin" /\ DOMAIN o.slots = BuiltinSlots /\ o.slots.data = Empty -> <<>>
     [] OTHER -> ModelStop("an object of class " \o o.class)
 ObjectRefs(o, r) ==
   MaybeRef(o.proto, r)
@@ -56,7 +65,16 @@ EnvironmentRefs(env, r) ==
             BindingRefs(env.b, r) \o MaybeRef(env.this, r) \o ObjectRef(env.fn, r) \o MaybeRef(env.newTarget, r)
        [] env.kind = "object" -> ObjectRef(env.obj, r)
        [] env.kind = "global" -> MaybeRef(env.this, r)
+       [] env.kind = "module" -> BindingRefs(env.b, r)
        [] OTHER -> ModelStop("an environment of kind " \o env.kind)
+\* What a module record refers to: its environment, its namespaces, its import.meta, a synthetic
+\* module's value, its module source, the capability of its evaluation, and what it threw.
+ModuleRefs(m, r) ==
+  (IF m.env = 0 THEN <<>> ELSE EnvironmentRef(m.env, r))
+  \o MaybeRef(m.namespace, r) \o MaybeRef(m.deferredNamespace, r) \o MaybeRef(m.meta, r)
+  \o MaybeRef(m.value, r) \o MaybeRef(m.moduleSource, r) \o MaybeRef(m.error, r)
+  \o (IF m.capability = Empty THEN <<>>
+      ELSE ObjectRef(m.capability.promise, r) \o MaybeRef(m.capability.resolve, r) \o MaybeRef(m.capability.reject, r))
 NodeRefs(s, n, r) == IF n > 0 THEN ObjectRefs(HeapGet(s.objs, n), r) ELSE EnvironmentRefs(HeapGet(s.envs, -n), r)
 \* The realm's objects that differ from the realm's start, by id, which a page equal to its start
 \* holds none of.
@@ -113,6 +131,11 @@ RenameSlots(o, number, r) ==
                                      IN [i \in DOMAIN kept |-> [key |-> RenameMaybe(kept[i].key, number, r), value |-> RenameMaybe(kept[i].value, number, r)]]]
     [] o.class = "set" -> [o.slots EXCEPT !.setData = RenameValues(SelectSeq(@, LAMBDA e : e # Empty), number, r)]
     [] o.class = "proxy" -> [o.slots EXCEPT !.target = RenameMaybe(@, number, r), !.handler = RenameMaybe(@, number, r)]
+    [] o.class = "promise" -> [o.slots EXCEPT !.result = RenameMaybe(@, number, r)]
+    [] o.class = "cell" ->
+         IF DOMAIN o.slots = {"promise"} THEN [o.slots EXCEPT !.promise = RenameMaybe(@, number, r)]
+         ELSE [o.slots EXCEPT !.resolve = RenameMaybe(@, number, r), !.reject = RenameMaybe(@, number, r)]
+    [] o.class = "builtin" -> IF o.slots.id \in CellBuiltins THEN [o.slots EXCEPT !.data = RenameValue(@, number, r)] ELSE o.slots
 RenameObject(o, number, r) ==
   [o EXCEPT !.proto = RenameMaybe(@, number, r),
             !.props = [b \in {c \in DOMAIN @ : DOMAIN @[c] # {}} |-> [k \in DOMAIN @[b] |-> RenameDescriptor(@[b][k], number, r)]],
@@ -121,12 +144,20 @@ RenameObject(o, number, r) ==
 RenameBindings(b, number, r) == [name \in DOMAIN b |-> [b[name] EXCEPT !.value = RenameMaybe(@, number, r)]]
 RenameEnvironmentRecord(env, number, r) ==
   LET outer == [env EXCEPT !.outer = RenameEnvironment(@, number, r)] IN
-  CASE env.kind \in {"declarative", "catch"} -> [outer EXCEPT !.b = RenameBindings(@, number, r)]
+  CASE env.kind \in {"declarative", "catch", "module"} -> [outer EXCEPT !.b = RenameBindings(@, number, r)]
     [] env.kind = "function" ->
          [outer EXCEPT !.b = RenameBindings(@, number, r), !.this = RenameMaybe(@, number, r),
                        !.fn = RenameValue(@, number, r), !.newTarget = RenameMaybe(@, number, r)]
     [] env.kind = "object" -> [outer EXCEPT !.obj = RenameValue(@, number, r)]
     [] env.kind = "global" -> [outer EXCEPT !.this = RenameMaybe(@, number, r)]
+RenameModule(m, number, r) ==
+  [m EXCEPT !.env = IF @ = 0 THEN 0 ELSE RenameEnvironment(@, number, r),
+            !.namespace = RenameMaybe(@, number, r), !.deferredNamespace = RenameMaybe(@, number, r),
+            !.meta = RenameMaybe(@, number, r), !.value = RenameMaybe(@, number, r),
+            !.moduleSource = RenameMaybe(@, number, r), !.error = RenameMaybe(@, number, r),
+            !.capability = IF @ = Empty THEN @
+                           ELSE [promise |-> RenameValue(@.promise, number, r), resolve |-> RenameMaybe(@.resolve, number, r),
+                                 reject |-> RenameMaybe(@.reject, number, r)]]
 RECURSIVE RenameObjectsIn(_, _, _, _)
 RenameObjectsIn(h, ids, number, r) ==
   IF ids = <<>> THEN h ELSE RenameObjectsIn(HeapSet(h, Head(ids), RenameObject(HeapGet(h, Head(ids)), number, r)), Tail(ids), number, r)
@@ -136,14 +167,16 @@ RenameEnvironmentsIn(h, ids, number, r) ==
 \* The canonical form of the state s that a step ends in, whose jobs, timers, and calls all ended,
 \* of a realm whose start is the state initial.
 CanonicalStateOf(s, initial) ==
-  IF s.jobs # <<>> \/ s.timers # <<>> \/ s.callers # Null \/ Len(s.realms) > 1 \/ s.waiters # <<>> \/ s.disposables # <<>> \/ s.modules # <<>>
+  IF s.jobs # <<>> \/ s.timers # <<>> \/ s.callers # Null \/ Len(s.realms) > 1 \/ s.waiters # <<>> \/ s.disposables # <<>>
   THEN ModelStop("pending work")
+  ELSE IF s.required # <<>> THEN ModelStop("a module that require loaded")
   ELSE
   LET r == [objects |-> initial.objs.size, environments |-> initial.envs.size]
       changed == ChangedRealmObjects(s, initial)
       roots == ConcatMap([e \in 1..r.environments |-> e], LAMBDA e : EnvironmentRefs(HeapGet(s.envs, e), r))
                \o ConcatMap(changed, LAMBDA i : ObjectRefs(HeapGet(s.objs, i), r))
                \o ConcatMap(SortInts(DOMAIN s.templates), LAMBDA k : ObjectRef(s.templates[k], r))
+               \o ConcatMap(s.modules, LAMBDA m : ModuleRefs(m, r))
       walk == CanonicalWalk(s, roots, [number |-> <<>>, order |-> <<>>, objects |-> 0, environments |-> 0], r)
       number == walk.number
       objects == SelectSeq(walk.order, LAMBDA n : n > 0)
@@ -156,6 +189,7 @@ CanonicalStateOf(s, initial) ==
         !.envs = envs,
         !.envsHeld = envs.size,
         !.templates = [k \in DOMAIN @ |-> RenameValue(@[k], number, r)],
+        !.modules = [i \in DOMAIN @ |-> RenameModule(@[i], number, r)],
         !.hoisted = {<<RenameEnvironment(pair[1], number, r), pair[2]>> : pair \in {p \in @ : p[1] <= r.environments \/ -p[1] \in DOMAIN number}},
         !.out = <<>>]
 ====
