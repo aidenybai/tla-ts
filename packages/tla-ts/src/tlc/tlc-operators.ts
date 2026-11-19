@@ -1,7 +1,7 @@
 import { TlaModuleError } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
 import type { Builtin, Context } from "../evaluate";
-import { prettyPrint } from "../pretty-print";
+import { prettyPrint, prettyPrintT } from "../pretty-print";
 import {
   defineConstant,
   defineHigherOrderOperator,
@@ -189,7 +189,7 @@ export const createTlcOperators = (
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
-    print(prettyPrint(formatNormalizedCopies([getValue(args, 0, "PrintT")])[0]));
+    print(prettyPrintT(formatNormalizedCopies([getValue(args, 0, "PrintT")])[0], runtime));
     return true;
   }),
   defineOperator("Assert", 2, (args) => {

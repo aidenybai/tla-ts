@@ -115,6 +115,7 @@ interface EnvironmentOptions {
   files: FileSystem;
   seed?: bigint;
   isTool?: boolean;
+  hasUserFile?: boolean;
   traceFile?: string;
   isSanyReported?: boolean;
   isWarningEnabled?: boolean;
@@ -305,6 +306,7 @@ export const createEnvironment = (
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   runtime.isTool = options.isTool ?? false;
+  runtime.hasUserFile = options.hasUserFile ?? false;
   runtime.version = options.version ?? "master";
   runtime.readLine = options.readLine;
   const linkedModules = new Map<string, LinkedModule>();

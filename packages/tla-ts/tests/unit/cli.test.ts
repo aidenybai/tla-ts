@@ -873,6 +873,30 @@ describe("the CLI reports results like TLC", () => {
     expect(run.result.stdout).not.toContain("[Seen |-> 1, Unseen |-> 0]");
     expect(run.written).toBe("[Seen |-> 1, Unseen |-> 0]\n");
   });
+
+  it("writes the value of PrintT and the counts of the _POSSIBLE predicates to -userFile on one line, and that of Print pretty-printed, like TLC", () => {
+    const run = runCliWithUserFile("UserFileLong");
+    expect(run.result.status).toBe(10);
+    expect(run.written).toBe(
+      [
+        "<<100000, 200000, 300000, 400000, 500000, 600000, 700000, 800000, 900000, 1000000, 1100000, 1200000>>",
+        "<< 100000,",
+        "   200000,",
+        "   300000,",
+        "   400000,",
+        "   500000,",
+        "   600000,",
+        "   700000,",
+        "   800000,",
+        "   900000,",
+        "   1000000,",
+        "   1100000,",
+        "   1200000 >>  TRUE",
+        "[ReachesTheFirstLongState |-> 1, ReachesTheSecondLongState |-> 1, ReachesTheThirdLongStateNever |-> 0, AlsoNeverReachedWithLongName |-> 0]",
+        "",
+      ].join("\n"),
+    );
+  });
 });
 
 describe("the CLI answers PickSuccessor from standard input like TLC", () => {
@@ -1271,6 +1295,7 @@ describe("the CLI takes several specs and globs", () => {
       "Checking UnfingerprintedState.tla with UnfingerprintedState.cfg",
       "Checking UnspecifiedFairness.tla with UnspecifiedFairness.cfg",
       "Checking UserFile.tla with UserFile.cfg",
+      "Checking UserFileLong.tla with UserFileLong.cfg",
       "Checking UserFilePossible.tla with UserFilePossible.cfg",
       "Checking ViewLasso.tla with ViewLasso.cfg",
       "Checking Warned.tla with Warned.cfg",

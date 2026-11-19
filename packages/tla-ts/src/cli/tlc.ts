@@ -414,6 +414,7 @@ const checkSpec = async (
       config,
       onPause: () => readSync(0, Buffer.alloc(1)),
       readLine: readStandardInputLine,
+      hasUserFile: args.userFile !== undefined,
       runtimeInvariants: runtimeInvariants.map((invariant) => ({
         name: invariant.name,
         module: invariant.module,

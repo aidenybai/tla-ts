@@ -15,7 +15,7 @@ import {
   TlaUnsupportedError,
 } from "../errors";
 import { getTlcFingerprint } from "./fingerprint";
-import { prettyPrint } from "../pretty-print";
+import { prettyPrint, prettyPrintT } from "../pretty-print";
 import { formatMessage, formatNestedMessage, MESSAGE_CODE, MESSAGE_LEVEL } from "./messages";
 import {
   describeRange,
@@ -418,11 +418,11 @@ export const createPossibleOperators = (
   defineStateOperator("_CheckName", 1, (args) => {
     const name = String(getValue(args, 0, "_CheckName"));
     if (runtime.possibleCounts.get(name)) return true;
-    print(prettyPrint(formatValue(getPossibleCounts(runtime), true)));
+    print(prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime));
     return false;
   }),
   defineStateOperator("_PrintCounts", 0, () => {
-    print(prettyPrint(formatValue(getPossibleCounts(runtime), true)));
+    print(prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime));
     return true;
   }),
 ];

@@ -25,6 +25,7 @@ export interface CheckerRuntime {
   warn: (code: number, text: string) => void;
   isWarningEnabled: boolean;
   isTool: boolean;
+  hasUserFile: boolean;
   version: TlcVersion;
   seed: bigint;
   isSeen: (state: Value[]) => boolean;
@@ -103,6 +104,7 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
     warn: () => {},
     isWarningEnabled: true,
     isTool: false,
+    hasUserFile: false,
     version: "master",
     seed,
     generatedStates: 0,

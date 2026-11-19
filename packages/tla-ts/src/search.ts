@@ -73,7 +73,7 @@ import {
 } from "./levels";
 import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty } from "./liveness";
 import { getLiveExpressions } from "./liveness-checker";
-import { prettyPrint } from "./pretty-print";
+import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
@@ -115,6 +115,8 @@ import {
 
 export interface CliSettings {
   readLine?: () => string | undefined;
+  /** TLC's -userFile, to which PrintT writes a value without line breaks. */
+  hasUserFile?: boolean;
   runtimeInvariants?: RuntimeInvariant[];
   errorCodes?: number[];
 }
@@ -932,6 +934,7 @@ export const createCheckEnvironment = (
     },
     seed: options.seed,
     isTool: options.isTool,
+    hasUserFile: options.hasUserFile,
     traceFile: options.traceSpec?.traceFile,
     isSanyReported: options.isSanyReported,
     isWarningEnabled: options.isWarningEnabled,
@@ -1377,7 +1380,7 @@ export const createSearch = (
       name: unwitnessed.name,
       code: MESSAGE_CODE.possibleUnwitnessed,
       message: `The _POSSIBLE predicate ${unwitnessed.name}${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
-      counts: prettyPrint(formatValue(getPossibleCounts(runtime), true)),
+      counts: prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime),
     };
   };
   // Deviation from TLC: a tuple VIEW prints as a state only when its elements are distinct variables, since TLC mislabels <<y, x>> and <<x + 1>>.
