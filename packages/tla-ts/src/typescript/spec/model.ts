@@ -1135,7 +1135,9 @@ export const compileModelToEscore = (
         : `\n      list == NewArray(c${choose.length}.s, <<${choose.map((_, index) => `c${index + 1}.v`).join(", ")}>>)\n      g == Completed(CreateDataPropertyOrThrow(list.s, Intrinsic(list.s, "GlobalObject"), Str(${getUnits(INITIAL)}), list.v))\n      s == ModelStart(g.s)`
     }\n  IN IF ${initially.length === 0 ? "TRUE" : initially.map((name) => `HoldsOf(s, ${getUnits(name)}, <<>>)`).join(" /\\ ")} THEN {StepEnd(s)} ELSE {}`,
     `InitialStates(s) ==\n  UNION {ApplyTo(InitialChoice, <<s${choose.map((choice) => `, ${choice.bound}`).join("")}>>) : ${choose.length === 0 ? "x \\in {0}" : choose.map((choice) => `${choice.bound} \\in ${choice.set}`).join(", ")}}`,
-    `Init == ${variable} \\in ApplyTo(InitialStates, InitialState)`,
+    // The initial states are a constant, which TLC and tla-ts evaluate once, as they start.
+    "InitialSet == ApplyTo(InitialStates, InitialState)",
+    `Init == ${variable} \\in InitialSet`,
   ];
   steps.push(
     ...(isStateless

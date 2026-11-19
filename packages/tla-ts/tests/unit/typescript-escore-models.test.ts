@@ -441,6 +441,31 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("computes a model's initial states once, as a constant", () => {
+    const source = `
+      /** @noDeadlock */
+      let count!: 0 | 1 | 2;
+      /** @initially */
+      export const isSmall = () => count <= 1;
+      export const step = () => {
+        if (count === 0) return;
+        count -= 1;
+      };
+    `;
+
+    it("starts from each initial state, as TLC counts", async () => {
+      expect(getCounts(await checkModel(source))).toEqual(["success", 2, 3]);
+    });
+
+    it("tells a constant that drops an initial state", async () => {
+      const result = await checkModel(source, "spec.ts", "canonical", [
+        "InitialSet == ApplyTo(InitialStates, InitialState)",
+        "InitialSet == LET all == ApplyTo(InitialStates, InitialState) IN all \\ {CHOOSE m \\in all : TRUE}",
+      ]);
+      expect(getCounts(result)).toEqual(["success", 2, 2]);
+    });
+  });
+
   describe("runs a lowered model's functions natively, as ESCore runs them", () => {
     const source = `
       type Key = "a" | "b";
