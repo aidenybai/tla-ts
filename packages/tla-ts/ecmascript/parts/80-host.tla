@@ -143,6 +143,18 @@ HostDateFormat(key) == [found |-> "none"]
 \* "unknown", as engine262 has no locale data.
 HostLocale(tag) == [found |-> "unknown"]
 
+\* HostCalendarYear(<<cal, year>>): a year of the Chinese or the Dangi calendar, which the host
+\* computes astronomically: found is "year", with the epoch days of its first day, the ordinal of
+\* its leap month or 0, and its months of 30 days as bits from the first month's. Else found is
+\* "unknown", where the host's table leaves the year out, as engine262 has no such calendar.
+HostCalendarYear(key) == [found |-> "unknown"]
+
+\* HostCalendarMonthDay(<<cal, month, leap, day>>): the month-day of the Chinese or the Dangi
+\* calendar of a month code's month and leap flag and a day from 1 to 30: found is "monthDay", with
+\* the epoch days of its ISO reference date and whether the month code and the day are kept, which
+\* they aren't where no year that the host searches has them. Else found is "unknown".
+HostCalendarMonthDay(key) == [found |-> "unknown"]
+
 \* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
 \* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==

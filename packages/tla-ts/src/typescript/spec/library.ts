@@ -241,6 +241,8 @@ export const HOOKS = new Map([
   ["HostDefaultStackTraceLimit", "file"],
   ["HostDateFormat", "key"],
   ["HostLocale", "tag"],
+  ["HostCalendarYear", "key"],
+  ["HostCalendarMonthDay", "key"],
   ["ModuleNode", "id"],
   ["ModuleDeclarations", "s, ctx, node"],
 ]);

@@ -10,6 +10,7 @@ import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
 import {
+  getHostCalendars,
   getHostDateFormat,
   getHostLocale,
   getHostTimeZone,
@@ -602,6 +603,7 @@ export const compileToEscore = (
           arity: 1,
           text: getHostDateFormat(program.words),
         },
+        ...getHostCalendars(files.map((file) => file.sourceFile.text).join("\n"), program.words),
         {
           name: "HostLocale",
           arity: 1,

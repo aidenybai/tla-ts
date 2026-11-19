@@ -914,9 +914,55 @@ describe("compiles scripts by specializing ESCore", () => {
           "2024-03-10[u-ca=hebrew]|6|13|M06|P2Y9M26D|heisei|31|1445-9-1|30|6|2024-09-06[u-ca=coptic]|1972-03-20[u-ca=persian]|RangeError";
         expect((await checkScript(getSource(expected))).message).toContain(THREW);
       });
+    },
+  );
 
-      it("stops at the Chinese calendar, whose tables ESCore doesn't hold", async () => {
-        const source = 'Temporal.PlainDate.from("2024-03-11[u-ca=chinese]");';
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "runs the Chinese and Dangi calendars from the years that the host's table records",
+    () => {
+      const getSource = (expected: string) => `
+      const date = Temporal.PlainDate.from({ year: 2023, monthCode: "M02L", day: 29, calendar: "chinese" });
+      const dangi = Temporal.PlainDate.from("2023-03-22[u-ca=dangi]");
+      const monthDay = Temporal.PlainMonthDay.from({ monthCode: "M09L", day: 30, calendar: "chinese" });
+      let rejected = "none";
+      try {
+        Temporal.PlainMonthDay.from({ monthCode: "M01L", day: 1, calendar: "chinese" }, { overflow: "reject" });
+      } catch (error) {
+        rejected = (error as Error).name;
+      }
+      const result = [
+        date.toString(),
+        date.month,
+        date.monthsInYear,
+        date.daysInYear,
+        date.era,
+        date.add({ years: 1 }).monthCode,
+        date.add({ months: 13 }).toString(),
+        date.until("2025-06-01[u-ca=chinese]", { largestUnit: "years" }).toString(),
+        dangi.monthCode,
+        dangi.day,
+        monthDay.toString(),
+        monthDay.monthCode,
+        rejected,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected =
+          "2023-04-19[u-ca=chinese]|3|13|384||M02|2024-05-07[u-ca=chinese]|P2Y2M6D|M02L|1|1972-11-05[u-ca=chinese]|M09|RangeError";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected =
+          "2023-04-19[u-ca=chinese]|3|13|384||M02|2024-05-07[u-ca=chinese]|P2Y2M6D|M02L|1|1972-11-05[u-ca=chinese]|M09L|RangeError";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a year that the host's table leaves out", async () => {
+        const source =
+          'Temporal.PlainDate.from({ year: 3000, month: 1, day: 1, calendar: "chinese" });';
         expect((await checkScript(source)).message).toContain("tla-ts can't");
       });
     },

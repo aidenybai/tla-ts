@@ -1,6 +1,7 @@
 import { runInNewContext } from "node:vm";
 import { TlaError } from "../../errors";
 import type { GeneratedDefinition, Library } from "./library";
+import { CALENDAR_TABLES } from "../calendars";
 import { DATE_FORMATS } from "../date-formats";
 import { TIME_ZONES } from "../time-zones";
 
@@ -1596,6 +1597,91 @@ export const getHostDateFormat = (words: ReadonlySet<string>) => {
   return entries.length === 0
     ? `HostDateFormat(key) == [found |-> "unknown"]`
     : `HostDateFormat(key) ==\n  LET table == ${entries.map(([key, format]) => `("${key}" :> ${getEntry(format)})`).join("\n    @@ ")}\n  IN IF key \\in DOMAIN table THEN table[key] ELSE [found |-> "unknown"]`;
+};
+
+// The program's HostCalendarYear and HostCalendarMonthDay: the recorded tables (calendars.ts) of
+// the Chinese and Dangi calendars that its text names, where it names Temporal. Each run of
+// consecutive years, and each calendar's month-days, is a definition of its own, which a check
+// reads once. Any other year stops, which the host computes astronomically.
+export const getHostCalendars = (text: string, words: ReadonlySet<string>) => {
+  const names = words.has("Temporal")
+    ? Object.keys(CALENDAR_TABLES).filter((name) => new RegExp(name, "i").test(text))
+    : [];
+  const tables = names.map((name, index) => {
+    const years = [...CALENDAR_TABLES[name].years].sort((left, right) => left[0] - right[0]);
+    const runs = years.reduce<number[][][]>((grouped, year) => {
+      const run = grouped.at(-1);
+      if (run !== undefined && run[run.length - 1][0] === year[0] - 1) run.push(year);
+      else grouped.push([year]);
+      return grouped;
+    }, []);
+    const monthDays = CALENDAR_TABLES[name].monthDays.flatMap((row, code) =>
+      row.map((entry, day) => ({
+        days: entry[0],
+        isKept: entry[1] === (code >> 1) + 1 && entry[2] === code % 2 && entry[3] === day + 1,
+      })),
+    );
+    return {
+      units: getUnitsOf(name),
+      runs: runs.map((run, position) => ({
+        name: `CalendarYears${index + 1}x${position + 1}`,
+        first: run[0][0],
+        last: run[run.length - 1][0],
+        text: `<<${run.map((year) => `[found |-> "year", start |-> ${year[1]}, leap |-> ${year[2]}, long |-> ${year[3]}]`).join(", ")}>>`,
+      })),
+      monthDays: {
+        name: `CalendarMonthDays${index + 1}`,
+        kept: `CalendarMonthDaysKept${index + 1}`,
+        days: `<<${monthDays.map((entry) => entry.days).join(", ")}>>`,
+        isKept: `<<${monthDays.map((entry) => (entry.isKept ? "TRUE" : "FALSE")).join(", ")}>>`,
+      },
+    };
+  });
+  const yearArms = tables.flatMap((table) =>
+    table.runs.map(
+      (run) =>
+        `key[1] = ${table.units} /\\ key[2] >= ${run.first} /\\ key[2] <= ${run.last} -> ${run.name}[key[2] - (${run.first - 1})]`,
+    ),
+  );
+  const monthDayArms = tables.map(
+    (table) =>
+      `key[1] = ${table.units} -> [found |-> "monthDay", days |-> ${table.monthDays.name}[index], isKept |-> ${table.monthDays.kept}[index]]`,
+  );
+  return [
+    ...tables.flatMap((table) => [
+      ...table.runs.map((run) => ({
+        name: run.name,
+        arity: 0,
+        text: `${run.name} == ${run.text}`,
+      })),
+      {
+        name: table.monthDays.name,
+        arity: 0,
+        text: `${table.monthDays.name} == ${table.monthDays.days}`,
+      },
+      {
+        name: table.monthDays.kept,
+        arity: 0,
+        text: `${table.monthDays.kept} == ${table.monthDays.isKept}`,
+      },
+    ]),
+    {
+      name: "HostCalendarYear",
+      arity: 1,
+      text:
+        yearArms.length === 0
+          ? `HostCalendarYear(key) == [found |-> "unknown"]`
+          : `HostCalendarYear(key) ==\n  CASE ${yearArms.join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`,
+    },
+    {
+      name: "HostCalendarMonthDay",
+      arity: 1,
+      text:
+        monthDayArms.length === 0
+          ? `HostCalendarMonthDay(key) == [found |-> "unknown"]`
+          : `HostCalendarMonthDay(key) ==\n  LET index == ((key[2] - 1) * 2 + (IF key[3] THEN 1 ELSE 0)) * 30 + key[4] IN\n  CASE ~(key[2] \\in 1..12 /\\ key[4] \\in 1..30) -> [found |-> "unknown"]\n    [] ${monthDayArms.join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`,
+    },
+  ];
 };
 
 // The services of Intl whose supportedLocalesOf HostLocale answers for.
