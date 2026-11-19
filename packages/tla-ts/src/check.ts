@@ -83,8 +83,10 @@ import {
   type SpecDescription,
 } from "./spec-description";
 import {
+  createLivenessDump,
   createStateWriter,
   type GraphState,
+  type LivenessDump,
   type StateDump,
   type StateWriter,
 } from "./state-graph";
@@ -363,12 +365,16 @@ const STOP_REPLAY = new Error("The replay stopped");
 export const checkSequentially = (options: CheckOptions): CheckResult => {
   const stateWriter =
     options.dump && createStateWriter(options.dump, options.writeFile, options.version);
+  const livenessDump = options.dump?.dot
+    ? createLivenessDump(options.dump, options.writeFile, options.version)
+    : undefined;
   try {
-    return searchStates(options, stateWriter);
+    return searchStates(options, stateWriter, livenessDump);
   } catch (error) {
     throw isStackOverflow(error) ? createStackOverflowError() : error;
   } finally {
-    // Deviation from TLC: it returns without closing the writer after a failed assumption or initial state, which loses what it buffered.
+    // Deviation from TLC: it returns without closing the writers after a failed assumption or initial state, which loses what they buffered.
+    livenessDump?.close();
     stateWriter?.close();
   }
 };
@@ -381,6 +387,7 @@ const LIVENESS_RATIO = 0.2;
 const searchStates = (
   options: CheckOptions & CliSettings,
   stateWriter: StateWriter | undefined,
+  livenessDump: LivenessDump | undefined,
 ): CheckResult => {
   const config =
     typeof options.config === "string"
@@ -691,9 +698,11 @@ const searchStates = (
           }
           return isUnseen;
         };
+        const distinctStates = runtime.distinctStates;
         if (!search.checkReplayedSuccessor(state, next, tracing, addFingerprint)) {
           throw STOP_REPLAY;
         }
+        runtime.queueSize += runtime.distinctStates - distinctStates;
       });
     });
   const tlcFingerprints: number[] = [];
@@ -715,74 +724,81 @@ const searchStates = (
   };
   const liveness = withLivenessExitCode(() =>
     withUnexpectedException(() =>
-      createLivenessChecker(search.properties.liveness, spec.temporals, environment, {
-        getFingerprint: (successor) =>
-          (tlcFingerprints[successor.index] ??= Number(
-            BigInt.asIntN(32, runtime.getFingerprint(successor.state)),
-          )),
-        forEachActionSuccessors: (source, state, onSuccessors, replay) => {
-          liveState = state;
-          let successors: LiveSuccessor[] = [];
-          const addSuccessor = (successor: Value[]) => {
-            canonicalizeState(successor);
-            const isInModel =
-              search.satisfiesConstraints(successor, state) &&
-              search.satisfiesActionConstraints(state, successor);
-            if (!isInModel) return;
-            const fingerprintState = getFingerprintState(successor);
-            const hash = getStateHash(fingerprintState);
-            const index = findStateIndex(seenStates, hash, fingerprintState);
-            successors.push({
-              index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
-              state: successor,
-            });
-          };
-          const visitSuccessor = (successor: Successor) => {
-            addSuccessor(successor.state);
-            return false;
-          };
-          const actionCount = coverage ? coverageActions.length : nextActions.length;
-          for (let position = 0; position < actionCount; position++) {
-            successors = [];
-            const livenessSource = current.livenessSource;
-            current.livenessSource = source;
-            try {
-              if (coverage) {
-                // TLC's coverage counts the successors of each action the graph generates again.
-                walkCoveredSuccessors(
-                  coverage,
-                  coverageActions[position],
-                  state,
-                  replay ?? environment,
-                  addSuccessor,
-                  addIncomplete,
-                );
-              } else if (replay) {
-                const action = nextActions[position];
-                walkSuccessors(action, -1, state, replay, addSuccessor, (partial) => {
-                  addIncomplete(partial, action.name);
-                  return true;
-                });
-              } else {
-                const action = nextActions[position];
-                forEachSuccessor(
-                  action.expression,
-                  state,
-                  environment,
-                  visitSuccessor,
-                  action.scope,
-                  undefined,
-                  undefined,
-                  addIncomplete,
-                );
+      createLivenessChecker(
+        search.properties.liveness,
+        spec.temporals,
+        environment,
+        {
+          getFingerprint: (successor) =>
+            (tlcFingerprints[successor.index] ??= Number(
+              BigInt.asIntN(32, runtime.getFingerprint(successor.state)),
+            )),
+          forEachActionSuccessors: (source, state, onSuccessors, replay) => {
+            liveState = state;
+            let successors: LiveSuccessor[] = [];
+            const addSuccessor = (successor: Value[]) => {
+              canonicalizeState(successor);
+              const isInModel =
+                search.satisfiesConstraints(successor, state) &&
+                search.satisfiesActionConstraints(state, successor);
+              if (!isInModel) return;
+              const fingerprintState = getFingerprintState(successor);
+              const hash = getStateHash(fingerprintState);
+              const index = findStateIndex(seenStates, hash, fingerprintState);
+              successors.push({
+                index: index === -1 ? getPendingIndex(hash, fingerprintState) : index,
+                state: successor,
+              });
+            };
+            const visitSuccessor = (successor: Successor) => {
+              addSuccessor(successor.state);
+              return false;
+            };
+            const actionCount = coverage ? coverageActions.length : nextActions.length;
+            for (let position = 0; position < actionCount; position++) {
+              successors = [];
+              const livenessSource = current.livenessSource;
+              current.livenessSource = source;
+              try {
+                if (coverage) {
+                  // TLC's coverage counts the successors of each action the graph generates again.
+                  walkCoveredSuccessors(
+                    coverage,
+                    coverageActions[position],
+                    state,
+                    replay ?? environment,
+                    addSuccessor,
+                    addIncomplete,
+                  );
+                } else if (replay) {
+                  const action = nextActions[position];
+                  walkSuccessors(action, -1, state, replay, addSuccessor, (partial) => {
+                    addIncomplete(partial, action.name);
+                    return true;
+                  });
+                } else {
+                  const action = nextActions[position];
+                  forEachSuccessor(
+                    action.expression,
+                    state,
+                    environment,
+                    visitSuccessor,
+                    action.scope,
+                    undefined,
+                    undefined,
+                    addIncomplete,
+                  );
+                }
+              } finally {
+                current.livenessSource = livenessSource;
               }
-            } finally {
-              current.livenessSource = livenessSource;
+              onSuccessors(successors);
             }
-            onSuccessors(successors);
-          }
+          },
+          getGraphState: (index, state) => getGraphState(state, depths[index] ?? 1),
         },
-      }),
+        livenessDump?.createWriter,
+      ),
     ),
   );
   if (liveness?.branches === 0) throw createTautologyError();

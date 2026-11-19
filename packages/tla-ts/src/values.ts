@@ -442,6 +442,8 @@ export const setViewText = (state: Record<string, Value>, getText: () => string)
 
 const aliasNames = new WeakMap<Record<string, Value>, string>();
 
+export const ALIAS_EVAL_ERROR = "_ALIASEvalError";
+
 export const setAliasName = (state: Record<string, Value>, alias: string) => {
   aliasNames.set(state, alias);
   return state;
@@ -3238,9 +3240,13 @@ export const formatState = (state: Record<string, Value>, previous?: Record<stri
       `The _format field of the ALIAS ${alias} is ${formatValue(format)}, but it must be a string.`,
     );
   }
+  // TLC lists an alias's evaluation error even where it repeats, so that a long trace doesn't hide it.
   return entries
     .filter((entry) => !(isFormatted && entry[0] === "_format"))
-    .filter((entry) => !previous || !isUnchanged(previous[entry[0]], entry[1]))
+    .filter(
+      (entry) =>
+        !previous || entry[0] === ALIAS_EVAL_ERROR || !isUnchanged(previous[entry[0]], entry[1]),
+    )
     .map((entry) => {
       const text = formatJava(format, [entry[0], prettyPrint(formatValue(entry[1]))]);
       if (text === undefined) {

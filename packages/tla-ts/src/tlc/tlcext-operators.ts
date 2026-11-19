@@ -9,6 +9,7 @@ import {
 } from "../builtins";
 import {
   formatRange,
+  getUnexpectedException,
   TlaEndOfInputError,
   TlaEvaluationError,
   TlaModuleError,
@@ -28,6 +29,7 @@ import {
 import { getChildren, isLocallyResolved, type Definition, type Expression } from "../ast";
 import { ACTION_LEVEL, CONSTANT_LEVEL, VARIABLE_LEVEL } from "../levels";
 import {
+  EMPTY_STATE,
   getNamedRegisters,
   getPossibleCounts,
   NAMED_REGISTER_PREFIX,
@@ -114,23 +116,32 @@ const getRegister = (runtime: CheckerRuntime, key: Value) => {
   return undefined;
 };
 
-export const setTlcValue = (runtime: CheckerRuntime, key: Value, value: Value) => {
+export const setTlcValue = (
+  runtime: CheckerRuntime,
+  key: Value,
+  value: Value,
+  state: (Value | undefined)[] | undefined,
+) => {
+  // TLC splits Next before its checker exists, so TLCSet there throws on a numbered register and drops the other writes.
+  const isSplit = state === EMPTY_STATE;
   if (typeof key === "number" && key >= 0) {
+    if (isSplit)
+      throw new TlaEvaluationError(getUnexpectedException("java.lang.NullPointerException"));
     runtime.registers.set(key, value);
     return;
   }
   if (key === "exit") {
-    if (value === true) runtime.isStopped = true;
+    if (value === true && !isSplit) runtime.isStopped = true;
     return;
   }
   if (key === "pause") {
-    if (value !== true || !runtime.pause) return;
+    if (value !== true || !runtime.pause || isSplit) return;
     runtime.printPrompt("Press enter to resume model checking.");
     runtime.pause();
     return;
   }
   if (typeof key === "string" && key.startsWith(NAMED_REGISTER_PREFIX)) {
-    runtime.namedRegisters.set(key, value);
+    if (!isSplit) runtime.namedRegisters.set(key, value);
     return;
   }
   if (typeof key === "string" && key.startsWith("-D")) {

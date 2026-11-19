@@ -22,6 +22,7 @@ import {
   type Solution,
   type Tableau,
 } from "./tableau";
+import type { GraphState, LivenessWriter } from "./state-graph";
 import { findTraceLasso, type TraceLasso } from "./trace-liveness";
 import { isSameValue, type Value } from "./values";
 
@@ -85,6 +86,7 @@ export interface SearchGraph<State> {
     onSuccessors: (successors: LiveSuccessor<State>[]) => void,
     replay?: Environment,
   ) => void;
+  getGraphState?: (index: number, state: State) => GraphState;
 }
 
 interface Tracing {
@@ -123,6 +125,11 @@ interface BehaviorChecks<State> {
   nodes: (Check<State>[] | Int32Array)[];
 }
 
+interface LateWrites {
+  node: number;
+  writes: (() => void)[];
+}
+
 interface BehaviorGraph<State> {
   solution: Solution;
   checks: BehaviorChecks<State>;
@@ -142,6 +149,7 @@ interface BehaviorGraph<State> {
   isDone: boolean[];
   stateCount: number;
   errorNode: number | undefined;
+  writer: LivenessWriter | undefined;
 }
 
 const containsAlways = (expression: LiveExpression): boolean => {
@@ -408,6 +416,7 @@ export const createLivenessChecker = (
   temporals: ScopedExpression[],
   environment: Environment,
   search: SearchGraph<Value[]>,
+  createWriter?: (isTableau: boolean) => LivenessWriter,
 ): LivenessChecker | undefined => {
   if (properties.length === 0) return undefined;
   const formula = getLiveFormula(properties, temporals, environment);
@@ -436,8 +445,10 @@ export const createLivenessChecker = (
       getFingerprint: search.getFingerprint,
       forEachActionSuccessors: (index, state, onSuccessors) =>
         search.forEachActionSuccessors(index, state, onSuccessors, tracing.replay),
+      getGraphState: search.getGraphState,
     },
     environment.runtime.version !== "1.7.4",
+    createWriter,
   );
   const traceWith = <Result>(replay: Environment | undefined, run: () => Result) => {
     if (replay === undefined) return run();
@@ -470,6 +481,7 @@ export const createLiveGraph = <State>(
   evaluation: LiveEvaluation<State>,
   search: SearchGraph<State>,
   isAcceptingFound: boolean,
+  createWriter?: (isTableau: boolean) => LivenessWriter,
 ): LiveGraph<State> => {
   const actionIds = new Map<string, number>();
   let capacityMultiplier = 1;
@@ -592,7 +604,85 @@ export const createLiveGraph = <State>(
     isDone: [],
     stateCount: 0,
     errorNode: undefined,
+    writer: createWriter?.(solution.tableau !== undefined),
   }));
+  const writeInitialState = (
+    behavior: BehaviorGraph<State>,
+    index: number,
+    state: State,
+    tableauNode: number,
+  ) => {
+    const getGraphState = search.getGraphState;
+    if (behavior.writer && getGraphState) {
+      behavior.writer.writeInitialState(getGraphState(index, state), tableauNode);
+    }
+  };
+  // TLC prints the result of the last action check first.
+  const writeSuccessor = (
+    behavior: BehaviorGraph<State>,
+    index: number,
+    state: State,
+    tableauNode: number,
+    successor: LiveSuccessor<State>,
+    successorNode: number,
+    actionResults: Uint8Array,
+    resultOffset: number,
+    isSeen: boolean,
+    isDotted: boolean,
+  ) => {
+    const getGraphState = search.getGraphState;
+    if (!behavior.writer || !getGraphState) return;
+    const actionCount = behavior.checks.actions.length;
+    const actionChecks = Array.from({ length: actionCount }, (_check, position) =>
+      actionResults[resultOffset + actionCount - 1 - position] === 1 ? "t" : "f",
+    ).join("");
+    behavior.writer.writeSuccessor(
+      getGraphState(index, state),
+      tableauNode,
+      getGraphState(successor.index, successor.state),
+      successorNode,
+      actionCount === 0 ? "" : `[${actionChecks}]`,
+      isSeen,
+      isDotted,
+    );
+  };
+  // TLC writes each edge as it finds it, so an expansion holds its writes until its parent writes the edge to it.
+  const lateWrites: LateWrites[] = [];
+  const writeEdges = (
+    behavior: BehaviorGraph<State>,
+    index: number,
+    state: State,
+    node: number,
+    targets: number[],
+    steps: number[],
+    successors: LiveSuccessor<State>[],
+    actionResults: Uint8Array,
+    mark: number,
+    isLate: boolean,
+  ) => {
+    const children = new Map(lateWrites.splice(mark).map((late) => [late.node, late.writes]));
+    const actionCount = behavior.checks.actions.length;
+    const writes = targets.flatMap((target, edge) => {
+      const step = steps[edge];
+      const write = () =>
+        writeSuccessor(
+          behavior,
+          index,
+          state,
+          behavior.nodeTableaux[node],
+          successors[step],
+          behavior.nodeTableaux[target],
+          actionResults,
+          step * actionCount,
+          isLate,
+          isLate,
+        );
+      // A late expansion draws no edge to the other nodes of its own state.
+      return [...(isLate && step === 0 ? [] : [write]), ...(children.get(target) ?? [])];
+    });
+    if (isLate) lateWrites.push({ node, writes });
+    else writes.forEach((write) => write());
+  };
   const checkState = (
     behavior: BehaviorGraph<State>,
     source: number,
@@ -806,6 +896,7 @@ export const createLiveGraph = <State>(
     row: Int8Array,
     offset: number,
   ) => {
+    const mark = lateWrites.length;
     const stateResults = checkState(behavior, index, state, row, offset);
     const tableauNode = tableau.nodes[behavior.nodeTableaux[node]];
     const actionCount = behavior.checks.actions.length;
@@ -823,6 +914,20 @@ export const createLiveGraph = <State>(
         behavior.solution.models.some(isEmptyModel)
       ) {
         behavior.errorNode = node;
+        if (behavior.writer) {
+          writeEdges(
+            behavior,
+            index,
+            state,
+            node,
+            successors,
+            actions,
+            [],
+            selfResults,
+            mark,
+            true,
+          );
+        }
         return;
       }
       const existing = getNodeId(behavior, index, next);
@@ -834,11 +939,13 @@ export const createLiveGraph = <State>(
     }
     // The results of the step to the state itself come first, then those of each successor.
     const actionBatches = [selfResults];
+    const stepBatches: LiveSuccessor<State>[][] = [];
     let stepCount = 1;
     search.forEachActionSuccessors(index, state, (nextStates) => {
       const edges = createEdgeRows(nextStates.length);
       const results = new Uint8Array(nextStates.length * actionCount);
       actionBatches.push(results);
+      stepBatches.push(nextStates);
       for (let position = 0; position < nextStates.length; position++) {
         const successor = nextStates[position];
         const successorRow = createRows(1);
@@ -883,6 +990,20 @@ export const createLiveGraph = <State>(
         actionResults.set(actionBatches[batch], resultOffset);
         resultOffset += actionBatches[batch].length;
       }
+      if (behavior.writer) {
+        writeEdges(
+          behavior,
+          index,
+          state,
+          node,
+          successors,
+          actions,
+          [{ index, state }, ...stepBatches.flat()],
+          actionResults,
+          mark,
+          true,
+        );
+      }
       writeNode(behavior, node, successors, actionResults, actions, stateResults);
     }
   };
@@ -895,6 +1016,7 @@ export const createLiveGraph = <State>(
     actionResults: Uint8Array,
     stateResults: Uint8Array,
     index: number,
+    state: State,
   ) => {
     const atomCount = stateAtoms.size;
     // Whether each successor is consistent with each tableau node, node by node.
@@ -912,6 +1034,7 @@ export const createLiveGraph = <State>(
     behavior.isDone[index] = true;
     // TLC expands the nodes recorded before the loop, not the ones the loop records.
     for (const node of getStateNodes(behavior, index)) {
+      const mark = lateWrites.length;
       const successors: number[] = [];
       const actions: number[] = [];
       set.forEach((successor, position) => {
@@ -936,6 +1059,20 @@ export const createLiveGraph = <State>(
           }
         }
       });
+      if (behavior.writer) {
+        writeEdges(
+          behavior,
+          index,
+          state,
+          node,
+          successors,
+          actions,
+          set,
+          actionResults,
+          mark,
+          false,
+        );
+      }
       writeNode(behavior, node, successors, actionResults, actions, stateResults);
     }
     return behavior.errorNode === undefined
@@ -1227,6 +1364,7 @@ export const createLiveGraph = <State>(
         const tableau = behavior.solution.tableau;
         if (!tableau) {
           behavior.initial.push(index);
+          writeInitialState(behavior, index, state, -1);
           continue;
         }
         for (let node = 0; node < tableau.initialCount; node++) {
@@ -1234,6 +1372,7 @@ export const createLiveGraph = <State>(
           behavior.initial.push(
             getNodeId(behavior, index, node) ?? recordNode(behavior, index, node),
           );
+          writeInitialState(behavior, index, state, node);
         }
       }
     },
@@ -1272,6 +1411,23 @@ export const createLiveGraph = <State>(
           throw new TlaEvaluationError("The behavior graph holds every edge of the state already.");
         }
         if (!tableau) {
+          if (behavior.writer) {
+            for (const successor of set) {
+              const isSeen = isWritten(behavior, successor.index);
+              writeSuccessor(
+                behavior,
+                index,
+                state,
+                -1,
+                successor,
+                -1,
+                actionResults,
+                0,
+                isSeen,
+                false,
+              );
+            }
+          }
           addPlainState(behavior, set, actionResults, stateResults, index);
           continue;
         }
@@ -1283,6 +1439,7 @@ export const createLiveGraph = <State>(
           actionResults,
           stateResults,
           index,
+          state,
         );
         if (accepted) return accepted;
       }

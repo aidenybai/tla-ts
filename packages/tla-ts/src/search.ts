@@ -75,6 +75,7 @@ import { expandTemporal, getLevel, type ScopedExpression, type TemporalProperty 
 import { getLiveExpressions } from "./liveness-checker";
 import { prettyPrint, prettyPrintT } from "./pretty-print";
 import { parenthesizedRanges } from "./parser";
+import { substitutionFrames, withSubstitutionFrames } from "./instances";
 import { getPossibleCounts, type CheckerRuntime } from "./runtime";
 import { createIncompleteSuccessorError, type SuccessorGenerator } from "./successors";
 import {
@@ -100,8 +101,8 @@ import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from 
 import type { TlcVersion } from "./tlc/version";
 import type { GraphState } from "./state-graph";
 import {
+  ALIAS_EVAL_ERROR,
   createModelValue,
-  formatState,
   formatValue,
   freezeStringOrder,
   getWrittenPairs,
@@ -553,10 +554,15 @@ const getProperties = (
       const conjunct = item.expression;
       if (isConstantTrue(item, environment, "property")) return;
       const partName = item.name ?? name;
+      const withFrames = (check: Expression) =>
+        withSubstitutionFrames(
+          check,
+          item.frames.filter((frame) => !substitutionFrames.get(check)?.includes(frame)),
+        );
       if (conjunct.kind === "Always" && conjunct.expression.kind === "BoxAction") {
         properties.actionProperties.push({
           name: partName,
-          box: conjunct.expression,
+          box: withFrames(conjunct.expression),
           action: conjunct.expression.action,
           subscript: conjunct.expression.subscript,
           scope: item.scope,
@@ -574,7 +580,7 @@ const getProperties = (
             : undefined;
         properties.invariants.push({
           name: operator?.name ?? (body.kind === "Identifier" ? body.name : partName),
-          expression: body,
+          expression: withFrames(body),
           scope: item.scope,
         });
         return;
@@ -583,7 +589,7 @@ const getProperties = (
       if (level < ACTION_LEVEL) {
         properties.initialPredicates.push({
           name: partName,
-          expression: conjunct,
+          expression: withFrames(conjunct),
           scope: item.scope,
         });
         return;
@@ -926,10 +932,21 @@ export const createCheckEnvironment = (
   isStringOrderFrozen = false,
 ) => {
   const order = createTlcOrder(options.source, options.loadModule);
+  const getOperatorModules = (kind: ModuleOperator["kind"]) =>
+    (options.moduleOperators ?? []).flatMap((operator) =>
+      operator.kind === kind ? [operator.module] : [],
+    );
   setStringOrder(
     order.getStringOrder(
       config,
       (options.runtimeInvariants ?? []).flatMap((invariant) => invariant.module ?? []),
+      // TLC extends the root with the modules of postconditions, the trace spec's last, before those of constraints and the view.
+      [
+        ...getOperatorModules("postcondition"),
+        ...(options.traceSpec?.traceFile === undefined ? [] : ["_TLCTrace"]),
+        ...getOperatorModules("constraint"),
+        ...getOperatorModules("view"),
+      ],
     ),
   );
   setValueOptions(options);
@@ -1436,8 +1453,14 @@ export const createSearch = (
   };
   runtime.toRecord = toRecord;
   // Deviation from TLC: StatePrinter fingerprints the alias it prints, so a VIEW that fails on the alias's values crashes TLC.
-  const evaluateAlias: Search["evaluateAlias"] = (alias, state, next, isTool) => {
-    const getStateRecord = () => toRecord(state.map((value) => value ?? createModelValue("null")));
+  const getStateRecord = (state: State) =>
+    toRecord(state.map((value) => value ?? createModelValue("null")));
+  const getAliasRecord = (
+    alias: string,
+    state: State,
+    next: State | undefined,
+    isTool: boolean,
+  ): Record<string, Value> | undefined => {
     try {
       getConfigDefinition("alias", alias, environment);
       const value = evaluate(
@@ -1445,12 +1468,17 @@ export const createSearch = (
         getContext(environment, state, next),
       );
       const record = toAliasRecord(value);
-      return record === undefined ? getStateRecord() : setAliasName(record, alias);
+      return record === undefined ? undefined : setAliasName(record, alias);
     } catch (error) {
       if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
-      return { ...getStateRecord(), _ALIASEvalError: formatNestedMessage(error.message, isTool) };
+      return {
+        ...getStateRecord(state),
+        [ALIAS_EVAL_ERROR]: formatNestedMessage(error.message, isTool),
+      };
     }
   };
+  const evaluateAlias: Search["evaluateAlias"] = (alias, state, next, isTool) =>
+    getAliasRecord(alias, state, next, isTool) ?? getStateRecord(state);
   const scopeExpressions = getScopeExpressions(spec.scope);
   return {
     properties,
@@ -1460,13 +1488,11 @@ export const createSearch = (
     getGraphState: (state, fingerprint, level, isTool) => ({
       fingerprint: BigInt.asIntN(64, fingerprint),
       level,
-      getLabel: () =>
-        formatState(
-          config.alias === undefined
-            ? toRecord(state)
-            : evaluateAlias(config.alias, state, undefined, isTool),
-        ),
-      getText: () => formatState(toRecord(state)),
+      getRecord: () => toRecord(state),
+      getAlias: () =>
+        config.alias === undefined
+          ? undefined
+          : getAliasRecord(config.alias, state, undefined, isTool),
     }),
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,

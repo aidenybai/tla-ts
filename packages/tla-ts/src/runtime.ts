@@ -126,6 +126,8 @@ export const createRuntime = (checkDeadlock: boolean, seed = 0n): CheckerRuntime
   return runtime;
 };
 
+export const EMPTY_STATE: (Value | undefined)[] = [];
+
 export const NAMED_REGISTER_PREFIX = "s:";
 
 const POSSIBLE_REGISTER = "s:_possible";
