@@ -19,6 +19,7 @@ import {
   forEachBinding,
   getDefinition,
   getRootKey,
+  isAssumeProve,
   lookupScope,
   resolveGlobalOperator,
   type Closure,
@@ -283,6 +284,14 @@ const getInstanceActions = (
   }, callAction);
 };
 
+const createRelationError = (expression: Expression) =>
+  setExitCode(
+    new TlaEvaluationError(
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${describeNode(expression)}`,
+    ),
+    EXIT_STATUS.error,
+  );
+
 const getActions = (
   expression: Expression,
   scope: Scope | undefined,
@@ -299,14 +308,7 @@ const getActions = (
     expression,
     scope,
   });
-  if (LITERAL_KINDS.has(expression.kind)) {
-    throw setExitCode(
-      new TlaEvaluationError(
-        `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${describeNode(expression)}`,
-      ),
-      EXIT_STATUS.error,
-    );
-  }
+  if (LITERAL_KINDS.has(expression.kind)) throw createRelationError(expression);
   switch (expression.kind) {
     case "Let":
       return getActions(
@@ -365,6 +367,8 @@ const getActions = (
     ? undefined
     : instanceActions.get(getOperatorName(expression) ?? "");
   const called = resolveClosure(expression, scope, environment);
+  // Deviation from TLC: Tool#getActionsAppl casts a theorem to an OpDefNode, and the ClassCastException crashes TLC unless an enclosing \E or operator catches it.
+  if (called && isAssumeProve(called.body)) throw createRelationError(called.body);
   if (instanceAction)
     return getInstanceActions(instanceAction, expression, scope, called, environment);
   const letDefinition = getLetDefinition(expression, scope);

@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, formatValue, parseModule, TlaConfigError, TlaSyntaxError } from "../../src";
+import {
+  check,
+  formatValue,
+  parseModule,
+  TlaConfigError,
+  TlaEvaluationError,
+  TlaSyntaxError,
+} from "../../src";
 import { createSanyError, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import { checkFixture, formatCallStackLines, getModuleLoader } from "./check-harness";
 
@@ -499,6 +506,42 @@ describe("INSTANCE matches TLC", () => {
       ]);
     },
   );
+
+  it.each([
+    [
+      "Foo == I!Ta\nNext2 == Foo",
+      ["Line 7, column 10 to line 7, column 12 in M", "Line 6, column 8 to line 6, column 11 in M"],
+    ],
+    [
+      "Next2 == \\E i \\in {1} : x' = x \\/ I!Ta",
+      [
+        "Line 6, column 10 to line 6, column 38 in M",
+        "Line 6, column 25 to line 6, column 38 in M",
+        "Line 6, column 35 to line 6, column 38 in M",
+      ],
+    ],
+  ])(
+    "keeps the operator or \\E around an ASSUME/PROVE theorem in %s as one action, like TLC",
+    async (definitions, frames) => {
+      const result = await checkTheorem(definitions, "INIT Init\nNEXT Next2");
+      expect([result.failure?.message, formatCallStackLines(result)]).toEqual([
+        `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${THEOREM_LOCATION}`,
+        [
+          ...frames,
+          "Line 5, column 1 to line 5, column 31 in M",
+          "Line 3, column 15 to line 3, column 38 in Inner",
+        ],
+      ]);
+    },
+  );
+
+  it("reports an ASSUME/PROVE theorem as an action of the next-state relation as not boolean, where TLC crashes", async () => {
+    await expect(checkTheorem("Next2 == x' = x \\/ I!Ta", "INIT Init\nNEXT Next2")).rejects.toThrow(
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${THEOREM_LOCATION}`,
+      ),
+    );
+  });
 });
 
 const INNER_MODULES: Record<string, string> = {
