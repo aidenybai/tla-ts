@@ -37,11 +37,27 @@ const worker = new Worker(
     try {
       const compiled = loaded.compileModelToEscore(spec.source, spec.fileName, loaded.runtime);
       const code = compiled.loadModule("ProgramCode");
-      // A raw model's steps end in the state they leave.
-      const changed = spec.isRaw ? code.replace(/^StepEnd\\(s\\) == CanonicalState\\((.*)\\)$/m, "StepEnd(s) == $1") : code;
+      // A raw model's steps end in the state they leave, and a compared model's compute the
+      // canonical form both natively and with ESCanonical's TLA+, as the module ESCanonicalPlain
+      // whose definitions take other names, which tla-ts runs as written, with spec.mutation
+      // replaced in it.
+      const canonical = compiled.loadModule("ESCanonical");
+      const names = [...canonical.matchAll(/^([A-Z]\\w*)(?:\\(.*\\))? ==/gm)].map((match) => match[1]);
+      const plain = canonical
+        .replace("MODULE ESCanonical", "MODULE ESCanonicalPlain")
+        .replace(new RegExp("\\\\b(" + names.join("|") + ")\\\\b", "g"), "Plain$1")
+        .replace(spec.mutation?.[0] ?? "", spec.mutation?.[1] ?? "");
+      const changed = code.replace(/^StepEnd\\(s\\) == CanonicalState\\((.*)\\)$/m, (line, state) =>
+        spec.mode === "raw"
+          ? "StepEnd(s) == " + state
+          : spec.mode === "compared"
+            ? "StepEnd(s) == LET native == CanonicalState(" + state + ") written == PlainCanonicalStateOf(" + state + ", InitialState) IN IF native = written THEN native ELSE Assert(FALSE, \\"the native canonical form differs\\")"
+            : line,
+      ).replace("\\nEXTENDS ESRuntime, ESCanonical\\n", spec.mode === "compared" ? "\\nEXTENDS ESRuntime, ESCanonical, ESCanonicalPlain\\n" : "\\nEXTENDS ESRuntime, ESCanonical\\n");
       const result = await loaded.check({
         ...compiled,
-        loadModule: (name) => (name === "ProgramCode" ? changed : compiled.loadModule(name)),
+        loadModule: (name) =>
+          name === "ProgramCode" ? changed : name === "ESCanonicalPlain" ? plain : compiled.loadModule(name),
         workers: 1,
         onPrint: () => {},
       });
@@ -80,10 +96,16 @@ const ready = new Promise((resolve) => {
 // The worker prepares the runtime before the first check, which takes longer than a check.
 beforeAll(() => ready, 60_000);
 
-// Checks a module's model on ESCore, with its steps' states canonical unless isRaw.
-const checkModel = (source: string, fileName = "spec.ts", isRaw = false) =>
+// Checks a module's model on ESCore, with its steps' states canonical, raw, or canonical where the
+// native canonical form and ESCanonical's TLA+ compare equal.
+const checkModel = (
+  source: string,
+  fileName = "spec.ts",
+  mode: "canonical" | "raw" | "compared" = "canonical",
+  mutation?: [string, string],
+) =>
   new Promise<ModelResult>((resolve) => {
-    worker.postMessage({ id: pending.length, source, fileName, isRaw });
+    worker.postMessage({ id: pending.length, source, fileName, mode, mutation });
     pending.push(resolve);
   });
 
@@ -159,7 +181,11 @@ describe("checks a module's exported functions as a model on ESCore", () => {
 
     it("merges the states that differ only in the objects a step left behind", async () => {
       expect(getCounts(await checkModel(getSource(2)))).toEqual(["success", 5, 7]);
-      expect(getCounts(await checkModel(getSource(2), "spec.ts", true))).toEqual(["success", 7, 7]);
+      expect(getCounts(await checkModel(getSource(2), "spec.ts", "raw"))).toEqual([
+        "success",
+        7,
+        7,
+      ]);
     });
 
     it("shows the arrays of a counterexample as sequences", async () => {
@@ -170,6 +196,38 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         { items: "<<1>>", steps: "1" },
         { items: "<<1>>", steps: "2" },
       ]);
+    });
+  });
+
+  describe("computes natively the canonical form that ESCanonical's TLA+ defines", () => {
+    const source = `
+      type Key = "a" | "b";
+      let owners = new Map<Key, number[]>();
+      let log: { key: Key }[] = [];
+      export const own = (key: Key) => {
+        if (log.length >= 2) return;
+        owners.set(key, [...(owners.get(key) ?? []), log.length]);
+        log = [...log, { key }];
+      };
+      export const drop = (key: Key) => {
+        if (!owners.has(key)) return;
+        owners.delete(key);
+      };
+      export const isShort = () => log.length <= LIMIT;
+    `;
+
+    it("agrees with the TLA+ in every step", async () => {
+      expect(
+        getCounts(await checkModel(source.replace("LIMIT", "2"), "spec.ts", "compared")),
+      ).toEqual(getCounts(await checkModel(source.replace("LIMIT", "2"))));
+    });
+
+    it("tells a TLA+ that numbers the objects otherwise", async () => {
+      const result = await checkModel(source.replace("LIMIT", "2"), "spec.ts", "compared", [
+        "r.objects + walk.objects + 1",
+        "r.objects + walk.objects + 2",
+      ]);
+      expect(result.message).toContain("the native canonical form differs");
     });
   });
 });

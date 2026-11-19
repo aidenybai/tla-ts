@@ -1,4 +1,5 @@
-// The canonical form of ESCore's state at the end of a model's step, as the module ESCanonical. A
+// The canonical form of ESCore's state at the end of a model's step, as the module ESCanonical,
+// whose CanonicalStateOf tla-ts runs natively (see escore-canonical.ts) and TLC runs as written. A
 // call leaves behind the objects and environments that nothing reaches any more, and numbers the
 // ones it makes in the order it made them, so that states that are equal to JavaScript differ as
 // values. The canonical form keeps the realm's objects and environments where they are, drops
