@@ -678,6 +678,50 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  describe("gives each error V8's own stack accessor", () => {
+    const getSource = (expected: string) => `
+      const error = new Error("m");
+      const own = Object.getOwnPropertyDescriptor(error, "stack");
+      const other = Object.getOwnPropertyDescriptor(new TypeError("t"), "stack");
+      const set = new Error("s");
+      set.stack = "mine";
+      const result = [
+        Object.getOwnPropertyNames(error).join(),
+        Object.getOwnPropertyNames(new AggregateError([])).join(),
+        typeof own?.get,
+        own?.get === other?.get && own?.set === other?.set,
+        JSON.stringify(own?.get?.name),
+        own?.enumerable,
+        set.stack,
+        "stack" in Error.prototype,
+      ].join("|");
+      if (result !== '${expected}') throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource('stack,message|stack,errors|function|true|""|false|mine|false'),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource('message|stack,errors|function|true|""|false|mine|false')))
+          .message,
+      ).toContain(THREW);
+    });
+
+    it("stops where a program reads the stack that Node writes", async () => {
+      expect(
+        (await checkScript('if (new Error("m").stack === undefined) throw 1;')).message,
+      ).toContain("tla-ts can't read an error's stack as Node writes it");
+    });
+  });
+
   describe("runs the built-ins of a global that a table of names links", () => {
     const getSource = (expected: string) => `
       const result = [...new Float32Array([3, 1.5])].join();

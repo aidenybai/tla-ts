@@ -56,6 +56,11 @@ const DEFINITIONS = [
   LET r == Call([s EXCEPT !.timers = Tail(@)], Head(s.timers), Undefined, <<>>) IN IF IsAbrupt(r) THEN r ELSE
   LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE
   LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTimers(u.s)`,
+  // An error's own stack accessor, as V8 gives each error one, of the two functions that the realm
+  // keeps in the slots of %Error.prototype%.
+  `InstallStack(s, o) ==
+  LET fns == O(s, Intrinsic(s, "ErrorPrototype")).slots
+  IN SetO(s, o, PutProp(O(s, o), SV("stack"), AccessorDesc(fns.stackGet, fns.stackSet, FALSE, TRUE)))`,
   // A statement's result r in a statement list, whose value is last's where r has none.
   `StatementResult(r, last) ==
   IF IsAbrupt(r) THEN Abrupt(r.s, UpdateEmpty(r.c, last))
@@ -475,6 +480,50 @@ const HOST_PATCHES = [
               IN ProxyCreate(timeout.s, timeout.v, s.hostHandler)
     [] m = "gc" ->`,
   },
+  // An error's stack: V8's accessor, whose getter and setter are nameless functions shared by every
+  // error. The text it reads is the host's, which ESCore can't write, so reading it stops, but for a
+  // value a program set.
+  {
+    name: "AddRealmProperty",
+    from: `    [] p.t = "g" ->`,
+    to: `    [] p.t = "g" /\\ p.o = "ErrorPrototype" /\\ p.k = SV("stack") ->
+         LET g == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), p.get, 0, <<>>, FALSE, Empty, s.realmId))
+             st == Alloc(g.s, BuiltinObject(Intrinsic(g.s, "FunctionPrototype"), p.set, 1, <<>>, FALSE, Empty, g.s.realmId))
+         IN SetO(st.s, owner, [O(st.s, owner) EXCEPT !.slots = [stackGet |-> g.v, stackSet |-> st.v]])
+    [] p.t = "g" ->`,
+  },
+  {
+    name: "ErrorBuiltin",
+    from: `    [] m = "getStack" ->
+         IF ~IsObject(this) THEN ThrowTypeError(s) ELSE Ok(s, IF O(s, this).class = "error" THEN EmptyStr ELSE Undefined)
+    [] m = "setStack" ->
+         IF ~IsObject(this) \\/ ~IsString(Arg(args, 1)) THEN ThrowTypeError(s)
+         ELSE LET r == SetterThatIgnoresPrototypeProperties(s, this, Intrinsic(s, "ErrorPrototype"), SV("stack"), Arg(args, 1)) IN
+              IF IsAbrupt(r) THEN r ELSE Ok(r.s, Undefined)`,
+    to: `    [] m = "getStack" ->
+         IF ~IsObject(this) \\/ O(s, this).class # "error" THEN Ok(s, Undefined)
+         ELSE IF "stack" \\in DOMAIN O(s, this).slots THEN Ok(s, O(s, this).slots.stack)
+         ELSE Assert(FALSE, "tla-ts can't read an error's stack as Node writes it")
+    [] m = "setStack" ->
+         IF ~IsObject(this) \\/ O(s, this).class # "error" THEN Ok(s, Undefined)
+         ELSE Ok(SetO(s, this, [O(s, this) EXCEPT !.slots = [stack |-> Arg(args, 1)] @@ @]), Undefined)`,
+  },
+  {
+    name: "ErrorConstructor",
+    from: `LET msg == IF message = Undefined THEN Ok(o.s, Empty) ELSE ToStr(o.s, message) IN`,
+    to: `LET withStack == InstallStack(o.s, Val(o))
+      msg == IF message = Undefined THEN Ok(withStack, Empty) ELSE ToStr(withStack, message) IN`,
+  },
+  {
+    name: "ThrowError",
+    from: `ThrowValue(a.s, a.v)`,
+    to: `ThrowValue(InstallStack(a.s, a.v), a.v)`,
+  },
+  {
+    name: "CombinatorElementDone",
+    from: `d == DefinePropertyOrThrow(error.s, error.v, SV("errors"), DataDesc(Val(values), TRUE, FALSE, TRUE))`,
+    to: `d == DefinePropertyOrThrow(InstallStack(error.s, error.v), error.v, SV("errors"), DataDesc(Val(values), TRUE, FALSE, TRUE))`,
+  },
   // A frame of a program's code, whose step is "Code" and whose arguments start with the id of the
   // operator that resumes it, which ResumeCode runs.
   {
@@ -719,9 +768,11 @@ export const getHostOnlyProperties = (library: Library) => {
 
 export const getRealmDefinitions = (library: Library): GeneratedDefinition[] => {
   const all = library.definitions.get("RealmProperties")?.text ?? "";
-  const missing = getMissingProperties(library).map(
-    (property) => `<<"${property.owner}", Str(${getUnitsOf(property.key)})>>`,
-  );
+  // Node has no Error.prototype.stack: each error has its own stack accessor, whose functions the
+  // realm makes in its place (InstallStack).
+  const missing = getMissingProperties(library)
+    .filter((property) => property.owner !== "ErrorPrototype" || property.key !== "stack")
+    .map((property) => `<<"${property.owner}", Str(${getUnitsOf(property.key)})>>`);
   return [
     {
       name: "HostRealmProperties",
