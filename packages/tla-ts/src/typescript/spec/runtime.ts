@@ -1011,6 +1011,7 @@ const HOST_PATCHES = [
          IF ~IsObject(this) \\/ O(s, this).class # "error" THEN Ok(s, Undefined)
          ELSE IF "stack" \\in DOMAIN O(s, this).slots THEN Ok(s, O(s, this).slots.stack)
          ELSE IF "trace" \\notin DOMAIN O(s, this).slots THEN Assert(FALSE, "tla-ts can't read an error's stack as Node writes it")
+         ELSE IF "dropped" \\in DOMAIN O(s, this).slots.trace THEN Assert(FALSE, "tla-ts can't read the stack of an error that a model's earlier step made")
          ELSE IF O(s, this).slots.trace.limit < 0 THEN Ok(s, Undefined)
          ELSE LET text == FormatStack(s, this, O(s, this).slots.trace) IN
               IF IsAbrupt(text) THEN text ELSE Ok(SetO(text.s, this, [O(text.s, this) EXCEPT !.slots = [stack |-> Val(text)] @@ @]), Val(text))

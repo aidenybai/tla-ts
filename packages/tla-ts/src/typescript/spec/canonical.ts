@@ -95,9 +95,12 @@ RenameElement(e, number, r) ==
      THEN [renamed EXCEPT !.init = RenameMaybe(@, number, r), !.initializers = RenameValues(@, number, r)]
      ELSE renamed
 RenameElements(seq, number, r) == [i \in DOMAIN seq |-> RenameElement(seq[i], number, r)]
+\* An error's captured stack holds the calls that made it, which a model's state keeps none of: its
+\* stack can't be read once the step that made it ends.
 RenameSlots(o, number, r) ==
   CASE o.class \in PlainClasses ->
-         IF "initializers" \in DOMAIN o.slots THEN [o.slots EXCEPT !.initializers = RenameValues(@, number, r)] ELSE o.slots
+         LET slots == IF "trace" \in DOMAIN o.slots THEN [o.slots EXCEPT !.trace = [dropped |-> TRUE]] ELSE o.slots
+         IN IF "initializers" \in DOMAIN slots THEN [slots EXCEPT !.initializers = RenameValues(@, number, r)] ELSE slots
     [] o.class = "function" ->
          [o.slots EXCEPT !.env = RenameEnvironment(@, number, r), !.home = RenameMaybe(@, number, r),
                          !.fields = RenameElements(@, number, r),

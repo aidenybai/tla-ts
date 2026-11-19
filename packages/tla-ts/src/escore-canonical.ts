@@ -348,9 +348,10 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
     const objectClass = getString(object, "class");
     const slots = get(object, "slots");
     if (PLAIN_CLASSES.has(objectClass)) {
-      return hasField(slots, "initializers")
-        ? except(slots, { initializers: renameValues })
-        : slots;
+      return except(slots, {
+        initializers: renameValues,
+        trace: () => createRecord([["dropped", true]]),
+      });
     }
     switch (objectClass) {
       case "function":

@@ -189,6 +189,43 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("keeps one state for errors that differ only in the calls that made them", () => {
+    const getSource = (message: string, isRead = false) => `
+      let last: Error | undefined = undefined;
+      let text = "";
+      let steps = 0;
+      export const fail = (n: 1 | 2) => {
+        if (steps >= 1) return;
+        last = new Error(${message});
+        steps++;
+      };
+      ${isRead ? 'export const read = () => { if (last !== undefined && text === "") text = last.stack ?? ""; };' : ""}
+    `;
+
+    it("merges errors made by calls with other arguments", async () => {
+      expect(getCounts(await checkModel(getSource('"x"'), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        2,
+        3,
+      ]);
+    });
+
+    it("tells apart errors whose messages differ", async () => {
+      expect(getCounts(await checkModel(getSource('"x" + n'), "spec.ts", "compared"))).toEqual([
+        "deadlock",
+        3,
+        3,
+      ]);
+    });
+
+    it("stops where a later step reads such an error's stack", async () => {
+      const result = await checkModel(getSource('"x"', true));
+      expect(result.message).toContain(
+        "tla-ts can't read the stack of an error that a model's earlier step made",
+      );
+    });
+  });
+
   describe("drops what a step leaves behind and numbers the rest as the heap's graph does", () => {
     const getSource = (bound: number) => `
       /** @noDeadlock */
