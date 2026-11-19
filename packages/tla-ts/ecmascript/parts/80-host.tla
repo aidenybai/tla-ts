@@ -119,6 +119,22 @@ RunModuleFrom(harness, specifier, directory, canSuspend, parses) ==
   TestResult(IF IsAbrupt(harness) THEN harness
              ELSE RunModule([harness.s EXCEPT !.parses = parses, !.directory = directory, !.canSuspend = canSuspend],
                             specifier))
+\* The named time zone that the host has of a lowercase name (AvailableNamedTimeZoneIdentifiers,
+\* §11.1.2): an entry [found, id, primary, offsets, days, seconds, isFinal, rule], whose found is
+\* "zone", with its identifier and its primary identifier as code units, its offsets in seconds, the first before any transition,
+\* the epoch days and the seconds within the day of its transitions before 2038, whether it has no
+\* transition after them, and otherwise the rule of its later transitions: its standard and daylight
+\* offsets in seconds, and the month, week, weekday, and local time in seconds of the start and of
+\* the end of daylight time. Else found is "rejected" where the host has no such time zone, and
+\* "unknown" where it may have one that this table leaves out. engine262 has none but UTC.
+HostTimeZone(key) == [found |-> "rejected"]
+
+\* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
+\* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==
-  LET thrown == IF r.c.type = "throw" THEN DescribeThrown(r.s, r.c.value) ELSE [name |-> <<>>, message |-> <<>>]
-  IN [ok |-> ~IsAbrupt(r), name |-> thrown.name, message |-> thrown.message, out |-> r.s.out]
+  LET rejected == {i \in 1..r.s.objs.size :
+                     LET o == HeapGet(r.s.objs, i) IN o.class = "promise" /\ o.slots.state = "rejected" /\ ~o.slots.isHandled}
+      ended == IF IsAbrupt(r) \/ rejected = {} THEN r
+               ELSE ThrowValue(r.s, HeapGet(r.s.objs, CHOOSE i \in rejected : \A j \in rejected : i <= j).slots.result)
+      thrown == IF ended.c.type = "throw" THEN DescribeThrown(ended.s, ended.c.value) ELSE [name |-> <<>>, message |-> <<>>]
+  IN [ok |-> ~IsAbrupt(ended), name |-> thrown.name, message |-> thrown.message, out |-> ended.s.out]

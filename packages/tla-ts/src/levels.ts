@@ -141,12 +141,12 @@ const createSignature = (
   nonLeibniz: new Set(),
 });
 
-const getMaxLevel = (operator: OperatorLevels, index: number) =>
+export const getMaxLevel = (operator: OperatorLevels, index: number) =>
   operator.formals.length === 0 && operator.maxLevels.length > 0
     ? operator.maxLevels[Math.min(index, operator.maxLevels.length - 1)]
     : (operator.maxLevels[index] ?? TEMPORAL_LEVEL);
 
-const getWeight = (operator: OperatorLevels, index: number) =>
+export const getWeight = (operator: OperatorLevels, index: number) =>
   operator.formals.length === 0 && operator.weights.length > 0
     ? operator.weights[Math.min(index, operator.weights.length - 1)]
     : (operator.weights[index] ?? 1);
@@ -187,12 +187,16 @@ const CORE_SIGNATURES = new Map(
   ]),
 );
 
-const SET_LEVELS = createSignature("$Set", 0, [2], [1]);
-const JUNCTION_LEVELS = createSignature("$Junction", 0, [3], [1]);
-const CHOOSE_LEVELS = createSignature("$Choose", 0, [2], [1]);
-const FUNCTION_LEVELS = createSignature("$Function", 0, [3], [1]);
-const APPLY_LEVELS = createSignature("$FcnApply", 0, [2, 2], [1, 1]);
-const SELECT_LEVELS = createSignature("$RcdSelect", 0, [2, 0], [1, 1]);
+export const SET_LEVELS = createSignature("$Set", 0, [2], [1]);
+export const JUNCTION_LEVELS = createSignature("$Junction", 0, [3], [1]);
+export const CHOOSE_LEVELS = createSignature("$Choose", 0, [2], [1]);
+export const FUNCTION_LEVELS = createSignature("$Function", 0, [3], [1]);
+export const APPLY_LEVELS = createSignature("$FcnApply", 0, [2, 2], [1, 1]);
+export const SELECT_LEVELS = createSignature("$RcdSelect", 0, [2, 0], [1, 1]);
+// The levels of a builtin operator or a standard module's operator, by name.
+export const getSignatureLevels = (name: string) =>
+  CORE_SIGNATURES.get(name) ?? STANDARD_LEVELS.get(name);
+
 const PRIME_LEVELS = createSignature("'", 2, [1], [0]);
 const ENABLED_LEVELS = createSignature("ENABLED", 1, [2], [0]);
 const TEMPORAL_LEVELS = createSignature("[]", 3, [3], [0]);
@@ -247,7 +251,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         levels: qualifiedName ? { ...levels, name: qualifiedName } : levels,
       };
     }
-    const signature = CORE_SIGNATURES.get(name) ?? STANDARD_LEVELS.get(name);
+    const signature = getSignatureLevels(name);
     if (signature) return { kind: "Defined", levels: signature };
     return { kind: "Declared", name, level: 0, arity: 0 };
   };

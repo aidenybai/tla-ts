@@ -78,10 +78,16 @@ import {
 } from "./standard-modules";
 import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
 import { resolveInstanceSubexpressions, resolveModuleSubexpressions } from "./subexpressions";
-import { checkModuleLevels, createLevelAnalyzer, type OperatorLevels } from "./levels";
+import {
+  checkModuleLevels,
+  createLevelAnalyzer,
+  getSignatureLevels,
+  type OperatorLevels,
+} from "./levels";
+import { checkPlainModule } from "./plain-module";
 import { createInstanceChecker, type InstanceCheck } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
-import { createDefinitionFacts } from "./dependencies";
+import { createDefinitionFacts, type PreparedFacts } from "./dependencies";
 import { createTlcOrder, type PreparedModule, type TlcOrder } from "./tlc/order";
 import { isTlcInteger, type Value } from "./values";
 import type { TlcVersion } from "./tlc/version";
@@ -105,6 +111,9 @@ interface EnvironmentOptions {
   moduleOperators?: ModuleOperator[];
 }
 
+// The operators that the analysis of a whole spec's levels takes as variables, which no plain module
+// reads.
+const RUNTIME_VARIABLES = ["TLCGet", "Trace", "CounterExample"];
 export interface ResolvedModuleOperator extends ModuleOperator {
   key: string | undefined;
 }
@@ -261,6 +270,10 @@ export const createEnvironment = (
   // The texts that the prepared modules whose levels a check links parse, or undefined for one that
   // doesn't say.
   const preparedTexts: (readonly string[] | undefined)[] = [];
+  const preparedValues: ReadonlyMap<Definition, Value>[] = [];
+  const preparedFacts = new Map<Definition, PreparedFacts>();
+  // The definitions that hold no wide string nor read a deserializer, as their modules tell.
+  const narrowDefinitions = new Set<Definition>();
   const parameterized = new Map<string, boolean>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
@@ -971,7 +984,26 @@ export const createEnvironment = (
     // SANY's checks found nothing in a module they accepted to instantiate or resolve, nor in a view
     // of it.
     const isAccepted = acceptedModules.has(unlinked) && parsed === unlinked;
-    const module = isAccepted
+    // A plain module, whose names and levels SANY's checks find in one pass, links as it is, where
+    // what it extends conflicts nowhere, which only the full checks report.
+    const plain =
+      isAccepted ||
+      runtime.version !== "master" ||
+      reports.some((report) => report.errors.length > 0 || report.warnings.length > 0)
+        ? undefined
+        : checkPlainModule(parsed, {
+            imported: visible,
+            getLevels: (name) => {
+              if (RUNTIME_VARIABLES.includes(name)) return undefined;
+              const key = visible.get(name)?.key ?? name;
+              if (definitions.has(key)) return preparedLevels.get(key);
+              return getSignatureLevels(name) ?? "declared";
+            },
+          });
+    const plainLevels = plain?.levels;
+    if (plain && !plain.isWide) parsed.definitions.forEach((item) => narrowDefinitions.add(item));
+    const isLinkedAsIs = isAccepted || plainLevels !== undefined;
+    const module = isLinkedAsIs
       ? parsed
       : resolveModuleSubexpressions(
           withLetInstances(parsed, (instance, lets) =>
@@ -979,10 +1011,19 @@ export const createEnvironment = (
           ),
           getAvailableDefinitions(visible),
         );
-    if (!isAccepted) scope.errors.push(...resolveModule(module, getUnit(module)));
+    if (!isLinkedAsIs) scope.errors.push(...resolveModule(module, getUnit(module)));
     const accepted = isAccepted ? order.getPreparedModule(parsed.name) : undefined;
-    const acceptedLevels = accepted?.levels;
+    const acceptedLevels = accepted?.levels ?? plainLevels;
     if (accepted) preparedTexts.push(accepted.texts?.parsed);
+    if (accepted?.values) preparedValues.push(accepted.values);
+    const acceptedFacts = accepted?.facts;
+    if (acceptedFacts) {
+      module.definitions.forEach((definition) => {
+        const facts = acceptedFacts.get(definition.name);
+        if (facts) preparedFacts.set(definition, facts);
+        if (facts && !facts.isWide) narrowDefinitions.add(definition);
+      });
+    }
     module.definitions.forEach((definition, position) => {
       const key = getKey(definition);
       definitions.set(key, definition);
@@ -1019,7 +1060,8 @@ export const createEnvironment = (
     const checks = instanceChecks
       .splice(firstCheck)
       .map((check) => ({ location: check.location, check: () => checkInstance(check) }));
-    if (isAccepted && checks.length === 0) {
+    if (isLinkedAsIs && checks.length === 0) {
+      if (plainLevels) options.onModuleLevels?.(module, plainLevels);
       linkOrder.push(linked);
       return linked;
     }
@@ -1121,17 +1163,18 @@ export const createEnvironment = (
     variables,
     linkOrder.flatMap((linked) => linked.module.variables.map((variable) => variable.name)),
   );
-  const facts = createDefinitionFacts({
-    definitions,
-    substitutions,
-    constants,
-    variableIndex,
-    builtins,
-    variables,
-  });
-  const runtimeVariables = ["TLCGet", "Trace", "CounterExample"].filter((name) =>
-    builtins.has(name),
+  const facts = createDefinitionFacts(
+    {
+      definitions,
+      substitutions,
+      constants,
+      variableIndex,
+      builtins,
+      variables,
+    },
+    preparedFacts,
   );
+  const runtimeVariables = RUNTIME_VARIABLES.filter((name) => builtins.has(name));
   // A prepared module's levels hold here where it reads none of the operators that this analysis
   // takes as variables.
   const isPreparedLevelsLinked = preparedTexts.every(
@@ -1153,6 +1196,7 @@ export const createEnvironment = (
     variables,
     variableIndex,
     facts,
+    narrowDefinitions,
     startupValues: Array.from({ length: facts.ids.size }, (): Value | undefined => undefined),
     substitutedDefinitions,
     instanceParams,
@@ -1163,6 +1207,12 @@ export const createEnvironment = (
     nextRunners: new WeakMap(),
     getOperatorLevels: analyzer.getOperatorLevels,
   };
+  preparedValues.forEach((values) =>
+    values.forEach((value, definition) => {
+      const id = facts.ids.get(definition);
+      if (id !== undefined) environment.startupValues[id] = value;
+    }),
+  );
   const getEvaluationError = (body: Expression) => {
     try {
       evaluate(body, { environment, scope: undefined, state: undefined, next: undefined });

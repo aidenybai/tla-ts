@@ -296,6 +296,56 @@ const createVarFunctionsFile = (
   return declared === text ? file : createFile(fileName, declared, languageVersion);
 };
 
+// The module that a file's literal names, for a file whose imports load as Node loads them where
+// isValue: TypeScript's resolution, where TypeScript compiles the module's code itself or only
+// types read it, and else the file that Node loads, as a package or JavaScript, though a package
+// may give its types, which isDeclared tells.
+const resolveLiteral = (
+  literal: ts.StringLiteralLike,
+  containingSourceFile: ts.SourceFile,
+  isValue: boolean,
+  options: ts.CompilerOptions,
+  host: ts.CompilerHost,
+  redirectedReference: ts.ResolvedProjectReference | undefined,
+): { module: ts.ResolvedModuleWithFailedLookupLocations; isDeclared: boolean } => {
+  const containingFile = containingSourceFile.fileName;
+  const resolved =
+    isJavaScriptFile(containingFile) && isValue
+      ? undefined
+      : ts.resolveModuleName(
+          literal.text,
+          containingFile,
+          options,
+          host,
+          undefined,
+          redirectedReference,
+        );
+  // tla-ts reads JSON's value as any, which the declaration of JSON's modules gives.
+  if (resolved?.resolvedModule?.extension === ts.Extension.Json) {
+    return { module: { resolvedModule: undefined }, isDeclared: false };
+  }
+  if (
+    resolved !== undefined &&
+    (!isValue ||
+      CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "") ||
+      containingSourceFile.isDeclarationFile ||
+      isTypeImport(literal))
+  ) {
+    return { module: resolved, isDeclared: false };
+  }
+  const found = resolveModule(literal, containingFile);
+  const extension = found === undefined ? undefined : getExtension(found);
+  if (found === undefined || extension === undefined || extension === ts.Extension.Json) {
+    return { module: resolved ?? { resolvedModule: undefined }, isDeclared: false };
+  }
+  return {
+    module: {
+      resolvedModule: { resolvedFileName: found, extension, isExternalLibraryImport: false },
+    },
+    isDeclared: resolved?.resolvedModule !== undefined,
+  };
+};
+
 // The project of the nearest tsconfig.json, where it holds the file, as an editor finds it.
 const getProject = (path: string) => {
   if (!ts.sys.fileExists(path)) return undefined;
@@ -332,6 +382,17 @@ const getProjectOptions = (options: ts.CompilerOptions): ts.CompilerOptions => (
   // An option that TypeScript deprecates still works as it did, and Node reads none of them.
   ignoreDeprecations: "6.0",
 });
+
+// The file that a literal of a model's file loads as the model runs, as createProgram resolves
+// it for the model at path, or undefined where none does.
+export const createFileResolver = (path: string) => {
+  const project = getProject(path);
+  const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
+  const host = ts.createCompilerHost(options);
+  return (literal: ts.StringLiteralLike) =>
+    resolveLiteral(literal, literal.getSourceFile(), true, options, host, undefined).module
+      .resolvedModule?.resolvedFileName;
+};
 
 // Type checks a model, with the files it imports, and throws their type errors. A file of a project
 // on disk type checks with the project's options, and where it needs them, as in an editor, the
@@ -382,41 +443,17 @@ export const createProgram = (
       resolutionOptions: ts.CompilerOptions,
       containingSourceFile: ts.SourceFile,
     ) =>
-      literals.map((literal): ts.ResolvedModuleWithFailedLookupLocations => {
-        const isValue = valueFiles === undefined || valueFiles.has(containingFile);
-        const resolved =
-          isJavaScriptFile(containingFile) && isValue
-            ? undefined
-            : ts.resolveModuleName(
-                literal.text,
-                containingFile,
-                resolutionOptions,
-                host,
-                undefined,
-                redirectedReference,
-              );
-        // tla-ts reads JSON's value as any, which the declaration of JSON's modules gives.
-        if (resolved?.resolvedModule?.extension === ts.Extension.Json) {
-          return { resolvedModule: undefined };
-        }
-        if (resolved !== undefined && !isValue) return resolved;
-        if (
-          resolved !== undefined &&
-          (CODE_EXTENSIONS.has(resolved.resolvedModule?.extension ?? "") ||
-            containingSourceFile.isDeclarationFile ||
-            isTypeImport(literal))
-        ) {
-          return resolved;
-        }
-        const found = resolveModule(literal, containingFile);
-        const extension = found === undefined ? undefined : getExtension(found);
-        if (found === undefined || extension === undefined || extension === ts.Extension.Json) {
-          return resolved ?? { resolvedModule: undefined };
-        }
-        if (resolved?.resolvedModule !== undefined) isDeclared = true;
-        return {
-          resolvedModule: { resolvedFileName: found, extension, isExternalLibraryImport: false },
-        };
+      literals.map((literal) => {
+        const resolution = resolveLiteral(
+          literal,
+          containingSourceFile,
+          valueFiles === undefined || valueFiles.has(containingFile),
+          resolutionOptions,
+          host,
+          redirectedReference,
+        );
+        if (resolution.isDeclared) isDeclared = true;
+        return resolution.module;
       });
   // HACK: a write outside strict mode to a name that no binding has makes a global, which the text
   // gains a var for, at its start, so that the name binds wherever it's written or read. The

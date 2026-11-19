@@ -14,6 +14,9 @@ import { check } from "../src/parallel";
 import { STRING_METHODS } from "../src/typescript/collections";
 import { getIndexedKind, INDEX_PARAMETERS, SET_LIKE_METHODS } from "../src/typescript/types";
 import { compile } from "../src/typescript/compile";
+import { printModule } from "../src/printer";
+import { compileToEscore } from "../src/typescript/spec/compile";
+import { prepareRuntime } from "../src/typescript/spec/prepare";
 import { CONFORMANCE_DIRECTORY, listTest262Files, TEST262_DIRECTORY } from "./corpora";
 
 type Outcome = "pass" | "wrong" | "untranslatable" | "skipped";
@@ -4201,19 +4204,39 @@ const getScriptError = (source: string, path: string, isSloppy: boolean) => {
   return run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
 };
 
+// TLA_TS_ESCORE=1 compiles with the backend that specializes ESCore instead, and TLA_TS_STATS=1
+// prints each check's compile and check time and its module's size.
+const ESCORE =
+  process.env.TLA_TS_ESCORE === undefined
+    ? undefined
+    : prepareRuntime(join(import.meta.dirname, "../ecmascript"));
+
 // Compiles a program and checks it, where a TypeScript error gives the run that onTypeError makes.
 const checkProgram = async (
   id: string,
   program: string,
   path: string,
+  isModule: boolean,
   scripts: readonly string[],
   onTypeError: (reason: string) => TestRun | Promise<TestRun>,
 ): Promise<TestRun> => {
   try {
-    const result = await check({
-      ...compile(program, path, undefined, false, scripts),
-      onPrint: () => {},
-    });
+    const start = performance.now();
+    const spec =
+      ESCORE === undefined
+        ? compile(program, path, undefined, false, scripts)
+        : compileToEscore(program, path, ESCORE, isModule);
+    const compiled = performance.now();
+    const result = await check({ ...spec, onPrint: () => {} });
+    if (process.env.TLA_TS_STATS !== undefined) {
+      // The ESCore backend's spec is its root module and the program's code.
+      const size =
+        (typeof spec.source === "string" ? spec.source.length : printModule(spec.source).length) +
+        (spec.loadModule?.("ProgramCode")?.length ?? 0);
+      console.log(
+        `STATS ${id} compile=${Math.round(compiled - start)} check=${Math.round(performance.now() - compiled)} size=${size}`,
+      );
+    }
     if (result.status === "success" || result.status === "deadlock") {
       return { id, outcome: "pass", reason: "" };
     }
@@ -4332,7 +4355,7 @@ const runJavaScriptTest = async (
       run.stderr.split("\n").find((line) => /^\w*Error\b/.test(line)) ?? `exit ${run.status}`;
     return { id, outcome: "skipped", reason: `Node fails as JavaScript: ${nodeError}` };
   }
-  return checkProgram(id, tla.test, tla.testPath, [], (reason) => ({
+  return checkProgram(id, tla.test, tla.testPath, true, [], (reason) => ({
     id,
     outcome: "skipped",
     reason: `type error as JavaScript: ${reason}`,
@@ -4406,7 +4429,7 @@ const runJavaScriptScriptTest = async (
   mkdirSync(dirname(testPath), { recursive: true });
   writeFileSync(harnessPath, harness);
   writeFileSync(testPath, source);
-  return checkProgram(id, source, testPath, [harnessPath], (reason) => ({
+  return checkProgram(id, source, testPath, false, [harnessPath], (reason) => ({
     id,
     outcome: "skipped",
     reason: `type error as JavaScript: ${reason}`,
@@ -4470,18 +4493,25 @@ const runTest = async (path: string): Promise<TestRun> => {
   // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
   // import of the test's .js path to the test's code rather than to the .js that Node runs.
   if (isLinked) writeFileSync(programPath, program);
-  // A test outside strict mode runs as a script, and can't import fixtures as one.
-  return checkProgram(id, program, isLinked ? programPath : "test262.ts", [], (reason) =>
-    isSloppy && isLinked
-      ? { id, outcome: "skipped", reason: `type error: ${reason}` }
-      : isSloppy
-        ? runJavaScriptScriptTest(id, source, metadata)
-        : runJavaScriptTest(
-            id,
-            metadata.isModule ? source : nameGlobalObject(source),
-            metadata,
-            fixtures,
-          ),
+  // A test outside strict mode runs as a script, and can't import fixtures as one. The ESCore
+  // backend compiles one script, so it can't run one after the harness's.
+  return checkProgram(
+    id,
+    program,
+    isLinked ? programPath : "test262.ts",
+    metadata.isModule,
+    [],
+    (reason) =>
+      isSloppy && (isLinked || ESCORE !== undefined)
+        ? { id, outcome: "skipped", reason: `type error: ${reason}` }
+        : isSloppy
+          ? runJavaScriptScriptTest(id, source, metadata)
+          : runJavaScriptTest(
+              id,
+              metadata.isModule ? source : nameGlobalObject(source),
+              metadata,
+              fixtures,
+            ),
   );
 };
 

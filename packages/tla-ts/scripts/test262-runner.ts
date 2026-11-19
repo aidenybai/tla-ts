@@ -338,10 +338,12 @@ export const createRunner = () => {
           : message;
     }
     if (!isOk) return message || "threw";
+    // An async test fails once it reports a failure, even if it later calls $DONE again.
     if (isAsync) {
-      return out.includes("Test262:AsyncTestComplete")
-        ? undefined
-        : (out.find((line) => line.startsWith("Test262:AsyncTestFailure")) ?? "never finished");
+      return (
+        out.find((line) => line.startsWith("Test262:AsyncTestFailure")) ??
+        (out.includes("Test262:AsyncTestComplete") ? undefined : "never finished")
+      );
     }
     return undefined;
   };

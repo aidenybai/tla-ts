@@ -1,5 +1,4 @@
 import {
-  getChildren,
   isLocallyResolved,
   type Assumption,
   type Definition,
@@ -27,6 +26,8 @@ import {
   isConstantLevel,
   isExpressionImpure,
   isImpureDefinition,
+  isWideDefinition,
+  isWideString,
 } from "./dependencies";
 import { createEnvironment, type ResolvedModuleOperator } from "./environment";
 import {
@@ -670,19 +671,10 @@ const isUnchangedFor = (stateCheck: StateCheck, state: Value[], parent: Value[] 
   return true;
 };
 
-const WIDE_CHARACTER = /[\u0100-\uffff]/;
-
-const DESERIALIZERS = new Set(["JsonDeserialize", "ndJsonDeserialize"]);
-
 const isWideConfigValue = (value: ConfigValue): boolean =>
   value.kind === "String"
-    ? WIDE_CHARACTER.test(value.value)
+    ? isWideString(value.value)
     : value.kind === "Set" && value.elements.some(isWideConfigValue);
-
-const isWideExpression = (expression: Expression): boolean =>
-  (expression.kind === "String" && WIDE_CHARACTER.test(expression.value)) ||
-  (expression.kind === "Apply" && DESERIALIZERS.has(expression.operator)) ||
-  getChildren(expression).some(isWideExpression);
 
 // TLC fingerprints a string by the low byte of each character, so it merges states whose strings differ only above U+00FF.
 const hasWideString = (config: ModelConfig, environment: Environment) =>
@@ -691,10 +683,7 @@ const hasWideString = (config: ModelConfig, environment: Environment) =>
       isWideConfigValue(constant.value) || (constant.args ?? []).some(isWideConfigValue),
   ) ||
   [...environment.definitions.values()].some(
-    (definition) =>
-      isWideExpression(definition.body) ||
-      (definition.kind === "Function" &&
-        definition.bounds.some((bound) => isWideExpression(bound.set))),
+    (definition) => !environment.narrowDefinitions.has(definition) && isWideDefinition(definition),
   );
 
 export interface Search {

@@ -170,6 +170,8 @@ export interface Environment {
   variables: string[];
   variableIndex: Map<string, number>;
   facts: DefinitionFacts;
+  // The definitions that their modules tell hold no wide string nor read a deserializer.
+  narrowDefinitions: ReadonlySet<Definition>;
   startupValues: (Value | undefined)[];
   substitutedDefinitions: Set<Definition>;
   instanceParams: Set<OperatorParam>;
