@@ -1747,12 +1747,12 @@ export const createSearch = (
         throw setExitCode(new TlaEvaluationError(rejection), EXIT_STATUS.configParseError);
       }
       const findViolation = (name: string, key: string) => {
+        const body = getDefinition(key, environment)?.body;
         const failure = getConstantFailure(
-          (context) => holdsLikeTlc(createIdentifier(key), context),
+          (context) => holdsLikeTlc(body ?? createIdentifier(key), context),
           environment,
         );
         if (!failure) return undefined;
-        const body = getDefinition(key, environment)?.body;
         const range = getBodyRange(key, environment);
         const location = range
           ? ` at ${body?.kind === "Number" ? describeNode(body) : formatRange(range)}`

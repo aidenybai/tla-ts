@@ -1649,6 +1649,26 @@ ASSUME TLCFP(a) = -887695703
     ]).toEqual([[[], ["2"]], ["3"]]);
   });
 
+  it("evaluates the body of a constant postcondition from another module again after the search, as TLC's ParameterizedSpecObj does", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x < 2 /\\ x' = x + 1\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Extra"
+          ? '---- MODULE Extra ----\nEXTENDS TLC\nP == PrintT(<<"zeta", "eta">>)\n===='
+          : undefined,
+      moduleOperators: [{ kind: "postcondition", module: "Extra", operator: "P" }],
+      onPrint: (text) => printed.push(text),
+    });
+    expect([result.status, printed, result.violation?.postconditionOutput]).toEqual([
+      "deadlock",
+      ['<<"zeta", "eta">>'],
+      ['<<"zeta", "eta">>'],
+    ]);
+  });
+
   it("rebuilds the step to a successor under a VIEW once, as TLC's TLCTrace#printTrace does", async () => {
     const result = await check({
       source:
