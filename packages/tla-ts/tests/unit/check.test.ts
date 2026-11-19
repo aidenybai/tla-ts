@@ -1516,6 +1516,35 @@ ASSUME TLCFP(a) = -887695703
     }
   });
 
+  it("evaluates the definition a <- gives a symmetry, and the body of one with parameters, like TLC", async () => {
+    const statuses = await Promise.all(
+      [
+        [
+          "CONSTANTS A, N\nPerms == Permutations(A)",
+          "CONSTANT A = {a1, a2} N <- Perms\nSYMMETRY N",
+        ],
+        [
+          "CONSTANT A\nPerms == Permutations(A)\nDef == 3",
+          "CONSTANT A = {a1, a2} Def <- Perms\nSYMMETRY Def",
+        ],
+      ].map(async (item) => (await checkModule(item[0], item[1])).status),
+    );
+    expect(statuses).toEqual(["success", "success"]);
+    await expect(checkModule("P(S) == Permutations(S)", "SYMMETRY P")).rejects.toThrow(
+      new TlaEvaluationError(
+        "In evaluation, the identifier S is either undefined or not an operator.\nline 6, col 22 to line 6, col 22 of module M",
+      ),
+    );
+  });
+
+  it("evaluates the definition a [Mod] <- gives a symmetry, where TLC throws a ClassCastException", async () => {
+    const result = await checkModule(
+      "CONSTANT A\nPerms == Permutations(A)\nDef == 3",
+      "CONSTANT A = {a1, a2} Def <- [M] Perms\nSYMMETRY Def",
+    );
+    expect(result.status).toBe("success");
+  });
+
   it.each([
     [
       "{(a :> b)[b]}",
