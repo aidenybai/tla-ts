@@ -26,6 +26,8 @@ export interface KernelParams {
   intHammerPeriod?: number;
   isArithPropagatingEqs?: boolean;
   qiCost?: string;
+  qiEagerThreshold?: number;
+  qiLazyThreshold?: number;
   // A kernel without a setup runs as with auto_config false.
   setup?: SmtSetup;
 }
@@ -58,6 +60,8 @@ export const solveGoal = (manager: AstManager, forms: number[], params: KernelPa
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,
     qiCost: params.qiCost,
+    qiEagerThreshold: params.qiEagerThreshold,
+    qiLazyThreshold: params.qiLazyThreshold,
   });
   if (!assertForms(context, asserted, forms)) {
     manager.limit.release();
@@ -103,6 +107,8 @@ export const solveAssuming = (
     intHammerPeriod: params.intHammerPeriod,
     isArithPropagatingEqs: params.isArithPropagatingEqs,
     qiCost: params.qiCost,
+    qiEagerThreshold: params.qiEagerThreshold,
+    qiLazyThreshold: params.qiLazyThreshold,
   });
   if (!assertForms(context, asserted, assertions)) {
     manager.limit.release();

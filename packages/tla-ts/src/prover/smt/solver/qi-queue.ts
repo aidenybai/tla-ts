@@ -8,7 +8,6 @@ import { VarSubst } from "./var-subst";
 import { setAt, shrink } from "./array";
 
 const EAGER_COST_THRESHOLD = 10;
-const LAZY_COST_THRESHOLD = 20;
 
 const getConstantCost = (text: string | undefined) => {
   if (text === undefined || text === "(+ weight generation)") return undefined;
@@ -215,10 +214,13 @@ export class QiQueue {
   private lemmas: RefVector;
   private costExprs: number[];
   private constantCost: number | undefined;
+  private eagerCostThreshold: number;
   numInstances = 0;
 
   constructor(private context: Context) {
     const manager = context.manager;
+    // qi_queue::setup reads the eager threshold before the setup tunes the parameters.
+    this.eagerCostThreshold = context.params.qiEagerThreshold ?? EAGER_COST_THRESHOLD;
     this.checker = new Checker(context);
     const constantCost = getConstantCost(context.params.qiCost);
     this.costExprs = manager.mkQiCostExprs(constantCost);
@@ -282,7 +284,7 @@ export class QiQueue {
     let sinceLastCheck = 0;
     for (const entry of entries) {
       if (context.checkCanceled()) break;
-      if (entry.cost <= EAGER_COST_THRESHOLD) this.instantiateEntry(entry);
+      if (entry.cost <= this.eagerCostThreshold) this.instantiateEntry(entry);
       else if (
         this.checker.isUnsat(context.manager.getQuantifier(entry.quantifier).body, entry.bindings)
       )
@@ -330,7 +332,7 @@ export class QiQueue {
     let result = true;
     for (let index = 0; index < this.delayedEntries.length; index++) {
       const entry = this.delayedEntries[index];
-      if (entry.isInstantiated || entry.cost > LAZY_COST_THRESHOLD) continue;
+      if (entry.isInstantiated || entry.cost > this.context.config.qiLazyThreshold) continue;
       result = false;
       this.instantiatedTrail.push(index);
       this.instantiateEntry(entry);

@@ -172,6 +172,8 @@ export interface SmtParams {
   intHammerPeriod?: number;
   isArithPropagatingEqs?: boolean;
   qiCost?: string;
+  qiEagerThreshold?: number;
+  qiLazyThreshold?: number;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
 }
@@ -230,6 +232,7 @@ export class Context extends Internalizer {
     this.config = {
       ...DEFAULT_CONFIG,
       isArithPropagatingEqs: params.isArithPropagatingEqs ?? true,
+      qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
     };
   }
 
@@ -262,6 +265,8 @@ export class Context extends Internalizer {
     this.params.intHammerPeriod = params.intHammerPeriod;
     this.params.isArithPropagatingEqs = params.isArithPropagatingEqs;
     this.params.qiCost = params.qiCost;
+    this.params.qiEagerThreshold = params.qiEagerThreshold;
+    this.params.qiLazyThreshold = params.qiLazyThreshold;
     this.arith?.updateParams();
     this.config = {
       ...DEFAULT_CONFIG,
@@ -274,6 +279,7 @@ export class Context extends Internalizer {
       isEliminatingTermIte: this.config.isEliminatingTermIte,
       isEliminatingBounds: this.config.isEliminatingBounds,
       arithPropagationThreshold: this.config.arithPropagationThreshold,
+      qiLazyThreshold: params.qiLazyThreshold ?? DEFAULT_CONFIG.qiLazyThreshold,
     };
   }
 
