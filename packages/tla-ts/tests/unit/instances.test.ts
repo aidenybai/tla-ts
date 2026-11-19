@@ -400,6 +400,28 @@ describe("INSTANCE matches TLC", () => {
     });
     expect([result.status, prints]).toEqual(["success", ["<<2, 3, -3, TRUE, <<1, 2>>, 1>>"]]);
   });
+
+  it("applies an operator of a standard module instanced with parameters to its own arguments, where TLC fails", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nS(a) == INSTANCE Sequences\nN(a) == INSTANCE Naturals\nAp(Op(_, _, _), v) == Op(1, v, 2)\nASSUME PrintT(<<S(1)!Append(<<5>>, 1), S(1)!Len(<<5>>), N(1)!+(2, 3), Ap(S!Append, <<4>>)>>)\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["<<<<5, 1>>, 1, 5, <<4, 2>>>>"]]);
+  });
+
+  it("selects into an operator of a standard module instanced with parameters like TLC", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nS(a) == INSTANCE Sequences\nASSUME PrintT(<<S(5)!Append(<<1>>, 2)!1, S(5)!Len(<<1, 2>>)!1>>)\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["<<<<1>>, Nat>>"]]);
+  });
 });
 
 const INNER_MODULES: Record<string, string> = {

@@ -590,7 +590,13 @@ export const createEnvironment = (
     resolved: Symbols,
   ): Symbols => {
     const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
-    if (standardSymbols) return getStandardInstanceSymbols(instance, standardSymbols);
+    if (standardSymbols) {
+      return getStandardInstanceSymbols(instance, standardSymbols, (symbol, name) =>
+        instance.params.length > 0
+          ? addOwnArgumentsAlias(symbol, name, instance.params, module.name, instance.location)
+          : symbol.key,
+      );
+    }
     const linked = nested ?? getLinkedModule(instance.module, module.name);
     const declarations = getDeclarations(linked);
     const suffix = `#${copyCount++}`;
@@ -704,20 +710,14 @@ export const createEnvironment = (
     });
   };
 
-  const getStandardInstanceSymbols = (instance: Instance, standardSymbols: Symbols): Symbols =>
+  const getStandardInstanceSymbols = (
+    instance: Instance,
+    standardSymbols: Symbols,
+    getKey: (symbol: ModuleSymbol, name: string) => string,
+  ): Symbols =>
     instance.name === undefined
       ? standardSymbols
-      : new Map(
-          [...standardSymbols].map((entry) => [
-            `${instance.name}!${entry[0]}`,
-            {
-              key: entry[1].key,
-              arity: entry[1].arity,
-              params: entry[1].params,
-              kind: entry[1].kind,
-            },
-          ]),
-        );
+      : getInstanceSymbols(instance, standardSymbols, [], getKey);
 
   const getInstanceSymbols = (
     instance: Instance,
@@ -1122,7 +1122,7 @@ export const createEnvironment = (
         if (standardSymbols) {
           return {
             declarations: [],
-            symbols: getStandardInstanceSymbols(instance, standardSymbols),
+            symbols: getStandardInstanceSymbols(instance, standardSymbols, (symbol) => symbol.key),
             instancer: parsed.name,
           };
         }
