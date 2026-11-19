@@ -720,15 +720,11 @@ const getQualifiedSelectors = (
   args: Expression[],
   counts: number[] | undefined,
   lookup: Lookup,
-  getStandardDefinition: Lookup,
 ) => {
   if (!name.includes("!") || lookup(name)) return undefined;
   const parts = name.split("!");
-  const isSelection = parts.some((_part, index) => {
-    const prefix = parts.slice(0, index + 1).join("!");
-    return lookup(prefix) ?? (index < parts.length - 1 ? getStandardDefinition(prefix) : undefined);
-  });
-  return isSelection ? getNameSelectors(name, args, counts) : undefined;
+  if (!parts.some((_part, index) => lookup(parts.slice(0, index + 1).join("!")))) return undefined;
+  return getNameSelectors(name, args, counts);
 };
 
 const containsReference = (expression: Expression): boolean =>
@@ -833,15 +829,9 @@ const resolveSubexpressions = (
     mapped.kind === "Subexpression"
       ? mapped.selectors
       : mapped.kind === "Identifier"
-        ? getQualifiedSelectors(mapped.name, [], undefined, lookup, getStandardDefinition)
+        ? getQualifiedSelectors(mapped.name, [], undefined, lookup)
         : mapped.kind === "Apply"
-          ? getQualifiedSelectors(
-              mapped.operator,
-              mapped.args,
-              mapped.argumentCounts,
-              lookup,
-              getStandardDefinition,
-            )
+          ? getQualifiedSelectors(mapped.operator, mapped.args, mapped.argumentCounts, lookup)
           : undefined;
   const first = selectors?.[0];
   const setGeneratedArguments = (count: number) => {
