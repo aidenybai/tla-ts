@@ -1007,7 +1007,6 @@ describe("the optimizer releases what Z3 releases", () => {
         parameters: new Map(),
         hasDefinitions: () => false,
         destructors: [],
-        cleanups: [],
         inits: [],
       },
       { getBaseModel: () => null, setModel: () => {} },
@@ -2627,6 +2626,31 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
         "(get-value (w q))",
       ]),
     ).toEqual(["sat", "sat", "((w #xd)\n (q true))"]);
+  });
+
+  it("keeps the shared terms of propagate-values until the whole tactic of apply ends", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 3))",
+        "(declare-const y (_ BitVec 3))",
+        "(assert (bvule (bvor (bvmul y y) x) (bvor y x)))",
+        "(assert (= x (_ bv3 3)))",
+        "(apply (and-then propagate-values bit-blast bv-divrem-bounds))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (let ((a!1 (= (= (or (not k!0) (not k!2)) k!1) (or (not k!0) (not k!1)))))",
+        "  (let ((a!2 (not (= (or (not k!0) (not k!2)) a!1))))",
+        "    (or k!2 a!2)))",
+        "  (not k!5)",
+        "  k!3",
+        "  k!4",
+        "  :precision precise :depth 3)",
+        ")",
+      ].join("\n"),
+    ]);
   });
 
   it("frees the model converter of apply's goal, so the next bit-blast numbers its bits anew", () => {

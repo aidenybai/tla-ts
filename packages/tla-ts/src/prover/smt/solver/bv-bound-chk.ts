@@ -471,22 +471,41 @@ class BvBoundChkRewriter extends RewriterTpl {
   }
 }
 
-export const runBvBoundChk = (manager: AstManager, limit: number) => (goal: Goal) => {
-  if (goal.isProofsEnabled)
-    throw new SmtTacticError("bv-bound-chk does not support proof production");
-  if (goal.isCoresEnabled)
-    throw new SmtTacticError("bv-bound-chk does not support unsat core production");
-  const rewriter = new BvBoundChkRewriter(manager, limit);
-  let rewritten = -1;
-  const size = goal.forms.size;
-  for (let index = 0; index < size && !goal.isInconsistent; index++) {
-    const next = rewriter.rewrite(goal.forms.items[index]);
+// The rewriter's cache lives until the tactic's cleanup.
+export class BvBoundChkTactic {
+  private rewriter: BvBoundChkRewriter | undefined;
+
+  constructor(
+    private manager: AstManager,
+    private limit: number,
+  ) {}
+
+  run(goal: Goal) {
+    const manager = this.manager;
+    if (goal.isProofsEnabled)
+      throw new SmtTacticError("bv-bound-chk does not support proof production");
+    if (goal.isCoresEnabled)
+      throw new SmtTacticError("bv-bound-chk does not support unsat core production");
+    const rewriter = (this.rewriter ??= new BvBoundChkRewriter(manager, this.limit));
+    let rewritten = -1;
+    const size = goal.forms.size;
+    for (let index = 0; index < size && !goal.isInconsistent; index++) {
+      const next = rewriter.rewrite(goal.forms.items[index]);
+      release(manager, rewritten);
+      rewritten = next;
+      goal.update(index, rewritten);
+    }
     release(manager, rewritten);
-    rewritten = next;
-    goal.update(index, rewritten);
+    goal.depth++;
+    return [goal];
   }
-  release(manager, rewritten);
-  rewriter.release();
-  goal.depth++;
-  return [goal];
-};
+
+  cleanup() {
+    this.rewriter?.release();
+    this.rewriter = undefined;
+  }
+
+  release() {
+    this.rewriter?.release();
+  }
+}

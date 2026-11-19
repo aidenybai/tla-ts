@@ -115,12 +115,17 @@ interface ReduceFrame {
   spos: number;
 }
 
+interface Substitution {
+  readonly size: number;
+  get(expr: number): number | undefined;
+}
+
 export class Rewriter extends RewriterTpl {
   private arith: ArithRewriter;
   private bv: BvRewriter;
   private array: ArrayRewriter;
   private seq: SeqRewriter;
-  private substitution = new Map<number, number>();
+  private substitution: Substitution = new Map<number, number>();
   private substitutionDependencies = new Map<number, Dependency | undefined>();
   usedDependencies: Dependency | undefined;
   private unusedVarsEliminator: UnusedVarsEliminator;
@@ -209,7 +214,7 @@ export class Rewriter extends RewriterTpl {
 
   // The caller may extend the substitution between rewrites without a reset.
   setSubstitution(
-    substitution: Map<number, number>,
+    substitution: Substitution,
     dependencies = new Map<number, Dependency | undefined>(),
   ) {
     this.substitution = substitution;

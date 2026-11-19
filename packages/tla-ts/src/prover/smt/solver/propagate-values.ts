@@ -1,6 +1,7 @@
 import { setAt, shrink } from "./array";
 import { KIND_APP, KIND_QUANTIFIER, OP_EQ, type AstManager } from "./ast";
 import { type Dependency, type Goal, joinDependencies } from "./goal";
+import { ObjMap } from "./hashtable";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
 // Quantifier bodies are included and patterns excluded.
@@ -43,9 +44,10 @@ class SharedOccs {
   }
 }
 
+// Its rewriter, substitution and shared occurrences live from one run until its cleanup.
 export class PropagateValuesTactic {
   private rewriter: Rewriter | undefined;
-  private readonly substitution = new Map<number, number>();
+  private readonly substitution: ObjMap<number>;
   private readonly dependencies = new Map<number, Dependency | undefined>();
   private readonly occs: SharedOccs;
 
@@ -54,19 +56,19 @@ export class PropagateValuesTactic {
     private readonly maxRounds = 4,
     private readonly options = TACTIC_REWRITER_OPTIONS,
   ) {
+    this.substitution = new ObjMap((expr) => manager.hashes[expr]);
     this.occs = new SharedOccs(manager);
   }
 
   run(goal: Goal) {
     const manager = this.manager;
     goal.depth++;
-    if (goal.isInconsistent) return;
-    if (goal.isProofsEnabled) {
+    if (goal.isInconsistent || this.maxRounds === 0 || goal.isProofsEnabled) {
       goal.elimRedundancies();
       return;
     }
-    const rewriter = new Rewriter(manager, this.options);
-    this.rewriter = rewriter;
+    this.releaseSubstitution();
+    const rewriter = (this.rewriter ??= new Rewriter(manager, this.options));
     const substitution = this.substitution;
     const dependencies = this.dependencies;
     rewriter.setSubstitution(substitution, dependencies);
@@ -149,6 +151,13 @@ export class PropagateValuesTactic {
     this.rewriter = undefined;
     this.releaseSubstitution();
     this.occs.reset();
+  }
+
+  // The destructor frees the members in the reverse of the order cleanup does.
+  release() {
+    this.occs.reset();
+    this.releaseSubstitution();
+    this.rewriter?.release();
   }
 }
 

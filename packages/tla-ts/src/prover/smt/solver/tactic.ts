@@ -30,7 +30,7 @@ import { fixDlVar } from "./fix-dl-var";
 import { runFpa2Bv } from "./fpa2bv-tactic";
 import { type BitBlasterRewriter, runBitBlast } from "./bit-blast-tactic";
 import { runMaxBvSharing } from "./max-bv-sharing-tactic";
-import { runBvBoundChk } from "./bv-bound-chk";
+import { BvBoundChkTactic } from "./bv-bound-chk";
 import { runBvDivremBounds } from "./bv-divrem-bounds";
 import { createBv1Blast } from "./bv1-blast";
 import { runReduceBvSize } from "./reduce-bv-size";
@@ -65,7 +65,7 @@ import { Rational } from "./rational";
 import { runNlsat } from "./nlsat-tactic";
 import { runNlqsat } from "./nlqsat";
 import { occf } from "./occf";
-import { propagateValues, type PropagateValuesTactic } from "./propagate-values";
+import { PropagateValuesTactic } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
@@ -114,9 +114,34 @@ interface ParamDescrs {
   get(name: string): ParamDescr | undefined;
 }
 
+// cleanup is Z3's tactic::cleanup, which exec runs at the end and the tacticals forward.
 export interface Tactic {
   (goal: Goal): Goal[];
+  cleanup?: () => void;
 }
+
+// A property on a function is slow to add, so a tactic that has nothing to clean goes without one.
+const withCleanup = (run: (goal: Goal) => Goal[], cleanup: (() => void) | undefined): Tactic =>
+  cleanup === undefined ? run : Object.assign(run, { cleanup });
+
+const hasCleanup = (tactics: Tactic[]) => tactics.some((tactic) => tactic.cleanup !== undefined);
+
+// binary_tactical and unary_tactical reach their children only after a run.
+const withGuardedCleanup = (run: (goal: Goal) => Goal[], children: Tactic[]) => {
+  if (!hasCleanup(children)) return run;
+  let isClean = true;
+  return withCleanup(
+    (goal) => {
+      isClean = false;
+      return run(goal);
+    },
+    () => {
+      if (isClean) return;
+      for (const child of children) child.cleanup?.();
+      isClean = true;
+    },
+  );
+};
 
 export interface TacticEnvironment {
   manager: AstManager;
@@ -128,7 +153,6 @@ export interface TacticEnvironment {
   parameters: ReadonlyMap<string, string>;
   hasDefinitions: () => boolean;
   destructors: (() => void)[];
-  cleanups: (() => void)[];
   inits: (() => void)[];
 }
 
@@ -472,19 +496,19 @@ const runParallelSmt = (environment: TacticEnvironment) => (goal: Goal) => {
 const createTacticSolver = (environment: TacticEnvironment, strategy: string): AckrSolver => {
   const manager = environment.manager;
   const destructors: (() => void)[] = [];
-  const cleanups: (() => void)[] = [];
   const inits: (() => void)[] = [];
-  const tactic = compileInternalTactic({ ...environment, destructors, cleanups, inits }, strategy);
+  const tactic = compileInternalTactic({ ...environment, destructors, inits }, strategy);
   const assertions = new RefVector(manager);
   let model: ProtoModel | undefined;
   let converters: Goal["converters"] = [];
   return {
     assert: (expr) => assertions.push(expr),
+    // tactic2solver cleans its tactic before the goal is built and again before it is freed.
     check: () => {
-      for (const cleanup of cleanups) cleanup();
-      for (const init of inits) init();
       model?.decRef();
       model = undefined;
+      tactic.cleanup?.();
+      for (const init of inits) init();
       const goal = new Goal(manager);
       for (const assertion of assertions.items) goal.assert(assertion);
       const checked = checkSatUsing(tactic, goal);
@@ -492,9 +516,10 @@ const createTacticSolver = (environment: TacticEnvironment, strategy: string): A
       decConverterRefs(manager, converters);
       converters = goal.converters;
       goal.converters = [];
-      goal.reset();
       model = checked.model;
       model?.incRef();
+      tactic.cleanup?.();
+      goal.reset();
       return checked.status;
     },
     getModel: () => model as ProtoModel,
@@ -768,15 +793,18 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ...getDescrs("", [["max_rounds", PARAM_UINT, 4, true]]),
       ]),
       isTrackingDependencies: true,
-      build: (environment, params) =>
-        inPlace((goal) =>
-          propagateValues(
-            environment.manager,
-            goal,
-            getUint(params, "max_rounds", 4),
-            getRewriterOptions(environment.manager, params),
-          ),
-        ),
+      build: (environment, params) => {
+        const tactic = new PropagateValuesTactic(
+          environment.manager,
+          getUint(params, "max_rounds", 4),
+          getRewriterOptions(environment.manager, params),
+        );
+        environment.destructors.push(() => tactic.release());
+        return withCleanup(
+          inPlace((goal) => tactic.run(goal)),
+          () => tactic.cleanup(),
+        );
+      },
     },
   ],
   [
@@ -1315,8 +1343,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       isTrackingDependencies: true,
       build: (environment) => {
         const tactic = createDt2BvTactic(environment.manager);
-        environment.cleanups.push(tactic.cleanup);
-        return tactic.run;
+        return withCleanup(tactic.run, tactic.cleanup);
       },
     },
   ],
@@ -1362,8 +1389,17 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
     {
       descrs: new Map(),
       isTrackingDependencies: true,
-      build: (environment, params) =>
-        runBvBoundChk(environment.manager, getUint(params, "bv_ineq_consistency_test_max", 0)),
+      build: (environment, params) => {
+        const tactic = new BvBoundChkTactic(
+          environment.manager,
+          getUint(params, "bv_ineq_consistency_test_max", 0),
+        );
+        environment.destructors.push(() => tactic.release());
+        return withCleanup(
+          (goal) => tactic.run(goal),
+          () => tactic.cleanup(),
+        );
+      },
     },
   ],
   [
@@ -1756,52 +1792,66 @@ const assertUnsat = (goal: Goal, unsatGoals: Goal[]) => {
   return [goal];
 };
 
-const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
-  const goals = first(goal);
-  if (goals.length === 1) {
-    const subgoal = goals[0];
-    if (subgoal.isDecided()) return goals;
-    let subresults: Goal[] = [];
-    try {
-      subresults = second(subgoal);
-      return subresults;
-    } finally {
-      if (subgoal !== goal && !subresults.includes(subgoal)) subgoal.release();
-    }
-  }
-  const results: Goal[] = [];
-  const unsatGoals: Goal[] = [];
-  try {
-    for (const subgoal of goals) {
-      const subresults = second(subgoal);
-      if (isDecidedSat(subresults)) return subresults;
-      (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
-    }
-  } catch (error) {
-    for (const subgoal of goals) if (!results.includes(subgoal)) subgoal.release();
-    for (const result of results) result.release();
-    throw error;
-  }
-  return results.length > 0 ? results : assertUnsat(goal, unsatGoals);
-};
-
-const runOrElse = (tactics: Tactic[]) => (goal: Goal) => {
-  const original = goal.copy();
-  try {
-    for (const tactic of tactics.slice(0, -1)) {
-      try {
-        return tactic(goal);
-      } catch (error) {
-        if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
+const runAndThen = (first: Tactic, second: Tactic) =>
+  withGuardedCleanup(
+    (goal) => {
+      const goals = first(goal);
+      if (goals.length === 1) {
+        const subgoal = goals[0];
+        if (subgoal.isDecided()) return goals;
+        let subresults: Goal[] = [];
+        try {
+          subresults = second(subgoal);
+          return subresults;
+        } finally {
+          if (subgoal !== goal && !subresults.includes(subgoal)) subgoal.release();
+        }
       }
-      goal.resetAll();
-      goal.copyFrom(original);
-    }
-    return tactics[tactics.length - 1](goal);
-  } finally {
-    original.release();
-  }
-};
+      const results: Goal[] = [];
+      const unsatGoals: Goal[] = [];
+      try {
+        for (const subgoal of goals) {
+          const subresults = second(subgoal);
+          if (isDecidedSat(subresults)) return subresults;
+          (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
+        }
+      } catch (error) {
+        for (const subgoal of goals) if (!results.includes(subgoal)) subgoal.release();
+        for (const result of results) result.release();
+        throw error;
+      }
+      return results.length > 0 ? results : assertUnsat(goal, unsatGoals);
+    },
+    [first, second],
+  );
+
+// nary_tactical cleans every child, tried or not.
+const runOrElse = (tactics: Tactic[]) =>
+  withCleanup(
+    (goal) => {
+      const original = goal.copy();
+      try {
+        for (const tactic of tactics.slice(0, -1)) {
+          try {
+            return tactic(goal);
+          } catch (error) {
+            if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError))
+              throw error;
+          }
+          goal.resetAll();
+          goal.copyFrom(original);
+        }
+        return tactics[tactics.length - 1](goal);
+      } finally {
+        original.release();
+      }
+    },
+    hasCleanup(tactics)
+      ? () => {
+          for (const tactic of tactics) tactic.cleanup?.();
+        }
+      : undefined,
+  );
 
 const isEqualGoal = (first: Goal, second: Goal) => {
   if (first.forms.size !== second.forms.size) return false;
@@ -1839,8 +1889,12 @@ const runRepeat = (tactic: Tactic, maxDepth: number) => {
   return (goal: Goal) => run(0, goal);
 };
 
-const runCond = (probe: Probe, onTrue: Tactic, onFalse: Tactic) => (goal: Goal) =>
-  probe(goal) === 0 ? onFalse(goal) : onTrue(goal);
+// Its cleanup reaches the branch it didn't take too.
+const runCond = (probe: Probe, onTrue: Tactic, onFalse: Tactic) =>
+  withGuardedCleanup(
+    (goal) => (probe(goal) === 0 ? onFalse(goal) : onTrue(goal)),
+    [onTrue, onFalse],
+  );
 
 const checkHasArgument = (list: SmtList, combinator: string) => {
   if (list.items.length < 2)
@@ -1883,10 +1937,10 @@ const compile = (
         build: (params) => {
           const tactic = named.build(environment, params);
           if (!isInternal) return tactic;
-          return (goal) => {
+          return withCleanup((goal) => {
             checkParams(named.descrs, params);
             return tactic(goal);
-          };
+          }, tactic.cleanup);
         },
       };
     const strategy = LOGIC_TACTICS.get(sexpr.text);
@@ -2066,7 +2120,7 @@ const compile = (
           const start = environment.inits.length;
           const tactic = child.build(new Map([...params, ...own]));
           for (const init of environment.inits.slice(start)) init();
-          return tactic;
+          return withGuardedCleanup(tactic, [tactic]);
         },
       };
     }
@@ -2093,14 +2147,17 @@ const compile = (
           let tactic: Tactic | undefined;
           let destructors: (() => void)[] = [];
           environment.destructors.push(() => destroyTactics(destructors));
-          return (goal) => {
-            if (tactic === undefined) {
-              const start = environment.destructors.length;
-              tactic = compile(environment, sexpr.items[1], isInternal).build(params);
-              destructors = environment.destructors.splice(start);
-            }
-            return tactic(goal);
-          };
+          return withCleanup(
+            (goal) => {
+              if (tactic === undefined) {
+                const start = environment.destructors.length;
+                tactic = compile(environment, sexpr.items[1], isInternal).build(params);
+                destructors = environment.destructors.splice(start);
+              }
+              return tactic(goal);
+            },
+            () => tactic?.cleanup?.(),
+          );
         },
       };
     }
@@ -2354,10 +2411,22 @@ const getTacticCheck = (goal: Goal, goals: Goal[] | string | undefined): TacticC
   };
 };
 
+// Z3's exec cleans the tactic after its run, or after a tactic_exception.
+const exec = (tactic: Tactic, goal: Goal) => {
+  try {
+    const goals = tactic(goal);
+    tactic.cleanup?.();
+    return goals;
+  } catch (error) {
+    if (error instanceof SmtTacticError || error instanceof SmtCanceledError) tactic.cleanup?.();
+    throw error;
+  }
+};
+
 export const checkSatUsing = (tactic: Tactic, goal: Goal) => {
   const goals = (() => {
     try {
-      return tactic(goal);
+      return exec(tactic, goal);
     } catch (error) {
       if (error instanceof SmtTacticError || error instanceof SmtDefaultError) return error.message;
       if (error instanceof SmtCanceledError) return undefined;
@@ -2377,7 +2446,7 @@ export const checkSatUsing = (tactic: Tactic, goal: Goal) => {
 
 export const applyTactic = (tactic: Tactic, goal: Goal) => {
   try {
-    return tactic(goal);
+    return exec(tactic, goal);
   } catch (error) {
     if (error instanceof SmtCanceledError)
       throw new SmtTacticError(goal.manager.limit.getCancelMessage());
