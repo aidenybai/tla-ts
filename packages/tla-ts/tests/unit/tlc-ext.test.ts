@@ -75,6 +75,25 @@ describe("TLCExt matches TLC", () => {
     },
   );
 
+  it("reads Trace of a state that a VIEW rebuilds as the path to it", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLE x\nInit == x = 0 /\\ PrintT("init")\nNext == x < 4 /\\ x\' = x + 1 /\\ PrintT(Len(Trace))\nInv == x < 3\nView == x\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([
+      prints,
+      result.violation?.trace.map((step) => step.output),
+      result.violation?.traceOutput,
+    ]).toEqual([
+      ['"init"', "1", '"init"', "2", '"init"', "1", "3"],
+      [['"init"', "1"], [], ['"init"', "2"], ['"init"', "1", "3"]],
+      ['"init"', "1", '"init"', "2", '"init"', "1", "3"],
+    ]);
+  });
+
   // Deviation from TLC: it prints 773, 484, 773, 773, 773, 484, 484, as the rebuild leaves its last state current and the draws after Trace seed from it.
   it("draws after Trace as for the state the search expands, unlike TLC", async () => {
     expect(

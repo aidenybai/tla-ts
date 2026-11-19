@@ -1091,7 +1091,12 @@ const searchStates = (
   };
   const isTraceRebuilt = coverage !== undefined || search.isTraceRebuildShown;
   runtime.getBehavior = (state) => {
-    const index = state === current.candidate ? -1 : states.indexOf(state);
+    const index =
+      state === current.candidate
+        ? -1
+        : current.isExpanding && state === current.rebuilt?.state
+          ? current.index
+          : states.indexOf(state);
     if (isTraceRebuilt) traces.rebuildPath(getTracedParent(state, index));
     return index === -1 ? [...getPath(current.index), state] : getPath(index);
   };
