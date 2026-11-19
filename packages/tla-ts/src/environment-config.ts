@@ -375,16 +375,19 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       setValue(substitution.name, assignment.value, getSubstitutedKeys(substitution));
     }
   });
-  const substitutions = new Map(
-    lastSubstitutions
-      .filter((substitution) => !values.has(`!${substitution.target}`))
-      .flatMap((substitution) =>
-        getSubstitutedKeys(substitution).map((key): [string, string] => [
-          key,
-          getRootKey(substitution.target),
-        ]),
-      ),
-  );
+  const substitutions = new Map<string, string>();
+  lastSubstitutions
+    .filter((substitution) => !values.has(`!${substitution.target}`))
+    .forEach((substitution) => {
+      const targetKey = getRootKey(substitution.target);
+      const builtin = linked.builtins.get(targetKey);
+      getSubstitutedKeys(substitution).forEach((key) => {
+        // TLC applies the Java override that a <- gives a name of no arguments to none where it evaluates the name.
+        if (builtin !== undefined && builtin.arity > 0 && getKeyArity(key) === 0) {
+          setOperator(key, { ...builtin, arity: 0, isLazy: true });
+        } else substitutions.set(key, targetKey);
+      });
+    });
   [...substitutions.keys()].forEach((key) => constants.delete(key));
   const scopedKeys = new Set(
     [...config.constants, ...config.substitutions]

@@ -1137,7 +1137,7 @@ export const findGlobalName = (name: string, environment: Environment): GlobalNa
   const definition = environment.definitions.get(name);
   if (definition) return { kind: "Definition", definition };
   const builtin = environment.builtins.get(name);
-  if (builtin && builtin.arity === 0 && !builtin.isStateLevel) {
+  if (builtin && builtin.arity === 0 && !builtin.isStateLevel && !builtin.isLazy) {
     return { kind: "Value", value: builtin.evaluate([]) };
   }
   return undefined;

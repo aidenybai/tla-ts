@@ -10,7 +10,7 @@ import { STACK_OVERFLOW_MESSAGE, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import { getExitCode } from "../../src/exit-codes";
 import { getOutDegreeSummary } from "../../src/tlc/summary";
 import type { TlcVersion } from "../../src/tlc/version";
-import { checkModule, checkSteps } from "./check-harness";
+import { checkModule, checkSteps, formatCallStackLines } from "./check-harness";
 
 const getFailureSummary = (result: CheckResult) => [
   result.status,
@@ -1022,6 +1022,80 @@ describe("evaluation errors match TLC", () => {
       ],
     ];
     expect(await getOverrideMessages(cases)).toEqual(cases.map((item) => item[3]));
+  });
+
+  it("applies the Java override that a <- gives a name of no arguments to none, like TLC", async () => {
+    const getError = (signature: string, result: string) =>
+      getJavaError(signature, `handle's method type (IValue[])${result} but found ()Value`);
+    const none = "CONSTANT N\nASSUME PrintT(N)";
+    const value = "tlc2.value.impl.Value";
+    const len = `value.impl.IntValue tlc2.module.Sequences.Len(${value})`;
+    const cases = [
+      [ALL_MODULES, none, "N <- Len", getError(len, "IntValue")],
+      [
+        ALL_MODULES,
+        none,
+        "N <- Head",
+        getError(`value.impl.Value tlc2.module.Sequences.Head(${value})`, "Value"),
+      ],
+      [
+        ALL_MODULES,
+        none,
+        "N <- IsFiniteSet",
+        getError(`value.IBoolValue tlc2.module.FiniteSets.IsFiniteSet(${value})`, "IBoolValue"),
+      ],
+      [
+        ALL_MODULES,
+        none,
+        "N <- ToJson",
+        getError(
+          "value.impl.StringValue tlc2.module.Json.toJson(tlc2.value.IValue) throws java.io.IOException",
+          "StringValue",
+        ),
+      ],
+      [
+        ALL_MODULES,
+        none,
+        "N <- JsonDeserialize",
+        getError(
+          "value.IValue tlc2.module.Json.deserialize(tlc2.value.impl.StringValue) throws java.io.IOException",
+          "IValue",
+        ),
+      ],
+      [
+        ALL_MODULES,
+        none,
+        "N <- ..",
+        getError(
+          "value.impl.IntervalValue tlc2.module.Integers.DotDot(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue)",
+          "IntervalValue",
+        ),
+      ],
+      [
+        ALL_MODULES,
+        none,
+        "N <- >",
+        getError(`value.impl.BoolValue tlc2.module.Integers.GT(${value},${value})`, "BoolValue"),
+      ],
+      [
+        "Integers, Sequences, FiniteSets, TLC",
+        "Op == 1\nASSUME PrintT(Op)",
+        "Op <- Len",
+        getError(len, "IntValue"),
+      ],
+    ];
+    expect(await getOverrideMessages(cases)).toEqual(cases.map((item) => item[3]));
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS ${ALL_MODULES}\nCONSTANT N\nVARIABLE x\nInit == x = N\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- Len",
+    });
+    expect([result.failure?.message, formatCallStackLines(result)]).toEqual([
+      getError(len, "IntValue"),
+      ["Line 5, column 9 to line 5, column 13 in M", "Line 5, column 13 to line 5, column 13 in M"],
+    ]);
+    expect((await checkModule("CONSTANT N\nASSUME TRUE", "CONSTANT N <- Len")).status).toBe(
+      "success",
+    );
   });
 
   it.each([

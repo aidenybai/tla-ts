@@ -229,12 +229,18 @@ export const checkJavaArity = (builtin: Builtin, signature: string): Builtin => 
   ...builtin,
   evaluate: (args, context) => {
     if (args.length === builtin.arity) return builtin.evaluate(args, context);
-    // TLC's MethodValue invokes a method without parameters exactly, so java.lang.invoke rejects arguments.
+    // TLC's MethodValue spreads the arguments into a method with parameters and invokes one without them exactly, so java.lang.invoke rejects the call.
     const result = signature.split(" ")[2].split(".").pop();
+    if (builtin.arity === 0) {
+      throw createJavaOverrideError(
+        signature,
+        `cannot convert MethodHandle()${result} to (Value[])Value`,
+      );
+    }
     throw createJavaOverrideError(
       signature,
-      builtin.arity === 0
-        ? `cannot convert MethodHandle()${result} to (Value[])Value`
+      args.length === 0
+        ? `handle's method type (IValue[])${result} but found ()Value`
         : `array is not of length ${builtin.arity}`,
     );
   },
