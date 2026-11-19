@@ -1413,6 +1413,24 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "", "sat", "((x #x4)", " (y #x1))"]);
   });
 
+  it("holds the terms of get-consequences until the command ends", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(get-consequences ((bvsle x (bvadd x x))) (y))",
+        "(assert (bvsge (bvadd x x) (bvmul y x)))",
+        "(check-sat)",
+        "(get-consequences () (x p q))",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toEqual(["unknown", "", "sat", "unknown", "", "sat", "((x #xf)", " (y #x7))"]);
+  });
+
   it("runs the commands after a check that timed out", () => {
     expect(
       run(

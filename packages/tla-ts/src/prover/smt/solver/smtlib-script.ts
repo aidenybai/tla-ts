@@ -1543,6 +1543,8 @@ export const runSmtlibScript = (
         });
         if (list.items.length > 3)
           throw new SmtParseError("invalid command, too many arguments", list.items[3]);
+        const terms = [...assumptions, ...vars];
+        for (const expr of terms) manager.incRef(expr);
         clearCheck();
         const deadline = Date.now() + options.timeLimitMs;
         manager.limit.restart(deadline);
@@ -1604,6 +1606,8 @@ export const runSmtlibScript = (
           print("");
         } finally {
           manager.limit.pop();
+          state.reader.releaseTerms();
+          for (const expr of terms) manager.decRef(expr);
         }
       },
     ],
