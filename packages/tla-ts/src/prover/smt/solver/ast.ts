@@ -706,7 +706,6 @@ export class AstManager {
   private numDecls = FIRST_FREE_SMALL_ID;
   private signatureDecls = new Map<number | string, SignatureDecl>();
   private declRefCounts: number[] = [];
-  readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
   // The recfun plugin's definitions by declaration, and their cases by case predicate.
   readonly recFunDefs = new ObjMap<RecFunDef>((decl) => this.declHashes[decl]);
   readonly recFunCases = new Map<number, RecFunCase>();
@@ -819,32 +818,7 @@ export class AstManager {
     ];
   }
 
-  mkMacro(name: string, expr: number) {
-    const decl = this.funcDecls.length;
-    this.declHashes[decl] = this.getFuncDeclHash(
-      name,
-      [],
-      this.sorts[expr],
-      getInfoHash(Z3_RECFUN_FAMILY, 0, [0]),
-    );
-    this.funcDecls.push({
-      name,
-      family: FAMILY_USER,
-      op: OP_UNINTERPRETED,
-      domain: [],
-      range: this.sorts[expr],
-      isSkolem: false,
-      smallId: this.mkSmallId(),
-      parameters: [],
-    });
-    this.declRefCounts[decl] = 1;
-    this.mkSmallId();
-    this.macros.set(decl, expr);
-    return decl;
-  }
-
   eraseRecFunDef(decl: number) {
-    this.macros.delete(decl);
     const def = this.recFunDefs.get(decl);
     if (def === undefined) return;
     for (const recFunCase of def.cases) this.recFunCases.delete(recFunCase.pred);
@@ -1013,6 +987,10 @@ export class AstManager {
     for (const kept of getKept(result)) this.incRef(kept);
     this.endTemporaries(outer);
     return result;
+  }
+
+  get isHoldingTemporaries() {
+    return this.temporariesMark !== -1;
   }
 
   beginTemporaries() {

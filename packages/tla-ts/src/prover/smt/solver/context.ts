@@ -1598,7 +1598,7 @@ export class Context extends Internalizer {
     }
     const formulas = asserted.getFormulas();
     const size = asserted.getNumFormulas();
-    for (let qhead = asserted.getQhead(); qhead < size && !this.isInconsistent(); qhead++) {
+    for (let qhead = asserted.getQhead(); qhead < size; qhead++) {
       if (this.checkCanceled()) {
         asserted.commit(qhead);
         return;

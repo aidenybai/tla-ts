@@ -5,6 +5,7 @@ import { BitBlasterRewriter } from "../bit-blast-tactic";
 import { decConverterRefs, Goal, incConverterRefs, mkDependencyLeaf } from "../goal";
 import { L_FALSE, L_TRUE, L_UNDEF } from "../lbool";
 import { ProtoModel } from "../proto-model";
+import { PropagateValuesTactic } from "../propagate-values";
 import { RefVector } from "../ref-vector";
 import {
   DEFAULT_PRINT_OPTIONS,
@@ -59,6 +60,8 @@ export class IncSatSolver {
   private readonly satConverter: Sat2GoalConverter;
   private isInternalizedConverted = false;
   private readonly internalized: RefVector;
+  // Z3 frees what the propagate-values of its preprocessing holds only when it preprocesses again.
+  private readonly propagator: PropagateValuesTactic;
   private hasUninterpreted = false;
   private subgoals: Goal[] = [];
   private scopes: Scope[] = [];
@@ -86,6 +89,7 @@ export class IncSatSolver {
     this.converters = new Goal(manager);
     this.satConverter = new Sat2GoalConverter(manager);
     this.internalized = new RefVector(manager);
+    this.propagator = new PropagateValuesTactic(manager);
   }
 
   private isClause(expr: number): boolean {
@@ -189,6 +193,7 @@ export class IncSatSolver {
     this.solver.popToBaseLevel();
     if (this.solver.isInconsistent) return L_FALSE;
     this.goal2sat.run(forms);
+    this.satConverter.flushSmc(this.solver, this.goal2sat.atoms);
     return this.checkUninterpreted();
   }
 
@@ -196,18 +201,20 @@ export class IncSatSolver {
     this.solver.popToBaseLevel();
     if (this.solver.isInconsistent) return L_FALSE;
     this.resetSubgoals();
+    this.propagator.cleanup();
     const bitBlaster = this.getBitBlaster();
     const subgoals = (() => {
       if (this.isCnf) return [goal];
       try {
         const goals = (
           this.goal2sat.euf === null
-            ? mkIncSatPreprocess(this.manager, bitBlaster)
-            : mkIncSatEufPreprocess(this.manager)
+            ? mkIncSatPreprocess(this.manager, bitBlaster, this.propagator)
+            : mkIncSatEufPreprocess(this.manager, this.propagator)
         )(goal);
         this.isCnf = true;
         return goals;
       } catch (error) {
+        this.propagator.cleanup();
         this.releaseBitBlaster();
         if (!(error instanceof SmtTacticError || error instanceof SmtCanceledError)) throw error;
         // The tactics of the preprocessing report a limit that stops their rewriters as a tactic_exception.
@@ -225,6 +232,7 @@ export class IncSatSolver {
     incConverterRefs(subgoal.converters);
     this.converters.converters = [...this.converters.converters, ...subgoal.converters];
     this.goal2sat.runGoal(subgoal, this.dep2asm);
+    this.satConverter.flushSmc(this.solver, this.goal2sat.atoms);
     return this.checkUninterpreted();
   }
 
@@ -475,6 +483,7 @@ export class IncSatSolver {
     this.core.reset();
     this.internalized.reset();
     this.satConverter.release();
+    this.propagator.cleanup();
     this.releaseBitBlaster();
     this.goal2sat.release();
   }

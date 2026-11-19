@@ -680,7 +680,7 @@ const SYMBOL_CHARACTER = /[A-Za-z0-9~!@$%^&*_\-+=<>.?/,]/;
 
 const createScanner = (text: string) => {
   // Z3 prints the null symbol its scanner starts with as null.
-  const state = { index: 0, line: 1, lineStart: -1, lastId: "null" };
+  const state = { index: 0, line: 1, lineStart: -1, lastId: "null", tokenColumn: 0 };
   const getColumn = () => state.index - state.lineStart - (state.line === 1 ? 0 : 1);
   const advance = () => {
     if (text[state.index] === "\n") {
@@ -694,6 +694,7 @@ const createScanner = (text: string) => {
   };
   const next = (): SmtToken | undefined => {
     for (;;) {
+      state.tokenColumn = getColumn();
       const character = text[state.index];
       if (character === undefined) return undefined;
       if (character === ";") {
@@ -705,7 +706,7 @@ const createScanner = (text: string) => {
         continue;
       }
       const start = state.index;
-      const position = { line: state.line, column: getColumn() };
+      const position = { line: state.line, column: state.tokenColumn };
       const getToken = (kind: SmtToken["kind"], tokenText = text.slice(start, state.index)) => {
         if (kind === "symbol" || kind === "keyword") state.lastId = tokenText;
         return {
@@ -803,6 +804,7 @@ const createScanner = (text: string) => {
   return {
     next,
     getPosition: () => ({ line: state.line, column: getColumn() }),
+    getTokenPosition: () => ({ line: state.line, column: state.tokenColumn }),
     getLastId: () => state.lastId,
   };
 };
@@ -900,11 +902,11 @@ export const createCommandReader = (text: string) => {
         scanner.getPosition(),
       );
     if (token.kind === ")") throw new SmtParseError("invalid s-expression, unexpected ')'", token);
-    if (token.kind !== "(") return token;
-    state.depth = 1;
-    const list = readList(token);
-    expectClosed(list);
-    return list;
+    const sexpr = token.kind === "(" ? readList(token) : token;
+    expectClosed(sexpr);
+    // Z3 scans one token past the s-expression.
+    state.lookahead = take();
+    return sexpr;
   };
   // parse_cmd checks the head of a command before it reads the rest.
   const readCommand = () => {
@@ -935,7 +937,7 @@ export const createCommandReader = (text: string) => {
       }
     }
   };
-  return { read, readCommand, readSExpr, skip };
+  return { read, readCommand, readSExpr, skip, getTokenPosition: scanner.getTokenPosition };
 };
 
 export const expectClosed = (sexpr: SExpr) => {
@@ -2378,9 +2380,7 @@ export const createSmtlibReader = (
     manager.incRef(expr);
     lastNamed.name = name;
     lastNamed.expr = expr;
-    const decl = manager.mkMacro(name, expr);
-    declare(funcs, name, [...(funcs.get(name) ?? []), decl]);
-    scopedFuncs.push(decl);
+    defineMacroFunc(name, [], expr);
     insertMacro(name, { domain: [], range: manager.sorts[expr], body: expr });
   };
 

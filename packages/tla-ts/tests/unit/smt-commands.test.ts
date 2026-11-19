@@ -1914,6 +1914,34 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("puts a named formula among the defined functions, in the order of their hash table", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-const p Bool)",
+        "(define-fun c2 () Int a)",
+        "(assert (! (>= b 0) :named n1))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun b () Int",
+      "    0)",
+      "  (define-fun p () Bool",
+      "    false)",
+      "  (define-fun a () Int",
+      "    0)",
+      "  (define-fun c2 () Int",
+      "    a)",
+      "  (define-fun n1 () Bool",
+      "    (>= b 0))",
+      ")",
+    ]);
+  });
+
   it("names the if-then-else terms of an integer problem before the search", () => {
     expect(
       run([

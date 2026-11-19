@@ -874,13 +874,15 @@ export const runSmtlibScript = (
       ...result,
     };
   };
-  // parse_sexpr reports its own errors under an empty file name and gives no tactic.
+  // Z3 reports a parse error at the token it last scanned, under an empty file name.
   const readDefaultTactic = (text: string) => {
+    const reader = createCommandReader(text);
     try {
-      return createCommandReader(text).readSExpr();
+      return reader.readSExpr();
     } catch (error) {
       if (!(error instanceof SmtParseError)) throw error;
-      print(`(error ": line ${error.line} column ${error.column}: ${error.message}")`);
+      const position = reader.getTokenPosition();
+      print(`(error ": line ${position.line} column ${position.column}: ${error.message}")`);
       return undefined;
     }
   };
@@ -2083,7 +2085,6 @@ export const runSmtlibScript = (
           const funcDecl = manager.funcDecls[decl];
           if (
             funcDecl.family !== FAMILY_USER ||
-            manager.macros.has(decl) ||
             model.constInterps.has(decl) ||
             model.funcInterps.has(decl)
           )
