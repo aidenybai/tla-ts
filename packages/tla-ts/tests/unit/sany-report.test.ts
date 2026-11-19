@@ -1723,6 +1723,33 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports references in the scope of a NEW to a theorem another module instantiates", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\nI == INSTANCE Inner\nU == I!T!2\nV == I!T!lab\n====\n",
+      Inner: "---- MODULE Inner ----\nTHEOREM T == ASSUME NEW y, y = 1 PROVE lab:: y = y\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 2",
+        "",
+        "line 3, col 10 to line 3, col 10 of module M",
+        "",
+        "Accessing ASSUME/PROVE clause within the scope of a declaration",
+        " from outside that declaration's scope.",
+        "",
+        "",
+        "line 4, col 10 to line 4, col 12 of module M",
+        "",
+        "Accessing subexpression labeled `lab' of ASSUME/PROVE clause within the scope of a declaration",
+        " from outside that declaration's scope.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("reports a variable in a DEF clause and the BY it leaves empty", () => {
     const report = getReport({
       M: "---- MODULE M ----\nVARIABLE x\nTHEOREM TRUE BY DEF x\n====\n",
