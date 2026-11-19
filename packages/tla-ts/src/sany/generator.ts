@@ -315,7 +315,6 @@ export const generateSanySpecification = (
   };
   loadSpecification(rootName);
   calculateDependencies(rootName, rootSource);
-  // SANY keeps these on the nodes, so they reach a theorem another module instantiates.
   const assumeProveScopes: ModuleGeneration["assumeProveScopes"] = new WeakMap();
   const labelGoals: ModuleGeneration["labelGoals"] = new WeakMap();
 
