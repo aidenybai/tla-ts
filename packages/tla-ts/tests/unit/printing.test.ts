@@ -114,6 +114,37 @@ describe("printing matches TLC", () => {
     ]);
   });
 
+  it("keeps the records inside a set sorted once PrintT prints them, as TLC sorts the set it shares in place", async () => {
+    const body = [
+      "yy == 0",
+      "zz == 0",
+      "ASSUME LET S == {[zz |-> 1, yy |-> 2]} IN PrintT(ToString(S)) /\\ PrintT(S) /\\ PrintT(ToString(S))",
+      "ASSUME LET T == <<[zz |-> 1, yy |-> 2]>> IN PrintT(T) /\\ PrintT(ToString(T))",
+      "ASSUME LET U == <<{[zz |-> 1, yy |-> 2]}>> IN PrintT(U) /\\ PrintT(ToString(U))",
+      "ASSUME LET W == {<<[zz |-> 1, yy |-> 2]>>} IN PrintT(W) /\\ PrintT(ToString(W))",
+      "ASSUME LET X == [k \\in {1} |-> {[zz |-> 1, yy |-> 2]}] IN PrintT(X) /\\ PrintT(ToString(X))",
+      "ASSUME LET Y == {[k \\in {1} |-> [zz |-> 1, yy |-> 2]]} IN PrintT(Y) /\\ PrintT(ToString(Y))",
+      "ASSUME LET Z == {[zz |-> 1, yy |-> 2]} IN Print(Z, TRUE) /\\ PrintT(ToString(Z))",
+    ].join("\n");
+    expect((await checkPrinting(body)).printed).toEqual([
+      '"{[zz |-> 1, yy |-> 2]}"',
+      "{[yy |-> 2, zz |-> 1]}",
+      '"{[yy |-> 2, zz |-> 1]}"',
+      "<<[yy |-> 2, zz |-> 1]>>",
+      '"<<[zz |-> 1, yy |-> 2]>>"',
+      "<<{[yy |-> 2, zz |-> 1]}>>",
+      '"<<{[yy |-> 2, zz |-> 1]}>>"',
+      "{<<[yy |-> 2, zz |-> 1]>>}",
+      '"{<<[yy |-> 2, zz |-> 1]>>}"',
+      "<<{[yy |-> 2, zz |-> 1]}>>",
+      '"<<{[yy |-> 2, zz |-> 1]}>>"',
+      "{<<[yy |-> 2, zz |-> 1]>>}",
+      '"{<<[yy |-> 2, zz |-> 1]>>}"',
+      "{[yy |-> 2, zz |-> 1]}  TRUE",
+      '"{[yy |-> 2, zz |-> 1]}"',
+    ]);
+  });
+
   it.each([
     ["{F(1), F(2), F(3)}", ["2  0", "1  0", "3  0"]],
     ["{F(4), F(2), F(1), F(3), F(5)}", ["2  0", "4  0", "1  0", "3  0", "5  0"]],

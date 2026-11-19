@@ -3017,7 +3017,7 @@ export const formatNormalizedCopies = (values: Value[]) => {
   const markedSets: SetValue[] = [];
   const writtenFunctions: [FunctionValue, Value[]][] = [];
   const copiedFunctions: LazyFunctionValue[] = [];
-  // TLC prints a deep copy, which copies functions but shares sets, so it caches only the functions inside a set.
+  // TLC prints a deep copy, which copies functions but shares sets, so the functions inside a set stay normalized and cached.
   const normalize = (value: Value, isWrittenOrderKept: boolean, isCopied: boolean): void => {
     if (typeof value !== "object") return;
     const normalizeInner = (inner: Value) => normalize(inner, isWrittenOrderKept, false);
@@ -3036,7 +3036,7 @@ export const formatNormalizedCopies = (values: Value[]) => {
         const isRangeWrittenOrderKept = isWrittenOrderKept || getFunctionClass(value) === "lambda";
         value.range.forEach((inner) => normalize(inner, isRangeWrittenOrderKept, isCopied));
         if (isWrittenOrderKept || value.writtenKeys === undefined) return;
-        writtenFunctions.push([value, value.writtenKeys]);
+        if (isCopied) writtenFunctions.push([value, value.writtenKeys]);
         value.writtenKeys = undefined;
         return;
       }

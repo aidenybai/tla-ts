@@ -192,6 +192,25 @@ describe("the state records of Trace and CounterExample match TLC", () => {
     ]);
   });
 
+  it("keeps the records PrintT sorted in the set of states for ToString and JsonSerialize", async () => {
+    const printed: string[] = [];
+    const written = new Map<string, string>();
+    const result = await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt, Json\nVARIABLES x, s, r\nInit == x = 0 /\\ s = 0 /\\ r = 0\nNext == x < 2 /\\ x\' = x + 1 /\\ UNCHANGED <<s, r>>\nInv == x < 2\nPost == PrintT(CounterExample.state) /\\ PrintT(ToString(CounterExample.state)) /\\ JsonSerialize("p.json", CounterExample)\n====',
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post",
+      onPrint: (text) => printed.push(text),
+      writeFile: (path, content) => written.set(path, String(content)),
+    });
+    expect([...printed, ...(result.violation?.postconditionOutput ?? [])]).toEqual([
+      "{ <<1, [x |-> 0, s |-> 0, r |-> 0]>>,\n  <<2, [x |-> 1, s |-> 0, r |-> 0]>>,\n  <<3, [x |-> 2, s |-> 0, r |-> 0]>> }",
+      '"{<<1, [x |-> 0, s |-> 0, r |-> 0]>>, <<2, [x |-> 1, s |-> 0, r |-> 0]>>, <<3, [x |-> 2, s |-> 0, r |-> 0]>>}"',
+    ]);
+    expect(written.get("p.json")).toBe(
+      '{"action":[[[1,{"x":0,"s":0,"r":0}],{"name":"Next","location":{"beginLine":5,"beginColumn":9,"endLine":5,"endColumn":49,"module":"M"}},[2,{"x":1,"s":0,"r":0}]],[[2,{"x":1,"s":0,"r":0}],{"name":"Next","location":{"beginLine":5,"beginColumn":9,"endLine":5,"endColumn":49,"module":"M"}},[3,{"x":2,"s":0,"r":0}]]],"state":[[1,{"x":0,"s":0,"r":0}],[2,{"x":1,"s":0,"r":0}],[3,{"x":2,"s":0,"r":0}]]}',
+    );
+  });
+
   it("puts the action of a simulated state before its variables", () => {
     const printed: string[] = [];
     simulate({
