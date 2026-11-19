@@ -12,7 +12,6 @@ import {
   exitFrames,
   getCoverageNode,
   getEnteredFrames,
-  getSubstitutionNode,
   runAtCoverageNode,
   type Coverage,
 } from "../coverage";
@@ -937,11 +936,12 @@ const visitUnchanged = (
       const value = replay.current?.[index];
       if (value === undefined) return false;
       if (replay.isEnabled && replay.coverage) {
-        countCoverage(replay.coverage, node);
-        const substitution = substitutedExpressions.get(expression);
-        if (substitution && substitution.replacement !== expression) {
-          countCoverage(replay.coverage, getSubstitutionNode(replay.coverage, substitution));
-        }
+        evaluateAt(replay, node, expression, {
+          environment: replay.environment,
+          scope,
+          state: replay.current,
+          next: undefined,
+        });
       }
       const assigned = partial[index];
       if (assigned !== undefined && !isEqualLikeTlc(assigned, value)) {

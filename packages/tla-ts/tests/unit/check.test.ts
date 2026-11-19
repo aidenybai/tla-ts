@@ -1813,6 +1813,19 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("counts the LET definition that UNCHANGED keeps under ENABLED, as TLC's Tool#enabledUnchanged evaluates the expression", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 - x /\\ UNCHANGED y\nInv == ENABLED (y' = y /\\ LET w == x IN UNCHANGED w)\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines?.at(-1)).toEqual([
+      "line 6, col 8 to line 6, col 52 of module M: 2",
+      "|line 6, col 17 to line 6, col 22 of module M: 2",
+      "|line 6, col 36 to line 6, col 36 of module M: 2",
+      "|line 6, col 41 to line 6, col 51 of module M: 2",
+    ]);
+  });
+
   it.each([
     [
       "a next-state failure",
