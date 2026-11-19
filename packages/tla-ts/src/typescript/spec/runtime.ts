@@ -430,10 +430,9 @@ export const INTERPRETER = new Set([
 ]);
 
 // Where ESCore, which has no Intl, as engine262 has none, and a host with ICU, as Node, answer
-// differently, a compiled spec stops: at a calendar other than ISO 8601, at a named time zone that
-// the host's recorded table leaves out, and at a date string in none of the formats that ECMA-262
-// defines, which a host may still read. The method names CallBuiltin stops at are the
-// locale-sensitive built-ins'.
+// differently, a compiled spec stops: at a named time zone that the host's recorded table leaves
+// out, and at a date string in none of the formats that ECMA-262 defines, which a host may still
+// read. The method names CallBuiltin stops at are the locale-sensitive built-ins'.
 export const LOCALE_METHODS = [
   "toLocaleString",
   "toLocaleDateString",
@@ -446,16 +445,6 @@ export const LOCALE_METHODS = [
 const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 
 const HOST_PATCHES = [
-  {
-    name: "CanonicalizeCalendar",
-    from: `ELSE ThrowError(s, "RangeError")`,
-    to: `ELSE Unsupported(s, <<>>)`,
-  },
-  {
-    name: "ParseISODateTime",
-    from: `TPLower(calendar.calendar) # N("iso8601") THEN ThrowError(s, "RangeError")`,
-    to: `TPLower(calendar.calendar) # N("iso8601") THEN Unsupported(s, <<>>)`,
-  },
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
   // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
   // host does too in its default locale, unless that locale tailors case, and in no locale given.

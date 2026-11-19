@@ -715,6 +715,58 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "runs the calendars other than ISO 8601",
+    () => {
+      const getSource = (expected: string) => `
+      const hebrew = Temporal.PlainDate.from({ year: 5784, monthCode: "M05L", day: 30, calendar: "hebrew" });
+      const reiwa = Temporal.PlainDate.from({ era: "reiwa", eraYear: 1, month: 5, day: 1, calendar: "japanese" });
+      const umalqura = Temporal.PlainDate.from("2024-03-11[u-ca=islamic-umalqura]");
+      const coptic = Temporal.PlainYearMonth.from({ year: 1740, month: 13, calendar: "coptic" });
+      const persian = Temporal.PlainMonthDay.from({ monthCode: "M12", day: 30, calendar: "persian" });
+      let rejected = "none";
+      try {
+        Temporal.PlainDate.from({ year: 5785, monthCode: "M05L", day: 1, calendar: "hebrew" }, { overflow: "reject" });
+      } catch (error) {
+        rejected = (error as Error).name;
+      }
+      const result = [
+        hebrew.toString(),
+        hebrew.month,
+        hebrew.monthsInYear,
+        hebrew.add({ years: 1 }).monthCode,
+        hebrew.until("2027-01-05[u-ca=hebrew]", { largestUnit: "years" }).toString(),
+        reiwa.subtract({ days: 1 }).era,
+        reiwa.subtract({ days: 1 }).eraYear,
+        umalqura.year + "-" + umalqura.month + "-" + umalqura.day,
+        umalqura.daysInMonth,
+        coptic.daysInMonth,
+        coptic.toString(),
+        persian.toString(),
+        rejected,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected =
+          "2024-03-10[u-ca=hebrew]|6|13|M06|P2Y9M26D|heisei|31|1445-9-1|30|5|2024-09-06[u-ca=coptic]|1972-03-20[u-ca=persian]|RangeError";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected =
+          "2024-03-10[u-ca=hebrew]|6|13|M06|P2Y9M26D|heisei|31|1445-9-1|30|6|2024-09-06[u-ca=coptic]|1972-03-20[u-ca=persian]|RangeError";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at the Chinese calendar, whose tables ESCore doesn't hold", async () => {
+        const source = 'Temporal.PlainDate.from("2024-03-11[u-ca=chinese]");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `
       const error = new Error("m");

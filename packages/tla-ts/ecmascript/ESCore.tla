@@ -1484,6 +1484,67 @@ RECURSIVE ActiveModule(_, _)
 RECURSIVE EvaluateExportDeclaration(_, _, _)
 RECURSIVE ExportDefaultThen(_, _, _)
 RECURSIVE RunModule(_, _)
+RECURSIVE CanonicalizeCalendar(_, _)
+RECURSIVE CalendarYearOffset(_)
+RECURSIVE RataDie(_)
+RECURSIVE RataDieToISODate(_)
+RECURSIVE CopticEpoch(_)
+RECURSIVE CopticYear(_, _)
+RECURSIVE IslamicEpoch(_)
+RECURSIVE IsUmalquraTable(_, _)
+RECURSIVE UmalquraLong(_, _)
+RECURSIVE IndianStart(_)
+RECURSIVE IndianBefore(_, _)
+RECURSIVE PersianLeap(_)
+RECURSIVE PersianStart(_)
+RECURSIVE PersianYearAt(_, _)
+RECURSIVE HebrewMonthsBefore(_)
+RECURSIVE HebrewElapsed(_)
+RECURSIVE HebrewNewYear(_)
+RECURSIVE HebrewLength(_)
+RECURSIVE ArithmeticLeap(_, _)
+RECURSIVE ArithmeticMonths(_, _)
+RECURSIVE ArithmeticMonthCode(_, _, _)
+RECURSIVE ArithmeticOrdinal(_, _, _)
+RECURSIVE IsValidMonthCodeForCalendar(_, _)
+RECURSIVE YearContainsMonthCode(_, _, _)
+RECURSIVE HebrewDays(_, _)
+RECURSIVE ArithmeticDaysInMonth(_, _, _)
+RECURSIVE ArithmeticMostDays(_, _)
+RECURSIVE HebrewBefore(_, _)
+RECURSIVE UmalquraBefore(_, _)
+RECURSIVE ArithmeticRataDie(_, _, _, _)
+RECURSIVE HebrewYearAt(_, _)
+RECURSIVE UmalquraYearAt(_, _)
+RECURSIVE ArithmeticMonthAt(_, _, _, _)
+RECURSIVE ArithmeticDateOf(_, _)
+RECURSIVE MonthIndex(_, _, _)
+RECURSIVE HebrewYearOfIndex(_, _)
+RECURSIVE OfMonthIndex(_, _)
+RECURSIVE ArithmeticYearWithinLimits(_, _)
+RECURSIVE ArithmeticReferenceYear(_)
+RECURSIVE ArithmeticReference(_, _, _, _)
+RECURSIVE CanonicalizeEraInCalendar(_, _)
+RECURSIVE CalendarDateArithmeticYearForEraYear(_, _, _)
+RECURSIVE CalendarDateEra(_, _, _)
+RECURSIVE CalendarParts(_, _)
+RECURSIVE CalendarMonthCode(_, _)
+RECURSIVE MonthCodeOf(_)
+RECURSIVE MonthCodeToOrdinal(_, _, _)
+RECURSIVE CalendarDateGetter(_, _, _, _)
+RECURSIVE ISODateToFields(_, _, _)
+RECURSIVE NonISOResolveFields(_, _, _, _)
+RECURSIVE CalendarDateToISO(_, _, _, _, _, _, _)
+RECURSIVE NonISOMonthDayToISOReferenceDate(_, _, _, _)
+RECURSIVE NonISODateAdd(_, _, _, _, _)
+RECURSIVE MonthCodeKey(_)
+RECURSIVE NonISOReached(_, _, _, _, _)
+RECURSIVE NonISODateSurpasses(_, _, _, _, _, _, _)
+RECURSIVE NonISOBackYears(_, _, _, _, _, _)
+RECURSIVE NonISOForeYears(_, _, _, _, _, _)
+RECURSIVE NonISOBackMonths(_, _, _, _, _, _, _)
+RECURSIVE NonISOForeMonths(_, _, _, _, _, _, _)
+RECURSIVE NonISODateUntil(_, _, _, _)
 RECURSIVE OffsetTimeZone(_)
 RECURSIVE IsOffsetTimeZone(_)
 RECURSIVE ISODaysInMonth(_, _)
@@ -1505,9 +1566,9 @@ RECURSIVE EpochNsToISODateTime(_)
 RECURSIVE TIYearInRange(_)
 RECURSIVE TIClamp(_, _, _)
 RECURSIVE RegulateISODate(_, _, _, _, _)
-RECURSIVE CalendarDateAdd(_, _, _, _)
+RECURSIVE CalendarDateAdd(_, _, _, _, _)
 RECURSIVE Surpasses(_, _, _, _, _)
-RECURSIVE CalendarDateUntil(_, _, _)
+RECURSIVE CalendarDateUntil(_, _, _, _)
 RECURSIVE ISODayOfWeek(_)
 RECURSIVE ISODayOfYear(_)
 RECURSIVE ISOWeekOfYear(_)
@@ -1520,7 +1581,6 @@ RECURSIVE ISODateUnits(_)
 RECURSIVE TemporalDateToString(_, _, _)
 RECURSIVE FormatISODateTime(_, _, _, _)
 RECURSIVE GetTemporalShowCalendarNameOption(_, _)
-RECURSIVE CanonicalizeCalendar(_, _)
 RECURSIVE ParseTemporalCalendarString(_, _)
 RECURSIVE ToTemporalCalendarIdentifier(_, _)
 RECURSIVE GetTemporalCalendarIdentifierWithISODefault(_, _)
@@ -1555,36 +1615,35 @@ RECURSIVE AddEpochNanoseconds(_, _, _)
 RECURSIVE InterpretISODateTimeOffset(_, _, _, _, _, _, _, _, _)
 RECURSIVE ConvertCalendarField(_, _, _)
 RECURSIVE PrepareFrom(_, _, _, _, _, _)
-RECURSIVE PrepareCalendarFields(_, _, _, _)
+RECURSIVE PrepareCalendarFields(_, _, _, _, _)
 RECURSIVE CalendarMergeFields(_, _)
-RECURSIVE ISODateToFields(_, _)
-RECURSIVE CalendarResolveFields(_, _, _)
-RECURSIVE CalendarDateFromFields(_, _, _)
-RECURSIVE CalendarYearMonthFromFields(_, _, _)
-RECURSIVE CalendarMonthDayFromFields(_, _, _)
-RECURSIVE InterpretTemporalDateTimeFields(_, _, _)
+RECURSIVE CalendarResolveFields(_, _, _, _)
+RECURSIVE CalendarDateFromFields(_, _, _, _)
+RECURSIVE CalendarYearMonthFromFields(_, _, _, _)
+RECURSIVE CalendarMonthDayFromFields(_, _, _, _)
+RECURSIVE InterpretTemporalDateTimeFields(_, _, _, _)
 RECURSIVE ZonedDateTimeISODateTime(_, _)
 RECURSIVE DateDurationDays(_, _, _)
 RECURSIVE InternalDurationSign(_)
 RECURSIVE CheckedDateDuration(_, _)
-RECURSIVE ComputeNudgeWindow(_, _, _, _, _, _, _, _, _)
-RECURSIVE NudgeToCalendarUnit(_, _, _, _, _, _, _, _, _, _)
-RECURSIVE NudgeToZonedTime(_, _, _, _, _, _, _, _)
+RECURSIVE ComputeNudgeWindow(_, _, _, _, _, _, _, _, _, _)
+RECURSIVE NudgeToCalendarUnit(_, _, _, _, _, _, _, _, _, _, _)
+RECURSIVE NudgeToZonedTime(_, _, _, _, _, _, _, _, _)
 RECURSIVE NudgeToDayOrTime(_, _, _, _, _, _, _)
 RECURSIVE BubbleUnits(_, _)
-RECURSIVE BubbleFrom(_, _, _, _, _, _, _)
-RECURSIVE BubbleRelativeDuration(_, _, _, _, _, _, _, _)
-RECURSIVE RoundRelativeDuration(_, _, _, _, _, _, _, _, _, _)
-RECURSIVE TotalRelativeDuration(_, _, _, _, _, _, _)
-RECURSIVE DifferenceISODateTime(_, _, _)
-RECURSIVE DifferencePlainDateTimeWithRounding(_, _, _, _, _, _, _)
-RECURSIVE DifferencePlainDateTimeWithTotal(_, _, _, _)
+RECURSIVE BubbleFrom(_, _, _, _, _, _, _, _)
+RECURSIVE BubbleRelativeDuration(_, _, _, _, _, _, _, _, _)
+RECURSIVE RoundRelativeDuration(_, _, _, _, _, _, _, _, _, _, _)
+RECURSIVE TotalRelativeDuration(_, _, _, _, _, _, _, _)
+RECURSIVE DifferenceISODateTime(_, _, _, _)
+RECURSIVE DifferencePlainDateTimeWithRounding(_, _, _, _, _, _, _, _)
+RECURSIVE DifferencePlainDateTimeWithTotal(_, _, _, _, _)
 RECURSIVE DayCorrectionFrom(_, _, _, _, _, _, _, _)
-RECURSIVE DifferenceZonedDateTime(_, _, _, _, _)
+RECURSIVE DifferenceZonedDateTime(_, _, _, _, _, _)
 RECURSIVE DifferenceEpochNanoseconds(_, _, _, _, _, _)
-RECURSIVE DifferenceZonedDateTimeWithRounding(_, _, _, _, _, _, _, _)
-RECURSIVE DifferenceZonedDateTimeWithTotal(_, _, _, _, _)
-RECURSIVE AddZonedDateTime(_, _, _, _, _)
+RECURSIVE DifferenceZonedDateTimeWithRounding(_, _, _, _, _, _, _, _, _)
+RECURSIVE DifferenceZonedDateTimeWithTotal(_, _, _, _, _, _)
+RECURSIVE AddZonedDateTime(_, _, _, _, _, _)
 RECURSIVE RelativePlainTarget(_, _, _)
 RECURSIVE RelativeToFrom(_, _, _, _, _, _, _, _)
 RECURSIVE GetTemporalRelativeToOption(_, _)
@@ -1646,7 +1705,6 @@ RECURSIVE ParseTemporalDurationString(_, _)
 RECURSIVE CreateTemporalDate(_, _, _, _)
 RECURSIVE ReadOverflowOption(_, _)
 RECURSIVE ToTemporalDateRecord(_, _, _)
-RECURSIVE CalendarDateGetter(_, _, _)
 RECURSIVE DifferenceTemporalPlainDate(_, _, _, _, _)
 RECURSIVE AddDurationToDate(_, _, _, _, _)
 RECURSIVE ToTimeRecordOrMidnight(_, _)
@@ -1655,7 +1713,7 @@ RECURSIVE PlainDateToZonedDateTime(_, _, _)
 RECURSIVE CreateTemporalDateTime(_, _, _, _)
 RECURSIVE ToTemporalDateTimeRecord(_, _, _)
 RECURSIVE RoundISODateTime(_, _, _, _)
-RECURSIVE ISODateTimeToFields(_)
+RECURSIVE ISODateTimeToFields(_, _)
 RECURSIVE SinceFields(_, _)
 RECURSIVE DifferenceTemporalPlainDateTime(_, _, _, _, _)
 RECURSIVE AddDurationToDateTime(_, _, _, _, _)
@@ -1692,10 +1750,10 @@ RECURSIVE CreateTemporalYearMonth(_, _, _, _)
 RECURSIVE ToTemporalYearMonthRecord(_, _, _)
 RECURSIVE TemporalYearMonthToString(_, _)
 RECURSIVE TemporalMonthDayToString(_, _)
-RECURSIVE YearMonthFirstDay(_, _)
+RECURSIVE YearMonthFirstDay(_, _, _)
 RECURSIVE DifferenceTemporalPlainYearMonth(_, _, _, _, _)
 RECURSIVE AddDurationToYearMonth(_, _, _, _, _)
-RECURSIVE MergedPartialFields(_, _, _, _)
+RECURSIVE MergedPartialFields(_, _, _, _, _)
 RECURSIVE MergedPlainDate(_, _, _, _, _)
 RECURSIVE PlainYearMonthBuiltin(_, _, _, _, _, _)
 RECURSIVE CreateTemporalMonthDay(_, _, _, _)
@@ -4996,6 +5054,72 @@ Base64UrlDigits == N("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012345
 HexDigits == N("0123456789abcdef")
 NoAttributes == [key \in {} |-> <<>>]
 NoResolution == [kind |-> "null"]
+EraCalendars == {N("gregory"), N("buddhist"), N("roc"), N("japanese")}
+CopticCalendars == {N("coptic"), N("ethiopic"), N("ethioaa")}
+IslamicCalendars == {N("islamic-civil"), N("islamic-tbla"), N("islamic-umalqura")}
+ArithmeticCalendars == CopticCalendars \cup IslamicCalendars \cup {N("indian"), N("persian"), N("hebrew")}
+UmalquraMonths ==
+  <<
+  1365, 683, 2359, 694, 1398, 876, 2901, 2730, 2390, 1182, 2397, 698, 1461, 938, 2891, 2710, 1326,
+  685, 1389, 2906, 1874, 3877, 3722, 3350, 2646, 2741, 1716, 3497, 2962, 2853, 1611, 2715, 858,
+  1753, 1492, 3493, 3402, 2709, 1334, 2421, 756, 1769, 1748, 1705, 1333, 605, 1213, 2490, 948,
+  2921, 2858, 2645, 1197, 2653, 730, 1753, 3754, 3732, 3370, 3158, 1198, 2669, 1386, 3413, 3402,
+  2707, 1323, 2651, 1338, 1717, 3753, 3410, 3369, 2645, 1197, 1389, 2794, 1764, 3793, 3490, 2730,
+  2394, 730, 1465, 2994, 1892, 1737, 1365, 683, 1243, 2746, 1460, 3497, 3410, 2725, 2349, 621,
+  2285, 730, 2773, 2725, 2635, 1175, 2359, 694, 2421, 3433, 3410, 3221, 2347, 603, 1243, 2517,
+  1490, 3493, 3402, 2709, 1357, 2733, 938, 3026, 3012, 2953, 2709, 1325, 1453, 2922, 1748, 3529,
+  3474, 2726, 2390, 686, 1389, 874, 2901, 2730, 2381, 1181, 2397, 698, 1461, 1450, 3413, 2714,
+  2350, 622, 1373, 2778, 1748, 1701, 2855, 2637, 1197, 1389, 2906, 1876, 3913, 3730, 3366, 2646,
+  854, 1717, 2986, 2962, 2853, 1675, 2715, 1370, 2778, 1460, 3497, 2898, 2714, 1334, 630, 1397,
+  2802, 1748, 1705, 1365, 685, 1213, 2490, 1396, 2921, 2898, 2709, 1325, 2653, 1242, 2777, 1714,
+  3733, 3626, 3222, 2350, 2733, 1386, 3429, 3402, 3349, 1579, 3163, 1338, 1717, 3506, 3428, 3369,
+  2645, 1197, 2413, 2794, 1768, 3793, 3492, 3402, 2666, 730, 1465, 2930, 2920, 1745, 1621, 1195,
+  2395, 698, 1461, 3497, 3410, 3238, 2382, 1134, 2397, 1242, 2773, 2730, 2637, 1179, 2359, 1206,
+  2421, 3434, 3410, 2725, 2379, 683, 1371, 2777, 1490, 3525, 3474, 2853, 1365, 2741, 1460, 2985,
+  1954, 1861, 1427, 2731, 1238, 2518, 1490, 2981, 2890, 2709, 1197, 349, 733, 2522, 1460, 1449,
+  1325, 603, 2231, 374, 1389, 2922, 2762, 2710, 1323, 347, 699, 1462, 3498, 2964, 3398, 2701, 1325,
+  2717, 1370, 1877, 1865, 3859, 3658, 2710, 1366, 1717, 2986, 2964
+  >>
+UmalquraStarts ==
+  <<
+  0, 354, 708, 1063, 1417, 1772, 2126, 2481, 2835, 3189, 3543, 3898, 4252, 4607, 4961, 5316, 5670,
+  6024, 6378, 6733, 7088, 7442, 7797, 8151, 8505, 8859, 9214, 9568, 9923, 10277, 10631, 10985,
+  11340, 11694, 12049, 12403, 12758, 13112, 13466, 13820, 14175, 14529, 14884, 15238, 15592, 15946,
+  16300, 16655, 17010, 17364, 17719, 18073, 18427, 18781, 19136, 19490, 19845, 20200, 20554, 20908,
+  21262, 21616, 21971, 22325, 22680, 23034, 23388, 23742, 24097, 24451, 24806, 25161, 25515, 25869,
+  26223, 26577, 26932, 27287, 27641, 27996, 28350, 28704, 29058, 29412, 29767, 30122, 30476, 30830,
+  31184, 31538, 31893, 32248, 32602, 32957, 33311, 33665, 34019, 34373, 34728, 35082, 35437, 35791,
+  36145, 36499, 36854, 37208, 37563, 37918, 38272, 38626, 38980, 39334, 39689, 40044, 40398, 40753,
+  41107, 41461, 41815, 42170, 42524, 42879, 43233, 43587, 43941, 44295, 44650, 45005, 45359, 45714,
+  46068, 46422, 46776, 47130, 47485, 47839, 48194, 48548, 48902, 49256, 49611, 49965, 50320, 50674,
+  51029, 51383, 51737, 52091, 52446, 52801, 53155, 53509, 53864, 54218, 54572, 54927, 55282, 55636,
+  55991, 56345, 56699, 57053, 57407, 57762, 58117, 58471, 58825, 59179, 59534, 59888, 60243, 60597,
+  60952, 61306, 61660, 62014, 62368, 62723, 63078, 63432, 63786, 64140, 64494, 64849, 65204, 65558,
+  65913, 66267, 66621, 66975, 67330, 67684, 68039, 68393, 68748, 69102, 69456, 69810, 70165, 70519,
+  70874, 71228, 71582, 71936, 72291, 72645, 73000, 73355, 73709, 74063, 74417, 74771, 75126, 75481,
+  75835, 76190, 76544, 76898, 77252, 77606, 77961, 78316, 78670, 79024, 79378, 79732, 80087, 80441,
+  80796, 81151, 81505, 81859, 82213, 82567, 82922, 83276, 83631, 83985, 84339, 84693, 85048, 85402,
+  85757, 86112, 86466, 86820, 87174, 87528, 87883, 88238, 88592, 88947, 89301, 89655, 90009, 90364,
+  90718, 91073, 91427, 91781, 92135, 92490, 92844, 93199, 93553, 93908, 94262, 94616, 94970, 95324,
+  95679, 96034, 96388, 96742, 97096, 97450, 97805, 98159, 98514, 98869, 99223, 99577, 99931,
+  100285, 100640, 100995, 101350, 101704, 102058, 102412, 102766, 103121, 103475, 103830, 104184,
+  104539, 104893, 105247, 105601, 105956, 106311, 106665
+  >>
+PersianCorrections ==
+  {1502, 1601, 1634, 1667, 1700, 1733, 1766, 1799, 1832, 1865, 1898, 1931, 1964, 1997, 2030, 2059,
+   2063, 2096, 2129, 2158, 2162, 2191, 2195, 2224, 2228, 2257, 2261, 2290, 2294, 2323, 2327, 2356,
+   2360, 2389, 2393, 2422, 2426, 2455, 2459, 2488, 2492, 2521, 2525, 2554, 2558, 2587, 2591, 2620,
+   2624, 2653, 2657, 2686, 2690, 2719, 2723, 2748, 2752, 2756, 2781, 2785, 2789, 2818, 2822, 2847,
+   2851, 2855, 2880, 2884, 2888, 2913, 2917, 2921, 2946, 2950, 2954, 2979, 2983, 2987}
+JapaneseEras ==
+  <<[name |-> N("meiji"), start |-> [year |-> 1873, month |-> 1, day |-> 1], first |-> 1868],
+    [name |-> N("taisho"), start |-> [year |-> 1912, month |-> 7, day |-> 30], first |-> 1912],
+    [name |-> N("showa"), start |-> [year |-> 1926, month |-> 12, day |-> 25], first |-> 1926],
+    [name |-> N("heisei"), start |-> [year |-> 1989, month |-> 1, day |-> 8], first |-> 1989],
+    [name |-> N("reiwa"), start |-> [year |-> 2019, month |-> 5, day |-> 1], first |-> 2019]>>
+CalendarDateGetters ==
+  {"era", "eraYear", "year", "month", "monthCode", "day", "dayOfWeek", "dayOfYear", "weekOfYear", "yearOfWeek",
+   "daysInWeek", "daysInMonth", "daysInYear", "monthsInYear", "inLeapYear"}
 ISO8601 == N("iso8601")
 UTCTimeZone == [id |-> N("UTC"), primary |-> N("UTC"), offset |-> 0, zone |-> Empty]
 TINsPerSecond == TI(1000000000)
@@ -5004,20 +5128,17 @@ TINsMaxInstant == TIMul(TI(100000000), TINsPerDay)
 CalendarClasses == {"temporalDate", "temporalDateTime", "temporalMonthDay", "temporalYearMonth", "temporalZonedDateTime"}
 TZEndDay == 24837
 CalendarFieldNames ==
-  <<"day", "hour", "microsecond", "millisecond", "minute", "month", "monthCode", "nanosecond", "offset", "second",
-    "timeZone", "year">>
+  <<"day", "era", "eraYear", "hour", "microsecond", "millisecond", "minute", "month", "monthCode", "nanosecond",
+    "offset", "second", "timeZone", "year">>
 CalendarFieldKeys ==
-  <<SV("day"), SV("hour"), SV("microsecond"), SV("millisecond"), SV("minute"), SV("month"), SV("monthCode"),
-    SV("nanosecond"), SV("offset"), SV("second"), SV("timeZone"), SV("year")>>
+  <<SV("day"), SV("era"), SV("eraYear"), SV("hour"), SV("microsecond"), SV("millisecond"), SV("minute"), SV("month"),
+    SV("monthCode"), SV("nanosecond"), SV("offset"), SV("second"), SV("timeZone"), SV("year")>>
 CalendarTimeFieldNames == {"hour", "minute", "second", "millisecond", "microsecond", "nanosecond"}
 EmptyCalendarFields == [n \in Range(CalendarFieldNames) |-> Empty]
 DateFieldNames == {"day", "month", "monthCode", "year"}
 YearMonthFieldNames == {"month", "monthCode", "year"}
 TPFail == [ok |-> FALSE]
 TPNoOffset == [z |-> FALSE, offset |-> Empty]
-CalendarDateGetters ==
-  {"era", "eraYear", "year", "month", "monthCode", "day", "dayOfWeek", "dayOfYear", "weekOfYear", "yearOfWeek",
-   "daysInWeek", "daysInMonth", "daysInYear", "monthsInYear", "inLeapYear"}
 YearMonthGetters == {"era", "eraYear", "year", "month", "monthCode", "daysInYear", "daysInMonth", "monthsInYear", "inLeapYear"}
 TINsPerMinute == TIMul(TI(60), TINsPerSecond)
 TINsPerHour == TIMul(TI(3600), TINsPerSecond)
@@ -16479,12 +16600,419 @@ RunModule(s, specifier) ==
      IN IF IsAbrupt(jobs) THEN jobs
         ELSE IF Slots(jobs.s, Val(evaluated)).state = "rejected" THEN ThrowValue(jobs.s, Slots(jobs.s, Val(evaluated)).result)
         ELSE jobs
+\* The calendars other than ISO 8601 that Temporal takes (Intl era and month code proposal), as
+\* Node 26 runs them. engine262 has none of them. A calendar date is [year, month, day] of TLA+
+\* integers, its month the ordinal in its year, and a month code [month, leap]. The calendars
+\* with eras whose months and days are ISO 8601's count their years from another year; the
+\* others count days arithmetically, as Node does: the Coptic and the two Ethiopian calendars, of
+\* 13 months each, the tabular Islamic calendars, the Indian national calendar, the Persian
+\* calendar, and the Hebrew calendar, whose leap years add a month. The Umm al-Qura calendar is
+\* the civil Islamic calendar outside the years that Node's table of its months covers. Node's
+\* Chinese and Dangi calendars read astronomical tables, which ESCore doesn't hold.
+\* CanonicalizeCalendar, with the aliases Node takes.
+CanonicalizeCalendar(s, id) ==
+  LET lower == TPLower(id) IN
+  CASE lower \in {ISO8601} \cup EraCalendars \cup ArithmeticCalendars -> Ok(s, lower)
+    [] lower = N("islamicc") -> Ok(s, N("islamic-civil"))
+    [] lower = N("ethiopic-amete-alem") -> Ok(s, N("ethioaa"))
+    [] lower \in {N("chinese"), N("dangi")} -> Unsupported(s, N("Unsupported: the chinese and dangi calendars"))
+    [] OTHER -> ThrowError(s, "RangeError")
+\* What a calendar's arithmetic year adds to the ISO year, where its months are ISO 8601's.
+CalendarYearOffset(cal) == CASE cal = N("buddhist") -> 543 [] cal = N("roc") -> -1911 [] OTHER -> 0
+\* The day of an ISO date counted from day 1 of the proleptic Gregorian calendar, and back.
+RataDie(date) == EpochDays(date) + 719163
+RataDieToISODate(day) == EpochDaysToISODate(day - 719163)
+\* The day before a Coptic or an Ethiopian year 1 starts, and a year in its Amete Mihret count.
+CopticEpoch(cal) == IF cal = N("coptic") THEN 103604 ELSE 2795
+CopticYear(cal, year) == IF cal = N("ethioaa") THEN year - 5500 ELSE year
+\* The day before a tabular Islamic year 1 starts, on its Friday or its Thursday epoch.
+IslamicEpoch(cal) == IF cal = N("islamic-tbla") THEN 227013 ELSE 227014
+\* The years 1300 to 1600 of the Umm al-Qura calendar, as Node's table gives them: each year's 30-day
+\* months as bits, and the days from the start of 1300, which the civil calendar starts on too, to
+\* the start of each year through 1601, where the civil calendar takes over again.
+IsUmalquraTable(cal, year) == cal = N("islamic-umalqura") /\ year >= 1300 /\ year <= 1600
+UmalquraLong(year, month) == (UmalquraMonths[year - 1299] \div 2 ^ (month - 1)) % 2 = 1
+\* The day that an Indian year starts on, in March of its Gregorian year, and the days before a month.
+IndianStart(year) == RataDie([year |-> year + 78, month |-> 3, day |-> IF IsLeapYear(year + 78) THEN 21 ELSE 22])
+IndianBefore(year, month) ==
+  LET first == IF IsLeapYear(year + 78) THEN 31 ELSE 30 IN
+  CASE month = 1 -> 0
+    [] month <= 7 -> first + 31 * (month - 2)
+    [] OTHER -> first + 155 + 30 * (month - 7)
+\* The Persian years that the 33-year rule makes leap years but Node's calendar doesn't, which moves
+\* each one's leap day to the next year.
+PersianLeap(year) ==
+  CASE year \in PersianCorrections -> FALSE
+    [] year - 1 \in PersianCorrections -> TRUE
+    [] OTHER -> (25 * year + 11) % 33 < 8
+\* The rata die that a Persian year starts on, and the Persian year of a rata die, from an estimate
+\* within a year or two.
+PersianStart(year) ==
+  226895 + 365 * (year - 1) + (8 * year + 21) \div 33 - (IF year - 1 \in PersianCorrections THEN 1 ELSE 0)
+PersianYearAt(day, year) ==
+  CASE PersianStart(year) > day -> PersianYearAt(day, year - 1)
+    [] PersianStart(year + 1) <= day -> PersianYearAt(day, year + 1)
+    [] OTHER -> year
+\* The Hebrew months before a year, and the days from its epoch to the year's molad, delayed as the
+\* calendar delays it, which splits the parts of an hour that a TLA+ integer wouldn't hold.
+HebrewMonthsBefore(year) == (235 * year - 234) \div 19
+HebrewElapsed(year) ==
+  LET months == HebrewMonthsBefore(year)
+      days == 29 * months + 13753 * (months \div 25920) + (12084 + 13753 * (months % 25920)) \div 25920
+  IN IF (3 * (days + 1)) % 7 < 3 THEN days + 1 ELSE days
+\* The rata die that a Hebrew year starts on, which the lengths of its neighbours delay.
+HebrewNewYear(year) ==
+  LET before == HebrewElapsed(year - 1)
+      elapsed == HebrewElapsed(year)
+      after == HebrewElapsed(year + 1)
+  IN -1373427 + elapsed + (CASE after - elapsed = 356 -> 2 [] elapsed - before = 382 -> 1 [] OTHER -> 0)
+HebrewLength(year) == HebrewNewYear(year + 1) - HebrewNewYear(year)
+\* CalendarDateInLeapYear and CalendarMonthsInYear of an arithmetic calendar's year.
+ArithmeticLeap(cal, year) ==
+  CASE cal \in CopticCalendars -> CopticYear(cal, year) % 4 = 3
+    [] IsUmalquraTable(cal, year) -> UmalquraStarts[year - 1298] - UmalquraStarts[year - 1299] = 355
+    [] cal \in IslamicCalendars -> (14 + 11 * year) % 30 < 11
+    [] cal = N("hebrew") -> (7 * year + 1) % 19 < 7
+    [] cal = N("persian") -> PersianLeap(year)
+    [] OTHER -> IsLeapYear(year + 78)
+ArithmeticMonths(cal, year) ==
+  CASE cal \in CopticCalendars -> 13
+    [] cal = N("hebrew") -> IF ArithmeticLeap(cal, year) THEN 13 ELSE 12
+    [] OTHER -> 12
+\* The month code of a month of a year, and the month that a month code is in a year that has it.
+\* A Hebrew leap year inserts Adar I, M05L, before Adar, M06.
+ArithmeticMonthCode(cal, year, month) ==
+  CASE cal # N("hebrew") \/ ~ArithmeticLeap(cal, year) \/ month <= 5 -> [month |-> month, leap |-> FALSE]
+    [] month = 6 -> [month |-> 5, leap |-> TRUE]
+    [] OTHER -> [month |-> month - 1, leap |-> FALSE]
+ArithmeticOrdinal(cal, year, code) ==
+  CASE cal # N("hebrew") \/ ~ArithmeticLeap(cal, year) \/ (code.month <= 5 /\ ~code.leap) -> code.month
+    [] code.leap -> 6
+    [] OTHER -> code.month + 1
+\* IsValidMonthCodeForCalendar, and YearContainsMonthCode of an arithmetic calendar.
+IsValidMonthCodeForCalendar(cal, code) ==
+  CASE cal = N("hebrew") -> (~code.leap /\ code.month <= 12) \/ (code.leap /\ code.month = 5)
+    [] cal \in CopticCalendars -> ~code.leap /\ code.month <= 13
+    [] OTHER -> ~code.leap /\ code.month <= 12
+YearContainsMonthCode(cal, year, code) == ~code.leap \/ ArithmeticLeap(cal, year)
+\* The days of a month of a Hebrew year, by its code: Heshvan and Kislev give a year its length.
+HebrewDays(year, code) ==
+  CASE code.leap -> 30
+    [] code.month = 2 -> IF HebrewLength(year) % 10 = 5 THEN 30 ELSE 29
+    [] code.month = 3 -> IF HebrewLength(year) % 10 = 3 THEN 29 ELSE 30
+    [] OTHER -> IF code.month % 2 = 1 THEN 30 ELSE 29
+ArithmeticDaysInMonth(cal, year, month) ==
+  CASE cal \in CopticCalendars -> IF month = 13 THEN (IF ArithmeticLeap(cal, year) THEN 6 ELSE 5) ELSE 30
+    [] IsUmalquraTable(cal, year) -> IF UmalquraLong(year, month) THEN 30 ELSE 29
+    [] cal \in IslamicCalendars -> IF month % 2 = 1 \/ (month = 12 /\ ArithmeticLeap(cal, year)) THEN 30 ELSE 29
+    [] cal = N("hebrew") -> HebrewDays(year, ArithmeticMonthCode(cal, year, month))
+    [] cal = N("persian") -> CASE month <= 6 -> 31 [] month <= 11 -> 30 [] OTHER -> IF ArithmeticLeap(cal, year) THEN 30 ELSE 29
+    [] month = 1 -> IF ArithmeticLeap(cal, year) THEN 31 ELSE 30
+    [] OTHER -> IF month <= 6 THEN 31 ELSE 30
+\* The days of the month of a code in the year where it's longest.
+ArithmeticMostDays(cal, code) ==
+  CASE cal \in CopticCalendars -> IF code.month = 13 THEN 6 ELSE 30
+    [] cal = N("islamic-umalqura") -> 30
+    [] cal \in IslamicCalendars -> IF code.month % 2 = 1 \/ code.month = 12 THEN 30 ELSE 29
+    [] cal = N("hebrew") -> IF code.month % 2 = 1 \/ code.leap \/ code.month \in {2, 3} THEN 30 ELSE 29
+    [] OTHER -> IF code.month <= 6 THEN 31 ELSE 30
+\* The days of the months of a Hebrew year, or of an Umm al-Qura year in Node's table, before one.
+HebrewBefore(year, month) ==
+  IF month = 1 THEN 0 ELSE HebrewBefore(year, month - 1) + ArithmeticDaysInMonth(N("hebrew"), year, month - 1)
+UmalquraBefore(year, month) ==
+  IF month = 1 THEN 0 ELSE UmalquraBefore(year, month - 1) + IF UmalquraLong(year, month - 1) THEN 30 ELSE 29
+\* The rata die of a valid date of an arithmetic calendar.
+ArithmeticRataDie(cal, year, month, day) ==
+  LET coptic == CopticYear(cal, year) IN
+  CASE cal \in CopticCalendars -> CopticEpoch(cal) + 365 * (coptic - 1) + coptic \div 4 + 30 * (month - 1) + day
+    [] IsUmalquraTable(cal, year) -> 687337 + UmalquraStarts[year - 1299] + UmalquraBefore(year, month) + day - 1
+    [] cal \in IslamicCalendars ->
+         IslamicEpoch(cal) + (year - 1) * 354 + (3 + 11 * year) \div 30 + 29 * (month - 1) + month \div 2 + day
+    [] cal = N("hebrew") -> HebrewNewYear(year) + HebrewBefore(year, month) + day - 1
+    [] cal = N("persian") ->
+         PersianStart(year) + (IF month <= 7 THEN 31 * (month - 1) ELSE 186 + 30 * (month - 7)) + day - 1
+    [] OTHER -> IndianStart(year) + IndianBefore(year, month) + day - 1
+\* The Hebrew year of a rata die, from an estimate within a few years, and the Umm al-Qura year of
+\* one, from its civil year, which is within a year of it.
+HebrewYearAt(day, year) ==
+  CASE HebrewNewYear(year) > day -> HebrewYearAt(day, year - 1)
+    [] HebrewNewYear(year + 1) <= day -> HebrewYearAt(day, year + 1)
+    [] OTHER -> year
+UmalquraYearAt(day, year) ==
+  CASE ArithmeticRataDie(N("islamic-umalqura"), year, 1, 1) > day -> UmalquraYearAt(day, year - 1)
+    [] ArithmeticRataDie(N("islamic-umalqura"), year + 1, 1, 1) <= day -> UmalquraYearAt(day, year + 1)
+    [] OTHER -> year
+\* The month of a year that a day of the year, counted from 0, is in.
+ArithmeticMonthAt(cal, year, month, within) ==
+  IF within < ArithmeticDaysInMonth(cal, year, month) THEN month
+  ELSE ArithmeticMonthAt(cal, year, month + 1, within - ArithmeticDaysInMonth(cal, year, month))
+\* The date of an arithmetic calendar on a rata die, which splits each product that a TLA+ integer
+\* wouldn't hold.
+ArithmeticDateOf(cal, day) ==
+  LET copticDays == day - CopticEpoch(cal) - 1
+      coptic == 4 * (copticDays \div 1461) + (4 * (copticDays % 1461) + 1463) \div 1461
+      islamicDays == day - IslamicEpoch(cal) - 1
+      islamic == 30 * (islamicDays \div 10631) + (30 * (islamicDays % 10631) + 10646) \div 10631
+      gregorian == RataDieToISODate(day).year
+      year == CASE cal \in CopticCalendars -> IF cal = N("ethioaa") THEN coptic + 5500 ELSE coptic
+                [] cal = N("islamic-umalqura") -> UmalquraYearAt(day, islamic)
+                [] cal \in IslamicCalendars -> islamic
+                [] cal = N("hebrew") -> HebrewYearAt(day, ((day + 1373427) * 19) \div 6940 + 1)
+                [] cal = N("persian") ->
+                     PersianYearAt(day, 33 * ((day - 226895) \div 12053) + (33 * ((day - 226895) % 12053)) \div 12053 + 1)
+                [] OTHER -> IF day < IndianStart(gregorian - 78) THEN gregorian - 79 ELSE gregorian - 78
+      within == day - ArithmeticRataDie(cal, year, 1, 1)
+      first == ArithmeticDaysInMonth(cal, year, 1)
+      month == CASE cal \in CopticCalendars -> within \div 30 + 1
+                 [] cal \in {N("hebrew"), N("persian"), N("islamic-umalqura")} -> ArithmeticMonthAt(cal, year, 1, within)
+                 [] cal \in IslamicCalendars -> (11 * within + 330) \div 325
+                 [] within < first -> 1
+                 [] within < first + 155 -> 2 + (within - first) \div 31
+                 [] OTHER -> 7 + (within - first - 155) \div 30
+  IN [year |-> year, month |-> month, day |-> day - ArithmeticRataDie(cal, year, month, 1) + 1]
+\* The months of an arithmetic calendar before a year's month, and the year and the month of a
+\* count of them.
+MonthIndex(cal, year, month) ==
+  IF cal = N("hebrew") THEN HebrewMonthsBefore(year) + month - 1 ELSE year * ArithmeticMonths(cal, 0) + month - 1
+HebrewYearOfIndex(index, year) ==
+  CASE HebrewMonthsBefore(year) > index -> HebrewYearOfIndex(index, year - 1)
+    [] HebrewMonthsBefore(year + 1) <= index -> HebrewYearOfIndex(index, year + 1)
+    [] OTHER -> year
+OfMonthIndex(cal, index) ==
+  LET count == ArithmeticMonths(cal, 0)
+      year == HebrewYearOfIndex(index, (19 * index + 234) \div 235)
+  IN IF cal = N("hebrew") THEN [year |-> year, month |-> index - HebrewMonthsBefore(year) + 1]
+     ELSE [year |-> index \div count, month |-> (index % count) + 1]
+\* Whether a year of an arithmetic calendar has a date within the limits.
+ArithmeticYearWithinLimits(cal, year) ==
+  LET months == ArithmeticMonths(cal, year) IN
+  ArithmeticRataDie(cal, year, 1, 1) - 719163 <= 100000000 /\
+  ArithmeticRataDie(cal, year, months, ArithmeticDaysInMonth(cal, year, months)) - 719163 >= -100000001
+\* The reference date of a month code and a day of an arithmetic calendar: the latest that is in
+\* 1972 or before, from a year of the calendar.
+ArithmeticReferenceYear(cal) == ArithmeticDateOf(cal, RataDie([year |-> 1972, month |-> 12, day |-> 31])).year
+ArithmeticReference(cal, year, code, day) ==
+  LET month == ArithmeticOrdinal(cal, year, code) IN
+  IF YearContainsMonthCode(cal, year, code) /\ day <= ArithmeticDaysInMonth(cal, year, month) /\
+     ArithmeticRataDie(cal, year, month, day) <= RataDie([year |-> 1972, month |-> 12, day |-> 31])
+  THEN RataDieToISODate(ArithmeticRataDie(cal, year, month, day))
+  ELSE ArithmeticReference(cal, year - 1, code, day)
+\* The Japanese calendar's eras from 1873, with the ISO date each starts on and its first year.
+\* CanonicalizeEraInCalendar, or Empty where the calendar has no such era.
+CanonicalizeEraInCalendar(cal, era) ==
+  CASE cal \in {N("coptic"), N("ethiopic"), N("hebrew")} /\ era = N("am") -> era
+    [] cal = N("persian") /\ era = N("ap") -> era
+    [] cal \in {N("ethiopic"), N("ethioaa")} /\ era = N("aa") -> era
+    [] cal = N("indian") /\ era = N("shaka") -> era
+    [] cal \in IslamicCalendars /\ era \in {N("ah"), N("bh")} -> era
+    [] cal \in {N("gregory"), N("japanese")} /\ era \in {N("ce"), N("ad")} -> N("ce")
+    [] cal \in {N("gregory"), N("japanese")} /\ era \in {N("bce"), N("bc")} -> N("bce")
+    [] cal = N("japanese") /\ \E i \in DOMAIN JapaneseEras : JapaneseEras[i].name = era -> era
+    [] cal = N("buddhist") /\ era = N("be") -> era
+    [] cal = N("roc") /\ era \in {N("roc"), N("broc")} -> era
+    [] OTHER -> Empty
+\* CalendarDateArithmeticYearForEraYear, of a BigInt era year: an era of the negative kind counts
+\* back from the year before its epoch, a Japanese era from 1873 counts from the year it starts in,
+\* and the Ethiopian calendar's Amete Alem era counts from 5500 years before its Amete Mihret era.
+CalendarDateArithmeticYearForEraYear(cal, era, eraYear) ==
+  LET japanese == SelectSeq(JapaneseEras, LAMBDA entry : entry.name = era) IN
+  CASE era \in {N("bce"), N("broc"), N("bh")} -> TISub(TI(1), eraYear)
+    [] cal = N("ethiopic") /\ era = N("aa") -> TISub(eraYear, TI(5500))
+    [] japanese # <<>> -> TIAdd(eraYear, TI(Head(japanese).first - 1))
+    [] OTHER -> eraYear
+\* CalendarDateEra and CalendarDateEraYear of an ISO date, of its arithmetic year, as [era, eraYear].
+CalendarDateEra(cal, date, year) ==
+  LET started == SelectSeq(JapaneseEras, LAMBDA entry : CompareISODate(date, entry.start) >= 0) IN
+  CASE cal = N("buddhist") -> [era |-> N("be"), eraYear |-> year]
+    [] cal \in {N("coptic"), N("hebrew")} -> [era |-> N("am"), eraYear |-> year]
+    [] cal = N("ethioaa") -> [era |-> N("aa"), eraYear |-> year]
+    [] cal = N("indian") -> [era |-> N("shaka"), eraYear |-> year]
+    [] cal = N("persian") -> [era |-> N("ap"), eraYear |-> year]
+    [] cal = N("ethiopic") -> IF year >= 1 THEN [era |-> N("am"), eraYear |-> year] ELSE [era |-> N("aa"), eraYear |-> year + 5500]
+    [] cal \in IslamicCalendars -> IF year >= 1 THEN [era |-> N("ah"), eraYear |-> year] ELSE [era |-> N("bh"), eraYear |-> 1 - year]
+    [] cal = N("japanese") /\ started # <<>> ->
+         [era |-> started[Len(started)].name, eraYear |-> year - started[Len(started)].first + 1]
+    [] year >= 1 -> [era |-> IF cal = N("roc") THEN N("roc") ELSE N("ce"), eraYear |-> year]
+    [] OTHER -> [era |-> IF cal = N("roc") THEN N("broc") ELSE N("bce"), eraYear |-> 1 - year]
+\* The calendar date of an ISO date, and its month code.
+CalendarParts(cal, date) ==
+  IF cal \in ArithmeticCalendars THEN ArithmeticDateOf(cal, RataDie(date))
+  ELSE [year |-> date.year + CalendarYearOffset(cal), month |-> date.month, day |-> date.day]
+CalendarMonthCode(cal, parts) ==
+  IF cal \in ArithmeticCalendars THEN ArithmeticMonthCode(cal, parts.year, parts.month) ELSE [month |-> parts.month, leap |-> FALSE]
+\* The month code of a fields record's monthCode units, or Empty.
+MonthCodeOf(units) == IF units = Empty THEN Empty ELSE [month |-> TPInt(units, 2, 3), leap |-> Len(units) = 4]
+\* MonthCodeToOrdinal of a month code that the year has, as ConstrainMonthCode constrains it.
+MonthCodeToOrdinal(cal, year, code) ==
+  IF cal \in ArithmeticCalendars
+  THEN ArithmeticOrdinal(cal, year, IF YearContainsMonthCode(cal, year, code) THEN code ELSE [month |-> 6, leap |-> FALSE])
+  ELSE code.month
+\* CalendarISOToDate's fields that the getters of PlainDate and kin read.
+CalendarDateGetter(s, cal, date, m) ==
+  LET parts == CalendarParts(cal, date)
+      isArithmetic == cal \in ArithmeticCalendars
+  IN CASE m \in {"era", "eraYear"} ->
+            IF cal = ISO8601 THEN Ok(s, Undefined)
+            ELSE LET era == CalendarDateEra(cal, date, parts.year) IN
+                 Ok(s, IF m = "era" THEN Str(era.era) ELSE IntV(era.eraYear))
+       [] m = "year" -> Ok(s, IntV(parts.year))
+       [] m = "month" -> Ok(s, IntV(parts.month))
+       [] m = "monthCode" ->
+            LET code == CalendarMonthCode(cal, parts) IN Ok(s, Str(CreateMonthCode(code.month, code.leap)))
+       [] m = "day" -> Ok(s, IntV(parts.day))
+       [] m = "dayOfWeek" -> Ok(s, IntV(ISODayOfWeek(date)))
+       [] m = "dayOfYear" ->
+            Ok(s, IntV(IF isArithmetic THEN RataDie(date) - ArithmeticRataDie(cal, parts.year, 1, 1) + 1 ELSE ISODayOfYear(date)))
+       [] m \in {"weekOfYear", "yearOfWeek"} ->
+            IF cal # ISO8601 THEN Ok(s, Undefined)
+            ELSE Ok(s, IntV(IF m = "weekOfYear" THEN ISOWeekOfYear(date).week ELSE ISOWeekOfYear(date).year))
+       [] m = "daysInWeek" -> Ok(s, IntV(7))
+       [] m = "daysInMonth" ->
+            Ok(s, IntV(IF isArithmetic THEN ArithmeticDaysInMonth(cal, parts.year, parts.month) ELSE ISODaysInMonth(date.year, date.month)))
+       [] m = "daysInYear" ->
+            Ok(s, IntV(CASE isArithmetic -> ArithmeticRataDie(cal, parts.year + 1, 1, 1) - ArithmeticRataDie(cal, parts.year, 1, 1)
+                         [] IsLeapYear(date.year) -> 366
+                         [] OTHER -> 365))
+       [] m = "monthsInYear" -> Ok(s, IntV(IF isArithmetic THEN ArithmeticMonths(cal, parts.year) ELSE 12))
+       [] m = "inLeapYear" -> Ok(s, Bool(IF isArithmetic THEN ArithmeticLeap(cal, parts.year) ELSE IsLeapYear(date.year)))
+\* ISODateToFields, for type "date", "year-month", or "month-day": the calendar year, month code, and
+\* day. It leaves out the month, whose number gives another month code in another Hebrew year.
+ISODateToFields(cal, date, type) ==
+  LET parts == CalendarParts(cal, date)
+      code == CalendarMonthCode(cal, parts)
+  IN [EmptyCalendarFields EXCEPT !.monthCode = CreateMonthCode(code.month, code.leap),
+                                 !.day = IF type \in {"date", "month-day"} THEN TI(parts.day) ELSE Empty,
+                                 !.year = IF type \in {"date", "year-month"} THEN TI(parts.year) ELSE Empty]
+\* CalendarResolveFields of a calendar other than ISO 8601 (NonISOResolveFields): the fields with
+\* year set to the arithmetic year that the year or the era and the era year give, and month to the
+\* month's ordinal.
+NonISOResolveFields(s, cal, fields, type) ==
+  LET code == MonthCodeOf(fields.monthCode)
+      era == IF fields.era = Empty THEN Empty ELSE CanonicalizeEraInCalendar(cal, fields.era)
+      year == IF fields.eraYear = Empty \/ era = Empty THEN fields.year
+              ELSE CalendarDateArithmeticYearForEraYear(cal, era, fields.eraYear)
+      ordinal == IF year = Empty THEN code.month ELSE MonthCodeToOrdinal(cal, TIClamp(year, -1000000, 1000000), code)
+  IN CASE (type \in {"date", "year-month"} \/ code = Empty \/ fields.month # Empty) /\ fields.year = Empty /\
+          (fields.era = Empty \/ fields.eraYear = Empty) -> ThrowTypeError(s)
+       [] (fields.era = Empty) # (fields.eraYear = Empty) -> ThrowTypeError(s)
+       [] type \in {"date", "month-day"} /\ fields.day = Empty -> ThrowTypeError(s)
+       [] fields.month = Empty /\ code = Empty -> ThrowTypeError(s)
+       [] fields.eraYear # Empty /\ era = Empty -> ThrowError(s, "RangeError")
+       [] fields.eraYear # Empty /\ fields.year # Empty /\ fields.year # year -> ThrowError(s, "RangeError")
+       [] code # Empty /\ ~(IF cal \in ArithmeticCalendars THEN IsValidMonthCodeForCalendar(cal, code) ELSE ~code.leap /\ code.month <= 12) ->
+            ThrowError(s, "RangeError")
+       [] year # Empty /\ fields.month # Empty /\ code # Empty /\ fields.month # TI(ordinal) -> ThrowError(s, "RangeError")
+       [] OTHER -> Ok(s, [fields EXCEPT !.year = year, !.month = IF code = Empty THEN fields.month ELSE TI(ordinal)])
+\* CalendarDateToISO of a resolved year and month and a day, BigInts, and the month code that the
+\* fields gave, or Empty. A month code that the year lacks is constrained or rejected.
+CalendarDateToISO(s, cal, year, month, day, code, overflow) ==
+  IF cal \notin ArithmeticCalendars THEN
+    LET iso == TISub(year, TI(CalendarYearOffset(cal))) IN
+    IF ~TIYearInRange(iso) THEN ThrowError(s, "RangeError") ELSE RegulateISODate(s, TIToInt(iso), month, day, overflow)
+  ELSE IF ~TIYearInRange(year) THEN ThrowError(s, "RangeError") ELSE
+  LET y == TIToInt(year)
+      months == ArithmeticMonths(cal, y)
+      m == TIClamp(month, 1, months)
+      days == ArithmeticDaysInMonth(cal, y, m)
+  IN IF overflow = N("reject") /\
+        ((code # Empty /\ ~YearContainsMonthCode(cal, y, code)) \/ BigIntLess(TI(months), month) \/ BigIntLess(TI(days), day))
+     THEN ThrowError(s, "RangeError")
+     ELSE Ok(s, RataDieToISODate(ArithmeticRataDie(cal, y, m, TIClamp(day, 1, days))))
+\* CalendarMonthDayToISOReferenceDate of a calendar other than ISO 8601, of resolved fields, whose
+\* year, where they give one, only decides how long the month is, and must be within the limits.
+\* A calendar whose months are ISO 8601's takes 1972 as the reference year.
+NonISOMonthDayToISOReferenceDate(s, cal, fields, overflow) ==
+  IF cal \notin ArithmeticCalendars THEN
+    LET year == IF fields.year = Empty THEN Empty ELSE TISub(fields.year, TI(CalendarYearOffset(cal))) IN
+    IF year # Empty /\ (BigIntLess(year, TI(-271821)) \/ BigIntLess(TI(275760), year)) THEN ThrowError(s, "RangeError") ELSE
+    LET date == RegulateISODate(s, IF year = Empty THEN 1972 ELSE TIToInt(TIMod(year, TI(400))), fields.month, fields.day, overflow) IN
+    IF IsAbrupt(date) THEN date ELSE Ok(s, [year |-> 1972, month |-> Val(date).month, day |-> Val(date).day])
+  ELSE
+  LET y == IF fields.year = Empty THEN 0 ELSE TIClamp(fields.year, -1000000, 1000000)
+      months == IF fields.year = Empty THEN 13 ELSE ArithmeticMonths(cal, y)
+      month == TIClamp(fields.month, 1, months)
+      given == MonthCodeOf(fields.monthCode)
+      code == CASE fields.year = Empty -> given
+                [] given = Empty -> ArithmeticMonthCode(cal, y, month)
+                [] YearContainsMonthCode(cal, y, given) -> given
+                [] OTHER -> [month |-> 6, leap |-> FALSE]
+      days == IF fields.year = Empty THEN ArithmeticMostDays(cal, code) ELSE ArithmeticDaysInMonth(cal, y, month)
+  IN IF fields.year # Empty /\ ~(TIYearInRange(fields.year) /\ ArithmeticYearWithinLimits(cal, y)) THEN ThrowError(s, "RangeError")
+     ELSE IF overflow = N("reject") /\
+             ((fields.year # Empty /\ given # Empty /\ ~YearContainsMonthCode(cal, y, given)) \/
+              BigIntLess(TI(months), fields.month) \/ BigIntLess(TI(days), fields.day))
+     THEN ThrowError(s, "RangeError")
+     ELSE Ok(s, ArithmeticReference(cal, ArithmeticReferenceYear(cal), code, TIClamp(fields.day, 1, days)))
+\* NonISODateAdd of an arithmetic calendar, for a date duration, whose fields share a sign. Past
+\* the bounds checked first, every result is out of range.
+NonISODateAdd(s, cal, date, duration, overflow) ==
+  LET days == TIAdd(duration[4], TIMul(TI(7), duration[3])) IN
+  IF BigIntLess(TI(600000), TIAbs(duration[1])) \/ BigIntLess(TI(20000000), TIAbs(duration[2])) \/
+     BigIntLess(TI(250000000), TIAbs(days)) THEN ThrowError(s, "RangeError") ELSE
+  LET parts == CalendarParts(cal, date)
+      code == ArithmeticMonthCode(cal, parts.year, parts.month)
+      year == parts.year + TIToInt(duration[1])
+  IN IF year < -1000000 \/ year > 1000000 THEN ThrowError(s, "RangeError")
+     ELSE IF overflow = N("reject") /\ ~YearContainsMonthCode(cal, year, code) THEN ThrowError(s, "RangeError") ELSE
+  LET to == OfMonthIndex(cal, MonthIndex(cal, year, MonthCodeToOrdinal(cal, year, code)) + TIToInt(duration[2])) IN
+  IF to.year < -1000000 \/ to.year > 1000000 THEN ThrowError(s, "RangeError") ELSE
+  LET length == ArithmeticDaysInMonth(cal, to.year, to.month) IN
+  IF overflow = N("reject") /\ parts.day > length THEN ThrowError(s, "RangeError") ELSE
+  LET start == ArithmeticRataDie(cal, to.year, to.month, IF parts.day > length THEN length ELSE parts.day) - 719163
+      total == start + TIToInt(days)
+  IN IF total < -100000001 \/ total > 100000000 THEN ThrowError(s, "RangeError") ELSE
+     LET result == EpochDaysToISODate(total) IN IF ISODateWithinLimits(result) THEN Ok(s, result) ELSE ThrowError(s, "RangeError")
+\* NonISODateUntil of an arithmetic calendar: the most years and then months that don't pass the
+\* later date, as NonISODateSurpasses finds them from a guess that's within one of them, and the
+\* days left. from and to are calendar dates, code from's month code; a month code orders by its
+\* month and then whether it's a leap month.
+MonthCodeKey(code) == code.month * 2 + (IF code.leap THEN 1 ELSE 0)
+NonISOReached(cal, from, code, years, months) ==
+  LET year == from.year + years IN OfMonthIndex(cal, MonthIndex(cal, year, MonthCodeToOrdinal(cal, year, code)) + months)
+NonISODateSurpasses(cal, sign, from, code, to, years, months) ==
+  \/ sign * CompareFieldsFrom(<<from.year + years, MonthCodeKey(code), from.day>>,
+                              <<to.year, MonthCodeKey(ArithmeticMonthCode(cal, to.year, to.month)), to.day>>, 1) > 0
+  \/ LET at == NonISOReached(cal, from, code, years, months) IN
+     sign * CompareFieldsFrom(<<at.year, at.month, from.day>>, <<to.year, to.month, to.day>>, 1) > 0
+NonISOBackYears(cal, sign, from, code, to, count) ==
+  IF count = 0 \/ ~NonISODateSurpasses(cal, sign, from, code, to, count, 0) THEN count
+  ELSE NonISOBackYears(cal, sign, from, code, to, count - sign)
+NonISOForeYears(cal, sign, from, code, to, count) ==
+  IF NonISODateSurpasses(cal, sign, from, code, to, count + sign, 0) THEN count
+  ELSE NonISOForeYears(cal, sign, from, code, to, count + sign)
+NonISOBackMonths(cal, sign, from, code, to, years, count) ==
+  IF count = 0 \/ ~NonISODateSurpasses(cal, sign, from, code, to, years, count) THEN count
+  ELSE NonISOBackMonths(cal, sign, from, code, to, years, count - sign)
+NonISOForeMonths(cal, sign, from, code, to, years, count) ==
+  IF NonISODateSurpasses(cal, sign, from, code, to, years, count + sign) THEN count
+  ELSE NonISOForeMonths(cal, sign, from, code, to, years, count + sign)
+NonISODateUntil(cal, one, two, largestUnit) ==
+  LET sign == -CompareISODate(one, two)
+      from == CalendarParts(cal, one)
+      to == CalendarParts(cal, two)
+      code == ArithmeticMonthCode(cal, from.year, from.month)
+      guess(count) == IF sign * count < 0 THEN 0 ELSE count
+      years == IF largestUnit = TUYear
+               THEN NonISOForeYears(cal, sign, from, code, to, NonISOBackYears(cal, sign, from, code, to, guess(to.year - from.year)))
+               ELSE 0
+      start == NonISOReached(cal, from, code, years, 0)
+      months == IF largestUnit \in {TUYear, TUMonth}
+                THEN NonISOForeMonths(cal, sign, from, code, to, years,
+                                      NonISOBackMonths(cal, sign, from, code, to, years,
+                                                       guess(MonthIndex(cal, to.year, to.month) - MonthIndex(cal, start.year, start.month))))
+                ELSE 0
+      at == NonISOReached(cal, from, code, years, months)
+      length == ArithmeticDaysInMonth(cal, at.year, at.month)
+      days == RataDie(two) - ArithmeticRataDie(cal, at.year, at.month, IF from.day > length THEN length ELSE from.day)
+      weeks == CASE largestUnit # TUWeek -> 0 [] days < 0 -> -((-days) \div 7) [] OTHER -> days \div 7
+  IN IF sign = 0 THEN ZeroDateDuration ELSE <<TI(years), TI(months), TI(weeks), TI(days - 7 * weeks)>>
 \* Temporal's ISO 8601 calendar (§12), time zones (§11), and relative durations (§7.5). An ISO
 \* date record is [year, month, day] and an ISO date-time record [date, time], of TLA+ integers.
-\* A calendar is "iso8601", the only one engine262 has, and a time zone is [id, primary, offset,
-\* zone]: its identifier and its primary identifier, its offset in minutes for UTC or an offset time
-\* zone, and for another named time zone, its HostTimeZone entry, else Empty. Calendar loops over days, months, and years have closed forms here, which give the
-\* loops' results.
+\* A calendar is its identifier: "iso8601", the only one engine262 has, or one of those in
+\* 89-temporal-calendars. A time zone is [id, primary, offset, zone]: its identifier and its
+\* primary identifier, its offset in minutes for UTC or an offset time zone, and for another named
+\* time zone, its HostTimeZone entry, else Empty. Calendar loops over days, months, and years have
+\* closed forms here, which give the loops' results.
 OffsetTimeZone(minutes) ==
   LET id == FormatOffsetTimeZoneIdentifier(minutes, TRUE) IN [id |-> id, primary |-> id, offset |-> minutes, zone |-> Empty]
 IsOffsetTimeZone(tz) == tz.id[1] \in {43, 45}
@@ -16543,8 +17071,9 @@ RegulateISODate(s, year, month, day, overflow) ==
        IF BigIntLess(day, TI(1)) \/ BigIntLess(TI(ISODaysInMonth(year, m)), day) THEN ThrowError(s, "RangeError")
        ELSE Ok(s, [year |-> year, month |-> m, day |-> TIToInt(day)])
 \* CalendarDateAdd for a date duration, whose fields share a sign. Past the bounds checked first,
-\* every result is out of range.
-CalendarDateAdd(s, date, duration, overflow) ==
+\* every result is out of range. A calendar whose months are ISO 8601's adds as ISO 8601 does.
+CalendarDateAdd(s, cal, date, duration, overflow) ==
+  IF cal \in ArithmeticCalendars THEN NonISODateAdd(s, cal, date, duration, overflow) ELSE
   LET days == TIAdd(duration[4], TIMul(TI(7), duration[3])) IN
   IF BigIntLess(TI(600000), TIAbs(duration[1])) \/ BigIntLess(TI(7200000), TIAbs(duration[2])) \/
      BigIntLess(TI(250000000), TIAbs(days)) THEN ThrowError(s, "RangeError")
@@ -16556,10 +17085,11 @@ CalendarDateAdd(s, date, duration, overflow) ==
 \* CompareSurpasses for the ISO calendar, whose month codes order as their months do.
 Surpasses(sign, year, month, day, target) ==
   sign * CompareFieldsFrom(<<year, month, day>>, <<target.year, target.month, target.day>>, 1) > 0
-\* CalendarDateUntil for the ISO calendar. Each of its loops finds the largest count, in the
+\* CalendarDateUntil. For the ISO calendar, each of its loops finds the largest count, in the
 \* direction of sign, that doesn't surpass the target; that count is the difference of the
 \* fields, or one less when the smaller fields surpass the target's.
-CalendarDateUntil(from, to, largestUnit) ==
+CalendarDateUntil(cal, from, to, largestUnit) ==
+  IF cal \in ArithmeticCalendars THEN NonISODateUntil(cal, from, to, largestUnit) ELSE
   LET compared == CompareISODate(from, to) IN
   IF compared = 0 THEN ZeroDateDuration ELSE
   LET sign == -compared
@@ -16614,9 +17144,8 @@ FormatISODateTime(dt, calendar, precision, show) ==
   ISODateUnits(dt.date) \o <<84>> \o TimeRecordToString(dt.time, precision) \o FormatCalendarAnnotation(calendar, show)
 GetTemporalShowCalendarNameOption(s, options) ==
   GetStringOption(s, options, SV("calendarName"), {N("auto"), N("always"), N("never"), N("critical")}, N("auto"))
-\* Calendar identifiers: CanonicalizeCalendar, ParseTemporalCalendarString,
+\* Calendar identifiers: ParseTemporalCalendarString,
 \* ToTemporalCalendarIdentifier, and GetTemporalCalendarIdentifierWithISODefault.
-CanonicalizeCalendar(s, id) == IF TPLower(id) = ISO8601 THEN Ok(s, ISO8601) ELSE ThrowError(s, "RangeError")
 ParseTemporalCalendarString(s, units) ==
   LET r == ParseISODateTime(s, units, "all") IN
   IF ~IsAbrupt(r) THEN Ok(r.s, IF Val(r).calendar = Empty THEN ISO8601 ELSE Val(r).calendar)
@@ -16828,13 +17357,14 @@ InterpretISODateTimeOffset(s, date, time, offsetBehaviour, offsetNs, tz, disambi
           ELSE IF offsetOption = N("reject") THEN ThrowError(possible.s, "RangeError")
           ELSE DisambiguatePossibleEpochNanoseconds(possible.s, Val(possible), tz, dt, disambiguation)
 \* Calendar fields records: the fields below, with Empty for an absent one. Numbers are BigInts,
-\* monthCode and offset are units, and timeZone is a time zone.
+\* era, monthCode, and offset are units, and timeZone is a time zone.
 ConvertCalendarField(s, name, v) ==
   CASE name \in {"month", "day"} ->
          LET n == SnapToInteger(s, v, TRUE) IN
          IF IsAbrupt(n) THEN n ELSE IF BigIntLess(Val(n), TI(1)) THEN ThrowError(n.s, "RangeError") ELSE n
     [] name = "monthCode" ->
          LET p == ParseMonthCode(s, v) IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, CreateMonthCode(Val(p).month, Val(p).leap))
+    [] name = "era" -> LET e == ToStr(s, v) IN IF IsAbrupt(e) THEN e ELSE Ok(e.s, Val(e).value)
     [] name = "timeZone" -> ToTemporalTimeZoneIdentifier(s, v)
     [] name = "offset" ->
          LET p == ToPrimitive(s, v, "string") IN IF IsAbrupt(p) THEN p
@@ -16852,26 +17382,27 @@ PrepareFrom(s, item, order, acc, isAny, required) ==
           ELSE LET c == ConvertCalendarField(v.s, name, Val(v)) IN IF IsAbrupt(c) THEN c
           ELSE PrepareFrom(c.s, item, Tail(order), [acc EXCEPT ![name] = Val(c)], TRUE, required)
 \* PrepareCalendarFields, for the set of field names to read and required "partial",
-\* "time-zone", or "no-required-fields". The fields are read in code unit order.
-PrepareCalendarFields(s, item, names, required) ==
-  PrepareFrom(s, item, SelectSeq([i \in 1..12 |-> i], LAMBDA i : CalendarFieldNames[i] \in names),
+\* "time-zone", or "no-required-fields". The fields are read in code unit order. A calendar other
+\* than ISO 8601 reads an era and an era year with a year (CalendarExtraFields).
+PrepareCalendarFields(s, cal, item, names, required) ==
+  LET read == IF cal # ISO8601 /\ "year" \in names THEN names \cup {"era", "eraYear"} ELSE names IN
+  PrepareFrom(s, item, SelectSeq([i \in 1..14 |-> i], LAMBDA i : CalendarFieldNames[i] \in read),
               [n \in Range(CalendarFieldNames) |->
                  IF required # "partial" /\ n \in CalendarTimeFieldNames THEN TI(0) ELSE Empty],
               FALSE, required)
-\* CalendarMergeFields for the ISO calendar.
+\* CalendarMergeFields, where a month and a month code replace each other, and so do a year and an
+\* era with its era year, which only a calendar other than ISO 8601 reads.
 CalendarMergeFields(fields, additional) ==
   [n \in DOMAIN fields |->
      IF additional[n] # Empty THEN additional[n]
      ELSE IF n \in {"month", "monthCode"} /\ (additional.month # Empty \/ additional.monthCode # Empty) THEN Empty
+     ELSE IF n \in {"era", "eraYear", "year"} /\ (additional.era # Empty \/ additional.eraYear # Empty \/ additional.year # Empty)
+     THEN Empty
      ELSE fields[n]]
-\* ISODateToFields, for type "date", "year-month", or "month-day".
-ISODateToFields(date, type) ==
-  [EmptyCalendarFields EXCEPT !.monthCode = CreateMonthCode(date.month, FALSE),
-                              !.day = IF type \in {"date", "month-day"} THEN TI(date.day) ELSE Empty,
-                              !.year = IF type \in {"date", "year-month"} THEN TI(date.year) ELSE Empty]
-\* CalendarResolveFields for the ISO calendar: the fields with month set from monthCode.
-CalendarResolveFields(s, fields, type) ==
-  IF type \in {"date", "year-month"} /\ fields.year = Empty THEN ThrowTypeError(s)
+\* CalendarResolveFields: for the ISO calendar, the fields with month set from monthCode.
+CalendarResolveFields(s, cal, fields, type) ==
+  IF cal # ISO8601 THEN NonISOResolveFields(s, cal, fields, type)
+  ELSE IF type \in {"date", "year-month"} /\ fields.year = Empty THEN ThrowTypeError(s)
   ELSE IF type \in {"date", "month-day"} /\ fields.day = Empty THEN ThrowTypeError(s)
   ELSE IF fields.month = Empty /\ fields.monthCode = Empty THEN ThrowTypeError(s)
   ELSE IF fields.monthCode = Empty THEN Ok(s, fields)
@@ -16879,26 +17410,25 @@ CalendarResolveFields(s, fields, type) ==
        IF Len(fields.monthCode) = 4 \/ number > 12 \/ (fields.month # Empty /\ fields.month # TI(number))
        THEN ThrowError(s, "RangeError") ELSE Ok(s, [fields EXCEPT !.month = TI(number)])
 \* CalendarDateFromFields, CalendarYearMonthFromFields, and CalendarMonthDayFromFields.
-CalendarDateFromFields(s, fields, overflow) ==
-  LET r == CalendarResolveFields(s, fields, "date") IN IF IsAbrupt(r) THEN r
-  ELSE IF ~TIYearInRange(Val(r).year) THEN ThrowError(s, "RangeError")
-  ELSE LET date == RegulateISODate(s, TIToInt(Val(r).year), Val(r).month, Val(r).day, overflow) IN
-       IF IsAbrupt(date) THEN date ELSE IF ISODateWithinLimits(Val(date)) THEN date ELSE ThrowError(s, "RangeError")
-CalendarYearMonthFromFields(s, fields, overflow) ==
-  LET r == CalendarResolveFields(s, fields, "year-month") IN IF IsAbrupt(r) THEN r
-  ELSE IF ~TIYearInRange(Val(r).year) THEN ThrowError(s, "RangeError")
-  ELSE LET date == RegulateISODate(s, TIToInt(Val(r).year), Val(r).month, TI(1), overflow) IN
-       IF IsAbrupt(date) THEN date ELSE IF ISOYearMonthWithinLimits(Val(date)) THEN date ELSE ThrowError(s, "RangeError")
-\* The reference year 1972; a given year counts only for whether it is a leap year, which repeats
-\* every 400 years.
-CalendarMonthDayFromFields(s, fields, overflow) ==
-  LET r == CalendarResolveFields(s, fields, "month-day") IN IF IsAbrupt(r) THEN r ELSE
+CalendarDateFromFields(s, cal, fields, overflow) ==
+  LET r == CalendarResolveFields(s, cal, fields, "date") IN IF IsAbrupt(r) THEN r ELSE
+  LET date == CalendarDateToISO(s, cal, Val(r).year, Val(r).month, Val(r).day, MonthCodeOf(fields.monthCode), overflow) IN
+  IF IsAbrupt(date) THEN date ELSE IF ISODateWithinLimits(Val(date)) THEN date ELSE ThrowError(s, "RangeError")
+CalendarYearMonthFromFields(s, cal, fields, overflow) ==
+  LET r == CalendarResolveFields(s, cal, fields, "year-month") IN IF IsAbrupt(r) THEN r ELSE
+  LET date == CalendarDateToISO(s, cal, Val(r).year, Val(r).month, TI(1), MonthCodeOf(fields.monthCode), overflow) IN
+  IF IsAbrupt(date) THEN date ELSE IF ISOYearMonthWithinLimits(Val(date)) THEN date ELSE ThrowError(s, "RangeError")
+\* For the ISO calendar, the reference year 1972; a given year counts only for whether it is a leap
+\* year, which repeats every 400 years.
+CalendarMonthDayFromFields(s, cal, fields, overflow) ==
+  LET r == CalendarResolveFields(s, cal, fields, "month-day") IN IF IsAbrupt(r) THEN r
+  ELSE IF cal # ISO8601 THEN NonISOMonthDayToISOReferenceDate(r.s, cal, Val(r), overflow) ELSE
   LET year == IF Val(r).year = Empty THEN 1972 ELSE TIToInt(TIMod(Val(r).year, TI(400)))
       date == RegulateISODate(s, year, Val(r).month, Val(r).day, overflow)
   IN IF IsAbrupt(date) THEN date ELSE Ok(s, [year |-> 1972, month |-> Val(date).month, day |-> Val(date).day])
 \* InterpretTemporalDateTimeFields, as an ISO date-time.
-InterpretTemporalDateTimeFields(s, fields, overflow) ==
-  LET date == CalendarDateFromFields(s, fields, overflow) IN IF IsAbrupt(date) THEN date ELSE
+InterpretTemporalDateTimeFields(s, cal, fields, overflow) ==
+  LET date == CalendarDateFromFields(s, cal, fields, overflow) IN IF IsAbrupt(date) THEN date ELSE
   LET time == RegulateTime(date.s, <<fields.hour, fields.minute, fields.second, fields.millisecond, fields.microsecond,
                                      fields.nanosecond>>, overflow)
   IN IF IsAbrupt(time) THEN time ELSE Ok(time.s, [date |-> Val(date), time |-> Val(time)])
@@ -16909,15 +17439,15 @@ ZonedDateTimeISODateTime(s, v) == GetISODateTimeFor(O(s, v).slots.timeZone, O(s,
 DateDurationDays(s, date, plain) ==
   LET ymw == <<date[1], date[2], date[3], TI(0)>> IN
   IF DurationSign(ymw) = 0 THEN Ok(s, date[4])
-  ELSE LET to == CalendarDateAdd(s, plain.date, ymw, N("constrain")) IN IF IsAbrupt(to) THEN to
+  ELSE LET to == CalendarDateAdd(s, plain.calendar, plain.date, ymw, N("constrain")) IN IF IsAbrupt(to) THEN to
   ELSE Ok(to.s, TIAdd(date[4], TI(EpochDays(Val(to)) - EpochDays(plain.date))))
 InternalDurationSign(d) == LET ds == DurationSign(d.date) IN IF ds # 0 THEN ds ELSE TISign(d.time)
 CheckedDateDuration(s, date) == IF IsValidDateDuration(date) THEN Ok(s, date) ELSE ThrowError(s, "RangeError")
 \* ComputeNudgeWindow, as [inner, outer, startNs, endNs, startDuration, endDuration].
-ComputeNudgeWindow(s, sign, duration, origin, dt, tz, increment, unit, additionalShift) ==
+ComputeNudgeWindow(s, sign, duration, origin, dt, tz, cal, increment, unit, additionalShift) ==
   LET d == duration.date
       step == TI(increment * sign)
-      weeksStart == IF unit = TUWeek THEN CalendarDateAdd(s, dt.date, <<d[1], d[2], TI(0), TI(0)>>, N("constrain")) ELSE Ok(s, Empty)
+      weeksStart == IF unit = TUWeek THEN CalendarDateAdd(s, cal, dt.date, <<d[1], d[2], TI(0), TI(0)>>, N("constrain")) ELSE Ok(s, Empty)
   IN IF IsAbrupt(weeksStart) THEN weeksStart ELSE
   LET inner == CASE unit = TUYear ->
                       LET years == RoundNumberToIncrement(d[1], TI(increment), N("trunc")) IN
@@ -16926,7 +17456,7 @@ ComputeNudgeWindow(s, sign, duration, origin, dt, tz, increment, unit, additiona
                       LET months == RoundNumberToIncrement(d[2], TI(increment), N("trunc")) IN
                       IF additionalShift THEN TIAdd(months, step) ELSE months
                  [] unit = TUWeek ->
-                      RoundNumberToIncrement(TIAdd(d[3], CalendarDateUntil(Val(weeksStart),
+                      RoundNumberToIncrement(TIAdd(d[3], CalendarDateUntil(cal, Val(weeksStart),
                                                                            AddDaysToISODate(Val(weeksStart), TIToInt(d[4])), TUWeek)[3]),
                                              TI(increment), N("trunc"))
                  [] OTHER -> RoundNumberToIncrement(d[4], TI(increment), N("trunc"))
@@ -16938,12 +17468,12 @@ ComputeNudgeWindow(s, sign, duration, origin, dt, tz, increment, unit, additiona
       start == CheckedDateDuration(weeksStart.s, bounded(inner))
   IN IF IsAbrupt(start) THEN start ELSE
   LET end == CheckedDateDuration(start.s, bounded(outer)) IN IF IsAbrupt(end) THEN end ELSE
-  LET startDate == IF DurationSign(Val(start)) = 0 THEN Ok(end.s, Empty) ELSE CalendarDateAdd(end.s, dt.date, Val(start), N("constrain")) IN
+  LET startDate == IF DurationSign(Val(start)) = 0 THEN Ok(end.s, Empty) ELSE CalendarDateAdd(end.s, cal, dt.date, Val(start), N("constrain")) IN
   IF IsAbrupt(startDate) THEN startDate ELSE
   LET startNs == IF Val(startDate) = Empty THEN Ok(startDate.s, origin)
                  ELSE EpochNsOf(startDate.s, [date |-> Val(startDate), time |-> dt.time], tz) IN
   IF IsAbrupt(startNs) THEN startNs ELSE
-  LET endDate == CalendarDateAdd(startNs.s, dt.date, Val(end), N("constrain")) IN IF IsAbrupt(endDate) THEN endDate ELSE
+  LET endDate == CalendarDateAdd(startNs.s, cal, dt.date, Val(end), N("constrain")) IN IF IsAbrupt(endDate) THEN endDate ELSE
   LET endNs == EpochNsOf(endDate.s, [date |-> Val(endDate), time |-> dt.time], tz) IN IF IsAbrupt(endNs) THEN endNs
   ELSE Ok(endNs.s, [inner |-> inner, outer |-> outer, startNs |-> Val(startNs), endNs |-> Val(endNs),
                     startDuration |-> [date |-> Val(start), time |-> TI(0)],
@@ -16952,13 +17482,13 @@ ComputeNudgeWindow(s, sign, duration, origin, dt, tz, increment, unit, additiona
 \* total as a rational [num, den] with den > 0. The progress through the window is
 \* (dest − start) / (end − start), so total is (inner × (end − start) + (dest − start) × increment
 \* × sign) / (end − start).
-NudgeToCalendarUnit(s, sign, duration, origin, dest, dt, tz, increment, unit, mode) ==
-  LET first == ComputeNudgeWindow(s, sign, duration, origin, dt, tz, increment, unit, FALSE) IN
+NudgeToCalendarUnit(s, sign, duration, origin, dest, dt, tz, cal, increment, unit, mode) ==
+  LET first == ComputeNudgeWindow(s, sign, duration, origin, dt, tz, cal, increment, unit, FALSE) IN
   IF IsAbrupt(first) THEN first ELSE
   LET contains(w) == IF sign = 1 THEN ~BigIntLess(dest, w.startNs) /\ ~BigIntLess(w.endNs, dest)
                      ELSE ~BigIntLess(dest, w.endNs) /\ ~BigIntLess(w.startNs, dest)
       window == IF contains(Val(first)) THEN first
-                ELSE ComputeNudgeWindow(first.s, sign, duration, origin, dt, tz, increment, unit, TRUE)
+                ELSE ComputeNudgeWindow(first.s, sign, duration, origin, dt, tz, cal, increment, unit, TRUE)
   IN IF IsAbrupt(window) THEN window ELSE
   LET w == Val(window)
       numer == TISub(dest, w.startNs)
@@ -16982,8 +17512,8 @@ NudgeToCalendarUnit(s, sign, duration, origin, dest, dt, tz, increment, unit, mo
                               expanded |-> ~contains(Val(first)) \/ isOuter],
                    total |-> [num |-> IF denom.neg THEN TINeg(totalNum) ELSE totalNum, den |-> progressDen]])
 \* NudgeToZonedTime.
-NudgeToZonedTime(s, sign, duration, dt, tz, increment, unit, mode) ==
-  LET start == CalendarDateAdd(s, dt.date, duration.date, N("constrain")) IN IF IsAbrupt(start) THEN start ELSE
+NudgeToZonedTime(s, sign, duration, dt, tz, cal, increment, unit, mode) ==
+  LET start == CalendarDateAdd(s, cal, dt.date, duration.date, N("constrain")) IN IF IsAbrupt(start) THEN start ELSE
   LET startNs == GetEpochNanosecondsFor(start.s, tz, [date |-> Val(start), time |-> dt.time], N("compatible")) IN IF IsAbrupt(startNs) THEN startNs ELSE
   LET endNs == GetEpochNanosecondsFor(startNs.s, tz, [date |-> AddDaysToISODate(Val(start), sign), time |-> dt.time], N("compatible")) IN
   IF IsAbrupt(endNs) THEN endNs ELSE
@@ -17016,63 +17546,63 @@ BubbleUnits(largestUnit, startUnit) ==
   (IF startUnit = TUDay /\ largestUnit \in {TUYear, TUMonth} THEN <<TUMonth>> ELSE <<>>) \o
   (IF startUnit = TUDay /\ largestUnit = TUWeek THEN <<TUWeek>> ELSE <<>>) \o
   (IF largestUnit = TUYear THEN <<TUYear>> ELSE <<>>)
-BubbleFrom(s, sign, duration, nudged, dt, tz, units) ==
+BubbleFrom(s, sign, duration, nudged, dt, tz, cal, units) ==
   IF units = <<>> THEN Ok(s, duration) ELSE
   LET d == duration.date
       end == CASE Head(units) = TUYear -> <<TIAdd(d[1], TI(sign)), TI(0), TI(0), TI(0)>>
                [] Head(units) = TUMonth -> <<d[1], TIAdd(d[2], TI(sign)), TI(0), TI(0)>>
                [] OTHER -> <<d[1], d[2], TIAdd(d[3], TI(sign)), TI(0)>>
   IN IF ~IsValidDateDuration(end) THEN ThrowError(s, "RangeError") ELSE
-  LET date == CalendarDateAdd(s, dt.date, end, N("constrain")) IN IF IsAbrupt(date) THEN date ELSE
+  LET date == CalendarDateAdd(s, cal, dt.date, end, N("constrain")) IN IF IsAbrupt(date) THEN date ELSE
   LET endNs == EpochNsOf(date.s, [date |-> Val(date), time |-> dt.time], tz) IN IF IsAbrupt(endNs) THEN endNs
   ELSE IF TISign(TISub(nudged, Val(endNs))) = -sign THEN Ok(endNs.s, duration)
-  ELSE BubbleFrom(endNs.s, sign, [date |-> end, time |-> TI(0)], nudged, dt, tz, Tail(units))
-BubbleRelativeDuration(s, sign, duration, nudged, dt, tz, largestUnit, startUnit) ==
+  ELSE BubbleFrom(endNs.s, sign, [date |-> end, time |-> TI(0)], nudged, dt, tz, cal, Tail(units))
+BubbleRelativeDuration(s, sign, duration, nudged, dt, tz, cal, largestUnit, startUnit) ==
   IF LargerOfTwoTemporalUnits(startUnit, largestUnit) = startUnit THEN Ok(s, duration)
-  ELSE BubbleFrom(s, sign, duration, nudged, dt, tz, BubbleUnits(largestUnit, startUnit))
+  ELSE BubbleFrom(s, sign, duration, nudged, dt, tz, cal, BubbleUnits(largestUnit, startUnit))
 \* RoundRelativeDuration and TotalRelativeDuration, for a time zone or Empty.
-RoundRelativeDuration(s, duration, origin, dest, dt, tz, largestUnit, increment, smallestUnit, mode) ==
+RoundRelativeDuration(s, duration, origin, dest, dt, tz, cal, largestUnit, increment, smallestUnit, mode) ==
   LET sign == IF InternalDurationSign(duration) < 0 THEN -1 ELSE 1
       nudge == CASE IsCalendarUnit(smallestUnit) \/ (tz # Empty /\ smallestUnit = TUDay) ->
-                      LET r == NudgeToCalendarUnit(s, sign, duration, origin, dest, dt, tz, increment, smallestUnit, mode) IN
+                      LET r == NudgeToCalendarUnit(s, sign, duration, origin, dest, dt, tz, cal, increment, smallestUnit, mode) IN
                       IF IsAbrupt(r) THEN r ELSE Ok(r.s, Val(r).nudge)
-                 [] tz # Empty -> NudgeToZonedTime(s, sign, duration, dt, tz, increment, smallestUnit, mode)
+                 [] tz # Empty -> NudgeToZonedTime(s, sign, duration, dt, tz, cal, increment, smallestUnit, mode)
                  [] OTHER -> NudgeToDayOrTime(s, duration, dest, largestUnit, increment, smallestUnit, mode)
   IN IF IsAbrupt(nudge) THEN nudge
      ELSE IF Val(nudge).expanded /\ smallestUnit \notin {TUYear, TUWeek} THEN
-       BubbleRelativeDuration(nudge.s, sign, Val(nudge).duration, Val(nudge).nudged, dt, tz, largestUnit,
+       BubbleRelativeDuration(nudge.s, sign, Val(nudge).duration, Val(nudge).nudged, dt, tz, cal, largestUnit,
                               LargerOfTwoTemporalUnits(smallestUnit, TUDay))
      ELSE Ok(nudge.s, Val(nudge).duration)
-TotalRelativeDuration(s, duration, origin, dest, dt, tz, unit) ==
+TotalRelativeDuration(s, duration, origin, dest, dt, tz, cal, unit) ==
   IF IsCalendarUnit(unit) \/ (tz # Empty /\ unit = TUDay) THEN
-    LET r == NudgeToCalendarUnit(s, IF InternalDurationSign(duration) < 0 THEN -1 ELSE 1, duration, origin, dest, dt, tz,
+    LET r == NudgeToCalendarUnit(s, IF InternalDurationSign(duration) < 0 THEN -1 ELSE 1, duration, origin, dest, dt, tz, cal,
                                  1, unit, N("trunc"))
     IN IF IsAbrupt(r) THEN r ELSE Ok(r.s, RatioToNumber(Val(r).total.num, Val(r).total.den))
   ELSE Ok(s, RatioToNumber(TIAdd(duration.time, TIMul(duration.date[4], TINsPerDay)), TemporalUnitLength(unit)))
 \* DifferenceISODateTime, DifferencePlainDateTimeWithRounding, and DifferencePlainDateTimeWithTotal.
-DifferenceISODateTime(x, y, largestUnit) ==
+DifferenceISODateTime(x, y, cal, largestUnit) ==
   LET time0 == DifferenceTime(x.time, y.time)
       timeSign == TISign(time0)
       adjust == timeSign = CompareISODate(x.date, y.date)
       time == IF adjust THEN TISub(time0, TIMul(TI(timeSign), TINsPerDay)) ELSE time0
       dateLargestUnit == LargerOfTwoTemporalUnits(TUDay, largestUnit)
-      diff == CalendarDateUntil(x.date, IF adjust THEN AddDaysToISODate(y.date, timeSign) ELSE y.date, dateLargestUnit)
+      diff == CalendarDateUntil(cal, x.date, IF adjust THEN AddDaysToISODate(y.date, timeSign) ELSE y.date, dateLargestUnit)
   IN IF largestUnit # dateLargestUnit
      THEN [date |-> <<diff[1], diff[2], diff[3], TI(0)>>, time |-> TIAdd(time, TIMul(diff[4], TINsPerDay))]
      ELSE [date |-> diff, time |-> time]
-DifferencePlainDateTimeWithRounding(s, from, to, largestUnit, increment, smallestUnit, mode) ==
+DifferencePlainDateTimeWithRounding(s, from, to, cal, largestUnit, increment, smallestUnit, mode) ==
   IF CompareISODateTime(from, to) = 0 THEN Ok(s, CombineDateAndTimeDuration(ZeroDateDuration, TI(0)))
   ELSE IF ~ISODateTimeWithinLimits(from) \/ ~ISODateTimeWithinLimits(to) THEN ThrowError(s, "RangeError")
-  ELSE LET diff == DifferenceISODateTime(from, to, largestUnit) IN
+  ELSE LET diff == DifferenceISODateTime(from, to, cal, largestUnit) IN
        IF smallestUnit = TUNanosecond /\ increment = 1 THEN Ok(s, diff)
-       ELSE RoundRelativeDuration(s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty,
+       ELSE RoundRelativeDuration(s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty, cal,
                                   largestUnit, increment, smallestUnit, mode)
-DifferencePlainDateTimeWithTotal(s, from, to, unit) ==
+DifferencePlainDateTimeWithTotal(s, from, to, cal, unit) ==
   IF CompareISODateTime(from, to) = 0 THEN Ok(s, PosZero)
   ELSE IF ~ISODateTimeWithinLimits(from) \/ ~ISODateTimeWithinLimits(to) THEN ThrowError(s, "RangeError")
-  ELSE LET diff == DifferenceISODateTime(from, to, unit) IN
+  ELSE LET diff == DifferenceISODateTime(from, to, cal, unit) IN
        IF unit = TUNanosecond THEN Ok(s, RatioToNumber(diff.time, TI(1)))
-       ELSE TotalRelativeDuration(s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty, unit)
+       ELSE TotalRelativeDuration(s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty, cal, unit)
 \* DifferenceZonedDateTime, with its loop over day corrections.
 DayCorrectionFrom(s, tz, start, end, to, sign, correction, maxCorrection) ==
   LET intermediate == [date |-> AddDaysToISODate(end.date, correction * sign), time |-> start.time]
@@ -17081,7 +17611,7 @@ DayCorrectionFrom(s, tz, start, end, to, sign, correction, maxCorrection) ==
      ELSE IF TISign(TISub(to, Val(ns))) # sign \/ correction >= maxCorrection
      THEN Ok(ns.s, [date |-> intermediate.date, time |-> TISub(to, Val(ns))])
      ELSE DayCorrectionFrom(ns.s, tz, start, end, to, sign, correction + 1, maxCorrection)
-DifferenceZonedDateTime(s, from, to, tz, largestUnit) ==
+DifferenceZonedDateTime(s, from, to, tz, cal, largestUnit) ==
   IF from = to THEN Ok(s, CombineDateAndTimeDuration(ZeroDateDuration, TI(0))) ELSE
   LET start == GetISODateTimeFor(tz, from)
       end == GetISODateTimeFor(tz, to)
@@ -17092,25 +17622,25 @@ DifferenceZonedDateTime(s, from, to, tz, largestUnit) ==
                                          IF sign = -1 THEN 2 ELSE 1)
           IN IF IsAbrupt(found) THEN found
              ELSE Ok(found.s, CombineDateAndTimeDuration(
-                                CalendarDateUntil(start.date, Val(found).date, LargerOfTwoTemporalUnits(largestUnit, TUDay)),
+                                CalendarDateUntil(cal, start.date, Val(found).date, LargerOfTwoTemporalUnits(largestUnit, TUDay)),
                                 Val(found).time))
 DifferenceEpochNanoseconds(s, from, to, increment, smallestUnit, mode) ==
   LET r == RoundTimeDuration(s, TISub(to, from), increment, smallestUnit, mode) IN
   IF IsAbrupt(r) THEN r ELSE Ok(r.s, CombineDateAndTimeDuration(ZeroDateDuration, Val(r)))
-DifferenceZonedDateTimeWithRounding(s, from, to, tz, largestUnit, increment, smallestUnit, mode) ==
+DifferenceZonedDateTimeWithRounding(s, from, to, tz, cal, largestUnit, increment, smallestUnit, mode) ==
   IF IsTimeUnit(largestUnit) THEN DifferenceEpochNanoseconds(s, from, to, increment, smallestUnit, mode) ELSE
-  LET diff == DifferenceZonedDateTime(s, from, to, tz, largestUnit) IN IF IsAbrupt(diff) THEN diff
+  LET diff == DifferenceZonedDateTime(s, from, to, tz, cal, largestUnit) IN IF IsAbrupt(diff) THEN diff
   ELSE IF smallestUnit = TUNanosecond /\ increment = 1 THEN diff
-  ELSE RoundRelativeDuration(diff.s, Val(diff), from, to, GetISODateTimeFor(tz, from), tz, largestUnit, increment, smallestUnit, mode)
-DifferenceZonedDateTimeWithTotal(s, from, to, tz, unit) ==
+  ELSE RoundRelativeDuration(diff.s, Val(diff), from, to, GetISODateTimeFor(tz, from), tz, cal, largestUnit, increment, smallestUnit, mode)
+DifferenceZonedDateTimeWithTotal(s, from, to, tz, cal, unit) ==
   IF IsTimeUnit(unit) THEN Ok(s, RatioToNumber(TISub(to, from), TemporalUnitLength(unit))) ELSE
-  LET diff == DifferenceZonedDateTime(s, from, to, tz, unit) IN IF IsAbrupt(diff) THEN diff
-  ELSE TotalRelativeDuration(diff.s, Val(diff), from, to, GetISODateTimeFor(tz, from), tz, unit)
+  LET diff == DifferenceZonedDateTime(s, from, to, tz, cal, unit) IN IF IsAbrupt(diff) THEN diff
+  ELSE TotalRelativeDuration(diff.s, Val(diff), from, to, GetISODateTimeFor(tz, from), tz, cal, unit)
 \* AddZonedDateTime.
-AddZonedDateTime(s, ns, tz, duration, overflow) ==
+AddZonedDateTime(s, ns, tz, cal, duration, overflow) ==
   IF DurationSign(duration.date) = 0 THEN AddEpochNanoseconds(s, ns, duration.time) ELSE
   LET dt == GetISODateTimeFor(tz, ns)
-      added == CalendarDateAdd(s, dt.date, duration.date, overflow)
+      added == CalendarDateAdd(s, cal, dt.date, duration.date, overflow)
   IN IF IsAbrupt(added) THEN added
      ELSE IF ~ISODateTimeWithinLimits([date |-> Val(added), time |-> dt.time]) THEN ThrowError(added.s, "RangeError")
      ELSE LET intermediate == GetEpochNanosecondsFor(added.s, tz, [date |-> Val(added), time |-> dt.time], N("compatible")) IN
@@ -17122,7 +17652,7 @@ RelativePlainTarget(s, d, plain) ==
       target == AddTime(MidnightTimeRecord, internal.time)
       date == CheckedDateDuration(s, <<internal.date[1], internal.date[2], internal.date[3], target.days>>)
   IN IF IsAbrupt(date) THEN date ELSE
-  LET targetDate == CalendarDateAdd(s, plain.date, Val(date), N("constrain")) IN IF IsAbrupt(targetDate) THEN targetDate
+  LET targetDate == CalendarDateAdd(s, plain.calendar, plain.date, Val(date), N("constrain")) IN IF IsAbrupt(targetDate) THEN targetDate
   ELSE Ok(targetDate.s, [from |-> [date |-> plain.date, time |-> MidnightTimeRecord],
                          to |-> [date |-> Val(targetDate), time |-> target.time]])
 \* GetTemporalRelativeToOption, as a relativeTo record [plain, zoned]: a [date, calendar] record
@@ -17148,10 +17678,10 @@ GetTemporalRelativeToOption(s, options) ==
               Ok(s1, [plain |-> [date |-> o.slots.dateTime.date, calendar |-> o.slots.calendar], zoned |-> Empty])
          [] OTHER ->
               LET calendar == GetTemporalCalendarIdentifierWithISODefault(s1, v) IN IF IsAbrupt(calendar) THEN calendar ELSE
-              LET fields == PrepareCalendarFields(calendar.s, v, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset", "timeZone"},
+              LET fields == PrepareCalendarFields(calendar.s, Val(calendar), v, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset", "timeZone"},
                                                   "no-required-fields") IN
               IF IsAbrupt(fields) THEN fields ELSE
-              LET result == InterpretTemporalDateTimeFields(fields.s, Val(fields), N("constrain")) IN IF IsAbrupt(result) THEN result
+              LET result == InterpretTemporalDateTimeFields(fields.s, Val(calendar), Val(fields), N("constrain")) IN IF IsAbrupt(result) THEN result
               ELSE RelativeToFrom(result.s, Val(result).date, Val(result).time, Val(calendar), Val(fields).timeZone,
                                   IF Val(fields).offset = Empty THEN "wall" ELSE "option", Val(fields).offset, "match-exactly")
      ELSE IF ~IsString(v) THEN ThrowTypeError(s1)
@@ -17493,8 +18023,8 @@ ParseTemporalDurationString(s, units) ==
               TIMul(sign, TPGroupValue(d.hours)), TIMul(sign, minutes), TIMul(sign, seconds),
               TI(d.sign * (subSecond \div 1000000)), TI(d.sign * ((subSecond \div 1000) % 1000)),
               TI(d.sign * (subSecond % 1000)) >>)
-\* The Temporal types (Temporal §3 to §10) and Temporal.Now, on the ISO calendar and the fixed-offset
-\* time zones of 89-temporal-dates.
+\* The Temporal types (Temporal §3 to §10) and Temporal.Now, on the calendars and the time zones of
+\* 89-temporal-dates and 89-temporal-calendars.
 \* A Temporal.PlainDate has class "temporalDate" and slots [date, calendar].
 CreateTemporalDate(s, date, calendar, newTarget) ==
   IF ~ISODateWithinLimits(date) THEN ThrowError(s, "RangeError")
@@ -17514,10 +18044,10 @@ ToTemporalDateRecord(s, item, options) ==
                                   [] OTHER -> ZonedDateTimeISODateTime(s, item).date,
                        calendar |-> o.slots.calendar])
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET date == CalendarDateFromFields(overflow.s, Val(fields), Val(overflow)) IN
+         LET date == CalendarDateFromFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN
          IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "plain-date-time") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -17526,22 +18056,6 @@ ToTemporalDateRecord(s, item, options) ==
        LET read == ReadOverflowOption(calendar.s, options) IN IF IsAbrupt(read) THEN read ELSE
        LET date == [year |-> Val(parsed).year, month |-> Val(parsed).month, day |-> Val(parsed).day] IN
        IF ISODateWithinLimits(date) THEN Ok(read.s, [date |-> date, calendar |-> Val(calendar)]) ELSE ThrowError(read.s, "RangeError")
-\* The fields a calendar date record (CalendarISOToDate) gives the getters of PlainDate and kin.
-CalendarDateGetter(s, date, m) ==
-  CASE m = "era" \/ m = "eraYear" -> Ok(s, Undefined)
-    [] m = "year" -> Ok(s, IntV(date.year))
-    [] m = "month" -> Ok(s, IntV(date.month))
-    [] m = "monthCode" -> Ok(s, Str(CreateMonthCode(date.month, FALSE)))
-    [] m = "day" -> Ok(s, IntV(date.day))
-    [] m = "dayOfWeek" -> Ok(s, IntV(ISODayOfWeek(date)))
-    [] m = "dayOfYear" -> Ok(s, IntV(ISODayOfYear(date)))
-    [] m = "weekOfYear" -> Ok(s, IntV(ISOWeekOfYear(date).week))
-    [] m = "yearOfWeek" -> Ok(s, IntV(ISOWeekOfYear(date).year))
-    [] m = "daysInWeek" -> Ok(s, IntV(7))
-    [] m = "daysInMonth" -> Ok(s, IntV(ISODaysInMonth(date.year, date.month)))
-    [] m = "daysInYear" -> Ok(s, IntV(IF IsLeapYear(date.year) THEN 366 ELSE 365))
-    [] m = "monthsInYear" -> Ok(s, IntV(12))
-    [] m = "inLeapYear" -> Ok(s, Bool(IsLeapYear(date.year)))
 \* DifferenceTemporalPlainDate.
 DifferenceTemporalPlainDate(s, operation, plain, other, options) ==
   LET o == ToTemporalDateRecord(s, other, Undefined) IN IF IsAbrupt(o) THEN o
@@ -17552,9 +18066,9 @@ DifferenceTemporalPlainDate(s, operation, plain, other, options) ==
   LET st == Val(settings)
       from == [date |-> plain.date, time |-> MidnightTimeRecord]
       to == [date |-> Val(o).date, time |-> MidnightTimeRecord]
-      diff == CombineDateAndTimeDuration(CalendarDateUntil(plain.date, Val(o).date, st.largestUnit), TI(0))
+      diff == CombineDateAndTimeDuration(CalendarDateUntil(plain.calendar, plain.date, Val(o).date, st.largestUnit), TI(0))
       rounded == IF st.smallestUnit = TUDay /\ st.roundingIncrement = 1 THEN Ok(settings.s, diff)
-                 ELSE RoundRelativeDuration(settings.s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty,
+                 ELSE RoundRelativeDuration(settings.s, diff, GetUTCEpochNanoseconds(from), GetUTCEpochNanoseconds(to), from, Empty, plain.calendar,
                                             st.largestUnit, st.roundingIncrement, st.smallestUnit, st.roundingMode)
   IN IF IsAbrupt(rounded) THEN rounded ELSE
   LET f == DurationFieldsFromInternal(Val(rounded), TUDay) IN
@@ -17567,7 +18081,7 @@ AddDurationToDate(s, operation, plain, durationLike, options) ==
       opts == GetOptionsObject(d.s, options)
   IN IF IsAbrupt(opts) THEN opts ELSE
   LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-  LET result == CalendarDateAdd(overflow.s, plain.date, dateDuration, Val(overflow)) IN
+  LET result == CalendarDateAdd(overflow.s, plain.calendar, plain.date, dateDuration, Val(overflow)) IN
   IF IsAbrupt(result) THEN result ELSE CreateTemporalDate(result.s, Val(result), plain.calendar, Empty)
 \* ToTimeRecordOrMidnight.
 ToTimeRecordOrMidnight(s, item) == IF item = Undefined THEN Ok(s, MidnightTimeRecord) ELSE ToTemporalTimeRecord(s, item, Undefined)
@@ -17594,25 +18108,25 @@ PlainDateBuiltin(s, f, m, this, args, nt) ==
     [] OTHER ->
          LET plain == O(s, this).slots
              date == plain.date
-         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, date, m)
+         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, plain.calendar, date, m)
               [] m = "calendarId" -> Ok(s, Str(plain.calendar))
               [] m = "toPlainYearMonth" ->
-                   LET ym == CalendarYearMonthFromFields(s, ISODateToFields(date, "date"), N("constrain")) IN
+                   LET ym == CalendarYearMonthFromFields(s, plain.calendar, ISODateToFields(plain.calendar, date, "date"), N("constrain")) IN
                    IF IsAbrupt(ym) THEN ym ELSE CreateTemporalYearMonth(ym.s, Val(ym), plain.calendar, Empty)
               [] m = "toPlainMonthDay" ->
-                   LET md == CalendarMonthDayFromFields(s, ISODateToFields(date, "date"), N("constrain")) IN
+                   LET md == CalendarMonthDayFromFields(s, plain.calendar, ISODateToFields(plain.calendar, date, "date"), N("constrain")) IN
                    IF IsAbrupt(md) THEN md ELSE CreateTemporalMonthDay(md.s, Val(md), plain.calendar, Empty)
               [] m \in {"add", "subtract"} -> AddDurationToDate(s, m, plain, Arg(args, 1), Arg(args, 2))
               [] m = "with" ->
                    LET isPartial == IsPartialTemporalObject(s, Arg(args, 1)) IN IF IsAbrupt(isPartial) THEN isPartial
                    ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-                   LET partial == PrepareCalendarFields(isPartial.s, Arg(args, 1), DateFieldNames, "partial") IN
+                   LET partial == PrepareCalendarFields(isPartial.s, plain.calendar, Arg(args, 1), DateFieldNames, "partial") IN
                    IF IsAbrupt(partial) THEN partial ELSE
-                   LET fields == CalendarMergeFields(ISODateToFields(date, "date"), Val(partial))
+                   LET fields == CalendarMergeFields(ISODateToFields(plain.calendar, date, "date"), Val(partial))
                        opts == GetOptionsObject(partial.s, Arg(args, 2))
                    IN IF IsAbrupt(opts) THEN opts ELSE
                    LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                   LET r == CalendarDateFromFields(overflow.s, fields, Val(overflow)) IN
+                   LET r == CalendarDateFromFields(overflow.s, plain.calendar, fields, Val(overflow)) IN
                    IF IsAbrupt(r) THEN r ELSE CreateTemporalDate(r.s, Val(r), plain.calendar, Empty)
               [] m = "withCalendar" ->
                    LET calendar == ToTemporalCalendarIdentifier(s, Arg(args, 1)) IN
@@ -17661,11 +18175,11 @@ ToTemporalDateTimeRecord(s, item, options) ==
                                       [] OTHER -> ZonedDateTimeISODateTime(s, item),
                        calendar |-> o.slots.calendar])
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames \cup CalendarTimeFieldNames, "no-required-fields") IN
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames \cup CalendarTimeFieldNames, "no-required-fields") IN
          IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET dt == InterpretTemporalDateTimeFields(overflow.s, Val(fields), Val(overflow)) IN IF IsAbrupt(dt) THEN dt
+         LET dt == InterpretTemporalDateTimeFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN IF IsAbrupt(dt) THEN dt
          ELSE IF ISODateTimeWithinLimits(Val(dt)) THEN Ok(dt.s, [dateTime |-> Val(dt), calendar |-> Val(calendar)])
          ELSE ThrowError(dt.s, "RangeError")
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
@@ -17682,8 +18196,8 @@ RoundISODateTime(dt, increment, unit, mode) ==
   LET rounded == RoundTime(dt.time, increment, unit, mode) IN
   [date |-> AddDaysToISODate(dt.date, TIToInt(rounded.days)), time |-> rounded.time]
 \* The fields of a date-time, for CalendarMergeFields.
-ISODateTimeToFields(dt) ==
-  [ISODateToFields(dt.date, "date") EXCEPT !.hour = TI(dt.time.hour), !.minute = TI(dt.time.minute),
+ISODateTimeToFields(cal, dt) ==
+  [ISODateToFields(cal, dt.date, "date") EXCEPT !.hour = TI(dt.time.hour), !.minute = TI(dt.time.minute),
                                            !.second = TI(dt.time.second), !.millisecond = TI(dt.time.millisecond),
                                            !.microsecond = TI(dt.time.microsecond), !.nanosecond = TI(dt.time.nanosecond)]
 \* The negation of a duration's fields for "since".
@@ -17697,7 +18211,7 @@ DifferenceTemporalPlainDateTime(s, operation, plain, other, options) ==
   IF IsAbrupt(settings) THEN settings
   ELSE IF CompareISODateTime(plain.dateTime, Val(o).dateTime) = 0 THEN CreateTemporalDuration(settings.s, ZeroDurationFields, Empty) ELSE
   LET st == Val(settings)
-      diff == DifferencePlainDateTimeWithRounding(settings.s, plain.dateTime, Val(o).dateTime, st.largestUnit,
+      diff == DifferencePlainDateTimeWithRounding(settings.s, plain.dateTime, Val(o).dateTime, plain.calendar, st.largestUnit,
                                                   st.roundingIncrement, st.smallestUnit, st.roundingMode)
   IN IF IsAbrupt(diff) THEN diff
      ELSE CreateTemporalDuration(diff.s, SinceFields(operation, DurationFieldsFromInternal(Val(diff), st.largestUnit)), Empty)
@@ -17709,7 +18223,7 @@ AddDurationToDateTime(s, operation, plain, durationLike, options) ==
       timeResult == AddTime(plain.dateTime.time, internal.time)
       dateDuration == CheckedDateDuration(overflow.s, <<internal.date[1], internal.date[2], internal.date[3], timeResult.days>>)
   IN IF IsAbrupt(dateDuration) THEN dateDuration ELSE
-  LET added == CalendarDateAdd(dateDuration.s, plain.dateTime.date, Val(dateDuration), Val(overflow)) IN IF IsAbrupt(added) THEN added
+  LET added == CalendarDateAdd(dateDuration.s, plain.calendar, plain.dateTime.date, Val(dateDuration), Val(overflow)) IN IF IsAbrupt(added) THEN added
   ELSE CreateTemporalDateTime(added.s, [date |-> Val(added), time |-> timeResult.time], plain.calendar, Empty)
 \* The smallestUnit and roundingIncrement of round on PlainDateTime and ZonedDateTime: a time unit
 \* or day, and an increment that divides the next larger unit (or is 1 for day).
@@ -17757,17 +18271,17 @@ PlainDateTimeBuiltin(s, f, m, this, args, nt) ==
     [] OTHER ->
          LET plain == O(s, this).slots
              dt == plain.dateTime
-         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, dt.date, m)
+         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, plain.calendar, dt.date, m)
               [] m \in {"hour", "minute", "second", "millisecond", "microsecond", "nanosecond"} -> Ok(s, IntV(dt.time[m]))
               [] m = "calendarId" -> Ok(s, Str(plain.calendar))
               [] m = "with" ->
                    LET isPartial == IsPartialTemporalObject(s, Arg(args, 1)) IN IF IsAbrupt(isPartial) THEN isPartial
                    ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-                   LET partial == PrepareCalendarFields(isPartial.s, Arg(args, 1), DateFieldNames \cup CalendarTimeFieldNames, "partial") IN
+                   LET partial == PrepareCalendarFields(isPartial.s, plain.calendar, Arg(args, 1), DateFieldNames \cup CalendarTimeFieldNames, "partial") IN
                    IF IsAbrupt(partial) THEN partial ELSE
                    LET opts == GetOptionsObject(partial.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                    LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                   LET r == InterpretTemporalDateTimeFields(overflow.s, CalendarMergeFields(ISODateTimeToFields(dt), Val(partial)), Val(overflow)) IN
+                   LET r == InterpretTemporalDateTimeFields(overflow.s, plain.calendar, CalendarMergeFields(ISODateTimeToFields(plain.calendar, dt), Val(partial)), Val(overflow)) IN
                    IF IsAbrupt(r) THEN r ELSE CreateTemporalDateTime(r.s, Val(r), plain.calendar, Empty)
               [] m = "withPlainTime" ->
                    LET time == ToTimeRecordOrMidnight(s, Arg(args, 1)) IN IF IsAbrupt(time) THEN time
@@ -17831,11 +18345,11 @@ ToTemporalZonedDateTimeRecord(s, item, options) ==
     IF O(s, item).class = "temporalZonedDateTime" THEN
       LET read == GetZonedOptions(s, options, N("reject")) IN IF IsAbrupt(read) THEN read ELSE Ok(read.s, O(s, item).slots)
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset", "timeZone"},
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset", "timeZone"},
                                              "time-zone") IN
          IF IsAbrupt(fields) THEN fields ELSE
          LET o == GetZonedOptions(fields.s, options, N("reject")) IN IF IsAbrupt(o) THEN o ELSE
-         LET dt == InterpretTemporalDateTimeFields(o.s, Val(fields), Val(o).overflow) IN IF IsAbrupt(dt) THEN dt ELSE
+         LET dt == InterpretTemporalDateTimeFields(o.s, Val(calendar), Val(fields), Val(o).overflow) IN IF IsAbrupt(dt) THEN dt ELSE
          LET offsetString == Val(fields).offset
              ns == InterpretISODateTimeOffset(dt.s, Val(dt).date, Val(dt).time, IF offsetString = Empty THEN "wall" ELSE "option",
                                               IF offsetString = Empty THEN TI(0) ELSE Val(ParseDateTimeUTCOffset(dt.s, offsetString)),
@@ -17892,7 +18406,7 @@ DifferenceTemporalZonedDateTime(s, operation, z, other, options) ==
     ELSE CreateTemporalDuration(diff.s, SinceFields(operation, DurationFieldsFromInternal(Val(diff), st.largestUnit)), Empty)
   ELSE IF ~TimeZoneEquals(z.timeZone, Val(o).timeZone) THEN ThrowError(settings.s, "RangeError")
   ELSE IF z.epochNs = Val(o).epochNs THEN CreateTemporalDuration(settings.s, ZeroDurationFields, Empty)
-  ELSE LET diff == DifferenceZonedDateTimeWithRounding(settings.s, z.epochNs, Val(o).epochNs, z.timeZone, st.largestUnit,
+  ELSE LET diff == DifferenceZonedDateTimeWithRounding(settings.s, z.epochNs, Val(o).epochNs, z.timeZone, z.calendar, st.largestUnit,
                                                        st.roundingIncrement, st.smallestUnit, st.roundingMode) IN
        IF IsAbrupt(diff) THEN diff
        ELSE CreateTemporalDuration(diff.s, SinceFields(operation, DurationFieldsFromInternal(Val(diff), TUHour)), Empty)
@@ -17900,7 +18414,7 @@ AddDurationToZonedDateTime(s, operation, z, durationLike, options) ==
   LET d == ToTemporalDurationFields(s, durationLike) IN IF IsAbrupt(d) THEN d ELSE
   LET opts == GetOptionsObject(d.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
   LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-  LET ns == AddZonedDateTime(overflow.s, z.epochNs, z.timeZone,
+  LET ns == AddZonedDateTime(overflow.s, z.epochNs, z.timeZone, z.calendar,
                              ToInternalDurationRecord(IF operation = "subtract" THEN NegatedDurationFields(Val(d)) ELSE Val(d)),
                              Val(overflow))
   IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
@@ -17927,14 +18441,14 @@ RoundZonedDateTime(s, z, roundToArg) ==
 WithZonedDateTime(s, z, item, options) ==
   LET isPartial == IsPartialTemporalObject(s, item) IN IF IsAbrupt(isPartial) THEN isPartial
   ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-  LET partial == PrepareCalendarFields(isPartial.s, item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset"}, "partial") IN
+  LET partial == PrepareCalendarFields(isPartial.s, z.calendar, item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset"}, "partial") IN
   IF IsAbrupt(partial) THEN partial ELSE
   LET dt == GetISODateTimeFor(z.timeZone, z.epochNs)
-      fields == CalendarMergeFields([ISODateTimeToFields(dt) EXCEPT !.offset = FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone, z.epochNs))],
+      fields == CalendarMergeFields([ISODateTimeToFields(z.calendar, dt) EXCEPT !.offset = FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone, z.epochNs))],
                                     Val(partial))
       o == GetZonedOptions(partial.s, options, N("prefer"))
   IN IF IsAbrupt(o) THEN o ELSE
-  LET result == InterpretTemporalDateTimeFields(o.s, fields, Val(o).overflow) IN IF IsAbrupt(result) THEN result ELSE
+  LET result == InterpretTemporalDateTimeFields(o.s, z.calendar, fields, Val(o).overflow) IN IF IsAbrupt(result) THEN result ELSE
   LET ns == InterpretISODateTimeOffset(result.s, Val(result).date, Val(result).time, "option",
                                        Val(ParseDateTimeUTCOffset(result.s, fields.offset)), z.timeZone, Val(o).disambiguation,
                                        Val(o).offset, "match-exactly")
@@ -17967,7 +18481,7 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
     [] OTHER ->
          LET z == O(s, this).slots
              dt == GetISODateTimeFor(z.timeZone, z.epochNs)
-         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, dt.date, m)
+         IN CASE m \in CalendarDateGetters -> CalendarDateGetter(s, z.calendar, dt.date, m)
               [] m \in {"hour", "minute", "second", "millisecond", "microsecond", "nanosecond"} -> Ok(s, IntV(dt.time[m]))
               [] m = "calendarId" -> Ok(s, Str(z.calendar))
               [] m = "timeZoneId" -> Ok(s, Str(z.timeZone.id))
@@ -18125,10 +18639,10 @@ ToTemporalYearMonthRecord(s, item, options) ==
     IF O(s, item).class = "temporalYearMonth" THEN
       LET read == ReadOverflowOption(s, options) IN IF IsAbrupt(read) THEN read ELSE Ok(read.s, O(s, item).slots)
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, YearMonthFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, YearMonthFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET date == CalendarYearMonthFromFields(overflow.s, Val(fields), Val(overflow)) IN
+         LET date == CalendarYearMonthFromFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN
          IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "year-month") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -18137,7 +18651,7 @@ ToTemporalYearMonthRecord(s, item, options) ==
        IN IF IsAbrupt(calendar) THEN calendar ELSE
        LET read == ReadOverflowOption(calendar.s, options) IN IF IsAbrupt(read) THEN read
        ELSE IF ~ISOYearMonthWithinLimits([year |-> r.year, month |-> r.month, day |-> r.day]) THEN ThrowError(read.s, "RangeError")
-       ELSE LET date == CalendarYearMonthFromFields(read.s, ISODateToFields([year |-> r.year, month |-> r.month, day |-> r.day], "year-month"),
+       ELSE LET date == CalendarYearMonthFromFields(read.s, Val(calendar), ISODateToFields(Val(calendar), [year |-> r.year, month |-> r.month, day |-> r.day], "year-month"),
                                                     N("constrain")) IN
             IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
 \* TemporalYearMonthToString and TemporalMonthDayToString.
@@ -18149,7 +18663,7 @@ TemporalMonthDayToString(md, show) ==
   (IF show \in {N("always"), N("critical")} \/ md.calendar # ISO8601 THEN PadISOYear(md.date.year) \o <<45>> ELSE <<>>) \o
   TwoDigits(md.date.month) \o <<45>> \o TwoDigits(md.date.day) \o FormatCalendarAnnotation(md.calendar, show)
 \* The first day of a year-month, as CalendarDateFromFields gives it.
-YearMonthFirstDay(s, date) == CalendarDateFromFields(s, [ISODateToFields(date, "year-month") EXCEPT !.day = TI(1)], N("constrain"))
+YearMonthFirstDay(s, cal, date) == CalendarDateFromFields(s, cal, [ISODateToFields(cal, date, "year-month") EXCEPT !.day = TI(1)], N("constrain"))
 \* DifferenceTemporalPlainYearMonth and AddDurationToYearMonth.
 DifferenceTemporalPlainYearMonth(s, operation, ym, other, options) ==
   LET o == ToTemporalYearMonthRecord(s, other, Undefined) IN IF IsAbrupt(o) THEN o
@@ -18158,15 +18672,15 @@ DifferenceTemporalPlainYearMonth(s, operation, ym, other, options) ==
   LET settings == GetDifferenceSettings(opts.s, operation, Val(opts), "date", {TUWeek, TUDay}, TUMonth, TUYear) IN
   IF IsAbrupt(settings) THEN settings
   ELSE IF CompareISODate(ym.date, Val(o).date) = 0 THEN CreateTemporalDuration(settings.s, ZeroDurationFields, Empty) ELSE
-  LET thisDate == YearMonthFirstDay(settings.s, ym.date) IN IF IsAbrupt(thisDate) THEN thisDate ELSE
-  LET otherDate == YearMonthFirstDay(thisDate.s, Val(o).date) IN IF IsAbrupt(otherDate) THEN otherDate ELSE
+  LET thisDate == YearMonthFirstDay(settings.s, ym.calendar, ym.date) IN IF IsAbrupt(thisDate) THEN thisDate ELSE
+  LET otherDate == YearMonthFirstDay(thisDate.s, ym.calendar, Val(o).date) IN IF IsAbrupt(otherDate) THEN otherDate ELSE
   LET st == Val(settings)
-      until == CalendarDateUntil(Val(thisDate), Val(otherDate), st.largestUnit)
+      until == CalendarDateUntil(ym.calendar, Val(thisDate), Val(otherDate), st.largestUnit)
       duration == CombineDateAndTimeDuration(<<until[1], until[2], TI(0), TI(0)>>, TI(0))
       from == [date |-> Val(thisDate), time |-> MidnightTimeRecord]
       rounded == IF st.smallestUnit = TUMonth /\ st.roundingIncrement = 1 THEN Ok(otherDate.s, duration)
                  ELSE RoundRelativeDuration(otherDate.s, duration, GetUTCEpochNanoseconds(from),
-                                            GetUTCEpochNanoseconds([date |-> Val(otherDate), time |-> MidnightTimeRecord]), from, Empty,
+                                            GetUTCEpochNanoseconds([date |-> Val(otherDate), time |-> MidnightTimeRecord]), from, Empty, ym.calendar,
                                             st.largestUnit, st.roundingIncrement, st.smallestUnit, st.roundingMode)
   IN IF IsAbrupt(rounded) THEN rounded
      ELSE CreateTemporalDuration(rounded.s, SinceFields(operation, DurationFieldsFromInternal(Val(rounded), TUDay)), Empty)
@@ -18177,23 +18691,23 @@ AddDurationToYearMonth(s, operation, ym, durationLike, options) ==
   IN IF IsAbrupt(opts) THEN opts ELSE
   LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow
   ELSE IF internal.date[3].mag # <<>> \/ internal.date[4].mag # <<>> \/ internal.time.mag # <<>> THEN ThrowError(overflow.s, "RangeError") ELSE
-  LET date == YearMonthFirstDay(overflow.s, ym.date) IN IF IsAbrupt(date) THEN date ELSE
-  LET added == CalendarDateAdd(date.s, Val(date), internal.date, Val(overflow)) IN IF IsAbrupt(added) THEN added ELSE
-  LET result == CalendarYearMonthFromFields(added.s, ISODateToFields(Val(added), "year-month"), Val(overflow)) IN
+  LET date == YearMonthFirstDay(overflow.s, ym.calendar, ym.date) IN IF IsAbrupt(date) THEN date ELSE
+  LET added == CalendarDateAdd(date.s, ym.calendar, Val(date), internal.date, Val(overflow)) IN IF IsAbrupt(added) THEN added ELSE
+  LET result == CalendarYearMonthFromFields(added.s, ym.calendar, ISODateToFields(ym.calendar, Val(added), "year-month"), Val(overflow)) IN
   IF IsAbrupt(result) THEN result ELSE CreateTemporalYearMonth(result.s, Val(result), ym.calendar, Empty)
 \* The getters of PlainYearMonth.
 \* The with of PlainYearMonth and PlainMonthDay: the merged fields of a partial object.
-MergedPartialFields(s, fields, item, names) ==
+MergedPartialFields(s, cal, fields, item, names) ==
   LET isPartial == IsPartialTemporalObject(s, item) IN IF IsAbrupt(isPartial) THEN isPartial
   ELSE IF ~Val(isPartial) THEN ThrowTypeError(isPartial.s) ELSE
-  LET partial == PrepareCalendarFields(isPartial.s, item, names, "partial") IN
+  LET partial == PrepareCalendarFields(isPartial.s, cal, item, names, "partial") IN
   IF IsAbrupt(partial) THEN partial ELSE Ok(partial.s, CalendarMergeFields(fields, Val(partial)))
 \* The toPlainDate of PlainYearMonth and PlainMonthDay: the date of the fields merged with the
 \* named fields of an object.
 MergedPlainDate(s, fields, item, names, calendar) ==
   IF ~IsObject(item) THEN ThrowTypeError(s) ELSE
-  LET input == PrepareCalendarFields(s, item, names, "no-required-fields") IN IF IsAbrupt(input) THEN input ELSE
-  LET date == CalendarDateFromFields(input.s, CalendarMergeFields(fields, Val(input)), N("constrain")) IN
+  LET input == PrepareCalendarFields(s, calendar, item, names, "no-required-fields") IN IF IsAbrupt(input) THEN input ELSE
+  LET date == CalendarDateFromFields(input.s, calendar, CalendarMergeFields(fields, Val(input)), N("constrain")) IN
   IF IsAbrupt(date) THEN date ELSE CreateTemporalDate(date.s, Val(date), calendar, Empty)
 PlainYearMonthBuiltin(s, f, m, this, args, nt) ==
   CASE m = "constructor" ->
@@ -18218,14 +18732,14 @@ PlainYearMonthBuiltin(s, f, m, this, args, nt) ==
     [] ~HasClass(s, this, "temporalYearMonth") -> ThrowTypeError(s)
     [] OTHER ->
          LET ym == O(s, this).slots IN
-         CASE m \in YearMonthGetters -> CalendarDateGetter(s, ym.date, m)
+         CASE m \in YearMonthGetters -> CalendarDateGetter(s, ym.calendar, ym.date, m)
            [] m = "calendarId" -> Ok(s, Str(ym.calendar))
            [] m = "with" ->
-                LET fields == MergedPartialFields(s, ISODateToFields(ym.date, "year-month"), Arg(args, 1), YearMonthFieldNames) IN
+                LET fields == MergedPartialFields(s, ym.calendar, ISODateToFields(ym.calendar, ym.date, "year-month"), Arg(args, 1), YearMonthFieldNames) IN
                 IF IsAbrupt(fields) THEN fields ELSE
                 LET opts == GetOptionsObject(fields.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                LET date == CalendarYearMonthFromFields(overflow.s, Val(fields), Val(overflow)) IN
+                LET date == CalendarYearMonthFromFields(overflow.s, ym.calendar, Val(fields), Val(overflow)) IN
                 IF IsAbrupt(date) THEN date ELSE CreateTemporalYearMonth(date.s, Val(date), ym.calendar, Empty)
            [] m \in {"add", "subtract"} -> AddDurationToYearMonth(s, m, ym, Arg(args, 1), Arg(args, 2))
            [] m \in {"until", "since"} -> DifferenceTemporalPlainYearMonth(s, m, ym, Arg(args, 1), Arg(args, 2))
@@ -18238,7 +18752,7 @@ PlainYearMonthBuiltin(s, f, m, this, args, nt) ==
                 ELSE Ok(show.s, Str(TemporalYearMonthToString(ym, Val(show))))
            [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalYearMonthToString(ym, N("auto"))))
            [] m = "valueOf" -> ThrowTypeError(s)
-           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(ym.date, "year-month"), Arg(args, 1), {"day"}, ym.calendar)
+           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(ym.calendar, ym.date, "year-month"), Arg(args, 1), {"day"}, ym.calendar)
 \* PlainMonthDay (Temporal §10). A Temporal.PlainMonthDay has class "temporalMonthDay" and slots
 \* [date, calendar], with a reference year.
 CreateTemporalMonthDay(s, date, calendar, newTarget) ==
@@ -18251,10 +18765,10 @@ ToTemporalMonthDayRecord(s, item, options) ==
     IF O(s, item).class = "temporalMonthDay" THEN
       LET read == ReadOverflowOption(s, options) IN IF IsAbrupt(read) THEN read ELSE Ok(read.s, O(s, item).slots)
     ELSE LET calendar == GetTemporalCalendarIdentifierWithISODefault(s, item) IN IF IsAbrupt(calendar) THEN calendar ELSE
-         LET fields == PrepareCalendarFields(calendar.s, item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
+         LET fields == PrepareCalendarFields(calendar.s, Val(calendar), item, DateFieldNames, "no-required-fields") IN IF IsAbrupt(fields) THEN fields ELSE
          LET opts == GetOptionsObject(fields.s, options) IN IF IsAbrupt(opts) THEN opts ELSE
          LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-         LET date == CalendarMonthDayFromFields(overflow.s, Val(fields), Val(overflow)) IN
+         LET date == CalendarMonthDayFromFields(overflow.s, Val(calendar), Val(fields), Val(overflow)) IN
          IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "month-day") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -18262,7 +18776,11 @@ ToTemporalMonthDayRecord(s, item, options) ==
            calendar == CanonicalizeCalendar(parsed.s, IF r.calendar = Empty THEN ISO8601 ELSE r.calendar)
        IN IF IsAbrupt(calendar) THEN calendar ELSE
        LET read == ReadOverflowOption(calendar.s, options) IN IF IsAbrupt(read) THEN read
-       ELSE Ok(read.s, [date |-> [year |-> 1972, month |-> r.month, day |-> r.day], calendar |-> Val(calendar)])
+       ELSE IF Val(calendar) = ISO8601 THEN Ok(read.s, [date |-> [year |-> 1972, month |-> r.month, day |-> r.day], calendar |-> ISO8601])
+       ELSE LET isoDate == [year |-> r.year, month |-> r.month, day |-> r.day] IN
+            IF ~ISODateWithinLimits(isoDate) THEN ThrowError(read.s, "RangeError") ELSE
+            LET date == CalendarMonthDayFromFields(read.s, Val(calendar), ISODateToFields(Val(calendar), isoDate, "month-day"), N("constrain")) IN
+            IF IsAbrupt(date) THEN date ELSE Ok(date.s, [date |-> Val(date), calendar |-> Val(calendar)])
 PlainMonthDayBuiltin(s, f, m, this, args, nt) ==
   CASE m = "constructor" ->
          IF nt = Undefined THEN ThrowTypeError(s) ELSE
@@ -18282,14 +18800,14 @@ PlainMonthDayBuiltin(s, f, m, this, args, nt) ==
     [] ~HasClass(s, this, "temporalMonthDay") -> ThrowTypeError(s)
     [] OTHER ->
          LET md == O(s, this).slots IN
-         CASE m \in {"monthCode", "day"} -> CalendarDateGetter(s, md.date, m)
+         CASE m \in {"monthCode", "day"} -> CalendarDateGetter(s, md.calendar, md.date, m)
            [] m = "calendarId" -> Ok(s, Str(md.calendar))
            [] m = "with" ->
-                LET fields == MergedPartialFields(s, ISODateToFields(md.date, "month-day"), Arg(args, 1), DateFieldNames) IN
+                LET fields == MergedPartialFields(s, md.calendar, ISODateToFields(md.calendar, md.date, "month-day"), Arg(args, 1), DateFieldNames) IN
                 IF IsAbrupt(fields) THEN fields ELSE
                 LET opts == GetOptionsObject(fields.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                 LET overflow == GetTemporalOverflowOption(opts.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow ELSE
-                LET date == CalendarMonthDayFromFields(overflow.s, Val(fields), Val(overflow)) IN
+                LET date == CalendarMonthDayFromFields(overflow.s, md.calendar, Val(fields), Val(overflow)) IN
                 IF IsAbrupt(date) THEN date ELSE CreateTemporalMonthDay(date.s, Val(date), md.calendar, Empty)
            [] m = "equals" ->
                 LET other == ToTemporalMonthDayRecord(s, Arg(args, 1), Undefined) IN IF IsAbrupt(other) THEN other
@@ -18300,7 +18818,7 @@ PlainMonthDayBuiltin(s, f, m, this, args, nt) ==
                 ELSE Ok(show.s, Str(TemporalMonthDayToString(md, Val(show))))
            [] m \in {"toLocaleString", "toJSON"} -> Ok(s, Str(TemporalMonthDayToString(md, N("auto"))))
            [] m = "valueOf" -> ThrowTypeError(s)
-           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(md.date, "month-day"), Arg(args, 1), {"year"}, md.calendar)
+           [] m = "toPlainDate" -> MergedPlainDate(s, ISODateToFields(md.calendar, md.date, "month-day"), Arg(args, 1), {"year"}, md.calendar)
 \* Temporal.Now (Temporal §2). The system time zone is UTC, and the system time is the clock Date
 \* reads, in milliseconds.
 SystemUTCEpochNanoseconds(s) == TIMul(TI(s.clock), TI(1000000))
@@ -18832,9 +19350,9 @@ CompareDurations(s, x, y, relativeTo) ==
       yInternal == ToInternalDurationRecord(y)
   IN IF relativeTo.zoned # Empty /\ (IsDateUnit(xLargest) \/ IsDateUnit(yLargest)) THEN
        LET z == relativeTo.zoned
-           xAfter == AddZonedDateTime(s, z.epochNs, z.timeZone, xInternal, N("constrain")) IN
+           xAfter == AddZonedDateTime(s, z.epochNs, z.timeZone, z.calendar, xInternal, N("constrain")) IN
        IF IsAbrupt(xAfter) THEN xAfter ELSE
-       LET yAfter == AddZonedDateTime(xAfter.s, z.epochNs, z.timeZone, yInternal, N("constrain")) IN
+       LET yAfter == AddZonedDateTime(xAfter.s, z.epochNs, z.timeZone, z.calendar, yInternal, N("constrain")) IN
        IF IsAbrupt(yAfter) THEN yAfter ELSE Ok(yAfter.s, IntV(TICompare(Val(xAfter), Val(yAfter))))
      ELSE LET isCalendar == IsCalendarUnit(xLargest) \/ IsCalendarUnit(yLargest) IN
        IF isCalendar /\ relativeTo.plain = Empty THEN ThrowError(s, "RangeError") ELSE
@@ -18873,14 +19391,14 @@ DurationRound(s, d, roundToArg) ==
      ELSE IF rel.zoned # Empty THEN
        LET z == rel.zoned
            internal == ToInternalDurationRecord(d)
-           target == AddZonedDateTime(s1, z.epochNs, z.timeZone, internal, N("constrain"))
+           target == AddZonedDateTime(s1, z.epochNs, z.timeZone, z.calendar, internal, N("constrain"))
        IN IF IsAbrupt(target) THEN target ELSE
-       LET r == DifferenceZonedDateTimeWithRounding(target.s, z.epochNs, Val(target), z.timeZone,
+       LET r == DifferenceZonedDateTimeWithRounding(target.s, z.epochNs, Val(target), z.timeZone, z.calendar,
                                                     largest, inc, smallest, rm)
        IN IF IsAbrupt(r) THEN r ELSE TemporalDurationFromInternal(r.s, Val(r), IF IsDateUnit(largest) THEN TUHour ELSE largest)
      ELSE IF rel.plain # Empty THEN
        LET target == RelativePlainTarget(s1, d, rel.plain) IN IF IsAbrupt(target) THEN target ELSE
-       LET r == DifferencePlainDateTimeWithRounding(target.s, Val(target).from, Val(target).to, largest, inc, smallest, rm)
+       LET r == DifferencePlainDateTimeWithRounding(target.s, Val(target).from, Val(target).to, rel.plain.calendar, largest, inc, smallest, rm)
        IN IF IsAbrupt(r) THEN r ELSE TemporalDurationFromInternal(r.s, Val(r), largest)
      ELSE IF IsCalendarUnit(existingLargest) \/ IsCalendarUnit(largest) THEN ThrowError(s1, "RangeError")
      ELSE LET internal == ToInternalDurationRecordWith24HourDays(d) IN
@@ -18903,12 +19421,12 @@ DurationTotal(s, d, totalOfArg) ==
       total == IF unit = TUAuto THEN ThrowError(s1, "RangeError")
                ELSE IF rel.zoned # Empty THEN
                  LET z == rel.zoned
-                     target == AddZonedDateTime(s1, z.epochNs, z.timeZone, ToInternalDurationRecord(d), N("constrain"))
+                     target == AddZonedDateTime(s1, z.epochNs, z.timeZone, z.calendar, ToInternalDurationRecord(d), N("constrain"))
                  IN IF IsAbrupt(target) THEN target
-                    ELSE DifferenceZonedDateTimeWithTotal(target.s, z.epochNs, Val(target), z.timeZone, unit)
+                    ELSE DifferenceZonedDateTimeWithTotal(target.s, z.epochNs, Val(target), z.timeZone, z.calendar, unit)
                ELSE IF rel.plain # Empty THEN
                  LET target == RelativePlainTarget(s1, d, rel.plain) IN IF IsAbrupt(target) THEN target
-                 ELSE DifferencePlainDateTimeWithTotal(target.s, Val(target).from, Val(target).to, unit)
+                 ELSE DifferencePlainDateTimeWithTotal(target.s, Val(target).from, Val(target).to, rel.plain.calendar, unit)
                ELSE IF IsCalendarUnit(DefaultTemporalLargestUnit(d)) \/ IsCalendarUnit(unit) THEN ThrowError(s1, "RangeError")
                ELSE Ok(s1, RatioToNumber(ToInternalDurationRecordWith24HourDays(d).time, TemporalUnitLength(unit)))
   IN IF IsAbrupt(total) THEN total ELSE Ok(total.s, Num(Val(total)))
