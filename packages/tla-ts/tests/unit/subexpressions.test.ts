@@ -427,6 +427,16 @@ describe("selections into standard operators match SANY and TLC", () => {
     expect([result.status, prints]).toEqual(["success", ["1", "2"]]);
   });
 
+  it("selects into a standard module whose source instantiates another", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS TLC, _Possible\nVARIABLE x\nASSUME PrintT(_CheckName("a")!1!1)\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["TRUE"]]);
+  });
+
   it("rejects the selections into standard bodies that SANY rejects", async () => {
     await expect(checkStandard("ASSUME PrintT(<<Nat!1, Tail(<<7, 8>>)!1>>)")).rejects.toThrow(
       createSanyError([

@@ -1280,8 +1280,7 @@ export const createEnvironment = (
       modules,
       extended,
     };
-    if (!scope.isHidden && !checkedModules.has(parsed.name))
-      checkedModules.set(parsed.name, linked);
+    if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
     scope.levelChecks.push(
       checkModuleLevels(
         module,
