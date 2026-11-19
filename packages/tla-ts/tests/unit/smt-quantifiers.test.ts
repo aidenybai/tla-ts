@@ -256,6 +256,25 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
       ]),
     ).toEqual(["unsat", "(:rlimit 593)"]);
   });
+
+  it("reads a qi.cost numeral as a float quotient of int64s", () => {
+    const getOutput = (cost: string) =>
+      run([
+        `(set-option :smt.qi.cost "${cost}")`,
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)) :weight 20)))",
+        "(assert (= (g a) (f b)))",
+        "(assert (> (g b) (f a)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]);
+    expect(getOutput("10.00000001")).toEqual(["unsat", "(:rlimit 641)"]);
+    expect(getOutput("20.0000001")).toEqual(["unsat", "(:rlimit 661)"]);
+    expect(getOutput("18446744073709551616")).toEqual(["unsat", "(:rlimit 641)"]);
+  });
 });
 
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {

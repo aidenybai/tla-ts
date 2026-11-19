@@ -16,6 +16,9 @@ const getConstantCost = (text: string | undefined) => {
   return Rational.fromDecimal(text);
 };
 
+// cost_evaluator reads a numeral as the float quotient of its int64 numerator and denominator.
+const getFloat = (value: bigint) => Math.fround(Number(BigInt.asIntN(64, value)));
+
 interface Entry {
   quantifier: number;
   bindings: Enode[];
@@ -219,7 +222,10 @@ export class QiQueue {
     this.checker = new Checker(context);
     const constantCost = getConstantCost(context.params.qiCost);
     this.costExprs = manager.mkQiCostExprs(constantCost);
-    this.constantCost = constantCost?.toDouble();
+    this.constantCost =
+      constantCost === undefined
+        ? undefined
+        : Math.fround(getFloat(constantCost.num) / getFloat(constantCost.den));
     for (const expr of this.costExprs) manager.incRef(expr);
     // smt.qi.new_gen is the variable cost, so the queue holds that variable twice.
     manager.incRef(this.costExprs[0]);
