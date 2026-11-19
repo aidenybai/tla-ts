@@ -216,18 +216,23 @@ const DEFINITIONS = [
   // module runs. One whose value is a primitive has the host's value. One whose value is a function
   // or an object is a proxy whose handler stops at every operation, whose target is a function
   // where the host's value is one, and a constructor where it's one, so that a new of it reaches
-  // the handler, and one that the host gives a getter has a getter that gives the
+  // the handler. A new without arguments of a constructor that makes an object quietly, which runs
+  // nothing a program sees until it uses the object, as TextEncoder's, makes a proxy that stops at
+  // every operation. One that the host gives a getter has a getter that gives the
   // proxy, or undefined where the host's gives undefined, and a setter that stops. Any other
   // accessor stops where it's read or written.
   `DefineHost(s, properties) ==
   LET handler == OrdinaryObjectCreate(s, Null)
       trap == CreateBuiltinFunction(handler.s, <<"Module", "hostTrap">>, 0, <<>>, Empty)
-      traps == DefineTraps(trap.s, Val(handler), Val(trap), CommonJsTraps)
+      construct == CreateBuiltinFunction(trap.s, <<"Module", "hostConstruct">>, 0, <<>>, Empty)
+      traps == AllowTraps(DefineTraps(construct.s, Val(handler), Val(trap), CommonJsTraps), Val(handler),
+                          <<[trap |-> SV("construct"), method |-> "hostConstruct"]>>)
   IN DefineHostWith([traps EXCEPT !.hostHandler = Val(handler)], Val(handler), properties)`,
   `DefineHostWith(s, handler, properties) ==
   IF properties = <<>> THEN Ok(s, Empty) ELSE
   LET p == Head(properties)
-      stop == LET a == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>,
+      stop == LET a == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"),
+                                              <<"Module", IF p.isQuiet THEN "hostQuietConstructor" ELSE "hostStop">>, 0, <<>>,
                                               p.isConstructor, p.name, s.realmId))
               IN Ok(a.s, a.v)
       target == CASE p.kind = "function" -> stop
@@ -500,7 +505,14 @@ const HOST_PATCHES = [
          IF ~IsObject(this) \\/ "consoleTask" \\notin DOMAIN O(s, this).slots \\/ ~IsCallable(s, Arg(args, 1))
          THEN Assert(FALSE, "tla-ts can't run a task of the host's console other than a function")
          ELSE Call(s, Arg(args, 1), Undefined, <<>>)
-    [] m = "hostStop" -> HostStop(data)
+    [] m \\in {"hostStop", "hostQuietConstructor"} -> HostStop(data)
+    [] m = "hostConstruct" ->
+         LET target == Arg(args, 1) IN
+         IF O(s, target).slots.id[2] # "hostQuietConstructor" \\/ Val(Get(s, Arg(args, 2), SV("length"))) # IntV(0) \\/
+            O(s, Arg(args, 3)).class # "proxy" \\/ O(s, Arg(args, 3)).slots.target # target
+         THEN HostStop(O(s, target).slots.data)
+         ELSE LET instance == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> O(s, target).slots.data])) IN
+              ProxyCreate(instance.s, instance.v, s.hostHandler)
     [] m = "hostTrap" ->
          HostStop(IF "hostName" \\in DOMAIN O(s, Arg(args, 1)).slots THEN O(s, Arg(args, 1)).slots.hostName ELSE O(s, Arg(args, 1)).slots.data)
     [] m = "commonJsStop" -> Assert(FALSE, "tla-ts can't use a CommonJS module's module or require other than for module.exports and a call")`,

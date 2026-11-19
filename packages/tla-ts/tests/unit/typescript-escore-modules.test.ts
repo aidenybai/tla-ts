@@ -310,8 +310,45 @@ describe("gives a module the host's globals and properties that ESCore lacks, wh
 
   it("stops at a new of a global that the host constructs, rather than throw", async () => {
     expect(
-      (await checkModules({ "main.js": "const encoder = new TextEncoder();" })).message,
-    ).toContain("tla-ts can't run the host's TextEncoder");
+      (await checkModules({ "main.js": 'const url = new URL("https://example.com");' })).message,
+    ).toContain("tla-ts can't run the host's URL");
+  });
+
+  describe("makes an object of a constructor that makes one quietly, which stops where it's used", () => {
+    const getQuiet = (expected: string) => ({
+      "main.js": getMain(
+        `const log = [];
+        const encoder = new TextEncoder();
+        const decoder = new TextDecoder();
+        function encode(text) { return encoder.encode(text); }
+        log.push(typeof encoder, typeof decoder, encoder === decoder, typeof encode);`,
+        expected,
+      ),
+    });
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getQuiet("object,object,false,function"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getQuiet("object,object,true,function"))).message).toContain(
+        THREW,
+      );
+    });
+
+    it("stops at a use of the object", async () => {
+      expect(
+        (await checkModules({ "main.js": 'new TextEncoder().encode("x");' })).message,
+      ).toContain("tla-ts can't run the host's TextEncoder");
+    });
+
+    it("stops at a new with arguments", async () => {
+      expect((await checkModules({ "main.js": 'new TextDecoder("utf-16le");' })).message).toContain(
+        "tla-ts can't run the host's TextDecoder",
+      );
+    });
   });
 
   it("stops at a class that extends a global of the host", async () => {
