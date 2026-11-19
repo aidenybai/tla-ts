@@ -60,11 +60,13 @@ import { extractModule } from "./parser";
 import {
   collectSemanticErrors,
   compareLocations,
+  CORE_SYMBOLS,
   getArity,
   getBoundNames,
   getFunctionArity,
   getKeyName,
   getParamArities,
+  getRecursiveCount,
   getTheoremGoal,
   isBefore,
   isSameSanyError,
@@ -78,6 +80,9 @@ import {
   type ModuleReport,
   type ModuleSymbol,
   type ModuleUnit,
+  type NestedRecursion,
+  type RecursiveCount,
+  type RecursiveDeclaration,
   type SymbolKind,
   type Symbols,
 } from "./resolve";
@@ -184,12 +189,14 @@ export interface LinkedModule {
   exported: Symbols;
   modules: Map<string, LinkedModule>;
   extended: LinkedModule[];
+  recursion: NestedRecursion;
 }
 
 interface ModuleScope {
   id: string;
   isHidden: boolean;
   symbols: Symbols;
+  recursiveCount: RecursiveCount;
   getDefinition: (name: string) => Definition | undefined;
   modules: Map<string, LinkedModule>;
   nested: Module[];
@@ -470,6 +477,7 @@ export const createEnvironment = (
       id: parsed.name,
       isHidden,
       symbols: new Map(),
+      recursiveCount: { declarations: [], closed: 0 },
       getDefinition: () => undefined,
       modules: new Map(),
       nested,
@@ -1164,6 +1172,7 @@ export const createEnvironment = (
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const instanced = new Map<Instance, Symbols>();
+    const nestedRecursion = new Map<Module, NestedRecursion>();
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
     const getLetModule = (instance: Instance) => {
       const ownModule = parsed.modules.find((nested) => nested.name === instance.module);
@@ -1217,6 +1226,8 @@ export const createEnvironment = (
       reports,
       warnings: scope.warnings,
       goalOperands,
+      recursiveCount: scope.recursiveCount,
+      nestedRecursion: [...nestedRecursion.values()],
     });
     const symbolsBefore = new Map(bound);
     const boundLocations = new Map<string, SourceLocation>();
@@ -1282,10 +1293,35 @@ export const createEnvironment = (
       const report: ModuleReport = { location: nested.location, errors: [], warnings: [] };
       reports.push(report);
       const getDefinitionBefore = subexpressions.getDefinitionsBefore(nested.location);
+      const recursiveDeclarations = parsed.units
+        .flatMap((item) => (item.kind === "Recursive" ? item.declarations : []))
+        .reduce<RecursiveDeclaration[]>(
+          (declared, declaration) => [
+            ...declared,
+            {
+              declaration,
+              isTaken:
+                CORE_SYMBOLS.has(declaration.name) ||
+                isBoundBefore(declaration.name, declaration.location) ||
+                [
+                  ...scope.recursiveCount.declarations.filter((other) => !other.isTaken),
+                  ...declared,
+                ].some((other) => other.declaration.name === declaration.name),
+            },
+          ],
+          [],
+        );
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         isHidden: scope.isHidden,
         symbols: symbolsBefore,
+        recursiveCount: getRecursiveCount(
+          parsed,
+          scope.recursiveCount,
+          recursiveDeclarations,
+          [...nestedRecursion.values()],
+          nested.location,
+        ),
         getDefinition: (name) => getDefinitionBefore(name) ?? scope.getDefinition(name),
         modules: visibleModules,
         nested: scope.nested,
@@ -1295,6 +1331,10 @@ export const createEnvironment = (
       });
       if (redefinition) report.errors.push(redefinition);
       if (!existing) modules.set(nested.name, linked);
+      nestedRecursion.set(nested, linked.recursion);
+      linked.recursion.definitions.forEach((definition) =>
+        bindBefore(definition.name, getDefinitionSymbol(definition), nested.location),
+      );
     };
     const instancingUnit = getUnit(parsed);
     [
@@ -1437,6 +1477,7 @@ export const createEnvironment = (
       exported,
       modules,
       extended,
+      recursion: resolved.recursion,
     };
     if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
     scope.levelChecks.push(

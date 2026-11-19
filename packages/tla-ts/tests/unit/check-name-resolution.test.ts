@@ -3625,6 +3625,119 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "a declaration in an inner module in a recursive definition section",
+      "RECURSIVE F(_)\n---- MODULE Inner ----\nCONSTANT c\nF(a) == a\n====",
+      [
+        {
+          location: "line 3, col 1 to line 6, col 4 of module M",
+          message: "A MODULE  may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 10 of module M",
+          message: "A declaration may not appear within a recursive definition section.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a declaration after an inner module in a recursive definition section",
+      "RECURSIVE F(_)\n---- MODULE Inner ----\nCONSTANT c\n====\nCONSTANT d",
+      [
+        {
+          location: "line 3, col 1 to line 5, col 4 of module M",
+          message: "A MODULE  may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 10 of module M",
+          message: "A declaration may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 2, col 11 to line 2, col 14 of module M",
+          message: "Symbol F declared in RECURSIVE statement but not defined.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a declaration after an inner module's definition of a RECURSIVE operator",
+      "RECURSIVE F(_)\n---- MODULE Inner ----\nF(a) == a\nCONSTANT c\n====\nCONSTANT d",
+      [
+        {
+          location: "line 3, col 1 to line 6, col 4 of module M",
+          message: "A MODULE  may not appear within a recursive definition section.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a definition of a RECURSIVE operator that an inner module defined",
+      "RECURSIVE F(_)\n---- MODULE Inner ----\nF(a) == a\n====\nF(a) == a",
+      [
+        {
+          location: "line 3, col 1 to line 5, col 4 of module M",
+          message: "A MODULE  may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 9 of module M",
+          message: "Operator F already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 6, col 1 to line 6, col 9 of module M",
+          message:
+            "Multiple declarations or definitions for symbol F.  \nThis duplicates the one at line 4, col 1 to line 4, col 9 of module M.",
+        },
+      ],
+    ],
+    [
+      "a use of a RECURSIVE operator that an inner module defined",
+      "RECURSIVE F(_)\n---- MODULE Inner ----\nF(a) == a\n====\nG == F(1)",
+      [
+        {
+          location: "line 3, col 1 to line 5, col 4 of module M",
+          message: "A MODULE  may not appear within a recursive definition section.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a second inner module's definition of a RECURSIVE operator",
+      "RECURSIVE F(_)\n---- MODULE Inner ----\nF(a) == a\n====\n---- MODULE Inner2 ----\nF(a) == a\n====",
+      [
+        {
+          location: "line 3, col 1 to line 5, col 4 of module M",
+          message: "A MODULE  may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 7, col 1 to line 7, col 9 of module M",
+          message: "Operator F already defined or declared.",
+        },
+      ],
+      [
+        {
+          location: "line 7, col 1 to line 7, col 9 of module M",
+          message:
+            "Multiple declarations or definitions for symbol F.  \nThis duplicates the one at line 4, col 1 to line 4, col 9 of module M.",
+        },
+      ],
+    ],
+    [
+      "an instance's use of a RECURSIVE operator that its inner module defined",
+      "RECURSIVE F(_)\n---- MODULE Inner ----\nF(a) == a\n====\nI == INSTANCE Inner\nG == I!F(1)",
+      [
+        {
+          location: "line 3, col 1 to line 5, col 4 of module M",
+          message: "A MODULE  may not appear within a recursive definition section.",
+        },
+        {
+          location: "line 7, col 6 to line 7, col 8 of module M",
+          message: "Unknown operator: `I!F'.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
