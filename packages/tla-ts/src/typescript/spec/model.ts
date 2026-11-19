@@ -8,6 +8,7 @@ import type { StateVariable } from "../emit";
 import type { Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
+import { getNativeFunctions, NATIVE_DEFINITIONS } from "./native";
 import { compileToEscore, type EscoreSpec } from "./compile";
 import { foldNames } from "./library";
 import type { EscoreRuntime } from "./prepare";
@@ -228,8 +229,9 @@ interface Converter {
 // module's top level, as model, the module's bindings lowered out of ESCore's heap (see
 // lowered.ts), where the module lets it, or else as heap, the canonical state. Each exported
 // function that today's compiler makes an action calls the function through ESCore with the
-// arguments that today's compiler chooses. Invariants, properties, and the other checks call the
-// functions they name. A trace shows each state variable as today's compiler does.
+// arguments that today's compiler chooses, natively where it can (see native.ts). Invariants,
+// properties, and the other checks call the functions they name. A trace shows each state
+// variable as today's compiler does.
 export const compileModelToEscore = (
   source: string,
   fileName: string,
@@ -781,6 +783,20 @@ export const compileModelToEscore = (
       : getLoweredBindings(file, new Set(choices.map((choice) => choice.name)));
   const variable = lowered === undefined ? "heap" : "model";
   const getState = (state: string) => (lowered === undefined ? state : `ModelState(${state})`);
+  // A lowered model's functions run natively where they can, and on ESCore where that bails.
+  const native = lowered === undefined ? undefined : getNativeFunctions(file, lowered);
+  // The native call of a function in the lowered state model, with the arguments of the values
+  // given, converted and lowered, or undefined where the function runs on ESCore only.
+  const getNativeCall = (name: string, model: string, values: (index: number) => string) => {
+    const operator = native?.getOperator(name);
+    const parameters = exported.get(name)?.parameters ?? [];
+    const converters = parameters.map((_, index) =>
+      guardChoices.has(`${name} ${index}`) ? undefined : boundConverters.get(`${name} ${index}`),
+    );
+    return operator === undefined || converters.some((converter) => converter === undefined)
+      ? undefined
+      : `${operator}(${[model, "FALSE", ...converters.map((converter, index) => `LowerConverted(${converter}(ModelBase, ${values(index)}))`)].join(", ")})`;
+  };
   // A step's or a check's arguments, converted in turn from a[1], the state, with the
   // parameters' values from a[2] on.
   const getArguments = (action: string, state: string, values: (position: number) => string) => {
@@ -814,8 +830,17 @@ export const compileModelToEscore = (
       (name) =>
         `${name}(a) ==\n  LET s == StepStart(${getState("a[1]")})\n      converted == ${getArguments(action, "s", (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN StepOf(s, ${getUnits(action)}, converted)`,
     );
+    const nativeCall = getNativeCall(action, "a[1]", (index) => `a[${index + 2}]`);
+    const run =
+      nativeCall === undefined
+        ? step
+        : define(
+            "NativeStep",
+            (name) =>
+              `${name}(a) ==\n  LET n == ${nativeCall} IN\n  IF n.type = "bail" THEN ${step}(a) ELSE IF n.w THEN {n.m} ELSE {}`,
+          );
     steps.push(
-      `${action}${bounds.length === 0 ? "" : `(${bounds.join(", ")})`} == ${variable}' \\in ApplyTo(${step}, <<${variable}${bounds.map((bound) => `, ${bound}`).join("")}>>)`,
+      `${action}${bounds.length === 0 ? "" : `(${bounds.join(", ")})`} == ${variable}' \\in ApplyTo(${run}, <<${variable}${bounds.map((bound) => `, ${bound}`).join("")}>>)`,
     );
   }
   // A check of a function's result at a state: whether it holds, or only that it returns.
@@ -831,8 +856,17 @@ export const compileModelToEscore = (
       (operatorName) =>
         `${operatorName}(a) ==\n  LET converted == ${getArguments(name, getState("a[1]"), (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN ${kind}(converted.s, ${getUnits(name)}, converted.args)`,
     );
+    const nativeCall = getNativeCall(name, "a[1]", (index) => `a[${index + 2}]`);
+    const checked =
+      nativeCall === undefined
+        ? operator
+        : define(
+            "NativeCheck",
+            (operatorName) =>
+              `${operatorName}(a) ==\n  LET n == ${nativeCall} IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE ${kind === "HoldsOf" ? "n.v = True" : "TRUE"}`,
+          );
     return (state: string, values: string[]) =>
-      `ApplyTo(${operator}, <<${[state, ...values].join(", ")}>>)`;
+      `ApplyTo(${checked}, <<${[state, ...values].join(", ")}>>)`;
   };
   // The bounds that today's check of a function quantifies its parameters over, the first ones
   // of its \A, as many as the function's parameters.
@@ -906,7 +940,17 @@ export const compileModelToEscore = (
       (operatorName) =>
         `${operatorName}(a) ==\n  LET before == ${lowered === undefined ? `BeforeOf(a[2], a[1], <<${shownNames.map(getUnits).join(", ")}>>)` : `MaterializeValue(ModelState(a[2]), LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>))`}\n  IN HoldsOf(before.s, ${getUnits(name)}, <<before.v>>)`,
     );
-    return `ApplyTo(${operator}, <<${variable}, ${variable}'>>)`;
+    const nativeOperator =
+      exported.get(name)?.parameters.length === 1 ? native?.getOperator(name) : undefined;
+    const checked =
+      nativeOperator === undefined
+        ? operator
+        : define(
+            "NativeStepCheck",
+            (operatorName) =>
+              `${operatorName}(a) ==\n  LET n == ${nativeOperator}(a[2], FALSE, LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>)) IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE n.v = True`,
+          );
+    return `ApplyTo(${checked}, <<${variable}, ${variable}'>>)`;
   };
   for (const name of config.properties) {
     const definition = definitions.get(name);
@@ -979,7 +1023,14 @@ export const compileModelToEscore = (
       )}\n      m == ${choose.length === 0 ? "ModelInitial" : `[ModelInitial EXCEPT ${choose.map((choice, index) => `!.${choice.name} = l${index + 1}.v`).join(", ")}]`}\n  IN IF ${
       initially.length === 0
         ? "TRUE"
-        : initially.map((name) => `HoldsOf(ModelState(m), ${getUnits(name)}, <<>>)`).join(" /\\ ")
+        : initially
+            .map((name) => {
+              const call = getNativeCall(name, "m", () => "");
+              return call === undefined
+                ? `HoldsOf(ModelState(m), ${getUnits(name)}, <<>>)`
+                : `(LET n == ${call} IN IF n.type = "bail" THEN HoldsOf(ModelState(m), ${getUnits(name)}, <<>>) ELSE n.v = True)`;
+            })
+            .join(" /\\ ")
     } THEN {m} ELSE {}`,
   ];
   const initialSteps = [
@@ -1089,7 +1140,7 @@ export const compileModelToEscore = (
           "StepEnd(s) == CanonicalState([s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]])",
           "StartState(s) == StepEnd(ModelStart(s))",
         ]
-      : getLoweredSteps(lowered)),
+      : [...getLoweredSteps(lowered), NATIVE_DEFINITIONS, ...(native?.definitions ?? [])]),
     STEP_OF,
     ...steps,
     ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, ${variable})`]),
