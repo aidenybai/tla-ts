@@ -44,9 +44,16 @@ import {
 } from "./levels";
 import { bindLetDefinitions, getLevel } from "./liveness";
 import { EMPTY_STATE } from "./runtime";
-import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
+import {
+  createRecord,
+  createSet,
+  createTuple,
+  formatValue,
+  rankString,
+  type Value,
+} from "./values";
 import { LITERAL_KINDS } from "./tlc/replay";
-import { resolveSynonym } from "./tlc/jar-data";
+import { resolveSynonym, TLC_RUNTIME_STRINGS } from "./tlc/jar-data";
 import { getSanyStandardModules } from "./sany/modules";
 import { parseModule } from "./parser";
 import { getStandardModule } from "./standard-definitions";
@@ -728,6 +735,8 @@ export const getSpecDescription = (
       ),
     );
   }
+  // TLC creates the checker, which interns these, once Tool's constructor has split the next-state relation.
+  TLC_RUNTIME_STRINGS.forEach(rankString);
   return description;
 };
 

@@ -292,8 +292,6 @@ export const reportStartup = (
     onProgress?.({ kind: "java-override", ...override }),
   );
   evaluateStartupDefinitions(specification.startupDefinitions, environment);
-  // TLC interns these as it creates the checker, after SpecProcessor evaluates the constant definitions.
-  TLC_RUNTIME_STRINGS.forEach(rankString);
   config.invariants.forEach((name) => {
     if (!getConfigPredicate("invariant", name, environment)) {
       onProgress?.({ kind: "constant-level-invariant", name });

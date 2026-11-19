@@ -787,6 +787,28 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "A(p) == x < 2 /\\ x' = x + 1 /\\ PrintT(p)\nNext == A(CounterExample)",
+      ["[state |-> {}, action |-> {}]", "[state |-> {}, action |-> {}]"],
+    ],
+    [
+      'Next == \\E s \\in {"zz" \\o "q"} : x\' = (x + 1) % 3\nASSUME PrintT({"zz" \\o "q", "ac" \\o "tion"})',
+      ['{"zzq", "action"}'],
+    ],
+  ])(
+    "ranks the strings that splitting %s creates before those TLC interns as it creates the checker",
+    async (definitions, prints) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt, Sequences\nVARIABLE x\nInit == x = 0\n${definitions}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual(prints);
+    },
+  );
+
   it("does not carry one check's string order into the next", async () => {
     const earlier = await checkModule(
       'Picked == CHOOSE s \\in {"zzq", "aaq"} : TRUE\nASSUME Picked = "zzq"',
