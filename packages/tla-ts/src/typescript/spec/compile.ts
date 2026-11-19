@@ -267,8 +267,8 @@ const getHostProperty = (
       ];
 };
 
-// The host's constructors that make an object without arguments quietly, running nothing that a
-// program sees until it uses the object.
+// The host's constructors that make an object quietly, running nothing that a program sees but
+// what QuietConstruct converts of their arguments until it uses the object.
 const QUIET_CONSTRUCTORS = new Set(["TextEncoder", "TextDecoder"]);
 
 // Whether a value of the host is a constructor, which Reflect.construct tells by throwing where

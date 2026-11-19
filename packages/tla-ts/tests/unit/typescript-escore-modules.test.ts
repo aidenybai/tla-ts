@@ -344,10 +344,28 @@ describe("gives a module the host's globals and properties that ESCore lacks, wh
       ).toContain("tla-ts can't run the host's TextEncoder");
     });
 
-    it("stops at a new with arguments", async () => {
+    it("stops at a label of another encoding", async () => {
       expect((await checkModules({ "main.js": 'new TextDecoder("utf-16le");' })).message).toContain(
         "tla-ts can't run the host's TextDecoder",
       );
+    });
+
+    describe("reads a TextDecoder's options as Node does", () => {
+      const getOptions = (expected: string) => ({
+        "main.js": getMain(
+          `const log = [];
+          new TextDecoder("utf-8", { get fatal() { log.push("fatal"); return true; }, get ignoreBOM() { log.push("bom"); return true; } });`,
+          expected,
+        ),
+      });
+
+      it("agrees with Node", async () => {
+        expect((await checkModules(getOptions("fatal,bom,bom,fatal"))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkModules(getOptions("fatal,bom"))).message).toContain(THREW);
+      });
     });
   });
 

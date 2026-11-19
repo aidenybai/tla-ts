@@ -216,9 +216,9 @@ const DEFINITIONS = [
   // module runs. One whose value is a primitive has the host's value. One whose value is a function
   // or an object is a proxy whose handler stops at every operation, whose target is a function
   // where the host's value is one, and a constructor where it's one, so that a new of it reaches
-  // the handler. A new without arguments of a constructor that makes an object quietly, which runs
-  // nothing a program sees until it uses the object, as TextEncoder's, makes a proxy that stops at
-  // every operation. One that the host gives a getter has a getter that gives the
+  // the handler. A new of a constructor that makes an object quietly, which runs nothing a program
+  // sees but its arguments' conversions until it uses the object, as TextEncoder's, makes a proxy
+  // that stops at every operation. One that the host gives a getter has a getter that gives the
   // proxy, or undefined where the host's gives undefined, and a setter that stops. Any other
   // accessor stops where it's read or written.
   `DefineHost(s, properties) ==
@@ -261,6 +261,24 @@ const DEFINITIONS = [
   LET d == DefinePropertyOrThrow(s, o, Str(Head(names)),
              IF Head(names) = N("main") THEN DataDesc(Bool(isMain), TRUE, TRUE, TRUE) ELSE AccessorDesc(stop, stop, TRUE, TRUE))
   IN IF IsAbrupt(d) THEN d ELSE DefineMetaProperties(d.s, o, stop, Tail(names), isMain)`,
+  // The steps of a constructor of the host that makes its object quietly, from the arguments it
+  // converts: TextEncoder's, which converts none, and TextDecoder's, as Node's runs them
+  // (lib/internal/encoding.js), of a label of UTF-8, and of options that it reads fatal and ignoreBOM
+  // of, then ignoreBOM and fatal again. A label of another encoding, which the host's table of labels
+  // decides, stops.
+  `QuietConstruct(s, name, args) ==
+  IF name = N("TextEncoder") THEN Ok(s, Empty) ELSE
+  LET label == IF Arg(args, 1) = Undefined THEN Ok(s, Str(N("utf-8"))) ELSE ToStr(s, Arg(args, 1))
+      options == Arg(args, 2)
+  IN IF IsAbrupt(label) THEN label
+     ELSE IF options \\notin {Undefined, Null} /\\ ~IsObject(options) THEN HostStop(name)
+     ELSE IF Val(label).value \\notin {N("utf-8"), N("utf8"), N("unicode-1-1-utf-8"), N("unicode11utf8"), N("unicode20utf8"), N("x-unicode20utf8")}
+     THEN HostStop(name)
+     ELSE IF options \\in {Undefined, Null} THEN Ok(label.s, Empty)
+     ELSE ReadOptions(label.s, options, <<SV("fatal"), SV("ignoreBOM"), SV("ignoreBOM"), SV("fatal")>>)`,
+  `ReadOptions(s, options, keys) ==
+  IF keys = <<>> THEN Ok(s, Empty) ELSE
+  LET r == Get(s, options, Head(keys)) IN IF IsAbrupt(r) THEN r ELSE ReadOptions(r.s, options, Tail(keys))`,
   // A stop at what of the host that ESCore leaves out a program uses, by its name's code units.
   `HostStop(name) == Assert(FALSE, "tla-ts can't run the host's " \\o UnitsText(name) \\o ", which ESCore leaves out")`,
   // The TLA+ string of code units that a TLA+ string can hold.
@@ -507,12 +525,16 @@ const HOST_PATCHES = [
          ELSE Call(s, Arg(args, 1), Undefined, <<>>)
     [] m \\in {"hostStop", "hostQuietConstructor"} -> HostStop(data)
     [] m = "hostConstruct" ->
-         LET target == Arg(args, 1) IN
-         IF O(s, target).slots.id[2] # "hostQuietConstructor" \\/ Val(Get(s, Arg(args, 2), SV("length"))) # IntV(0) \\/
-            O(s, Arg(args, 3)).class # "proxy" \\/ O(s, Arg(args, 3)).slots.target # target
-         THEN HostStop(O(s, target).slots.data)
-         ELSE LET instance == Alloc(s, MakeObject(Null, "ordinary", [hostName |-> O(s, target).slots.data])) IN
-              ProxyCreate(instance.s, instance.v, s.hostHandler)
+         LET target == Arg(args, 1)
+             list == CreateListFromArrayLike(s, Arg(args, 2), "all")
+         IN IF IsAbrupt(list) THEN list
+            ELSE IF O(s, target).slots.id[2] # "hostQuietConstructor" \\/ O(s, Arg(args, 3)).class # "proxy" \\/
+                    O(s, Arg(args, 3)).slots.target # target
+            THEN HostStop(O(s, target).slots.data) ELSE
+            LET quiet == QuietConstruct(list.s, O(s, target).slots.data, Val(list)) IN
+            IF IsAbrupt(quiet) THEN quiet ELSE
+            LET instance == Alloc(quiet.s, MakeObject(Null, "ordinary", [hostName |-> O(s, target).slots.data])) IN
+            ProxyCreate(instance.s, instance.v, s.hostHandler)
     [] m = "hostTrap" ->
          HostStop(IF "hostName" \\in DOMAIN O(s, Arg(args, 1)).slots THEN O(s, Arg(args, 1)).slots.hostName ELSE O(s, Arg(args, 1)).slots.data)
     [] m = "commonJsStop" -> Assert(FALSE, "tla-ts can't use a CommonJS module's module or require other than for module.exports and a call")`,
