@@ -2396,9 +2396,6 @@ const parse = (
     if (!isCorrectLevel(step)) {
       throw createError(`${isQed ? "QED step" : "step"}'s number has bad level`, step);
     }
-    if (mode !== "sany" && getStepLevel(step) < 0 && getStepName(step) !== undefined) {
-      throw createError("<*> and <+> cannot be used for a named step", step);
-    }
     cursor++;
     return { name: getStepName(step), token: step.text, location: getLocation(step) };
   };

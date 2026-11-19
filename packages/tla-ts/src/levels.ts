@@ -54,13 +54,14 @@ export interface InstanceCopy extends InstanceSubstitutes {
 
 export interface InstancedDefinition {
   source: OperatorLevels;
-  constants: Set<string>;
+  constants: Map<string, number>;
   variables: Set<string>;
   isConstant: boolean;
 }
 
-export interface LetInstance {
+export interface LetInstance extends InstanceSubstitutes {
   copies: Map<string, InstanceCopy>;
+  getArgParams: () => Set<string>;
   check: () => SanyError[];
 }
 
@@ -71,11 +72,12 @@ export interface InstanceLevels {
 }
 
 interface LevelContext {
-  constants: Set<string>;
+  constants: Map<string, number>;
   variables: Set<string>;
   getDefinition: (name: string) => Definition | undefined;
   getQualifiedName?: (name: string) => string | undefined;
   instances: InstanceLevels;
+  recursiveSections: WeakMap<Definition, SectionMember[]>;
 }
 
 export interface InstanceLevelCheck {
@@ -94,7 +96,7 @@ type Resolved =
   | { kind: "Declared"; name: string; level: number; arity: number }
   | { kind: "Defined"; levels: OperatorLevels };
 
-interface SectionMember {
+export interface SectionMember {
   definition: Definition;
   scope: Scope;
   isRechecked: boolean;
@@ -524,6 +526,8 @@ const getExceedingError = (operator: OperatorLevels, index: number) =>
 
 export const createLevelAnalyzer = (context: LevelContext) => {
   const definitionLevels = new Map<Definition, OperatorLevels>();
+  // SANY level-checks a LAMBDA once, so a recursive section's second pass keeps its first levels.
+  const lambdaLevels = new Map<Expression, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
   const errors: CodedSanyError[] = [];
   const messages: LevelMessage[] = [];
@@ -536,7 +540,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     if (entry?.kind === "Let") {
       return { kind: "Defined", levels: analyzeDefinition(entry.definition, entry.scope) };
     }
-    if (context.constants.has(name)) return { kind: "Declared", name, level: 0, arity: 0 };
+    const arity = context.constants.get(name);
+    if (arity !== undefined) return { kind: "Declared", name, level: 0, arity };
     if (context.variables.has(name)) return { kind: "Declared", name, level: 1, arity: 0 };
     const definition = context.getDefinition(name);
     if (definition) {
@@ -769,12 +774,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const toOperand = (expression: Expression, scope: Scope): Operand => {
     if (expression.kind === "Lambda") {
-      const operator = analyzeOperator(
-        "LAMBDA",
-        toFormals(expression.params),
-        expression.body,
-        scope,
-      );
+      const operator =
+        lambdaLevels.get(expression) ??
+        analyzeOperator("LAMBDA", toFormals(expression.params), expression.body, scope);
+      lambdaLevels.set(expression, operator);
       return { kind: "Operator", data: operator };
     }
     const name =
@@ -871,6 +874,29 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const letCopies = new WeakMap<Definition, InstanceCopy>();
 
+  const getInstanceArgParams = (instance: LetInstance, scope: Scope) => {
+    const operands = getSubstitutes(instance, scope);
+    const getParams = (param: string) => operands.get(param)?.data.params ?? [param];
+    return [
+      ...[...instance.getArgParams()].flatMap((key) => {
+        const parameter = parseArgumentParamKey(key);
+        const operator = operands.get(parameter.operator);
+        if (!operator) return [key];
+        return operator.kind === "Declared"
+          ? [...getParams(parameter.param)].map((param) =>
+              getArgumentParamKey(operator.declared.name, parameter.index, param),
+            )
+          : [];
+      }),
+      ...[...operands.values()].flatMap((operand) => [...operand.data.argParams]),
+    ].filter((key) => {
+      const parameter = parseArgumentParamKey(key);
+      return instance.params.every(
+        (param) => param.name !== parameter.operator && param.name !== parameter.param,
+      );
+    });
+  };
+
   const analyzeLet = (expression: LetExpression, scope: Scope) => {
     const instances = expression.instances?.flatMap(
       (instance) => context.instances.getLetInstance(instance) ?? [],
@@ -904,6 +930,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       argConstraints: new Map(body.argConstraints),
       argParams: new Set(body.argParams),
     };
+    instances?.forEach((instance) =>
+      getInstanceArgParams(instance, inner).forEach((key) => data.argParams.add(key)),
+    );
     definitions.forEach((levels) => mergeConstraints(data, levels));
     return data;
   };
@@ -1360,6 +1389,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const staleDefinitions = new Set<Definition>();
 
   const analyzeDefinition = (definition: Definition, scope: Scope): OperatorLevels => {
+    const members = definition.isRecursive && context.recursiveSections.get(definition);
+    if (members && !definitionLevels.has(definition)) checkRecursiveSection(members);
     const cached = definitionLevels.get(definition);
     if (cached && !staleDefinitions.delete(definition)) return cached;
     const prior = cached ?? createPlaceholder(definition, TEMPORAL_LEVEL, 0);
@@ -1460,12 +1491,9 @@ export const analyzeAssumeProve = (
           message: "Level error:\nTemporal formula used as set.",
         });
       }
-      inner.set(assumption.name, {
-        kind: "Formal",
-        arity: assumption.arity,
-        level: NEW_SYMBOL_LEVELS[assumption.level],
-      });
-      return set ? [set] : [];
+      const level = NEW_SYMBOL_LEVELS[assumption.level];
+      inner.set(assumption.name, { kind: "Formal", arity: assumption.arity, level });
+      return [set ?? createData(level)];
     }
     return [
       assumption.kind === "AssumeProve"
@@ -1598,6 +1626,11 @@ export const checkModuleLevels = (
   ];
   const statementBodies = new Set(statements.map((statement) => statement.statement));
   const sections = getRecursiveSections(new Map(), module.units, module.hasRecursiveLet);
+  sections.forEach((section) =>
+    section.members.forEach((member) =>
+      context.recursiveSections.set(member.definition, section.members),
+    ),
+  );
   const createCheck = (location: SourceLocation, run: () => void) => ({
     location,
     check: (reported: SanyError[]) => {

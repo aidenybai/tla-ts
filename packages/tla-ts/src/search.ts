@@ -292,10 +292,11 @@ export const reportStartup = (
 
 const getInvariants = (names: string[], environment: Environment) => {
   const analyzer = createLevelAnalyzer({
-    constants: new Set(environment.constants.keys()),
+    constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
     variables: new Set(environment.variables),
     getDefinition: (name) => environment.definitions.get(name),
     instances: environment.instances,
+    recursiveSections: environment.recursiveSections,
   });
   return names.flatMap((name) => {
     const definition = getConfigPredicate("invariant", name, environment);

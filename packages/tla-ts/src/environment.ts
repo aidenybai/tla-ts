@@ -97,6 +97,7 @@ import {
   type InstanceLevelCheck,
   type InstanceSubstitutes,
   type LetInstance,
+  type SectionMember,
 } from "./levels";
 import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
 import { isEvalException } from "./tlc/messages";
@@ -177,7 +178,6 @@ export interface LinkedModule {
   exported: Symbols;
   modules: Map<string, LinkedModule>;
   extended: LinkedModule[];
-  facts: Set<string>;
 }
 
 interface ModuleScope {
@@ -326,6 +326,7 @@ export const createEnvironment = (
   const warnings: SanyError[] = [];
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
+  const recursiveSections = new WeakMap<Definition, SectionMember[]>();
   const createInstanceCopy = (
     sourceKey: string,
     module: string,
@@ -355,6 +356,7 @@ export const createEnvironment = (
       getLetInstance: (instance) =>
         instance.location.range && letInstances.get(formatRange(instance.location.range)),
     },
+    recursiveSections,
   );
   const instanceActions = new Map<string, InstanceAction>();
   const instanceNames = new Map<string, string>();
@@ -572,9 +574,6 @@ export const createEnvironment = (
     const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
     if (standardSymbols) return getStandardInstanceSymbols(instance, standardSymbols);
     const linked = nested ?? getLinkedModule(instance.module, module.name);
-    linked.facts.forEach((name) =>
-      unit.facts.add(instance.name === undefined ? name : `${instance.name}!${name}`),
-    );
     const declarations = getDeclarations(linked);
     const suffix = `#${copyCount++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
@@ -711,7 +710,13 @@ export const createEnvironment = (
         .filter(
           (entry) =>
             !declared.has(entry[0]) &&
-            (instance.name !== undefined || entry[1].kind !== "Instance"),
+            (instance.name !== undefined ||
+              (entry[1].kind !== "Instance" &&
+                // SANY reuses a theorem that a module with parameters got from one without, but never adds its name.
+                (instance.isLocal ||
+                  declarations.length === 0 ||
+                  entry[1].kind !== "Theorem" ||
+                  parameterized.get(entry[1].key) === true))),
         )
         .map((entry): [string, ModuleSymbol] => {
           if (instance.name === undefined) {
@@ -723,11 +728,17 @@ export const createEnvironment = (
                 params: entry[1].params,
                 kind: entry[1].kind,
                 range:
-                  parameterized.get(entry[1].key) === true
+                  instance.isLocal || parameterized.get(entry[1].key) === true
                     ? instance.location.range
                     : entry[1].range,
+                // SANY copies what a LOCAL INSTANCE imports to the instance, but a copy from a module without parameters stays the same definition.
+                sourceRange:
+                  instance.isLocal && parameterized.get(entry[1].key) !== true
+                    ? entry[1].range
+                    : undefined,
                 functionArity:
                   parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,
+                goal: entry[1].goal,
               },
             ];
           }
@@ -743,6 +754,7 @@ export const createEnvironment = (
               ],
               kind: entry[1].kind,
               functionArity: declarations.length > 0 ? undefined : entry[1].functionArity,
+              goal: entry[1].goal,
             },
           ];
         }),
@@ -930,6 +942,11 @@ export const createEnvironment = (
     if (instance.location.range) {
       letInstances.set(formatRange(instance.location.range), {
         copies: localCopies,
+        params: instance.params,
+        substitutions: new Map(
+          declarations.map((declaration) => [declaration.key, getReplacement(declaration)]),
+        ),
+        getArgParams: () => instanceLevels.getArgParams(instance.module),
         check: () => instanceLevels.checkInstance(instanceCheck),
       });
     }
@@ -985,7 +1002,6 @@ export const createEnvironment = (
         });
       });
     const exported: Symbols = new Map();
-    const facts = new Set<string>();
     const modules = new Map<string, LinkedModule>();
     const extended: LinkedModule[] = [];
     const getKey = (item: { name: string }) => `${item.name}${KEY_SEPARATOR}${scope.id}`;
@@ -1019,7 +1035,6 @@ export const createEnvironment = (
         variableLocations.push(linked.variableLocations[index]);
       });
       mergeExtended(linked.exported);
-      linked.facts.forEach((name) => facts.add(name));
       linked.modules.forEach((module, moduleName) => modules.set(moduleName, module));
       extended.push(linked);
     });
@@ -1089,7 +1104,6 @@ export const createEnvironment = (
           (nested) => nested.name === name && isBefore(nested.location, location),
         ),
       instanced,
-      facts,
       reports,
       warnings: scope.warnings,
     });
@@ -1215,6 +1229,19 @@ export const createEnvironment = (
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
+    resolved.boundTheorems.forEach((theorem) => {
+      const key = getKey(theorem);
+      parameterized.set(key, !isParameterFree);
+      const symbol: ModuleSymbol = {
+        key,
+        arity: 0,
+        kind: "Theorem",
+        range: theorem.location.range,
+        goal: theorem.goal,
+      };
+      visible.set(theorem.name, symbol);
+      exported.set(theorem.name, symbol);
+    });
     const linked = {
       module,
       constants,
@@ -1224,21 +1251,18 @@ export const createEnvironment = (
       exported,
       modules,
       extended,
-      facts: new Set([
-        ...facts,
-        ...[...module.theorems, ...module.assumptions].flatMap((fact) => fact.name ?? []),
-      ]),
     };
     if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
     scope.levelChecks.push(
       checkModuleLevels(
         module,
         {
-          constants: new Set(constants.map((constant) => constant.key)),
+          constants: new Map(constants.map((constant) => [constant.key, constant.arity])),
           variables: new Set(variables),
           getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
+          recursiveSections,
         },
         instanceChecks.splice(firstCheck),
         warnings,
@@ -1365,15 +1389,17 @@ export const createEnvironment = (
     entryEvaluators: new WeakMap(),
     definitionEvaluators: new WeakMap(),
     instances: instanceLevels.instances,
+    recursiveSections,
   };
   const analyzer = createLevelAnalyzer({
-    constants: new Set(constants.keys()),
+    constants: new Map([...constants.keys()].map((key) => [key, 0])),
     variables: new Set([
       ...variables,
       ...["TLCGet", "Trace", "CounterExample"].filter((name) => builtins.has(name)),
     ]),
     getDefinition: (name) => getDefinition(name, environment),
     instances: instanceLevels.instances,
+    recursiveSections,
   });
   const getEvaluationError = (body: Expression) => {
     try {

@@ -44,6 +44,9 @@ interface Binding {
   params?: number[];
   range?: SourceRange;
   functionArity?: number;
+  goal?: Goal;
+  sourceRange?: SourceRange;
+  nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
 }
 
 export interface ModuleSymbol extends Binding {
@@ -63,9 +66,7 @@ interface LocalName extends Binding {
   name: string;
   isSelf?: boolean;
   parent: LocalName | undefined;
-  goal?: Goal;
   isPending?: boolean;
-  nonFactStep?: "Use" | "Hide" | "Instance" | "Define";
 }
 
 interface ModuleBinding extends Binding {
@@ -86,8 +87,6 @@ interface Unit {
   isModuleKnown: (name: string, location: SourceLocation) => boolean;
   location: SourceLocation;
   self: Definition | undefined;
-  facts: Set<string>;
-  goals: Map<string, Goal>;
   bindings: ModuleBindings;
   errors: SanyError[];
   warnings: SanyError[];
@@ -226,7 +225,9 @@ const isSameRange = (left: SourceRange | undefined, right: SourceRange | undefin
 
 const isBindable = (name: string, current: Binding | undefined, added: Binding, unit: Unit) => {
   if (current === undefined) return true;
-  if (isSameRange(current.range, added.range)) return false;
+  if (isSameRange(current.sourceRange ?? current.range, added.sourceRange ?? added.range)) {
+    return false;
+  }
   const range = added.range;
   if (range === undefined || unit.isGenerated || (current.kind !== "Builtin" && !current.range)) {
     return true;
@@ -241,7 +242,8 @@ const isBindable = (name: string, current: Binding | undefined, added: Binding, 
   } else if (
     added.kind === "Parameter" ||
     current.kind !== added.kind ||
-    current.arity !== added.arity
+    current.arity !== added.arity ||
+    (current.nonFactStep === undefined) !== (added.nonFactStep === undefined)
   ) {
     unit.errors.push({
       location,
@@ -346,11 +348,9 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   return binding ? unit.imported.get(name) : undefined;
 };
 
-const isFact = (name: string, unit: Unit) =>
-  unit.facts.has(name) || unit.bindings.get(name)?.kind === "Theorem";
+const isFact = (name: string, unit: Unit) => unit.bindings.get(name)?.kind === "Theorem";
 
-const getGoal = (name: string, unit: Unit) =>
-  unit.bindings.get(name)?.kind === "Theorem" ? unit.goals.get(name) : undefined;
+const getGoal = (name: string, unit: Unit) => unit.bindings.get(name)?.goal;
 
 const findBinding = (name: string, scope: LocalName | undefined, unit: Unit): Binding | undefined =>
   lookupLocal(scope, name) ?? findSymbol(name, unit);
@@ -589,6 +589,7 @@ const SCOPE_MESSAGE = "within the scope of a declaration\n from outside that dec
 const checkSelection = (
   reference: Reference,
   selectors: Selector[],
+  nameLength: number,
   goal: Goal,
   unit: Unit,
   isFact: boolean,
@@ -609,8 +610,8 @@ const checkSelection = (
   };
   let params = 0;
   let args = 0;
-  for (const [offset, selector] of selectors.slice(1).entries()) {
-    const index = offset + 1;
+  for (const [offset, selector] of selectors.slice(nameLength).entries()) {
+    const index = offset + nameLength;
     const node = state.node;
     if (selector.kind === "Name") {
       if (selectors[index - 1].kind !== "Name") {
@@ -625,7 +626,7 @@ const checkSelection = (
           ? [...statement.assumptions, statement.conclusion]
           : [statement];
       const found =
-        index === 1
+        index === nameLength
           ? clauses
               .map((clause, position) => ({
                 position,
@@ -638,13 +639,13 @@ const checkSelection = (
             };
       if (!found?.label) return report(index, `Cannot find label \`${selector.name}'.`);
       if (
-        index === 1 &&
+        index === nameLength &&
         statement.kind === "AssumeProve" &&
         isInScopeOfDeclaration(statement, found.position) &&
         isOutOfScope
       ) {
         return report(
-          1,
+          nameLength,
           `Accessing subexpression labeled \`${selector.name}' of ASSUME/PROVE clause ${SCOPE_MESSAGE}`,
         );
       }
@@ -661,7 +662,7 @@ const checkSelection = (
         return report(index - 1, "!: should not follow an operand selector.");
       }
       const next = selectors[index + 1];
-      if (next === undefined ? index !== 1 : next.kind !== "Name") {
+      if (next === undefined ? index !== nameLength : next.kind !== "Name") {
         return report(
           index,
           "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
@@ -843,12 +844,18 @@ const checkReference = (
 ) => {
   if (!isReference(expression)) return false;
   const selectors = getSelectors(expression);
-  const first = selectors[0];
-  const goal =
-    selectors.length > 1 && first.kind === "Name"
-      ? (lookupLocal(scope, first.name)?.goal ?? getGoal(first.name, unit))
-      : undefined;
-  return goal && { node: checkSelection(expression, selectors, goal, unit, isFact) };
+  let name = "";
+  for (let nameLength = 1; nameLength < selectors.length; nameLength++) {
+    const selector = selectors[nameLength - 1];
+    if (selector.kind !== "Name") return undefined;
+    name = nameLength === 1 ? selector.name : `${name}!${selector.name}`;
+    const goal =
+      (nameLength === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
+    if (goal) {
+      return { node: checkSelection(expression, selectors, nameLength, goal, unit, isFact) };
+    }
+  }
+  return undefined;
 };
 
 const isInstanceName = (name: string, scope: LocalName | undefined, unit: Unit) => {
@@ -2221,6 +2228,12 @@ const getStepGoal = (body: StepBody, location: SourceLocation): Goal | undefined
   }
 };
 
+const moveStep = (
+  named: LocalName | undefined,
+  from: LocalName | undefined,
+  parent: LocalName | undefined,
+) => (parent === from ? named : named && named !== from ? { ...named, parent } : parent);
+
 const resolveStep = (
   step: ProofStep,
   scope: LocalName | undefined,
@@ -2232,43 +2245,48 @@ const resolveStep = (
       ? unit
       : { ...unit, hasLabelScope: true, labelParams: [], labels: new Set<string>() };
   const goal = getStepGoal(body, step.location);
-  const bindStep = (parent: LocalName | undefined): LocalName | undefined =>
-    step.name === undefined ? parent : { name: step.name, arity: 0, kind: "Theorem", parent, goal };
-  const bindNonFactStep = (
-    parent: LocalName | undefined,
-    nonFactStep: LocalName["nonFactStep"],
-  ): LocalName | undefined =>
+  const start = step.head.start;
+  const numberRange =
+    step.name === undefined
+      ? undefined
+      : { ...step.head, end: { ...start, column: start.column + step.token.length - 1 } };
+  if (numberRange && (step.token[1] === "*" || step.token[1] === "+")) {
+    unit.errors.push({
+      location: formatRange(numberRange),
+      message: "<*> and <+> cannot be used for a named step.",
+    });
+  }
+  const bindStep = (parent: LocalName | undefined, stepGoal = goal) =>
     step.name === undefined
       ? parent
-      : { name: step.name, arity: 0, kind: "Theorem", parent, nonFactStep };
+      : bindName(
+          parent,
+          step.name,
+          { kind: "Theorem", arity: 0, range: numberRange, goal: stepGoal },
+          unit,
+        );
+  const bindNonFactStep = (parent: LocalName | undefined, nonFactStep: Binding["nonFactStep"]) =>
+    step.name === undefined
+      ? parent
+      : bindName(
+          parent,
+          step.name,
+          { kind: "Theorem", arity: 0, range: step.head, nonFactStep },
+          unit,
+        );
   switch (body.kind) {
     case "Assert": {
       const assumed = resolveStatement(body.statement, scope, stepUnit);
-      const proofScope = body.isSuffices ? scope : assumed;
-      const name = step.name;
-      if (name === undefined) {
-        resolveProof(step.proof, proofScope, unit);
-        return body.isSuffices ? assumed : scope;
-      }
       const assertion = {
         statement: body.statement,
         isSuffices: body.isSuffices,
         isInProof: true,
         keyword: body.isSuffices && body.statement.kind !== "AssumeProve" ? "SUFFICES" : undefined,
       };
-      resolveProof(
-        step.proof,
-        { name, arity: 0, kind: "Theorem", parent: proofScope, goal: assertion },
-        unit,
-      );
+      const named = bindStep(scope, assertion);
+      resolveProof(step.proof, moveStep(named, scope, body.isSuffices ? scope : assumed), unit);
       assertion.isInProof = false;
-      return {
-        name,
-        arity: 0,
-        kind: "Theorem",
-        parent: body.isSuffices ? assumed : scope,
-        goal: assertion,
-      };
+      return moveStep(named, scope, body.isSuffices ? assumed : scope);
     }
     case "Use":
     case "Hide":
@@ -2288,10 +2306,12 @@ const resolveStep = (
         body.kind,
       );
     case "Have":
-    case "Case":
+    case "Case": {
       resolveExpression(body.expression, scope, stepUnit);
-      resolveProof(step.proof, bindStep(scope), unit);
-      return bindStep(scope);
+      const named = bindStep(scope);
+      resolveProof(step.proof, named, unit);
+      return named;
+    }
     case "Witness":
       body.expressions.forEach((expression) => resolveExpression(expression, scope, stepUnit));
       return bindStep(scope);
@@ -2315,27 +2335,37 @@ const resolveStep = (
         ...stepUnit,
         labelParams: [...stepUnit.labelParams, ...getBoundNames(body.bounds), ...body.names],
       });
-      resolveProof(step.proof, bindStep(scope), unit);
-      return bindStep(picked);
+      const named = bindStep(scope);
+      resolveProof(step.proof, named, unit);
+      return moveStep(named, scope, picked);
     }
-    default:
-      resolveProof(step.proof, bindStep(scope), unit);
-      return bindStep(scope);
+    default: {
+      const named = bindStep(scope);
+      resolveProof(step.proof, named, unit);
+      return named;
+    }
   }
 };
 
-const resolveTheorem = (theorem: Theorem, unit: Unit, bindings: Map<string, ModuleBinding>) => {
-  const isDefinition = theorem.name !== undefined && theorem.statement.kind !== "AssumeProve";
-  const scope = isDefinition ? undefined : resolveStatement(theorem.statement, undefined, unit);
+const resolveTheorem = (
+  theorem: Theorem,
+  unit: Unit,
+  bindings: Map<string, ModuleBinding>,
+  isDefinitionBody: boolean,
+) => {
+  const scope = isDefinitionBody ? undefined : resolveStatement(theorem.statement, undefined, unit);
+  const goal =
+    theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
+      ? { statement: theorem.statement, isSuffices: false, isInProof: false, keyword: undefined }
+      : undefined;
   if (theorem.name !== undefined) {
     bindModuleName(
       bindings,
       theorem.name,
-      { kind: "Theorem", arity: 0, range: theorem.location.range },
+      { kind: "Theorem", arity: 0, range: theorem.location.range, goal },
       unit,
     );
   }
-  const goal = unit.goals.get(theorem.name ?? "");
   if (goal) goal.isInProof = true;
   resolveProof(theorem.proof, scope, unit);
   if (goal) goal.isInProof = false;
@@ -2361,7 +2391,6 @@ export interface ModuleUnit {
   getKey: (item: { name: string }) => string;
   isModuleKnown: (name: string, location: SourceLocation) => boolean;
   instanced: Map<Instance, Symbols>;
-  facts: Set<string>;
   reports: ModuleReport[];
   warnings: SanyError[];
 }
@@ -2583,8 +2612,6 @@ export const resolveSubstitutions = (
     isModuleKnown: unit.isModuleKnown,
     location: instance.location,
     self: undefined,
-    facts: new Set(),
-    goals: new Map(),
     bindings: {
       get: (name): ModuleBinding | undefined => {
         const other = module.instances.findLast((candidate) => candidate.name === name);
@@ -2659,23 +2686,6 @@ export const collectSemanticErrors = (units: SemanticUnit[], warnings: SanyError
 
 export const resolveModule = (module: Module, unit: ModuleUnit) => {
   const symbols = createSymbols(module, unit);
-  const goals = new Map(
-    module.theorems.flatMap((theorem): [string, Goal][] =>
-      theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
-        ? [
-            [
-              theorem.name,
-              {
-                statement: theorem.statement,
-                isSuffices: false,
-                isInProof: false,
-                keyword: undefined,
-              },
-            ],
-          ]
-        : [],
-    ),
-  );
   const bindings = new Map<string, ModuleBinding>(
     [...CORE_SYMBOLS, ...unit.bound].map((entry) => [
       entry[0],
@@ -2700,8 +2710,6 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         isModuleKnown: unit.isModuleKnown,
         location,
         self,
-        facts: unit.facts,
-        goals,
         bindings,
         errors,
         warnings,
@@ -2713,6 +2721,8 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         isGenerated: false,
       }),
   });
+  const isDefinitionBody = (statement: Expression | AssumeProve) =>
+    module.definitions.some((definition) => definition.body === statement);
   const bindDeclarations = (declarations: Declaration[], kind: "Constant" | "Variable") =>
     declarations.map((declaration) =>
       createCheck(declaration.location, undefined, false, (inner) =>
@@ -2823,7 +2833,9 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.assumptions.map((assumption) =>
         createCheck(assumption.location, undefined, assumption.name !== undefined, (inner) => {
-          resolveExpression(assumption.expression, undefined, inner);
+          if (!isDefinitionBody(assumption.expression)) {
+            resolveExpression(assumption.expression, undefined, inner);
+          }
           if (assumption.name !== undefined) {
             bindModuleName(
               bindings,
@@ -2836,7 +2848,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       ),
       ...module.theorems.map((theorem) =>
         createCheck(theorem.location, undefined, theorem.name !== undefined, (inner) =>
-          resolveTheorem(theorem, inner, bindings),
+          resolveTheorem(theorem, inner, bindings, isDefinitionBody(theorem.statement)),
         ),
       ),
       ...module.uses.map((use) =>
@@ -2865,5 +2877,12 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     boundDefinitions: module.definitions.filter((definition) =>
       isSameRange(bindings.get(definition.name)?.range, definition.location.range),
     ),
+    boundTheorems: module.theorems.flatMap((theorem) => {
+      if (theorem.name === undefined) return [];
+      const binding = bindings.get(theorem.name);
+      return binding?.goal && isSameRange(binding.range, theorem.location.range)
+        ? [{ name: theorem.name, location: theorem.location, goal: binding.goal }]
+        : [];
+    }),
   };
 };

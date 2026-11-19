@@ -45,7 +45,7 @@ import {
   type NextStateMode,
 } from "./coverage";
 import { MESSAGE_CODE } from "./tlc/messages";
-import type { InstanceLevels } from "./levels";
+import type { InstanceLevels, SectionMember } from "./levels";
 import type { CheckerRuntime } from "./runtime";
 import {
   isEvaluatedAtStartup,
@@ -194,6 +194,7 @@ export interface Environment {
   entryEvaluators: WeakMap<Expression, Evaluator>;
   definitionEvaluators: WeakMap<Definition, Evaluator>;
   instances: InstanceLevels;
+  recursiveSections: WeakMap<Definition, SectionMember[]>;
   callStack?: CallStack;
   coverage?: Coverage;
 }
