@@ -27,6 +27,7 @@ import {
   getEntryEvaluator,
   getReevaluatedDefinitions,
   getStartupValue,
+  isAssumeProve,
   lookupScope,
   mapBoundSets,
   resolveApplyOperator,
@@ -48,6 +49,7 @@ import {
   getEnabledFailure,
   getIfConditionMessage,
   getImpliesConditionMessage,
+  getRelationMessage,
   holdsValue,
   isAssignedShortcut,
   replayEnabled,
@@ -658,6 +660,11 @@ const compileIdentifier = (
   environment: Environment,
   isInit: boolean,
 ): Runner => {
+  if (isAssumeProve(expression)) {
+    return (run) => {
+      throw createRunError(run, getRelationMessage(run, expression));
+    };
+  }
   const guard = compileGuard(expression);
   const definition = isLocallyResolved(expression)
     ? undefined

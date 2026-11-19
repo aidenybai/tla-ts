@@ -28,6 +28,8 @@ import {
   getContextElements,
   getLazyFunction,
   getQuantifierElements,
+  getStartupValue,
+  isAssumeProve,
   mapBoundSets,
   toKeepLazyContext,
   lookupScope,
@@ -226,7 +228,7 @@ export const createRunError = (run: RunKind, message: string) => {
   return run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
 };
 
-const getRelationMessage = (run: RunKind, expression: Expression) => {
+export const getRelationMessage = (run: RunKind, expression: Expression) => {
   const node = describeNode(expression);
   return run.isEnabled
     ? `Attempted to compute ENABLED on a non-boolean expression.\n${node}`
@@ -446,7 +448,7 @@ const visitFramed = (
       case "Selection":
         return visit(replay, expression.expression, items, scope, partial, node);
       default:
-        if (LITERAL_KINDS.has(expression.kind)) {
+        if (LITERAL_KINDS.has(expression.kind) || isAssumeProve(expression)) {
           throw createRunError(replay, getRelationMessage(replay, expression));
         }
         return withFrame(replay, expression, () =>
@@ -516,7 +518,11 @@ const visitDefined = (
       operator?.kind === "Closure" &&
       operator.params.length === 0 &&
       !replay.environment.variableIndex.has(expression.name) &&
-      !(definition && isConstantLevel(definition, replay.environment))
+      !(
+        definition &&
+        isConstantLevel(definition, replay.environment) &&
+        getStartupValue(definition, replay.environment) !== undefined
+      )
     ) {
       return visit(replay, operator.body, items, operator.scope, partial, node);
     }

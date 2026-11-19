@@ -946,7 +946,9 @@ const getSymbolArity = (
   }
   if (local) return local.arity;
   const binding = unit.bindings.get(name);
-  if (binding?.goal?.statement.kind === "AssumeProve") return binding.arity;
+  if (binding?.goal?.statement.kind === "AssumeProve" && !binding.isSubstituted) {
+    return binding.arity;
+  }
   const symbol = findSymbol(name, unit);
   if (symbol) {
     if (expression.kind === "Identifier") expression.name = symbol.key;

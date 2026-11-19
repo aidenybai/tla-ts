@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { check, formatValue, parseModule, TlaConfigError, TlaSyntaxError } from "../../src";
-import { createSanyError } from "../../src/errors";
-import { checkFixture, getModuleLoader } from "./check-harness";
+import { createSanyError, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { checkFixture, formatCallStackLines, getModuleLoader } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
 
@@ -24,6 +24,18 @@ const SHADOWED_MODULES = new Map([
   ["Plus", "---- MODULE Plus ----\na + b == 99\n===="],
   ["Universe", "---- MODULE Universe ----\nCONSTANT Nat\n===="],
 ]);
+
+const checkTheorem = (definitions: string, config: string) =>
+  check({
+    source: `---- MODULE M ----\nEXTENDS TLC\nCONSTANT c\nVARIABLE x\nI == INSTANCE Inner WITH k <- c\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+    config: `CONSTANT c = 1\n${config}`,
+    loadModule: (name) =>
+      name === "Inner"
+        ? "---- MODULE Inner ----\nCONSTANT k\nTHEOREM Ta == ASSUME NEW y PROVE y = k\n===="
+        : undefined,
+  });
+
+const THEOREM_LOCATION = "line 3, col 15 to line 3, col 38 of module Inner";
 
 const checkShadowed = (unit: string, assumption: string, config = "") =>
   check({
@@ -422,6 +434,71 @@ describe("INSTANCE matches TLC", () => {
     });
     expect([result.status, prints]).toEqual(["success", ["<<<<1>>, Nat>>"]]);
   });
+
+  it("can't evaluate an ASSUME/PROVE theorem a substituting instance imports, like TLC", async () => {
+    const assumed = await checkTheorem("ASSUME PrintT(I!Ta)", "INIT Init\nNEXT Next");
+    expect([assumed.status, assumed.violation?.name, assumed.violation?.message]).toEqual([
+      "assumption-violation",
+      "line 6, col 8 to line 6, col 19 of module M",
+      `Attempted to evaluate an expression that cannot be evaluated.\n${THEOREM_LOCATION}`,
+    ]);
+    const initial = await checkTheorem("Init2 == x = 0 /\\ I!Ta", "INIT Init2\nNEXT Next");
+    expect([initial.failure?.message, formatCallStackLines(initial)]).toEqual([
+      `Attempted to evaluate an expression that cannot be evaluated.\n${THEOREM_LOCATION}`,
+      [
+        "Line 6, column 10 to line 6, column 22 in M",
+        "Line 6, column 10 to line 6, column 14 in M",
+        "Line 6, column 19 to line 6, column 22 in M",
+        "Line 5, column 1 to line 5, column 31 in M",
+        "Line 3, column 15 to line 3, column 38 in Inner",
+      ],
+    ]);
+  });
+
+  it.each([
+    [
+      "Init2 == I!Ta /\\ x = 0",
+      "INIT Init2\nNEXT Next",
+      `The init state relation is not a boolean expression.\n${THEOREM_LOCATION}`,
+      [
+        "Line 6, column 10 to line 6, column 22 in M",
+        "Line 6, column 10 to line 6, column 13 in M",
+      ],
+    ],
+    [
+      "Next2 == I!Ta /\\ x' = x",
+      "INIT Init\nNEXT Next2",
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${THEOREM_LOCATION}`,
+      [
+        "Line 6, column 10 to line 6, column 23 in M",
+        "Line 6, column 10 to line 6, column 13 in M",
+      ],
+    ],
+    [
+      "Next2 == x' = x /\\ ENABLED I!Ta",
+      "INIT Init\nNEXT Next2",
+      `${UNEXPECTED_EXCEPTION}Attempted to compute ENABLED on a non-boolean expression.\n${THEOREM_LOCATION}`,
+      [
+        "Line 6, column 10 to line 6, column 31 in M",
+        "Line 6, column 10 to line 6, column 15 in M",
+        "Line 6, column 20 to line 6, column 31 in M",
+        "Line 6, column 28 to line 6, column 31 in M",
+      ],
+    ],
+  ])(
+    "reports an ASSUME/PROVE theorem a substituting instance imports in %s as not boolean, like TLC",
+    async (definitions, config, message, frames) => {
+      const result = await checkTheorem(definitions, config);
+      expect([result.failure?.message, formatCallStackLines(result)]).toEqual([
+        message,
+        [
+          ...frames,
+          "Line 5, column 1 to line 5, column 31 in M",
+          "Line 3, column 15 to line 3, column 38 in Inner",
+        ],
+      ]);
+    },
+  );
 });
 
 const INNER_MODULES: Record<string, string> = {
