@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { isProcessDeclared } from "../common-js";
 import type { GeneratedDefinition } from "./library";
+import { getSourceString } from "./runtime";
 
 // Specializes ESCore's evaluation rules to a program: each syntax node gives the TLA+ that ESCore's
 // Evaluate rule for its kind leaves once the node is known, with the evaluation of each child in
@@ -71,6 +72,15 @@ export interface SpecializedProgram {
 
 const getUnits = (text: string) =>
   `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
+
+// A file's units that its source string holds as "?", as a function from position to unit, joined
+// in halves so that building it takes n log n rather than n^2 steps.
+const getPatches = (patches: number[][]): string =>
+  patches.length === 0
+    ? "<<>>"
+    : patches.length === 1
+      ? `(${patches[0][0]} :> ${patches[0][1]})`
+      : `(${getPatches(patches.slice(0, patches.length >> 1))} @@ ${getPatches(patches.slice(patches.length >> 1))})`;
 
 const getStr = (text: string) => `Str(${getUnits(text)})`;
 
@@ -601,9 +611,10 @@ export const specialize = (
   // the declaration starts in the program.
   const getSite = (node: ts.Node) => (fileStarts.get(node.getSourceFile()) ?? 0) + node.getStart();
 
-  // A node's source text, as a slice of its file's, which SourceTextN holds once for file N.
+  // A node's source text, as its file's number and the range of the file's text it spans, which
+  // SourceUnits makes code units of when a program reads it.
   const getSourceText = (node: ts.Node) =>
-    `SubSeq(SourceText${fileNumbers.get(node.getSourceFile())}, ${node.getStart() + 1}, ${node.getEnd()})`;
+    `<<${fileNumbers.get(node.getSourceFile())}, ${node.getStart() + 1}, ${node.getEnd()}>>`;
 
   // A function's code record, which the module evaluates once, as it has no parameters.
   const defineRecord = (
@@ -2656,13 +2667,27 @@ export const specialize = (
     },
     { name: "Program", arity: 1, text: `Program(s) == ${program}` },
   );
+  const sources = files.map((file) => getSourceString(file.sourceFile.text));
   return {
     definitions: [
-      ...files.map((file, index) => ({
+      ...sources.map((source, index) => ({
         name: `SourceText${index + 1}`,
         arity: 0,
-        text: `SourceText${index + 1} == ${getUnits(file.sourceFile.text)}`,
+        text: `SourceText${index + 1} == ${source.text}`,
       })),
+      {
+        name: "SourcePatches",
+        arity: 0,
+        text: `SourcePatches == <<${sources.map((source) => getPatches(source.patches)).join(", ")}>>`,
+      },
+      {
+        name: "SourceUnits",
+        arity: 1,
+        text: `SourceUnits(t) ==
+  LET u == StringUnits(SubSeq(<<${sources.map((_, index) => `SourceText${index + 1}`).join(", ")}>>[t[1]], t[2], t[3]))
+      p == SourcePatches[t[1]]
+  IN [i \\in DOMAIN u |-> IF t[2] + i - 1 \\in DOMAIN p THEN p[t[2] + i - 1] ELSE u[i]]`,
+      },
       ...definitions,
     ],
     words,

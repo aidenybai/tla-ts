@@ -352,21 +352,12 @@ export const compileToEscore = (
   const leftOut = new Set(
     runtime.gates.filter((gate) => !isIncluded(gate)).map((gate) => gate.group),
   );
-  // A program's source texts are strings where a TLA+ string can hold each, which a check reads as
-  // one token rather than one for each code unit.
-  const sourceStrings = files.map((file) => getTlaString(file.sourceFile.text));
-  const isStringSource = sourceStrings.every((text) => text !== undefined);
   const runJobs =
     "LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE";
   const definitions = compact(
     suspendDefinitions(
       [
-        ...program.definitions.map((definition) => {
-          const number = /^SourceText(\d+)$/.exec(definition.name)?.[1];
-          return number !== undefined && isStringSource
-            ? { ...definition, text: `${definition.name} == ${sourceStrings[Number(number) - 1]}` }
-            : definition;
-        }),
+        ...program.definitions,
         {
           name: "HostProperties",
           arity: 0,
@@ -397,11 +388,6 @@ export const compileToEscore = (
           text: program.words.has("Temporal")
             ? getHostTimeZone(files.map((file) => file.sourceFile.text).join("\n"))
             : `HostTimeZone(key) == [found |-> "unknown"]`,
-        },
-        {
-          name: "SourceUnits",
-          arity: 1,
-          text: isStringSource ? "SourceUnits(t) == StringUnits(t)" : "SourceUnits(t) == t",
         },
         {
           name: "RunProgram",

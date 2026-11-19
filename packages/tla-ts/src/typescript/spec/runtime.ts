@@ -377,6 +377,16 @@ export const getTlaString = (text: string) =>
     ? `"${[...text].map((character) => CHARACTERS.get(character.charCodeAt(0))).join("")}"`
     : undefined;
 
+// A file's text as a TLA+ string of one character for each code unit, with "?" for each unit that a
+// string can't hold, and those units by their positions, from 1.
+export const getSourceString = (text: string) => {
+  const units = Array.from({ length: text.length }, (_, index) => text.charCodeAt(index));
+  return {
+    text: `"${units.map((unit) => CHARACTERS.get(unit) ?? "?").join("")}"`,
+    patches: units.flatMap((unit, index) => (CHARACTERS.has(unit) ? [] : [[index + 1, unit]])),
+  };
+};
+
 export const RUNTIME_DEFINITIONS: GeneratedDefinition[] = [
   ...DEFINITIONS,
   // The code units of a TLA+ string's characters.
