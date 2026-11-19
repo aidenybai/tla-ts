@@ -1284,6 +1284,17 @@ describe("the arithmetic probes, as Z3 5.3.2 measures a goal", () => {
     ]);
   });
 
+  it("print their values as an ostream prints a double", () => {
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        '(apply (and-then (echo "v " (/ 1 30000000)) (echo "u " (/ 1 0)) (echo "t " (/ num-exprs 3000000)) (fail-if (> 1 0))))',
+      ]),
+    ).toEqual(["v 3.33333e-08", "u inf", "t 1e-06", '(error "tactic failed: fail-if tactic")']);
+  });
+
   it("finds no QF_AUFLIA goal once an array is selected from", () => {
     const probe =
       '(apply (and-then (if is-qfauflia (echo "qfauflia") (echo "other")) (fail-if (> 1 0))))';
@@ -2894,6 +2905,42 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ).toEqual(["unknown", "(:rlimit 344)", "unknown", "(:rlimit 686)"]);
   });
 
+  it("frees and-then's one new subgoal when the second tactic returns or fails", () => {
+    const getClauses = (tactic: string) =>
+      run([
+        "(declare-fun f ((_ BitVec 4)) (_ BitVec 4))",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(assert (bvult (f (f x)) (f y)))",
+        "(assert (or (= x y) (= (f x) #x2)))",
+        `(apply ${tactic})`,
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or (and p q) (and (not p) r) (and q (not r))))",
+        "(apply tseitin-cnf)",
+      ])
+        .join("\n")
+        .split("\n")
+        .slice(-8, -2);
+    expect(getClauses("(then ackermannize_bv ackermannize_bv)")).toEqual([
+      "  (not (bvule (f y) (f (f x))))",
+      "  (or (= x y) (= (f x) #x2))",
+      "  (or p q r)",
+      "  (or q (not p) (not r))",
+      "  (or q (not p))",
+      "  (or q r)",
+    ]);
+    expect(getClauses("(then ackermannize_bv fail)")).toEqual([
+      "  (not (bvule (f y) (f (f x))))",
+      "  (or (= x y) (= (f x) #x2))",
+      "  (or p q r)",
+      "  (or q (not p) (not r))",
+      "  (or q (not p))",
+      "  (or q r)",
+    ]);
+  });
+
   it("reads tactic.default_tactic as it makes the solver", () => {
     expect(
       run([
@@ -3018,5 +3065,32 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
       "sat",
       "(:rlimit 69)",
     ]);
+  });
+});
+
+describe("the default tactic, as Z3 5.3.2 builds it", () => {
+  it("refuses the core of a lazy tactic, whose dependencies it can't know", () => {
+    expect(() =>
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (! (or p q) :named a1))",
+        "(assert (! (not p) :named a2))",
+        "(assert (! (not q) :named a3))",
+        "(check-sat-using default)",
+        "(get-unsat-core)",
+      ]),
+    ).toThrow(SmtUnsupportedError);
+  });
+
+  it("takes the parameters of the smt tactic its finite-field branch runs", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat-using (using-params default :random_seed 3))",
+      ]),
+    ).toEqual(["sat"]);
   });
 });

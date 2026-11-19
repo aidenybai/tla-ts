@@ -807,13 +807,15 @@ export class AstManager {
     this.startupExprs = [];
   }
 
-  mkQiCostExprs() {
+  mkQiCostExprs(cost?: Rational) {
     const vars = Array.from({ length: NUM_QI_COST_VARS }, (_value, index) =>
       this.mkVar(index, SORT_REAL),
     );
     return [
       ...vars,
-      this.mkApp(OP_ADD, [vars[QI_COST_WEIGHT], vars[QI_COST_GENERATION]], SORT_REAL),
+      cost === undefined
+        ? this.mkApp(OP_ADD, [vars[QI_COST_WEIGHT], vars[QI_COST_GENERATION]], SORT_REAL)
+        : this.mkNumeralOfSort(cost, SORT_REAL),
     ];
   }
 

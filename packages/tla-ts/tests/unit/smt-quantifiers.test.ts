@@ -239,6 +239,42 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
       ]),
     ).toEqual(["unknown", "(:rlimit 981)"]);
   });
+
+  it("costs each instance 0 under the qi.cost of the AUFLIA tactic", () => {
+    expect(
+      run([
+        "(set-logic AUFLIA)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)) :weight 20)))",
+        "(assert (= (g a) (f b)))",
+        "(assert (> (g b) (f a)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 593)"]);
+  });
+
+  it("reads a qi.cost numeral as a float quotient of int64s", () => {
+    const getOutput = (cost: string) =>
+      run([
+        `(set-option :smt.qi.cost "${cost}")`,
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)) :weight 20)))",
+        "(assert (= (g a) (f b)))",
+        "(assert (> (g b) (f a)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]);
+    expect(getOutput("10.00000001")).toEqual(["unsat", "(:rlimit 641)"]);
+    expect(getOutput("20.0000001")).toEqual(["unsat", "(:rlimit 661)"]);
+    expect(getOutput("18446744073709551616")).toEqual(["unsat", "(:rlimit 641)"]);
+  });
 });
 
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {
@@ -270,6 +306,18 @@ describe("the model checker, as Z3 5.3.2 counts its steps", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["sat", "(:rlimit 187)"]);
+  });
+
+  it("makes its context on a check that finds no quantifier relevant", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (or (> a 3) (forall ((x Int)) (> (f x) x))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 362)"]);
   });
 });
 

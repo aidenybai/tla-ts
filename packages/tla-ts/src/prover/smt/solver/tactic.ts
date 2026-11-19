@@ -70,7 +70,7 @@ import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { SmtKernel } from "./smt-kernel";
 import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
-import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
+import { compileProbe, formatDouble, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
 import { runQe } from "./qe";
 import { applyQeLite } from "./qe-lite";
@@ -320,6 +320,9 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     ),
     intHammerPeriod: getHammerPeriod(environment.parameters),
     isArithPropagatingEqs: getParameter(environment, "smt.arith.propagate_eqs", "true") !== "false",
+    qiCost: params.has("qi.cost")
+      ? String(params.get("qi.cost"))
+      : environment.parameters.get("smt.qi.cost"),
   };
 };
 
@@ -1736,7 +1739,17 @@ const assertUnsat = (goal: Goal, unsatGoals: Goal[]) => {
 
 const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
   const goals = first(goal);
-  if (goals.length === 1) return goals[0].isDecided() ? goals : second(goals[0]);
+  if (goals.length === 1) {
+    const subgoal = goals[0];
+    if (subgoal.isDecided()) return goals;
+    let subresults: Goal[] = [];
+    try {
+      subresults = second(subgoal);
+      return subresults;
+    } finally {
+      if (subgoal !== goal && !subresults.includes(subgoal)) subgoal.release();
+    }
+  }
   const results: Goal[] = [];
   const unsatGoals: Goal[] = [];
   try {
@@ -2053,9 +2066,10 @@ const compile = (
     case "lazy": {
       if (!isInternal)
         throw new SmtParseError(`invalid tactic, unknown tactic combinator lazy`, sexpr.end);
-      const child = compile(environment, sexpr.items[1], isInternal);
       return {
-        ...mergeDescrs([child]),
+        descrs: new Map(),
+        isRejectingUnknown: true,
+        isTrackingDependencies: false,
         build: (params) => {
           let tactic: Tactic | undefined;
           let destructors: (() => void)[] = [];
@@ -2063,7 +2077,7 @@ const compile = (
           return (goal) => {
             if (tactic === undefined) {
               const start = environment.destructors.length;
-              tactic = child.build(params);
+              tactic = compile(environment, sexpr.items[1], isInternal).build(params);
               destructors = environment.destructors.splice(start);
             }
             return tactic(goal);
@@ -2122,7 +2136,7 @@ const compile = (
           };
         const probe = compileProbe(piece, isInternal);
         return (goal) => {
-          environment.write(formatProbeValue(probe(goal)) + newline, true);
+          environment.write(formatDouble(probe(goal)) + newline, true);
           return [goal];
         };
       });
