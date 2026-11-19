@@ -2813,7 +2813,6 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     ]),
   );
   const recursive = new Set<Binding>();
-  // An inner module shares SANY's symbol table, so its definition can define an outer RECURSIVE operator.
   const outerBindings = new Map(
     unit.recursiveCount.declarations
       .filter((declared) => !declared.isTaken)
@@ -3037,7 +3036,6 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         !outerBindings.has(definition.name) &&
         isSameRange(bindings.get(definition.name)?.range, definition.location.range),
     ),
-    // SANY keeps the OpDefNode of a RECURSIVE declaration that nothing defines, so other modules see it.
     boundRecursive: declarations
       .filter((item) => !item.isTaken && bindings.get(item.declaration.name)?.isPending === true)
       .map((item) => item.declaration),

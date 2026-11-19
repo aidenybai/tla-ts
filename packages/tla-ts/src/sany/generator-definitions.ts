@@ -429,7 +429,6 @@ export const createSubstIn = (
   };
 };
 
-// SANY's SubstInNode reports the null body of a RECURSIVE operator that nothing defines.
 const substituteBody = (
   generation: ModuleGeneration,
   substs: Subst[],

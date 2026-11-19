@@ -783,7 +783,6 @@ export const createEnvironment = (
             (entry[1].kind === "Theorem" &&
               declarations.length > 0 &&
               (instance.name !== undefined || parameterized.get(entry[1].key) === true));
-          // A new OpDefNode for an instance takes its arity from its params, not from a RECURSIVE declaration.
           const copiedArity = entry[1].params?.length ?? entry[1].arity;
           if (instance.name === undefined) {
             return [

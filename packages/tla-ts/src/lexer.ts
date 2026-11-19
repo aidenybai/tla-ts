@@ -494,7 +494,6 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
   const tokens: Token[] = [];
   // Each name is one string object, so looking a name up in a scope compares pointers.
   const names = new Map<string, string>();
-  // JavaCC's SimpleCharStream ends a line at a CR, an LF, or a CR LF.
   const prefixLines = source.slice(0, headerMatch.index).split(/\r\n?|\n/);
   let index = headerMatch.index;
   let line = prefixLines.length;
@@ -636,7 +635,6 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
       const word = source.slice(index, wordEnd);
       const digitsEnd = skipClass(source, index, DIGIT);
       if (digitsEnd === wordEnd) {
-        // tlapm reads a decimal as one token; SANY reads its parts and point apart.
         const fractionEnd =
           isTlapm && source.charCodeAt(wordEnd) === CODE_DOT
             ? skipClass(source, wordEnd + 1, DIGIT)
