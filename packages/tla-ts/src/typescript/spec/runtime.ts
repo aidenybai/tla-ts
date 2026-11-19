@@ -30,7 +30,7 @@ const DEFINITIONS = [
   IF IsAbrupt(ref) THEN ref ELSE
   LET old == GetValue(ref.s, Val(ref)) IN
   IF IsAbrupt(old) THEN old ELSE
-  LET num == ToNumeric(old.s, Val(old)) IN
+  LET num == IF IsNumber(Val(old)) THEN old ELSE ToNumeric(old.s, Val(old)) IN
   IF IsAbrupt(num) THEN num ELSE
   LET v == Val(num)
       new == IF IsNumber(v)
