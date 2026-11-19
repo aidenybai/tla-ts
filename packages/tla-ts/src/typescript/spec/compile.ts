@@ -435,10 +435,12 @@ export const compileToEscore = (
           name: "RunProgram",
           arity: 1,
           // A host exits with an error where its entry module still awaits once nothing is left
-          // to run, as Node does.
+          // to run, which the completion's target marks, and reports the rejection of its entry
+          // module's evaluation as an uncaught exception, before any other promise's rejection, as
+          // Node does.
           text:
             files[0].kind === "module"
-              ? `RunProgram(s) == LET h == DefineHost(s, HostProperties) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
+              ? `RunProgram(s) == LET h == DefineHost(s, HostProperties) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE IF Slots(j.s, Val(p)).state = "rejected" THEN Abrupt(j.s, Completion("throw", Slots(j.s, Val(p)).result, [kind |-> "module"])) ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN LET e == ThrowError(t.s, "Error") IN [e EXCEPT !.c.target = [kind |-> "unsettled"]] ELSE t`
               : isModule
                 ? `RunProgram(s) == LET h == DefineHost(s, HostProperties) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
                 : isQueuing

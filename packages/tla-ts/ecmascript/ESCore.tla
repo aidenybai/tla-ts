@@ -421,6 +421,7 @@ RECURSIVE IfThen(_, _, _)
 RECURSIVE ReturnThen(_, _)
 RECURSIVE ReturnValueThen(_)
 RECURSIVE ThrowThen(_)
+RECURSIVE ThrowAtThen(_, _)
 RECURSIVE WithThen(_, _, _)
 RECURSIVE EvaluateVariableDeclarationList(_, _, _)
 RECURSIVE VariableListThen(_, _, _)
@@ -7845,6 +7846,11 @@ ReturnValueThen(r) ==
   IF IsSuspended(r) THEN Pass(r, "ReturnValueThen", <<>>) ELSE IF IsAbrupt(r) THEN r ELSE Abrupt(r.s, Completion("return", Val(r), Empty))
 ThrowThen(r) ==
   IF IsSuspended(r) THEN Pass(r, "ThrowThen", <<>>) ELSE IF IsAbrupt(r) THEN r ELSE ThrowValue(r.s, Val(r))
+\* ThrowThen of a throw statement at a site of a compiled program, <<file, throw>>, the numbers of
+\* its file and of the statement among the file's throws, which the completion's target carries, so
+\* that the host can say where an exception that nothing catches was thrown.
+ThrowAtThen(site, r) ==
+  IF IsSuspended(r) THEN Pass(r, "ThrowAtThen", <<site>>) ELSE IF IsAbrupt(r) THEN r ELSE Abrupt(r.s, Completion("throw", Val(r), [kind |-> "throw", site |-> site]))
 \* The with statement (§14.11.2).
 WithThen(ctx, n, r) ==
   IF IsSuspended(r) THEN Pass(r, "WithThen", <<ctx, n>>) ELSE
@@ -20050,6 +20056,7 @@ ResumeFrame(frame, r) ==
     [] frame.step = "ReturnThen" -> ReturnThen(frame.args[1], r)
     [] frame.step = "ReturnValueThen" -> ReturnValueThen(r)
     [] frame.step = "ThrowThen" -> ThrowThen(r)
+    [] frame.step = "ThrowAtThen" -> ThrowAtThen(frame.args[1], r)
     [] frame.step = "WithThen" -> WithThen(frame.args[1], frame.args[2], r)
     [] frame.step = "VariableListThen" -> VariableListThen(frame.args[1], frame.args[2], r)
     [] frame.step = "PatternInitializerThen" -> PatternInitializerThen(frame.args[1], frame.args[2], frame.args[3], r)

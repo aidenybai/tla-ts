@@ -48,13 +48,15 @@ const DEFINITIONS = [
   `ArrayElementResult(array, key, r) ==
   IF IsAbrupt(r) THEN r ELSE CreateDataPropertyOrThrow(r.s, array, key, Val(r))`,
   // The end of a program once its jobs ran: a throw of the reason of the first promise rejected
-  // that nothing handles, as the host that runs the program reports it.
+  // that nothing handles, as the host that runs the program reports it, which the completion's
+  // target marks as a rejection.
   `UnhandledRejection(s) ==
   LET rejected == {i \\in 1..s.objs.size :
                      LET o == HeapGet(s.objs, i) IN
                      o.class = "promise" /\\ o.slots.state = "rejected" /\\ ~o.slots.isHandled}
   IN IF rejected = {} THEN Ok(s, Undefined)
-     ELSE ThrowValue(s, HeapGet(s.objs, CHOOSE i \\in rejected : \\A j \\in rejected : i <= j).slots.result)`,
+     ELSE Abrupt(s, Completion("throw", HeapGet(s.objs, CHOOSE i \\in rejected : \\A j \\in rejected : i <= j).slots.result,
+                               [kind |-> "rejection"]))`,
   // The timers a program set, each a task of its own after the jobs before it ran, as Node runs
   // timers of no delay.
   `RunTimers(s) ==
