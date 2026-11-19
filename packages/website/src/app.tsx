@@ -20,7 +20,7 @@ export const App = () => (
       <Hero.Body>
         <p>
           Formally verify TypeScript code with{" "}
-          <Link href="https://lamport.azurewebsites.net/tla/tla.html">TLA+</Link>.
+          <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link>.
         </p>
         <div className="flex gap-2">
           <a
