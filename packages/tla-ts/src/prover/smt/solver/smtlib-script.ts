@@ -60,7 +60,7 @@ import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { FdSolver } from "./fd-solver";
-import { getParameterValue, isDoubleParameter } from "./gparams";
+import { getDoubleParameter, getParameterValue, isDoubleParameter } from "./gparams";
 import { formatDouble } from "./probes";
 import { SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
@@ -713,6 +713,8 @@ export const runSmtlibScript = (
     intHammerPeriod: getHammerPeriod(settings.parameters),
     isArithPropagatingEqs: settings.parameters.get("smt.arith.propagate_eqs") !== "false",
     qiCost: settings.parameters.get("smt.qi.cost"),
+    qiEagerThreshold: getDoubleParameter(settings.parameters, "smt.qi.eager_threshold"),
+    qiLazyThreshold: getDoubleParameter(settings.parameters, "smt.qi.lazy_threshold"),
   });
   const checkFdSolver = (fdSolver: FdSolver, extra: number[]) => {
     const result = fdSolver.check(extra);

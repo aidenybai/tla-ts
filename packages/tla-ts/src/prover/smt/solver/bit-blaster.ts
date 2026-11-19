@@ -1,5 +1,5 @@
 import { SmtCanceledError } from "../../../errors";
-import type { AstManager } from "./ast";
+import { OP_EQ, SORT_BOOL, type AstManager } from "./ast";
 import { TACTIC_ARITH_OPTIONS } from "./arith-rewriter";
 import { assign, assignOwned, release } from "./expr-ref";
 import { Rewriter } from "./rewriter";
@@ -56,9 +56,14 @@ export class BitBlaster {
     return result;
   }
 
-  mkNot(arg: number) {
-    const outer = this.manager.beginTemporaries();
-    return this.endRewrite(this.rewriter.mkNot(arg), outer);
+  mkNot(arg: number, previous = -1) {
+    const manager = this.manager;
+    if (manager.getOp(arg) === OP_EQ && manager.sorts[manager.getArg(arg, 0)] === SORT_BOOL)
+      return this.mkXor(manager.getArg(arg, 0), manager.getArg(arg, 1), previous);
+    const outer = manager.beginTemporaries();
+    const result = this.endRewrite(this.rewriter.mkNot(arg), outer);
+    release(manager, previous);
+    return result;
   }
 
   mkAnd(args: number[]) {
@@ -699,9 +704,8 @@ export class BitBlaster {
     const size = first.length;
     let negation = this.mkNot(first[0]);
     let result = this.mkOr([negation, second[0]]);
-    const manager = this.manager;
     for (let index = 1; index < (isSigned ? size - 1 : size); index++) {
-      negation = assignOwned(manager, negation, this.mkNot(first[index]));
+      negation = this.mkNot(first[index], negation);
       result = this.mkGe2(negation, second[index], result, result);
     }
     if (isSigned) {

@@ -1931,6 +1931,56 @@ describe("hoist_ite, as Z3 5.3.2 simplifies", () => {
   });
 });
 
+describe("push_ite_bv, as Z3 5.3.2 simplifies", () => {
+  it("makes no if-then-else that mk_ite_core leaves alone before push_ite tries its arguments", () => {
+    expect(
+      run([
+        "(declare-const y (_ BitVec 2))",
+        "(declare-const z (_ BitVec 2))",
+        "(assert (bvule (bvneg (bvsdiv y z)) z))",
+        "(apply (and-then bv-divrem-bounds (using-params simplify :push_ite_bv true) simplify bit-blast))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (let ((a!1 (not (or k!2 (or (not k!1) (= k!0 k!1)))))",
+        "        (a!6 (or k!0 (not k!2) (not (or k!2 (not k!0))))))",
+        "  (let ((a!2 (or (not (or (not k!1) (= k!0 k!1))) (not k!2) a!1))",
+        "        (a!7 (or (not (or (not k!3) (= k!2 k!3))) (not a!6))))",
+        "  (let ((a!3 (or (not (or (not k!3) (= k!2 k!3))) (not a!2))))",
+        "  (let ((a!4 (ite a!3",
+        "                  (not (or (not k!1) (= k!0 k!1)))",
+        "                  (= (or (not k!1) (= k!0 k!1)) k!2))))",
+        "  (let ((a!5 (or (not (or (not k!3) (= k!2 k!3))) (not a!4))))",
+        "  (let ((a!8 (or (not a!5) (not (or (not a!4) (not a!6))) (not a!7))))",
+        "  (let ((a!9 (not (= a!8 (ite (= k!1 k!3) (not a!3) (= a!3 a!8)))))",
+        "        (a!11 (or (not k!3) (not (or k!2 (not a!8))))))",
+        "  (let ((a!10 (or a!9 (not (or k!2 (not a!8))))))",
+        "    (or (not (or (not k!3) a!9)) (not a!10) (not a!11))))))))))",
+        "  (let ((a!1 (not (or k!2 (or (not k!1) (= k!0 k!1)))))",
+        "        (a!6 (or k!0 (not k!2) (not (or k!2 (not k!0))))))",
+        "  (let ((a!2 (or (not (or (not k!1) (= k!0 k!1))) (not k!2) a!1))",
+        "        (a!7 (or (not (or (not k!3) (= k!2 k!3))) (not a!6))))",
+        "  (let ((a!3 (or (not (or (not k!3) (= k!2 k!3))) (not a!2))))",
+        "  (let ((a!4 (ite a!3",
+        "                  (not (or (not k!1) (= k!0 k!1)))",
+        "                  (= (or (not k!1) (= k!0 k!1)) k!2))))",
+        "  (let ((a!5 (or (not (or (not k!3) (= k!2 k!3))) (not a!4))))",
+        "  (let ((a!8 (or (not a!5) (not (or (not a!4) (not a!6))) (not a!7))))",
+        "  (let ((a!9 (or (not (ite (= k!1 k!3) (not a!3) (= a!3 a!8)))",
+        "                 (= a!8 (ite (= k!1 k!3) (not a!3) (= a!3 a!8)))))",
+        "        (a!12 (or (or k!0 (not k!1)) (not (or (not a!8) k!0)))))",
+        "  (let ((a!10 (not (or (not a!9) (or k!0 (not k!1)))))",
+        "        (a!11 (or (not a!9) (not (or (not a!8) k!0)))))",
+        "    (or (not (or k!2 k!3)) a!10 (not a!11) (not a!12))))))))))",
+        "  :precision precise :depth 4)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+});
+
 describe("arith_lhs and arith_ineq_lhs, as Z3 5.3.2 simplifies", () => {
   it("reads arith_lhs and arith_ineq_lhs as two parameters", () => {
     expect(
