@@ -178,9 +178,9 @@ const DEFINITIONS = [
       require == LET a == Alloc(made.s, BuiltinObject(Intrinsic(made.s, "FunctionPrototype"), <<"Module", "require">>, 1,
                                                        N("require"), TRUE, id, made.s.realmId))
                  IN Ok(a.s, a.v)
-      moduleProxy == StoppingProxy(require.s, Val(module), <<[trap |-> SV("get"), method |-> "moduleExportsGet"],
+      moduleProxy == StoppingProxy(require.s, Val(module), N("module"), <<[trap |-> SV("get"), method |-> "moduleExportsGet"],
                                                               [trap |-> SV("set"), method |-> "moduleExportsSet"]>>)
-      requireProxy == StoppingProxy(moduleProxy.s, Val(require), <<[trap |-> SV("apply"), method |-> "requireApply"]>>)
+      requireProxy == StoppingProxy(moduleProxy.s, Val(require), N("require"), <<[trap |-> SV("apply"), method |-> "requireApply"]>>)
       f == CodeFunctionCreate(requireProxy.s, Intrinsic(requireProxy.s, "FunctionPrototype"), node.code, FALSE, s.globalEnv, NoPrivateEnvironment)
       r == Call([f.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE]) @@ @], f.v, Val(exports),
                 <<Val(exports), Val(requireProxy), Val(moduleProxy), Str(node.filename), Str(node.dirname)>>)
@@ -197,9 +197,9 @@ const DEFINITIONS = [
   // What of Node a program reaches that the runtime has only part of, such as a CommonJS module's
   // module and require: a proxy whose handler stops at every operation but its allowed traps,
   // which reach only what the runtime has, such as module.exports and a call of require.
-  `StoppingProxy(s, target, allowed) ==
+  `StoppingProxy(s, target, name, allowed) ==
   LET handler == OrdinaryObjectCreate(s, Null)
-      stop == CreateBuiltinFunction(handler.s, <<"Module", "commonJsStop">>, 0, <<>>, Empty)
+      stop == CreateBuiltinFunction(handler.s, <<"Module", "hostStop">>, 0, <<>>, name)
   IN ProxyCreate(AllowTraps(DefineTraps(stop.s, Val(handler), Val(stop), CommonJsTraps), Val(handler), allowed),
                  target, Val(handler))`,
   `CommonJsTraps ==
@@ -209,7 +209,7 @@ const DEFINITIONS = [
   IF names = <<>> THEN s ELSE DefineTraps(CreateDataProperty(s, handler, Head(names), trap).s, handler, trap, Tail(names))`,
   `AllowTraps(s, handler, allowed) ==
   IF allowed = <<>> THEN s ELSE
-  LET f == CreateBuiltinFunction(s, <<"Module", Head(allowed).method>>, 0, <<>>, Empty) IN
+  LET f == CreateBuiltinFunction(s, <<"Module", Head(allowed).method>>, 0, <<>>, IF "data" \\in DOMAIN Head(allowed) THEN Head(allowed).data ELSE Empty) IN
   AllowTraps(CreateDataProperty(f.s, handler, Head(allowed).trap, Val(f)).s, handler, Tail(allowed))`,
   // The host's globals and built-ins' properties that a module program names and ESCore's realm
   // lacks, on the global object and the intrinsics as the host's own context has them, where a
@@ -237,10 +237,12 @@ const DEFINITIONS = [
               IN Ok(a.s, a.v)
       target == CASE p.kind = "function" -> stop
                   [] p.kind = "console" -> ConsoleObject(stop.s)
+                  [] p.kind = "process" -> ProcessObject(stop.s)
                   [] OTHER -> LET a == Alloc(stop.s, MakeObject(Null, "ordinary", [hostName |-> p.name])) IN Ok(a.s, a.v)
       value == CASE p.kind = "value" -> Ok(target.s, p.value)
                  [] p.kind \\in {"undefined", "accessor"} -> Ok(target.s, Undefined)
-                 [] p.kind = "console" -> StoppingProxy(target.s, Val(target), <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
+                 [] p.kind = "console" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
+                 [] p.kind = "process" -> StoppingProxy(target.s, Val(target), p.name, <<[trap |-> SV("get"), method |-> "processGet"]>>)
                  [] OTHER -> ProxyCreate(target.s, Val(target), handler)
       getter == IF p.kind = "accessor" THEN Ok(value.s, Val(stop))
                 ELSE CreateBuiltinFunction(value.s, <<"Module", "hostGlobal">>, 0, <<>>, Val(value))
@@ -284,6 +286,47 @@ const DEFINITIONS = [
   // The TLA+ string of code units that a TLA+ string can hold.
   `UnitsText(units) ==
   IF units = <<>> THEN "" ELSE (CHOOSE c \\in DOMAIN CharacterUnits : CharacterUnits[c] = Head(units)) \\o UnitsText(Tail(units))`,
+  // TextEncoder's encode, as Node's runs it: the UTF-8 bytes of the string of input, where a lone
+  // surrogate is U+FFFD, in a new Uint8Array.
+  `TextEncode(s, input) ==
+  LET str == ToStr(s, input) IN
+  IF IsAbrupt(str) THEN str ELSE
+  LET bytes == Utf8Bytes(Val(str).value, 1, <<>>)
+      array == CreateArrayFromList(str.s, [i \\in 1..Len(bytes) |-> IntV(bytes[i])])
+  IN IF IsAbrupt(array) THEN array
+     ELSE Construct(array.s, Intrinsic(array.s, "Uint8Array"), <<Val(array)>>, Intrinsic(array.s, "Uint8Array"))`,
+  `Utf8Bytes(u, k, acc) ==
+  IF k > Len(u) THEN acc ELSE
+  IF u[k] >= 55296 /\\ u[k] <= 56319 /\\ k < Len(u) /\\ u[k + 1] >= 56320 /\\ u[k + 1] <= 57343
+  THEN Utf8Bytes(u, k + 2, acc \\o UTF8Encode((u[k] - 55296) * 1024 + u[k + 1] - 56320 + 65536))
+  ELSE Utf8Bytes(u, k + 1, acc \\o UTF8Encode(IF u[k] >= 55296 /\\ u[k] <= 57343 THEN 65533 ELSE u[k]))`,
+  // A function of the host, as a proxy that stops at every operation but typeof.
+  `HostFunction(s, name) ==
+  LET stop == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE, name, s.realmId))
+  IN ProxyCreate(stop.s, stop.v, s.hostHandler)`,
+  // Node's process, of which a program reads only hrtime, whose bigint it may only read, and
+  // getBuiltinModule, of async_hooks, of which it reads
+  // only AsyncResource, whose objects run a function in their scope and emit their destroy, as
+  // Node's do (lib/async_hooks.js) where no hook of async_hooks observes them, which a program would
+  // make by reading more of async_hooks. A program reads process.env as the compile gives it.
+  `ProcessObject(s) ==
+  LET bigint == HostFunction(s, N("process.hrtime.bigint"))
+      hrtimeTarget == Alloc(bigint.s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>, FALSE,
+                                                    N("process.hrtime"), s.realmId))
+      hrtime == StoppingProxy(hrtimeTarget.s, hrtimeTarget.v, N("process.hrtime"),
+                              <<[trap |-> SV("get"), method |-> "hrtimeGet", data |-> Val(bigint)]>>)
+      o == OrdinaryObjectCreate(hrtime.s, Intrinsic(s, "ObjectPrototype"))
+      withHrtime == CreateDataProperty(o.s, Val(o), SV("hrtime"), Val(hrtime))
+      run == CreateBuiltinFunction(withHrtime.s, <<"Module", "asyncRun">>, 1, N("runInAsyncScope"), Empty)
+      destroy == CreateBuiltinFunction(run.s, <<"Module", "asyncDestroy">>, 0, N("emitDestroy"), Empty)
+      resource == Alloc(destroy.s, BuiltinObject(Intrinsic(destroy.s, "FunctionPrototype"), <<"Module", "asyncResource">>, 1,
+                                                 N("AsyncResource"), TRUE, [run |-> Val(run), destroy |-> Val(destroy)], destroy.s.realmId))
+      hooks == OrdinaryObjectCreate(resource.s, Null)
+      withResource == CreateDataProperty(hooks.s, Val(hooks), SV("AsyncResource"), resource.v)
+      hooksProxy == StoppingProxy(withResource.s, Val(hooks), N("async_hooks"), <<[trap |-> SV("get"), method |-> "asyncHooksGet"]>>)
+      load == CreateBuiltinFunction(hooksProxy.s, <<"Module", "getBuiltinModule">>, 1, N("getBuiltinModule"), Val(hooksProxy))
+      made == CreateDataProperty(load.s, Val(o), SV("getBuiltinModule"), Val(load))
+  IN Ok(made.s, Val(o))`,
   // Node's console, of which a program reads only the methods that write what they're given and
   // createTask: each of the former writes nothing that the program reads, where the values it's
   // given are primitives, which no code of the program runs to format.
@@ -511,6 +554,37 @@ const HOST_PATCHES = [
          IF Arg(args, 2) \\notin {SV("log"), SV("info"), SV("debug"), SV("warn"), SV("error"), SV("createTask")}
          THEN Assert(FALSE, "tla-ts can't use the host's console other than to write primitives and createTask")
          ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "textEncoderGet" ->
+         CASE Arg(args, 2) = SV("encode") -> Ok(s, data)
+           [] Arg(args, 2) = SV("encoding") -> Ok(s, SV("utf-8"))
+           [] OTHER -> HostStop(N("TextEncoder"))
+    [] m = "textEncode" ->
+         IF ~IsObject(this) \\/ O(s, this).class # "proxy" \\/ O(s, O(s, this).slots.target).slots # [hostName |-> N("TextEncoder")]
+         THEN HostStop(N("TextEncoder"))
+         ELSE TextEncode(s, IF Arg(args, 1) = Undefined THEN EmptyStr ELSE Arg(args, 1))
+    [] m = "processGet" ->
+         IF Arg(args, 2) \\notin {SV("getBuiltinModule"), SV("hrtime")} THEN HostStop(N("process")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "getBuiltinModule" ->
+         IF Arg(args, 1) \\notin {SV("node:async_hooks"), SV("async_hooks")} THEN HostStop(N("getBuiltinModule")) ELSE Ok(s, data)
+    [] m = "asyncHooksGet" ->
+         IF Arg(args, 2) # SV("AsyncResource") THEN HostStop(N("async_hooks")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "asyncResource" ->
+         IF nt # f \\/ ~IsString(Arg(args, 1)) \\/ (Arg(args, 2) # Undefined /\\ ~IsObject(Arg(args, 2))) THEN HostStop(N("AsyncResource")) ELSE
+         LET trigger == IF Arg(args, 2) = Undefined THEN Ok(s, Undefined) ELSE Get(s, Arg(args, 2), SV("triggerAsyncId")) IN
+         IF IsAbrupt(trigger) THEN trigger ELSE IF Val(trigger) # Undefined THEN HostStop(N("AsyncResource")) ELSE
+         LET manual == IF Arg(args, 2) = Undefined THEN Ok(trigger.s, Undefined) ELSE Get(trigger.s, Arg(args, 2), SV("requireManualDestroy")) IN
+         IF IsAbrupt(manual) THEN manual ELSE
+         LET instance == Alloc(manual.s, MakeObject(Null, "ordinary", [asyncResource |-> TRUE])) IN
+         StoppingProxy(instance.s, instance.v, N("AsyncResource"), <<[trap |-> SV("get"), method |-> "asyncResourceGet", data |-> data]>>)
+    [] m = "asyncResourceGet" ->
+         CASE Arg(args, 2) = SV("runInAsyncScope") -> Ok(s, data.run)
+           [] Arg(args, 2) = SV("emitDestroy") -> Ok(s, data.destroy)
+           [] OTHER -> HostStop(N("AsyncResource"))
+    [] m \\in {"asyncRun", "asyncDestroy"} ->
+         IF ~IsObject(this) \\/ O(s, this).class # "proxy" \\/ "asyncResource" \\notin DOMAIN O(s, O(s, this).slots.target).slots
+         THEN HostStop(N("AsyncResource"))
+         ELSE IF m = "asyncDestroy" THEN Ok(s, this)
+         ELSE Call(s, Arg(args, 1), Arg(args, 2), IF Len(args) > 2 THEN SubSeq(args, 3, Len(args)) ELSE <<>>)
     [] m = "consoleWrite" ->
          IF \\E i \\in DOMAIN args : IsObject(args[i])
          THEN Assert(FALSE, "tla-ts can't write an object to the host's console, which formats it")
@@ -533,11 +607,15 @@ const HOST_PATCHES = [
             THEN HostStop(O(s, target).slots.data) ELSE
             LET quiet == QuietConstruct(list.s, O(s, target).slots.data, Val(list)) IN
             IF IsAbrupt(quiet) THEN quiet ELSE
-            LET instance == Alloc(quiet.s, MakeObject(Null, "ordinary", [hostName |-> O(s, target).slots.data])) IN
-            ProxyCreate(instance.s, instance.v, s.hostHandler)
+            LET name == O(s, target).slots.data
+                instance == Alloc(quiet.s, MakeObject(Null, "ordinary", [hostName |-> name]))
+                encode == CreateBuiltinFunction(instance.s, <<"Module", "textEncode">>, 0, N("encode"), Empty)
+            IN IF name = N("TextEncoder")
+               THEN StoppingProxy(encode.s, instance.v, name, <<[trap |-> SV("get"), method |-> "textEncoderGet", data |-> Val(encode)]>>)
+               ELSE ProxyCreate(instance.s, instance.v, s.hostHandler)
     [] m = "hostTrap" ->
          HostStop(IF "hostName" \\in DOMAIN O(s, Arg(args, 1)).slots THEN O(s, Arg(args, 1)).slots.hostName ELSE O(s, Arg(args, 1)).slots.data)
-    [] m = "commonJsStop" -> Assert(FALSE, "tla-ts can't use a CommonJS module's module or require other than for module.exports and a call")`,
+    [] m = "hrtimeGet" -> IF Arg(args, 2) # SV("bigint") THEN HostStop(N("process.hrtime")) ELSE Ok(s, data)`,
   },
   // A program's functions hold their source text as the program's code gives it, which
   // SourceUnits makes code units of when a program reads it.

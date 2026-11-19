@@ -339,9 +339,9 @@ describe("gives a module the host's globals and properties that ESCore lacks, wh
     });
 
     it("stops at a use of the object", async () => {
-      expect(
-        (await checkModules({ "main.js": 'new TextEncoder().encode("x");' })).message,
-      ).toContain("tla-ts can't run the host's TextEncoder");
+      expect((await checkModules({ "main.js": "new TextDecoder().decode();" })).message).toContain(
+        "tla-ts can't run the host's TextDecoder",
+      );
     });
 
     it("stops at a label of another encoding", async () => {
@@ -378,6 +378,52 @@ describe("gives a module the host's globals and properties that ESCore lacks, wh
   it("stops at a call of a built-in's method that only the host has", async () => {
     expect((await checkModules({ "main.js": "Error.captureStackTrace({});" })).message).toContain(
       "tla-ts can't run the host's captureStackTrace",
+    );
+  });
+});
+
+describe("gives a module the part of Node's process and TextEncoder that Effect loads with", () => {
+  const getFiles = (expected: string) => ({
+    "main.js": getMain(
+      `const log = [];
+      const AsyncResource = globalThis.process?.getBuiltinModule?.("node:async_hooks")?.AsyncResource;
+      const resource = new AsyncResource("effect/Fiber");
+      const ran = resource.runInAsyncScope(function (a, b) { return [this.tag, a, b].join("-"); }, { tag: "t" }, 1, 2);
+      const hrtime = globalThis.process?.hrtime;
+      const encoder = new TextEncoder();
+      log.push(AsyncResource.name, AsyncResource.length, ran, resource.emitDestroy() === resource, typeof hrtime, typeof hrtime?.bigint);
+      log.push(encoder.encoding, Array.from(encoder.encode("a\u00e9\u20ac\ud83d\ude00\ud800")).join(" "), encoder.encode().length);`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    expect(
+      (
+        await checkModules(
+          getFiles(
+            "AsyncResource,1,t-1-2,true,function,function,utf-8,97 195 169 226 130 172 240 159 152 128 239 191 189,0",
+          ),
+        )
+      ).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (
+        await checkModules(
+          getFiles(
+            "AsyncResource,1,t-1-2,true,function,function,utf-8,97 195 169 226 130 172 240 159 152 128 237 160 128,0",
+          ),
+        )
+      ).message,
+    ).toContain(THREW);
+  });
+
+  it("stops at a call of hrtime's bigint", async () => {
+    expect((await checkModules({ "main.js": "process.hrtime.bigint();" })).message).toContain(
+      "tla-ts can't run the host's process.hrtime.bigint",
     );
   });
 });

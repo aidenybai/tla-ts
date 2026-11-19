@@ -249,8 +249,8 @@ const getHostProperty = (
               ? `Str(N(${JSON.stringify(value)}))`
               : undefined;
   const kind =
-    name === "console" && host !== undefined
-      ? "console"
+    (name === "console" || name === "process") && host !== undefined
+      ? name
       : isAccessor && host === undefined
         ? "accessor"
         : typeof value === "function" || (typeof value === "object" && value !== null)
@@ -339,6 +339,8 @@ export const compileToEscore = (
     program.identifiers.has("setTimeout");
   const isIncluded = (gate: EscoreRuntime["gates"][number]) =>
     (isModule && MODULE_GROUPS.has(gate.group)) ||
+    // A TextEncoder's encode makes a Uint8Array.
+    (isModule && gate.group === "84" && program.words.has("TextEncoder")) ||
     [...gate.triggers].some((word) => program.words.has(word));
   const included = runtime.gates.filter(isIncluded);
   const kept = new Set(included.flatMap((gate) => gate.reached));
