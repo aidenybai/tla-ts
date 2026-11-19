@@ -70,6 +70,7 @@ it.each([
     "Next line 7, col 9 to line 7, col 50 of module M",
   ],
   ['{TLCGet("all")}', ['<<"A", <<<<7>>>>>>'], "Next line 7, col 9 to line 7, col 39 of module M"],
+  ["{TLCSet(2, 5)}", ['<<"A", TRUE>>'], "Next line 7, col 9 to line 7, col 38 of module M"],
 ])(
   "splits Next over %s as TLC's Tool does before the checker exists, at level 1 and without statistics or registers",
   async (domain, expectedPrinted, label) => {
@@ -83,6 +84,22 @@ it.each([
       expectedPrinted,
       [undefined, label],
     ]);
+  },
+);
+
+it.each([
+  ["2", "TLCGet(2) was undefined."],
+  ['"s:q"', "TLCGet(s:q) was undefined."],
+])(
+  "keeps no register %s that TLCSet writes as TLC's Tool splits Next before the checker exists",
+  async (key, message) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ TLCGet(${key}) = 5\nNext == \\E p \\in {TLCSet(${key}, 5)} : x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+    });
+    expect(result.failure?.message).toBe(
+      `Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel),\nbut it produced the following error:\n${message}`,
+    );
   },
 );
 

@@ -289,8 +289,8 @@ export const createTlcOperators = (
         ),
         "public static tlc2.value.impl.Value tlc2.module.TLCGetSet.TLCGetEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
       ),
-  defineStateOperator("TLCSet", 2, (args) => {
-    setTlcValue(runtime, getValue(args, 0, "TLCSet"), getValue(args, 1, "TLCSet"));
+  defineStateOperator("TLCSet", 2, (args, context) => {
+    setTlcValue(runtime, getValue(args, 0, "TLCSet"), getValue(args, 1, "TLCSet"), context?.state);
     return true;
   }),
   defineConstant("Any", ANY_SET),
