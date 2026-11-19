@@ -3056,3 +3056,20 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ]);
   });
 });
+
+describe("the default tactic, as Z3 5.3.2 builds it", () => {
+  it("refuses the core of a lazy tactic, whose dependencies it can't know", () => {
+    expect(() =>
+      run([
+        "(set-option :produce-unsat-cores true)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(assert (! (or p q) :named a1))",
+        "(assert (! (not p) :named a2))",
+        "(assert (! (not q) :named a3))",
+        "(check-sat-using default)",
+        "(get-unsat-core)",
+      ]),
+    ).toThrow(SmtUnsupportedError);
+  });
+});

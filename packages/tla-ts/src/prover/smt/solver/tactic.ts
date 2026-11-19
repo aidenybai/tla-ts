@@ -2069,7 +2069,7 @@ const compile = (
       return {
         descrs: new Map(),
         isRejectingUnknown: true,
-        isTrackingDependencies: true,
+        isTrackingDependencies: false,
         build: (params) => {
           let tactic: Tactic | undefined;
           let destructors: (() => void)[] = [];
