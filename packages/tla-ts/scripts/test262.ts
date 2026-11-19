@@ -4597,7 +4597,7 @@ const getReasonKind = (reason: string) =>
 
 const isVerbose = process.argv.includes("--verbose");
 const prefixes = process.argv.slice(2).filter((argument) => !argument.startsWith("--"));
-const paths = listTest262Files()
+const paths = listTest262Files(prefixes)
   .filter((path) => {
     const id = relative(TEST262_DIRECTORY, path);
     return prefixes.length === 0 || prefixes.some((prefix) => id.startsWith(prefix));
