@@ -1465,6 +1465,32 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     ]);
   });
 
+  it("evaluates the VIEW only for the candidates as TLC rebuilds a lasso from the fingerprints the search stored", () => {
+    const result = runTool("ViewLoop");
+    expect(result.status).toBe(13);
+    const sequence = getToolSequence(result.stdout);
+    expect(sequence.slice(sequence.indexOf("2192"))).toEqual([
+      "2192",
+      getView(0, 1),
+      getView(1, 2),
+      getView(2, 3),
+      getView(3, 4),
+      "2116",
+      "2264",
+      "2217",
+      "2217",
+      "2217",
+      "2217",
+      getView(1, 5),
+      "2122",
+      "2267",
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+  });
+
   it("prints what the ALIAS prints right before each state of a simulated behavior, as TLC's Simulator evaluates it", () => {
     const result = runCli("tool-output", "AliasSteps", [
       "-tool",
