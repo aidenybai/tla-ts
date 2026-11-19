@@ -2883,6 +2883,67 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "named <*> steps, each as a semantic error",
+      "THEOREM TRUE\n<*>abc 1\n<*>def QED",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 6 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 6 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a named <+> step as a semantic error, not a parse error",
+      "THEOREM TRUE\n<1>1. TRUE\n<+>a. TRUE\n<2> QED\n<1> QED",
+      [
+        {
+          location: "line 4, col 1 to line 4, col 5 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+      ],
+      [],
+    ],
+    [
+      "named <+> and <*> steps that take one step number",
+      "THEOREM TRUE\n<1>1. TRUE\n  <+>1. TRUE\n  <*>1. DEFINE D == 1\n  <*> QED\n<1> QED",
+      [
+        {
+          location: "line 4, col 3 to line 4, col 7 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+        {
+          location: "line 5, col 3 to line 5, col 7 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+        {
+          location: "line 5, col 3 to line 5, col 21 of module M",
+          message:
+            "Multiply-defined symbol '<2>1': this definition or declaration conflicts \nwith the one at line 4, col 3 to line 4, col 7 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a named <*> step before the errors in its body",
+      "THEOREM TRUE\n<*>a. Undefined\n<*> QED",
+      [
+        {
+          location: "line 3, col 1 to line 3, col 5 of module M",
+          message: "<*> and <+> cannot be used for a named step.",
+        },
+        {
+          location: "line 3, col 7 to line 3, col 15 of module M",
+          message: "Unknown operator: `Undefined'.",
+        },
+      ],
+      [],
+    ],
+    [
       "an assertion numbered like an earlier USE step, which keeps the number",
       "Op == 1\nTHEOREM TRUE\n<1>3. USE DEF Op\n<1>3. TRUE\n  <2>1. <1>3\n  <2> QED\n<1> QED",
       [

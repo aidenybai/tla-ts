@@ -353,7 +353,6 @@ describe("parseModule reads proofs like SANY", () => {
 
   it.each([
     ["a QED step at another level", "THEOREM TRUE\n<2>1. TRUE\n<1> QED"],
-    ["a named <+> step", "THEOREM TRUE\n<1>1. TRUE\n<+>a. TRUE\n<2> QED\n<1> QED"],
     ["a proof of a step that takes none", "THEOREM TRUE\n<1> HAVE TRUE OBVIOUS\n<1> QED"],
     ["a step number outside a proof", "THEOREM <1>1"],
     ["a proof without a QED step", "THEOREM TRUE\n<1>1. TRUE"],

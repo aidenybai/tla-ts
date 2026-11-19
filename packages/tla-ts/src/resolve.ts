@@ -2240,6 +2240,16 @@ const resolveStep = (
       : { ...unit, hasLabelScope: true, labelParams: [], labels: new Set<string>() };
   const goal = getStepGoal(body, step.location);
   const start = step.head.start;
+  const numberRange = {
+    ...step.head,
+    end: { ...start, column: start.column + step.token.length - 1 },
+  };
+  if (step.name !== undefined && (step.token[1] === "*" || step.token[1] === "+")) {
+    unit.errors.push({
+      location: formatRange(numberRange),
+      message: "<*> and <+> cannot be used for a named step.",
+    });
+  }
   // SANY binds a step's name after its body and before its proof, and keeps an earlier binding of
   // the name. It locates the name at the step number, or at a non-fact step's whole step.
   const bindStep = (parent: LocalName | undefined, stepGoal = goal) =>
@@ -2248,15 +2258,7 @@ const resolveStep = (
       : bindName(
           parent,
           step.name,
-          {
-            kind: "Theorem",
-            arity: 0,
-            range: {
-              ...step.head,
-              end: { ...start, column: start.column + step.token.length - 1 },
-            },
-            goal: stepGoal,
-          },
+          { kind: "Theorem", arity: 0, range: numberRange, goal: stepGoal },
           unit,
         );
   const bindNonFactStep = (parent: LocalName | undefined, nonFactStep: Binding["nonFactStep"]) =>
