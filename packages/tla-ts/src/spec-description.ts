@@ -35,6 +35,7 @@ import {
 } from "./evaluate";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import { bindLetDefinitions, getLevel } from "./liveness";
+import { EMPTY_STATE } from "./runtime";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
 import { LITERAL_KINDS } from "./tlc/replay";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -118,6 +119,13 @@ const getConstantContext = (environment: Environment, scope: Scope | undefined) 
   environment,
   scope,
   state: undefined,
+  next: undefined,
+});
+
+const getSplitContext = (environment: Environment, scope: Scope | undefined) => ({
+  environment,
+  scope,
+  state: EMPTY_STATE,
   next: undefined,
 });
 
@@ -269,7 +277,7 @@ const getInstanceActions = (
     return callAction();
   }
   return tryCollect(() => {
-    const values = args.map((arg) => evaluate(arg, getConstantContext(environment, scope)));
+    const values = args.map((arg) => evaluate(arg, getSplitContext(environment, scope)));
     return [
       {
         ...instanceAction,
@@ -347,23 +355,19 @@ const getActions = (
       return tryCollect(
         () => {
           const actions: SpecAction[] = [];
-          forEachBinding(
-            expression.bounds,
-            getConstantContext(environment, scope),
-            (boundScope) => {
-              actions.push(
-                ...getActions(
-                  expression.body,
-                  boundScope,
-                  closure,
-                  environment,
-                  instanceActions,
-                  definition,
-                ),
-              );
-              return false;
-            },
-          );
+          forEachBinding(expression.bounds, getSplitContext(environment, scope), (boundScope) => {
+            actions.push(
+              ...getActions(
+                expression.body,
+                boundScope,
+                closure,
+                environment,
+                instanceActions,
+                definition,
+              ),
+            );
+            return false;
+          });
           return actions.length === 0 ? [createSplitAction()] : actions;
         },
         () => [createSplitAction()],
@@ -428,7 +432,7 @@ const getActions = (
         name: called.params[index].name,
         binding: {
           kind: "Value",
-          value: evaluate(arg, getConstantContext(environment, scope)),
+          value: evaluate(arg, getSplitContext(environment, scope)),
         },
         parent: current,
       }),

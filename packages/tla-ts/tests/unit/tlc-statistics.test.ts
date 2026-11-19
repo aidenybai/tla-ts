@@ -62,6 +62,30 @@ it('prints the trace of a sub-action of \\E that reads TLCGet("stats") with the 
   ]);
 });
 
+it.each([
+  ['{TLCGet("level")}', ['<<"A", 1>>'], "A(1) line 6, col 9 to line 6, col 49 of module M"],
+  [
+    '{TLCGet("stats").distinct}',
+    ['<<"A", 1>>'],
+    "Next line 7, col 9 to line 7, col 50 of module M",
+  ],
+  ['{TLCGet("all")}', ['<<"A", <<<<7>>>>>>'], "Next line 7, col 9 to line 7, col 39 of module M"],
+])(
+  "splits Next over %s as TLC's Tool does before the checker exists, at level 1 and without statistics or registers",
+  async (domain, expectedPrinted, label) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nASSUME TLCSet(1, 7)\nInit == x = 0\nA(p) == x < 1 /\\ x' = x + 1 /\\ PrintT(<<"A", p>>)\nNext == \\E p \\in ${domain} : A(p)\nInv == x < 1\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => printed.push(text),
+    });
+    expect([printed, result.violation?.trace.map((step) => step.label)]).toEqual([
+      expectedPrinted,
+      [undefined, label],
+    ]);
+  },
+);
+
 it('reads TLCGet("level") as 0 in the initial predicate as it rebuilds an initial state for a trace, as TLC does', async () => {
   const printed: string[] = [];
   const result = await check({
