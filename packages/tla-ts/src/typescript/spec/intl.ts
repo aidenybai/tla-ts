@@ -828,7 +828,7 @@ const SERVICES: Service[] = [
       const methods = new Map<string, string | undefined>([
         [`"construct", <<>>`, `[found |-> "value", value |-> True]`],
       ]);
-      if (words.has("format") || words.has("formatToParts")) {
+      if (["format", "formatToParts", "toLocaleString"].some((word) => words.has(word))) {
         for (const [key, value] of literals.durations) {
           methods.set(
             `"formatToParts", <<${key}>>`,
@@ -842,7 +842,7 @@ const SERVICES: Service[] = [
       }
       return methods as Map<string, string>;
     },
-    callers: [],
+    callers: ["toLocaleString"],
   },
   {
     name: "Segmenter",

@@ -593,7 +593,7 @@ DurationBuiltin(s, f, m, this, args, nt) ==
                                                                        LargerOfTwoTemporalUnits(DefaultTemporalLargestUnit(d), TUSecond))
                              IN IF ~IsValidDuration(rounded) THEN ThrowError(time.s, "RangeError")
                                 ELSE Ok(time.s, Str(TemporalDurationToString([i \in 1..10 |-> TIFloat(rounded[i])], precision.precision)))
-              [] m = "toLocaleString" -> TemporalToLocaleString(s, "Duration", Empty, Arg(args, 1), Arg(args, 2), TemporalDurationToString(d, TPrecisionAuto))
+              [] m = "toLocaleString" -> TemporalToLocaleString(s, "Duration", [fields |-> d], Arg(args, 1), Arg(args, 2), TemporalDurationToString(d, TPrecisionAuto))
               [] m = "toJSON" -> Ok(s, Str(TemporalDurationToString(d, TPrecisionAuto)))
               [] m = "valueOf" -> ThrowTypeError(s)
 

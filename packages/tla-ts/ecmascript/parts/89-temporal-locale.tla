@@ -128,7 +128,12 @@ TemporalKinds ==
 \* read, or else the host's recorded English pattern, for an English locale.
 TemporalToLocaleString(s, kind, slots, locales, options, text) ==
   IF HostDateFormat(Empty).found = "none" THEN Ok(s, Str(text))
-  ELSE IF kind = "Duration" THEN Unsupported(s, N("Unsupported: Intl.DurationFormat"))
+  \* Temporal.Duration.prototype.toLocaleString: the format of a new Intl.DurationFormat.
+  ELSE IF kind = "Duration" THEN
+    LET df == DurationFormatConstruct(s, Intrinsic(s, "IntlDurationFormat"), locales, options) IN IF IsAbrupt(df) THEN df ELSE
+    LET answer == IntlAnswer(df.s, "DurationFormat", O(df.s, Val(df)).slots.options, "formatToParts",
+                             <<<<"duration", [i \in 1..10 |-> TIUnits(slots.fields[i])]>>>>)
+    IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "format", Val(answer))
   ELSE LET requested == CanonicalizeLocaleList(s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
   LET o == IF options = Undefined THEN OrdinaryObjectCreate(requested.s, Null) ELSE ToObject(requested.s, options) IN IF IsAbrupt(o) THEN o ELSE
   LET matcher == GetStringOption(o.s, Val(o), SV("localeMatcher"), {N("lookup"), N("best fit")}, Undefined) IN
