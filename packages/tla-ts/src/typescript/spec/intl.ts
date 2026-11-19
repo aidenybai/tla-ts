@@ -17,6 +17,9 @@ interface Literals {
   // The Temporal objects that Temporal's constructors and methods make of literals, each with the
   // key of ESCore's HostIntl entries for it.
   temporals: Map<string, object>;
+  // The durations that object literals, strings, and Temporal's methods make of literals, by the
+  // key of ESCore's HostIntl entries for them.
+  durations: Map<string, unknown>;
   // The lists of strings that array literals write.
   lists: string[][];
   objects: ts.ObjectLiteralExpression[];
@@ -225,6 +228,35 @@ const getTemporalKey = (value: unknown) => {
   return undefined;
 };
 
+// The key of ESCore's HostIntl entries for the duration that Temporal reads of a value, the units
+// of its fields from years to nanoseconds, or undefined where Temporal reads none.
+const DURATION_FIELDS = [
+  "years",
+  "months",
+  "weeks",
+  "days",
+  "hours",
+  "minutes",
+  "seconds",
+  "milliseconds",
+  "microseconds",
+  "nanoseconds",
+];
+const getDurationKey = (value: unknown) => {
+  const temporal: unknown = Reflect.get(globalThis, "Temporal");
+  if (typeof temporal !== "object" || temporal === null) return undefined;
+  if (typeof value !== "string" && (typeof value !== "object" || value === null)) return undefined;
+  const duration = attempt(
+    () =>
+      Reflect.apply(Reflect.get(Reflect.get(temporal, "Duration"), "from"), undefined, [
+        value,
+      ]) as object,
+  );
+  return duration === undefined
+    ? undefined
+    : `<<"duration", <<${DURATION_FIELDS.map((field) => getUnitsOf(BigInt(Reflect.get(duration, field)).toString())).join(", ")}>>>>`;
+};
+
 const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
   const literals: Literals = {
     strings: new Set(),
@@ -235,6 +267,7 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
     bigints: new Set(),
     times: new Set(),
     temporals: new Map(),
+    durations: new Map(),
     lists: [[]],
     objects: [],
     locales: new Map(),
@@ -243,6 +276,8 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
   const visit = (node: ts.Node) => {
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       literals.strings.add(node.text);
+      const duration = getDurationKey(node.text);
+      if (duration !== undefined) literals.durations.set(duration, node.text);
       if (
         ts.isArrayLiteralExpression(node.parent) ||
         ((ts.isCallExpression(node.parent) || ts.isNewExpression(node.parent)) &&
@@ -260,6 +295,9 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
       literals.bigints.add((-digits).toString());
     } else if (ts.isObjectLiteralExpression(node)) {
       literals.objects.push(node);
+      const object = getTemporal(node);
+      const duration = object === undefined ? undefined : getDurationKey(object.value);
+      if (duration !== undefined) literals.durations.set(duration, object?.value);
     } else if (ts.isArrayLiteralExpression(node)) {
       const list = getStringList(node);
       if (list !== undefined) literals.lists.push(list);
@@ -286,6 +324,8 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
       const named = literals.locales.get(name) ?? [undefined];
       literals.locales.set(name, named);
       const temporal = getTemporal(node);
+      const duration = temporal === undefined ? undefined : getDurationKey(temporal.value);
+      if (duration !== undefined) literals.durations.set(duration, temporal?.value);
       const key = temporal === undefined ? undefined : getTemporalKey(temporal.value);
       if (key !== undefined && temporal !== undefined)
         literals.temporals.set(key, temporal.value as object);
@@ -383,6 +423,12 @@ const getElements = (values: readonly unknown[]) => {
   return elements.some((element) => element === undefined)
     ? undefined
     : `[elements |-> <<${elements.join(", ")}>>]`;
+};
+
+// An answer of an array of values.
+const getArray = (values: readonly unknown[]) => {
+  const elements = getElements(values);
+  return elements === undefined ? undefined : `[found |-> "array", ${elements.slice(1)}`;
 };
 
 const getNumberArgument = (value: number) =>
@@ -756,6 +802,49 @@ const SERVICES: Service[] = [
     callers: [],
   },
   {
+    name: "DurationFormat",
+    options: {
+      ...MATCHER,
+      numberingSystem: isTypeSequence,
+      style: isOneOf("long", "short", "narrow", "digital"),
+      ...Object.fromEntries(
+        DURATION_FIELDS.flatMap((field) => [
+          [field, isOneOf("long", "short", "narrow", "numeric", "2-digit")],
+          [`${field}Display`, isOneOf("auto", "always")],
+        ]),
+      ),
+      fractionalDigits: isInteger,
+    },
+    getConfig: (bag) =>
+      `${getTlaValue(String(bag.localeMatcher ?? "best fit"))}, ${getTlaValue(bag.numberingSystem === undefined ? undefined : String(bag.numberingSystem))}, ${getTlaValue(String(bag.style ?? "short"))}, <<${DURATION_FIELDS.flatMap(
+        (field) =>
+          [field, `${field}Display`].map((key) =>
+            getTlaValue(bag[key] === undefined ? undefined : String(bag[key])),
+          ),
+      ).join(
+        ", ",
+      )}>>, ${bag.fractionalDigits === undefined ? "Empty" : String(Math.floor(Number(bag.fractionalDigits)))}`,
+    getMethods: (format: object, literals, words) => {
+      const methods = new Map<string, string | undefined>([
+        [`"construct", <<>>`, `[found |-> "value", value |-> True]`],
+      ]);
+      if (words.has("format") || words.has("formatToParts")) {
+        for (const [key, value] of literals.durations) {
+          methods.set(
+            `"formatToParts", <<${key}>>`,
+            getAnswer(() =>
+              getParts(
+                Reflect.apply(Reflect.get(format, "formatToParts"), format, [value]) as object[],
+              ),
+            ),
+          );
+        }
+      }
+      return methods as Map<string, string>;
+    },
+    callers: [],
+  },
+  {
     name: "Segmenter",
     options: { ...MATCHER, granularity: isOneOf("grapheme", "word", "sentence") },
     getConfig: () => "",
@@ -926,12 +1015,7 @@ const getLocaleEntries = (literals: Literals) => {
     for (const method of LOCALE_INFO) {
       const answer = getAnswer(() => {
         const value: unknown = Reflect.apply(Reflect.get(locale, method), locale, []);
-        if (Array.isArray(value)) {
-          const elements = getElements(value);
-          return elements === undefined
-            ? undefined
-            : `[found |-> "array", elements |-> ${elements.slice("[elements |-> ".length, -1)}]`;
-        }
+        if (Array.isArray(value)) return getArray(value);
         if (typeof value === "object" && value !== null) {
           const pairs = Object.entries(value).map(([key, inner]) => [key, getEscoreValue(inner)]);
           return pairs.some((pair) => pair[1] === undefined)
@@ -964,7 +1048,7 @@ const getLocaleEntries = (literals: Literals) => {
 
 // The services whose constructor ESCore's NumberFormatConstruct or PluralRulesConstruct runs, which
 // key an object by its resolved options; IntlConstruct's key it by the options it read.
-const RESOLVING = new Set(["NumberFormat", "PluralRules"]);
+const RESOLVING = new Set(["NumberFormat", "PluralRules", "DurationFormat"]);
 
 // The program's HostIntl: what the host's Intl gives for the currencies and the Intl objects that
 // the program's literals make, keyed as ESCore keys them, and for each argument its literals may be
@@ -1001,7 +1085,14 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
         const object = (() => {
           try {
             return new Constructor(locales, bag);
-          } catch {
+          } catch (error) {
+            // A DurationFormat whose options ESCore accepts constructs as HostIntl answers.
+            if (service.name === "DurationFormat") {
+              entries.set(
+                `<<"${service.name}", <<<<${requested.map(getUnitsOf).join(", ")}>>, ${service.getConfig(bag, {})}>>, "construct", <<>>>>`,
+                `[found |-> "error", error |-> "${error instanceof Error ? error.name : "Error"}"]`,
+              );
+            }
             return undefined;
           }
         })();
@@ -1042,6 +1133,21 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
   }
   if (words.has("Locale")) {
     for (const [key, answer] of getLocaleEntries(literals)) entries.set(key, answer);
+  }
+  if (words.has("supportedValuesOf")) {
+    for (const key of [
+      "calendar",
+      "collation",
+      "currency",
+      "numberingSystem",
+      "timeZone",
+      "unit",
+    ]) {
+      const answer = getArray(Reflect.apply(Intl.supportedValuesOf, Intl, [key]) as unknown[]);
+      if (answer !== undefined) {
+        entries.set(`<<"Intl", <<>>, "supportedValuesOf", <<${getUnitsOf(key)}>>>>`, answer);
+      }
+    }
   }
   if (words.has("toLocaleString") && literals.temporals.size > 0) {
     for (const [key, answer] of getTemporalEntries(literals)) entries.set(key, answer);

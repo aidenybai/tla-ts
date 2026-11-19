@@ -721,6 +721,90 @@ SegmenterClasses ==
   ("Segmenter.segment" :> "intlSegmenter") @@ ("Segments.containing" :> "intlSegments") @@
   ("Segments.iterator" :> "intlSegments") @@ ("SegmentIterator.next" :> "intlSegmentIterator")
 
+\* The units of Intl.DurationFormat (Table 20), each with its option, its display option, the styles
+\* it takes, and its digital default.
+DurationUnit(unit, key, display, styles, digital) == [unit |-> unit, key |-> key, display |-> display, styles |-> styles, digital |-> digital]
+DurationDateStyles == {N("long"), N("short"), N("narrow")}
+DurationUnits ==
+  <<DurationUnit("years", SV("years"), SV("yearsDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("months", SV("months"), SV("monthsDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("weeks", SV("weeks"), SV("weeksDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("days", SV("days"), SV("daysDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("hours", SV("hours"), SV("hoursDisplay"), DurationDateStyles \cup {N("numeric"), N("2-digit")}, N("numeric")),
+    DurationUnit("minutes", SV("minutes"), SV("minutesDisplay"), DurationDateStyles \cup {N("numeric"), N("2-digit")}, N("numeric")),
+    DurationUnit("seconds", SV("seconds"), SV("secondsDisplay"), DurationDateStyles \cup {N("numeric"), N("2-digit")}, N("numeric")),
+    DurationUnit("milliseconds", SV("milliseconds"), SV("millisecondsDisplay"), DurationDateStyles \cup {N("numeric")}, N("numeric")),
+    DurationUnit("microseconds", SV("microseconds"), SV("microsecondsDisplay"), DurationDateStyles \cup {N("numeric")}, N("numeric")),
+    DurationUnit("nanoseconds", SV("nanoseconds"), SV("nanosecondsDisplay"), DurationDateStyles \cup {N("numeric")}, N("numeric"))>>
+
+\* GetDurationUnitOptions (§13.5.6) of each unit from the ith on, with the previous unit's style,
+\* appending to acc the style and the display that the options give, or Empty. It leaves out the
+\* two-digit hours of a locale's digital format, which only HostIntl knows.
+DurationUnitOptionsFrom(s, options, base, i, prev, acc) ==
+  IF i > Len(DurationUnits) THEN Ok(s, acc) ELSE
+  LET u == DurationUnits[i]
+      given == GetStringOption(s, options, u.key, u.styles, Empty)
+  IN IF IsAbrupt(given) THEN given ELSE
+  LET g == Val(given)
+      isTime == u.unit \in {"hours", "minutes", "seconds"}
+      isMinuteOrSecond == u.unit \in {"minutes", "seconds"}
+      first == CASE g # Empty -> [style |-> g, display |-> N("always")]
+                 [] base = N("digital") -> [style |-> u.digital, display |-> IF isTime THEN N("always") ELSE N("auto")]
+                 [] prev \in {N("fractional"), N("numeric"), N("2-digit")} ->
+                      [style |-> N("numeric"), display |-> IF isMinuteOrSecond THEN N("always") ELSE N("auto")]
+                 [] OTHER -> [style |-> base, display |-> N("auto")]
+      chosen == IF first.style = N("numeric") /\ u.unit \in {"milliseconds", "microseconds", "nanoseconds"}
+                THEN [style |-> N("fractional"), display |-> N("auto")] ELSE first
+      read == GetStringOption(given.s, options, u.display, {N("auto"), N("always")}, Empty)
+  IN IF IsAbrupt(read) THEN read ELSE
+  LET display == IF Val(read) = Empty THEN chosen.display ELSE Val(read)
+      style == IF isMinuteOrSecond /\ prev \in {N("numeric"), N("2-digit")} THEN N("2-digit") ELSE chosen.style
+  IN CASE display = N("always") /\ chosen.style = N("fractional") -> ThrowError(read.s, "RangeError")
+       [] prev = N("fractional") /\ chosen.style # N("fractional") -> ThrowError(read.s, "RangeError")
+       [] prev \in {N("numeric"), N("2-digit")} /\ chosen.style \notin {N("fractional"), N("numeric"), N("2-digit")} ->
+            ThrowError(read.s, "RangeError")
+       [] OTHER ->
+            DurationUnitOptionsFrom(read.s, options, base, i + 1,
+                                    IF u.unit \in {"hours", "minutes", "seconds", "milliseconds", "microseconds"} THEN style ELSE prev,
+                                    acc \o <<g, Val(read)>>)
+
+\* The constructor of Intl.DurationFormat (§13.1.1), whose object holds its requested locales and the
+\* options it read, and which constructs where HostIntl's answer for them does.
+DurationFormatConstruct(s, newTarget, locales, options) ==
+  LET o == OrdinaryCreateFromConstructor(s, newTarget, "IntlDurationFormatPrototype", "intlDurationFormat",
+                                         [locales |-> <<>>, options |-> Empty]) IN IF IsAbrupt(o) THEN o ELSE
+  LET requested == CanonicalizeLocaleList(o.s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET opts == CASE options = Undefined -> OrdinaryObjectCreate(requested.s, Null)
+                [] IsObject(options) -> Ok(requested.s, options)
+                [] OTHER -> ThrowTypeError(requested.s)
+  IN IF IsAbrupt(opts) THEN opts ELSE
+  LET matcher == GetStringOption(opts.s, Val(opts), SV("localeMatcher"), {N("lookup"), N("best fit")}, N("best fit")) IN
+  IF IsAbrupt(matcher) THEN matcher ELSE
+  LET nu == GetAnyStringOption(matcher.s, Val(opts), SV("numberingSystem")) IN IF IsAbrupt(nu) THEN nu
+  ELSE IF Val(nu) # Empty /\ ~IsTypeSequenceFrom(Val(nu), 1, 0) THEN ThrowError(nu.s, "RangeError") ELSE
+  LET style == GetStringOption(nu.s, Val(opts), SV("style"), {N("long"), N("short"), N("narrow"), N("digital")}, N("short")) IN
+  IF IsAbrupt(style) THEN style ELSE
+  LET units == DurationUnitOptionsFrom(style.s, Val(opts), Val(style), 1, <<>>, <<>>) IN IF IsAbrupt(units) THEN units ELSE
+  LET digits == GetNumberOption(units.s, Val(opts), SV("fractionalDigits"), 0, 9, Empty) IN IF IsAbrupt(digits) THEN digits ELSE
+  LET config == <<Val(requested), Val(matcher), Val(nu), Val(style), Val(units), Val(digits)>>
+      answer == IntlAnswer(digits.s, "DurationFormat", config, "construct", <<>>)
+  IN IF IsAbrupt(answer) THEN answer ELSE Ok(SetSlots(answer.s, Val(o), [locales |-> Val(requested), options |-> config]), Val(o))
+
+\* The methods of an Intl.DurationFormat, df: ToDurationRecord, as Temporal reads a duration, whose
+\* fields' units key HostIntl's entries.
+DurationFormatMethods ==
+  {"DurationFormat.resolvedOptions", "DurationFormat.format", "DurationFormat.formatToParts"}
+DurationFormatMethod(s, m, df, args) ==
+  LET config == O(s, df).slots.options IN
+  IF m = "DurationFormat.resolvedOptions" THEN
+    LET answer == IntlAnswer(s, "DurationFormat", config, "resolvedOptions", <<>>) IN
+    IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "resolvedOptions", Val(answer))
+  ELSE IF ~IsObject(Arg(args, 1)) /\ ~IsString(Arg(args, 1)) THEN ThrowTypeError(s) ELSE
+  LET f == ToTemporalDurationFields(s, Arg(args, 1)) IN IF IsAbrupt(f) THEN f ELSE
+  LET method == IF m = "DurationFormat.format" THEN "format" ELSE "formatToParts"
+      answer == IntlAnswer(f.s, "DurationFormat", config, "formatToParts", <<<<"duration", [i \in 1..10 |-> TIUnits(Val(f)[i])]>>>>)
+  IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+
 IntlIntrinsics ==
   <<
      IntrinsicObject("Intl", "ObjectPrototype", "ordinary", [none |-> TRUE]),
@@ -851,6 +935,7 @@ IntlBuiltin(s, f, m, this, args, nt) ==
   CASE m \in IntlConstructors ->
          IF nt = Undefined /\ m \notin IntlCallableConstructors THEN ThrowTypeError(s)
          ELSE IF m = "Locale" THEN LocaleConstruct(s, nt, Arg(args, 1), Arg(args, 2))
+         ELSE IF m = "DurationFormat" THEN DurationFormatConstruct(s, nt, Arg(args, 1), Arg(args, 2))
          ELSE IF m \in DOMAIN IntlConstructorOptions \cup {"NumberFormat", "PluralRules"} THEN
            LET o == IF m = "NumberFormat" THEN NumberFormatConstruct(s, IF nt = Undefined THEN f ELSE nt, Arg(args, 1), Arg(args, 2))
                     ELSE IF m = "PluralRules" THEN PluralRulesConstruct(s, nt, Arg(args, 1), Arg(args, 2))
@@ -869,7 +954,8 @@ IntlBuiltin(s, f, m, this, args, nt) ==
          LET key == ToStr(s, Arg(args, 1)) IN IF IsAbrupt(key) THEN key
          ELSE IF Val(key).value \notin {N("calendar"), N("collation"), N("currency"), N("numberingSystem"), N("timeZone"), N("unit")}
          THEN ThrowError(key.s, "RangeError")
-         ELSE Unsupported(key.s, N("Unsupported: the values that the host supports"))
+         ELSE LET answer == IntlAnswer(key.s, "Intl", <<>>, "supportedValuesOf", <<Val(key).value>>) IN
+              IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "supportedValuesOf", Val(answer))
     [] m \in IntlSupportedLocalesOf ->
          LET list == CanonicalizeLocaleList(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list
          ELSE FilterLocales(list.s, IntlServiceOf(m), Val(list), Arg(args, 2))
@@ -878,6 +964,7 @@ IntlBuiltin(s, f, m, this, args, nt) ==
     [] m \in DOMAIN SegmenterClasses ->
          IF IsObject(this) /\ O(s, this).class = SegmenterClasses[m] THEN SegmenterMethod(s, m, this, args) ELSE ThrowTypeError(s)
     [] m = "DateTimeFormat.boundFormat" -> DateTimeFormatMethod(s, m, O(s, f).slots.data, args)
+    [] m \in DurationFormatMethods /\ IsObject(this) /\ O(s, this).class = "intlDurationFormat" -> DurationFormatMethod(s, m, this, args)
     [] m \in DateTimeFormatMethods /\ IsObject(this) /\ O(s, this).class = "intlDateTimeFormat" -> DateTimeFormatMethod(s, m, this, args)
     [] m \in LocaleMethods /\ IsObject(this) /\ O(s, this).class = "intlLocale" -> LocaleMethod(s, m, this)
     [] m \in IntlHostMethods /\ IsObject(this) /\ O(s, this).class = "intl" \o IntlMethodServices[m] -> IntlHostMethod(s, m, this, args)

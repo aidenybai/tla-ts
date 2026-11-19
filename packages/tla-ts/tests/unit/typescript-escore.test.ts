@@ -1041,22 +1041,30 @@ describe("compiles scripts by specializing ESCore", () => {
       } catch (caught) {
         error = (caught as Error).name;
       }
+      try {
+        new Intl.DurationFormat("en", { hours: "numeric", minutes: "long" });
+      } catch (caught) {
+        error += (caught as Error).name;
+      }
       const result = [
         date.toLocaleString("de-AT", { dateStyle: "long" }),
         new Intl.DateTimeFormat("en-US", { dateStyle: "short" }).format(date),
         Temporal.Instant.fromEpochMilliseconds(0).toLocaleString("en-US", { timeZone: "UTC", timeStyle: "short" }),
+        new Intl.DurationFormat("en", { style: "long" }).format({ hours: 1, minutes: 2 }),
+        Intl.supportedValuesOf("calendar").includes("chinese"),
         error,
       ].join("|");
       if (result !== "${expected}") throw new Error(result);
     `;
 
       it("agrees with Node", async () => {
-        const expected = "4. August 2021|8/4/21|12:00 AM|TypeError";
+        const expected =
+          "4. August 2021|8/4/21|12:00 AM|1 hour, 2 minutes|true|TypeErrorRangeError";
         expect((await checkScript(getSource(expected))).message).toBeUndefined();
       });
 
       it("rejects another result", async () => {
-        const expected = "4. August 2021|8/4/21|12:00 PM|TypeError";
+        const expected = "4. August 2021|8/4/21|12:00 AM|1 hour, 2 minute|true|TypeErrorRangeError";
         expect((await checkScript(getSource(expected))).message).toContain(THREW);
       });
 
@@ -1114,8 +1122,9 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource(expected))).message).toContain(THREW);
     });
 
-    it("stops at a constructor whose options it leaves out", async () => {
-      expect((await checkScript("new Intl.DurationFormat();")).message).toContain("tla-ts can't");
+    it("stops at a constructor whose options the host's table leaves out", async () => {
+      const source = 'new Intl.DurationFormat("en", { numberingSystem: ["ar", "ab"].join("") });';
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
 
     it("stops at a locale that the program doesn't write", async () => {
