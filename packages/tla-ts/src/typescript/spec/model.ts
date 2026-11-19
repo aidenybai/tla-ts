@@ -1024,9 +1024,8 @@ export const compileModelToEscore = (
     set: printExpression(rewriteGuards(choice.domain)),
   }));
   // As compileToEscore runs a script's jobs and timers, a step runs the ones a call leaves.
-  const settle = isAsync
-    ? "ModelSettle(r) == LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE [t EXCEPT !.c = r.c]"
-    : "ModelSettle(r) == r";
+  const settle =
+    "ModelSettle(r) == LET t == SettleJobs(r.s) IN IF IsAbrupt(t) THEN t ELSE [t EXCEPT !.c = r.c]";
   // The module's top level reads each state variable that starts at every value of its type, at
   // its declaration, from the global $tlaTsInitial, which the initial state's choice holds before
   // the module runs, and which the module deletes as it ends.

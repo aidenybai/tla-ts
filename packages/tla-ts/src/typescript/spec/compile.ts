@@ -577,6 +577,15 @@ export const compileToEscore = (
                     : "RunProgram(s) == Program(s)",
         },
         {
+          name: "SettleJobs",
+          arity: 1,
+          // The jobs, the rejections, and the timers that a model's call leaves, which a program
+          // that queues none has none of.
+          text: isQueuing
+            ? `SettleJobs(s) == ${runJobs.replaceAll("p.s", "s")} RunTimers(u.s)`
+            : "SettleJobs(s) == Ok(s, Undefined)",
+        },
+        {
           name: "CallBuiltin",
           arity: 6,
           text: getCallBuiltin(

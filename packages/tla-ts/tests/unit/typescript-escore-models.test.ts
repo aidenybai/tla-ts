@@ -150,6 +150,21 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // A step settles the jobs that its program queues, which a program that names then only in a
+  // comment queues none of.
+  describe("settles a step of a program that queues no jobs", () => {
+    const getSource = (limit: number) =>
+      `// Each step then counts one more.\nlet count = 0;\nexport const step = () => {\n  if (count < 2) count++;\n};\nexport const isSmall = () => count < ${limit};\n`;
+
+    it("agrees with Node", async () => {
+      expect(getCounts(await checkModel(getSource(3)))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("rejects another result", async () => {
+      expect(getCounts(await checkModel(getSource(2)))).toEqual(["invariant-violation", 3, 3]);
+    });
+  });
+
   // A model that imports a file runs as an ES module, with the module it imports beside it.
   describe("checks the exported functions of a model that imports a file", () => {
     const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-plan-"));
