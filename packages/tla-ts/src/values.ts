@@ -2093,13 +2093,13 @@ export const getSequenceElements = (value: Value): Value[] | undefined => {
     );
   }
   const functionValue = toFiniteFunction(value);
-  // A tuple's domain is 1..n, as TLC's TupleValue's is, so only another function's domain needs a
-  // look, which takes as long as the function is.
-  return getFunctionClass(functionValue) === "tuple" ||
-    functionValue.domain.every((key, index) => key === index + 1)
-    ? functionValue.range
-    : undefined;
+  return isSequenceDomain(functionValue.domain) ? functionValue.range : undefined;
 };
+
+// A function's domain is sorted and of values that compare with each other, so one that starts at 1
+// and ends at its length holds only integers, each once, and is 1..n.
+const isSequenceDomain = (domain: Value[]) =>
+  domain.length === 0 || (domain[0] === 1 && domain[domain.length - 1] === domain.length);
 
 const describeNonSetMembership = (element: Value, value: Value) => {
   const prefix = `Attempted to check if the value:\n${formatValue(element)}\nis an element of the`;
@@ -3050,7 +3050,7 @@ export const formatValue = (value: Value, isStrict = false, isNormalized = false
       const formatRange = (inner: Value) =>
         formatValue(inner, isStrict, isNormalized && getFunctionClass(value) !== "lambda");
       if (functionValue.domain.length === 0 && getFunctionClass(value) === "record") return "[]";
-      if (functionValue.domain.every((key, index) => key === index + 1)) {
+      if (isSequenceDomain(functionValue.domain)) {
         return `<<${functionValue.range.map(formatRange).join(", ")}>>`;
       }
       const pairs = isNormalized

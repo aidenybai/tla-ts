@@ -391,6 +391,8 @@ export const createFileResolver = (path: string) => {
   const project = getProject(path);
   const options = project === undefined ? COMPILER_OPTIONS : getProjectOptions(project.options);
   const host = ts.createCompilerHost(options);
+  // A JSON file, which tla-ts reads TypeScript's resolution of as no module, is the one that Node
+  // loads.
   return (literal: ts.StringLiteralLike) =>
     resolveLiteral(
       literal,
@@ -400,7 +402,10 @@ export const createFileResolver = (path: string) => {
       options,
       host,
       undefined,
-    ).module.resolvedModule?.resolvedFileName;
+    ).module.resolvedModule?.resolvedFileName ??
+    [resolveModule(literal, literal.getSourceFile().fileName)].find((path) =>
+      path?.endsWith(".json"),
+    );
 };
 
 // Type checks a model, with the files it imports, and throws their type errors. A file of a project

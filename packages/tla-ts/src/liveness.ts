@@ -234,6 +234,13 @@ export const getLevel = (
   return levels.level === CONSTANT_LEVEL ? levels.bound : levels.level;
 };
 
+// As TLC levels a conjunct of a spec or a property, which SpecProcessor reads by getLevelBound.
+export const getLevelBound = (
+  expression: Expression,
+  scope: Scope | undefined,
+  environment: Environment,
+): number => getLevels(expression, scope, environment, new Set(), new Set()).bound;
+
 const getUnrolledElements = (bounds: Bound[], context: Context) => {
   try {
     return getBoundElements(bounds, context);

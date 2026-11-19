@@ -8,6 +8,11 @@ import { TIME_ZONES } from "../time-zones";
 // length, sourceText] that its function object holds as its body, and CallCode, which the
 // compile generates, runs the body of the code with an id.
 const DEFINITIONS = [
+  // SetO and SetE, which record whether a write reached an object or an environment that existed
+  // as a model's step started, below the state's writeMark, as written: a step that writes none
+  // changes nothing, as JavaScript sees it, and a model takes no step there. A script's mark is 0.
+  `SetO(s, v, o) == [s EXCEPT !.objs = HeapSet(@, v.id, o), !.written = @ \\/ v.id <= s.writeMark.objects]`,
+  `SetE(s, e, env) == [s EXCEPT !.envs = HeapSet(@, e, env), !.written = @ \\/ e <= s.writeMark.environments]`,
   `CodeFunctionCreate(s, proto, code, isLexicalThis, env, priv) ==
   LET thisMode == IF isLexicalThis THEN "lexical" ELSE IF code.strict THEN "strict" ELSE "global"
       o == PutProp(MakeObject(proto, "function",
@@ -49,6 +54,9 @@ const DEFINITIONS = [
                      o.class = "promise" /\\ o.slots.state = "rejected" /\\ ~o.slots.isHandled}
   IN IF rejected = {} THEN Ok(s, Undefined)
      ELSE ThrowValue(s, HeapGet(s.objs, CHOOSE i \\in rejected : \\A j \\in rejected : i <= j).slots.result)`,
+  // A throw of the reason of a rejected promise, which the host handles, as it throws it instead.
+  `ThrowRejection(s, promise) ==
+  ThrowValue(SetSlots(s, promise, [isHandled |-> TRUE]), Slots(s, promise).result)`,
   // The timers a program set, each a task of its own after the jobs before it ran, as Node runs
   // timers of no delay.
   `RunTimers(s) ==
@@ -136,12 +144,35 @@ const DEFINITIONS = [
   `ModuleRequestPhases(node) == node.phases`,
   // HostLoadImportedModule (§16.2.1.10) for a program's host, which loads the module of the file
   // that the referrer's request names, made the first time the host loads it in the realm.
+  // Node loads a JSON file only for a request of type json, and loads no other file for one, which
+  // it rejects with a TypeError.
   `HostLoadModuleFrom(s, referrer, request) ==
-  LoadModuleNode(s, ModuleNode(ModuleAt(s, referrer).node.targets[request.specifier]))`,
+  LET node == ModuleNode(ModuleAt(s, referrer).node.targets[request.specifier])
+      type == IF N("type") \\in DOMAIN request.attributes THEN request.attributes[N("type")] ELSE <<>>
+  IN IF (node.kind = "json") # (type = N("json")) \\/ type \\notin {<<>>, N("json")} THEN ThrowTypeError(s)
+     ELSE LoadModuleNode(s, node)`,
+  // The exports of a JSON file, which Node's CommonJS loader and its ESM loader share: the value of
+  // its JSON, the first time either loads it, made a loaded module of the CommonJS cache.
+  `JsonExports(s, node) ==
+  IF node.file \\in DOMAIN s.required THEN Get(s, s.required[node.file].module, SV("exports"))
+  ELSE IF ~node.isValid THEN Assert(FALSE, "tla-ts can't load a JSON file that JSON.parse rejects, whose error Node names the file in")
+  ELSE LET v == JSONParse(s, Str(node.text), Undefined) IN
+  IF IsAbrupt(v) THEN v ELSE
+  LET module == OrdinaryObjectCreate(v.s, Intrinsic(v.s, "ObjectPrototype"))
+      made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(v))
+  IN Ok([made.s EXCEPT !.required = (node.file :> [module |-> Val(module), loaded |-> TRUE]) @@ @], Val(v))`,
   // A CommonJS module that an ES module imports is a Synthetic Module Record whose default export
-  // is the module's exports, as Node's ModuleWrap for it gives them.
+  // is the module's exports, as Node's ModuleWrap for it gives them. An ES module with an early
+  // error throws a SyntaxError, as Node's parse of it does.
   `LoadModuleNode(s, node) ==
   IF <<s.realmId, node.file>> \\in DOMAIN s.moduleIds THEN Ok(s, s.moduleIds[<<s.realmId, node.file>>])
+  ELSE IF node.kind = "rejected" THEN ThrowError(s, "SyntaxError")
+  ELSE IF node.kind = "json" THEN
+    LET exports == JsonExports(s, node) IN
+    IF IsAbrupt(exports) THEN exports ELSE
+    LET m == Len(exports.s.modules) + 1
+        record == ModuleRecord("synthetic", None, Val(exports), <<>>, <<>>, FALSE, <<>>, <<>>, <<>>, <<>>)
+    IN Ok([exports.s EXCEPT !.modules = Append(@, record), !.moduleIds = (<<s.realmId, node.file>> :> m) @@ @], m)
   ELSE LET m == Len(s.modules) + 1
            record == IF node.kind = "commonjs"
                      THEN ModuleRecord("synthetic", node, Undefined, <<>>, <<>>, FALSE, <<>>, <<>>, <<>>, <<>>)
@@ -155,29 +186,66 @@ const DEFINITIONS = [
   CASE rec.node = None -> Ok(SyntheticEvaluate(s, m), value)
     [] rec.status = "evaluated" -> IF rec.error = Empty THEN Ok(s, value) ELSE ThrowValue(s, rec.error)
     [] OTHER ->
-         LET r == RequireFile(s, rec.node.file) IN
-         IF IsAbrupt(r) THEN Abrupt(SetModule(r.s, m, [status |-> "evaluated", error |-> r.c.value]), r.c)
-         ELSE Ok(SetModule(SetMutableBinding(r.s, rec.env, N("default"), Val(r), TRUE).s, m, [status |-> "evaluated"]), value)`,
+         LET r == RequireFile(s, rec.node.file)
+             set == IF IsAbrupt(r) THEN r ELSE SetCommonJsExports(r.s, rec.env, Val(r), rec.node.exportNames)
+         IN IF IsAbrupt(set) THEN Abrupt(SetModule(set.s, m, [status |-> "evaluated", error |-> set.c.value]), set.c)
+            ELSE Ok(SetModule(set.s, m, [status |-> "evaluated"]), value)`,
+  // The evaluation steps of Node's ModuleWrap of a CommonJS module (createCJSModuleWrap in
+  // lib/internal/modules/esm/translators.js): each name its lexer found that the exports have as
+  // their own, bound to its value, or undefined where reading it throws, then default and
+  // module.exports bound to the exports.
+  `SetCommonJsExports(s, env, exports, names) ==
+  IF names = <<>> THEN Ok(s, Empty) ELSE
+  LET name == Head(names) IN
+  IF name \\in {N("default"), N("module.exports")}
+  THEN SetCommonJsExports(SetMutableBinding(s, env, name, exports, TRUE).s, env, exports, Tail(names))
+  ELSE LET o == ToObject(s, exports) IN
+       IF IsAbrupt(o) THEN o ELSE
+       LET own == HasOwnProperty(o.s, Val(o), Str(name)) IN
+       IF IsAbrupt(own) THEN own
+       ELSE IF Val(own) = False THEN SetCommonJsExports(own.s, env, exports, Tail(names)) ELSE
+       LET v == Get(own.s, Val(o), Str(name))
+           bound == IF IsAbrupt(v) THEN SetMutableBinding(v.s, env, name, Undefined, TRUE)
+                    ELSE SetMutableBinding(v.s, env, name, Val(v), TRUE)
+       IN SetCommonJsExports(bound.s, env, exports, Tail(names))`,
+  // The bindings of a Synthetic Module Record's export names, undefined until it evaluates.
+  `BindExportNames(s, env, names) ==
+  IF names = <<>> THEN s ELSE
+  BindExportNames(InitializeBinding(CreateMutableBinding(s, env, Head(names), FALSE).s, env, Head(names), Undefined).s, env, Tail(names))`,
+  // The names that a Synthetic Module Record exports: a CommonJS module's, which Node's lexer finds,
+  // and default.
+  `SyntheticExportNames(rec) == IF rec.node = None THEN <<N("default")>> ELSE rec.node.exportNames`,
   // RunModule for a program whose code is a module, as the host runs its entry: the module loaded,
   // linked, and evaluated, with the promise of its evaluation as the result's value.
   `RunModuleNode(s, node) ==
   LET loaded == LoadModuleNode(s, node)
       loading == LoadRequestedModules(loaded.s, Val(loaded))
-  IN IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowValue(loading.s, Slots(loading.s, Val(loading)).result) ELSE
+  IN IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowRejection(loading.s, Val(loading)) ELSE
      LET link == ModuleLink(loading.s, Val(loaded)) IN
      IF IsAbrupt(link) THEN link ELSE ModuleEvaluate(link.s, Val(loaded))`,
   // Module._load of Node's CommonJS loader (lib/internal/modules/cjs/loader.js) for a file of the
   // program, which require calls: the exports of the module, whose code runs the first time, in
   // the function Node wraps it in, with this as its exports; and, for a module whose code still
   // runs, its exports so far. The state's required holds each module object and whether its code
-  // ran, and forgets a module whose code threw. Node's require is a function that new constructs
+  // ran, and forgets a module whose code threw. A module with an early error throws a SyntaxError,
+  // as Node's compile of it does. Node's require is a function that new constructs
   // too, which the proxy of it stops at.
   `RequireFile(s, id) ==
   IF id \\in DOMAIN s.required THEN
     LET exports == Get(s, s.required[id].module, SV("exports")) IN
-    IF IsAbrupt(exports) \\/ s.required[id].loaded THEN exports ELSE CircularExports(exports.s, Val(exports))
+    IF IsAbrupt(exports) \\/ s.required[id].loaded THEN exports
+    ELSE IF ModuleNode(id).kind = "module" THEN Assert(FALSE, "tla-ts can't require an ES module in a cycle, where Node throws")
+    ELSE CircularExports(exports.s, Val(exports))
   ELSE LET node == ModuleNode(id) IN
-  IF node.kind # "commonjs" THEN Assert(FALSE, "tla-ts can't require an ES module yet") ELSE
+  IF node.kind = "json" THEN JsonExports(s, node) ELSE
+  IF node.kind = "rejected" \\/ (node.kind = "commonjs" /\\ node.code = None) THEN ThrowError(s, "SyntaxError") ELSE
+  IF node.kind = "module" THEN
+    LET module == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+        r == RequireEsm([module.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE]) @@ @], node)
+        made == IF IsAbrupt(r) THEN r ELSE CreateDataProperty(r.s, Val(module), SV("exports"), Val(r))
+    IN IF IsAbrupt(made) THEN Abrupt([made.s EXCEPT !.required = [i \\in DOMAIN @ \\ {id} |-> @[i]]], made.c)
+       ELSE Ok([made.s EXCEPT !.required[id].loaded = TRUE], Val(r))
+  ELSE
   LET exports == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
       module == OrdinaryObjectCreate(exports.s, Intrinsic(exports.s, "ObjectPrototype"))
       made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(exports))
@@ -192,6 +260,89 @@ const DEFINITIONS = [
                 <<Val(exports), Val(requireProxy), Val(moduleProxy), Str(node.filename), Str(node.dirname)>>)
   IN IF IsAbrupt(r) THEN Abrupt([r.s EXCEPT !.required = [i \\in DOMAIN @ \\ {id} |-> @[i]]], r.c)
      ELSE Get([r.s EXCEPT !.required[id].loaded = TRUE], Val(module), SV("exports"))`,
+  // require of an ES module, as Node's loaders run it (loadESMFromCJS, importSyncForRequire and
+  // populateCJSExportsFromESM): the module loaded, linked, and evaluated at once, which a graph that
+  // awaits at its top level can't be, where Node throws, and its exports: its export named
+  // module.exports, or its namespace, or, where it exports a default and no __esModule, the
+  // namespace of its facade, which exports its names, its default, and __esModule as true.
+  `RequireEsm(s, node) ==
+  LET loaded == LoadModuleNode(s, node) IN
+  IF IsAbrupt(loaded) THEN loaded ELSE
+  LET m == Val(loaded) IN
+  IF ModuleAt(loaded.s, m).status \\in {"evaluating", "evaluating-async"}
+  THEN Assert(FALSE, "tla-ts can't require an ES module in a cycle, where Node throws") ELSE
+  LET evaluated == EvaluateNow(loaded.s, m) IN
+  IF IsAbrupt(evaluated) THEN evaluated ELSE
+  LET ns == GetModuleNamespace(evaluated.s, m, FALSE)
+      whole == HasOwnProperty(ns.s, Val(ns), SV("module.exports"))
+      default == IF IsAbrupt(whole) THEN whole ELSE HasOwnProperty(whole.s, Val(ns), SV("default"))
+      esModule == IF IsAbrupt(default) THEN default ELSE HasOwnProperty(default.s, Val(ns), SV("__esModule"))
+  IN CASE IsAbrupt(esModule) -> esModule
+       [] Val(whole) = True -> Get(esModule.s, Val(ns), SV("module.exports"))
+       [] Val(default) = False \\/ Val(esModule) = True -> Ok(esModule.s, Val(ns))
+       [] node.facade = 0 -> Assert(FALSE, "tla-ts can't make the facade of an ES module that Node gives a require of it")
+       [] OTHER ->
+            LET facade == LoadModuleNode(esModule.s, ModuleNode(node.facade))
+                done == IF IsAbrupt(facade) THEN facade ELSE EvaluateNow(facade.s, Val(facade))
+            IN IF IsAbrupt(done) THEN done ELSE GetModuleNamespace(done.s, Val(facade), FALSE)`,
+  // A module loaded, linked, and evaluated at once, as Node's ModuleJobSync runs it for a require,
+  // which throws what the evaluation threw. A graph that awaits at its top level stops, where Node
+  // throws.
+  `EvaluateNow(s, m) ==
+  LET loading == LoadRequestedModules(s, m) IN
+  IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowRejection(loading.s, Val(loading)) ELSE
+  LET link == ModuleLink(loading.s, m) IN
+  IF IsAbrupt(link) THEN link
+  ELSE IF IsAsyncGraph(link.s, <<m>>, {}) THEN Assert(FALSE, "tla-ts can't require an ES module that awaits at its top level, where Node throws") ELSE
+  LET promise == ModuleEvaluate(link.s, m) IN
+  IF Slots(promise.s, Val(promise)).state = "rejected" THEN ThrowRejection(promise.s, Val(promise))
+  ELSE Ok(promise.s, Empty)`,
+  // Whether a module or one that it requests, of the modules given and those they request, awaits at
+  // its top level (IsGraphAsync of V8's modules).
+  `IsAsyncGraph(s, modules, seen) ==
+  IF modules = <<>> THEN FALSE ELSE
+  LET m == Head(modules) rec == ModuleAt(s, m) IN
+  IF m \\in seen \\/ rec.kind # "source" THEN IsAsyncGraph(s, Tail(modules), seen \\cup {m})
+  ELSE rec.hasTLA \\/ IsAsyncGraph(s, Tail(modules) \\o MapSeq(rec.requests, LAMBDA r : rec.loaded[r]), seen \\cup {m})`,
+  // The host's code for import(), NODE_IMPORT's function, called with the host's functions that it
+  // takes, whose result the state keeps as the function that import() calls.
+  `SetupHostImport(s, id) ==
+  LET f == CodeFunctionCreate(s, Intrinsic(s, "FunctionPrototype"), ModuleNode(id).code, FALSE, s.globalEnv, NoPrivateEnvironment)
+      fns == HostImportFunctions(f.s, <<"hostLoad", "hostDependencies", "hostIsInstantiated", "hostInstantiate", "hostEvaluate", "hostNamespace">>, <<>>)
+      r == Call(fns.s, f.v, Undefined, fns.v)
+  IN IF IsAbrupt(r) THEN r ELSE Ok([r.s EXCEPT !.hostImport = Val(r)], Empty)`,
+  `HostImportFunctions(s, methods, acc) ==
+  IF methods = <<>> THEN [s |-> s, v |-> acc] ELSE
+  LET f == CreateBuiltinFunction(s, <<"Module", Head(methods)>>, 0, <<>>, Empty) IN
+  HostImportFunctions(f.s, Tail(methods), Append(acc, Val(f)))`,
+  // EvaluateImportCall (§13.3.10.2) as V8 runs it, once the call's specifier and options are
+  // evaluated: the specifier as a string and the options' attributes, a throw of either rejecting
+  // the call's promise, then the call's promise resolved with the promise of the host's code for
+  // import(), with the file of the code that calls it, so that it settles a job after the host's,
+  // as the order of Node's jobs shows.
+  `HostImportCall(s, file, specifier, options) ==
+  LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise"))
+      str == ToStr(cap.s, specifier)
+      attributes == IF IsAbrupt(str) THEN str ELSE NodeImportAttributes(str.s, options)
+  IN IF IsAbrupt(attributes) THEN RejectWith(attributes, Val(cap)) ELSE
+  LET host == Call(attributes.s, s.hostImport, Undefined,
+                   <<Val(str), IntV(file), IF N("type") \\in DOMAIN Val(attributes) THEN Str(Val(attributes)[N("type")]) ELSE Undefined>>)
+      resolved == IF IsAbrupt(host) THEN host ELSE Call(host.s, Val(cap).resolve, Undefined, <<Val(host)>>)
+  IN IF IsAbrupt(resolved) THEN resolved ELSE Ok(resolved.s, Val(cap).promise)`,
+  // The attributes of import()'s options, as V8 reads them, where each is type, which Node's loader
+  // supports and rejects others of later.
+  `NodeImportAttributes(s, options) ==
+  IF options = Undefined THEN Ok(s, NoAttributes)
+  ELSE IF ~IsObject(options) THEN ThrowTypeError(s) ELSE
+  LET with == Get(s, options, SV("with")) IN
+  IF IsAbrupt(with) \\/ Val(with) = Undefined THEN IF IsAbrupt(with) THEN with ELSE Ok(with.s, NoAttributes)
+  ELSE IF ~IsObject(Val(with)) THEN ThrowTypeError(with.s) ELSE
+  LET entries == EnumerableOwnProperties(with.s, Val(with), "pair")
+      pairs == Range(Val(entries))
+  IN IF IsAbrupt(entries) THEN entries
+     ELSE IF \\E pair \\in pairs : ~IsString(pair[2]) THEN ThrowTypeError(entries.s)
+     ELSE IF \\E pair \\in pairs : pair[1].value # N("type") THEN Assert(FALSE, "tla-ts can't import a module with an attribute other than type, which Node rejects later")
+     ELSE Ok(entries.s, [key \\in {pair[1].value : pair \\in pairs} |-> (CHOOSE pair \\in pairs : pair[1].value = key)[2].value])`,
   // getExportsForCircularRequire of Node's CommonJS loader, which gives the exports of a module
   // whose code still runs a prototype that warns of each property that it lacks, where they are
   // an object of Object.prototype that doesn't mark itself an ES module's.
@@ -376,6 +527,20 @@ export const getTlaString = (text: string) =>
   [...text].every((character) => CHARACTERS.has(character.charCodeAt(0)))
     ? `"${[...text].map((character) => CHARACTERS.get(character.charCodeAt(0))).join("")}"`
     : undefined;
+
+// A file's text as a TLA+ string of one character for each code unit, with "?" for each unit that a
+// string can't hold, and those units by their positions, from 1.
+export const getSourceString = (text: string) => {
+  const patches: number[][] = [];
+  // Every code unit but a printable one that a string spells as itself.
+  const spelled = text.replace(/[^\x20\x21\x23-\x5b\x5d-\x7e]/g, (character, index: number) => {
+    const unit = character.charCodeAt(0);
+    const spelling = CHARACTERS.get(unit);
+    if (spelling === undefined) patches.push([index + 1, unit]);
+    return spelling ?? "?";
+  });
+  return { text: `"${spelled}"`, patches };
+};
 
 export const RUNTIME_DEFINITIONS: GeneratedDefinition[] = [
   ...DEFINITIONS,
@@ -575,12 +740,42 @@ const HOST_PATCHES = [
     from: "EvaluateDisposing(then.s, ModuleContext(ModuleAt(s, m).env), ModuleItems(ModuleAt(s, m).node))",
     to: "RunBody(then.s, ModuleContext(ModuleAt(s, m).env), ModuleAt(s, m).node.body)",
   },
+  // A Synthetic Module Record that import() evaluates as the root of its graph evaluates as one
+  // that a graph does, and throws what its evaluation threw the first time, as V8's
+  // Module::Evaluate does, which gives a promise rejected with it after that.
+  {
+    name: "ModuleEvaluate",
+    from: `LET cap == NewPromiseCapability(SyntheticEvaluate(s, m0), Intrinsic(s, "Promise"))
+           resolved == Call(cap.s, Val(cap).resolve, Undefined, <<Undefined>>)
+       IN Ok(resolved.s, Val(cap).promise)`,
+    to: `LET evaluated == SyntheticEvaluateThen(s, m0, Empty)
+           cap == NewPromiseCapability(evaluated.s, Intrinsic(evaluated.s, "Promise"))
+           settled == IF IsAbrupt(evaluated) THEN Call(cap.s, Val(cap).reject, Undefined, <<evaluated.c.value>>)
+                      ELSE Call(cap.s, Val(cap).resolve, Undefined, <<Undefined>>)
+       IN IF IsAbrupt(evaluated) /\\ rec0.status # "evaluated" THEN evaluated ELSE Ok(settled.s, Val(cap).promise)`,
+  },
   // A Synthetic Module Record links once, as Node's does, so that a CommonJS module that a later
   // link reaches keeps its exports.
   {
     name: "SyntheticLink",
-    from: "SyntheticLink(s, m) ==\n",
-    to: "SyntheticLink(s, m) ==\n  IF ModuleAt(s, m).env # 0 THEN s ELSE\n",
+    from: `SyntheticLink(s, m) ==
+  LET env == NewModuleEnvironment(s, s.globalEnv, m)
+      created == CreateMutableBinding(env.s, env.e, N("default"), FALSE)
+  IN SetModule(InitializeBinding(created.s, env.e, N("default"), Undefined).s, m, [env |-> env.e])`,
+    to: `SyntheticLink(s, m) ==
+  IF ModuleAt(s, m).env # 0 THEN s ELSE
+  LET env == NewModuleEnvironment(s, s.globalEnv, m)
+  IN SetModule(BindExportNames(env.s, env.e, SyntheticExportNames(ModuleAt(s, m))), m, [env |-> env.e])`,
+  },
+  {
+    name: "GetExportedNames",
+    from: `CASE rec.kind = "synthetic" -> [names |-> <<N("default")>>, set |-> starSet]`,
+    to: `CASE rec.kind = "synthetic" -> [names |-> SyntheticExportNames(rec), set |-> starSet]`,
+  },
+  {
+    name: "ResolveExport",
+    from: `[result |-> IF name = N("default") THEN Resolved(m, name, FALSE, FALSE) ELSE NoResolution, set |-> resolveSet]`,
+    to: `[result |-> IF name \\in Range(SyntheticExportNames(rec)) THEN Resolved(m, name, FALSE, FALSE) ELSE NoResolution, set |-> resolveSet]`,
   },
   {
     name: "InnerModuleEvaluation",
@@ -621,6 +816,27 @@ const HOST_PATCHES = [
          IF ~IsObject(this) \\/ O(s, this).class # "proxy" \\/ O(s, O(s, this).slots.target).slots # [hostName |-> N("TextEncoder")]
          THEN HostStop(N("TextEncoder"))
          ELSE TextEncode(s, IF Arg(args, 1) = Undefined THEN EmptyStr ELSE Arg(args, 1))
+    [] m = "hostLoad" ->
+         LET referrer == ModuleNode(NumToSmallInt(Arg(args, 1).value))
+             specifier == Arg(args, 2).value
+         IN IF specifier \\notin DOMAIN referrer.targets THEN Assert(FALSE, "tla-ts can't import a module other than a file that a string names") ELSE
+         LET node == ModuleNode(referrer.targets[specifier]) IN
+         IF (node.kind = "json") # (Arg(args, 3) = SV("json")) \\/ Arg(args, 3) \\notin {Undefined, SV("json")}
+         THEN Assert(FALSE, "tla-ts can't import a module of another type than its attributes', where Node's error names it") ELSE
+         LET loaded == LoadModuleNode(s, node) IN
+         IF IsAbrupt(loaded) THEN loaded ELSE
+         LET loading == LoadRequestedModules(loaded.s, Val(loaded)) IN
+         IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowRejection(loading.s, Val(loading))
+         ELSE Ok(loading.s, IntV(Val(loaded)))
+    [] m = "hostDependencies" ->
+         LET rec == ModuleAt(s, NumToSmallInt(Arg(args, 1).value)) IN
+         CreateArrayFromList(s, IF rec.kind = "source" THEN MapSeq(rec.requests, LAMBDA r : IntV(rec.loaded[r])) ELSE <<>>)
+    [] m = "hostIsInstantiated" ->
+         LET rec == ModuleAt(s, NumToSmallInt(Arg(args, 1).value)) IN
+         Ok(s, Bool(IF rec.kind = "source" THEN rec.status \\in {"linked", "evaluating", "evaluating-async", "evaluated"} ELSE rec.env # 0))
+    [] m = "hostInstantiate" -> ResultThen(Undefined, ModuleLink(s, NumToSmallInt(Arg(args, 1).value)))
+    [] m = "hostEvaluate" -> ModuleEvaluate(s, NumToSmallInt(Arg(args, 1).value))
+    [] m = "hostNamespace" -> GetModuleNamespace(s, NumToSmallInt(Arg(args, 1).value), FALSE)
     [] m = "processGet" ->
          IF Arg(args, 2) \\notin {SV("getBuiltinModule"), SV("hrtime")} THEN HostStop(N("process")) ELSE Get(s, Arg(args, 1), Arg(args, 2))
     [] m = "getBuiltinModule" ->

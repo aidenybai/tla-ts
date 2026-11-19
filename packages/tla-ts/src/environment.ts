@@ -874,8 +874,9 @@ export const createEnvironment = (
       range: definition.location.range,
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
-    const getKey = (definition: Definition) =>
-      parsed === root ? definition.name : `${definition.name}${KEY_SEPARATOR}${scope.id}`;
+    const getNameKey = (name: string) =>
+      parsed === root ? name : `${name}${KEY_SEPARATOR}${scope.id}`;
+    const getKey = (definition: Definition) => getNameKey(definition.name);
     const instanced = new Map<Instance, Symbols>();
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
     const getLetModule = (instance: Instance) => {
@@ -993,6 +994,7 @@ export const createEnvironment = (
         ? undefined
         : checkPlainModule(parsed, {
             imported: visible,
+            getKey: getNameKey,
             getLevels: (name) => {
               if (RUNTIME_VARIABLES.includes(name)) return undefined;
               const key = visible.get(name)?.key ?? name;

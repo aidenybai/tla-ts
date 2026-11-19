@@ -19,6 +19,8 @@ import { LOCAL_RESOLUTION, type Symbols } from "./resolve";
 // undefined where a definition has none, a builtin's signature, or "declared" for another name.
 export interface PlainContext {
   imported: Symbols;
+  // The key of one of the module's own definitions, by its name.
+  getKey: (name: string) => string;
   getLevels: (name: string) => OperatorLevels | "declared" | undefined;
 }
 
@@ -58,7 +60,7 @@ export const checkPlainModule = (
   ) {
     return undefined;
   }
-  // An index for each parameter name, as a bit of a set of them.
+  // An index for each parameter name of the definition being walked, as a bit of a set of them.
   const bits = new Map<string, number>();
   const getBit = (name: string) => {
     const bit = bits.get(name) ?? bits.size;
@@ -70,6 +72,10 @@ export const checkPlainModule = (
   let isWide = false;
   // The levels of each definition so far, by its index in the module.
   const levels: OperatorLevels[] = [];
+  // The references to global names, each with the key of what it names, which it takes once the
+  // module proves plain, as a module that's resolved in full does. A reference by key reads its
+  // definition wherever the module is instantiated, where the definition's name isn't visible.
+  const references: [Expression & { kind: "Identifier" | "Apply" }, string][] = [];
   // The names that the definition being walked binds, innermost last.
   const locals: Local[] = [];
   // The lowest maximum level that the definition being walked puts on each parameter.
@@ -194,6 +200,10 @@ export const checkPlainModule = (
         }
         const resolved = resolveGlobal(name, args.length);
         if (resolved === undefined) return undefined;
+        references.push([
+          expression,
+          own.has(name) ? context.getKey(name) : (context.imported.get(name)?.key ?? name),
+        ]);
         return "bit" in resolved ? 1 << resolved.bit : walkAll(args, resolved, isInExcept);
       }
       case "And":
@@ -328,6 +338,7 @@ export const checkPlainModule = (
       return undefined;
     }
     locals.length = 0;
+    bits.clear();
     maxima.fill(TEMPORAL_LEVEL);
     for (const param of definition.params) {
       const bit = getBit(param.name);
@@ -360,6 +371,10 @@ export const checkPlainModule = (
     };
     own.set(definition.name, definitionLevels);
     levels.push(definitionLevels);
+  }
+  for (const reference of references) {
+    if (reference[0].kind === "Identifier") reference[0].name = reference[1];
+    else reference[0].operator = reference[1];
   }
   return { levels, isWide };
 };

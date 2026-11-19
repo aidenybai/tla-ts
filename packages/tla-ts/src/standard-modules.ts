@@ -1,3 +1,4 @@
+import { ESCORE_CANONICAL_OPERATORS } from "./escore-canonical";
 import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import {
   createModuleArgumentError,
@@ -576,6 +577,7 @@ export const getJavaOverrides = (
   evaluateReplaced: (name: string, args: BuiltinArgument[], context: Context | undefined) => Value,
 ) => {
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
+  if (name === "ESCanonical") return ESCORE_CANONICAL_OPERATORS;
   if (name === "AnySet") return [defineConstant("ANY", ANY_SET)];
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (name === "_TLCTrace") return createTlcTraceOperators(files);

@@ -32,7 +32,7 @@ const worker = new Worker(
   parentPort.on("message", async (spec) => {
     const loaded = await loading;
     try {
-      const compiled = loaded.compileToEscore(readFileSync(spec.path, "utf8"), spec.path, loaded.runtime, true);
+      const compiled = loaded.compileToEscore(readFileSync(spec.path, "utf8"), spec.path, loaded.runtime, spec.isModule);
       const result = await loaded.check({ ...compiled, workers: 1, onPrint: () => {} });
       parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message });
     } catch (error) {
@@ -68,7 +68,7 @@ beforeAll(() => ready, 60_000);
 // Checks a program whose entry is main.js, in a directory of its files, whose package makes each
 // JavaScript file an ES module unless the files give a package.json of their own, as Node runs
 // them.
-const checkModules = (files: Record<string, string>) => {
+const checkModules = (files: Record<string, string>, isModule = true) => {
   const directory = mkdtempSync(join(tmpdir(), "escore-modules-"));
   directories.push(directory);
   Object.entries({ "package.json": '{ "type": "module" }', ...files }).forEach((entry) => {
@@ -76,7 +76,7 @@ const checkModules = (files: Record<string, string>) => {
     writeFileSync(join(directory, entry[0]), entry[1]);
   });
   return new Promise<ModuleResult>((resolve) => {
-    worker.postMessage({ id: pending.length, path: join(directory, "main.js") });
+    worker.postMessage({ id: pending.length, path: join(directory, "main.js"), isModule });
     pending.push(resolve);
   });
 };
@@ -243,6 +243,153 @@ describe("compiles modules by specializing ESCore", () => {
       expect((await checkModules({ "main.js": "import.meta.url;" })).message).toContain(
         "tla-ts can't run the host's import.meta",
       );
+    });
+  });
+
+  describe("runs import() in the jobs that Node's loader takes", () => {
+    // A module that counts jobs as they run and logs when each import() settles.
+    const getImporting = (imports: string, expected: string) => ({
+      "main.js": `import "./static.js";
+        const log = [];
+        globalThis.order = log;
+        let tick = 0;
+        globalThis.tick = () => tick;
+        const spin = () => { if (tick < 40) { tick++; Promise.resolve().then(spin); } };
+        spin();
+        ${imports}
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+      "static.js": "export const s = 1;",
+      "fresh.js":
+        'export const f = 1; globalThis.order.push("body@" + globalThis.tick()); Promise.resolve().then(() => globalThis.order.push("job@" + globalThis.tick()));',
+      "deep.js": 'import "./leaf.js"; export const deep = 1;',
+      "leaf.js": "export const leaf = 1;",
+      "throws.js": 'throw new Error("bad");',
+      "counter.cjs": "exports.count = 1;",
+      "throws.cjs": 'throw new Error("cjs bad");',
+    });
+    const imports = `import("./static.js").then(() => log.push("static@" + tick));
+      import("./fresh.js").then((ns) => log.push("fresh@" + tick + ":" + Object.keys(ns)));
+      import("./deep.js").then(() => log.push("deep@" + tick));
+      import("./counter.cjs").then((ns) => log.push("cjs@" + tick + ":" + ns.count));
+      import("./throws.js").catch((error) => log.push("rejected@" + tick + ":" + error.message));
+      import("./throws.cjs").catch((error) => log.push("cjs rejected@" + tick + ":" + error.message));`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModules(
+            getImporting(
+              imports,
+              "body@6,job@7,static@9,cjs rejected@11:cjs bad,fresh@12:f,cjs@12:1,rejected@12:bad,deep@14",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another order", async () => {
+      expect(
+        (
+          await checkModules(
+            getImporting(
+              imports,
+              "body@6,job@7,static@9,fresh@12:f,cjs@12:1,cjs rejected@12:cjs bad,rejected@12:bad,deep@14",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("runs import() on the built-ins as the realm first has them, as Node's primordials", () => {
+    const getFiles = (expected: string) => ({
+      "main.js": `const log = [];
+        const then = Promise.prototype.then;
+        globalThis.Promise = function () { throw new Error("Promise"); };
+        Map.prototype.get = function () { throw new Error("get"); };
+        Set.prototype.has = function () { throw new Error("has"); };
+        Array.prototype.map = function () { throw new Error("map"); };
+        then.call(import("./imported.js"), (ns) => log.push(ns.value), (error) => log.push(error.message));
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+      "imported.js": 'import "./leaf.js"; export const value = 1;',
+      "leaf.js": "export const leaf = 1;",
+    });
+
+    it("agrees with Node", async () => {
+      expect((await checkModules(getFiles("1"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles("Promise"))).message).toContain(THREW);
+    });
+  });
+
+  describe("throws a SyntaxError where Node loads a module with an early error", () => {
+    const getFiles = (expected: string) => ({
+      "main.js": `import requires from "./requires.cjs";
+        const log = [requires];
+        let tick = 0;
+        const spin = () => { if (tick < 40) { tick++; Promise.resolve().then(spin); } };
+        spin();
+        import("./clash.js").catch((error) => log.push(error.name + "@" + tick));
+        import("./imports-clash.js").catch((error) => log.push(error.name + "@" + tick));
+        import("./clash.cjs").catch((error) => log.push(error.name + "@" + tick));
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+      "clash.js": "var name; function name() {}",
+      "imports-clash.js": 'import "./clash.js";',
+      "clash.cjs": "let name; var name;",
+      "requires.cjs": `const names = [];
+        try { require("./clash.cjs"); } catch (error) { names.push(error.name); }
+        try { require("./clash.js"); } catch (error) { names.push(error.name); }
+        module.exports = names.join("/");`,
+    });
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModules(
+            getFiles("SyntaxError/SyntaxError,SyntaxError@6,SyntaxError@6,SyntaxError@11"),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkModules(
+            getFiles("SyntaxError/SyntaxError,SyntaxError@6,SyntaxError@6,SyntaxError@12"),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+
+    it("fails as Node does at a static import of one", async () => {
+      expect(
+        (
+          await checkModules({
+            "main.js": 'import "./clash.js";',
+            "clash.js": "let name; var name;",
+          })
+        ).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("runs import() of a script, which loads modules as a module's does", () => {
+    const getScript = (expected: string) => ({
+      "main.js": `var log = [];
+        import("./static.js").then((ns) => { log.push(Object.keys(ns).join()); return import("./static.js"); }).then(() => log.push("again"));
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+      "static.js": "export const s = 1;",
+    });
+
+    it("agrees with Node", async () => {
+      expect((await checkModules(getScript("s,again"), false)).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getScript("again,s"), false)).message).toContain(THREW);
     });
   });
 
@@ -612,15 +759,149 @@ describe("compiles CommonJS modules as Node loads them", () => {
       expect((await checkModules(getImporting("true,1,2,side,counter"))).message).toContain(THREW);
     });
 
-    it("stops at an import of another name", async () => {
+    it("fails as Node does at an import of a name its lexer doesn't find", async () => {
       expect(
         (
           await checkModules({
-            "main.js": 'import { next } from "./counter.cjs";',
-            "counter.cjs": "exports.next = () => 1;",
+            "main.js": 'import { hidden } from "./counter.cjs";',
+            "counter.cjs": 'const name = "hidden"; exports[name] = 1;',
           })
         ).message,
-      ).toContain("tla-ts can't import names other than default from a CommonJS module");
+      ).toContain(THREW);
+    });
+  });
+
+  describe("requires an ES module as Node does", () => {
+    const getRequiring = (expected: string) => ({
+      ...getFiles(
+        `const withDefault = require("./with-default.mjs");
+        const again = require("./with-default.mjs");
+        const named = require("./named.mjs");
+        log.push(withDefault === again, Object.keys(withDefault).join("|"), withDefault.__esModule, withDefault.default(), Object.prototype.toString.call(withDefault));
+        log.push(Object.keys(named).join("|"), named.__esModule, require("./whole.mjs"));
+        try { require("./throws.mjs"); } catch (error) { log.push(error.message); }`,
+        expected,
+      ),
+      "with-default.mjs": 'export default function () { return "d"; } export const x = 1;',
+      "named.mjs": "export const y = 2; export const z = 3;",
+      "whole.mjs": 'const value = "whole"; export { value as "module.exports" };',
+      "throws.mjs": 'throw new Error("esm failed");',
+    });
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModules(
+            getRequiring("true,__esModule|default|x,true,d,[object Module],y|z,,whole,esm failed"),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkModules(
+            getRequiring("true,default|x,true,d,[object Module],y|z,,whole,esm failed"),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+
+    it("stops at a module that awaits at its top level, where Node throws", async () => {
+      expect(
+        (
+          await checkModules({
+            ...getFiles('require("./waits.mjs");', ""),
+            "waits.mjs": "await null;",
+          })
+        ).message,
+      ).toContain("tla-ts can't require an ES module that awaits");
+    });
+  });
+
+  describe("loads a JSON file for an import of type json and a require, sharing its value", () => {
+    const getJson = (expected: string) => ({
+      ...getFiles("", ""),
+      "package.json": '{ "type": "module" }',
+      "data.json": '\ufeff{"a": [1, 2], "__proto__": 3}',
+      "main.js": getMain(
+        `import data from "./data.json" with { type: "json" };
+        import * as ns from "./data.json" with { type: "json" };
+        import { fromRequire } from "./reader.cjs";
+        const log = [JSON.stringify(data), Object.keys(ns).join(), fromRequire === data, Object.getOwnPropertyNames(data).join()];`,
+        expected,
+      ),
+      "reader.cjs": 'exports.fromRequire = require("./data.json");',
+    });
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getJson('{\\"a\\":[1,2],\\"__proto__\\":3},default,true,a,__proto__')))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkModules(getJson('{\\"a\\":[1,2],\\"__proto__\\":3},default,false,a,__proto__')))
+          .message,
+      ).toContain(THREW);
+    });
+
+    it("fails as Node does at an import of JSON without its type", async () => {
+      expect(
+        (await checkModules({ "main.js": 'import data from "./data.json";', "data.json": "1" }))
+          .message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("gives an ES module the names that Node's lexer finds a CommonJS module exports", () => {
+    const getNamed = (expected: string) => ({
+      ...getFiles("", ""),
+      "package.json": '{ "type": "module" }',
+      "main.js": getMain(
+        `import * as ns from "./lib.cjs";
+        import lib, { a, b, later, thrower, "module.exports" as whole } from "./lib.cjs";
+        import { c, d } from "./reexport.cjs";
+        export * from "./reexport.cjs";
+        import * as self from "./main.js";
+        const log = [Object.keys(ns).join("|"), a, b, later, thrower, whole === lib, lib.notListed, c, d, Object.keys(self).join("|")];`,
+        expected,
+      ),
+      "lib.cjs": `exports.a = 1;
+        module.exports.b = 2;
+        Object.defineProperty(exports, "thrower", { enumerable: true, get: function () { return x.thrower; } });
+        exports.notListed2 = 0;
+        if (false) exports.later = 3;
+        const name = "notListed"; exports[name] = 4;`,
+      "reexport.cjs": 'module.exports = require("./inner.cjs");',
+      "inner.cjs": 'exports.c = "C"; exports.d = "D";',
+    });
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModules(
+            getNamed(
+              "a|b|default|later|module.exports|notListed2|thrower,1,2,,,true,4,C,D,c|d|module.exports",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkModules(
+            getNamed(
+              "a|b|default|later|module.exports|notListed2|thrower,1,2,3,,true,4,C,D,c|d|module.exports",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
     });
   });
 

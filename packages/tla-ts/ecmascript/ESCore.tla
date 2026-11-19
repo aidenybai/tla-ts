@@ -97,6 +97,7 @@ RECURSIVE DropProp(_, _)
 RECURSIVE IsDigit(_)
 RECURSIVE DigitsBelow(_, _)
 RECURSIVE LexLess(_, _)
+RECURSIVE LexLessFrom(_, _, _)
 RECURSIVE IsArrayIndexUnits(_)
 RECURSIVE IsArrayIndex(_)
 RECURSIVE IndexLess(_, _)
@@ -1430,6 +1431,9 @@ RECURSIVE GetModuleSource(_, _)
 RECURSIVE IsResolvable(_, _, _)
 RECURSIVE GetModuleNamespace(_, _, _)
 RECURSIVE SortCodeUnits(_)
+RECURSIVE SetToSeqFrom(_, _)
+RECURSIVE SortDistinctUnits(_)
+RECURSIVE MergeCodeUnits(_, _, _)
 RECURSIVE IsSymbolLikeNamespaceKey(_, _, _)
 RECURSIVE NamespaceExports(_, _)
 RECURSIVE NamespaceHasProperty(_, _, _)
@@ -5308,10 +5312,12 @@ IsDigit(u) == u >= 48 /\ u <= 57
 DigitsBelow(units, limit) ==
   Len(units) < Len(limit) \/
   (Len(units) = Len(limit) /\ LexLess(units, limit))
-LexLess(a, b) ==
-  IF a = <<>> THEN b # <<>>
-  ELSE IF b = <<>> THEN FALSE
-  ELSE IF Head(a) # Head(b) THEN Head(a) < Head(b) ELSE LexLess(Tail(a), Tail(b))
+LexLess(a, b) == LexLessFrom(a, b, 1)
+\* Whether a comes before b, where they agree before index i.
+LexLessFrom(a, b, i) ==
+  IF i > Len(a) THEN i <= Len(b)
+  ELSE IF i > Len(b) THEN FALSE
+  ELSE IF a[i] # b[i] THEN a[i] < b[i] ELSE LexLessFrom(a, b, i + 1)
 IsArrayIndexUnits(units) ==
   /\ units # <<>>
   /\ \A i \in DOMAIN units : IsDigit(units[i])
@@ -16075,14 +16081,29 @@ GetModuleNamespace(s, m, isDeferred) ==
   LET field == IF isDeferred THEN "deferredNamespace" ELSE "namespace" IN
   IF ModuleAt(s, m)[field] # Empty THEN Ok(s, ModuleAt(s, m)[field]) ELSE
   LET names == SelectSeq(GetExportedNames(s, m, {}).names, LAMBDA name : IsResolvable(s, m, name))
-      object == MakeObject(Null, "namespace", [module |-> m, exports |-> SortCodeUnits(Range(names)), deferred |-> isDeferred])
+      object == MakeObject(Null, "namespace", [module |-> m, exports |-> SortDistinctUnits(names), deferred |-> isDeferred])
       tag == IF isDeferred THEN SV("Deferred Module") ELSE SV("Module")
       ns == Alloc(s, PutProp([object EXCEPT !.ext = FALSE], SymToStringTag, DataDesc(tag, FALSE, FALSE, FALSE)))
   IN Ok(SetModule(ns.s, m, [name \in {field} |-> ns.v]), ns.v)
-SortCodeUnits(names) ==
-  IF names = {} THEN <<>>
-  ELSE LET first == CHOOSE name \in names : \A other \in names : name = other \/ CodeUnitLess(name, other)
-       IN <<first>> \o SortCodeUnits(names \ {first})
+\* The names of a set in the order of their code units.
+SortCodeUnits(names) == SortDistinctUnits(SetToSeqFrom(names, <<>>))
+\* The elements of a set after those of done, in the order CHOOSE takes them.
+SetToSeqFrom(set, done) ==
+  IF set = {} THEN done
+  ELSE LET x == CHOOSE x \in set : TRUE IN SetToSeqFrom(set \ {x}, Append(done, x))
+\* The distinct names of a sequence in the order of their code units, by a merge sort.
+SortDistinctUnits(names) ==
+  IF Len(names) <= 1 THEN names
+  ELSE LET half == Len(names) \div 2
+       IN MergeCodeUnits(SortDistinctUnits(SubSeq(names, 1, half)),
+                         SortDistinctUnits(SubSeq(names, half + 1, Len(names))), <<>>)
+\* The distinct names of two sorted sequences of distinct names, after those of done.
+MergeCodeUnits(a, b, done) ==
+  IF a = <<>> THEN done \o b
+  ELSE IF b = <<>> THEN done \o a
+  ELSE IF Head(a) = Head(b) THEN MergeCodeUnits(a, Tail(b), done)
+  ELSE IF CodeUnitLess(Head(a), Head(b)) THEN MergeCodeUnits(Tail(a), b, Append(done, Head(a)))
+  ELSE MergeCodeUnits(a, Tail(b), Append(done, Head(b)))
 \* Module namespace exotic objects (§10.4.6), with slots [module, exports, deferred]. A deferred
 \* namespace evaluates its module before it reads the exports, except for a symbol-like key: a
 \* symbol, or "then" (IsSymbolLikeNamespaceKey and GetModuleExportsList of import-defer).
