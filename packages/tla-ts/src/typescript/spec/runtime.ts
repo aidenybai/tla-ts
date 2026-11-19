@@ -49,6 +49,9 @@ const DEFINITIONS = [
                      o.class = "promise" /\\ o.slots.state = "rejected" /\\ ~o.slots.isHandled}
   IN IF rejected = {} THEN Ok(s, Undefined)
      ELSE ThrowValue(s, HeapGet(s.objs, CHOOSE i \\in rejected : \\A j \\in rejected : i <= j).slots.result)`,
+  // A throw of the reason of a rejected promise, which the host handles, as it throws it instead.
+  `ThrowRejection(s, promise) ==
+  ThrowValue(SetSlots(s, promise, [isHandled |-> TRUE]), Slots(s, promise).result)`,
   // The timers a program set, each a task of its own after the jobs before it ran, as Node runs
   // timers of no delay.
   `RunTimers(s) ==
@@ -149,9 +152,11 @@ const DEFINITIONS = [
       made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(v))
   IN Ok([made.s EXCEPT !.required = (node.file :> [module |-> Val(module), loaded |-> TRUE]) @@ @], Val(v))`,
   // A CommonJS module that an ES module imports is a Synthetic Module Record whose default export
-  // is the module's exports, as Node's ModuleWrap for it gives them.
+  // is the module's exports, as Node's ModuleWrap for it gives them. An ES module with an early
+  // error throws a SyntaxError, as Node's parse of it does.
   `LoadModuleNode(s, node) ==
   IF <<s.realmId, node.file>> \\in DOMAIN s.moduleIds THEN Ok(s, s.moduleIds[<<s.realmId, node.file>>])
+  ELSE IF node.kind = "rejected" THEN ThrowError(s, "SyntaxError")
   ELSE IF node.kind = "json" THEN
     LET exports == JsonExports(s, node) IN
     IF IsAbrupt(exports) THEN exports ELSE
@@ -205,14 +210,15 @@ const DEFINITIONS = [
   `RunModuleNode(s, node) ==
   LET loaded == LoadModuleNode(s, node)
       loading == LoadRequestedModules(loaded.s, Val(loaded))
-  IN IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowValue(loading.s, Slots(loading.s, Val(loading)).result) ELSE
+  IN IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowRejection(loading.s, Val(loading)) ELSE
      LET link == ModuleLink(loading.s, Val(loaded)) IN
      IF IsAbrupt(link) THEN link ELSE ModuleEvaluate(link.s, Val(loaded))`,
   // Module._load of Node's CommonJS loader (lib/internal/modules/cjs/loader.js) for a file of the
   // program, which require calls: the exports of the module, whose code runs the first time, in
   // the function Node wraps it in, with this as its exports; and, for a module whose code still
   // runs, its exports so far. The state's required holds each module object and whether its code
-  // ran, and forgets a module whose code threw. Node's require is a function that new constructs
+  // ran, and forgets a module whose code threw. A module with an early error throws a SyntaxError,
+  // as Node's compile of it does. Node's require is a function that new constructs
   // too, which the proxy of it stops at.
   `RequireFile(s, id) ==
   IF id \\in DOMAIN s.required THEN
@@ -222,6 +228,7 @@ const DEFINITIONS = [
     ELSE CircularExports(exports.s, Val(exports))
   ELSE LET node == ModuleNode(id) IN
   IF node.kind = "json" THEN JsonExports(s, node) ELSE
+  IF node.kind = "rejected" \\/ (node.kind = "commonjs" /\\ node.code = None) THEN ThrowError(s, "SyntaxError") ELSE
   IF node.kind = "module" THEN
     LET module == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
         r == RequireEsm([module.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE]) @@ @], node)
@@ -273,14 +280,13 @@ const DEFINITIONS = [
   // throws.
   `EvaluateNow(s, m) ==
   LET loading == LoadRequestedModules(s, m) IN
-  IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowValue(loading.s, Slots(loading.s, Val(loading)).result) ELSE
+  IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowRejection(loading.s, Val(loading)) ELSE
   LET link == ModuleLink(loading.s, m) IN
   IF IsAbrupt(link) THEN link
   ELSE IF IsAsyncGraph(link.s, <<m>>, {}) THEN Assert(FALSE, "tla-ts can't require an ES module that awaits at its top level, where Node throws") ELSE
-  LET promise == ModuleEvaluate(link.s, m)
-      slots == Slots(promise.s, Val(promise))
-  IN IF slots.state = "rejected" THEN ThrowValue(SetSlots(promise.s, Val(promise), [isHandled |-> TRUE]), slots.result)
-     ELSE Ok(promise.s, Empty)`,
+  LET promise == ModuleEvaluate(link.s, m) IN
+  IF Slots(promise.s, Val(promise)).state = "rejected" THEN ThrowRejection(promise.s, Val(promise))
+  ELSE Ok(promise.s, Empty)`,
   // Whether a module or one that it requests, of the modules given and those they request, awaits at
   // its top level (IsGraphAsync of V8's modules).
   `IsAsyncGraph(s, modules, seen) ==
@@ -734,7 +740,7 @@ const HOST_PATCHES = [
          LET loaded == LoadModuleNode(s, node) IN
          IF IsAbrupt(loaded) THEN loaded ELSE
          LET loading == LoadRequestedModules(loaded.s, Val(loaded)) IN
-         IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowValue(loading.s, Slots(loading.s, Val(loading)).result)
+         IF Slots(loading.s, Val(loading)).state = "rejected" THEN ThrowRejection(loading.s, Val(loading))
          ELSE Ok(loading.s, IntV(Val(loaded)))
     [] m = "hostDependencies" ->
          LET rec == ModuleAt(s, NumToSmallInt(Arg(args, 1).value)) IN

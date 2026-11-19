@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { createJavaScriptFile, isCommonJsFile } from "../common-js";
+import { rejectEarlyErrors } from "../early-errors";
 import { createFileResolver } from "../program";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
@@ -126,10 +127,25 @@ const transpile = (source: string, fileName: string, isModule: boolean) => {
   return ts.createSourceFile(
     fileName.replace(/\.[cm]?tsx?$/, ".js"),
     transpiled.outputText,
-    ts.ScriptTarget.ESNext,
+    {
+      languageVersion: ts.ScriptTarget.ESNext,
+      impliedNodeFormat: isModule ? ts.ModuleKind.ESNext : ts.ModuleKind.CommonJS,
+    },
     true,
     ts.ScriptKind.JS,
   );
+};
+
+// Whether a file's code has an early error, for which Node throws a SyntaxError where it loads the
+// file, as tla-ts finds a program's.
+const hasEarlyError = (sourceFile: ts.SourceFile) => {
+  try {
+    rejectEarlyErrors(sourceFile);
+    return false;
+  } catch (error) {
+    if (error instanceof TlaTypeScriptError && / SyntaxError: /.test(error.message)) return true;
+    throw error;
+  }
 };
 
 // The specifier of each import and export of a module, or each require of a string of a CommonJS
@@ -281,8 +297,10 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
       kind === "commonjs"
         ? transpile(`${WRAPPER[0]}${code}${WRAPPER[1]}`, path, false)
         : transpile(code, path, kind !== "script");
+    // Node loads none of the requests of a file that it fails to parse.
+    const isRejected = path !== entry && kind !== "script" && hasEarlyError(sourceFile);
     const targets = new Map(
-      [...getSpecifiers(sourceFile, kind).keys()].flatMap((specifier) => {
+      [...(isRejected ? [] : getSpecifiers(sourceFile, kind).keys())].flatMap((specifier) => {
         const literal = written.get(specifier);
         const found = literal === undefined ? undefined : resolve(literal);
         if (found === undefined || !/\.([cm]?[jt]sx?|json)$/.test(found)) return [];
@@ -307,6 +325,7 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
       kind,
       targets,
       exportNames: kind === "commonjs" ? getWrapperNames(preparse(path, text)) : [],
+      isRejected,
     });
   }
   const withFacades = files.map((file) => ({

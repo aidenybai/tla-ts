@@ -301,6 +301,58 @@ describe("compiles modules by specializing ESCore", () => {
     });
   });
 
+  describe("throws a SyntaxError where Node loads a module with an early error", () => {
+    const getFiles = (expected: string) => ({
+      "main.js": `import requires from "./requires.cjs";
+        const log = [requires];
+        let tick = 0;
+        const spin = () => { if (tick < 40) { tick++; Promise.resolve().then(spin); } };
+        spin();
+        import("./clash.js").catch((error) => log.push(error.name + "@" + tick));
+        import("./imports-clash.js").catch((error) => log.push(error.name + "@" + tick));
+        import("./clash.cjs").catch((error) => log.push(error.name + "@" + tick));
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+      "clash.js": "var name; function name() {}",
+      "imports-clash.js": 'import "./clash.js";',
+      "clash.cjs": "let name; var name;",
+      "requires.cjs": `const names = [];
+        try { require("./clash.cjs"); } catch (error) { names.push(error.name); }
+        try { require("./clash.js"); } catch (error) { names.push(error.name); }
+        module.exports = names.join("/");`,
+    });
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModules(
+            getFiles("SyntaxError/SyntaxError,SyntaxError@6,SyntaxError@6,SyntaxError@11"),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkModules(
+            getFiles("SyntaxError/SyntaxError,SyntaxError@6,SyntaxError@6,SyntaxError@12"),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+
+    it("fails as Node does at a static import of one", async () => {
+      expect(
+        (
+          await checkModules({
+            "main.js": 'import "./clash.js";',
+            "clash.js": "let name; var name;",
+          })
+        ).message,
+      ).toContain(THREW);
+    });
+  });
+
   describe("runs import() of a script, which loads modules as a module's does", () => {
     const getScript = (expected: string) => ({
       "main.js": `var log = [];

@@ -64,6 +64,8 @@ export interface ProgramFile {
   exportNames: readonly string[];
   // The file of an ES module's facade, which a require of it gives the namespace of.
   facade?: number;
+  // Whether the file has an early error, for which Node throws a SyntaxError where it loads it.
+  isRejected?: boolean;
 }
 
 export interface SpecializedProgram {
@@ -2554,6 +2556,14 @@ export const specialize = (
   // does (lib/internal/modules/cjs/loader.js). Its code may not read the wrapper's arguments
   // object, whose callee is the runtime's function rather than Node's.
   const commonJsCode = (file: ProgramFile, number: number) => {
+    const directory = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), 1));
+    const getNode = (code: string) =>
+      `ModuleNode${number} == [file |-> ${number}, kind |-> "commonjs", code |-> ${code}, filename |-> ${getUnits(file.path)}, dirname |-> ${getUnits(directory)}, targets |-> ${getTargets(file)}, exportNames |-> ${getSequence(file.exportNames.map(getUnits))}]`;
+    // A module with an early error has no code, which Node fails to compile where it runs it.
+    if (file.isRejected === true) {
+      definitions.push({ name: `ModuleNode${number}`, arity: 0, text: getNode("None") });
+      return undefined;
+    }
     const statement = file.sourceFile.statements[0];
     const wrapper =
       ts.isExpressionStatement(statement) && ts.isParenthesizedExpression(statement.expression)
@@ -2572,12 +2582,7 @@ export const specialize = (
       { node: wrapper, parameters: wrapper.parameters, body: wrapper.body, kind: "normal" },
       { isStrict: false, isClassBody: false, isAsyncGenerator: false },
     );
-    const directory = file.path.slice(0, Math.max(file.path.lastIndexOf("/"), 1));
-    definitions.push({
-      name: `ModuleNode${number}`,
-      arity: 0,
-      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "commonjs", code |-> ${code}, filename |-> ${getUnits(file.path)}, dirname |-> ${getUnits(directory)}, targets |-> ${getTargets(file)}, exportNames |-> ${getSequence(file.exportNames.map(getUnits))}]`,
-    });
+    definitions.push({ name: `ModuleNode${number}`, arity: 0, text: getNode(code) });
     return undefined;
   };
 
@@ -2596,6 +2601,15 @@ export const specialize = (
       name: `ModuleNode${number}`,
       arity: 0,
       text: `ModuleNode${number} == [file |-> ${number}, kind |-> "json", isValid |-> ${getBool(file.json !== undefined)}, text |-> ${getUnits((file.json ?? "").replace(/^\uFEFF/, ""))}]`,
+    });
+    return undefined;
+  };
+  // An ES module with an early error, which Node fails to parse where it loads it.
+  const rejectedCode = (number: number) => {
+    definitions.push({
+      name: `ModuleNode${number}`,
+      arity: 0,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "rejected"]`,
     });
     return undefined;
   };
@@ -2624,7 +2638,9 @@ export const specialize = (
     file.kind === "host"
       ? hostCode(file, index + 1)
       : file.kind === "module"
-        ? moduleCode(file, index + 1)
+        ? file.isRejected === true
+          ? rejectedCode(index + 1)
+          : moduleCode(file, index + 1)
         : file.kind === "commonjs"
           ? commonJsCode(file, index + 1)
           : file.kind === "json"
