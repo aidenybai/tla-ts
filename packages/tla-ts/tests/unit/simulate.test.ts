@@ -294,6 +294,59 @@ it("binds CounterExample to the lasso of a behavior that violates a temporal pro
   ]);
 });
 
+const getAliasLasso = (body: string, config: string) => {
+  const lassos: [unknown[], number | undefined][] = [];
+  simulate({
+    source: `---- MODULE M ----\nEXTENDS Integers\n${body}\n====`,
+    config: `SPECIFICATION Spec\nPROPERTY Prop\nALIAS Alias\n${config}`,
+    seed: 4n,
+    traceDepth: 8,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: () => {},
+    onProgress: (progress) => {
+      if (progress.kind !== "violation") return;
+      lassos.push([
+        progress.violation.trace.map((step) => step.state),
+        progress.violation.loopStart,
+      ]);
+    },
+  });
+  return lassos;
+};
+
+// Deviation from TLC: it fails with a NullPointerException, and with p |-> IF x = 0 THEN -1 ELSE x' it gives p = 0, 1, 2 past the initial state.
+it("reads a primed variable in the ALIAS of a lasso as the successor's, unlike TLC", () => {
+  expect(
+    getAliasLasso(
+      "VARIABLE x\nAlias == [x |-> x, p |-> x']\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nSpec == Init /\\ [][Next]_x\nProp == <>(x = 4)",
+      "CHECK_DEADLOCK FALSE",
+    ),
+  ).toEqual([
+    [
+      [
+        { x: 0, p: 1 },
+        { x: 1, p: 2 },
+        { x: 2, p: 3 },
+        { x: 3, p: 3 },
+      ],
+      3,
+    ],
+  ]);
+});
+
+// Deviation from TLC: it fails with a NullPointerException as it fingerprints the alias of the cycle's second state.
+it("prints the cycle of a lasso with an ALIAS that leaves out a variable, unlike TLC", () => {
+  expect(
+    getAliasLasso(
+      "VARIABLES x, y\nAlias == [x |-> x]\nInit == x = 0 /\\ y = 0\nNext == y' = 1 - y /\\ x' = x\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nProp == <>(x = 1)",
+      "",
+    ),
+  ).toEqual([[[{ x: 0 }, { x: 0 }], 0]]);
+});
+
 const getViewLassos = (values: string, property: string) => {
   const lassos: [unknown[][], number | undefined][] = [];
   simulate({
