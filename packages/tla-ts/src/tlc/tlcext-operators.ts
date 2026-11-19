@@ -403,11 +403,11 @@ export const createPossibleOperators = (
   defineStateOperator("_CheckName", 1, (args) => {
     const name = String(getValue(args, 0, "_CheckName"));
     if (runtime.possibleCounts.get(name)) return true;
-    print(prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime));
+    print(prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime.hasUserFile));
     return false;
   }),
   defineStateOperator("_PrintCounts", 0, () => {
-    print(prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime));
+    print(prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime.hasUserFile));
     return true;
   }),
 ];

@@ -1387,7 +1387,7 @@ export const createSearch = (
       name: unwitnessed.name,
       code: MESSAGE_CODE.possibleUnwitnessed,
       message: `The _POSSIBLE predicate ${unwitnessed.name}${location} was never witnessed.\nOthers may be unwitnessed too; only witnessed predicates appear with a\nnon-zero count in the record printed above.\nSee https://explain.tlapl.us/possible-conditions for additional details.`,
-      counts: prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime),
+      counts: prettyPrintT(formatValue(getPossibleCounts(runtime), true), runtime.hasUserFile),
     };
   };
   // Deviation from TLC: a tuple VIEW prints as a state only when its elements are distinct variables, since TLC mislabels <<y, x>> and <<x + 1>>.

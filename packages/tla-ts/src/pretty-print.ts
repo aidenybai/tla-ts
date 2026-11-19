@@ -1,7 +1,6 @@
 // TLC prints the original text whenever the parse fails.
 
 import { skipWhile } from "./lexer";
-import type { CheckerRuntime } from "./runtime";
 
 interface PrintedNode {
   kind: "Constant" | "Set" | "Sequence" | "Record" | "Function" | "Subset" | "Pair";
@@ -259,5 +258,5 @@ export const prettyPrint = (text: string) => {
 };
 
 // TLC writes the value of PrintT to -userFile with a line break, which PrettyPrint#mypp leaves unformatted.
-export const prettyPrintT = (text: string, runtime: CheckerRuntime) =>
-  runtime.hasUserFile ? text : prettyPrint(text);
+export const prettyPrintT = (text: string, hasUserFile: boolean) =>
+  hasUserFile ? text : prettyPrint(text);

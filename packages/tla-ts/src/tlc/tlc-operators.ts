@@ -189,7 +189,9 @@ export const createTlcOperators = (
     return getValue(args, 1, "Print");
   }),
   defineOperator("PrintT", 1, (args) => {
-    print(prettyPrintT(formatNormalizedCopies([getValue(args, 0, "PrintT")])[0], runtime));
+    print(
+      prettyPrintT(formatNormalizedCopies([getValue(args, 0, "PrintT")])[0], runtime.hasUserFile),
+    );
     return true;
   }),
   defineOperator("Assert", 2, (args) => {
