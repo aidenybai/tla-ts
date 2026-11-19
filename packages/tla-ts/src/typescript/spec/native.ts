@@ -200,7 +200,8 @@ const getUnits = (text: string) =>
   `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
 
 // Whether a key names an array index, whose place in an object's keys isn't the order it came in.
-const isIndexKey = (text: string) => /^(?:0|[1-9][0-9]*)$/.test(text) && Number(text) < 2 ** 32 - 1;
+export const isIndexKey = (text: string) =>
+  /^(?:0|[1-9][0-9]*)$/.test(text) && Number(text) < 2 ** 32 - 1;
 
 interface Scope {
   // The TLA+ expressions of the lowered state and of whether the call wrote, so far.

@@ -90,6 +90,12 @@ const worker = new Worker(
           : spec.mode === "lowered"
             ? escore + "(a)"
             : line,
+      // A lowered model's lowered converters check that each gives what lowering the objects of
+      // its converter gives.
+      ).replace(/^LowerConvert(\\d+)\\(x\\) == (.*)$/gm, (line, number, body) =>
+        spec.mode === "lowered"
+          ? "LowerConvert" + number + "(x) == LET d == (" + body + ") IN LET c == Convert" + number + "(ModelBase, x) IN IF d = LowerValue(c.s, c.v, 0).v THEN d ELSE Assert(FALSE, \\"the lowered converter differs\\")"
+          : line,
       ).replace("\\nEXTENDS ESRuntime, ESCanonical", spec.mode === "compared" ? "\\nEXTENDS ESRuntime, ESCanonical, ESCanonicalPlain" : "\\nEXTENDS ESRuntime, ESCanonical")
         .replace(/^(EXTENDS .*)$/m, (line) => (isOperators ? line + ", ESNativePlain" : line))
         .replace(/\\n====\\n$/, isOperators ? "\\n" + spec.operators + "\\n====\\n" : "\\n====\\n");
@@ -145,7 +151,8 @@ beforeAll(() => ready, 60_000);
 
 // Checks a module's model on ESCore, with its steps' states lowered where the module lets them,
 // raw, canonical where the native canonical form and ESCanonical's TLA+ compare equal, lowered
-// where each lowered state materializes to the canonical state it lowers, lowered where each native call
+// where each lowered state materializes to the canonical state it lowers and each lowered
+// converter gives what lowering its converter's objects gives, lowered where each native call
 // gives what ESCore's gives, or with the assumptions operators, which read ESNative's operators
 // and their TLA+ as PlainX.
 const checkModel = (
@@ -402,6 +409,35 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         'MaterializeList(s, v.elems) IN NewArray(e.s, SelectSeq(e.args, LAMBDA x : x.type # "number"))',
       ]);
       expect(result.message).toContain("the lowered state materializes to another state");
+    });
+  });
+
+  describe("lowers the values an initial state chooses without making them on the heap", () => {
+    const source = `
+      type Key = "a" | "b";
+      let slot!: { owner: Key | null; count: 0 | 1 };
+      let pair!: [Key, boolean];
+      let seen!: Set<Key>;
+      let totals!: Map<Key, 0 | 1>;
+      export const bump = () => {
+        if (slot.count === 1) return;
+        slot.count = 1;
+      };
+      export const isPaired = () => pair.length === 2 && slot.count <= 1;
+    `;
+
+    it("gives what lowering the converted objects gives, as TLC counts", async () => {
+      const counts = ["deadlock", 864, 891];
+      expect(getCounts(await checkModel(source, "spec.ts", "lowered"))).toEqual(counts);
+      expect(getCounts(await checkModel(source))).toEqual(counts);
+    });
+
+    it("tells a lowered converter that flips a number", async () => {
+      const result = await checkModel(source, "spec.ts", "lowered", [
+        "(x) == IntV(x)",
+        "(x) == IntV(1 - x)",
+      ]);
+      expect(result.message).toContain("the lowered converter differs");
     });
   });
 

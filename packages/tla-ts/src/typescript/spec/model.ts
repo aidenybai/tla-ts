@@ -8,7 +8,7 @@ import type { StateVariable } from "../emit";
 import type { Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
-import { getNativeFunctions, NATIVE_MODULE } from "./native";
+import { getNativeFunctions, isIndexKey, NATIVE_MODULE } from "./native";
 import { compileToEscore, type EscoreSpec } from "./compile";
 import { foldNames } from "./library";
 import type { EscoreRuntime } from "./prepare";
@@ -223,6 +223,9 @@ interface Converter {
   // The definition of an operator of a state and a TLA+ value of the domain, which gives the state
   // and the JavaScript value that the value stands for.
   name: string;
+  // The definition of an operator of a TLA+ value of the domain, Lower<name>, which gives the
+  // lowered value of the JavaScript value that name makes, where it makes one that lowers.
+  lowered: string | undefined;
 }
 
 // The model of a TypeScript module, checked on ESCore: one variable holds ESCore's state after the
@@ -352,9 +355,19 @@ export const compileModelToEscore = (
     );
     const known = converters.get(key);
     if (known !== undefined) return known;
-    const converter = { name: createConverter(domain, type) };
+    const name = createConverter(domain, type);
+    const converter = { name, lowered: lowerings.get(name) };
     converters.set(key, converter);
     return converter;
+  };
+  // The lowered converter of each converter, by name, where the values it makes lower: its
+  // lowered value, which LowerValue gives of the objects that the converter makes, built
+  // directly, as a TLA+ value of its own.
+  const lowerings = new Map<string, string | undefined>();
+  const lowerAs = (name: string, text: string | undefined) => {
+    lowerings.set(name, text === undefined ? undefined : `Lower${name}`);
+    if (text !== undefined) steps.push(`Lower${name}(x) == ${text}`);
+    return name;
   };
   const unsupported = (domain: Expression, type?: ts.TypeNode): string => {
     const primitive = type === undefined ? undefined : PRIMITIVE_TYPES.get(type.kind);
@@ -363,7 +376,10 @@ export const compileModelToEscore = (
         `tla-ts can't pass a value of ${printExpression(domain)} to an ESCore model yet`,
       );
     }
-    return define("Convert", (name) => `${name}(s, x) == [s |-> s, v |-> ${primitive}]`);
+    return lowerAs(
+      define("Convert", (name) => `${name}(s, x) == [s |-> s, v |-> ${primitive}]`),
+      primitive,
+    );
   };
   const getUnion = (expression: Expression): Expression[] =>
     expression.kind === "Apply" && expression.operator === "\\cup"
@@ -408,7 +424,15 @@ export const compileModelToEscore = (
     );
   const createConverter = (domain: Expression, type?: ts.TypeNode): string => {
     const plain = (body: string) =>
-      define("Convert", (name) => `${name}(s, x) == [s |-> s, v |-> ${body}]`);
+      lowerAs(
+        define("Convert", (name) => `${name}(s, x) == [s |-> s, v |-> ${body}]`),
+        body,
+      );
+    // The lowered text of converters whose lowered converters exist, or undefined.
+    const lowered = (parts: Converter[], text: (names: string[]) => string) =>
+      parts.every((part) => part.lowered !== undefined)
+        ? text(parts.map((part) => part.lowered ?? ""))
+        : undefined;
     if (domain.kind === "Identifier" && domain.name === "BOOLEAN") return plain("Bool(x)");
     if (domain.kind === "Apply" && domain.operator === "..") return plain("IntV(x)");
     if (domain.kind === "Identifier") {
@@ -435,10 +459,17 @@ export const compileModelToEscore = (
     }
     if (domain.kind === "Product") {
       const factors = domain.factors.map((factor) => getConverter(factor));
-      return define(
-        "Convert",
-        (name) =>
-          `${name}(s, x) ==\n  LET ${factors.map((factor, index) => `e${index + 1} == ${factor.name}(${index === 0 ? "s" : `e${index}.s`}, x[${index + 1}])`).join("\n      ")}\n  IN NewArray(e${factors.length}.s, <<${factors.map((_, index) => `e${index + 1}.v`).join(", ")}>>)`,
+      return lowerAs(
+        define(
+          "Convert",
+          (name) =>
+            `${name}(s, x) ==\n  LET ${factors.map((factor, index) => `e${index + 1} == ${factor.name}(${index === 0 ? "s" : `e${index}.s`}, x[${index + 1}])`).join("\n      ")}\n  IN NewArray(e${factors.length}.s, <<${factors.map((_, index) => `e${index + 1}.v`).join(", ")}>>)`,
+        ),
+        lowered(
+          factors,
+          (names) =>
+            `[type |-> "larray", elems |-> <<${names.map((name, index) => `${name}(x[${index + 1}])`).join(", ")}>>]`,
+        ),
       );
     }
     if (domain.kind === "RecordSet") {
@@ -446,10 +477,20 @@ export const compileModelToEscore = (
         name: field.name,
         converter: getConverter(field.value),
       }));
-      return define(
-        "Convert",
-        (name) =>
-          `${name}(s, x) ==\n  LET ${fields.map((field, index) => `e${index + 1} == ${field.converter.name}(${index === 0 ? "s" : `e${index}.s`}, x.${field.name})`).join("\n      ")}\n  IN NewRecord(e${fields.length}.s, <<${fields.map((field, index) => `<<Str(${getUnits(field.name)}), e${index + 1}.v>>`).join(", ")}>>)`,
+      // An object's keys come in the order NewRecord adds them, as no field names an index.
+      return lowerAs(
+        define(
+          "Convert",
+          (name) =>
+            `${name}(s, x) ==\n  LET ${fields.map((field, index) => `e${index + 1} == ${field.converter.name}(${index === 0 ? "s" : `e${index}.s`}, x.${field.name})`).join("\n      ")}\n  IN NewRecord(e${fields.length}.s, <<${fields.map((field, index) => `<<Str(${getUnits(field.name)}), e${index + 1}.v>>`).join(", ")}>>)`,
+        ),
+        fields.some((field) => isIndexKey(field.name))
+          ? undefined
+          : lowered(
+              fields.map((field) => field.converter),
+              (names) =>
+                `[type |-> "lobject", keys |-> <<${fields.map((field) => getUnits(field.name)).join(", ")}>>, vals |-> ${fields.length === 0 ? "<<>>" : fields.map((field, index) => `(${getUnits(field.name)} :> ${names[index]}(x.${field.name}))`).join(" @@ ")}]`,
+            ),
       );
     }
     // Arrays up to a length: UNION {[1 .. length -> D] : length \in L}.
@@ -469,10 +510,22 @@ export const compileModelToEscore = (
           ? getConverter(bound.set.args[0])
           : undefined;
       if (!isArray && keys === undefined) return unsupported(domain, type);
-      return define("Convert", (name) =>
+      return lowerAs(
+        define("Convert", (name) =>
+          keys === undefined
+            ? `${name}(s, x) ==\n  LET e == ${defineList(range.name)}(s, x) IN NewArray(e.s, e.args)`
+            : `${name}(s, x) ==\n  LET order == SetToSeq(DOMAIN x)\n      k == ${defineList(keys.name)}(s, order)\n      e == ${defineList(range.name)}(k.s, [i \\in DOMAIN order |-> x[order[i]]])\n  IN NewMap(e.s, [i \\in DOMAIN order |-> [key |-> k.args[i], value |-> e.args[i]]])`,
+        ),
         keys === undefined
-          ? `${name}(s, x) ==\n  LET e == ${defineList(range.name)}(s, x) IN NewArray(e.s, e.args)`
-          : `${name}(s, x) ==\n  LET order == SetToSeq(DOMAIN x)\n      k == ${defineList(keys.name)}(s, order)\n      e == ${defineList(range.name)}(k.s, [i \\in DOMAIN order |-> x[order[i]]])\n  IN NewMap(e.s, [i \\in DOMAIN order |-> [key |-> k.args[i], value |-> e.args[i]]])`,
+          ? lowered(
+              [range],
+              (names) => `[type |-> "larray", elems |-> [i \\in DOMAIN x |-> ${names[0]}(x[i])]]`,
+            )
+          : lowered(
+              [keys, range],
+              (names) =>
+                `LET order == SetToSeq(DOMAIN x) IN [type |-> "lmap", keys |-> [i \\in DOMAIN order |-> ${names[0]}(order[i])], vals |-> [i \\in DOMAIN order |-> ${names[1]}(x[order[i]])]]`,
+            ),
       );
     }
     // Arrays up to a length of one element type, as a union of sets of tuples.
@@ -493,10 +546,16 @@ export const compileModelToEscore = (
             : undefined;
       if (elementDomain !== undefined) {
         const element = getConverter(elementDomain);
-        return define(
-          "Convert",
-          (name) =>
-            `${name}(s, x) ==\n  LET e == ${defineList(element.name)}(s, x) IN NewArray(e.s, e.args)`,
+        return lowerAs(
+          define(
+            "Convert",
+            (name) =>
+              `${name}(s, x) ==\n  LET e == ${defineList(element.name)}(s, x) IN NewArray(e.s, e.args)`,
+          ),
+          lowered(
+            [element],
+            (names) => `[type |-> "larray", elems |-> [i \\in DOMAIN x |-> ${names[0]}(x[i])]]`,
+          ),
         );
       }
     }
@@ -510,18 +569,38 @@ export const compileModelToEscore = (
         set: printExpression(renameModelValues(arg)),
         converter: getConverter(arg),
       }));
-      return define(
-        "Convert",
-        (name) =>
-          `${name}(s, x) ==\n  ${parts.map((part, index) => (index === parts.length - 1 ? `${part.converter.name}(s, x)` : `IF x \\in ${part.set} THEN ${part.converter.name}(s, x) ELSE `)).join("")}`,
+      return lowerAs(
+        define(
+          "Convert",
+          (name) =>
+            `${name}(s, x) ==\n  ${parts.map((part, index) => (index === parts.length - 1 ? `${part.converter.name}(s, x)` : `IF x \\in ${part.set} THEN ${part.converter.name}(s, x) ELSE `)).join("")}`,
+        ),
+        lowered(
+          parts.map((part) => part.converter),
+          (names) =>
+            parts
+              .map((part, index) =>
+                index === parts.length - 1
+                  ? `${names[index]}(x)`
+                  : `IF x \\in ${part.set} THEN ${names[index]}(x) ELSE `,
+              )
+              .join(""),
+        ),
       );
     }
     if (domain.kind === "Apply" && domain.operator === "SUBSET") {
       const element = getConverter(domain.args[0]);
-      return define(
-        "Convert",
-        (name) =>
-          `${name}(s, x) ==\n  LET e == ${defineList(element.name)}(s, SetToSeq(x)) IN NewSet(e.s, e.args)`,
+      return lowerAs(
+        define(
+          "Convert",
+          (name) =>
+            `${name}(s, x) ==\n  LET e == ${defineList(element.name)}(s, SetToSeq(x)) IN NewSet(e.s, e.args)`,
+        ),
+        lowered(
+          [element],
+          (names) =>
+            `LET order == SetToSeq(x) IN [type |-> "lset", elems |-> [i \\in DOMAIN order |-> ${names[0]}(order[i])]]`,
+        ),
       );
     }
     return unsupported(domain, type);
@@ -795,7 +874,15 @@ export const compileModelToEscore = (
     );
     return operator === undefined || converters.some((converter) => converter === undefined)
       ? undefined
-      : `${operator}(${[model, "FALSE", ...converters.map((converter, index) => `LowerConverted(${converter}(ModelBase, ${values(index)}))`)].join(", ")})`;
+      : `${operator}(${[
+          model,
+          "FALSE",
+          ...converters.map((converter, index) =>
+            converter !== undefined && lowerings.get(converter) !== undefined
+              ? `${lowerings.get(converter)}(${values(index)})`
+              : `LowerConverted(${converter}(ModelBase, ${values(index)}))`,
+          ),
+        ].join(", ")})`;
   };
   // A step's or a check's arguments, converted in turn from a[1], the state, with the
   // parameters' values from a[2] on.
@@ -1001,6 +1088,7 @@ export const compileModelToEscore = (
     ...choice,
     bound: `v${index + 1}`,
     converter: getConverter(choice.domain).name,
+    lowered: getConverter(choice.domain).lowered,
     set: printExpression(rewriteGuards(choice.domain)),
   }));
   // As compileToEscore runs a script's jobs and timers, a step runs the ones a call leaves.
@@ -1012,11 +1100,13 @@ export const compileModelToEscore = (
   // the module runs, and which the module deletes as it ends.
   // A lowered model's initial states each convert the choice's values in ModelBase and lower
   // them, with the values that ModelBase's module gave the other bindings.
+  const isChoiceLowered = choose.every((choice) => choice.lowered !== undefined);
   const loweredInitialSteps = [
     `InitialChoice(a) ==\n  LET s0 == ModelBase${choose
-      .map(
-        (choice, index) =>
-          `\n      c${index + 1} == ${choice.converter}(${index === 0 ? "s0" : `c${index}.s`}, a[${index + 2}])\n      l${index + 1} == LowerValue(c${index + 1}.s, c${index + 1}.v, 0)`,
+      .map((choice, index) =>
+        isChoiceLowered
+          ? `\n      l${index + 1} == [v |-> ${choice.lowered}(a[${index + 2}])]`
+          : `\n      c${index + 1} == ${choice.converter}(${index === 0 ? "s0" : `c${index}.s`}, a[${index + 2}])\n      l${index + 1} == LowerValue(c${index + 1}.s, c${index + 1}.v, 0)`,
       )
       .join(
         "",
