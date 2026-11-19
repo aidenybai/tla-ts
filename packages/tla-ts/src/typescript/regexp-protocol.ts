@@ -1,7 +1,14 @@
 import ts from "@typescript/typescript6";
 import type { Expression } from "../ast";
 import { type Frame, getChanged, type Path, throwTypeError, translateJoined } from "./actions";
-import { type Context, getSetters, getUndefined, skipCasts } from "./context";
+import {
+  type Context,
+  getParameters,
+  getSetters,
+  getUndefined,
+  isNameRead,
+  skipCasts,
+} from "./context";
 import { isEvery } from "./types";
 import { getConversionFunctions, runToPrimitive } from "./conversions";
 import { translateExpression } from "./expressions";
@@ -140,7 +147,9 @@ const toText = (
   );
 
 // Set(R, "lastIndex", value, true), which runs a setter that the script writes and throws a
-// TypeError where the write fails.
+// TypeError where the write fails. TypeScript doesn't see the protocol pass its number to the
+// setter, so a setter that reads a value whose type doesn't take one isn't called, and the write
+// stops.
 const setLastIndex = (
   site: ts.Node,
   receiver: Expression,
@@ -161,7 +170,17 @@ const setLastIndex = (
       receiver,
       string("lastIndex"),
       value,
-      getSetters(site, context),
+      getSetters(site, context).filter((setter) => {
+        const parameter = getParameters(setter).at(0);
+        return (
+          parameter === undefined ||
+          (ts.isIdentifier(parameter.name) && !isNameRead(parameter.name, setter, context)) ||
+          context.checker.isTypeAssignableTo(
+            context.checker.getNumberType(),
+            context.checker.getTypeAtLocation(parameter),
+          )
+        );
+      }),
       path,
       context,
       frame,

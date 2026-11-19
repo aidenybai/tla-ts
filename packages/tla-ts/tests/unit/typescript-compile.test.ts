@@ -35564,6 +35564,48 @@ describe("regular expressions", () => {
     expect((await checkModel(getSource("none"))).failure?.message).toContain("range");
   });
 
+  describe("sets the lastIndex of the splitter that a species returns through its setter", () => {
+    const getSource = (setter: string, expected: string) => `
+      let indices = "";
+      const splitter = {
+        ${setter},
+        exec: () => null,
+      };
+      const obj = { constructor: function () {} };
+      // @ts-ignore
+      obj.constructor[Symbol.species] = function () {
+        return splitter;
+      };
+      RegExp.prototype[Symbol.split].call(obj, "abcd");
+      if (indices !== "${expected}") throw new Error("seen " + indices);
+    `;
+    const getReadingSetter = (type: string) =>
+      `set lastIndex(value: ${type}) { indices += value + ","; }`;
+
+    it("agrees with Node on the numbers that it passes", async () => {
+      expect(
+        (await checkModel(getSource(getReadingSetter("number"), "0,1,2,3,"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects the wrong expectation", async () => {
+      expect(
+        (await checkModel(getSource(getReadingSetter("number"), "0,1,2,4,"))).failure?.message,
+      ).toContain("seen 0,1,2,3,");
+    });
+
+    it("calls a setter that doesn't read its value of another type", async () => {
+      const setter = `set lastIndex(_: string) { indices += "set,"; }`;
+      expect((await checkModel(getSource(setter, "set,set,set,set,"))).failure).toBeUndefined();
+    });
+
+    it("stops at a setter that reads its value as a string", async () => {
+      expect(
+        (await checkModel(getSource(getReadingSetter("string"), "0,1,2,3,"))).failure?.message,
+      ).toContain("tla-ts can't call setters");
+    });
+  });
+
   it("reads RegExp's species through its getter, which gives RegExp", async () => {
     const getSource = (expected: string) => `
       const parts = RegExp.prototype[Symbol.split].call(/b/, "abcb", 2);
