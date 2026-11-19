@@ -5,7 +5,7 @@ import { createJavaScriptFile, isCommonJsFile } from "../common-js";
 import { createFileResolver } from "../program";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
-import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
+import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
 import { getHostTimeZone, getTlaString, LOCALE_METHODS } from "./runtime";
 import { getNumber, type ProgramFile, specialize } from "./specialize";
 import { suspendDefinitions } from "./suspend";
@@ -16,6 +16,13 @@ export interface EscoreSpec {
   config: string;
   loadModule: (name: string) => string | undefined;
   preparedModules: PreparedModule[];
+}
+
+export interface EscoreSteps {
+  steps: string;
+  entries: readonly string[];
+  // The text of other modules the steps extend, whose reads of the runtime the spec keeps.
+  reads?: string;
 }
 
 interface CodeDefinition {
@@ -291,16 +298,19 @@ const MODULE_GROUPS = new Set(["79-proxy.tla", "86-promise.tla", "88-modules.tla
 
 // Compiles a TypeScript script or module to a spec whose Init runs it as ESCore runs a script or a
 // host its entry module: the realm, then the program, then the jobs it queued. An uncaught exception
-// fails Init's assertion. The spec's module ProgramCode holds the program's code, and the
-// runtime's prepared modules the rest.
+// fails Init's assertion. The spec's module ProgramCode holds the program's code and the spec's
+// steps, the variables and the definitions of Init and Next, and the runtime's prepared modules
+// the rest. A model gives its own steps, and the names of the functions they call, which the
+// program may name nowhere else.
 export const compileToEscore = (
   source: string,
   fileName: string,
   runtime: EscoreRuntime,
   isModule = false,
+  model: EscoreSteps = { steps: SCRIPT_STEPS, entries: [] },
 ): EscoreSpec => {
   const files = loadFiles(source, fileName, isModule);
-  const program = specialize(files, runtime.internalKeys);
+  const program = specialize(files, new Set([...runtime.internalKeys, ...model.entries]));
   // The runtime's setTimeout gives a script undefined where Node gives a Timeout, so a script may
   // only call it as a statement.
   const findTimerValue = (node: ts.Node): ts.Node | undefined =>
@@ -441,7 +451,7 @@ export const compileToEscore = (
   );
   const code = definitions.map((definition) => definition.text).join("\n");
   const view = runtime.getView(
-    `${code}\n${ROOT}\n${CONFIG}`,
+    `${code}\n${model.steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`,
     leaves.map((leaf) => leaf.name),
   );
   const viewed = new Set(view.module.definitions.map((definition) => definition.name));
@@ -461,6 +471,7 @@ export const compileToEscore = (
       (stub) =>
         `Stub${stub.name}(${Array.from({ length: stub.arity }, (_, index) => `p${index + 1}`).join(", ")}) == Assert(FALSE, "tla-ts can't run ${stub.name}, which this program's spec leaves out of ESCore")`,
     ),
+    model.steps,
     "====",
     "",
   ].join("\n");

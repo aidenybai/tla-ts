@@ -8,6 +8,11 @@ import { TIME_ZONES } from "../time-zones";
 // length, sourceText] that its function object holds as its body, and CallCode, which the
 // compile generates, runs the body of the code with an id.
 const DEFINITIONS = [
+  // SetO and SetE, which record whether a write reached an object or an environment that existed
+  // as a model's step started, below the state's writeMark, as written: a step that writes none
+  // changes nothing, as JavaScript sees it, and a model takes no step there. A script's mark is 0.
+  `SetO(s, v, o) == [s EXCEPT !.objs = HeapSet(@, v.id, o), !.written = @ \\/ v.id <= s.writeMark.objects]`,
+  `SetE(s, e, env) == [s EXCEPT !.envs = HeapSet(@, e, env), !.written = @ \\/ e <= s.writeMark.environments]`,
   `CodeFunctionCreate(s, proto, code, isLexicalThis, env, priv) ==
   LET thisMode == IF isLexicalThis THEN "lexical" ELSE IF code.strict THEN "strict" ELSE "global"
       o == PutProp(MakeObject(proto, "function",
