@@ -1431,6 +1431,8 @@ RECURSIVE GetModuleSource(_, _)
 RECURSIVE IsResolvable(_, _, _)
 RECURSIVE GetModuleNamespace(_, _, _)
 RECURSIVE SortCodeUnits(_)
+RECURSIVE SetToSeqFrom(_, _)
+RECURSIVE SortDistinctUnits(_)
 RECURSIVE MergeCodeUnits(_, _, _)
 RECURSIVE IsSymbolLikeNamespaceKey(_, _, _)
 RECURSIVE NamespaceExports(_, _)
@@ -16079,16 +16081,22 @@ GetModuleNamespace(s, m, isDeferred) ==
   LET field == IF isDeferred THEN "deferredNamespace" ELSE "namespace" IN
   IF ModuleAt(s, m)[field] # Empty THEN Ok(s, ModuleAt(s, m)[field]) ELSE
   LET names == SelectSeq(GetExportedNames(s, m, {}).names, LAMBDA name : IsResolvable(s, m, name))
-      object == MakeObject(Null, "namespace", [module |-> m, exports |-> SortCodeUnits(names), deferred |-> isDeferred])
+      object == MakeObject(Null, "namespace", [module |-> m, exports |-> SortDistinctUnits(names), deferred |-> isDeferred])
       tag == IF isDeferred THEN SV("Deferred Module") ELSE SV("Module")
       ns == Alloc(s, PutProp([object EXCEPT !.ext = FALSE], SymToStringTag, DataDesc(tag, FALSE, FALSE, FALSE)))
   IN Ok(SetModule(ns.s, m, [name \in {field} |-> ns.v]), ns.v)
+\* The names of a set in the order of their code units.
+SortCodeUnits(names) == SortDistinctUnits(SetToSeqFrom(names, <<>>))
+\* The elements of a set after those of done, in the order CHOOSE takes them.
+SetToSeqFrom(set, done) ==
+  IF set = {} THEN done
+  ELSE LET x == CHOOSE x \in set : TRUE IN SetToSeqFrom(set \ {x}, Append(done, x))
 \* The distinct names of a sequence in the order of their code units, by a merge sort.
-SortCodeUnits(names) ==
+SortDistinctUnits(names) ==
   IF Len(names) <= 1 THEN names
   ELSE LET half == Len(names) \div 2
-       IN MergeCodeUnits(SortCodeUnits(SubSeq(names, 1, half)),
-                         SortCodeUnits(SubSeq(names, half + 1, Len(names))), <<>>)
+       IN MergeCodeUnits(SortDistinctUnits(SubSeq(names, 1, half)),
+                         SortDistinctUnits(SubSeq(names, half + 1, Len(names))), <<>>)
 \* The distinct names of two sorted sequences of distinct names, after those of done.
 MergeCodeUnits(a, b, done) ==
   IF a = <<>> THEN done \o b
