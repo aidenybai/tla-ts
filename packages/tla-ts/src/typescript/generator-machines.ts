@@ -157,9 +157,10 @@ const isMachineUse = (
   if (name === undefined || !ts.isIdentifier(name)) return false;
   const symbol = getSymbol(name, context.checker);
   const owner = ts.findAncestor(parent, ts.isFunctionLike);
+  // A declaration's name isn't a use, but a declaration's initializer that reads the variable is.
   const references = findNodes(name.getSourceFile(), ts.isIdentifier).filter(
     (identifier) =>
-      !ts.isVariableDeclaration(identifier.parent) &&
+      !(ts.isVariableDeclaration(identifier.parent) && identifier.parent.name === identifier) &&
       getSymbol(identifier, context.checker) === symbol,
   );
   // A variable may also take another object that a call makes, whose own call decides how it runs.
