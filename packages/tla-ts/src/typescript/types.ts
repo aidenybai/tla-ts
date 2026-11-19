@@ -1467,7 +1467,13 @@ export const getKind = (node: ts.Expression, context: Context): Kind => {
     return "object";
   }
   if (isHeldBuiltInObject(node, context) || isCreatedObject(node, context)) return "object";
-  const type = checker.getNonNullableType(checker.getTypeAtLocation(node));
+  // A value of a type parameter holds one of its constraint's, as a rest parameter of type A
+  // extends ReadonlyArray<unknown> holds an array.
+  const read = checker.getNonNullableType(checker.getTypeAtLocation(node));
+  const type =
+    (read.flags & ts.TypeFlags.TypeParameter) !== 0
+      ? (checker.getBaseConstraintOfType(read) ?? read)
+      : read;
   // A value of a built-in object's type, other than the global that names it, holds that object.
   if (
     context.heap !== undefined &&

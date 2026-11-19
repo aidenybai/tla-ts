@@ -15177,11 +15177,39 @@ describe("errors", () => {
     );
   });
 
-  it("stops where the script's name hides a built-in that the global object holds", () => {
+  describe("reads a built-in that the global object holds where the script's let hides it", () => {
+    const getSource = (expected: string) => `
+      let Array = 1;
+      const holder = { global: globalThis as unknown, value: Array };
+      const global = holder.global as { Array: unknown; Math: unknown };
+      const seen = [
+        holder.value,
+        typeof global.Array,
+        global.Array === globalThis.Array,
+        global.Math === Math,
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("1,function,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("1,function,false,true"))).failure?.message).toContain(
+        "seen 1,function,true,true",
+      );
+    });
+  });
+
+  it("stops where the script's var replaces a built-in that the global object holds", () => {
     expect(() =>
       compile(`
-        let Array = 1;
+        var Array = 1;
         const holder = { global: globalThis as unknown, value: Array };
+        const global = holder.global as { Array: unknown };
+        const seen = [holder.value, global.Array].join();
+        if (seen !== "1,1") throw new Error("seen " + seen);
       `),
     ).toThrow("tla-ts can't name the built-in Array, which Array hides");
   });
@@ -50877,11 +50905,11 @@ describe("BigInts", () => {
     it("stops at a built-in read as a value", () => {
       expect(() =>
         compile(`
-          export const Pattern = globalThis.RegExp;
-          export const isSame = (value: 1 | 2): boolean => Pattern === Pattern && value === value;
+          export const Global = globalThis;
+          export const isSame = (value: 1 | 2): boolean => Global === Global && value === value;
         `),
       ).toThrow(
-        "spec.ts:2:34 tla-ts can't use the built-in globalThis as a value where no heap holds objects",
+        "spec.ts:2:33 tla-ts can't use the built-in globalThis as a value where no heap holds objects",
       );
     });
 
@@ -54166,8 +54194,8 @@ describe("BigInts", () => {
     });
   });
 
-  it("stops at a function that a new constructs, made in code that may run more than once", () => {
-    const source = `
+  it("constructs a function that a new constructs, made in code that may run more than once", async () => {
+    const getSource = (expected: string) => `
       interface Primitive {
         readonly value: unknown;
       }
@@ -54183,10 +54211,14 @@ describe("BigInts", () => {
       };
       export const succeed = makeExit("Success");
       export const fail = makeExit("Failure");
-      if (succeed(1).value !== "Success1") throw new Error("value " + succeed(1).value);
+      const made = succeed(1);
+      const failed = fail(2);
+      const seen = [made.value, failed.value].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
     `;
-    expect(() => compile(source)).toThrow(
-      "tla-ts can't make a function that a new constructs, or whose property the script writes, in code that may run more than once",
+    expect((await checkModel(getSource("Success1,Failure2"))).failure).toBeUndefined();
+    expect((await checkModel(getSource("Success1,Success2"))).failure?.message).toContain(
+      "seen Success1,Failure2",
     );
   });
 
@@ -56434,6 +56466,117 @@ describe("BigInts", () => {
     });
   });
 
+  describe("spreads a rest parameter whose type is a type parameter of an array's constraint", () => {
+    const getSource = (expected: string) => `
+      const liftThrowable =
+        <A extends ReadonlyArray<unknown>, B>(f: (...a: A) => B): ((...a: A) => B | undefined) =>
+        (...a) => {
+          try {
+            return f(...a);
+          } catch {
+            return undefined;
+          }
+        };
+      const divide = (left: number, right: number) => {
+        if (right === 0) throw new RangeError("zero");
+        return left / right;
+      };
+      const safe = liftThrowable(divide);
+      const box = { seen: "" };
+      const first = safe(6, 3);
+      const second = safe(1, 0);
+      box.seen = [first, second].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("2,"))).failure).toBeUndefined();
+    });
+
+    it("rejects a result for the throw", async () => {
+      expect((await checkModel(getSource("2,0"))).failure?.message).toContain("seen 2,");
+    });
+  });
+
+  describe("describes a property of a value whose type doesn't tell, where the heap holds it", () => {
+    const path = join(import.meta.dirname, "model.js");
+    const getSource = (expected: string) => `
+      "use strict";
+      var box = { seen: "" };
+      var hasOwnProperty = Object.prototype.hasOwnProperty;
+      function readKey(config) {
+        if (hasOwnProperty.call(config, "key")) {
+          var getter = Object.getOwnPropertyDescriptor(config, "key").get;
+          if (getter && getter.isReactWarning) return "warning";
+        }
+        return void 0 !== config.key ? "key" : "none";
+      }
+      var warned = {};
+      var warning = function () {};
+      warning.isReactWarning = true;
+      Object.defineProperty(warned, "key", { get: warning, configurable: true });
+      box.seen = [readKey({ key: 1 }), readKey({}), readKey(warned)].join();
+      if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await check(compile(getSource("key,none,warning"), path))).failure).toBeUndefined();
+    });
+
+    it("rejects the getter unread", async () => {
+      expect((await check(compile(getSource("key,none,key"), path))).failure?.message).toContain(
+        "seen key,none,warning",
+      );
+    });
+  });
+
+  describe("constructs a function that a call makes each time it runs, with the prototype it holds", () => {
+    const getSource = (expected: string) => `
+      interface Made {
+        value: unknown;
+        readonly op: string;
+      }
+      const makeExit = (options: { op: string }) => {
+        const Proto = { op: options.op };
+        const ExitPrimitive = function (this: Made, value: unknown) {
+          this.value = value;
+        } as unknown as new (value: unknown) => Made;
+        ExitPrimitive.prototype = Proto;
+        return function (value: unknown) {
+          return new ExitPrimitive(value);
+        };
+      };
+      const succeed = makeExit({ op: "Success" });
+      const fail = makeExit({ op: "Failure" });
+      const first = succeed(1);
+      const second = fail("boom");
+      const third = succeed(2);
+      const seen = [
+        first.op,
+        String(first.value),
+        second.op,
+        String(second.value),
+        Object.getPrototypeOf(first) === Object.getPrototypeOf(third),
+        Object.getPrototypeOf(first) === Object.getPrototypeOf(second),
+        Object.hasOwn(first, "op"),
+      ].join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+      export {};
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModel(getSource("Success,1,Failure,boom,true,false,false"))).failure,
+      ).toBeUndefined();
+    });
+
+    it("rejects one prototype for both calls", async () => {
+      expect(
+        (await checkModel(getSource("Success,1,Failure,boom,true,true,false"))).failure?.message,
+      ).toContain("seen Success,1,Failure,boom,true,false,false");
+    });
+  });
+
   describe("runs a compound assignment's key call and throws for an undefined or null base", () => {
     const path = join(import.meta.dirname, "model.js");
     const getSource = (expected: string) => `
@@ -56996,5 +57139,155 @@ describe("converts a value of type never to a string as JavaScript converts what
         "tla-ts can't convert objects to strings",
       );
     }
+  });
+});
+
+describe("reads a built-in through globalThis as the built-in", () => {
+  const getSource = (expected: string) => `
+    const box = { seen: "" };
+    class Failure extends globalThis.Error {
+      getKind() {
+        return "failure";
+      }
+    }
+    class BadInput extends globalThis.TypeError {}
+    const failure = new Failure("boom");
+    const badInput = new BadInput("bad");
+    const range = new globalThis.RangeError("range");
+    box.seen = [
+      failure.message,
+      failure.getKind(),
+      failure instanceof Error,
+      failure instanceof Failure,
+      failure instanceof TypeError,
+      badInput instanceof TypeError,
+      badInput instanceof BadInput,
+      range instanceof RangeError,
+      range.message,
+      globalThis.Error === Error,
+    ].join();
+    if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+  `;
+  const expected = "boom,failure,true,true,false,true,true,true,range,true";
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (await checkModel(getSource(expected.replace("true,true,false", "true,true,true")))).failure
+        ?.message,
+    ).toContain(`seen ${expected}`);
+  });
+
+  describe("where a module's own name hides the built-in", () => {
+    const getModule = (expected: string) => `
+      const getCounter = () => {
+        let count = 0;
+        return () => ++count;
+      };
+      export const counter = getCounter();
+      const box = { seen: "" };
+      export const YieldableError = (function () {
+        class YieldableError extends globalThis.Error {}
+        Object.assign(YieldableError.prototype, { op: "YieldableError" });
+        return YieldableError as any;
+      })() as new (message?: string) => globalThis.Error;
+      export const Error = (message: string) => new YieldableError(message);
+      const error = new YieldableError("boom");
+      box.seen = [
+        error.message,
+        error instanceof globalThis.Error,
+        error instanceof YieldableError,
+        Object.hasOwn(YieldableError.prototype, "op"),
+      ].join();
+      if (box.seen !== "${expected}") throw new globalThis.Error("seen " + box.seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getModule("boom,true,true,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getModule("boom,true,false,true"))).failure?.message).toContain(
+        "seen boom,true,true,true",
+      );
+    });
+  });
+
+  it("stops where the script replaces the built-in on the global object", async () => {
+    const result = await checkModel(`
+      const box = { seen: "" };
+      const original = globalThis.Error;
+      (globalThis as { Error: unknown }).Error = function Replaced() {};
+      box.seen = [globalThis.Error === original, typeof globalThis.Error].join();
+      (globalThis as { Error: unknown }).Error = original;
+      if (box.seen !== "false,function") throw new Error("seen " + box.seen);
+    `);
+    expect(result.failure?.message).toContain("tla-ts can't");
+  });
+});
+
+describe("constructs the class that a function returns where a call runs it once in place", () => {
+  const getSource = (expected: string) => `
+    const box = { seen: "" };
+    const Made = (function () {
+      class Made {
+        tag = "made";
+        describe() {
+          return this.tag;
+        }
+      }
+      return Made;
+    })();
+    const YieldableError = (function () {
+      class YieldableError extends globalThis.Error {}
+      const proto = { op: "YieldableError" };
+      Object.assign(YieldableError.prototype, proto);
+      return YieldableError as any;
+    })() as new (message?: string) => Error;
+    const made = new Made();
+    const error = new YieldableError("boom");
+    box.seen = [
+      made.describe(),
+      made instanceof Made,
+      error.message,
+      error instanceof Error,
+      error instanceof YieldableError,
+      Object.hasOwn(YieldableError.prototype, "op"),
+    ].join();
+    if (box.seen !== "${expected}") throw new Error("seen " + box.seen);
+  `;
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource("made,true,boom,true,true,true"))).failure).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect(
+      (await checkModel(getSource("made,true,boom,true,false,true"))).failure?.message,
+    ).toContain("seen made,true,boom,true,true,true");
+  });
+
+  it("stops where the function runs more than once", () => {
+    expect(() =>
+      compile(`
+        const box = { seen: "" };
+        const make = () =>
+          (function () {
+            class Made {
+              describe() {
+                return "made";
+              }
+            }
+            return Made;
+          })();
+        const First = make();
+        const Second = make();
+        box.seen = [new First().describe(), First === Second].join();
+        if (box.seen !== "made,false") throw new Error("seen " + box.seen);
+      `),
+    ).toThrow("tla-ts can't make a class in code that may run more than once");
   });
 });

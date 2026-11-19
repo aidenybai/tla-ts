@@ -506,7 +506,16 @@ const getKeyName = (key: ts.PropertyName, context: Context) => {
 // initializes gives, and which is empty where it's an argument, an element, an operand of in or of
 // a comma, or what an assignment to anything else assigns.
 export const getAnonymousName = (node: ts.ArrowFunction | HeapClass, context: Context) => {
-  const named = ts.findAncestor(node.parent, (parent) => !ts.isParenthesizedExpression(parent));
+  // A cast runs nothing, so the name passes through it as through parentheses.
+  const named = ts.findAncestor(
+    node.parent,
+    (parent) =>
+      !ts.isParenthesizedExpression(parent) &&
+      !ts.isAsExpression(parent) &&
+      !ts.isTypeAssertionExpression(parent) &&
+      !ts.isSatisfiesExpression(parent) &&
+      !ts.isNonNullExpression(parent),
+  );
   if (named === undefined) return undefined;
   if (ts.isVariableDeclaration(named)) {
     return ts.isIdentifier(named.name) ? named.name.text : undefined;
@@ -2366,7 +2375,7 @@ export const translateAllocated = (node: ts.Node, scope: Scope, context: Context
       describedValue === undefined
         ? useJavaScript(
             "Describe",
-            [heap, translateObjectValue(node.arguments[0], scope, context), key],
+            [heap, translateHeldValue(node.arguments[0], scope, context), key],
             context,
           )
         : useJavaScript(
@@ -2497,10 +2506,32 @@ export const isDescription = (node: ts.Node, context: Context) =>
   node.arguments.length >= 2 &&
   !isProxyValue(node.arguments[0], context) &&
   (["object", "sequence"].includes(getKind(node.arguments[0], context)) ||
+    isAnyValue(node.arguments[0], context) ||
     isBuiltInObject(node.arguments[0], context) ||
     (node.expression.expression.getText() === "Object" &&
       getKind(node.arguments[0], context) === "string") ||
     isUntypedObject(node.arguments[0], context));
+
+// A value of type any or unknown, which may be an object that the heap holds or another value.
+const isAnyValue = (node: ts.Expression, context: Context) =>
+  context.heap !== undefined &&
+  (context.checker.getTypeAtLocation(node).flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+
+// An object, which a value of type any reads where the heap or the built-in objects hold it, and
+// stops at otherwise.
+const translateHeldValue = (node: ts.Expression, scope: Scope, context: Context) =>
+  isAnyValue(node, context)
+    ? share(translateExpression(node, scope, context), "object", context, (value) =>
+        ifExpression(
+          useJavaScript("IsHeldObject", [value], context),
+          value,
+          apply("Assert", [
+            boolean(false),
+            string("tla-ts can't read the own properties of a value that isn't an object here"),
+          ]),
+        ),
+      )
+    : translateObjectValue(node, scope, context);
 
 // A global that the global object holds, whose type tells an object though only declarations give
 // it, such as the DOM's window, which holds what a script defines there.
