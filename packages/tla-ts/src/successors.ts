@@ -125,7 +125,6 @@ const assign = (partial: State, index: number, value: Value) => {
 const holds = (run: Run, expression: Expression, context: Context) =>
   holdsValue(run, expression, evaluate(expression, context));
 
-// Returns, rather than throws, the unassigned variable ENABLED meets, which TLC's Tool#enabledUnchanged fails on.
 const holdsUnchanged = (run: Run, unchanged: Expression, context: Context) => {
   try {
     return holds(run, unchanged, context);

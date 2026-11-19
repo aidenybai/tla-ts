@@ -4250,7 +4250,6 @@ const compileStep = (
       const checks = indexes
         .filter((index) => primed[index] !== undefined)
         .map((index) => `H.same(${primed[index]}, v${index})`);
-      // The interpreter warns about a variable UNCHANGED keeps that the step has changed.
       return () =>
         checks.length === 0 ? tail() : `if (${checks.join(" && ")}) { ${tail()} } else H.deopt();`;
     }

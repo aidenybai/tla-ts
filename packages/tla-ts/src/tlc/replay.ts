@@ -349,7 +349,6 @@ const proceedItems = (
   return isChanged(replay, items, partial) && proceed(replay, items.rest, partial, items.node);
 };
 
-// Returns, rather than throws, the unassigned variable ENABLED meets, which TLC's Tool#enabledUnchanged fails on.
 const evaluateInPartial = (
   replay: Replay,
   node: number,
