@@ -123,6 +123,7 @@ const getModInverse = (value: bigint, modulus: bigint) => {
 export class SolveEqs {
   private pinned: RefVector;
   private eqTerms: RefVector;
+  private oldForms: RefVector;
   private nonzero = new Set<number>();
   private bounds: BoundManager;
   private isAllowingBool = true;
@@ -150,23 +151,15 @@ export class SolveEqs {
   ) {
     this.pinned = new RefVector(manager);
     this.eqTerms = new RefVector(manager);
+    this.oldForms = new RefVector(manager);
     this.bounds = new BoundManager(manager);
     this.substitution = new ObjMap((expr) => manager.hashes[expr]);
     this.rewriter = new Rewriter(manager, options.rewriter);
     this.state = new DependentExprState(manager, goal);
   }
 
-  private pin(expr: number) {
-    this.eqTerms.push(expr);
-    return expr;
-  }
-
-  private mkApp(op: number, args: number[], sort: number) {
-    return this.pin(this.manager.mkApp(op, args, sort));
-  }
-
-  private mkMul(args: number[], sort: number) {
-    return args.length === 1 ? args[0] : this.mkApp(OP_MUL, args, sort);
+  private mkMul(args: number[]) {
+    return args.length === 1 ? args[0] : this.manager.mkApp(OP_MUL, args, SORT_REAL);
   }
 
   private push(eqs: DependentEq[], orig: number, variable: number, term: number) {
@@ -277,8 +270,8 @@ export class SolveEqs {
           other === index
             ? term
             : isBv
-              ? this.pin(mkBvApp(manager, OP_BSUB, [term, arg]))
-              : this.mkApp(OP_SUB, [term, arg], manager.sorts[rhs]),
+              ? mkBvApp(manager, OP_BSUB, [term, arg])
+              : manager.mkApp(OP_SUB, [term, arg], manager.sorts[rhs]),
         rhs,
       );
   }
@@ -309,14 +302,14 @@ export class SolveEqs {
               eqs,
               orig,
               variable,
-              this.mkApp(OP_UMINUS, [this.mkSubTerm(x, index, y)], manager.sorts[y]),
+              manager.mkApp(OP_UMINUS, [this.mkSubTerm(x, index, y)], manager.sorts[y]),
             );
           else if (isReal && !value.isZero())
             this.push(
               eqs,
               orig,
               variable,
-              this.mkApp(OP_DIV, [this.mkSubTerm(x, index, y), coefficient], SORT_REAL),
+              manager.mkApp(OP_DIV, [this.mkSubTerm(x, index, y), coefficient], SORT_REAL),
             );
           continue;
         }
@@ -333,12 +326,7 @@ export class SolveEqs {
           continue;
         const others = factors.filter((_value, otherIndex) => otherIndex !== factorIndex);
         const term = this.mkSubTerm(x, index, y);
-        this.push(
-          eqs,
-          orig,
-          factor,
-          this.mkApp(OP_DIV, [term, this.mkMul(others, SORT_REAL)], SORT_REAL),
-        );
+        this.push(eqs, orig, factor, manager.mkApp(OP_DIV, [term, this.mkMul(others)], SORT_REAL));
       }
     }
   }
@@ -348,10 +336,16 @@ export class SolveEqs {
     if (!this.options.isEliminatingMod || manager.getOp(x) !== OP_MOD) return;
     const [dividend, divisor] = manager.getArgs(x);
     if (!manager.isNumeral(divisor) || !manager.getRationalValue(divisor).isPositive()) return;
-    const fresh = this.pin(manager.mkFreshConst("mod", SORT_INT));
-    const term = this.mkApp(OP_ADD, [this.mkApp(OP_MUL, [divisor, fresh], SORT_INT), y], SORT_INT);
+    const fresh = manager.mkFreshConst("mod", SORT_INT);
+    const term = manager.mkApp(
+      OP_ADD,
+      [manager.mkApp(OP_MUL, [divisor, fresh], SORT_INT), y],
+      SORT_INT,
+    );
+    manager.incRef(term);
     if (this.isConst(dividend)) this.push(eqs, orig, dividend, term);
     else this.solveArithEq(orig, dividend, term, eqs);
+    manager.decRef(term);
   }
 
   private solveArithMul(orig: number, x: number, y: number, eqs: DependentEq[]) {
@@ -365,12 +359,7 @@ export class SolveEqs {
       )
         continue;
       const others = factors.filter((_value, otherIndex) => otherIndex !== index);
-      this.push(
-        eqs,
-        orig,
-        factor,
-        this.mkApp(OP_DIV, [y, this.mkMul(others, SORT_REAL)], SORT_REAL),
-      );
+      this.push(eqs, orig, factor, manager.mkApp(OP_DIV, [y, this.mkMul(others)], SORT_REAL));
     }
   }
 
@@ -424,11 +413,14 @@ export class SolveEqs {
     if (!manager.isBvNumeral(coefficient) || !this.isConst(variable)) return undefined;
     const value = manager.getBvNumeralValue(coefficient);
     if (value % 2n === 0n) return undefined;
-    const width = manager.getBvSize(manager.sorts[variable]);
-    return {
-      variable,
-      inverse: manager.mkBvNumeral(getModInverse(value, 1n << BigInt(width)), width),
-    };
+    return { variable, value };
+  }
+
+  private mkInverseMul(odd: { variable: number; value: bigint }, term: number) {
+    const manager = this.manager;
+    const width = manager.getBvSize(manager.sorts[odd.variable]);
+    const inverse = manager.mkBvNumeral(getModInverse(odd.value, 1n << BigInt(width)), width);
+    return mkBvApp(manager, OP_BMUL, [inverse, term]);
   }
 
   private solveBvEq(orig: number, x: number, y: number, eqs: DependentEq[]) {
@@ -441,22 +433,10 @@ export class SolveEqs {
         }
         const odd = this.getOddCoefficient(arg);
         if (odd === undefined) continue;
-        const term = this.mkSubTerm(x, index, y);
-        this.push(
-          eqs,
-          orig,
-          odd.variable,
-          this.pin(mkBvApp(manager, OP_BMUL, [this.pin(odd.inverse), term])),
-        );
+        this.push(eqs, orig, odd.variable, this.mkInverseMul(odd, this.mkSubTerm(x, index, y)));
       }
     const odd = this.getOddCoefficient(x);
-    if (odd !== undefined)
-      this.push(
-        eqs,
-        orig,
-        odd.variable,
-        this.pin(mkBvApp(manager, OP_BMUL, [this.pin(odd.inverse), y])),
-      );
+    if (odd !== undefined) this.push(eqs, orig, odd.variable, this.mkInverseMul(odd, y));
   }
 
   private getBvEqs(form: number, eqs: DependentEq[]) {
@@ -575,17 +555,27 @@ export class SolveEqs {
     return eqs;
   }
 
+  // m_next keeps a reference to the term of each equation it copies.
+  private resetNext() {
+    for (const eqs of this.next) for (const eq of eqs) this.manager.decRef(eq.term);
+    this.next = [];
+  }
+
   private extractDepGraph(eqs: DependentEq[]) {
     this.var2id.clear();
     this.id2var = [];
+    this.resetNext();
     for (const eq of eqs) {
       if (this.var2id.has(eq.variable) || !this.canBeVar(eq.variable)) continue;
       this.var2id.set(eq.variable, this.id2var.length);
       this.id2var.push(eq.variable);
     }
     this.next = this.id2var.map(() => []);
-    for (const eq of eqs)
-      if (this.canBeVar(eq.variable)) this.next[this.var2id.get(eq.variable) as number].push(eq);
+    for (const eq of eqs) {
+      if (!this.canBeVar(eq.variable)) continue;
+      this.manager.incRef(eq.term);
+      this.next[this.var2id.get(eq.variable) as number].push(eq);
+    }
   }
 
   private extractSubst() {
@@ -629,6 +619,8 @@ export class SolveEqs {
             todo.length = todoSize;
             continue;
           }
+          manager.incRef(eq.term);
+          manager.decRef(this.next[next][0].term);
           this.next[next][0] = eq;
           this.substIds.push(next);
           break;
@@ -667,12 +659,14 @@ export class SolveEqs {
       const replaced = replacer.replace(form);
       const simplified = this.rewriter.rewrite(replaced);
       manager.decRef(replaced);
-      if (simplified !== form)
+      if (simplified !== form) {
+        this.oldForms.push(form);
         goal.update(
           index,
           simplified,
           joinDependencies(goal.getDependency(index), replacer.dependency),
         );
+      }
       manager.decRef(simplified);
     });
     replacer.release();
@@ -696,6 +690,7 @@ export class SolveEqs {
         .filter((def) => !def.isMacro && def.rhs !== -1)
         .flatMap((def) => getSubterms(manager, def.rhs)),
     );
+    this.oldForms.reset();
     this.eqTerms.reset();
     const eqs = getEqs();
     this.extractDepGraph(eqs);
@@ -718,9 +713,14 @@ export class SolveEqs {
       this.runRound(() => this.getEqs());
       count++;
     } while (this.substIds.length > 0 && count < 20 && limit.inc());
-    if (limit.inc() && this.options.isContextSolve && !goal.isProofsEnabled)
+    if (limit.inc() && this.options.isContextSolve && !goal.isProofsEnabled) {
       this.runRound(() => this.collectNestedEqualities());
+      // The model trail keeps the formulas the nested equalities replaced.
+      if (this.substitution.size > 0)
+        for (const form of this.oldForms.items) this.pinned.push(form);
+    }
     this.eqTerms.reset();
+    this.oldForms.reset();
     finishSimplifier(goal, this.definitions);
   }
 
@@ -976,9 +976,10 @@ export class SolveEqs {
   }
 
   release() {
-    this.state.release();
+    this.eqTerms.reset();
+    this.resetNext();
     this.rewriter.release();
     this.pinned.reset();
-    this.eqTerms.reset();
+    this.state.release();
   }
 }

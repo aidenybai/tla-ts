@@ -2332,6 +2332,79 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
     ]);
   });
 
+  it("keeps each bv term solve-eqs solves for only in its equation", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(declare-const z (_ BitVec 8))",
+        "(assert (= (bvadd x y z (bvmul x z)) #x01))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or (not p) q)",
+      "  (or r q p)",
+      "  (or r q)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
+  it("keeps each arithmetic term solve-eqs solves for only in its equation", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= (+ (* (- 1) y) x) 8))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or q p r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
+  it("keeps the formulas solve-eqs replaces until its next round", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (= (+ (* (- 1) z) y (* 3 y)) 2))",
+        "(assert (= 2 (+ (* (- 1) x) z)))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or q (not r) (not p))",
+      "  (or q p r)",
+      "  (or q r)",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
   it("keeps the solver of the last check-sat until the next assert", () => {
     expect(
       run([
