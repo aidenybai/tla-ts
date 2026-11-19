@@ -2092,13 +2092,10 @@ export const specialize = (
     scope: Scope,
     labels: string[],
   ): Code => {
-    if (ts.isForOfStatement(node) && node.awaitModifier !== undefined) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't compile a generator or an async function to ESCore yet",
-        node,
-      );
-    }
     const isEnumerate = ts.isForInStatement(node);
+    // A for-await statement awaits each result of its async iterator's next.
+    const isAwait = ts.isForOfStatement(node) && node.awaitModifier !== undefined;
+    if (isAwait) isAsync = true;
     const id = loops.length + 1;
     loops.push({ id, body: "" });
     const labelSet = `{${labels.map(getUnits).join(", ")}}`;
@@ -2133,7 +2130,9 @@ export const specialize = (
       bind = `ResultThen(ctx, AssignToThen(Val(value), ${reference(initializer, scope)("value.s", "ctx")}))`;
     }
     loops[id - 1].body = [
-      `LET r == Call(s, it.next, it.iterator, <<>>) IN IF IsAbrupt(r) THEN r ELSE IF ~IsObject(Val(r)) THEN ThrowTypeError(r.s) ELSE`,
+      isAwait
+        ? `LET r == AwaitThen(Call(s, it.next, it.iterator, <<>>)) IN IF IsAbrupt(r) THEN r ELSE IF ~IsObject(Val(r)) THEN ThrowTypeError(r.s) ELSE`
+        : `LET r == Call(s, it.next, it.iterator, <<>>) IN IF IsAbrupt(r) THEN r ELSE IF ~IsObject(Val(r)) THEN ThrowTypeError(r.s) ELSE`,
       "LET done == IteratorComplete(r.s, Val(r)) IN IF IsAbrupt(done) THEN done ELSE IF Val(done) THEN Ok(done.s, v) ELSE",
       `LET value == Get(done.s, Val(r), SV("value")) IN IF IsAbrupt(value) THEN value ELSE`,
       `LET bound == ${bind} IN IF IsAbrupt(bound) THEN ForInOfClose(loop, it, bound) ELSE`,
@@ -2146,7 +2145,7 @@ export const specialize = (
         : `LET env == NewDeclarativeEnvironment(s, ctx.lex) IN ${expression(`BlockBindNames(env.s, env.e, ${getSequence(tdz.map(getUnits))}, FALSE)`, "WithLex(ctx, env.e)")}`;
     return defineCode(
       "ForInOf",
-      `BreakTargetThen(ForInOfHeadThen(ctx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> <<>>, it |-> Empty, iterationKind |-> "${isEnumerate ? "enumerate" : "iterate"}", iteratorKind |-> "sync"], ${head}))`,
+      `BreakTargetThen(ForInOfHeadThen(ctx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> <<>>, it |-> Empty, iterationKind |-> "${isEnumerate ? "enumerate" : isAwait ? "async-iterate" : "iterate"}", iteratorKind |-> "${isAwait ? "async" : "sync"}"], ${head}))`,
     );
   };
 

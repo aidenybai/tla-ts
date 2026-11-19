@@ -473,6 +473,47 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("awaits each result of a for-await statement's iterator", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      async function* numbers() {
+        yield 1;
+        yield await Promise.resolve(2);
+      }
+      const closing = {
+        [Symbol.asyncIterator]() {
+          return {
+            next: async () => ({ value: "c", done: false }),
+            return: async () => {
+              log.push("closed");
+              return {};
+            },
+          };
+        },
+      };
+      async function main() {
+        for await (const value of numbers()) log.push(String(value));
+        for await (const value of [Promise.resolve("a"), "b"]) log.push(value);
+        for await (const value of closing) {
+          log.push(value);
+          break;
+        }
+        log.push("after");
+      }
+      main().then(() => {
+        if (log.join() !== "${expected}") throw new Error(log.join());
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("1,2,a,b,c,closed,after"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("1,2,a,b,c,after"))).message).toContain(THREW);
+    });
+  });
+
   describe("awaits the value that an async generator returns", () => {
     const getSource = (expected: string) => `
       const actual: string[] = [];
