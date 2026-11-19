@@ -55,8 +55,10 @@ import {
   getStartupValue,
   expectBoolean,
   expectBooleanBody,
+  getBuiltin,
   getDefinition,
   getRootKey,
+  type Builtin,
   type Context,
   type Environment,
   type Scope,
@@ -237,9 +239,18 @@ const getConstantValue = (key: string, definition: Definition, environment: Envi
   return isLiteralDefinition(definition) ? undefined : getStartupValue(definition, environment);
 };
 
+// SpecProcessor reads a name of the configuration in defns, which holds TRUE, FALSE and BOOLEAN as values and a Java override as a MethodValue.
+const getValueBuiltin = (key: string, environment: Environment) =>
+  environment.constants.has(key) ? undefined : getBuiltin(key, environment);
+
+const formatBuiltin = (builtin: Builtin) =>
+  builtin.signature === undefined
+    ? formatValue(builtin.evaluate([]))
+    : `<Java Method: ${builtin.signature}>`;
+
 const getConfigDefinition = (kind: string, name: string, environment: Environment) => {
   const key = getRootKey(name, environment);
-  if (environment.constants.has(key)) {
+  if (environment.constants.has(key) || getBuiltin(key, environment)) {
     throw new TlaConfigError(`The ${kind} ${name} cannot be a constant.`);
   }
   const definition = getConfigOperator(kind, name, environment);
@@ -251,6 +262,11 @@ const getConfigDefinition = (kind: string, name: string, environment: Environmen
 
 const getConfigPredicate = (kind: string, name: string, environment: Environment) => {
   const key = getRootKey(name, environment);
+  const builtin = getValueBuiltin(key, environment);
+  if (builtin) {
+    if (builtin.signature === undefined && builtin.evaluate([]) === true) return undefined;
+    throw new TlaConfigError(`The ${kind} of ${name} is equal to ${formatBuiltin(builtin)}`);
+  }
   const definition = environment.constants.has(key)
     ? undefined
     : getConfigOperator(kind, name, environment);
@@ -390,6 +406,12 @@ const getSpecification = (
   const nextActions: ScopedExpression[] = [];
   const temporals: ScopedExpression[] = [];
   const specificationKey = getRootKey(config.specification, environment);
+  const builtin = getValueBuiltin(specificationKey, environment);
+  if (builtin) {
+    throw new TlaConfigError(
+      `The value of ${config.specification} is equal to ${formatBuiltin(builtin)}`,
+    );
+  }
   const value = environment.constants.has(specificationKey)
     ? environment.constants.get(specificationKey)
     : getConstantValue(
@@ -1745,7 +1767,11 @@ export const createSearch = (
       const modulePostconditions = getModuleOperators("postcondition");
       const rejection = config.postconditions
         .map((name) => {
-          const definition = getDefinition(getRootKey(name, environment), environment);
+          const key = getRootKey(name, environment);
+          const definition = getDefinition(key, environment);
+          if (environment.constants.has(key) || getBuiltin(key, environment)) {
+            return `The post condition ${name} cannot be a constant.`;
+          }
           if (!definition) {
             return `The post condition ${name} specified in the configuration file\nis not defined in the specification.`;
           }

@@ -3,7 +3,7 @@ import type { Substitution } from "./config";
 import { TlaConfigError, TlaEvaluationError, UNEXPECTED_EXCEPTION } from "./errors";
 import { EXIT_STATUS, setExitCode, withErrorExitCode } from "./exit-codes";
 import { MESSAGE_CODE, withUnexpectedException } from "./tlc/messages";
-import { evaluate, getRootKey, type Environment } from "./evaluate";
+import { evaluate, getBuiltin, getRootKey, type Environment } from "./evaluate";
 import { parenthesizedRanges } from "./parser";
 import { getKeyName } from "./resolve";
 import {
@@ -110,12 +110,20 @@ export const getSymmetryGroup = (
 ): Images[] | undefined => {
   const key = getRootKey(name, environment);
   const definition = environment.definitions.get(key);
-  if (definition === undefined && !environment.constants.has(key)) {
+  if (
+    definition === undefined &&
+    !environment.constants.has(key) &&
+    getBuiltin(key, environment) === undefined
+  ) {
     throw new TlaConfigError(
       `The symmetry function ${name} specified in the configuration file\nis not defined in the specification.`,
     );
   }
-  if (definition?.kind !== "Operator" || definition.params.length > 0) {
+  if (
+    environment.constants.has(key) ||
+    definition?.kind !== "Operator" ||
+    definition.params.length > 0
+  ) {
     throw createSymmetryError(`The symmetry function ${name} must specify a set of permutations.`);
   }
   const evaluateConstant = (expression: Expression) =>

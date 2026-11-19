@@ -227,6 +227,7 @@ const createJavaOverrideError = (signature: string, message: string) =>
 
 export const checkJavaArity = (builtin: Builtin, signature: string): Builtin => ({
   ...builtin,
+  signature,
   evaluate: (args, context) => {
     if (args.length === builtin.arity) return builtin.evaluate(args, context);
     // TLC's MethodValue spreads the arguments into a method with parameters and invokes one without them exactly, so java.lang.invoke rejects the call.

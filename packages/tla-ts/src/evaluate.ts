@@ -141,6 +141,7 @@ export interface Builtin {
   isLevelConstant?: boolean;
   isActionLevel?: boolean;
   isLazy?: boolean;
+  signature?: string;
 }
 
 export interface Closure {
@@ -508,6 +509,9 @@ export const expectBooleanBody = (value: Value, expression: Expression) => {
 
 export const getDefinition = (name: string, environment: Environment) =>
   environment.definitions.get(environment.substitutions.get(name) ?? name);
+
+export const getBuiltin = (name: string, environment: Environment) =>
+  environment.builtins.get(environment.substitutions.get(name) ?? name);
 
 // Deviation from TLC: SpecProcessor#processModuleOverrides puts a standard module's Java override over a root definition of the same name.
 export const getRootKey = (name: string, environment: Environment) =>

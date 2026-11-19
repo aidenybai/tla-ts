@@ -4110,6 +4110,51 @@ describe("initial predicate and next-state relation match TLC", () => {
     ).rejects.toThrow(/The next state action Next cannot be a constant/);
   });
 
+  it("reads a name of the configuration as TLC's defns holds TRUE, FALSE, BOOLEAN and the Java overrides", async () => {
+    const statuses = await Promise.all(
+      ["INVARIANT TRUE", "PROPERTY TRUE", "CONSTRAINT TRUE"].map(
+        async (config) => (await checkModule("", config)).status,
+      ),
+    );
+    expect(statuses).toEqual(["success", "success", "success"]);
+    const cases = [
+      ["INVARIANT BOOLEAN", "The invariant of BOOLEAN is equal to {FALSE, TRUE}"],
+      [
+        "ACTION_CONSTRAINT STRING",
+        "The action constraint of STRING is equal to <Java Method: public static tlc2.value.impl.Value tlc2.module.Strings.STRING()>",
+      ],
+      ["VIEW BOOLEAN", "The view function BOOLEAN cannot be a constant."],
+    ];
+    for (const item of cases) {
+      await expect(checkModule("", item[0])).rejects.toThrow(new TlaConfigError(item[1]));
+    }
+    await expect(checkModule("", "POSTCONDITION TRUE")).rejects.toThrow(
+      new TlaEvaluationError("The post condition TRUE cannot be a constant."),
+    );
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====",
+        config: "SPECIFICATION Nat",
+      }),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The value of Nat is equal to <Java Method: public static tlc2.value.impl.Value tlc2.module.Naturals.Nat()>",
+      ),
+    );
+    const symmetries = [
+      ["", "SYMMETRY FALSE", "FALSE"],
+      ["CONSTANT N", "CONSTANT N <- TRUE\nSYMMETRY N", "N"],
+    ];
+    for (const item of symmetries) {
+      await expect(checkModule(item[0], item[1])).rejects.toThrow(
+        new TlaEvaluationError(
+          `${UNEXPECTED_EXCEPTION}The symmetry function ${item[2]} must specify a set of permutations.`,
+        ),
+      );
+    }
+  });
+
   it("takes a constant next-state action that TLC fails to compute for an operator", async () => {
     const result = await checkSteps("Step == <<TRUE>>[1] /\\ <<1>>[1]", "INIT Init\nNEXT Step");
     expect(result.failure?.message).toBe(
