@@ -82,6 +82,7 @@ interface ModuleBindings {
 
 interface Unit {
   imported: Symbols;
+  linkTheorem: (key: string) => void;
   getInstance: (instance: Instance) => InstancedModule;
   definitions: Map<string, Definition>;
   getKey: (item: { name: string }) => string;
@@ -951,6 +952,7 @@ const getSymbolArity = (
   }
   const symbol = findSymbol(name, unit);
   if (symbol) {
+    if (symbol.kind === "Theorem") unit.linkTheorem(symbol.key);
     if (expression.kind === "Identifier") expression.name = symbol.key;
     else expression.operator = symbol.key;
     operandApplications.get(expression)?.forEach((application) => {
@@ -2422,6 +2424,7 @@ export interface ModuleReport {
 
 export interface ModuleUnit {
   imported: Symbols;
+  linkTheorem: (key: string) => void;
   getInstance: (instance: Instance) => InstancedModule;
   bound: Symbols;
   definitions: Map<string, Definition>;
@@ -2644,6 +2647,7 @@ export const resolveSubstitutions = (
   unit.reports.push(report);
   return checkSubstitutions(instance, declarations, module.name, undefined, {
     imported,
+    linkTheorem: unit.linkTheorem,
     getInstance: unit.getInstance,
     definitions: unit.definitions,
     getKey: unit.getKey,
@@ -2743,6 +2747,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     check: (errors, warnings) =>
       check({
         imported: symbols,
+        linkTheorem: unit.linkTheorem,
         getInstance: unit.getInstance,
         definitions: unit.definitions,
         getKey: unit.getKey,

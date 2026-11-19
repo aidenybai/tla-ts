@@ -394,7 +394,12 @@ interface Instantiation {
   getDefinition: (key: string) => Definition | undefined;
   getOuterDefinition: (key: string) => Definition | undefined;
   isParameterized: (key: string) => boolean;
-  addDefinition: (source: string, name: string, create: (key: string) => Definition) => string;
+  addDefinition: (
+    source: string,
+    name: string,
+    create: (key: string) => Definition,
+    reservedKey?: string,
+  ) => string;
   createName: (name: string) => string;
   frame?: Expression;
   isLocal?: boolean;
@@ -993,27 +998,35 @@ export const createInstantiation = (instantiation: Instantiation) => {
   const rewrite = createRewrite("Normal");
   createRewrite("Enabled");
   createRewrite("Primed");
-  const getEntry = (key: string, copy: string) => {
+  const getEntry = (key: string, copy: string, reservedKey: string | undefined) => {
     const frame = instantiation.frame;
     const definition = instantiation.getDefinition(copy);
     if (!frame || !definition) return copy;
-    return instantiation.addDefinition(key, definition.name, () => {
-      const operator = getOperatorDefinition(definition);
-      return { ...operator, body: withSubstitutionFrames(operator.body, [frame]) };
-    });
+    return instantiation.addDefinition(
+      key,
+      definition.name,
+      () => {
+        const operator = getOperatorDefinition(definition);
+        return { ...operator, body: withSubstitutionFrames(operator.body, [frame]) };
+      },
+      reservedKey,
+    );
   };
   return {
-    getKey: (key: string) => {
+    getKey: (key: string, reservedKey?: string) => {
       const copy = getCopy(rewrite, key);
-      return copy === undefined ? key : getEntry(key, copy);
+      return copy === undefined ? key : getEntry(key, copy, reservedKey);
     },
-    getQualifiedKey: (key: string) => {
+    getQualifiedKey: (key: string, reservedKey?: string) => {
       const copy = getCopy(rewrite, key);
-      if (copy !== undefined) return getEntry(key, copy);
+      if (copy !== undefined) return getEntry(key, copy, reservedKey);
       const definition = instantiation.getDefinition(key);
       if (!definition) return key;
-      return instantiation.addDefinition(key, definition.name, () =>
-        withInstanceParams(definition, instantiation.params),
+      return instantiation.addDefinition(
+        key,
+        definition.name,
+        () => withInstanceParams(definition, instantiation.params),
+        reservedKey,
       );
     },
   };

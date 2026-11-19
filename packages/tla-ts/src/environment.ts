@@ -294,6 +294,11 @@ export const createEnvironment = (
   const order = options.order ?? createTlcOrder(options.source, options.loadModule);
   const root = order.parseModule(options.source);
   const definitions = new Map<string, Definition>();
+  const unlinkedTheorems = new Map<string, () => void>();
+  const getLinkedDefinition = (key: string) => {
+    unlinkedTheorems.get(key)?.();
+    return definitions.get(key);
+  };
   const parameterized = new Map<string, boolean>();
   const unresolvedBodyKeys = new Set<string>();
   const copySources = new Map<string, CopySource>();
@@ -346,14 +351,14 @@ export const createEnvironment = (
       return {
         constants: linked.constants,
         variables: linked.variables,
-        definitions: [
+        getDefinitions: () => [
           ...new Set(
-            [...linked.visible.values()].flatMap((symbol) => definitions.get(symbol.key) ?? []),
+            [...linked.visible.values()].flatMap((symbol) => getLinkedDefinition(symbol.key) ?? []),
           ),
         ],
         assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
         theorems: linked.module.theorems,
-        getDefinition: (symbol) => definitions.get(linked.visible.get(symbol)?.key ?? symbol),
+        getDefinition: (symbol) => getLinkedDefinition(linked.visible.get(symbol)?.key ?? symbol),
       };
     },
     {
@@ -667,12 +672,12 @@ export const createEnvironment = (
       params,
       substitutions: substitutes.substitutions,
       variables: new Set(linked.variables),
-      getDefinition: (key) => definitions.get(key),
+      getDefinition: getLinkedDefinition,
       getOuterDefinition: (key) =>
         module.definitions.find((definition) => unit.getKey(definition) === key),
       isParameterized: (key) => parameterized.get(key) === true,
-      addDefinition: (source, name, create) => {
-        const key = createName(`${name}@${module.name}`);
+      addDefinition: (source, name, create, reservedKey) => {
+        const key = reservedKey ?? createName(`${name}@${module.name}`);
         const definition = create(key);
         definitions.set(key, definition);
         const copy = createInstanceCopy(source, instance.module, substitutes);
@@ -688,14 +693,7 @@ export const createEnvironment = (
       createName,
       frame,
     });
-    return getInstanceSymbols(instance, linked.exported, declarations, (symbol, name) => {
-      const key = symbol.key;
-      const copy =
-        instance.name === undefined
-          ? instantiation.getKey(key)
-          : params.length > 0 && builtins.has(key) && !definitions.has(key)
-            ? addOwnArgumentsAlias(symbol, name, params, module.name, instance.location)
-            : instantiation.getQualifiedKey(key);
+    const setInstanceNames = (copy: string, name: string) => {
       if (declarations.length > 0) {
         instanceActions.set(copy, {
           name,
@@ -705,6 +703,30 @@ export const createEnvironment = (
         });
       }
       if (instance.name !== undefined) qualifiedNames.set(copy, name);
+    };
+    return getInstanceSymbols(instance, linked.exported, declarations, (symbol, name) => {
+      const key = symbol.key;
+      if (
+        symbol.goal?.statement.kind === "AssumeProve" &&
+        (instance.name !== undefined || parameterized.get(key) === true)
+      ) {
+        const theoremKey = createName(key);
+        parameterized.set(theoremKey, !isParameterFree);
+        unlinkedTheorems.set(theoremKey, () => {
+          unlinkedTheorems.delete(theoremKey);
+          if (instance.name === undefined) instantiation.getKey(key, theoremKey);
+          else instantiation.getQualifiedKey(key, theoremKey);
+          setInstanceNames(theoremKey, name);
+        });
+        return theoremKey;
+      }
+      const copy =
+        instance.name === undefined
+          ? instantiation.getKey(key)
+          : params.length > 0 && builtins.has(key) && !definitions.has(key)
+            ? addOwnArgumentsAlias(symbol, name, params, module.name, instance.location)
+            : instantiation.getQualifiedKey(key);
+      setInstanceNames(copy, name);
       if (unresolvedBodyKeys.has(key) && !isSubstituted(key)) unresolvedBodyKeys.add(copy);
       return copy;
     });
@@ -933,7 +955,7 @@ export const createEnvironment = (
         ]),
       ),
       variables: new Set(linked.variables),
-      getDefinition: (key) => definitions.get(key),
+      getDefinition: getLinkedDefinition,
       getOuterDefinition: () => undefined,
       isParameterized: (key) => parameterized.get(key) === true,
       addDefinition: (source, name, create) => {
@@ -970,7 +992,7 @@ export const createEnvironment = (
         const name = instance.name === undefined ? entry[0] : `${instance.name}!${entry[0]}`;
         const key = instantiation.getKey(entry[1].key);
         const copy = copies.find((candidate) => candidate.name === key);
-        const original = definitions.get(key);
+        const original = getLinkedDefinition(key);
         const definition = copy ?? (original && withInstanceParams(original, instance.params));
         if (definition) {
           const operator =
@@ -1119,6 +1141,7 @@ export const createEnvironment = (
     };
     const getUnit = (module: Module): ModuleUnit => ({
       imported: visible,
+      linkTheorem: getLinkedDefinition,
       getInstance: (instance) => {
         const nested = getLetModule(instance);
         const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
@@ -1188,7 +1211,7 @@ export const createEnvironment = (
       (name) => {
         const symbol = visible.get(name);
         const definition =
-          symbol && !builtinAliases.has(symbol.key) ? definitions.get(symbol.key) : undefined;
+          symbol && !builtinAliases.has(symbol.key) ? getLinkedDefinition(symbol.key) : undefined;
         return definition ? { ...definition, name } : scope.getDefinition(name);
       },
       (name) => {
@@ -1347,7 +1370,7 @@ export const createEnvironment = (
         {
           constants: new Map(constants.map((constant) => [constant.key, constant.arity])),
           variables: new Set(variables),
-          getDefinition: (symbol) => definitions.get(visible.get(symbol)?.key ?? symbol),
+          getDefinition: (symbol) => getLinkedDefinition(visible.get(symbol)?.key ?? symbol),
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
           recursiveSections,
@@ -1389,7 +1412,7 @@ export const createEnvironment = (
     const linked = getLinkedModule(invariant.module, root.name);
     linkOrder.splice(linkOrder.indexOf(linked), 1);
     const key = linked.visible.get(invariant.name)?.key;
-    if (key !== undefined && definitions.has(key)) rootKeys.set(invariant.name, key);
+    if (key !== undefined && getLinkedDefinition(key)) rootKeys.set(invariant.name, key);
   });
   linkedRoot.visible.forEach((symbol, name) => rootKeys.set(name, symbol.key));
   linkedRoot.constants.forEach((constant) => rootKeys.set(constant.name, constant.key));
