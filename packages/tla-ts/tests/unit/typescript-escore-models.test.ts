@@ -150,6 +150,20 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  // Each function that a check only calls returns, whatever today's spec names its result.
+  describe("checks each call of functions that only return", () => {
+    const getSource = (thrown: number) =>
+      `export const twice = (n: 0 | 1) => n * 2;\nexport const thrice = (n: 0 | 1) => {\n  if ((n as number) === ${thrown}) throw new Error("thrown");\n  return n * 3;\n};\n`;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(2))).status).toBe("success");
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource(1))).status).toBe("assumption-violation");
+    });
+  });
+
   // A step settles the jobs that its program queues, which a program that names then only in a
   // comment queues none of.
   describe("settles a step of a program that queues no jobs", () => {

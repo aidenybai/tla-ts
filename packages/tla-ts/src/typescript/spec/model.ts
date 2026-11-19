@@ -921,14 +921,21 @@ export const compileModelToEscore = (
   const boundNames = (bounds: Bound[]) =>
     bounds.map((bound) => (bound.pattern.kind === "Name" ? bound.pattern.name : ""));
   // Invariants, and the checks that only call a function, which today's spec defines as
-  // \A bounds : LET result == ... IN result = result.
+  // \A bounds : LET result == ... IN result = result, where result may take a fresh name.
   const isCallCheck = (expression: Expression | undefined): boolean =>
     expression?.kind === "Forall"
       ? isCallCheck(expression.body)
       : expression?.kind === "Let" &&
         expression.body.kind === "Apply" &&
         expression.body.operator === "=" &&
-        expression.definitions.some((definition) => definition.name === "result");
+        expression.definitions.some(
+          (definition) =>
+            /^result(?:_\d+)?$/.test(definition.name) &&
+            expression.body.kind === "Apply" &&
+            expression.body.args.every(
+              (arg) => arg.kind === "Identifier" && arg.name === definition.name,
+            ),
+        );
   const current = variable;
   const defined = new Set<string>();
   const defineInvariant = (name: string) => {
