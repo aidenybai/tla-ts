@@ -319,7 +319,6 @@ export class QiQueue {
       result = false;
       this.instantiatedTrail.push(index);
       this.instantiateEntry(entry);
-      if (this.context.checkCanceled()) break;
     }
     return result;
   }

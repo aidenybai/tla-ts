@@ -206,6 +206,23 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
       "(:rlimit 296)",
     ]);
   });
+
+  it("reads no cancel flag between the lazy instances of a final check", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi false)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-const c0 Int)",
+        "(assert (forall ((x Int)) (p (f (f x)))))",
+        "(assert (= c0 0))",
+        "(assert (not (= c0 (f 0))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 981)"]);
+  });
 });
 
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {
