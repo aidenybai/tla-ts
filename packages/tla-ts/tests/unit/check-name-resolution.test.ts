@@ -1932,6 +1932,39 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "a variable named after a definition, and an inner module that refers to the definition",
+      "Op(a) == a\nVARIABLE Op\n---- MODULE Inner ----\nA == Op\n====",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 10 of module M.",
+        },
+        {
+          location: "line 5, col 6 to line 5, col 7 of module M",
+          message: "The operator Op requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance of operators already declared and defined, and an inner module that refers to the first ones",
+      "CONSTANT Seq\nLen == 1\nINSTANCE Sequences\n---- MODULE Inner ----\nA == <<Seq, Len>>\n====",
+      [
+        {
+          location: "line 20, col 1 to line 20, col 41 of module Sequences",
+          message:
+            "Multiply-defined symbol 'Seq': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 12 of module M.",
+        },
+        {
+          location: "line 25, col 1 to line 25, col 44 of module Sequences",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 8 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
       "an operator parameter named after a definition",
       "B == 1\nF(B) == B",
       [

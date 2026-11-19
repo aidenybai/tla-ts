@@ -59,6 +59,7 @@ import { overrideDefinitions, type JavaOverride } from "./java-overrides";
 import { extractModule } from "./parser";
 import {
   collectSemanticErrors,
+  compareLocations,
   getArity,
   getFunctionArity,
   getKeyName,
@@ -1203,22 +1204,31 @@ export const createEnvironment = (
     });
     const getSymbolsBefore = (location: SourceLocation): Symbols =>
       [
-        ...declarations
-          .filter((declaration) => isBefore(declaration.location, location))
-          .map((declaration): [string, ModuleSymbol] => [
-            declaration.name,
-            getDeclarationSymbol(declaration),
-          ]),
-        ...parsed.definitions
-          .filter((definition) => isBefore(definition.location, location))
-          .map((definition): [string, ModuleSymbol] => [
-            definition.name,
-            getDefinitionSymbol(definition),
-          ]),
-      ].reduce(
-        (symbols, entry) => (symbols.has(entry[0]) ? symbols : symbols.set(entry[0], entry[1])),
-        new Map(visible),
-      );
+        ...declarations.map((declaration) => ({
+          location: declaration.location,
+          name: declaration.name,
+          symbol: getDeclarationSymbol(declaration),
+        })),
+        ...parsed.definitions.map((definition) => ({
+          location: definition.location,
+          name: definition.name,
+          symbol: getDefinitionSymbol(definition),
+        })),
+        ...parsed.instances.flatMap((instance) =>
+          [...(instanced.get(instance) ?? [])].map((entry) => ({
+            location: instance.location,
+            name: entry[0],
+            symbol: entry[1],
+          })),
+        ),
+      ]
+        .filter((item) => isBefore(item.location, location))
+        .toSorted((left, right) => compareLocations(left.location, right.location))
+        .reduce(
+          (symbols, item) =>
+            symbols.has(item.name) ? symbols : symbols.set(item.name, item.symbol),
+          new Map(bound),
+        );
     const subexpressions = createModuleSubexpressions(
       parsed,
       getLetInstanceExpansion(parsed, (instance, lets) =>
