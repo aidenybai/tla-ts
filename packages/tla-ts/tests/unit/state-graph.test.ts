@@ -201,6 +201,22 @@ describe("check dumps the state graph like TLC's -dump", () => {
     ]);
   });
 
+  // Deviation from TLC: it returns without closing the liveness writers after an initial state fails, which leaves their headers alone in the file.
+  it("writes the initial states of the behavior graph when an initial state violates an invariant, unlike TLC", async () => {
+    const written = new Map<string, string>();
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x \\in {0, 1}\nNext == x' = (x + 1) % 3\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nInv == x # 1\nLive == (x = 1) ~> (x = 0)\n====",
+      config: "SPECIFICATION Spec\nINVARIANT Inv\nPROPERTY Live",
+      dump: { path: "M.dot", dot: true },
+      writeFile: (path, content) => written.set(path, String(content)),
+    });
+    expect([result.status, written.get("M_liveness.dot")]).toEqual([
+      "invariant-violation",
+      'digraph DiskGraph {\nnode [shape=box,style=rounded]\nnodesep=0.35;\nsubgraph cluster_graph {\ncolor="white";\n"-3406341414084290173.1" [style = filled] [label="x = 0\n#-3406341414084290173.1#"]\n"-686636423115914061.0" [style = filled] [label="x = 1\n#-686636423115914061.0#"]\n"-686636423115914061.1" [style = filled] [label="x = 1\n#-686636423115914061.1#"]\n}\n}',
+    ]);
+  });
+
   it("leaves a snapshot that matches the finished graph", async () => {
     const dump = await dumpFixture("water-jugs", "WaterJugs", {
       path: "WaterJugs.dot",
