@@ -34,6 +34,7 @@ interface ModuleContext {
   assumptions: Expression[];
   theorems: Theorem[];
   getDefinition: (name: string) => Definition | undefined;
+  getQualifiedName: (name: string) => string | undefined;
 }
 
 interface ModuleLevels {
@@ -82,6 +83,7 @@ export const createInstanceChecker = (
         constants,
         variables,
         getDefinition: module.getDefinition,
+        getQualifiedName: module.getQualifiedName,
         instances,
         recursiveSections,
       }),

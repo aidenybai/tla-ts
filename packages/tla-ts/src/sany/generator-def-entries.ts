@@ -175,15 +175,8 @@ const getDefEntryParts = (
         "Tuple"
         ? getSecondHeir(getMatchingIndex(file, span.start + 1), "N_IdentifierTuple")
         : undefined;
-    case "Decimal": {
-      const token = file.tokens[span.start];
-      const point = token.column + token.text.indexOf(".");
-      return {
-        hasChildlessFirstChild: false,
-        last: { ...getLocation(span.start), beginColumn: point, endColumn: point },
-        lastKind: ".",
-      };
-    }
+    case "Decimal":
+      return { hasChildlessFirstChild: false, last: getLocation(span.start + 1), lastKind: "." };
     case "Let":
       return getSecondHeir(getOperandSpan(file, expression.body).start - 2, "N_LetDefinitions");
     case "Product":

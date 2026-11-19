@@ -60,10 +60,14 @@ import { extractModule } from "./parser";
 import {
   collectSemanticErrors,
   compareLocations,
+  CORE_SYMBOLS,
   getArity,
+  getBoundNames,
   getFunctionArity,
   getKeyName,
   getParamArities,
+  getRecursiveCount,
+  getRecursiveDefinitions,
   getTheoremGoal,
   isBefore,
   isSameSanyError,
@@ -77,6 +81,8 @@ import {
   type ModuleReport,
   type ModuleSymbol,
   type ModuleUnit,
+  type NestedRecursion,
+  type RecursiveCount,
   type SymbolKind,
   type Symbols,
 } from "./resolve";
@@ -183,12 +189,14 @@ export interface LinkedModule {
   exported: Symbols;
   modules: Map<string, LinkedModule>;
   extended: LinkedModule[];
+  recursion: NestedRecursion;
 }
 
 interface ModuleScope {
   id: string;
   isHidden: boolean;
   symbols: Symbols;
+  recursiveCount: RecursiveCount;
   getDefinition: (name: string) => Definition | undefined;
   modules: Map<string, LinkedModule>;
   nested: Module[];
@@ -196,6 +204,12 @@ interface ModuleScope {
   warnings: SanyError[];
   levelChecks: ReturnType<typeof checkModuleLevels>[];
 }
+
+// Generator#processFunction looks a function's name up among its own bound names, so x[x \in S] defines nothing unless RECURSIVE x took the name first.
+const isDefining = (definition: Definition) =>
+  definition.kind !== "Function" ||
+  definition.isRecursive ||
+  !getBoundNames(definition.bounds).includes(definition.name);
 
 const createModuleRedefinedError = (module: Module) =>
   new TlaSyntaxError(
@@ -358,6 +372,7 @@ export const createEnvironment = (
         assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
         theorems: linked.module.theorems,
         getDefinition: (symbol) => getLinkedDefinition(linked.visible.get(symbol)?.key ?? symbol),
+        getQualifiedName: (symbol) => qualifiedNames.get(linked.visible.get(symbol)?.key ?? symbol),
       };
     },
     {
@@ -463,6 +478,7 @@ export const createEnvironment = (
       id: parsed.name,
       isHidden,
       symbols: new Map(),
+      recursiveCount: { declarations: [], closed: 0 },
       getDefinition: () => undefined,
       modules: new Map(),
       nested,
@@ -767,12 +783,16 @@ export const createEnvironment = (
             (entry[1].kind === "Theorem" &&
               declarations.length > 0 &&
               (instance.name !== undefined || parameterized.get(entry[1].key) === true));
+          const copiedArity = entry[1].params?.length ?? entry[1].arity;
           if (instance.name === undefined) {
             return [
               entry[0],
               {
                 key: getKey(entry[1], entry[0]),
-                arity: entry[1].arity,
+                arity:
+                  instance.isLocal || parameterized.get(entry[1].key) === true
+                    ? copiedArity
+                    : entry[1].arity,
                 params: entry[1].params,
                 kind: entry[1].kind,
                 range:
@@ -796,7 +816,7 @@ export const createEnvironment = (
             qualified,
             {
               key: entry[1].kind === "Instance" ? qualified : getKey(entry[1], qualified),
-              arity: entry[1].arity + instance.params.length,
+              arity: copiedArity + instance.params.length,
               params: entry[1].params && [
                 ...instance.params.map((param) => param.arity),
                 ...entry[1].params,
@@ -1141,14 +1161,36 @@ export const createEnvironment = (
           !bound.has(declaration.name) && firstDeclarations.get(declaration.name) === declaration,
       )
       .forEach((declaration) => exported.set(declaration.name, getDeclarationSymbol(declaration)));
-    const getDefinitionSymbol = (definition: Definition): ModuleSymbol => ({
-      key: getKey(definition),
-      arity: getArity(definition),
-      params: getParamArities(definition),
-      kind: isTheoremDefinition(parsed, definition) ? "Theorem" : "Definition",
-      range: definition.location.range,
-      functionArity: getFunctionArity(definition),
-    });
+    const recursiveDeclarations = parsed.units.flatMap((item) =>
+      item.kind === "Recursive" ? item.declarations : [],
+    );
+    const outerRecursive = scope.recursiveCount.declarations
+      .filter((declared) => !declared.isTaken)
+      .map((declared) => declared.declaration);
+    const definedRecursive = [...outerRecursive, ...recursiveDeclarations];
+    const firstRecursive = new Map(
+      definedRecursive.toReversed().map((declaration) => [declaration.name, declaration]),
+    );
+    const recursiveDefinitions = getRecursiveDefinitions(
+      parsed,
+      definedRecursive,
+      parsed.definitions,
+    );
+    // SANY's OpDefNode for a RECURSIVE operator keeps the declared arity.
+    const getDefinitionSymbol = (definition: Definition): ModuleSymbol => {
+      const declared = firstRecursive.get(definition.name);
+      return {
+        key: getKey(definition),
+        arity:
+          declared !== undefined && isBefore(declared.location, definition.location)
+            ? declared.arity
+            : getArity(definition),
+        params: getParamArities(definition),
+        kind: isTheoremDefinition(parsed, definition) ? "Theorem" : "Definition",
+        range: definition.location.range,
+        functionArity: getFunctionArity(definition),
+      };
+    };
     const getInstanceSymbol = (instance: Instance, name: string): ModuleSymbol => ({
       key: `${name}${KEY_SEPARATOR}${scope.id}`,
       arity: instance.params.length,
@@ -1157,6 +1199,7 @@ export const createEnvironment = (
     });
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const instanced = new Map<Instance, Symbols>();
+    const nestedRecursion = new Map<Module, NestedRecursion>();
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
     const getLetModule = (instance: Instance) => {
       const ownModule = parsed.modules.find((nested) => nested.name === instance.module);
@@ -1193,7 +1236,10 @@ export const createEnvironment = (
       bound,
       // SANY keeps the first of two definitions of a name.
       definitions: new Map(
-        module.definitions.toReversed().map((definition) => [definition.name, definition]),
+        module.definitions
+          .filter(isDefining)
+          .toReversed()
+          .map((definition) => [definition.name, definition]),
       ),
       getKey,
       isModuleKnown: (name, location) =>
@@ -1207,6 +1253,8 @@ export const createEnvironment = (
       reports,
       warnings: scope.warnings,
       goalOperands,
+      recursiveCount: scope.recursiveCount,
+      nestedRecursion: [...nestedRecursion.values()],
     });
     const symbolsBefore = new Map(bound);
     const boundLocations = new Map<string, SourceLocation>();
@@ -1272,10 +1320,26 @@ export const createEnvironment = (
       const report: ModuleReport = { location: nested.location, errors: [], warnings: [] };
       reports.push(report);
       const getDefinitionBefore = subexpressions.getDefinitionsBefore(nested.location);
+      const countedNames = new Set(outerRecursive.map((declaration) => declaration.name));
+      const counted = recursiveDeclarations.map((declaration) => {
+        const isTaken =
+          CORE_SYMBOLS.has(declaration.name) ||
+          isBoundBefore(declaration.name, declaration.location) ||
+          countedNames.has(declaration.name);
+        countedNames.add(declaration.name);
+        return { declaration, isTaken };
+      });
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         isHidden: scope.isHidden,
         symbols: symbolsBefore,
+        recursiveCount: getRecursiveCount(
+          scope.recursiveCount,
+          counted,
+          [...nestedRecursion.values()],
+          recursiveDefinitions,
+          nested.location,
+        ),
         getDefinition: (name) => getDefinitionBefore(name) ?? scope.getDefinition(name),
         modules: visibleModules,
         nested: scope.nested,
@@ -1285,6 +1349,14 @@ export const createEnvironment = (
       });
       if (redefinition) report.errors.push(redefinition);
       if (!existing) modules.set(nested.name, linked);
+      nestedRecursion.set(nested, linked.recursion);
+      linked.recursion.definitions.forEach((definition) => {
+        recursiveDefinitions.set(definition.name, [
+          ...(recursiveDefinitions.get(definition.name) ?? []),
+          definition,
+        ]);
+        bindBefore(definition.name, getDefinitionSymbol(definition), nested.location);
+      });
     };
     const instancingUnit = getUnit(parsed);
     [
@@ -1293,7 +1365,7 @@ export const createEnvironment = (
         link: () =>
           bindBefore(declaration.name, getDeclarationSymbol(declaration), declaration.location),
       })),
-      ...parsed.definitions.map((definition) => ({
+      ...parsed.definitions.filter(isDefining).map((definition) => ({
         location: definition.location,
         link: () =>
           bindBefore(definition.name, getDefinitionSymbol(definition), definition.location),
@@ -1381,6 +1453,19 @@ export const createEnvironment = (
       visible.set(definition.name, symbol);
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
+    resolved.boundRecursive.forEach((declaration) => {
+      const symbol: ModuleSymbol = {
+        key: getKey(declaration),
+        arity: declaration.arity,
+        params: Array(declaration.arity).fill(0),
+        kind: "Definition",
+        range: declaration.location.range,
+      };
+      parameterized.set(symbol.key, !isParameterFree);
+      unresolvedBodyKeys.add(symbol.key);
+      visible.set(declaration.name, symbol);
+      exported.set(declaration.name, symbol);
+    });
     resolved.boundTheorems.forEach((theorem) => {
       const key = getKey(theorem);
       parameterized.set(key, !isParameterFree);
@@ -1427,6 +1512,7 @@ export const createEnvironment = (
       exported,
       modules,
       extended,
+      recursion: resolved.recursion,
     };
     if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
     scope.levelChecks.push(
