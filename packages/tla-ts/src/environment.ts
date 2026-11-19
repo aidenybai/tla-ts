@@ -67,6 +67,7 @@ import {
   getKeyName,
   getParamArities,
   getRecursiveCount,
+  getRecursiveDefinitions,
   getTheoremGoal,
   isBefore,
   isSameSanyError,
@@ -82,7 +83,6 @@ import {
   type ModuleUnit,
   type NestedRecursion,
   type RecursiveCount,
-  type RecursiveDeclaration,
   type SymbolKind,
   type Symbols,
 } from "./resolve";
@@ -1164,26 +1164,33 @@ export const createEnvironment = (
     const recursiveDeclarations = parsed.units.flatMap((item) =>
       item.kind === "Recursive" ? item.declarations : [],
     );
-    const definedRecursive = [
-      ...scope.recursiveCount.declarations
-        .filter((declared) => !declared.isTaken)
-        .map((declared) => declared.declaration),
-      ...recursiveDeclarations,
-    ];
+    const outerRecursive = scope.recursiveCount.declarations
+      .filter((declared) => !declared.isTaken)
+      .map((declared) => declared.declaration);
+    const definedRecursive = [...outerRecursive, ...recursiveDeclarations];
+    const firstRecursive = new Map(
+      definedRecursive.toReversed().map((declaration) => [declaration.name, declaration]),
+    );
+    const recursiveDefinitions = getRecursiveDefinitions(
+      parsed,
+      definedRecursive,
+      parsed.definitions,
+    );
     // SANY's OpDefNode for a RECURSIVE operator keeps the declared arity.
-    const getDefinitionSymbol = (definition: Definition): ModuleSymbol => ({
-      key: getKey(definition),
-      arity:
-        definedRecursive.find(
-          (declaration) =>
-            declaration.name === definition.name &&
-            isBefore(declaration.location, definition.location),
-        )?.arity ?? getArity(definition),
-      params: getParamArities(definition),
-      kind: isTheoremDefinition(parsed, definition) ? "Theorem" : "Definition",
-      range: definition.location.range,
-      functionArity: getFunctionArity(definition),
-    });
+    const getDefinitionSymbol = (definition: Definition): ModuleSymbol => {
+      const declared = firstRecursive.get(definition.name);
+      return {
+        key: getKey(definition),
+        arity:
+          declared !== undefined && isBefore(declared.location, definition.location)
+            ? declared.arity
+            : getArity(definition),
+        params: getParamArities(definition),
+        kind: isTheoremDefinition(parsed, definition) ? "Theorem" : "Definition",
+        range: definition.location.range,
+        functionArity: getFunctionArity(definition),
+      };
+    };
     const getInstanceSymbol = (instance: Instance, name: string): ModuleSymbol => ({
       key: `${name}${KEY_SEPARATOR}${scope.id}`,
       arity: instance.params.length,
@@ -1313,31 +1320,24 @@ export const createEnvironment = (
       const report: ModuleReport = { location: nested.location, errors: [], warnings: [] };
       reports.push(report);
       const getDefinitionBefore = subexpressions.getDefinitionsBefore(nested.location);
-      const counted = recursiveDeclarations.reduce<RecursiveDeclaration[]>(
-        (declared, declaration) => [
-          ...declared,
-          {
-            declaration,
-            isTaken:
-              CORE_SYMBOLS.has(declaration.name) ||
-              isBoundBefore(declaration.name, declaration.location) ||
-              [
-                ...scope.recursiveCount.declarations.filter((other) => !other.isTaken),
-                ...declared,
-              ].some((other) => other.declaration.name === declaration.name),
-          },
-        ],
-        [],
-      );
+      const countedNames = new Set(outerRecursive.map((declaration) => declaration.name));
+      const counted = recursiveDeclarations.map((declaration) => {
+        const isTaken =
+          CORE_SYMBOLS.has(declaration.name) ||
+          isBoundBefore(declaration.name, declaration.location) ||
+          countedNames.has(declaration.name);
+        countedNames.add(declaration.name);
+        return { declaration, isTaken };
+      });
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         isHidden: scope.isHidden,
         symbols: symbolsBefore,
         recursiveCount: getRecursiveCount(
-          parsed,
           scope.recursiveCount,
           counted,
           [...nestedRecursion.values()],
+          recursiveDefinitions,
           nested.location,
         ),
         getDefinition: (name) => getDefinitionBefore(name) ?? scope.getDefinition(name),
@@ -1350,9 +1350,13 @@ export const createEnvironment = (
       if (redefinition) report.errors.push(redefinition);
       if (!existing) modules.set(nested.name, linked);
       nestedRecursion.set(nested, linked.recursion);
-      linked.recursion.definitions.forEach((definition) =>
-        bindBefore(definition.name, getDefinitionSymbol(definition), nested.location),
-      );
+      linked.recursion.definitions.forEach((definition) => {
+        recursiveDefinitions.set(definition.name, [
+          ...(recursiveDefinitions.get(definition.name) ?? []),
+          definition,
+        ]);
+        bindBefore(definition.name, getDefinitionSymbol(definition), nested.location);
+      });
     };
     const instancingUnit = getUnit(parsed);
     [

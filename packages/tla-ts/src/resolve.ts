@@ -2481,37 +2481,49 @@ export interface NestedRecursion {
   closed: number;
 }
 
+export const getRecursiveDefinitions = (
+  module: Module,
+  declarations: Declaration[],
+  definitions: Definition[],
+) => {
+  const names = new Set(declarations.map((declaration) => declaration.name));
+  return Map.groupBy(
+    definitions.filter(
+      (definition) => names.has(definition.name) && !isTheoremDefinition(module, definition),
+    ),
+    (definition) => definition.name,
+  );
+};
+
 // SANY counts a RECURSIVE declaration whose name is taken, and nothing defines it.
 const getOpenRecursive = (
-  module: Module,
   declarations: RecursiveDeclaration[],
-  nestedDefinitions: Definition[],
+  definitions: Map<string, Definition[]>,
   location: SourceLocation,
 ) =>
   declarations.filter(
     (declared) =>
       isBefore(declared.declaration.location, location) &&
       (declared.isTaken ||
-        ![...module.definitions, ...nestedDefinitions].some(
-          (definition) =>
-            definition.name === declared.declaration.name &&
-            isBefore(declared.declaration.location, definition.location) &&
-            isBefore(definition.location, location) &&
-            (definition.kind === "Operator" || declared.declaration.arity === 0) &&
-            !isTheoremDefinition(module, definition),
-        )),
+        definitions
+          .get(declared.declaration.name)
+          ?.some(
+            (definition) =>
+              isBefore(declared.declaration.location, definition.location) &&
+              isBefore(definition.location, location) &&
+              (definition.kind === "Operator" || declared.declaration.arity === 0),
+          ) !== true),
   );
 
 // SANY shares its RECURSIVE counter with inner modules: their undefined declarations stay counted, and each module's end takes the count off the sum that flags a section.
 export const getRecursiveCount = (
-  module: Module,
   start: RecursiveCount,
   declarations: RecursiveDeclaration[],
   nested: NestedRecursion[],
+  definitions: Map<string, Definition[]>,
   location: SourceLocation,
 ): RecursiveCount => ({
   declarations: getOpenRecursive(
-    module,
     [
       ...start.declarations,
       ...declarations,
@@ -2519,7 +2531,7 @@ export const getRecursiveCount = (
         item.declarations.map((declaration) => ({ declaration, isTaken: true })),
       ),
     ],
-    nested.flatMap((item) => item.definitions),
+    definitions,
     location,
   ),
   closed: nested.findLast((item) => isBefore(item.location, location))?.closed ?? start.closed,
@@ -2826,6 +2838,17 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     recursive.add(binding);
   });
   const nestedDefinitions = unit.nestedRecursion.flatMap((item) => item.definitions);
+  const recursiveDeclarations = module.units.flatMap((item) =>
+    item.kind === "Recursive" ? item.declarations : [],
+  );
+  const recursiveDefinitions = getRecursiveDefinitions(
+    module,
+    [
+      ...unit.recursiveCount.declarations.map((declared) => declared.declaration),
+      ...recursiveDeclarations,
+    ],
+    [...module.definitions, ...nestedDefinitions],
+  );
   const declarations: RecursiveDeclaration[] = [];
   const createCheck = (
     location: SourceLocation,
@@ -2894,10 +2917,10 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
             location: section.location,
             check: (errors) => {
               const count = getRecursiveCount(
-                module,
                 unit.recursiveCount,
                 declarations,
                 unit.nestedRecursion,
+                recursiveDefinitions,
                 section.location,
               );
               if (count.declarations.length > count.closed) {
@@ -2934,24 +2957,22 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       })),
       ...bindDeclarations(module.constants, "Constant"),
       ...bindDeclarations(module.variables, "Variable"),
-      ...module.units
-        .flatMap((item) => (item.kind === "Recursive" ? item.declarations : []))
-        .map((declaration) =>
-          createCheck(declaration.location, undefined, false, (inner) => {
-            const binding = getRecursiveBinding(declaration, unit.getKey(declaration));
-            const isBound = isBindable(
-              declaration.name,
-              bindings.get(declaration.name),
-              binding,
-              inner,
-            );
-            if (isBound) {
-              bindings.set(declaration.name, binding);
-              recursive.add(binding);
-            }
-            declarations.push({ declaration, isTaken: !isBound });
-          }),
-        ),
+      ...recursiveDeclarations.map((declaration) =>
+        createCheck(declaration.location, undefined, false, (inner) => {
+          const binding = getRecursiveBinding(declaration, unit.getKey(declaration));
+          const isBound = isBindable(
+            declaration.name,
+            bindings.get(declaration.name),
+            binding,
+            inner,
+          );
+          if (isBound) {
+            bindings.set(declaration.name, binding);
+            recursive.add(binding);
+          }
+          declarations.push({ declaration, isTaken: !isBound });
+        }),
+      ),
       ...module.definitions.map((definition) =>
         createCheck(definition.location, definition, true, (inner) => {
           if (isTheoremDefinition(module, definition)) {
@@ -3009,7 +3030,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
       {
         location: end,
         check: (errors: SanyError[]) =>
-          getOpenRecursive(module, declarations, nestedDefinitions, end).forEach((item) => {
+          getOpenRecursive(declarations, recursiveDefinitions, end).forEach((item) => {
             const range = item.declaration.location.range;
             if (range) {
               errors.push({
@@ -3023,10 +3044,10 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
     unit.warnings,
   );
   const endCount = getRecursiveCount(
-    module,
     unit.recursiveCount,
     declarations,
     unit.nestedRecursion,
+    recursiveDefinitions,
     end,
   );
   return {
