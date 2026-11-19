@@ -953,7 +953,7 @@ export const runSmtlibScript = (
   };
   const detachSolver = (): SolverParts => {
     const assertions = new RefVector(state.manager);
-    if (state.fdSolver === undefined)
+    if (state.strategy !== undefined && state.fdSolver === undefined)
       for (const assertion of state.assertions) assertions.push(assertion);
     const parts = {
       kernel: state.kernel,
