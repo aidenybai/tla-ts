@@ -1956,7 +1956,19 @@ export const getClass = (node: ts.Node | undefined, context: Context) => {
 
 // Whether a variable's initializer is a function or a class, which tla-ts inlines where it's used
 // instead of storing.
-export const isInlined = (node: ts.Node | undefined, context: Context) => {
+export const isInlined = (node: ts.Node | undefined, context: Context): boolean => {
+  // A top-level const that another name's function initializes, as const isSymbol =
+  // predicate.isSymbol does, holds that function, which its calls run.
+  const aliased =
+    node !== undefined &&
+    ts.isVariableDeclaration(node.parent) &&
+    node.parent.initializer === node &&
+    getTopLevelDeclaration(getSymbol(node.parent.name, context.checker), context) === node.parent &&
+    (ts.isIdentifier(skipCasts(node as ts.Expression)) ||
+      ts.isPropertyAccessExpression(skipCasts(node as ts.Expression)))
+      ? getCallee(skipCasts(node as ts.Expression), context)
+      : undefined;
+  if (aliased !== undefined) return isInlined(aliased, context);
   const found = getAnyFunction(node);
   return (
     (found !== undefined &&

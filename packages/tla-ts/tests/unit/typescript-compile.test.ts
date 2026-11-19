@@ -56645,6 +56645,110 @@ describe("BigInts", () => {
       );
     });
   });
+
+  describe("reads the length of an arguments object that holds a function that the call passes", () => {
+    const getSource = (expected: string) => `
+      const width = Uint8Array.BYTES_PER_ELEMENT;
+      const dual = function (arity: number, body: (...args: Array<any>) => any): any {
+        return function (a: any, b: any) {
+          if (arguments.length >= arity) {
+            return body(a, b);
+          }
+          return function (self: any) {
+            return body(self, a);
+          };
+        };
+      };
+      const apply: (f: (value: number) => number, value: number) => number = dual(
+        2,
+        (f: (value: number) => number, value: number) => f(value) + width,
+      );
+      const result = [apply((value: number) => value * 2, 3), apply((value: number) => value - 1, 3)].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("7,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModel(getSource("7,4"))).failure?.message).toContain("result 7,3");
+    });
+  });
+
+  describe("checks an exported const that another module's function initializes as that function", () => {
+    const path = join(import.meta.dirname, "../fixtures/typescript/imports/reexporting-alias.ts");
+    const source = readFileSync(path, "utf8");
+
+    it("agrees with Node, checking the function for each argument", async () => {
+      const result = await check(compile(source, path));
+      expect([result.status, result.failure, result.distinctStates]).toEqual([
+        "deadlock",
+        undefined,
+        3,
+      ]);
+    });
+
+    it("rejects a function that throws for an argument", async () => {
+      const wrong = source.replace("= signs.isPositive", "= signs.isSmall");
+      expect((await check(compile(wrong, path))).status).toBe("assumption-violation");
+    });
+  });
+
+  describe("tests instanceof of a built-in on a type parameter's value that typeof narrows", () => {
+    const getSource = (expected: string) => `
+      const box = { size: Uint8Array.BYTES_PER_ELEMENT };
+      const describe = <A>(self: A): string => {
+        switch (typeof self) {
+          case "function":
+          case "object": {
+            if (self === null) return "null";
+            if (self instanceof Date) return "date";
+            return "object";
+          }
+          default:
+            return "other";
+        }
+      };
+      const result = [describe(new Date(5)), describe(box), describe(null), describe(1)].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("date,object,null,other"))).failure).toBeUndefined();
+    });
+
+    it("rejects another kind", async () => {
+      expect((await checkModel(getSource("object,object,null,other"))).failure?.message).toContain(
+        "result date,object,null,other",
+      );
+    });
+  });
+
+  describe("stops where it runs a method that only an interface declares, among a call's candidates", () => {
+    const getSource = (expected: string) => `
+      interface System {
+        getCurrentDirectory(): string;
+      }
+      const systems: System[] = [];
+      const sys: System | undefined = systems[0];
+      const host = sys ? { getCurrentDirectory: () => sys.getCurrentDirectory() } : undefined;
+      const names: Array<() => string> = [() => "a", () => "b"];
+      const pick = (index: number) => names[index]();
+      const result = [pick(0), pick(1), host === undefined].join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+
+    it("agrees with Node, as no call runs the method", async () => {
+      expect((await checkModel(getSource("a,b,true"))).failure).toBeUndefined();
+    });
+
+    it("rejects another pick", async () => {
+      expect((await checkModel(getSource("a,a,true"))).failure?.message).toContain(
+        "result a,b,true",
+      );
+    });
+  });
 });
 
 describe("instanceof on a value that holds an instance of a class that extends an error", () => {

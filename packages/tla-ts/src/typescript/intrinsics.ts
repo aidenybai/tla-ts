@@ -42,7 +42,7 @@ import {
   string,
   tuple,
 } from "./tla";
-import { getCollection, getKind, isGeneratorType } from "./types";
+import { getCollection, getKind, isEvery, isGeneratorType } from "./types";
 import { findProgramNames, getPosition, hasBit, setBit } from "./program-nodes";
 
 // Built-in constructors, besides the errors, whose prototype objects tla-ts compiles to
@@ -585,9 +585,12 @@ export const translateBuiltInInstanceOf = (
   const isObject = getKind(left, context) === "object";
   const isGenerator = !isPrimitive && !isObject && isGeneratorType(left, context);
   const parent = isPrimitive || isObject || isGenerator ? undefined : getPrototype(left, context);
-  // A value of type unknown or any may be anything, which only the run can tell.
+  // A value of type unknown or any may be anything, which only the run can tell, as may one of a
+  // type parameter's type, which typeof may narrow to A & object.
   const isUnknown =
-    !isPrimitive && !isObject && (type.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0;
+    !isPrimitive &&
+    !isObject &&
+    isEvery(type, ts.TypeFlags.Unknown | ts.TypeFlags.Any | ts.TypeFlags.TypeParameter);
   if (
     !isPrimitive &&
     !isObject &&

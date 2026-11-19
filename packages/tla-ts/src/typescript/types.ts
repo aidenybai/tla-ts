@@ -2136,6 +2136,21 @@ export const translateUnknown = (
   const isLibrary =
     (declaration !== undefined && declaration.getSourceFile().isDeclarationFile) ||
     (parameter !== undefined && ts.isParameter(parameter) && parameter.parent === unknowns?.owner);
+  // A method that only the program's interface declares, inside a function, which may never run:
+  // the call stops the check where it runs.
+  if (
+    declaration !== undefined &&
+    !declaration.getSourceFile().isDeclarationFile &&
+    (ts.isMethodSignature(declaration) || ts.isPropertySignature(declaration)) &&
+    ts.findAncestor(node.parent, ts.isFunctionLike) !== undefined
+  ) {
+    return apply("Assert", [
+      boolean(false),
+      string(
+        `tla-ts can't tell which function ${node.expression.getText()} runs, as only an interface declares it`,
+      ),
+    ]);
+  }
   if (
     !isLibrary ||
     unknowns === undefined ||
