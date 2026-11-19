@@ -399,6 +399,8 @@ const processSubstitutions = (
   return substs;
 };
 
+const SUBST_IN_ERROR = "Substitution error, probably due to error \nin module being instantiated.";
+
 export const createSubstIn = (
   generation: ModuleGeneration,
   kind: "SubstIn" | "APSubstIn",
@@ -412,7 +414,7 @@ export const createSubstIn = (
     generation.addError(
       location,
       kind === "SubstIn"
-        ? "Substitution error, probably due to error \nin module being instantiated."
+        ? SUBST_IN_ERROR
         : "Substitution error, probably due to error in module being instantiated.",
     );
   }
@@ -425,6 +427,19 @@ export const createSubstIn = (
     instantiatedModule,
     location,
   };
+};
+
+// SANY's SubstInNode reports the null body of a RECURSIVE operator that nothing defines.
+const substituteBody = (
+  generation: ModuleGeneration,
+  substs: Subst[],
+  body: ExprNode | undefined,
+  instantiatedModule: ModuleNode,
+  location: SanyLocation,
+) => {
+  if (body) return createSubstIn(generation, "SubstIn", substs, body, instantiatedModule, location);
+  generation.addError(location, SUBST_IN_ERROR);
+  return undefined;
 };
 
 export const processModuleDefinition = (
@@ -461,15 +476,8 @@ export const processModuleDefinition = (
             name: qualifiedName,
             params,
             body:
-              substs.length > 0 && symbol.body
-                ? createSubstIn(
-                    generation,
-                    "SubstIn",
-                    substs,
-                    symbol.body,
-                    instanceeModule,
-                    location,
-                  )
+              substs.length > 0
+                ? substituteBody(generation, substs, symbol.body, instanceeModule, location)
                 : symbol.body,
             isLocal: instance.isLocal,
             location,
@@ -586,8 +594,7 @@ export const generateInstance = (
           : reuseSymbol(generation, symbol)
         : copyFrom(
             generation.currentModule,
-            symbol.body &&
-              createSubstIn(generation, "SubstIn", substs, symbol.body, instanceeModule, location),
+            substituteBody(generation, substs, symbol.body, instanceeModule, location),
           );
     generation.currentModule.definitions.push(node);
     setRecursionFields(generation, node);

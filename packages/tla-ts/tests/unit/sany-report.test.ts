@@ -1046,6 +1046,37 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reports an instance's substitution into a RECURSIVE operator that nothing defines like SANY", () => {
+    const report = getReport({
+      M: "---- MODULE M ----\n---- MODULE A ----\nCONSTANT c\nRECURSIVE G\n====\nI == INSTANCE A WITH c <- 1\nINSTANCE A WITH c <- 2\n====\n",
+    });
+    expect(report.text).toBe(
+      joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 3",
+        "",
+        "line 4, col 11 to line 4, col 11 of module M",
+        "",
+        "Symbol G declared in RECURSIVE statement but not defined.",
+        "",
+        "",
+        "line 6, col 1 to line 6, col 27 of module M",
+        "",
+        "Substitution error, probably due to error ",
+        "in module being instantiated.",
+        "",
+        "",
+        "line 7, col 1 to line 7, col 22 of module M",
+        "",
+        "Substitution error, probably due to error ",
+        "in module being instantiated.",
+        "",
+        "",
+      ]),
+    );
+  });
+
   it("closes the outer module's recursive definition section at the end of an inner module like SANY", () => {
     const report = getReport({
       M: "---- MODULE M ----\nRECURSIVE F(_)\n---- MODULE Inner ----\nCONSTANT c\n====\nCONSTANT d\n====\n",
