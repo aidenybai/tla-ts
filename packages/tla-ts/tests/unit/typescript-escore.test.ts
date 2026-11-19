@@ -103,6 +103,83 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("holds the bindings that only a function's own code reaches in its frame", () => {
+    const getSource = (expected: string) => `
+      function fib(n: number): number { if (n < 2) return n; const a = fib(n - 1); const b = fib(n - 2); return a + b; }
+      function sum(list: number[]) { let total = 0; for (const item of list) { total += item; } return total; }
+      const holder = { base: 10, get twice() { let d = this.base; d = d * 2; return d; } };
+      function viaGetter(k: number) { const before = k; const t = holder.twice; return before + t; }
+      function mapped(xs: number[]) { const off = 3; return xs.map((x) => x + 1).map(function (y) { const z = y * 2; return z; }).join("-") + off; }
+      function* numbers(n: number) { for (let i = 0; i < n; i++) yield fib(i); }
+      function shadow(p: number) { let r = p; { const p = 100; r += p; } for (let p = 0; p < 2; p++) { r += p; } return r + p; }
+      function update(v: number) { let c = v; c++; ++c; c--; let d = c ** 2; d %= 7; return [c, d]; }
+      function labels() { let n = 0; outer: for (let i = 0; i < 3; i++) { for (let j = 0; j < 3; j++) { if (j === 1) continue outer; if (i === 2) break outer; n += 10 * i + j; } } return n; }
+      function cases(x: number) { let out = ""; switch (x) { case 1: const a = "one"; out = a; case 2: out += "two"; break; default: out = "other"; } return out; }
+      function hoisted() { function read() { return v; } var v = 4; return read(); }
+      function early() { try { u; const u = 1; return "no"; } catch (error) { return (error as Error).constructor.name; } }
+      function fixed() { const c = 1; try { (c as number) = 2; } catch (error) { return (error as Error).constructor.name; } return "no"; }
+      function caught() { let y = 1; try { throw 3; } catch (e) { y += e as number; } let s = 0; for (const key in { p: 1, q: 2 }) s += key.length; return y + s; }
+      const kept = (a: number) => { let k = a; return () => ++k; };
+      const counter = kept(5);
+      counter();
+      const result = [fib(10), sum([1, 2, 3]), viaGetter(1), mapped([1, 2]), [...numbers(5)].join(), shadow(5), update(3).join(), labels(), cases(1), cases(2), cases(3), hoisted(), early(), fixed(), caught(), counter()].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "55;6;21;4-63;0,1,1,2,3;111;4,2;10;onetwo;two;other;4;ReferenceError;TypeError;6;7",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "55;6;21;4-63;0,1,1,2,3;111;4,2;10;onetwo;two;other;4;ReferenceError;TypeError;6;6",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("keeps a binding that a class's extends clause reads in its environment", () => {
+    const getSource = (expected: string) => `
+      class Base {
+        static make() { return new this(); }
+        kind() { return "base"; }
+      }
+      function derive(parent: typeof Base, label: string) {
+        let made = 0;
+        class Derived extends parent {
+          constructor() { made += 1; super(); }
+          kind() { return label + ":" + super.kind(); }
+        }
+        const instance = Derived.make();
+        return [instance.kind(), made, Object.getPrototypeOf(Derived) === parent].join();
+      }
+      function extendsCall(pick: () => typeof Base) { class Picked extends pick() {} return new Picked().kind(); }
+      const result = [derive(Base, "d"), extendsCall(() => Base)].join(";");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("d:base,1,true;base"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("d:base,2,true;base"))).message).toContain(THREW);
+    });
+  });
+
   describe("calls a function that only a value at run time picks", () => {
     const getSource = (expected: string) => `
       const handlers = [(value: number) => value * 2, (value: number) => value + 100];

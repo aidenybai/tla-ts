@@ -2,6 +2,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { isProcessDeclared } from "../common-js";
 import type { GeneratedDefinition } from "./library";
+import { getLocals, type Locals } from "./locals";
 import { getSourceString } from "./runtime";
 
 // Specializes ESCore's evaluation rules to a program: each syntax node gives the TLA+ that ESCore's
@@ -21,6 +22,8 @@ interface Scope {
   isClassBody: boolean;
   // Whether the scope's code is an async generator's, whose return awaits its value.
   isAsyncGenerator: boolean;
+  // The bindings of the scope's function that its frame holds.
+  locals?: Locals;
 }
 
 interface NamedCode {
@@ -47,6 +50,8 @@ interface FunctionLike {
 
 interface LexicalDeclaration {
   names: string[];
+  // The identifier that declares each name.
+  nodes: ts.Node[];
   isConst: boolean;
   fn: ts.FunctionDeclaration | undefined;
 }
@@ -225,6 +230,14 @@ const getBoundNames = (name: ts.BindingName): string[] =>
         ts.isOmittedExpression(element) ? [] : getBoundNames(element.name),
       );
 
+// The identifiers that declare a binding's names, in order.
+const getBoundIdentifiers = (name: ts.BindingName): ts.Identifier[] =>
+  ts.isIdentifier(name)
+    ? [name]
+    : name.elements.flatMap((element) =>
+        ts.isOmittedExpression(element) ? [] : getBoundIdentifiers(element.name),
+      );
+
 // The names a declaration list binds, in order.
 const getDeclaredNames = (list: ts.VariableDeclarationList) =>
   list.declarations.flatMap((declaration) => getBoundNames(declaration.name));
@@ -322,16 +335,26 @@ const getLexicalDeclarations = (statements: readonly ts.Statement[], isBlock: bo
       return [
         {
           names: getDeclaredNames(inner.declarationList),
+          nodes: inner.declarationList.declarations.flatMap((declaration) =>
+            getBoundIdentifiers(declaration.name),
+          ),
           isConst: isConst(inner.declarationList),
           fn: undefined,
         },
       ];
     }
     if (ts.isClassDeclaration(inner) && inner.name !== undefined) {
-      return [{ names: [inner.name.text], isConst: false, fn: undefined }];
+      return [{ names: [inner.name.text], nodes: [inner.name], isConst: false, fn: undefined }];
     }
     if (isBlock && ts.isFunctionDeclaration(inner)) {
-      return [{ names: [inner.name?.text ?? "*default*"], isConst: false, fn: inner }];
+      return [
+        {
+          names: [inner.name?.text ?? "*default*"],
+          nodes: [inner.name ?? inner],
+          isConst: false,
+          fn: inner,
+        },
+      ];
     }
     return [];
   });
@@ -679,8 +702,7 @@ export const specialize = (
     if (ts.isIdentifier(node)) {
       words.add(node.text);
       if (!moduleNames.has(node.text)) identifiers.add(node.text);
-      return (state, context) =>
-        `ResolveBinding(${state}, ${context}, ${getUnits(node.text)}, ${getBool(scope.isStrict)})`;
+      return nameReference(node, scope);
     }
     if (ts.isParenthesizedExpression(node)) return reference(node.expression, scope);
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
@@ -689,6 +711,33 @@ export const specialize = (
     if (ts.isCallExpression(node)) return chainRoot(node, call(node, scope));
     return value(node, scope);
   };
+
+  // The reference of a name, which a local's frame slot holds.
+  const nameReference = (node: ts.Identifier, scope: Scope): Code => {
+    const slot = scope.locals?.slots.get(node);
+    return slot === undefined
+      ? (state, context) =>
+          `ResolveBinding(${state}, ${context}, ${getUnits(node.text)}, ${getBool(scope.isStrict)})`
+      : (state) =>
+          `Ok(${state}, LocalReference(${slot}, ${getBool(scope.locals?.constant[slot - 1] ?? false)}, ${getUnits(node.text)}, ${getBool(scope.isStrict)}))`;
+  };
+
+  // The names of those that nodes declare that an environment holds rather than a frame.
+  const getBound = (names: readonly string[], nodes: readonly ts.Node[], scope: Scope) =>
+    names.filter((_, index) => scope.locals?.slots.get(nodes[index]) === undefined);
+
+  // A state whose frame holds no value yet at slots, as a binding is before its declaration runs.
+  const resetSlots = (state: string, slots: readonly number[]) =>
+    slots.length === 0
+      ? state
+      : `[${state} EXCEPT ${slots.map((slot) => `!.frame[${slot}] = Empty`).join(", ")}]`;
+
+  // The frame slots of those that nodes declare.
+  const getSlots = (nodes: readonly ts.Node[], scope: Scope) =>
+    nodes.flatMap((node) => {
+      const slot = scope.locals?.slots.get(node);
+      return slot === undefined ? [] : [slot];
+    });
 
   // A node that ends an optional chain turns the chain's short circuit, a completion of type
   // "nullish", into undefined (§13.3.9.1).
@@ -887,8 +936,11 @@ export const specialize = (
     const strict = getBool(scope.isStrict);
     if (ts.isIdentifier(name)) {
       words.add(name.text);
-      return (state, context, bound, env) =>
-        `InitializeBoundName(${state}, ${context}, ${getUnits(name.text)}, ${bound}, ${env}, ${strict})`;
+      const slot = scope.locals?.slots.get(name);
+      return slot === undefined
+        ? (state, context, bound, env) =>
+            `InitializeBoundName(${state}, ${context}, ${getUnits(name.text)}, ${bound}, ${env}, ${strict})`
+        : (state, _context, bound) => `LocalInitialize(${state}, ${slot}, ${bound})`;
     }
     const steps: string[] = [];
     if (ts.isObjectBindingPattern(name)) {
@@ -1135,8 +1187,11 @@ export const specialize = (
     }
     if (ts.isIdentifier(node)) {
       reference(node, scope);
-      return (state, context) =>
-        `IdentifierValue(${state}, ${getLex(context)}, ${getUnits(node.text)}, ${getBool(scope.isStrict)})`;
+      const slot = scope.locals?.slots.get(node);
+      return slot === undefined
+        ? (state, context) =>
+            `IdentifierValue(${state}, ${getLex(context)}, ${getUnits(node.text)}, ${getBool(scope.isStrict)})`
+        : (state) => `LocalValue(${state}, ${slot})`;
     }
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const ref = reference(node, scope);
@@ -1651,11 +1706,6 @@ export const specialize = (
     const body = fn.body;
     const statements = body !== undefined && ts.isBlock(body) ? body.statements : [];
     const isStrict = outer.isStrict || outer.isClassBody || hasUseStrict(statements);
-    const scope: Scope = {
-      isStrict,
-      isClassBody: false,
-      isAsyncGenerator: flavor === "asyncGenerator",
-    };
     const parameters = fn.parameters;
     const parameterNames = parameters.flatMap((parameter) => getBoundNames(parameter.name));
     const hasDuplicates = new Set(parameterNames).size < parameterNames.length;
@@ -1681,6 +1731,34 @@ export const specialize = (
       (hasExpressions ||
         (!functionNames.includes("arguments") && !lexicalNames.includes("arguments")));
     const parameterBindings = argumentsNeeded ? [...parameterNames, "arguments"] : parameterNames;
+    // An ordinary function's bindings that only its own code reaches are its frame's, which its
+    // code makes each time it runs.
+    const locals =
+      flavor === "normal" &&
+      ["normal", "arrow", "method", "get", "set"].includes(fn.kind) &&
+      body !== undefined &&
+      isSimple &&
+      !hasDuplicates &&
+      !argumentsNeeded &&
+      (isStrict || getHoistableFunctions(statements).length === 0)
+        ? getLocals(
+            node,
+            parameters,
+            body,
+            [
+              { names: dedupe([...parameterNames, ...varScoped.names]), isConst: false },
+              ...lexical,
+            ],
+            (items) => getLexicalDeclarations(items, true),
+          )
+        : undefined;
+    const isLocal = (name: string) => (locals?.top.get(name) ?? 0) !== 0;
+    const scope: Scope = {
+      isStrict,
+      isClassBody: false,
+      isAsyncGenerator: flavor === "asyncGenerator",
+      locals,
+    };
     const id = codes.length + 1;
     codes.push({ id, body: "" });
     // A function whose parameters are names that its body declares nothing beside instantiates
@@ -1699,7 +1777,7 @@ export const specialize = (
       steps.push(
         !isStrict && hasExpressions
           ? `LET pe == NewDeclarativeEnvironment(s, ctx.lex) env == pe.e s1 == CreateBindings(pe.s, env, ${getSequence(parameterNames.map(getUnits))}, ${getBool(isStrict)}, ${getBool(hasDuplicates)}) IN`
-          : `LET env == ctx.lex s1 == CreateBindings(s, env, ${getSequence(parameterNames.map(getUnits))}, ${getBool(isStrict)}, ${getBool(hasDuplicates)}) IN`,
+          : `LET env == ctx.lex s1 == CreateBindings(s, env, ${getSequence(parameterNames.filter((name) => !isLocal(name)).map(getUnits))}, ${getBool(isStrict)}, ${getBool(hasDuplicates)}) IN`,
       );
       // Step 22: the arguments object.
       if (argumentsNeeded) {
@@ -1756,7 +1834,7 @@ export const specialize = (
       const varNames = dedupe(varScoped.names);
       if (!hasExpressions) {
         steps.push(
-          `LET varEnv == env s4 == CreateVarBindings(${state}, env, ${getSequence(varNames.filter((name) => !parameterBindings.includes(name)).map(getUnits))}, env, FALSE, {}) IN`,
+          `LET varEnv == env s4 == CreateVarBindings(${state}, env, ${getSequence(varNames.filter((name) => !parameterBindings.includes(name) && !isLocal(name)).map(getUnits))}, env, FALSE, {}) IN`,
         );
       } else {
         steps.push(
@@ -1804,7 +1882,7 @@ export const specialize = (
       steps.push(`LET bodyCtx == [ctx EXCEPT !.lex = ${lexEnv}, !.var = varEnv] IN`);
       if (lexical.length > 0) {
         steps.push(
-          `LET s6 == ${lexical.reduce((current, declaration) => `CreateLexicalNames(${current}, ${lexEnv}, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)})`, isStrict ? varState : "le.s")} IN`,
+          `LET s6 == ${lexical.reduce((current, declaration) => `CreateLexicalNames(${current}, ${lexEnv}, ${getSequence(getBound(declaration.names, declaration.nodes, scope).map(getUnits))}, ${getBool(declaration.isConst)})`, isStrict ? varState : "le.s")} IN`,
         );
       }
       // Step 36: the functions.
@@ -1813,7 +1891,9 @@ export const specialize = (
         const instantiate = instantiateFunction(declaration, scope);
         steps.push(
           `LET fo${index + 1} == ${instantiate(functionState, "bodyCtx")} IN`,
-          `LET fs${index + 1} == SetMutableBinding(fo${index + 1}.s, varEnv, ${getUnits(declaration.name?.text ?? "*default*")}, Val(fo${index + 1}), FALSE).s IN`,
+          isLocal(declaration.name?.text ?? "*default*")
+            ? `LET fs${index + 1} == LocalInitialize(fo${index + 1}.s, ${locals?.top.get(declaration.name?.text ?? "*default*")}, Val(fo${index + 1})).s IN`
+            : `LET fs${index + 1} == SetMutableBinding(fo${index + 1}.s, varEnv, ${getUnits(declaration.name?.text ?? "*default*")}, Val(fo${index + 1}), FALSE).s IN`,
         );
         functionState = `fs${index + 1}`;
       });
@@ -1838,11 +1918,45 @@ export const specialize = (
           : ts.isBlock(body)
             ? statementList(body.statements, scope)(state, context)
             : `LET e == ${value(body, scope)(state, context)} IN IF IsAbrupt(e) THEN e ELSE Abrupt(e.s, Completion("return", Val(e), Empty))`;
+    const slotCount = locals?.constant.length ?? 0;
+    // Where the frame holds each binding the body declares, its environment would hold none.
+    const isFramed =
+      slotCount > 0 &&
+      [...parameterNames, ...varScoped.names, ...lexicalNames].every((name) => isLocal(name));
+    // Each slot's value as the code starts: a parameter's argument where the frame holds them all,
+    // undefined for a var or a function, and no value for a lexical declaration's.
+    const frame = getSequence(
+      Array.from({ length: slotCount }, (_, index) => {
+        const name = [...(locals?.top ?? [])].find((entry) => entry[1] === index + 1)?.[0];
+        const parameter = name === undefined ? -1 : parameterNames.indexOf(name);
+        if (isFramed && parameter !== -1) return `Arg(args, ${parameter + 1})`;
+        return name !== undefined && varScoped.names.includes(name) && parameter === -1
+          ? "Undefined"
+          : "Empty";
+      }),
+    );
+    const getFramedSteps = () => [
+      "LET bodyCtx == [ctx EXCEPT !.var = ctx.lex] IN",
+      ...functions.flatMap((declaration, index) => [
+        `LET fo${index + 1} == ${instantiateFunction(declaration, scope)(index === 0 ? "s" : `fs${index}`, "bodyCtx")} IN`,
+        `LET fs${index + 1} == LocalInitialize(fo${index + 1}.s, ${locals?.top.get(declaration.name?.text ?? "*default*")}, Val(fo${index + 1})).s IN`,
+      ]),
+      getEvaluation(functions.length === 0 ? "s" : `fs${functions.length}`, "bodyCtx"),
+    ];
     const run = isUnnamed
       ? `Assert(FALSE, "tla-ts can't call a function that its script names nowhere else")`
-      : isPlain
-        ? `LET i == PlainInstantiation(s, ctx, ${getSequence(parameterNames.map(getUnits))}, args, ${getBool(isStrict)}) IN\n  ${getEvaluation("i.s", "i.ctx")}`
-        : getSteps().join("\n  ");
+      : isFramed
+        ? getFramedSteps().join("\n  ")
+        : isPlain && slotCount === 0
+          ? `LET i == PlainInstantiation(s, ctx, ${getSequence(parameterNames.map(getUnits))}, args, ${getBool(isStrict)}) IN\n  ${getEvaluation("i.s", "i.ctx")}`
+          : getSteps().join("\n  ");
+    if (slotCount > 0 && !isUnnamed) {
+      definitions.push({
+        name: `Body${id}`,
+        arity: 4,
+        text: `Body${id}(s, f, ctx, args) ==\n  ${run}`,
+      });
+    }
     if (flavor === "async" && !isUnnamed) {
       definitions.push({
         name: `AsyncBody${id}`,
@@ -1855,7 +1969,9 @@ export const specialize = (
       body:
         flavor === "async" && !isUnnamed
           ? `Code${id}(s, f, ctx, args) ==\n  LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise")) IN\n  LET started == AsyncFunctionStep(Val(cap), AsyncBody${id}(cap.s, f, ctx, args)) IN\n  Abrupt(started.s, Completion("return", Val(cap).promise, Empty))`
-          : `Code${id}(s, f, ctx, args) ==\n  ${run}`,
+          : slotCount > 0 && !isUnnamed
+            ? `Code${id}(s, f, ctx, args) ==\n  LET r == Body${id}([s EXCEPT !.frame = ${frame}], f, ctx, args) IN [r EXCEPT !.s.frame = s.frame]`
+            : `Code${id}(s, f, ctx, args) ==\n  ${run}`,
     };
     const length = parameters.findIndex(
       (parameter) => parameter.initializer !== undefined || parameter.dotDotDotToken !== undefined,
@@ -1999,7 +2115,11 @@ export const specialize = (
       const definition = classDefinition(node, node.name?.text);
       return defineCode(
         "ClassDeclaration",
-        `LET r == ${definition("s", "ctx", node.name === undefined ? getStr("default") : "EmptyStr")} IN IF IsAbrupt(r) THEN r ELSE LET b == InitializeBinding(r.s, ctx.lex, ${getUnits(getDeclaredName(node))}, Val(r)) IN IF IsAbrupt(b) THEN b ELSE Ok(b.s, Empty)`,
+        `LET r == ${definition("s", "ctx", node.name === undefined ? getStr("default") : "EmptyStr")} IN IF IsAbrupt(r) THEN r ELSE LET b == ${
+          node.name !== undefined && scope.locals?.slots.has(node.name)
+            ? `LocalInitialize(r.s, ${scope.locals.slots.get(node.name)}, Val(r))`
+            : `InitializeBinding(r.s, ctx.lex, ${getUnits(getDeclaredName(node))}, Val(r))`
+        } IN IF IsAbrupt(b) THEN b ELSE Ok(b.s, Empty)`,
       );
     }
     // An import, and an export of names, evaluate to empty (§16.2.2.7, §16.2.3.7).
@@ -2097,11 +2217,10 @@ export const specialize = (
       }
       const name = declaration.name.text;
       words.add(name);
-      const units = getUnits(name);
       if (initializer === undefined && !isLet) return;
       const lhs = `l${index + 1}`;
       steps.push(
-        `LET ${lhs} == ResolveBinding(${state}, ctx, ${units}, ${getBool(scope.isStrict)}) IN IF IsAbrupt(${lhs}) THEN ${lhs} ELSE`,
+        `LET ${lhs} == ${nameReference(declaration.name, scope)(state, "ctx")} IN IF IsAbrupt(${lhs}) THEN ${lhs} ELSE`,
       );
       const assigned =
         initializer === undefined
@@ -2155,11 +2274,20 @@ export const specialize = (
     const list = statementList(statements, scope);
     if (declarations.length === 0) return list;
     const declared = blockDeclarations(declarations, scope);
+    if (!hasBound(declarations, scope)) {
+      return defineCode("Block", list(declared("s", "ctx"), "ctx"));
+    }
     return defineCode(
       "Block",
       `LET env == NewDeclarativeEnvironment(s, ctx.lex) bctx == WithLex(ctx, env.e) IN ${list(declared("env.s", "bctx"), "bctx")}`,
     );
   };
+
+  // Whether declarations bind a name that an environment holds rather than a frame.
+  const hasBound = (declarations: readonly LexicalDeclaration[], scope: Scope) =>
+    declarations.some(
+      (declaration) => getBound(declaration.names, declaration.nodes, scope).length > 0,
+    );
 
   // BlockDeclarationInstantiation (§14.2.3, §B.3.2.6): the state once the declarations have their
   // bindings in the environment that the context's lexical environment is, and each function its
@@ -2168,16 +2296,25 @@ export const specialize = (
     const steps: string[] = [];
     let state = "s";
     declarations.forEach((declaration, index) => {
+      const bound = getBound(declaration.names, declaration.nodes, scope);
       steps.push(
-        `LET b${index + 1} == BlockBindNames(${state}, ctx.lex, ${getSequence(declaration.names.map(getUnits))}, ${getBool(declaration.isConst)}) IN`,
+        `LET b${index + 1} == ${resetSlots(
+          bound.length === 0
+            ? state
+            : `BlockBindNames(${state}, ctx.lex, ${getSequence(bound.map(getUnits))}, ${getBool(declaration.isConst)})`,
+          getSlots(declaration.nodes, scope),
+        )} IN`,
       );
       state = `b${index + 1}`;
       if (declaration.fn !== undefined) {
         const instantiate = instantiateFunction(declaration.fn, scope);
         const units = getUnits(declaration.names[0]);
+        const slot = scope.locals?.slots.get(declaration.nodes[0]);
         steps.push(
           `LET fo${index + 1} == ${instantiate(state, "ctx")} IN`,
-          `LET fb${index + 1} == IF E(fo${index + 1}.s, ctx.lex).b[${units}].init THEN SetMutableBinding(fo${index + 1}.s, ctx.lex, ${units}, Val(fo${index + 1}), FALSE).s ELSE InitializeBinding(fo${index + 1}.s, ctx.lex, ${units}, Val(fo${index + 1})).s IN`,
+          slot === undefined
+            ? `LET fb${index + 1} == IF E(fo${index + 1}.s, ctx.lex).b[${units}].init THEN SetMutableBinding(fo${index + 1}.s, ctx.lex, ${units}, Val(fo${index + 1}), FALSE).s ELSE InitializeBinding(fo${index + 1}.s, ctx.lex, ${units}, Val(fo${index + 1})).s IN`
+            : `LET fb${index + 1} == LocalInitialize(fo${index + 1}.s, ${slot}, Val(fo${index + 1})).s IN`,
         );
         state = `fb${index + 1}`;
       }
@@ -2224,16 +2361,24 @@ export const specialize = (
       ts.isVariableDeclarationList(initializer) &&
       isLexical(initializer)
     ) {
-      const names = getDeclaredNames(initializer);
+      const nodes = initializer.declarations.flatMap((item) => getBoundIdentifiers(item.name));
+      const names = getBound(getDeclaredNames(initializer), nodes, scope);
+      const slots = getSlots(nodes, scope);
       // CreatePerIterationEnvironment (§14.7.4.4) copies the let bindings so that each closure an
       // iteration makes keeps its own. Where the statement makes no closure, nothing can tell the
       // copies from the bindings they copy, so the iterations share one environment.
       const lets =
         isConst(initializer) || !hasClosure(node) ? "<<>>" : getSequence(names.map(getUnits));
       const declaration = declarationList(initializer, scope);
+      if (names.length === 0) {
+        return defineCode(
+          "For",
+          `BreakTargetThen(ForDeclarationThen(ctx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> <<>>], ${declaration(resetSlots("s", slots), "ctx")}))`,
+        );
+      }
       return defineCode(
         "For",
-        `LET env == NewDeclarativeEnvironment(s, ctx.lex) loopCtx == WithLex(ctx, env.e) IN BreakTargetThen(ForDeclarationThen(loopCtx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> ${lets}], ${declaration(`BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))})`, "loopCtx")}))`,
+        `LET env == NewDeclarativeEnvironment(s, ctx.lex) loopCtx == WithLex(ctx, env.e) IN BreakTargetThen(ForDeclarationThen(loopCtx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> ${lets}], ${declaration(resetSlots(`BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))})`, slots), "loopCtx")}))`,
       );
     }
     const init =
@@ -2266,6 +2411,7 @@ export const specialize = (
     const body = statement(node.statement, scope, []);
     let bind: string;
     let tdz: string[] = [];
+    let tdzSlots: number[] = [];
     if (ts.isVariableDeclarationList(initializer)) {
       const declaration = initializer.declarations[0];
       if (declaration.initializer !== undefined) {
@@ -2276,11 +2422,15 @@ export const specialize = (
       }
       const names = getBoundNames(declaration.name);
       const pattern = binding(declaration.name, scope);
-      if (isLexical(initializer)) {
+      const slot = scope.locals?.slots.get(declaration.name);
+      if (isLexical(initializer) && slot !== undefined) {
+        tdzSlots = [slot];
+        bind = `ResultThen(ctx, LocalInitialize(value.s, ${slot}, Val(value)))`;
+      } else if (isLexical(initializer)) {
         tdz = names;
         bind = `LET env == NewDeclarativeEnvironment(value.s, ctx.lex) iterCtx == WithLex(ctx, env.e) s1 == BlockBindNames(env.s, env.e, ${getSequence(names.map(getUnits))}, ${getBool(isConst(initializer))}) IN ResultThen(iterCtx, ${pattern("s1", "iterCtx", "Val(value)", "env.e")})`;
       } else if (ts.isIdentifier(declaration.name)) {
-        bind = `ResultThen(ctx, AssignToThen(Val(value), ResolveBinding(value.s, ctx, ${getUnits(declaration.name.text)}, ${getBool(scope.isStrict)})))`;
+        bind = `ResultThen(ctx, AssignToThen(Val(value), ${nameReference(declaration.name, scope)("value.s", "ctx")}))`;
       } else {
         bind = `ResultThen(ctx, ${pattern("value.s", "ctx", "Val(value)", "NoEnv")})`;
       }
@@ -2304,7 +2454,7 @@ export const specialize = (
     const expression = value(node.expression, scope);
     const head =
       tdz.length === 0
-        ? `${expression("s", "ctx")}`
+        ? `${expression(resetSlots("s", tdzSlots), "ctx")}`
         : `LET env == NewDeclarativeEnvironment(s, ctx.lex) IN ${expression(`BlockBindNames(env.s, env.e, ${getSequence(tdz.map(getUnits))}, FALSE)`, "WithLex(ctx, env.e)")}`;
     return defineCode(
       "ForInOf",
@@ -2346,6 +2496,12 @@ export const specialize = (
       true,
     );
     const declared = blockDeclarations(declarations, scope);
+    if (!hasBound(declarations, scope)) {
+      return defineCode(
+        "Switch",
+        `LET r == ${discriminant("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE BreakTargetThen(${first}(${declared("r.s", "ctx")}, ctx, Val(r)))`,
+      );
+    }
     return defineCode(
       "Switch",
       `LET r == ${discriminant("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE LET env == NewDeclarativeEnvironment(r.s, ctx.lex) IN BreakTargetThen(${first}(${declared("env.s", "WithLex(ctx, env.e)")}, WithLex(ctx, env.e), Val(r)))`,
@@ -2360,10 +2516,13 @@ export const specialize = (
     if (clause !== undefined) {
       const catchBlock = block(clause.block.statements, scope);
       const parameter = clause.variableDeclaration;
+      const slot = parameter === undefined ? undefined : scope.locals?.slots.get(parameter.name);
       const handler =
         parameter === undefined
           ? catchBlock("r.s", "ctx")
-          : `LET env == NewCatchEnvironment(r.s, ctx.lex) cctx == WithLex(ctx, env.e) b == ${binding(parameter.name, scope)(`BlockBindNames(env.s, env.e, ${getSequence(getBoundNames(parameter.name).map(getUnits))}, FALSE)`, "cctx", "r.c.value", "env.e")} IN IF IsAbrupt(b) THEN b ELSE ${catchBlock("b.s", "cctx")}`;
+          : slot !== undefined
+            ? catchBlock(`LocalInitialize(r.s, ${slot}, r.c.value).s`, "ctx")
+            : `LET env == NewCatchEnvironment(r.s, ctx.lex) cctx == WithLex(ctx, env.e) b == ${binding(parameter.name, scope)(`BlockBindNames(env.s, env.e, ${getSequence(getBoundNames(parameter.name).map(getUnits))}, FALSE)`, "cctx", "r.c.value", "env.e")} IN IF IsAbrupt(b) THEN b ELSE ${catchBlock("b.s", "cctx")}`;
       steps.push(`LET c == IF r.c.type = "throw" THEN ${handler} ELSE r IN`);
     } else steps.push("LET c == r IN");
     if (node.finallyBlock === undefined) steps.push("UpdateEmptyThen(Undefined, c)");
@@ -2558,11 +2717,25 @@ export const specialize = (
     // declarations, and *default* for a default export of an expression.
     const lexical = statements.flatMap((statement): LexicalDeclaration[] =>
       ts.isFunctionDeclaration(statement)
-        ? [{ names: [getDeclaredName(statement)], isConst: false, fn: statement }]
+        ? [
+            {
+              names: [getDeclaredName(statement)],
+              nodes: [statement],
+              isConst: false,
+              fn: statement,
+            },
+          ]
         : ts.isClassDeclaration(statement)
-          ? [{ names: [getDeclaredName(statement)], isConst: false, fn: undefined }]
+          ? [
+              {
+                names: [getDeclaredName(statement)],
+                nodes: [statement],
+                isConst: false,
+                fn: undefined,
+              },
+            ]
           : ts.isExportAssignment(statement)
-            ? [{ names: ["*default*"], isConst: false, fn: undefined }]
+            ? [{ names: ["*default*"], nodes: [statement], isConst: false, fn: undefined }]
             : getLexicalDeclarations([statement], false),
     );
     const varNames = dedupe(

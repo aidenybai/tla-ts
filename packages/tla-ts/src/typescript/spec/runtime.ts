@@ -1012,6 +1012,73 @@ export const getHostOnlyProperties = (library: Library) => {
   });
 };
 
+// ESCore's operators on Reference Records, which take a reference whose base is a local: the slot
+// of the frame that holds a binding that only its function's own code reaches (see locals.ts). A
+// local behaves as the declarative binding it stands for: it has no value before its declaration
+// runs, and a const's throws at an assignment.
+const LOCAL_PATCHES = [
+  {
+    name: "GetValue",
+    from: `IF v.type # "reference" THEN Ok(s, v)`,
+    to: `IF v.type # "reference" THEN Ok(s, v)
+  ELSE IF v.base.type = "local" THEN LocalValue(s, v.base.slot)`,
+  },
+  {
+    name: "PutValue",
+    from: `IF v.type # "reference" THEN ThrowError(s, "ReferenceError")`,
+    to: `IF v.type # "reference" THEN ThrowError(s, "ReferenceError")
+  ELSE IF v.base.type = "local" THEN
+    IF s.frame[v.base.slot] = Empty THEN ThrowError(s, "ReferenceError")
+    ELSE IF v.base.constant THEN ThrowTypeError(s)
+    ELSE LocalInitialize(s, v.base.slot, w)`,
+  },
+  {
+    name: "InitializeReferencedBinding",
+    from: "== InitializeBinding(",
+    to: `== IF v.base.type = "local" THEN LocalInitialize(s, v.base.slot, w) ELSE InitializeBinding(`,
+  },
+  {
+    name: "CallThisValue",
+    from: `IF ref.type # "reference" THEN Undefined`,
+    to: `IF ref.type # "reference" \\/ ref.base.type = "local" THEN Undefined`,
+  },
+  {
+    name: "IsPropertyReference",
+    from: `{"env", "unresolvable"}`,
+    to: `{"env", "unresolvable", "local"}`,
+  },
+];
+
+export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => [
+  ...LOCAL_PATCHES.map((patch) => {
+    const definition = library.definitions.get(patch.name);
+    if (definition === undefined || !definition.text.includes(patch.from)) {
+      throw new TlaError(`ESCore's ${patch.name} no longer reads as the compiled spec patches it`);
+    }
+    return {
+      name: patch.name,
+      arity: definition.arity,
+      text: definition.text.replace(patch.from, patch.to),
+    };
+  }),
+  {
+    name: "LocalReference",
+    arity: 4,
+    text: `LocalReference(slot, constant, name, strict) ==
+  Reference([type |-> "local", slot |-> slot, constant |-> constant], Str(name), strict, Empty)`,
+  },
+  {
+    name: "LocalValue",
+    arity: 2,
+    text: `LocalValue(s, slot) == IF s.frame[slot] = Empty THEN ThrowError(s, "ReferenceError") ELSE Ok(s, s.frame[slot])`,
+  },
+  {
+    name: "LocalInitialize",
+    arity: 3,
+    text: `LocalInitialize(s, slot, v) == Ok([s EXCEPT !.frame[slot] = v], Empty)`,
+  },
+];
+
 export const getRealmDefinitions = (library: Library): GeneratedDefinition[] => {
   const all = library.definitions.get("RealmProperties")?.text ?? "";
   // Node has no Error.prototype.stack: each error has its own stack accessor, whose functions the

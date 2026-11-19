@@ -24,6 +24,7 @@ import {
   getHostDefinitions,
   getHostOnlyGlobals,
   getHostOnlyProperties,
+  getLocalDefinitions,
   getRealmDefinitions,
   INTERPRETER,
   RUNTIME_DEFINITIONS,
@@ -133,6 +134,7 @@ const files = { readFile: undefined, writeFile: undefined, makeDirectory: undefi
 const getOverrides = (library: Library) => [
   ...RUNTIME_DEFINITIONS,
   ...getHostDefinitions(library),
+  ...getLocalDefinitions(library),
   ...getRealmDefinitions(library),
   // The realm's first objects, which the runtime evaluates once, as it starts, rather than
   // deep in the realm's properties, where building them would take a deeper stack.
@@ -148,7 +150,7 @@ const getOverrides = (library: Library) => [
       .replace("HeapOf(IntrinsicObjects(0, 1))", "InitialObjects")
       .replace(
         "jobs |-> <<>>,",
-        "jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty, written |-> FALSE, writeMark |-> [objects |-> 0, environments |-> 0], hostImport |-> Empty,",
+        "jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty, written |-> FALSE, writeMark |-> [objects |-> 0, environments |-> 0], hostImport |-> Empty, frame |-> <<>>,",
       ),
   },
   {
