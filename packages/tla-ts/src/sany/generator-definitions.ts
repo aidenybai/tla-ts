@@ -188,6 +188,7 @@ const endOpDefNode = (
   node.body = body;
   node.location = location;
   node.preComments = preComments;
+  // Deviation from SANY: Generator#endOpDefNode throws WrongInvocationException once unresolvedSum is negative, as after an inner module's checkForUndefinedRecursiveOps subtracted the outer module's open RECURSIVE operators.
   if (node.inRecursive) {
     generation.recursion.unresolvedCount[generation.curLevel]--;
     generation.recursion.unresolvedSum--;
@@ -303,21 +304,16 @@ export const processRecursive = (generation: ModuleGeneration, declarations: Dec
 
 export const checkForUndefinedRecursiveOps = (generation: ModuleGeneration) => {
   const recursion = generation.recursion;
-  if (recursion.unresolvedCount[generation.curLevel] === 0) return;
-  const undefinedDeclarations = generation.recursiveDeclarations.filter(
-    (node) => node.letInLevel === generation.curLevel && !node.isDefined,
-  );
-  undefinedDeclarations.forEach((node) =>
-    generation.addError(
-      node.location,
-      `Symbol ${node.name} declared in RECURSIVE statement but not defined.`,
-    ),
-  );
-  // Deviation from SANY: Generator#checkForUndefinedRecursiveOps also closes the outer module's RECURSIVE operators at the end of an inner module, so SANY misses the rest of the section and throws WrongInvocationException at a definition in it.
-  recursion.unresolvedSum -=
-    generation.curLevel === 0
-      ? undefinedDeclarations.length
-      : recursion.unresolvedCount[generation.curLevel];
+  if (recursion.unresolvedCount[generation.curLevel] <= 0) return;
+  generation.recursiveDeclarations
+    .filter((node) => node.letInLevel === generation.curLevel && !node.isDefined)
+    .forEach((node) =>
+      generation.addError(
+        node.location,
+        `Symbol ${node.name} declared in RECURSIVE statement but not defined.`,
+      ),
+    );
+  recursion.unresolvedSum -= recursion.unresolvedCount[generation.curLevel];
 };
 
 const processSubstitutions = (
@@ -687,7 +683,7 @@ export const checkRecursiveSection = (
   location: SourceLocation,
   type: string,
 ) => {
-  if (generation.recursion.unresolvedSum === 0) return;
+  if (generation.recursion.unresolvedSum <= 0) return;
   generation.addError(
     getUnitLocation(generation.file, location),
     `${type} may not appear within a recursive definition section.`,

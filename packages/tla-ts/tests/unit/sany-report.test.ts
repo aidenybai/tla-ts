@@ -1046,9 +1046,9 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
-  it("keeps a recursive definition section open after an inner module, where SANY throws WrongInvocationException", () => {
+  it("closes the outer module's recursive definition section at the end of an inner module like SANY", () => {
     const report = getReport({
-      M: "---- MODULE M ----\nRECURSIVE F(_)\n---- MODULE Inner ----\nCONSTANT c\n====\nCONSTANT d\nF(x) == x\n====\n",
+      M: "---- MODULE M ----\nRECURSIVE F(_)\n---- MODULE Inner ----\nCONSTANT c\n====\nCONSTANT d\n====\n",
     });
     expect(report.text).toBe(
       joinLines([
@@ -1066,14 +1066,41 @@ Spec == Init /\\ [][Next]_x
         "A declaration may not appear within a recursive definition section.",
         "",
         "",
-        "line 6, col 1 to line 6, col 10 of module M",
+        "line 2, col 11 to line 2, col 14 of module M",
         "",
-        "A declaration may not appear within a recursive definition section.",
+        "Symbol F declared in RECURSIVE statement but not defined.",
         "",
         "",
       ]),
     );
   });
+
+  it.each(["CONSTANT d\nF(x) == x", "F(x) == x\nCONSTANT d"])(
+    "goes on past a recursive definition an inner module closed, where SANY throws WrongInvocationException (%s)",
+    (after) => {
+      const report = getReport({
+        M: `---- MODULE M ----\nRECURSIVE F(_)\n---- MODULE Inner ----\nCONSTANT c\n====\n${after}\n====\n`,
+      });
+      expect(report.text).toBe(
+        joinLines([
+          "Semantic errors:",
+          "",
+          "*** Errors: 2",
+          "",
+          "line 3, col 1 to line 5, col 4 of module M",
+          "",
+          "A MODULE  may not appear within a recursive definition section.",
+          "",
+          "",
+          "line 4, col 1 to line 4, col 10 of module M",
+          "",
+          "A declaration may not appear within a recursive definition section.",
+          "",
+          "",
+        ]),
+      );
+    },
+  );
 
   it.each([
     ["RECURSIVE F(_)\nF == 1\nA == F(1)", "line 5, col 6 to line 5, col 9", 1, 0],
