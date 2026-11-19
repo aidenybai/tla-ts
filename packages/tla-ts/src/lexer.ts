@@ -633,8 +633,9 @@ export const tokenize = (source: string, isTlapm = false): Token[] => {
         pushToken("Keyword", word.slice(0, 3), 3);
         continue;
       }
-      const name = names.get(word) ?? word;
-      names.set(name, name);
+      const known = names.get(word);
+      const name = known ?? word;
+      if (known === undefined) names.set(word, word);
       pushToken(KEYWORDS.has(word) ? "Keyword" : "Identifier", name, word.length);
       continue;
     }
