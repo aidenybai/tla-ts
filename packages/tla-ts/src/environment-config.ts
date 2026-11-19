@@ -142,12 +142,10 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
           0);
   };
   const constants = new Map<string, Value>();
-  const operatorKeys = new Set<string>();
   const setOperator = (key: string, operator: Builtin) => {
     linked.builtins.set(key, operator);
     linked.definitions.delete(key);
     constants.delete(key);
-    operatorKeys.add(key);
   };
   config.constants
     .filter((assignment) => assignment.args === undefined)
@@ -170,22 +168,46 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       });
     });
   const tables = new Map<string, { name: string; module?: string; rows: [Value[], Value][] }>();
-  config.constants.forEach((assignment) => {
-    if (assignment.args === undefined) return;
-    const tableKey = `${assignment.module ?? ""}!${assignment.name}`;
-    const table = tables.get(tableKey) ?? {
-      name: assignment.name,
-      module: assignment.module,
-      rows: [],
-    };
-    if (table.rows.length > 0 && table.rows[0][0].length !== assignment.args.length) {
-      throw new TlaConfigError(
-        `The arity of the operator ${assignment.name} is inconsistent in the configuration file.`,
-      );
-    }
-    table.rows.push([assignment.args.map(toValue), toValue(assignment.value)]);
-    tables.set(tableKey, table);
-  });
+  const addRows = (isRoot: boolean) =>
+    config.constants.forEach((assignment) => {
+      if (assignment.args === undefined || (assignment.module === undefined) !== isRoot) return;
+      const tableKey = `${assignment.module ?? ""}!${assignment.name}`;
+      const table = tables.get(tableKey) ?? {
+        name: assignment.name,
+        module: assignment.module,
+        rows: [],
+      };
+      if (table.rows.length > 0 && table.rows[0][0].length !== assignment.args.length) {
+        throw new TlaConfigError(
+          `The arity of the operator ${assignment.name} is inconsistent in the configuration file.`,
+        );
+      }
+      table.rows.push([assignment.args.map(toValue), toValue(assignment.value)]);
+      tables.set(tableKey, table);
+    });
+  addRows(true);
+  // SpecProcessor#processConstants looks for an unassigned constant after the root module's tables and before the other modules' tables and every <-.
+  const assignedNames = new Set(
+    [...config.constants, ...config.substitutions]
+      .filter((item) => item.module === undefined)
+      .map((item) => item.name),
+  );
+  const unassigned = linked.root.constants
+    .filter(
+      (constant) =>
+        !linked.operatorConstants.has(constant.key) && !assignedNames.has(constant.name),
+    )
+    .map((constant) => constant.name);
+  if (unassigned.length > 0) {
+    const name =
+      linked.order
+        .getDeclarationOrder("constant")
+        .find((constant) => unassigned.includes(constant)) ?? unassigned[0];
+    throw new TlaConfigError(
+      `The constant parameter ${name} is not assigned a value by the configuration file.`,
+    );
+  }
+  addRows(false);
   tables.forEach((table) =>
     getScopedKeys(table).forEach((key) =>
       setOperator(key, createOperatorTable(table.name, getKeyArity(key), table.rows)),
@@ -302,22 +324,5 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     linked.definitions.set(key, alias);
   });
   linked.operatorConstants.forEach((value, name) => constants.set(name, value));
-  const unassigned = linked.root.constants
-    .filter(
-      (constant) =>
-        !constants.has(constant.key) &&
-        !substitutions.has(constant.key) &&
-        !operatorKeys.has(constant.key),
-    )
-    .map((constant) => constant.name);
-  if (unassigned.length > 0) {
-    const name =
-      linked.order
-        .getDeclarationOrder("constant")
-        .find((constant) => unassigned.includes(constant)) ?? unassigned[0];
-    throw new TlaConfigError(
-      `The constant parameter ${name} is not assigned a value by the configuration file.`,
-    );
-  }
   return { constants, substitutions };
 };

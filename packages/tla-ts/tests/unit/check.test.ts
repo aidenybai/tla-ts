@@ -1620,6 +1620,8 @@ ASSUME TLCFP(a) = -887695703
       ],
       ["CONSTANTS Zeta, Alpha, Mid, N", "CONSTANT Mid = 1", "Zeta"],
       ["CONSTANTS N, Procs, Values, Acceptors, Quorums", "CONSTANT Procs = 1", "Quorums"],
+      ["CONSTANTS N, B\nOp(a) == a\nDef == 3", "CONSTANT N = 1 Op <- Def", "B"],
+      ["CONSTANT N", "CONSTANT Nat(1) = [Naturals] 1 Nat(1, 2) = [Naturals] 2", "N"],
     ];
     for (const [body, config, name] of cases) {
       await expect(checkModule(body, config)).rejects.toThrow(
