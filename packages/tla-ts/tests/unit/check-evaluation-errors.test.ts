@@ -1225,6 +1225,46 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  it.each([
+    ["", undefined],
+    [" under -coverage", 1],
+  ])(
+    "compares an application under UNCHANGED in ENABLED without a warning once the step assigns its variables%s, as TLC's Tool#enabledUnchanged does",
+    async (_title, coverage) => {
+      const warnings: string[] = [];
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 - x /\\ UNCHANGED y\nOp(v) == v\nInv == ENABLED (x' = 1 /\\ UNCHANGED Op(x))\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        coverage,
+        onProgress: (progress) => {
+          if (progress.kind === "warning") warnings.push(progress.text);
+        },
+      });
+      expect([result.status, warnings]).toEqual(["invariant-violation", []]);
+    },
+  );
+
+  it.each([
+    ["", undefined],
+    [" under -coverage", 1],
+  ])(
+    "keeps the body of an application under UNCHANGED in ENABLED unchanged where the step leaves its variable unassigned%s, unlike TLC",
+    async (_title, coverage) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Integers\nVARIABLE x\nInit == x = 0\nNext == x' = x\nOp(v) == v\nInv == ENABLED (UNCHANGED Op(x))\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        coverage,
+      });
+      expect([result.failure, result.generatedStates, result.distinctStates]).toEqual([
+        undefined,
+        2,
+        1,
+      ]);
+    },
+  );
+
   const checkFairPrint = (action: string, config: string, version: TlcVersion) =>
     check({
       source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nA == PrintT(x) /\\ ${action}\nSpec == Init /\\ [][A]_x /\\ WF_x(A)\nP == [](x = 0 => <>(x = 1))\nInv == x < 1\n====`,

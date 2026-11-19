@@ -1,6 +1,6 @@
 import { isAssumeProve, type Expression, type SourceLocation } from "../ast";
 import { getKindString } from "../builtins";
-import { TlaEvaluationError, TlaUncodedError } from "../errors";
+import { TlaEvaluationError, TlaUnassignedError, TlaUncodedError } from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
 import { isConstantLevel } from "../dependencies";
 import {
@@ -349,6 +349,7 @@ const proceedItems = (
   return isChanged(replay, items, partial) && proceed(replay, items.rest, partial, items.node);
 };
 
+// Returns, rather than throws, the unassigned variable ENABLED meets, which TLC's Tool#enabledUnchanged fails on.
 const evaluateInPartial = (
   replay: Replay,
   node: number,
@@ -356,18 +357,16 @@ const evaluateInPartial = (
   scope: Scope | undefined,
   partial: State,
 ) => {
-  const environment = replay.environment;
   try {
     return evaluateAt(replay, node, expression, {
-      environment,
+      environment: replay.environment,
       scope,
       state: partial,
       next: undefined,
     });
   } catch (error) {
-    throw replay.isEnabled
-      ? toUnspecifiedSubscriptError(error, environment.runtime.version)
-      : error;
+    if (replay.isEnabled && error instanceof TlaUnassignedError) return error;
+    throw error;
   }
 };
 
@@ -379,6 +378,9 @@ const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
     next: undefined,
   });
   const after = evaluateInPartial(replay, item.node, item.expression, item.scope, partial);
+  if (after instanceof TlaUnassignedError) {
+    throw toUnspecifiedSubscriptError(after, replay.environment.runtime.version);
+  }
   try {
     return !isEqualLikeTlc(before, after);
   } catch (error) {
@@ -1002,29 +1004,43 @@ const visitUnchanged = (
         return visitUnchanged(replay, operator.body, items, operator.scope, partial, node);
       }
     }
-    // Deviation from TLC: Tool#enabledUnchanged evaluates the application in the partial next state and fails on an unassigned variable.
-    if (replay.isEnabled && expression.kind === "Apply") {
-      const context = getContext(replay, scope, partial);
-      const operator = resolveApplyOperator(expression, context);
-      if (operator?.kind === "Closure" && operator.params.length === expression.args.length) {
-        return visitUnchanged(
-          replay,
-          operator.body,
-          items,
-          bindOperatorArguments(operator, expression.args, context),
-          partial,
-          node,
-        );
-      }
-    }
     const before = evaluateAt(replay, node, expression, {
       environment: replay.environment,
       scope,
       state: replay.current,
       next: undefined,
     });
+    const callStack = replay.callStack;
+    const depth = callStack?.expressions.length ?? 0;
+    const fingerprint = callStack?.fingerprint;
     const after = evaluateInPartial(replay, node, expression, scope, partial);
-    return isEqualLikeTlc(before, after) && proceed(replay, items, partial, node);
+    if (!(after instanceof TlaUnassignedError)) {
+      return isEqualLikeTlc(before, after) && proceed(replay, items, partial, node);
+    }
+    const context = getContext(replay, scope, partial);
+    const operator =
+      expression.kind === "Apply" ? resolveApplyOperator(expression, context) : undefined;
+    // Deviation from TLC: Tool#enabledUnchanged fails on a variable the step leaves unassigned in an application, whose body tla-ts keeps unchanged instead.
+    if (
+      expression.kind !== "Apply" ||
+      operator?.kind !== "Closure" ||
+      operator.params.length !== expression.args.length
+    ) {
+      throw toUnspecifiedSubscriptError(after, replay.environment.runtime.version);
+    }
+    if (callStack) {
+      callStack.expressions.length = depth;
+      callStack.isFrozen = false;
+      callStack.fingerprint = fingerprint;
+    }
+    return visitUnchanged(
+      replay,
+      operator.body,
+      items,
+      bindOperatorArguments(operator, expression.args, context),
+      partial,
+      node,
+    );
   });
 
 const createReplay = (

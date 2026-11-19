@@ -8,7 +8,12 @@ import {
 } from "./ast";
 import { getKindString } from "./builtins";
 import { getReadVariables } from "./dependencies";
-import { TlaEvaluationError, TlaIllegalStateError, TlaIncompleteSuccessorError } from "./errors";
+import {
+  TlaEvaluationError,
+  TlaIllegalStateError,
+  TlaIncompleteSuccessorError,
+  TlaUnassignedError,
+} from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import {
   describeLocation,
@@ -119,13 +124,13 @@ const assign = (partial: State, index: number, value: Value) => {
 const holds = (run: Run, expression: Expression, context: Context) =>
   holdsValue(run, expression, evaluate(expression, context));
 
+// Returns, rather than throws, the unassigned variable ENABLED meets, which TLC's Tool#enabledUnchanged fails on.
 const holdsUnchanged = (run: Run, unchanged: Expression, context: Context) => {
   try {
     return holds(run, unchanged, context);
   } catch (error) {
-    throw run.isEnabled
-      ? toUnspecifiedSubscriptError(error, context.environment.runtime.version)
-      : error;
+    if (run.isEnabled && error instanceof TlaUnassignedError) return error;
+    throw error;
   }
 };
 
@@ -631,21 +636,29 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       return;
     }
     const context = getContext(run, scope, partial);
-    if (run.isEnabled && expression.kind === "Apply") {
-      const operator = resolveApplyOperator(expression, context);
-      if (operator?.kind === "Closure" && operator.params.length === expression.args.length) {
-        getRunner(getUnchangedWrapper(operator.body), environment, false)(
-          run,
-          bindOperatorArguments(operator, expression.args, context),
-          partial,
-          action,
-          isFixed,
-          onComplete,
-        );
-        return;
-      }
+    const isHeld = holdsUnchanged(run, unchanged, context);
+    if (!(isHeld instanceof TlaUnassignedError)) {
+      if (isHeld) onComplete(partial, action);
+      return;
     }
-    if (holdsUnchanged(run, unchanged, context)) onComplete(partial, action);
+    const operator =
+      expression.kind === "Apply" ? resolveApplyOperator(expression, context) : undefined;
+    // Deviation from TLC: Tool#enabledUnchanged fails on a variable the step leaves unassigned in an application, whose body tla-ts keeps unchanged instead.
+    if (
+      expression.kind !== "Apply" ||
+      operator?.kind !== "Closure" ||
+      operator.params.length !== expression.args.length
+    ) {
+      throw toUnspecifiedSubscriptError(isHeld, run.environment.runtime.version);
+    }
+    getRunner(getUnchangedWrapper(operator.body), environment, false)(
+      run,
+      bindOperatorArguments(operator, expression.args, context),
+      partial,
+      action,
+      isFixed,
+      onComplete,
+    );
   };
 };
 
@@ -1134,9 +1147,11 @@ const compileAction = (
       };
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(run, scope, partial, action, isFixed, (nextPartial, nextAction) => {
-          if (!holdsUnchanged(run, unchanged, getContext(run, scope, nextPartial))) {
-            onComplete(nextPartial, nextAction);
+          const isHeld = holdsUnchanged(run, unchanged, getContext(run, scope, nextPartial));
+          if (isHeld instanceof TlaUnassignedError) {
+            throw toUnspecifiedSubscriptError(isHeld, run.environment.runtime.version);
           }
+          if (!isHeld) onComplete(nextPartial, nextAction);
         });
     }
     case "BoxAction":
