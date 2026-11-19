@@ -182,7 +182,6 @@ export interface LinkedModule {
 
 interface ModuleScope {
   id: string;
-  // A standard module's source, linked only for selections into its operators, stays out of the spec's modules.
   isHidden: boolean;
   symbols: Symbols;
   getDefinition: (name: string) => Definition | undefined;
@@ -305,7 +304,6 @@ export const createEnvironment = (
   );
   const standardExports = new Map<string, Symbols>();
   const standardSources = new Map<string, LinkedModule>();
-  // The definitions Java overrides replace, by key, to fall back to and to select into.
   const replacedDefinitions = new Map<string, Definition>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
@@ -546,7 +544,6 @@ export const createEnvironment = (
     return top;
   };
 
-  // SANY selects into the bodies a standard module's source gives the operators tla-ts builds in.
   const getStandardSource = (name: string) => {
     const cached = standardSources.get(name);
     if (cached) return cached;
@@ -1164,8 +1161,7 @@ export const createEnvironment = (
           source !== undefined && getSanyStandardModules(runtime.version).has(source)
             ? getStandardSource(source).visible.get(symbol.key)?.key
             : symbol.key;
-        const definition =
-          key === undefined ? undefined : (replacedDefinitions.get(key) ?? definitions.get(key));
+        const definition = key === undefined ? undefined : replacedDefinitions.get(key);
         return definition && { ...definition, name };
       },
       (name, location) =>

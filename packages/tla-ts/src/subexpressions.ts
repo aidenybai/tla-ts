@@ -281,7 +281,7 @@ const applyDefinition = (definition: Definition, selection: Selection) => {
 const selectSubexpression = (
   selectors: Selector[],
   lookup: Lookup,
-  getStandard: Lookup,
+  getStandardDefinition: Lookup,
   reference: Expression & SelectingName,
   isOperator: boolean,
 ): Expression => {
@@ -351,7 +351,7 @@ const selectSubexpression = (
         const definition = local
           ? local.find((candidate) => getSourceName(candidate) === name)
           : (lookup(name) ??
-            (selectorIndex < selectors.length - 1 ? getStandard(name) : undefined));
+            (selectorIndex < selectors.length - 1 ? getStandardDefinition(name) : undefined));
         if (definition)
           return { definition, name, args, earlier: args.length - selector.args.length };
       }
@@ -391,8 +391,7 @@ const selectSubexpression = (
         range: reference.selectorRanges?.[selectorIndex],
       }),
     );
-    // SANY makes a LAMBDA of a whole operator body selected by !:, and TLC evaluates a LAMBDA whose
-    // body a Java override replaced as that override.
+    // TLC evaluates the LAMBDA SANY makes of a whole body selected by !: as the body's Java override.
     const isOverride =
       !local &&
       arity > 0 &&
@@ -718,13 +717,13 @@ const getQualifiedSelectors = (
   args: Expression[],
   counts: number[] | undefined,
   lookup: Lookup,
-  getStandard: Lookup,
+  getStandardDefinition: Lookup,
 ) => {
   if (!name.includes("!") || lookup(name)) return undefined;
   const parts = name.split("!");
   const isSelection = parts.some((_part, index) => {
     const prefix = parts.slice(0, index + 1).join("!");
-    return lookup(prefix) ?? (index < parts.length - 1 ? getStandard(prefix) : undefined);
+    return lookup(prefix) ?? (index < parts.length - 1 ? getStandardDefinition(prefix) : undefined);
   });
   return isSelection ? getNameSelectors(name, args, counts) : undefined;
 };
@@ -738,7 +737,7 @@ const containsReference = (expression: Expression): boolean =>
 const resolveSubexpressions = (
   expression: Expression,
   lookup: Lookup,
-  getStandard: Lookup,
+  getStandardDefinition: Lookup,
   isGoal: (name: string) => boolean,
   isOperator = false,
 ): Expression => {
@@ -755,20 +754,20 @@ const resolveSubexpressions = (
     expression.definitions.forEach((definition) =>
       resolved.push(
         resolveDefinition(definition, (child) =>
-          resolveSubexpressions(child, local, getStandard, isLocalGoal),
+          resolveSubexpressions(child, local, getStandardDefinition, isLocalGoal),
         ),
       ),
     );
     const mapped = {
       ...expression,
       definitions: resolved,
-      body: resolveSubexpressions(expression.body, local, getStandard, isLocalGoal),
+      body: resolveSubexpressions(expression.body, local, getStandardDefinition, isLocalGoal),
     };
     return mapped.instances
       ? {
           ...mapped,
           instances: mapped.instances.map((instance) =>
-            resolveInstance(instance, local, getStandard, isLocalGoal),
+            resolveInstance(instance, local, getStandardDefinition, isLocalGoal),
           ),
         }
       : mapped;
@@ -778,7 +777,7 @@ const resolveSubexpressions = (
       resolveSubexpressions(
         arg,
         lookup,
-        getStandard,
+        getStandardDefinition,
         isGoal,
         params !== undefined && params[index]?.arity !== 0,
       ),
@@ -788,7 +787,9 @@ const resolveSubexpressions = (
       ? selectors.map(getSelectorName).join("!")
       : undefined;
     const callee =
-      name === undefined ? undefined : (lookup(name) ?? (isLast ? undefined : getStandard(name)));
+      name === undefined
+        ? undefined
+        : (lookup(name) ?? (isLast ? undefined : getStandardDefinition(name)));
     return callee?.kind === "Operator" ? callee.params : undefined;
   };
   const rebuilt =
@@ -819,7 +820,7 @@ const resolveSubexpressions = (
             ),
           }
         : mapChildren(expression, (child) =>
-            resolveSubexpressions(child, lookup, getStandard, isGoal),
+            resolveSubexpressions(child, lookup, getStandardDefinition, isGoal),
           );
   const children = getChildren(expression);
   const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
@@ -829,14 +830,14 @@ const resolveSubexpressions = (
     mapped.kind === "Subexpression"
       ? mapped.selectors
       : mapped.kind === "Identifier"
-        ? getQualifiedSelectors(mapped.name, [], undefined, lookup, getStandard)
+        ? getQualifiedSelectors(mapped.name, [], undefined, lookup, getStandardDefinition)
         : mapped.kind === "Apply"
           ? getQualifiedSelectors(
               mapped.operator,
               mapped.args,
               mapped.argumentCounts,
               lookup,
-              getStandard,
+              getStandardDefinition,
             )
           : undefined;
   const first = selectors?.[0];
@@ -867,12 +868,18 @@ const resolveSubexpressions = (
     first?.kind === "Name" &&
     selectors[1].kind !== "Name" &&
     !lookup(first.name) &&
-    !getStandard(first.name)
+    !getStandardDefinition(first.name)
   ) {
     setGeneratedArguments(0);
     return mapped;
   }
-  const selected = selectSubexpression(selectors, lookup, getStandard, mapped, isOperator);
+  const selected = selectSubexpression(
+    selectors,
+    lookup,
+    getStandardDefinition,
+    mapped,
+    isOperator,
+  );
   const generated = generatedArgumentCounts.get(mapped);
   if (generated !== undefined) setGeneratedArguments(generated);
   const parenthesized = parenthesizedRanges.get(expression);
@@ -884,13 +891,19 @@ const resolveSubexpressions = (
 const resolveInstance = (
   instance: Instance,
   lookup: Lookup,
-  getStandard: Lookup,
+  getStandardDefinition: Lookup,
   isGoal: (name: string) => boolean,
 ): Instance => ({
   ...instance,
   substitutions: instance.substitutions.map((substitution) => ({
     ...substitution,
-    expression: resolveSubexpressions(substitution.expression, lookup, getStandard, isGoal, true),
+    expression: resolveSubexpressions(
+      substitution.expression,
+      lookup,
+      getStandardDefinition,
+      isGoal,
+      true,
+    ),
   })),
 });
 
@@ -906,8 +919,7 @@ export const createModuleSubexpressions = (
   module: Module,
   expand: ((expression: Expression) => Expression) | undefined,
   getAvailable: Lookup,
-  // A standard operator's definition, which only a selection's head may reach: SANY selects into the body its module's source gives it.
-  getStandard: Lookup,
+  getStandardDefinition: Lookup,
   isBoundBefore: (name: string, location: SourceLocation) => boolean,
 ) => {
   const createLookup = (definitions: Definition[]): Lookup => {
@@ -992,13 +1004,13 @@ export const createModuleSubexpressions = (
     resolveSubexpressions(
       expression,
       getVisibleLookup(definitionLookup, location),
-      getStandard,
+      getStandardDefinition,
       (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
     );
   const createProofResolver = (lookup: Lookup) => {
     const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
     const resolveInProof = (expression: Expression) =>
-      resolveSubexpressions(expression, lookup, getStandard, isProofGoal);
+      resolveSubexpressions(expression, lookup, getStandardDefinition, isProofGoal);
     const resolveFacts = (facts: Fact[]) => {
       const resolved = facts.map((fact) =>
         fact.kind === "ModuleFact" ? fact : resolveInProof(fact),
@@ -1010,7 +1022,7 @@ export const createModuleSubexpressions = (
       defs.map((def) =>
         def.kind === "ModuleFact"
           ? def
-          : resolveSubexpressions(def, lookup, getStandard, isProofGoal, true),
+          : resolveSubexpressions(def, lookup, getStandardDefinition, isProofGoal, true),
       );
     const resolveBounds = (bounds: Bound[]) =>
       bounds.map((bound) => ({ ...bound, set: resolveInProof(bound.set) }));
@@ -1032,7 +1044,7 @@ export const createModuleSubexpressions = (
         case "Hide":
           return { ...body, facts: resolveFacts(body.facts), defs: resolveDefs(body.defs) };
         case "Instance":
-          return resolveInstance(body, lookup, getStandard, isProofGoal);
+          return resolveInstance(body, lookup, getStandardDefinition, isProofGoal);
         case "Define": {
           const defined: Definition[] = [];
           const local = createProofResolver(
@@ -1042,7 +1054,12 @@ export const createModuleSubexpressions = (
             ...body,
             definitions: body.definitions.map((definition) => {
               if (definition.kind === "Instance") {
-                return resolveInstance(definition, local.lookup, getStandard, local.isProofGoal);
+                return resolveInstance(
+                  definition,
+                  local.lookup,
+                  getStandardDefinition,
+                  local.isProofGoal,
+                );
               }
               const resolved = resolveDefinition(definition, local.resolveInProof);
               defined.push(resolved);
