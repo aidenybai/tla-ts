@@ -56829,6 +56829,44 @@ describe("BigInts", () => {
     });
   });
 
+  describe("joins what follows the definitions of a typed array's indices that may convert", () => {
+    const getSource = (expected: string) => `
+      const sample = new Uint8Array(4);
+      const descriptor = { value: 1, writable: true, enumerable: true, configurable: true };
+      const converted = {
+        value: { valueOf: () => 7 },
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      };
+      const results = [
+        Reflect.defineProperty(sample, "0", descriptor),
+        Reflect.defineProperty(sample, "1", converted),
+        Reflect.defineProperty(sample, "2", descriptor),
+        Reflect.defineProperty(sample, "4", descriptor),
+        Reflect.defineProperty(sample, "-1", descriptor),
+        Reflect.defineProperty(sample, "1.5", descriptor),
+        Reflect.defineProperty(sample, "-0", descriptor),
+        Reflect.defineProperty(sample, "3", converted),
+        Reflect.defineProperty(sample, "5", converted),
+        Reflect.defineProperty(sample, "0", converted),
+      ];
+      const result = results.join() + ";" + sample.join();
+      if (result !== "${expected}") throw new Error("result " + result);
+    `;
+    const expected = "true,true,true,false,false,false,false,true,false,true;7,7,1,7";
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource(expected))).failure).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkModel(getSource(expected.replace(";7,7,1,7", ";7,7,1,1")))).failure?.message,
+      ).toContain(`result ${expected}`);
+    });
+  });
+
   describe("converts an object that Reflect.set writes to a typed array's index", () => {
     const path = join(import.meta.dirname, "model.js");
     const getSource = (expected: string) => `

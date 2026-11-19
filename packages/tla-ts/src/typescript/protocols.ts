@@ -1023,7 +1023,11 @@ export const readDescriptor = (
   const isReflect =
     ts.isPropertyAccessExpression(site.expression) &&
     site.expression.expression.getText() === "Reflect";
-  const define = (after: Path, descriptor: Expression) =>
+  const define = (
+    after: Path,
+    descriptor: Expression,
+    next: (path: Path, value: Expression) => Formula,
+  ) =>
     isReflect
       ? bind(
           after,
@@ -1038,7 +1042,7 @@ export const readDescriptor = (
             const defined = withHeap(bound, field(change, "heap"), context);
             return ifThenElse(
               field(change, "isDone"),
-              continueWith(defined, field(change, "value")),
+              next(defined, field(change, "value")),
               ifThenElse(
                 field(change, "isRangeError"),
                 throwError("RangeError", defined, site, context, frame),
@@ -1055,44 +1059,53 @@ export const readDescriptor = (
           after,
           context,
           frame,
-          (defined) => continueWith(defined, values[0]),
+          (defined) => next(defined, values[0]),
         );
   // A typed array's index converts an object value that its definition takes, once it checks the
-  // index and the descriptor, and writes it only where the index is still in bounds.
+  // index and the descriptor, and writes it only where the index is still in bounds. The paths
+  // join before what follows, which each would otherwise repeat.
   const key = useJavaScript("PropertyKey", [values[1]], context);
   return ifThenElse(
     isObjectArgument(values[0], context),
     readFields(site, values[2], path, context, frame, (after, descriptor) =>
       !isTypedValueDefine(site, context)
-        ? define(after, descriptor)
-        : ifThenElse(
-            useJavaScript(
-              "TypedDefineConverts",
-              [getHeap(after.scope, site, context), values[0], key, descriptor],
-              context,
-            ),
-            runToPrimitive(
-              site,
-              field(descriptor, "value"),
-              "number",
-              after,
-              context,
-              frame,
-              (converted, primitive) =>
-                ifThenElse(
-                  useJavaScript(
-                    "HasTypedElement",
-                    [getHeap(converted.scope, site, context), values[0], key],
-                    context,
-                  ),
-                  define(
-                    converted,
-                    useJavaScript("WithDescriptorValue", [descriptor, primitive], context),
-                  ),
-                  continueWith(converted, isReflect ? boolean(true) : values[0]),
+        ? define(after, descriptor, continueWith)
+        : translateJoined(
+            site,
+            after,
+            context,
+            (joined, value) => continueWith(joined, value ?? getUndefined(context)),
+            (next) =>
+              ifThenElse(
+                useJavaScript(
+                  "TypedDefineConverts",
+                  [getHeap(after.scope, site, context), values[0], key, descriptor],
+                  context,
                 ),
-            ),
-            define(after, descriptor),
+                runToPrimitive(
+                  site,
+                  field(descriptor, "value"),
+                  "number",
+                  after,
+                  context,
+                  frame,
+                  (converted, primitive) =>
+                    ifThenElse(
+                      useJavaScript(
+                        "HasTypedElement",
+                        [getHeap(converted.scope, site, context), values[0], key],
+                        context,
+                      ),
+                      define(
+                        converted,
+                        useJavaScript("WithDescriptorValue", [descriptor, primitive], context),
+                        next,
+                      ),
+                      next(converted, isReflect ? boolean(true) : values[0]),
+                    ),
+                ),
+                define(after, descriptor, next),
+              ),
           ),
     ),
     throwTypeError(path, site, context, frame),
