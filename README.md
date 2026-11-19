@@ -98,8 +98,6 @@ const result = await check(spec);
 | `fileName`  | The path of the file. Imports resolve from it, and the module takes its name  |
 | `libraries` | TypeScript's built-in `lib.*.d.ts` files by name. Pass them only in a browser |
 
-TypeScript's built-in files declare types such as `Array` and `Map`. In Node, `compile` reads them from disk. A browser has no disk, so pass them as a `Map` from file name to text.
-
 ### `check`
 
 ```ts
@@ -114,8 +112,6 @@ result.violation?.trace;
 | `config`     | A TLC configuration                         |
 | `loadModule` | Returns the source of an imported module    |
 | `workers`    | The number of worker threads. Defaults to 1 |
-
-A check with several workers starts over on one worker when it orders two strings that the search created, such as with `\o` or `ToString`. This happens when both strings go into one set or one function's domain. TLC orders strings by when it first sees them, and workers share that order only for strings that exist before the search. The CLI prints a warning when this happens, and `check` passes `onProgress` a `sequential-fallback` event.
 
 ### `prove`
 

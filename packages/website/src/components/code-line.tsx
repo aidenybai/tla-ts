@@ -5,6 +5,9 @@ import type { Mark, Token } from "../site-data";
 import type { LineNote } from "../run-worker";
 
 const WORDS = /\s+|[A-Za-z_]\w*|\d+|[^\sA-Za-z_\d]+/g;
+// Each word is its own box, and a line may break between two boxes. Words with no space between
+// them stay together up to this length, so that a wrapped line breaks at its spaces.
+const MAX_JOINED_LENGTH = 32;
 
 interface Word {
   text: string;
@@ -38,6 +41,7 @@ interface CodeWordsProps {
   marks?: Mark[];
   hoveredName?: string;
   isHighlighted?: boolean;
+  isJoined?: boolean;
   colors?: Record<string, string>;
 }
 
@@ -57,7 +61,7 @@ const CodeWords = memo((props: CodeWordsProps) => {
       : { "--tint": `${color}` };
     return { ...word, region: marks.at(0)?.name, tint: color ? tint : undefined };
   });
-  return words.map((word, index) => {
+  const spans = words.map((word, index) => {
     if (/^\s/.test(word.text)) return word.text;
     // A tint spills 2px past the word, except toward a tinted neighbor, where two would overlap.
     const edges = [
@@ -81,6 +85,24 @@ const CodeWords = memo((props: CodeWordsProps) => {
       </span>
     );
   });
+  if (!props.isJoined) return spans;
+  return words
+    .reduce<number[][]>((runs, word, index) => {
+      const run = runs.at(-1);
+      if (run && !/^\s/.test(word.text) && !/^\s/.test(words[run[0]].text)) run.push(index);
+      else runs.push([index]);
+      return runs;
+    }, [])
+    .map((run) => {
+      const length = run.reduce((sum, index) => sum + words[index].text.length, 0);
+      return run.length > 1 && length <= MAX_JOINED_LENGTH ? (
+        <span key={words[run[0]].column} className="whitespace-nowrap">
+          {run.map((index) => spans[index])}
+        </span>
+      ) : (
+        run.map((index) => spans[index])
+      );
+    });
 });
 
 interface CodeLineProps {
@@ -115,7 +137,9 @@ export const CodeLine = memo((props: CodeLineProps) => (
       className={cn(
         "min-w-0 flex-1",
         props.isDimmed && "opacity-40",
-        props.isWrapped === false ? "whitespace-pre" : "break-words whitespace-pre-wrap",
+        props.isWrapped === false
+          ? "whitespace-pre"
+          : "pl-[2ch] -indent-[2ch] break-words whitespace-pre-wrap *:indent-0",
       )}
     >
       <CodeWords
@@ -123,6 +147,7 @@ export const CodeLine = memo((props: CodeLineProps) => (
         marks={props.marks}
         hoveredName={props.hoveredName}
         isHighlighted={props.isHighlighted}
+        isJoined={props.isWrapped !== false}
         colors={props.colors}
       />
     </span>
