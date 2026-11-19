@@ -3270,6 +3270,28 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    ["TRUE /\\ Init", ""],
+    ["C /\\ Init", ""],
+    [
+      "(1 = 1) /\\ TRUE /\\ Init",
+      ',\n  [ name |-> "UnnamedAction",\n    location |->\n        [ beginLine |-> 6,\n          beginColumn |-> 10,\n          endLine |-> 6,\n          endColumn |-> 14,\n          module |-> "M" ] ]',
+    ],
+  ])(
+    "leaves out of the initial predicates of Spec == %s /\\ [][x' = 1 - x]_x a name whose value is TRUE, as TLC's SpecProcessor does",
+    async (init, unnamed) => {
+      const printed: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nCONSTANT C\nVARIABLE x\nInit == x = 0\nSpec == ${init} /\\ [][x' = 1 - x]_x\nASSUME PrintT(TLCGet("spec").inits)\n====`,
+        config: "CONSTANT C = TRUE\nSPECIFICATION Spec",
+        onPrint: (text) => printed.push(text),
+      });
+      expect(printed).toEqual([
+        `{ [ name |-> "Init",\n    location |->\n        [ beginLine |-> 5,\n          beginColumn |-> 9,\n          endLine |-> 5,\n          endColumn |-> 13,\n          module |-> "M" ] ]${unnamed} }`,
+      ]);
+    },
+  );
+
   it("counts a recursive function of an instance of an instance at its definition once", async () => {
     const lines = await getCoverageLines(
       "---- MODULE G ----\nEXTENDS Naturals\nVARIABLES x, y\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT K\nVARIABLES a, b\nD == \\E e \\in {0, K % 4} : a' = e /\\ b' = b\nRf[n \\in 0..2] == IF n = 0 THEN K ELSE Rf[n - 1] + (a % 2)\n====\n---- MODULE Mid ----\nEXTENDS Naturals\nCONSTANT L\nVARIABLES p, q\nII == INSTANCE Inner WITH K <- L + 1, a <- p, b <- q\n====\nMd == INSTANCE Mid WITH L <- 1, p <- x, q <- y\nInit == x = 0 /\\ y = 0\nNext == Md!II!D\nInv == Md!II!Rf[2] > 0\n====",
