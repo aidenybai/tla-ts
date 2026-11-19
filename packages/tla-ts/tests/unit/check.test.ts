@@ -3479,6 +3479,59 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "d",
+      [
+        "||line 4, col 39 to line 4, col 39 of module M: 2",
+        "||line 5, col 8 to line 5, col 16 of module Inner: 4",
+        "|||line 4, col 6 to line 4, col 10 of module Inner: 4",
+        "|||line 4, col 15 to line 4, col 24 of module Inner: 2",
+        "|||line 4, col 29 to line 4, col 39 of module Inner: 2",
+      ],
+    ],
+    [
+      "<<d>>",
+      [
+        "||line 4, col 39 to line 4, col 39 of module M: 2",
+        "||line 5, col 8 to line 5, col 16 of module Inner: 4",
+        "|||line 4, col 6 to line 4, col 10 of module Inner: 4",
+        "|||line 4, col 15 to line 4, col 24 of module Inner: 2",
+        "|||line 4, col 29 to line 4, col 43 of module Inner: 2",
+      ],
+    ],
+    [
+      "<<>>",
+      [
+        "||line 5, col 8 to line 5, col 16 of module Inner: 4",
+        "|||line 4, col 6 to line 4, col 10 of module Inner: 4",
+        "|||line 4, col 15 to line 4, col 24 of module Inner: 2",
+        "|||line 4, col 29 to line 4, col 42 of module Inner: 0",
+      ],
+    ],
+  ])(
+    "counts UNCHANGED %s in an instanced ENABLED as TLC's Tool#enabledUnchanged does",
+    async (unchanged, lines) => {
+      const result = await check({
+        source:
+          "---- MODULE M ----\nEXTENDS Naturals\nVARIABLES x, y\nI == INSTANCE Inner WITH c <- x, d <- y\nInit == x = 0 /\\ y = 0\nNext == x < 3 /\\ x' = x + 1 /\\ UNCHANGED y\nInv == I!Can \\/ x >= 2\n====",
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+        coverage: 1,
+        loadModule: (name) =>
+          name === "Inner"
+            ? `---- MODULE Inner ----\nEXTENDS Naturals\nVARIABLES c, d\nA == c < 2 /\\ c' = c + 1 /\\ UNCHANGED ${unchanged}\nCan == ENABLED A\n====`
+            : undefined,
+      });
+      expect(formatCoverage(result)?.at(-1)).toEqual([
+        "line 7, col 8 to line 7, col 22 of module M: 4",
+        "|line 7, col 8 to line 7, col 12 of module M: 4",
+        "||line 4, col 31 to line 4, col 31 of module M: 4",
+        ...lines,
+        "|line 7, col 17 to line 7, col 22 of module M: 2",
+      ]);
+    },
+  );
+
   it("counts a substitution at each primed reference and again for UNCHANGED, as TLC's LazyValue caches it only for the states it was evaluated in", async () => {
     const lines = formatCoverage(
       await check({

@@ -660,28 +660,27 @@ const substituteInEnabled = (
   }
   if (expression.kind !== "Unchanged") return undefined;
   const names = getUnchangedVariables(expression.expression, rewrite, bound);
-  if (names === undefined) return undefined;
-  return {
-    kind: "And",
-    operands: names.map((name) => ({
-      kind: "Apply",
-      operator: "=",
-      args: [
-        {
-          kind: "Prime",
-          expression: {
-            kind: "Identifier",
-            name: getEnabledVariableName(name),
-            location: expression.location,
-          },
+  if (names === undefined || names.length === 0) return undefined;
+  const operands = names.map((name): Expression => ({
+    kind: "Apply",
+    operator: "=",
+    args: [
+      {
+        kind: "Prime",
+        expression: {
+          kind: "Identifier",
+          name: getEnabledVariableName(name),
           location: expression.location,
         },
-        substitute({ kind: "Identifier", name, location: expression.location }, rewrite, bound),
-      ],
-      location: expression.location,
-    })),
+        location: expression.location,
+      },
+      substitute({ kind: "Identifier", name, location: expression.location }, rewrite, bound),
+    ],
     location: expression.location,
-  };
+  }));
+  return operands.length === 1
+    ? operands[0]
+    : { kind: "And", operands, location: expression.location };
 };
 
 export const createLocalIdentifier = (name: string, location: SourceLocation): Expression => ({
