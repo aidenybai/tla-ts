@@ -8,8 +8,10 @@ import {
   TlaStackOverflowError,
   TlaTooManyStatesError,
   TlaUnsupportedError,
+  TlaSetBoundError,
   UNEXPECTED_EVAL_EXCEPTION,
   UNEXPECTED_EXCEPTION,
+  WRONG_INVOCATION_EXCEPTION,
 } from "./errors";
 import type { State } from "./evaluate";
 import { EXIT_STATUS, getMessageExitStatus, withLivenessChecksExitCode } from "./exit-codes";
@@ -247,6 +249,8 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   const covered = coverage && addActionCoverage(coverage, environment, description);
   let traceCount = 0;
   let currentTrace = 0;
+  // TLC's Simulator computes the initial states, prints the behaviors and checks the postcondition on its own thread, where TLCGet("diameter") is 0.
+  let isOnWorker = false;
   let evaluatedAction: SpecAction | undefined;
   runtime.getSuccessorAction = () => evaluatedAction;
   runtime.getLevel = (state) => nodes.get(state)?.level ?? 0;
@@ -254,7 +258,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const node = state && nodes.get(state);
     switch (key) {
       case "diameter":
-        return currentTrace === 0 ? 0 : traceCount + 1;
+        return isOnWorker ? traceCount + 1 : 0;
       case "generated":
       case "distinct":
       case "queue":
@@ -732,6 +736,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
   runtime.getRandom = () => enumerableRandom;
   const errors: WorkerError[] = [];
   const isContinued = options.isContinued ?? false;
+  isOnWorker = true;
   while (true) {
     statistics.traces++;
     currentTrace = statistics.traces;
@@ -754,6 +759,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
       break;
     }
   }
+  isOnWorker = false;
   const printed = errors.findIndex(
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );
@@ -834,4 +840,8 @@ const toEvaluationError = (error: unknown) => {
 };
 
 const getUnexpectedPrefix = (error: TlaEvaluationError) =>
-  isEvalException(error) ? UNEXPECTED_EVAL_EXCEPTION : UNEXPECTED_EXCEPTION;
+  isEvalException(error)
+    ? UNEXPECTED_EVAL_EXCEPTION
+    : error instanceof TlaSetBoundError
+      ? WRONG_INVOCATION_EXCEPTION
+      : UNEXPECTED_EXCEPTION;

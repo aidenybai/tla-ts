@@ -568,6 +568,38 @@ it("prints a state whose function the RL scheduler fails to fingerprint, where T
   ]);
 });
 
+it.each([false, true])(
+  "reports a set beyond -maxSetSize as TLC's WrongInvocationException and prints the summary after the behavior (generating: %s)",
+  (isGenerating) => {
+    const outputs: string[] = [];
+    const status = simulate({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == \\E k \\in {a + b : a \\in 1..4, b \\in 1..4} : x' = k\n====",
+      config: "INIT Init\nNEXT Next",
+      seed: 4n,
+      traceDepth: 3,
+      traceCount: 2n,
+      aril: 0n,
+      isGenerating,
+      scheduler: "random",
+      maxSetSize: 4,
+      onSimulation: (output) => {
+        if (output.kind === "message" && output.isError) outputs.push(output.message);
+        if (output.kind === "behavior") outputs.push("behavior");
+        if (output.kind === "summary") outputs.push("summary");
+      },
+    });
+    expect([status, outputs]).toEqual([
+      255,
+      [
+        "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a util.WrongInvocationException\n: Attempted to construct a set with too many elements (>4).",
+        "behavior",
+        "summary",
+      ],
+    ]);
+  },
+);
+
 it("keeps the incomplete step of a successor error under -difftrace, where TLC's TLCStateMut#fingerPrint crashes", () => {
   const definitions =
     "Next == \\/ y < 2 /\\ y' = y + 1 /\\ z' = z\n        \\/ y = 2 /\\ y' = y + 1\nInv == TRUE\nView == y \\div 2";

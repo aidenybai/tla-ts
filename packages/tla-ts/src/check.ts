@@ -816,23 +816,53 @@ const searchStates = (
   const canonicalizeState = coverage ? (state: Value[]) => state : createCanonicalizer();
 
   const toRecord = search.toRecord;
-  const getUncoveredInitialStates = () =>
-    spec.init === undefined ? [] : getInitialStates(spec.init, environment, spec.scope);
-  const forEachSpecInitialState = (onState: (state: Value[]) => void) => {
-    if (coverage) {
-      replayInitialStates(coverageInits, environment, onState, rejectIncompleteInitialState);
-      return;
+  // TLC's TLCGet("level") is 0 in the initial predicate and 1 in an initial state, also as TLC rebuilds one for a trace while it explores another state.
+  let rebuiltInitLevel = -1;
+  const rebuildInit = <Result>(rebuild: () => Result) => {
+    rebuiltInitLevel = 0;
+    try {
+      return rebuild();
+    } finally {
+      rebuiltInitLevel = -1;
     }
-    if (spec.init === undefined) return;
-    forEachInitialState(
-      spec.init,
-      environment,
-      (state) => {
-        onState(state);
-        return false;
-      },
-      spec.scope,
-    );
+  };
+  const findUncoveredInitialState = (isMatch: (state: Value[]) => boolean) => {
+    const init = spec.init;
+    return init === undefined
+      ? undefined
+      : rebuildInit(() => {
+          const initialStates = getInitialStates(init, environment, spec.scope);
+          rebuiltInitLevel = 1;
+          return initialStates.find(isMatch);
+        });
+  };
+  const forEachSpecInitialState = (onState: (state: Value[]) => void) => {
+    const onRebuiltState = (state: Value[]) => {
+      rebuiltInitLevel = 1;
+      onState(state);
+      rebuiltInitLevel = 0;
+    };
+    rebuildInit(() => {
+      if (coverage) {
+        replayInitialStates(
+          coverageInits,
+          environment,
+          onRebuiltState,
+          rejectIncompleteInitialState,
+        );
+        return;
+      }
+      if (spec.init === undefined) return;
+      forEachInitialState(
+        spec.init,
+        environment,
+        (state) => {
+          onRebuiltState(state);
+          return false;
+        },
+        spec.scope,
+      );
+    });
   };
   const isUnfingerprintable = (state: Value[]) => {
     try {
@@ -1008,7 +1038,7 @@ const searchStates = (
     tracedSteps,
     captureOutput,
     forEachInitialState: forEachSpecInitialState,
-    getUncoveredInitialStates,
+    findUncoveredInitialState,
     findSuccessorAction,
   });
   const getPath = (index: number): Value[][] =>
@@ -1046,6 +1076,7 @@ const searchStates = (
       const explored = source !== -1 ? source : current.isExpanding ? current.index : -1;
       return explored === -1 ? 0 : depths[explored];
     }
+    if (rebuiltInitLevel !== -1) return rebuiltInitLevel;
     const rebuilt = current.rebuilt;
     if (rebuilt) return state === rebuilt.state ? rebuilt.level : rebuilt.level + 1;
     if (source !== -1) return state === states[source] ? depths[source] : depths[source] + 1;
