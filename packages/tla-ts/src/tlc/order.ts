@@ -12,7 +12,6 @@ import {
   SANY_NODE_NAMES,
   SANY_OPERATOR_SYNONYMS,
   TLC_MODULE_SOURCES,
-  TLC_RUNTIME_STRINGS,
   TLC_STARTUP_STRINGS,
 } from "./jar-data";
 
@@ -585,7 +584,6 @@ const getStringOrder = (
       if (token.kind === "String") intern(token.text);
     });
   });
-  TLC_RUNTIME_STRINGS.forEach(intern);
   return [...order];
 };
 

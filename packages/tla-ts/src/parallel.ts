@@ -26,9 +26,10 @@ import {
   reportStartup,
 } from "./search";
 import { getInitialStates } from "./successors";
+import { TLC_RUNTIME_STRINGS } from "./tlc/jar-data";
 import { getFingerprintDistance, OUT_DEGREE_BUCKETS } from "./tlc/summary";
 import { createStateEncoder, type EncodedStates } from "./transfer";
-import { createCanonicalizer, getUnorderedString, type Value } from "./values";
+import { createCanonicalizer, getUnorderedString, rankString, type Value } from "./values";
 import { spawnWorker, type Port } from "./worker";
 
 export interface StartMessage extends Pick<
@@ -141,6 +142,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   );
   const specification = created.specification;
   reportStartup(specification, config, report);
+  TLC_RUNTIME_STRINGS.forEach(rankString);
   const environment = specification.environment;
   const search = createSearch(
     config,

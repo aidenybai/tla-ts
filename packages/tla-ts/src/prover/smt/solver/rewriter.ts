@@ -623,7 +623,7 @@ export class Rewriter extends RewriterTpl {
         return (
           (manager.isBvSort(manager.sorts[args[1]])
             ? this.bv.mkIteCore(args[0], args[1], args[2])
-            : undefined) ?? this.mkIte(args[0], args[1], args[2])
+            : undefined) ?? this.mkIteCore(args[0], args[1], args[2])
         );
       case OP_LE:
         return this.arith.mkLe(args[0], args[1]) ?? -1;
@@ -1097,7 +1097,18 @@ export class Rewriter extends RewriterTpl {
     return { expr: manager.mkAnd(pairs), depth: 3 };
   }
 
-  mkIte(inputCondition: number, inputThen: number, inputElse: number): number | Rewrite {
+  mkIte(condition: number, thenExpr: number, elseExpr: number) {
+    const reduced = this.mkIteCore(condition, thenExpr, elseExpr);
+    return reduced === -1
+      ? this.manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], this.manager.sorts[thenExpr])
+      : reduced;
+  }
+
+  private mkIteCore(
+    inputCondition: number,
+    inputThen: number,
+    inputElse: number,
+  ): number | Rewrite {
     const manager = this.manager;
     const isNegated = manager.isNot(inputCondition);
     const condition = isNegated ? manager.getArg(inputCondition, 0) : inputCondition;
@@ -1205,7 +1216,9 @@ export class Rewriter extends RewriterTpl {
         };
       }
     }
-    return manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], sort);
+    return isNegated || thenExpr !== thenCandidate || elseExpr !== elseCandidate
+      ? manager.mkApp(OP_ITE, [condition, thenExpr, elseExpr], sort)
+      : -1;
   }
 
   mkAdd(args: number[]) {

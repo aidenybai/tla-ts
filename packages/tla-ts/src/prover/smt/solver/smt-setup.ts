@@ -112,6 +112,7 @@ export interface SmtConfig {
   isArithPropagatingEqs: boolean;
   arithPropagationThreshold: number;
   isArithBoundPropagating: boolean;
+  qiLazyThreshold: number;
 }
 
 const UNKNOWN_THEORIES = [
@@ -148,6 +149,7 @@ export const DEFAULT_CONFIG: SmtConfig = {
   isArithPropagatingEqs: true,
   arithPropagationThreshold: Infinity,
   isArithBoundPropagating: true,
+  qiLazyThreshold: 20,
 };
 
 // setup_unknown(), which closes with setup_relevancy.
@@ -387,6 +389,7 @@ const setupAufLia = (config: SmtConfig) => {
   config.restartStrategy = RS_GEOMETRIC;
   config.restartFactor = 1.5;
   config.isEliminatingBounds = true;
+  config.qiLazyThreshold = 20;
   config.isLiftingNonGroundIte = true;
   config.theories.push(FAMILY_ARITH, FAMILY_ARRAY);
 };
@@ -402,6 +405,7 @@ const setupAufLiaByFeatures = (config: SmtConfig, features: StaticFeatures) => {
 const setupAufLira = (config: SmtConfig) => {
   config.phaseSelection = PS_ALWAYS_FALSE;
   config.isEliminatingBounds = true;
+  config.qiLazyThreshold = 20;
   config.isFindingMacros = true;
   config.isLiftingNonGroundIte = true;
   config.theories.push(FAMILY_ARITH, FAMILY_ARRAY);

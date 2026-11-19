@@ -224,7 +224,7 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
     defineStateOperator("Trace", 0, (_args, context) => {
       const variables = context?.environment.variables ?? [];
       const state = context?.state ?? variables.map(() => undefined);
-      if (!context || !isCompleteState(state)) {
+      if (!context || state.length < variables.length || !isCompleteState(state)) {
         const unassigned = variables.filter((_name, index) => state[index] === undefined);
         throw new TlaEvaluationError(
           `In evaluating TLCExt!Trace, the state is not completely specified yet (variable${unassigned.length > 1 ? "s" : ""} ${unassigned.join(", ")} undefined).`,

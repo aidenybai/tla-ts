@@ -37,6 +37,7 @@ import { runReduceBvSize } from "./reduce-bv-size";
 import { createSatTactic } from "./sat/sat-tactic";
 import { mkThSolver } from "./euf/th-solvers";
 import { getHammerPeriod } from "./lp/lp-settings";
+import { getDoubleParameter } from "./gparams";
 import { createFdTactic } from "./fd-solver";
 import { elimUncnstr } from "./elim-uncnstr";
 import { runElimTermIte } from "./elim-term-ite-tactic";
@@ -294,7 +295,14 @@ const SMT_DESCRS = getDescrs("smt", [
   ["auto_config", PARAM_BOOL, true, true],
   ["mbqi.id", PARAM_STRING, ""],
   ["qi.cost", PARAM_STRING, "(+ weight generation)", true],
+  ["qi.eager_threshold", PARAM_NUMERAL, "10", true],
+  ["qi.lazy_threshold", PARAM_NUMERAL, "20", true],
 ]);
+
+const getSmtDouble = (environment: TacticEnvironment, params: TacticParams, name: string) =>
+  params.has(name)
+    ? getNumeral(params, name, "0").toDouble()
+    : getDoubleParameter(environment.parameters, `smt.${name}`);
 
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
 // assumption.
@@ -326,6 +334,8 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     qiCost: params.has("qi.cost")
       ? String(params.get("qi.cost"))
       : environment.parameters.get("smt.qi.cost"),
+    qiEagerThreshold: getSmtDouble(environment, params, "qi.eager_threshold"),
+    qiLazyThreshold: getSmtDouble(environment, params, "qi.lazy_threshold"),
   };
 };
 

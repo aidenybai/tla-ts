@@ -498,4 +498,18 @@ describe("theory_bv, as Z3 5.3.2 bit-blasts its terms", () => {
       ]),
     ).toEqual(["sat", "((v0 #x9d)\n (v1 #x07)\n (v2 #x53))"]);
   });
+
+  it("frees the negation mk_le replaces before the one mk_not_core makes for it", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(assert (bvult y #b0100))",
+        "(assert (bvslt (bvurem (bvnot x) x) x))",
+        "(assert (bvule y (bvsmod (bvor x y) (bvsmod x x))))",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toEqual(["sat", "((x #x3)\n (y #x0))"]);
+  });
 });
