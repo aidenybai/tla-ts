@@ -200,6 +200,30 @@ describe("random choices match TLC run with -fp 0 and the same -seed", () => {
     expect(result.violation?.trace.map((step) => step.state.x)).toEqual([0, 794, 794, 794]);
   });
 
+  it.each([
+    [
+      "Next == \\E v \\in RandomSubset(1, 10..19) : y' = v % 4 /\\ PrintT(<<y, v>>)",
+      ["<<0, 19>>", "<<1, 19>>", "<<2, 19>>", "<<3, 19>>"],
+    ],
+    [
+      "A(v) == y' = v % 4 /\\ PrintT(<<y, v>>)\nNext == A(RandomElement(10..19))",
+      ["<<0, 17>>", "<<1, 17>>", "<<2, 17>>", "<<3, 17>>"],
+    ],
+    ['Next == \\E v \\in (IF PrintT("domain") THEN 0..1 ELSE {}) : y\' = v', ['"domain"']],
+  ])(
+    "evaluates the bound or argument TLC splits the next-state relation on once: %s",
+    async (next, outputs) => {
+      const printed: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC, Randomization\nVARIABLE y\nInit == y \\in 0..3\n${next}\n====`,
+        config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        seed: 4n,
+        onPrint: (line) => printed.push(line),
+      });
+      expect([result.status, printed]).toEqual(["success", outputs]);
+    },
+  );
+
   it("draws again from the seed of each state it rebuilds for a lasso, as TLC does", async () => {
     const result = await check({
       source:

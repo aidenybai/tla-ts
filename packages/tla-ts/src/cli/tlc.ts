@@ -1,9 +1,7 @@
 import {
   appendFileSync,
-  closeSync,
   existsSync,
   mkdirSync,
-  openSync,
   readFileSync,
   readSync,
   realpathSync,
@@ -30,7 +28,7 @@ import { check } from "../parallel";
 import { extractModule, parseModule } from "../parser";
 import { simulate } from "../simulate";
 import type { CliSettings } from "../search";
-import type { StateDump } from "../state-graph";
+import { getDotHeader, type StateDump } from "../state-graph";
 import {
   getSanyStandardModules,
   SANY_174_STANDARD_MODULES,
@@ -536,7 +534,7 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
   const dumpPath = dump?.path;
   if (dumpPath !== undefined) {
     try {
-      closeSync(openSync(dumpPath, "w"));
+      writeFileSync(dumpPath, dump?.dot ? getDotHeader(dump, version) : "");
     } catch {
       console.log(`Error: Unable to write to file ${dumpPath}`);
       return printCommandLineError(

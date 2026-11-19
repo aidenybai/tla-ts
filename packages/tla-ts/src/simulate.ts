@@ -318,8 +318,8 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     const node = nodes.get(state);
     return node ? getTrace(node, search.getTlcOrder()).map((step) => step.state) : [state];
   };
-  const reportPostcondition = (isAfterViolation: boolean) => {
-    const postcondition = search.findPostconditionViolation(isAfterViolation);
+  const reportPostcondition = () => {
+    const postcondition = search.findPostconditionViolation();
     if (!postcondition) return undefined;
     if (postcondition.counts !== undefined) (options.onPrint ?? console.log)(postcondition.counts);
     reportMessage(
@@ -454,7 +454,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
           `Invariant ${violated.name} is violated by the initial state:\n${formatState(alias)}`,
         );
         runtime.counterExample = getInitialCounterExample(node);
-        reportPostcondition(true);
+        reportPostcondition();
         return EXIT_STATUS.safetyViolation;
       }
       generatedNodes.push(node);
@@ -491,7 +491,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
           `Property ${predicate.name} is violated by the initial state:\n${formatState(alias)}`,
         );
         runtime.counterExample = getInitialCounterExample(node);
-        reportPostcondition(true);
+        reportPostcondition();
         return EXIT_STATUS.livenessViolation;
       }
     } catch (error) {
@@ -732,6 +732,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     return { positions, failure: undefined };
   };
 
+  const getSimulatorRandom = runtime.getRandom;
   const enumerableRandom = createJavaRandom(seed);
   runtime.getRandom = () => enumerableRandom;
   const errors: WorkerError[] = [];
@@ -760,6 +761,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     }
   }
   isOnWorker = false;
+  runtime.getRandom = getSimulatorRandom;
   const printed = errors.findIndex(
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );
@@ -821,7 +823,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     runtime.counterExample =
       last.counterExample ?? getCounterExample(getTrace(last.node, search.getTlcOrder()));
   }
-  const postcondition = reportPostcondition(last !== undefined);
+  const postcondition = reportPostcondition();
   const postconditionStatus = postcondition
     ? getMessageExitStatus(postcondition.code)
     : EXIT_STATUS.success;

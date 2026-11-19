@@ -19,6 +19,7 @@ import {
   prepareSearch,
   reportAssumptionViolation,
 } from "./search";
+import { createStateWriter } from "./state-graph";
 import { forEachInitialState, forEachSuccessor, getSuccessors, type Successor } from "./successors";
 import {
   formatNestedMessage,
@@ -157,6 +158,13 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     );
     return EXIT_STATUS.error;
   }
+  const stateWriter =
+    options.dump && createStateWriter(options.dump, options.writeFile, options.version);
+  // Deviation from TLC: it returns without closing the writer after a failed assumption or initial state, which loses what it buffered.
+  const closeDump = (status: number) => {
+    stateWriter?.close();
+    return status;
+  };
   runtime.generatedStates = -1;
   runtime.distinctStates = -1;
   runtime.initialStates = -1;
@@ -168,7 +176,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     environment,
     message,
   );
-  if (assumptionStatus !== undefined) return assumptionStatus;
+  if (assumptionStatus !== undefined) return closeDump(assumptionStatus);
 
   const description = prepared.getDescription();
   const nextActions = description.actions;
@@ -279,8 +287,11 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       const isInModel = search.satisfiesConstraints(state);
       const fingerprint = isInModel ? runtime.getFingerprint(state) : 0n;
       const status = isInModel ? setStatus(fingerprint, 0) : 0;
-      if (isInModel && status === 0) initialEntries.push({ state, fingerprint });
       if (status !== 0) continue;
+      if (isInModel) {
+        initialEntries.push({ state, fingerprint });
+        stateWriter?.writeInitialState(search.getGraphState(state, fingerprint, 1, isTool));
+      }
       const alias = () =>
         config.alias === undefined
           ? search.toRecord(state)
@@ -416,6 +427,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   const expandState = (depth: number, isLeaf: boolean, successors: StateEntry[]) => {
     const entry = stack[depth];
     const state = entry.state;
+    const source = stateWriter && search.getGraphState(state, entry.fingerprint, depth + 1, isTool);
     let isDeadlocked = true;
     let isAllDone = true;
     let isNoLeaf = true;
@@ -445,6 +457,13 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
           if (isInModel) {
             isAllDone &&= (status & DONE) === DONE;
             isNoLeaf &&= !isLeafStatus(status);
+            if (source) {
+              stateWriter?.writeUnlabeledSuccessor(
+                source,
+                search.getGraphState(successor, fingerprint, depth + 2, isTool),
+                status !== 0,
+              );
+            }
             if (!isCompleted(status)) {
               if (successors.length === getSetBound()) throw new TlaTooManyStatesError();
               successors.push({ state: successor, fingerprint });
@@ -571,6 +590,9 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   };
   const replayExpansion = (entry: StateEntry) => {
     const tracing = createTracingEnvironment(environment);
+    const level = runtime.getLevel(entry.state);
+    const source =
+      stateWriter && search.getGraphState(entry.state, entry.fingerprint, level, isTool);
     try {
       const isPassed = (covered?.actions ?? nextActions).every((action) => {
         const successors: Value[][] = [];
@@ -579,12 +601,18 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
         return successors.every(
           (successor) =>
             successor.every((value) => value !== undefined) &&
-            search.checkReplayedSuccessor(
-              entry.state,
-              successor,
-              tracing,
-              () => setStatus(runtime.getFingerprint(successor), 0) === 0,
-            ),
+            search.checkReplayedSuccessor(entry.state, successor, tracing, () => {
+              const fingerprint = runtime.getFingerprint(successor);
+              const isNew = setStatus(fingerprint, 0) === 0;
+              if (source) {
+                stateWriter?.writeUnlabeledSuccessor(
+                  source,
+                  search.getGraphState(successor, fingerprint, level + 1, isTool),
+                  !isNew,
+                );
+              }
+              return isNew;
+            }),
         );
       });
       if (isPassed) return;
@@ -599,7 +627,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
     const status = [code, checker.errorCode, checker.continuedCode].find(
       (candidate) => candidate !== NO_ERROR,
     );
-    return status === undefined ? EXIT_STATUS.success : getMessageExitStatus(status);
+    return closeDump(status === undefined ? EXIT_STATUS.success : getMessageExitStatus(status));
   };
   const tryInitialStates = () => {
     try {
@@ -637,9 +665,11 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
       );
     }
     printSummary();
-    return isReplayFailed ? EXIT_STATUS.specEvaluationFailure : getErrorExitCode(inner);
+    return closeDump(isReplayFailed ? EXIT_STATUS.specEvaluationFailure : getErrorExitCode(inner));
   }
-  if (initialFailure.code !== NO_ERROR) return getMessageExitStatus(initialFailure.code);
+  if (initialFailure.code !== NO_ERROR) {
+    return closeDump(getMessageExitStatus(initialFailure.code));
+  }
   message(
     MESSAGE_CODE.depthFirstInitGenerated,
     `Finished computing initial states: ${generatedCount} states generated, with ${initialEntries.length} of them distinct.`,

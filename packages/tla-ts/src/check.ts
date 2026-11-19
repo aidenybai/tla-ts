@@ -121,7 +121,6 @@ import { runTypedSearch, type TypedResult } from "./typed-tier";
 import {
   createCanonicalizer,
   createModelValue,
-  formatState,
   getFingerprintError,
   getModelValues,
   isSameValue,
@@ -369,6 +368,7 @@ export const checkSequentially = (options: CheckOptions): CheckResult => {
   } catch (error) {
     throw isStackOverflow(error) ? createStackOverflowError() : error;
   } finally {
+    // Deviation from TLC: it returns without closing the writer after a failed assumption or initial state, which loses what it buffered.
     stateWriter?.close();
   }
 };
@@ -1090,17 +1090,8 @@ const searchStates = (
     name: action.name,
     signature: getActionSignature(action),
   });
-  const getGraphState = (state: Value[], level: number): GraphState => ({
-    fingerprint: BigInt.asIntN(64, runtime.getFingerprint(state)),
-    level,
-    getLabel: () =>
-      formatState(
-        config.alias === undefined
-          ? toRecord(state)
-          : search.evaluateAlias(config.alias, state, undefined, options.isTool ?? false),
-      ),
-    getText: () => formatState(toRecord(state)),
-  });
+  const getGraphState = (state: Value[], level: number) =>
+    search.getGraphState(state, runtime.getFingerprint(state), level, options.isTool ?? false);
 
   const visitInitialState = (state: Value[]) => {
     runtime.generatedStates++;
@@ -1442,6 +1433,8 @@ const searchStates = (
   const isNamingEdges = Boolean(
     options.dump?.dot && (options.dump.actionLabels || options.dump.colorize),
   );
+  // Tool's constructor evaluates the bounds and arguments it splits Next on once, which shows when they draw, print or read a register.
+  const isNextSplit = isNamingEdges || search.isNextReplayed;
   const forEachActionSuccessor = (
     state: Value[],
     onUnsatisfied:
@@ -1464,7 +1457,7 @@ const searchStates = (
       }
       return successorCount;
     }
-    if (!isNamingEdges) {
+    if (!isNextSplit) {
       return forEachSuccessor(
         next,
         state,
@@ -1485,6 +1478,7 @@ const searchStates = (
           state,
           environment,
           (successor) => {
+            successor.action ??= action.name;
             isStopped = onSuccessor(successor, action);
             return isStopped;
           },
