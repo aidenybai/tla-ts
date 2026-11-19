@@ -134,7 +134,8 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
         .replace("HeapOf(IntrinsicObjects(0, 1))", "InitialObjects")
         .replace(
           "jobs |-> <<>>,",
-          "jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty,",
+          // The task that runs, below whose frames a stack trace ends (STACK_DEFINITIONS).
+          'jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty, task |-> [kind |-> "main"],',
         ),
     },
     {

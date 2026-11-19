@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { createJavaScriptFile, isCommonJsFile } from "../common-js";
@@ -6,7 +8,7 @@ import { createFileResolver } from "../program";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
-import { getHostTimeZone, getTlaString, LOCALE_METHODS } from "./runtime";
+import { getHostTimeZone, getTlaString, getUnitsOf, LOCALE_METHODS } from "./runtime";
 import { getNumber, type ProgramFile, specialize } from "./specialize";
 import { stripTypes } from "./strip-types";
 import { suspendDefinitions } from "./suspend";
@@ -310,6 +312,26 @@ const isConstructor = (value: unknown) => {
 
 const getBoolean = (value: boolean) => (value ? "TRUE" : "FALSE");
 
+// The frames of Node 26 below the top level of the ES module it runs as its entry, where V8's stack
+// trace ends: the module job that evaluates the module, and the async frames of the loader that
+// awaits it.
+const ENTRY_MODULE_FRAMES = [
+  "ModuleJob.run (node:internal/modules/esm/module_job:569:25)",
+  "async node:internal/modules/esm/loader:650:26",
+  "async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:105:5)",
+];
+
+// Where Node places a file's code in a stack trace: a file URL, but for a JavaScript file that Node
+// loads as CommonJS, its path; none for a script, which tla-ts doesn't know how a host runs.
+const getHostFileLocation = (file: ProgramFile) =>
+  file.kind === "script"
+    ? "Empty"
+    : getUnitsOf(
+        file.kind === "commonjs" && !/\.[cm]?ts$/.test(file.path)
+          ? resolve(file.path)
+          : pathToFileURL(resolve(file.path)).href,
+      );
+
 // The groups of ESCore's parts that a module runs on: its loading, linking, and evaluation, the
 // promise of its evaluation, and the proxies that stand for what of the host ESCore lacks.
 const MODULE_GROUPS = new Set(["79-proxy.tla", "86-promise.tla", "88-modules.tla"]);
@@ -408,7 +430,12 @@ export const compileToEscore = (
                     ),
                   ),
                 ...runtime.hostOnlyProperties
-                  .filter((property) => program.words.has(property.key))
+                  // Error.stackTraceLimit, which an error's stack reads, is always the host's.
+                  .filter(
+                    (property) =>
+                      program.words.has(property.key) ||
+                      (property.owner === "Error" && property.key === "stackTraceLimit"),
+                  )
                   .flatMap((property) =>
                     getHostProperty(property.owner, property.key, property.descriptor, undefined),
                   ),
@@ -422,6 +449,22 @@ export const compileToEscore = (
           text: program.words.has("Temporal")
             ? getHostTimeZone(files.map((file) => file.sourceFile.text).join("\n"))
             : `HostTimeZone(key) == [found |-> "unknown"]`,
+        },
+        {
+          name: "HostFileLocation",
+          arity: 1,
+          text: `HostFileLocation(file) ==\n  CASE ${files.map((file, index) => `file = ${index + 1} -> ${getHostFileLocation(file)}`).join("\n    [] ")}`,
+        },
+        {
+          name: "HostDefaultStackTraceLimit",
+          arity: 1,
+          // A script, whose realm lacks the host's Error.stackTraceLimit, has Node's default.
+          text: `HostDefaultStackTraceLimit(file) == ${isModule ? -1 : 10}`,
+        },
+        {
+          name: "HostEntryFrames",
+          arity: 1,
+          text: `HostEntryFrames(file) == ${files[0].kind === "module" ? `<<${ENTRY_MODULE_FRAMES.map(getUnitsOf).join(", ")}>>` : "Empty"}`,
         },
         {
           name: "SourceUnits",
