@@ -481,12 +481,21 @@ const describeSpecification = (
   expression: Expression,
   scope: Scope | undefined,
   environment: Environment,
+  instanceActions: Map<string, InstanceAction>,
   description: SpecDescription,
   next: NextItem[],
   frames: Expression[] = [],
 ): void => {
   const recurse = (inner: Expression, innerScope: Scope | undefined, innerFrames = frames) =>
-    describeSpecification(inner, innerScope, environment, description, next, innerFrames);
+    describeSpecification(
+      inner,
+      innerScope,
+      environment,
+      instanceActions,
+      description,
+      next,
+      innerFrames,
+    );
   const substitutionFrame = frames.find((frame) => frameSubstitutions.has(frame));
   const createConjunct = (
     name: string,
@@ -511,13 +520,14 @@ const describeSpecification = (
       getLevel(called.body, called.scope, environment) === VARIABLE_LEVEL &&
       (!substitutionFrame || isVariableBound(called.body, environment, new Set()))
     ) {
-      const definition =
-        substitutionFrame && !isLocallyResolved(expression)
-          ? getDefinition(getOperatorName(expression) ?? "", environment)
-          : undefined;
+      const name = isLocallyResolved(expression) ? undefined : getOperatorName(expression);
       description.inits.push({
         ...createConjunct(called.name, called.body, called.scope),
-        ...getDefinitionRanges(definition),
+        ...(name === undefined
+          ? undefined
+          : substitutionFrame
+            ? getDefinitionRanges(getDefinition(name, environment))
+            : instanceActions.get(name)),
       });
       return;
     }
@@ -628,7 +638,14 @@ export const getSpecDescription = (
       ? undefined
       : getOperatorDefinition(config.specification, environment);
   if (specification) {
-    describeSpecification(specification.body, undefined, environment, description, next);
+    describeSpecification(
+      specification.body,
+      undefined,
+      environment,
+      instanceActions,
+      description,
+      next,
+    );
     next.forEach((item) =>
       description.actions.push(
         ...(item.frames.length > 0

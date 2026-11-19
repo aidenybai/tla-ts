@@ -3124,6 +3124,9 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  const LO_MODULE =
+    "---- MODULE Lo ----\nEXTENDS Integers\nCONSTANT Max\nVARIABLES c, d\nhv == <<c, d>>\nOne == c = 0\nTwo == c = 0 /\\ d \\in {0, 1}\nStep == c < Max /\\ c' = c + 1 /\\ d' = d\nSpec1 == One /\\ d = 0 /\\ [][Step]_hv\nSpec2 == Two /\\ [][Step]_hv\n====";
+
   it.each([
     [
       "splits it where the instance's variables have names the root module doesn't declare",
@@ -3157,10 +3160,7 @@ ASSUME TLCFP(a) = -887695703
         config: "SPECIFICATION Spec",
         coverage: 1,
         onPrint: (text) => prints.push(text),
-        loadModule: (name) =>
-          name === "Lo"
-            ? "---- MODULE Lo ----\nEXTENDS Integers\nCONSTANT Max\nVARIABLES c, d\nhv == <<c, d>>\nOne == c = 0\nTwo == c = 0 /\\ d \\in {0, 1}\nStep == c < Max /\\ c' = c + 1 /\\ d' = d\nSpec1 == One /\\ d = 0 /\\ [][Step]_hv\nSpec2 == Two /\\ [][Step]_hv\n===="
-            : undefined,
+        loadModule: (name) => (name === "Lo" ? LO_MODULE : undefined),
       });
       expect([
         result.coverage?.relations.map(
@@ -3173,6 +3173,32 @@ ASSUME TLCFP(a) = -887695703
       ]);
     },
   );
+
+  it("names the initial predicate a specification takes from an instance directly by the instance, as TLC names the definition the instance adds", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        '---- MODULE U3 ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nL == INSTANCE Lo WITH Max <- 2, c <- x, d <- y\nSpec == L!Two /\\ [][L!Step]_<<x, y>>\nASSUME PrintT(TLCGet("spec").inits)\n====',
+      config: "SPECIFICATION Spec",
+      coverage: 1,
+      onPrint: (text) => prints.push(text),
+      loadModule: (name) => (name === "Lo" ? LO_MODULE : undefined),
+    });
+    expect([
+      result.coverage?.relations.map(
+        (relation) => `${relation.label} ${relation.distinct}:${relation.generated}`,
+      ),
+      prints,
+    ]).toEqual([
+      [
+        "L!Two line 4, col 1 to line 4, col 1 of module U3 6:6",
+        "L!Step line 4, col 1 to line 4, col 1 of module U3 4:8",
+      ],
+      [
+        '{ [ coverage |-> [generated |-> 0, distinct |-> 0],\n    name |-> "L!Two",\n    location |->\n        [ beginLine |-> 4,\n          beginColumn |-> 1,\n          endLine |-> 4,\n          endColumn |-> 46,\n          module |-> "U3" ] ] }',
+      ],
+    ]);
+  });
 
   it("counts a recursive function of an instance of an instance at its definition once", async () => {
     const lines = await getCoverageLines(
