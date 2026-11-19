@@ -29,14 +29,12 @@ import {
   type SanyError,
 } from "./errors";
 import {
-  ASSUME_PROVE_IDENTIFIER,
   bindOperatorArguments,
   createBigNumberError,
   createRealNumberError,
   evaluate,
   getDefinition,
   getDefinitionClosure,
-  isAssumeProve,
   type Builtin,
   type BuiltinArgument,
   type Context,
@@ -1188,9 +1186,7 @@ export const createEnvironment = (
         const symbol = visible.get(name);
         const definition =
           symbol && !builtinAliases.has(symbol.key) ? definitions.get(symbol.key) : undefined;
-        return definition && !(definition.kind === "Operator" && isAssumeProve(definition.body))
-          ? { ...definition, name }
-          : scope.getDefinition(name);
+        return definition ? { ...definition, name } : scope.getDefinition(name);
       },
       (name) => {
         const symbol = visible.get(name);
@@ -1308,13 +1304,13 @@ export const createEnvironment = (
     resolved.boundTheorems.forEach((theorem) => {
       const key = getKey(theorem);
       parameterized.set(key, !isParameterFree);
-      const statement = theorem.goal.statement;
-      if (statement.kind === "AssumeProve") {
+      const body = subexpressions.getAssumeProve(theorem.name);
+      if (body) {
         definitions.set(key, {
           kind: "Operator",
           name: theorem.name,
           params: [],
-          body: { kind: "Identifier", name: ASSUME_PROVE_IDENTIFIER, location: statement.location },
+          body,
           isLocal: false,
           isRecursive: false,
           location: theorem.location,

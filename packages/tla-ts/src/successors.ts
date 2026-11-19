@@ -1,5 +1,6 @@
 import {
   getChildren,
+  isAssumeProve,
   isLocallyResolved,
   type Definition,
   type Expression,
@@ -27,7 +28,6 @@ import {
   getEntryEvaluator,
   getReevaluatedDefinitions,
   getStartupValue,
-  isAssumeProve,
   lookupScope,
   mapBoundSets,
   resolveApplyOperator,
@@ -660,11 +660,6 @@ const compileIdentifier = (
   environment: Environment,
   isInit: boolean,
 ): Runner => {
-  if (isAssumeProve(expression)) {
-    return (run) => {
-      throw createRunError(run, getRelationMessage(run, expression));
-    };
-  }
   const guard = compileGuard(expression);
   const definition = isLocallyResolved(expression)
     ? undefined
@@ -1115,6 +1110,11 @@ const compileAction = (
     case "FunctionApplication":
       return compileFunctionAction(expression, environment, isInit);
     case "Apply": {
+      if (isAssumeProve(expression)) {
+        return (run) => {
+          throw createRunError(run, getRelationMessage(run, expression));
+        };
+      }
       const args = expression.args;
       if (isAssignmentOperator(expression.operator)) {
         const index = getAssignableIndex(args[0], environment, isInit);

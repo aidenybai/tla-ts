@@ -1,7 +1,10 @@
 import {
+  getAssumeProveExpression,
   getChildren,
   getDefinitionExpressions,
   getFunctionConstruction,
+  isAssumeProve,
+  isNewDeclaration,
   type ApplyExpression,
   type AssumeProve,
   type Bound,
@@ -328,6 +331,17 @@ const selectSubexpression = (
     return undefined;
   };
 
+  // SANY rejects selecting an ASSUME/PROVE, a NEW or anything in its scope, which the resolver reports from the reference.
+  const isLeftToResolver = (selector: Selector | undefined) => {
+    if (!current || !isAssumeProve(current)) return false;
+    if (selector === undefined) return true;
+    if (selector.kind === "Colon") return false;
+    const clauses = getChildren(current);
+    const index =
+      selector.kind === "Operand" ? getOperandIndex(selector.operand, clauses.length) : -1;
+    return isNewDeclaration(clauses.at(-1)) && (index === -1 || index === clauses.length - 1);
+  };
+
   const findCallee = (name: string) =>
     selection.lets.flat().findLast((definition) => definition.name === name) ?? lookup(name);
 
@@ -440,6 +454,10 @@ const selectSubexpression = (
       const range = reference.selectorRanges?.[selectorIndex];
       const found = owner && findLabel(owner, selector.name, [], []);
       const missing = `Cannot find label \`${selector.name}'.`;
+      if (!found && isLeftToResolver(selector)) {
+        isFailed = true;
+        return;
+      }
       if (!found) return report(range, missing);
       found.applications.forEach((application) => checkNull(application, missing, true));
       const params = found.label.params;
@@ -650,6 +668,7 @@ const selectSubexpression = (
       );
       return reference;
     }
+    if (isLeftToResolver(selector)) return reference;
     if (selector.kind !== "Colon") {
       checkNull(
         current,
@@ -668,7 +687,7 @@ const selectSubexpression = (
     );
     selectorIndex++;
   }
-  if (isFailed) return reference;
+  if (isFailed || isLeftToResolver(undefined)) return reference;
   if (!current) throw createError("Subexpression selection failed", location);
   if (current.kind === "Lambda" && !isOperator) {
     report(location.range, "Selected operator argument when expression expected.");
@@ -934,20 +953,12 @@ export const createModuleSubexpressions = (
   const clauses = module.theorems.flatMap((theorem): Definition[] => {
     const statement = theorem.statement;
     if (theorem.name === undefined || statement.kind !== "AssumeProve") return [];
-    const assumptions = statement.assumptions.filter(
-      (assumption) => assumption.kind !== "NewSymbol" && assumption.kind !== "AssumeProve",
-    );
-    if (assumptions.length !== statement.assumptions.length) return [];
     return [
       {
         kind: "Operator",
         name: theorem.name,
         params: [],
-        body: {
-          kind: "Tuple",
-          elements: [...assumptions, statement.conclusion],
-          location: statement.location,
-        },
+        body: getAssumeProveExpression(statement),
         isLocal: true,
         isRecursive: false,
         location: theorem.location,
@@ -983,7 +994,6 @@ export const createModuleSubexpressions = (
       }
       return resolvedDefinitions.get(definition) ?? definition;
     };
-  const isGoal = (name: string) => goals.has(name);
   const getExpanded = (expression: Expression) => (expand ? expand(expression) : expression);
   const ordered = [
     ...module.definitions.map((definition) => ({ definition, isClause: false })),
@@ -993,17 +1003,22 @@ export const createModuleSubexpressions = (
   );
   const getOwnDefinition = createLookup(module.definitions);
   const getModuleDefinition = createLookup(ordered.map((entry) => entry.definition));
-  const proofLookup: Lookup = (name) => getOwnDefinition(name) ?? getAvailable(name);
+  const proofLookup: Lookup = (name) => {
+    const definition = getOwnDefinition(name) ?? getAvailable(name);
+    return definition?.kind === "Operator" && isAssumeProve(definition.body)
+      ? undefined
+      : definition;
+  };
   const definitionLookup: Lookup = (name) => getModuleDefinition(name) ?? getAvailable(name);
   const resolve = (expression: Expression, location: SourceLocation) =>
     resolveSubexpressions(
       expression,
       getVisibleLookup(definitionLookup, location),
       getStandardDefinition,
-      (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
+      () => false,
     );
   const createProofResolver = (lookup: Lookup) => {
-    const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
+    const isProofGoal = (name: string) => goals.has(name) || !lookup(name);
     const resolveInProof = (expression: Expression) =>
       resolveSubexpressions(expression, lookup, getStandardDefinition, isProofGoal);
     const resolveFacts = (facts: Fact[]) => {
@@ -1133,6 +1148,10 @@ export const createModuleSubexpressions = (
     }
   };
   return {
+    getAssumeProve: (name: string) => {
+      const clause = clauses.find((definition) => definition.name === name);
+      return clause && (resolvedDefinitions.get(clause) ?? clause).body;
+    },
     getDefinitionsBefore: (location: SourceLocation): Lookup => {
       resolveDefinitionsBefore(location);
       return (name) => {

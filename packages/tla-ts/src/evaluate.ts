@@ -2,6 +2,7 @@ import {
   getChildren,
   getFunctionConstruction,
   getReferencedName,
+  isAssumeProve,
   isLocallyResolved,
   isRecursiveConstruction,
   type Bound,
@@ -289,12 +290,6 @@ const createTemporalFormulaError = (form: string, expression: Expression) =>
   new TlaEvaluationError(
     `TLC encountered a temporal formula (${form}) when evaluating a predicate or action.\n${describeRange(expression)}`,
   );
-
-// TLC reaches an ASSUME/PROVE only through a theorem an instance substitutes into, and can't evaluate it.
-export const ASSUME_PROVE_IDENTIFIER = "$AssumeProve";
-
-export const isAssumeProve = (expression: Expression) =>
-  expression.kind === "Identifier" && expression.name === ASSUME_PROVE_IDENTIFIER;
 
 export const describeNode = (expression: Expression) =>
   expression.kind === "Number"
@@ -1690,13 +1685,6 @@ const compileIdentifier = (
   environment: Environment,
 ): Evaluator => {
   const name = expression.name;
-  if (name === ASSUME_PROVE_IDENTIFIER) {
-    return () => {
-      throw new TlaEvaluationError(
-        `Attempted to evaluate an expression that cannot be evaluated.\n${describeRange(expression)}`,
-      );
-    };
-  }
   const global = isLocallyResolved(expression) ? undefined : findGlobalName(name, environment);
   if (global?.kind === "Variable") {
     const index = global.index;
@@ -1838,6 +1826,13 @@ const compileApply = (
   environment: Environment,
 ): Evaluator => {
   const args = expression.args;
+  if (isAssumeProve(expression)) {
+    return () => {
+      throw new TlaEvaluationError(
+        `Attempted to evaluate an expression that cannot be evaluated.\n${describeRange(expression)}`,
+      );
+    };
+  }
   if (expression.operator === "=>") {
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);

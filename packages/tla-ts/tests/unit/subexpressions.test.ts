@@ -909,3 +909,55 @@ describe("subexpression references into theorems match SANY", () => {
     expect(result.status).toBe("success");
   });
 });
+
+describe("selections into ASSUME/PROVE theorems match TLC", () => {
+  const checkTheorems = async (definitions: string) => {
+    const prints: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\n---- MODULE Inner ----\nEXTENDS Naturals\nCONSTANT k\nTHEOREM Tc == ASSUME k = 1, k > 0 PROVE k + 1 = 2\nTHEOREM Tf == ASSUME k = 1, NEW j PROVE j = j\nTHEOREM Tg == ASSUME k + 1 = 2, ASSUME k = 1 PROVE k > 0 PROVE k = 1\nTHEOREM Tm == ASSUME k = 1 PROVE l2 :: k + 4 = 5\nTHEOREM Tn == ASSUME k = 1 PROVE Tm!l2\n====\nI == INSTANCE Inner WITH k <- 1\nP(p) == INSTANCE Inner WITH k <- p\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    return [result.status, prints];
+  };
+
+  it("evaluates the clauses it selects, before a NEW and in a nested ASSUME/PROVE, through an instance or not", async () => {
+    expect(
+      await checkTheorems(
+        "Ap(Op(_)) == Op(1)\nTHEOREM Uf == ASSUME 2 = 2, NEW j PROVE j = j\nTHEOREM Ug == ASSUME 3 = 3, ASSUME 4 = 4 PROVE 5 = 5 PROVE 6 = 6\nASSUME PrintT(<<I!Tc!1, I!Tc!3!1, I!Tf!1, I!Tg!2!2, I!Tn!2!1!1, Ap(P!Tc!1), Uf!1, Ug!2!1, Ug!3>>)",
+      ),
+    ).toEqual(["success", ["<<TRUE, 2, TRUE, TRUE, 5, TRUE, TRUE, TRUE, TRUE>>"]]);
+  });
+
+  it("evaluates a clause selected through an instance with parameters, where TLC fails", async () => {
+    expect(await checkTheorems("ASSUME PrintT(P(1)!Tc!1)")).toEqual(["success", ["TRUE"]]);
+  });
+
+  it("rejects selecting an ASSUME/PROVE, a NEW or a clause in its scope, like SANY", async () => {
+    await expect(
+      checkTheorems(
+        "THEOREM Uh == ASSUME 2 = 2 PROVE 3 = 3\nA == Uh!:\nB == I!Tc!:\nC == I!Tf!2\nD == I!Tf!3",
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 16, col 6 to line 16, col 9 of module M",
+          message: "Selected ASSUME/PROVE instead of expression.",
+        },
+        {
+          location: "line 17, col 6 to line 17, col 11 of module M",
+          message: "Selected ASSUME/PROVE instead of expression.",
+        },
+        {
+          location: "line 18, col 6 to line 18, col 11 of module M",
+          message: "Selected a NEW declaration as an expression or operator.",
+        },
+        {
+          location: "line 19, col 11 to line 19, col 11 of module M",
+          message:
+            "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        },
+      ]),
+    );
+  });
+});

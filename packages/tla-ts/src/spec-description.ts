@@ -1,5 +1,6 @@
 import { isEvaluatedAtStartup } from "./dependencies";
 import {
+  isAssumeProve,
   isLocallyResolved,
   type Definition,
   type Expression,
@@ -19,7 +20,6 @@ import {
   forEachBinding,
   getDefinition,
   getRootKey,
-  isAssumeProve,
   lookupScope,
   resolveGlobalOperator,
   type Closure,

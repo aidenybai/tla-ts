@@ -1,4 +1,4 @@
-import type { Expression, SourceLocation } from "../ast";
+import { isAssumeProve, type Expression, type SourceLocation } from "../ast";
 import { getKindString } from "../builtins";
 import { TlaEvaluationError, TlaUncodedError } from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
@@ -29,7 +29,6 @@ import {
   getLazyFunction,
   getQuantifierElements,
   getStartupValue,
-  isAssumeProve,
   mapBoundSets,
   toKeepLazyContext,
   lookupScope,
