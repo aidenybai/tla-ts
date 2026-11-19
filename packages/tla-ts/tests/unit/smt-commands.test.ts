@@ -2244,6 +2244,20 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "57", "unsat", "(s t v u)"]);
   });
 
+  it("frees the terms of the local context simplification when it replaces them", () => {
+    expect(
+      run([
+        "(declare-const a Bool)",
+        "(declare-const b Bool)",
+        "(declare-const c Bool)",
+        "(declare-const d Bool)",
+        "(declare-const e Bool)",
+        "(simplify (or false (ite (not (= b b)) d (not (= c b))) (and a (not b)) b) :local_ctx true)",
+        "(simplify (or (ite (not (= (not b) d)) a a) (and (ite b c b) (not d)) (and b (not c)) e) :local_ctx true)",
+      ]),
+    ).toEqual(["(or c (and a (not b)) b)", "(or a (and b (not c)) e (and b c (not d)))"]);
+  });
+
   it("frees the terms of get-value after it prints them, in their order, as parse_get_value does", () => {
     expect(
       run([
