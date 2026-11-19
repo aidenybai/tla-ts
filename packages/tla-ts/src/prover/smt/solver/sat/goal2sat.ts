@@ -18,6 +18,7 @@ import {
 import { EufSolver, type EufInternalizer, type ThSolverFactory } from "../euf/euf-solver";
 import { getDependencyValues, type Goal } from "../goal";
 import type { ObjMap } from "../hashtable";
+import { RefVector } from "../ref-vector";
 import { DEFAULT_PRINT_OPTIONS, printExpr } from "../smt2-printer";
 import { NULL_LITERAL } from "./clause";
 import { PbSolver, type SatInternalizer } from "./pb-solver";
@@ -525,7 +526,12 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
     const newDep = manager.isUninterpretedConst(atom)
       ? atom
       : manager.mkFreshConst("dep", SORT_BOOL);
-    if (newDep !== atom) this.process(manager.mkEq(newDep, atom), true);
+    if (newDep !== atom) {
+      const equation = manager.mkEq(newDep, atom);
+      manager.incRef(equation);
+      this.process(equation, true);
+      manager.decRef(equation);
+    }
     this.convertAtom(newDep, false, false);
     const lit = this.results.pop() as number;
     dep2asm.set(dep, isSign ? lit ^ 1 : lit);
@@ -551,26 +557,35 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
   runGoal(goal: Goal, dep2asm: Map<number, number> | ObjMap<number>) {
     const manager = this.manager;
     if (this.mkThSolver !== null) this.ensureEuf();
+    // Z3 holds the last negation and formula, then the clause, in refs that keep each until the next
+    // formula replaces it.
+    const held = new RefVector(manager);
+    held.resize(2);
+    const clause = new RefVector(manager);
     try {
       forms: for (let index = 0; index < goal.forms.size; index++) {
         const form = goal.forms.items[index];
+        held.set(1, form);
         const dependency = goal.getDependency(index);
         if (dependency === undefined) {
           this.process(form, true);
           continue;
         }
-        const clause = [form];
-        const deps = getDependencyValues(dependency);
-        for (let depIndex = 0; depIndex < deps.length; depIndex++) {
-          const dep = deps[depIndex];
+        clause.reset();
+        clause.push(form);
+        for (const dep of getDependencyValues(dependency)) {
           this.insertDep(dep, dep2asm);
           if (dep === form) continue forms;
-          clause.push(manager.isNot(dep) ? manager.getArg(dep, 0) : manager.mkNot(dep));
+          held.set(0, manager.isNot(dep) ? manager.getArg(dep, 0) : manager.mkNot(dep));
+          clause.push(held.items[0]);
         }
-        this.process(manager.mkOr(clause), true);
+        held.set(1, manager.mkOr(clause.items));
+        this.process(held.items[1], true);
       }
     } finally {
       this.reset();
+      clause.reset();
+      held.reset();
     }
   }
 
