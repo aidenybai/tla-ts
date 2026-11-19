@@ -126,15 +126,19 @@ const isStepped = (node: ts.Node, context: Context, methods: ReadonlySet<string>
     (ts.isForOfStatement(parent) &&
       parent.expression === outer &&
       parent.awaitModifier === undefined &&
+      !isSuspending(parent.initializer) &&
       !isSuspending(parent.statement))
   );
 };
 
-// Whether code yields or awaits outside the functions that it makes, which a loop's operator can't.
+// Whether code yields or awaits outside the functions that it makes, which a loop's operator can't,
+// as an await using does where it disposes.
 const isSuspending = (node: ts.Node): boolean =>
   ts.isYieldExpression(node) ||
   ts.isAwaitExpression(node) ||
   (ts.isForOfStatement(node) && node.awaitModifier !== undefined) ||
+  (ts.isVariableDeclarationList(node) &&
+    (node.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.AwaitUsing) ||
   (!ts.isFunctionLike(node) && (ts.forEachChild(node, isSuspending) ?? false));
 
 // Whether the object that a call makes only meets the code that steps a state machine: the call is

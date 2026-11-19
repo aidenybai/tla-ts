@@ -27960,6 +27960,41 @@ describe("errors", () => {
     });
   });
 
+  describe("disposes what a for-of's await using binds from a generator at each iteration's end", () => {
+    const getSource = (expected: string) => `
+      declare function setTimeout(callback: () => void): void;
+      const resource = {
+        disposed: false,
+        [Symbol.dispose]() {
+          this.disposed = true;
+        },
+      };
+      let seen = "";
+      function* make() {
+        seen += resource.disposed + ",";
+        yield resource;
+        seen += resource.disposed + ",";
+      }
+      const run = async () => {
+        for (await using _ of make()) {
+          seen += resource.disposed + ",";
+        }
+      };
+      run();
+      setTimeout(() => {
+        if (seen !== "${expected}") throw new Error("seen " + seen);
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("false,false,true,"))).failure).toBeUndefined();
+    });
+
+    it("rejects a disposal after the loop", async () => {
+      expect((await checkModel(getSource("false,false,false,"))).failure).toBeDefined();
+    });
+  });
+
   it("runs a dispose method that reads the locals of the async call that made it", async () => {
     const source = (expected: string) => `
       declare function setTimeout(callback: () => void): void;
