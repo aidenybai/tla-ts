@@ -239,6 +239,20 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       });
     });
 
+    // A function whose name a definition of the spec may take, as ESCore's do, gets one of its own.
+    describe("calls a function whose name TLA+ takes another for", () => {
+      const getBody = (operator: string) =>
+        `export const Undone = (value: 0 | 1) => flip(${operator}) === value;\nexport const heap = () => flip(1);\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody("flip(value)")))).toEqual(["success", 1, 1]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody("value")))).toEqual(["invariant-violation", 1, 1]);
+      });
+    });
+
     it("calls none of the functions whose parameters take values it can't list", async () => {
       expect(
         getCounts(

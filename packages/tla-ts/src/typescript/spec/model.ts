@@ -256,6 +256,9 @@ export const compileModelToEscore = (
   }
   const module = today.source;
   const config = parseConfig(today.config);
+  // The binding of the function that each of the spec's names calls.
+  const bindings = today.bindings;
+  const getBinding = (name: string) => getUnits(bindings.get(name) ?? name);
   const definitions = new Map<string, Definition>(
     module.definitions.map((definition) => [definition.name, definition]),
   );
@@ -311,6 +314,10 @@ export const compileModelToEscore = (
       }
     }
   }
+  bindings.forEach((binding, name) => {
+    const found = exported.get(binding);
+    if (found !== undefined) exported.set(name, found);
+  });
   const steps: string[] = [];
   const appended: string[] = [];
   const entries = new Set<string>();
@@ -844,11 +851,11 @@ export const compileModelToEscore = (
   };
   const rewrittenNext = next?.kind === "Operator" ? rewriteGuards(next.body) : undefined;
   for (const [action, bounds] of actions) {
-    entries.add(action);
+    entries.add(bindings.get(action) ?? action);
     const step = define(
       "Step",
       (name) =>
-        `${name}(a) ==\n  LET s == StepStart(${getState("a[1]")})\n      converted == ${getArguments(action, "s", (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN StepOf(s, ${getUnits(action)}, converted)`,
+        `${name}(a) ==\n  LET s == StepStart(${getState("a[1]")})\n      converted == ${getArguments(action, "s", (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN StepOf(s, ${getBinding(action)}, converted)`,
     );
     const nativeCall = getNativeCall(action, "a[1]", (index) => `a[${index + 2}]`);
     const run =
@@ -865,7 +872,7 @@ export const compileModelToEscore = (
   }
   // A check of a function's result at a state: whether it holds, or only that it returns.
   const defineCheck = (name: string, kind: "HoldsOf" | "ReturnsOf", bounds: Bound[]) => {
-    entries.add(name);
+    entries.add(bindings.get(name) ?? name);
     const names = bounds.map((bound) => (bound.pattern.kind === "Name" ? bound.pattern.name : ""));
     bounds.forEach((bound, index) =>
       boundConverters.set(`${name} ${index}`, getConverter(bound.set).name),
@@ -874,7 +881,7 @@ export const compileModelToEscore = (
     const operator = define(
       "Check",
       (operatorName) =>
-        `${operatorName}(a) ==\n  LET converted == ${getArguments(name, getState("a[1]"), (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN ${kind}(converted.s, ${getUnits(name)}, converted.args)`,
+        `${operatorName}(a) ==\n  LET converted == ${getArguments(name, getState("a[1]"), (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN ${kind}(converted.s, ${getBinding(name)}, converted.args)`,
     );
     const nativeCall = getNativeCall(name, "a[1]", (index) => `a[${index + 2}]`);
     const checked =

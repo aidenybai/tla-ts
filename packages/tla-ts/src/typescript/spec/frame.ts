@@ -472,7 +472,14 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
       ? [{ ...declared, node, body: node.body, tags: tags.get(statement) ?? new Map() }]
       : [];
   });
-  exported.forEach((definition) => getName(definition, "exported function"));
+  // An exported function whose name TLA+ takes for its own gets a name of its own, which a step
+  // calls the function's binding by.
+  const bindings = new Map<string, string>();
+  exported.forEach((definition) => {
+    const name = names.getFresh(definition.name);
+    if (name !== definition.name) bindings.set(name, definition.name);
+    definition.name = name;
+  });
   const getTag = (definition: Exported) =>
     [...definition.tags.keys()].find((candidate) => VALUE_TAGS.has(candidate));
 
@@ -1058,6 +1065,7 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
     config,
     variables: stateNames.map((name): StateVariable => ({ name })),
     notes,
+    bindings,
   };
 };
 
