@@ -857,6 +857,23 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("prints a double with six digits and any other numeral as its rational", () => {
+    expect(
+      run([
+        "(set-option :sat.restart.factor 1.23456789)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 100.125)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 1234567.5)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 0.00001)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.phase 1.5)",
+        "(get-option :sat.phase)",
+      ]),
+    ).toEqual(["1.23457", "100.125", "1.23457e+06", "1e-05", "3/2"]);
+  });
+
   it("sets an option before it finds too many arguments", () => {
     expect(
       run([

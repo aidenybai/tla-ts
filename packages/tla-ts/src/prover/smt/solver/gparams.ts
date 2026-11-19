@@ -193,10 +193,23 @@ const PARAMETER_KINDS = new Map<string, ParameterKinds>([
 
 const UINT_MAX = 4294967295n;
 
-export const checkParameterValue = (name: string, value: string, token: SExpr) => {
+const getParameterKinds = (name: string) => {
   const dot = name.indexOf(".");
-  const parameter = name.slice(dot + 1);
-  const kinds = PARAMETER_KINDS.get(dot === -1 ? "" : name.slice(0, dot));
+  return {
+    parameter: name.slice(dot + 1),
+    kinds: PARAMETER_KINDS.get(dot === -1 ? "" : name.slice(0, dot)),
+  };
+};
+
+export const isDoubleParameter = (name: string) => {
+  const found = getParameterKinds(name);
+  return found.kinds?.doubles.split(" ").includes(found.parameter) === true;
+};
+
+export const checkParameterValue = (name: string, value: string, token: SExpr) => {
+  const found = getParameterKinds(name);
+  const parameter = found.parameter;
+  const kinds = found.kinds;
   if (kinds === undefined) return;
   if (kinds.uints.split(" ").includes(parameter)) {
     if (!/^[0-9]*$/.test(value))

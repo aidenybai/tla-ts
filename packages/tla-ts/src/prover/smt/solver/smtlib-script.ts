@@ -60,7 +60,7 @@ import { isSupportedLogic, logicHasSeq } from "./smt-logics";
 import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { FdSolver } from "./fd-solver";
-import { checkParameterValue } from "./gparams";
+import { checkParameterValue, isDoubleParameter } from "./gparams";
 import { SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
@@ -347,6 +347,16 @@ const getFirstArgument = (list: SmtList) => {
   if (argument === undefined)
     throw new SmtParseError("invalid command, argument(s) missing", list.end);
   return argument;
+};
+
+// An ostream prints a double as printf's %g, with six significant digits.
+const formatDouble = (value: number) => {
+  const [mantissa, exponentText] = value.toExponential(5).split("e");
+  const exponent = Number(exponentText);
+  const trimZeros = (text: string) => (text.includes(".") ? text.replace(/\.?0+$/, "") : text);
+  return exponent >= -4 && exponent < 6
+    ? trimZeros(value.toFixed(5 - exponent))
+    : `${trimZeros(mantissa)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
 };
 
 const checkArgumentCount = (list: SmtList, count: number) => {
@@ -2228,11 +2238,11 @@ export const runSmtlibScript = (
               : value.kind === "numeral" || value.kind === "bitvector"
                 ? BigInt(value.text.replace("#", "0")).toString()
                 : value.text;
-          checkParameterValue(getParameterName(keyword), text, value);
-          // A fraction keeps its decimal, which is how Z3 prints a double.
+          const name = getParameterName(keyword);
+          checkParameterValue(name, text, value);
           settings.parameters.set(
-            getParameterName(keyword),
-            text.includes("/") ? value.text : text,
+            name,
+            isDoubleParameter(name) && text.includes("/") ? value.text : text,
           );
           if (optionName === ":smt.mbqi.max_iterations") settings.mbqiMaxIterations = Number(text);
           if (optionName === ":rlimit") settings.rlimit = Number(text);
@@ -2303,7 +2313,11 @@ export const runSmtlibScript = (
             ? undefined
             : (settings.parameters.get(name) ?? PARAMETER_DEFAULTS.get(name)));
         if (value === undefined) throw new SmtUnsupportedError(`the option ${option.text}`);
-        print(String(value));
+        print(
+          typeof value === "string" && isDoubleParameter(name)
+            ? formatDouble(Number(value))
+            : String(value),
+        );
       },
     ],
     [
