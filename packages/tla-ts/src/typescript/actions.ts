@@ -7450,8 +7450,29 @@ export const inlineValues = (
         ),
     context,
   );
+  // What the callee's own code evaluated or made belongs to this call, not to a later one, as a
+  // callback that a method calls for each element runs it anew.
+  const isOwn = (entry: [ts.Node, Expression]) =>
+    ts.findAncestor(entry[0], (ancestor) => ancestor === callee) !== undefined;
   const back = (after: Path, result?: Expression) =>
-    continueWith({ ...after, scope: { ...after.scope, previous: path.scope.previous } }, result);
+    continueWith(
+      {
+        ...after,
+        scope: {
+          ...after.scope,
+          previous: path.scope.previous,
+          results: new Map([
+            ...[...after.scope.results].filter((entry) => !isOwn(entry)),
+            ...[...path.scope.results].filter(isOwn),
+          ]),
+          allocated: new Map([
+            ...[...after.scope.allocated].filter((entry) => !isOwn(entry)),
+            ...[...path.scope.allocated].filter(isOwn),
+          ]),
+        },
+      },
+      result,
+    );
   return letIn(
     bound.definitions,
     translateStatements(

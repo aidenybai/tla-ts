@@ -58423,4 +58423,23 @@ describe("runs the script's methods in a conversion inside at most one other", (
       expect((await checkModel(getSource("7,2"))).failure?.message).toContain("seen 7,3");
     });
   });
+
+  describe("converts anew in each call of a callback that an iterator's reduce runs", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      const minus = (acc: any, value: any) => acc - value;
+      box.seen.push(String([1, 2, 3].values().reduce(minus, 10)));
+      box.seen.push(String([4, 5].values().reduce((sum: any, value: any) => sum * value, 1)));
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("4,20"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("9,4"))).failure?.message).toContain("seen 4,20");
+    });
+  });
 });
