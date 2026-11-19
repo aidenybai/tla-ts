@@ -381,6 +381,58 @@ describe("subexpression references match TLC", () => {
   });
 });
 
+describe("selections into standard operators match SANY and TLC", () => {
+  const checkStandard = (assumption: string, onPrint?: (text: string) => void) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Integers, Sequences, FiniteSets, Bags, TLC\nS == INSTANCE Sequences\nVARIABLE x\n${assumption}\nInit == x = 0\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      onPrint,
+    });
+
+  it("selects into the bodies the standard modules give the operators tla-ts builds in", async () => {
+    const prints: string[] = [];
+    const result = await checkStandard(
+      "ASSUME PrintT(<<Append(<<5>>, 1)!1, Append(<<5>>, 1)!2!1, SubSeq(<<1, 2, 3>>, 2, 3)!1, S!\\o(<<5>>, <<6>>)!1, Len(<<1, 2>>)!1, BagToSet(SetToBag({1}))!1, CopiesIn(1, SetToBag({1}))!1, SelectSeq(<<1, 2>>, LAMBDA a : a > 1)!1, RandomElement({4})!1>>)",
+      (text) => prints.push(text),
+    );
+    expect([result.status, prints]).toEqual([
+      "success",
+      ["<<<<5>>, 1, 1..2, 1..2, Nat, <<1>>, TRUE, <<2>>, {4}>>"],
+    ]);
+  });
+
+  it("fails on a selected standard body that TLC fails to evaluate", async () => {
+    const result = await checkStandard("ASSUME PrintT(Cardinality({1, 2})!1)");
+    expect(result.violation?.message).toBe(
+      "TLC attempted to evaluate an unbounded CHOOSE.\nMake sure that the expression is of form CHOOSE x \\in S: P(x).\nline 26, col 56 to line 26, col 73 of module FiniteSets",
+    );
+  });
+
+  it("evaluates the whole selected body of an operator TLC overrides in Java as the override", async () => {
+    const prints: string[] = [];
+    const result = await checkStandard(
+      "G(Op(_)) == Op({1, 2})\nASSUME PrintT(<<Nat!:, Len(<<1, 2>>)!:, S!Len(<<1, 2, 3>>)!:, ToString(1)!:, <<1>> \\in Seq({1})!:, G(Cardinality!:)>>)",
+      (text) => prints.push(text),
+    );
+    expect([result.status, prints]).toEqual(["success", ['<<{}, 2, 3, "1", TRUE, 2>>']]);
+  });
+
+  it("rejects the selections into standard bodies that SANY rejects", async () => {
+    await expect(checkStandard("ASSUME PrintT(<<Nat!1, Tail(<<7, 8>>)!1>>)")).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 5, col 21 to line 5, col 21 of module M",
+          message: "Nonexistent operand specified by `argument selector 1'.",
+        },
+        {
+          location: "line 5, col 39 to line 5, col 39 of module M",
+          message: "Subexpression of CASE must have form !i!j.",
+        },
+      ]),
+    );
+  });
+});
+
 describe("subexpression references into theorems match SANY", () => {
   const SCOPE = "within the scope of a declaration\n from outside that declaration's scope.";
 

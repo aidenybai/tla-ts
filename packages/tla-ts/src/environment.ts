@@ -88,7 +88,7 @@ import {
   STANDARD_DEPENDENCIES,
   STANDARD_EXTENDS,
 } from "./standard-modules";
-import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
+import { getStandardModule, getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
 import { createModuleSubexpressions, resolveInstanceSubexpressions } from "./subexpressions";
 import {
   checkModuleLevels,
@@ -182,6 +182,8 @@ export interface LinkedModule {
 
 interface ModuleScope {
   id: string;
+  // A standard module's source, linked only for selections into its operators, stays out of the spec's modules.
+  isHidden: boolean;
   symbols: Symbols;
   getDefinition: (name: string) => Definition | undefined;
   modules: Map<string, LinkedModule>;
@@ -302,6 +304,9 @@ export const createEnvironment = (
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
   const standardExports = new Map<string, Symbols>();
+  const standardSources = new Map<string, LinkedModule>();
+  // The definitions Java overrides replace, by key, to fall back to and to select into.
+  const replacedDefinitions = new Map<string, Definition>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   runtime.isTool = options.isTool ?? false;
@@ -436,7 +441,7 @@ export const createEnvironment = (
     return rejectModuleLiterals(module);
   };
 
-  const linkTopLevel = (parsed: Module) => {
+  const linkTopLevel = (parsed: Module, isHidden = false) => {
     const cycleStart = linking.indexOf(parsed.name);
     if (cycleStart !== -1) {
       const cycle = [...linking.slice(cycleStart), parsed.name].map((name) => `${name}.tla`);
@@ -452,6 +457,7 @@ export const createEnvironment = (
     loading.push(closure);
     const linked = linkModule(parsed, {
       id: parsed.name,
+      isHidden,
       symbols: new Map(),
       getDefinition: () => undefined,
       modules: new Map(),
@@ -495,14 +501,21 @@ export const createEnvironment = (
       useModule(name, dependencies.get(name) ?? []);
       return cached;
     }
-    const top = linkTopLevel(loadModule(name, importer));
-    const replaced = new Map<string, Definition>();
+    const top = linkSource(name, importer, false);
+    linkedModules.set(name, top.linked);
+    dependencies.set(name, top.closure);
+    useModule(name, top.closure);
+    return top.linked;
+  };
+
+  const linkSource = (name: string, importer: string, isHidden: boolean) => {
+    const top = linkTopLevel(loadModule(name, importer), isHidden);
     const evaluateReplaced = (
       operator: string,
       args: BuiltinArgument[],
       context: Context | undefined,
     ) => {
-      const definition = replaced.get(operator);
+      const definition = replacedDefinitions.get(top.linked.visible.get(operator)?.key ?? operator);
       const expressions = args.flatMap((arg) =>
         typeof arg === "object" && arg.kind === "Operator" && arg.expression
           ? [arg.expression]
@@ -525,15 +538,21 @@ export const createEnvironment = (
         if (symbol?.kind !== "Definition") return;
         if (symbol.arity !== operator.arity && ANNOTATED_OVERRIDE_MODULES.has(name)) return;
         const definition = definitions.get(symbol.key);
-        if (definition) replaced.set(operator.name, definition);
+        if (definition) replacedDefinitions.set(symbol.key, definition);
         builtins.set(symbol.key, operator);
         definitions.delete(symbol.key);
       },
     );
-    linkedModules.set(name, top.linked);
-    dependencies.set(name, top.closure);
-    useModule(name, top.closure);
-    return top.linked;
+    return top;
+  };
+
+  // SANY selects into the bodies a standard module's source gives the operators tla-ts builds in.
+  const getStandardSource = (name: string) => {
+    const cached = standardSources.get(name);
+    if (cached) return cached;
+    const linked = linkSource(name, name, true).linked;
+    standardSources.set(name, linked);
+    return linked;
   };
 
   // SANY infers a substitution for each declaration the instancing module resolves, in the order of the instanced module's symbol table, and appends the others.
@@ -1137,6 +1156,18 @@ export const createEnvironment = (
         const definition = symbol && definitions.get(symbol.key);
         return definition ? { ...definition, name } : scope.getDefinition(name);
       },
+      (name) => {
+        const symbol = visible.get(name);
+        if (symbol?.kind !== "Definition" || !builtins.has(symbol.key)) return undefined;
+        const source = getStandardModule(symbol.key);
+        const key =
+          source !== undefined && getSanyStandardModules(runtime.version).has(source)
+            ? getStandardSource(source).visible.get(symbol.key)?.key
+            : symbol.key;
+        const definition =
+          key === undefined ? undefined : (replacedDefinitions.get(key) ?? definitions.get(key));
+        return definition && { ...definition, name };
+      },
       (name, location) =>
         bound.has(name) ||
         parsed.instances.some(
@@ -1158,6 +1189,7 @@ export const createEnvironment = (
       const getDefinitionBefore = subexpressions.getDefinitionsBefore(nested.location);
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
+        isHidden: scope.isHidden,
         symbols: getSymbolsBefore(nested.location),
         getDefinition: (name) => getDefinitionBefore(name) ?? scope.getDefinition(name),
         modules: visibleModules,
@@ -1252,7 +1284,8 @@ export const createEnvironment = (
       modules,
       extended,
     };
-    if (!checkedModules.has(parsed.name)) checkedModules.set(parsed.name, linked);
+    if (!scope.isHidden && !checkedModules.has(parsed.name))
+      checkedModules.set(parsed.name, linked);
     scope.levelChecks.push(
       checkModuleLevels(
         module,
@@ -1268,7 +1301,7 @@ export const createEnvironment = (
         warnings,
       ),
     );
-    linkOrder.push(linked);
+    if (!scope.isHidden) linkOrder.push(linked);
     return linked;
   };
 
