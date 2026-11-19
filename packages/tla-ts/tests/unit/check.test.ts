@@ -1483,15 +1483,19 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
-  // Deviation from TLC: TLC fails each with "The symmetry operator must specify a set of functions.", since it keeps the set lazy.
-  it.each(["{f \\in [{a, b} -> {a, b}] : f[a] # f[b]}", "Perms"])(
-    "checks the symmetry %s as a set of functions",
+  it.each(["[{a, b} -> {a, b}]", "{f \\in [{a, b} -> {a, b}] : f[a] # f[b]}", "Perms"])(
+    "rejects the symmetry %s, a set of functions TLC keeps lazy, as Tool#getSymmetryPerms does",
     async (symmetry) => {
-      const result = await check({
-        source: `---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nPerms == {f \\in [{a, b} -> {a, b}] : f[a] # f[b]}\nSym == ${symmetry}\n====`,
-        config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
-      });
-      expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nPerms == {f \\in [{a, b} -> {a, b}] : f[a] # f[b]}\nSym == ${symmetry}\n====`,
+          config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+        }),
+      ).rejects.toThrow(
+        new TlaEvaluationError(
+          `${UNEXPECTED_EXCEPTION}The symmetry operator must specify a set of functions.`,
+        ),
+      );
     },
   );
 

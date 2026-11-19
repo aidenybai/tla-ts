@@ -123,19 +123,13 @@ export const getSymmetryGroup = (
   const value = withErrorExitCode(() =>
     withUnexpectedException(() => evaluateConstant(definition.body)),
   );
-  if (!isSetValue(value) || !isEnumerable(value)) {
+  if (!isEnumeratedSet(value)) {
     throw createSymmetryError("The symmetry operator must specify a set of functions.");
   }
   const elements = toFiniteSet(value).elements;
-  // Tool#getSymmetryPerms rejects a set that isn't a SetEnumValue before it looks at the values.
-  // Deviation from TLC: it rejects a set of functions it keeps lazy, such as {f \in [S -> S] : P}, too.
-  // Deviation from TLC: it asks for each value to be a FcnRcdValue, so it rejects a tuple, a record and a function it keeps lazy.
+  // Deviation from TLC: Tool#getSymmetryPerms asks for each value to be a FcnRcdValue, so it rejects a tuple, a record and a function it keeps lazy.
   if (!elements.every(isFunctionValue)) {
-    throw createSymmetryError(
-      isEnumeratedSet(value)
-        ? "The symmetry values must be function records."
-        : "The symmetry operator must specify a set of functions.",
-    );
+    throw createSymmetryError("The symmetry values must be function records.");
   }
   const body = definition.body;
   const permutedSets =
