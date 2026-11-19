@@ -247,7 +247,7 @@ const getDefinitionBody = (definition: Definition) => {
     : body;
 };
 
-const applyDefinition = (definition: Definition, selection: Selection) => {
+const applyDefinition = (definition: Definition, selection: Selection, isOverride: boolean) => {
   const location = selection.location;
   const params =
     definition.kind === "Operator"
@@ -270,7 +270,7 @@ const applyDefinition = (definition: Definition, selection: Selection) => {
           operator: definition.name,
           args,
           location,
-          resolution: LOCAL_RESOLUTION,
+          resolution: isOverride ? undefined : LOCAL_RESOLUTION,
         };
   return createApplication(
     { ...selection, params: [...selection.params, ...params] },
@@ -281,6 +281,7 @@ const applyDefinition = (definition: Definition, selection: Selection) => {
 const selectSubexpression = (
   selectors: Selector[],
   lookup: Lookup,
+  getStandardDefinition: Lookup,
   reference: Expression & SelectingName,
   isOperator: boolean,
 ): Expression => {
@@ -349,7 +350,8 @@ const selectSubexpression = (
         const name = names.join("!");
         const definition = local
           ? local.find((candidate) => getSourceName(candidate) === name)
-          : lookup(name);
+          : (lookup(name) ??
+            (selectorIndex < selectors.length - 1 ? getStandardDefinition(name) : undefined));
         if (definition)
           return { definition, name, args, earlier: args.length - selector.args.length };
       }
@@ -389,7 +391,16 @@ const selectSubexpression = (
         range: reference.selectorRanges?.[selectorIndex],
       }),
     );
-    if (isLast) return { definition, args: found.args };
+    // TLC evaluates the LAMBDA SANY makes of a whole body selected by !: as the body's Java override.
+    const isOverride =
+      !local &&
+      // Deviation from TLC: TLC passes the arguments of an instance with parameters to the override too, which fails.
+      found.earlier === 0 &&
+      arity > 0 &&
+      selectorIndex === selectors.length - 2 &&
+      selectors[selectorIndex + 1].kind === "Colon" &&
+      !lookup(found.name);
+    if (isLast || isOverride) return { definition, args: found.args, isOverride };
     const range = definition.location.range;
     const isUndefined =
       declaredArities.has(definition) &&
@@ -592,7 +603,9 @@ const selectSubexpression = (
 
   const first = enterDefinition(undefined);
   if (isFailed) return reference;
-  if (first) return applyDefinition(first.definition, { ...selection, args: first.args });
+  if (first) {
+    return applyDefinition(first.definition, { ...selection, args: first.args }, first.isOverride);
+  }
   followLabels();
   while (selectorIndex < selectors.length && !isFailed) {
     const selector = selectors[selectorIndex];
@@ -610,10 +623,11 @@ const selectSubexpression = (
       const last = enterDefinition(current.definitions);
       if (isFailed) return reference;
       if (last) {
-        return applyDefinition(last.definition, {
-          ...selection,
-          args: [...selection.args, ...last.args],
-        });
+        return applyDefinition(
+          last.definition,
+          { ...selection, args: [...selection.args, ...last.args] },
+          last.isOverride,
+        );
       }
       followLabels();
       continue;
@@ -724,6 +738,7 @@ const containsReference = (expression: Expression): boolean =>
 const resolveSubexpressions = (
   expression: Expression,
   lookup: Lookup,
+  getStandardDefinition: Lookup,
   isGoal: (name: string) => boolean,
   isOperator = false,
 ): Expression => {
@@ -739,19 +754,21 @@ const resolveSubexpressions = (
       !expression.definitions.some((definition) => definition.name === name) && isGoal(name);
     expression.definitions.forEach((definition) =>
       resolved.push(
-        resolveDefinition(definition, (child) => resolveSubexpressions(child, local, isLocalGoal)),
+        resolveDefinition(definition, (child) =>
+          resolveSubexpressions(child, local, getStandardDefinition, isLocalGoal),
+        ),
       ),
     );
     const mapped = {
       ...expression,
       definitions: resolved,
-      body: resolveSubexpressions(expression.body, local, isLocalGoal),
+      body: resolveSubexpressions(expression.body, local, getStandardDefinition, isLocalGoal),
     };
     return mapped.instances
       ? {
           ...mapped,
           instances: mapped.instances.map((instance) =>
-            resolveInstance(instance, local, isLocalGoal),
+            resolveInstance(instance, local, getStandardDefinition, isLocalGoal),
           ),
         }
       : mapped;
@@ -761,14 +778,19 @@ const resolveSubexpressions = (
       resolveSubexpressions(
         arg,
         lookup,
+        getStandardDefinition,
         isGoal,
         params !== undefined && params[index]?.arity !== 0,
       ),
     );
-  const getSelectorParams = (selectors: Selector[]) => {
-    const callee = selectors.every((selector) => selector.kind === "Name")
-      ? lookup(selectors.map(getSelectorName).join("!"))
+  const getSelectorParams = (selectors: Selector[], isLast: boolean) => {
+    const name = selectors.every((selector) => selector.kind === "Name")
+      ? selectors.map(getSelectorName).join("!")
       : undefined;
+    const callee =
+      name === undefined
+        ? undefined
+        : (lookup(name) ?? (isLast ? undefined : getStandardDefinition(name)));
     return callee?.kind === "Operator" ? callee.params : undefined;
   };
   const rebuilt =
@@ -789,13 +811,18 @@ const resolveSubexpressions = (
                     ...selector,
                     args: resolveArguments(
                       selector.args,
-                      getSelectorParams(expression.selectors.slice(0, index + 1)),
+                      getSelectorParams(
+                        expression.selectors.slice(0, index + 1),
+                        index === expression.selectors.length - 1,
+                      ),
                     ),
                   }
                 : selector,
             ),
           }
-        : mapChildren(expression, (child) => resolveSubexpressions(child, lookup, isGoal));
+        : mapChildren(expression, (child) =>
+            resolveSubexpressions(child, lookup, getStandardDefinition, isGoal),
+          );
   const children = getChildren(expression);
   const mapped = getChildren(rebuilt).every((child, index) => child === children[index])
     ? expression
@@ -832,11 +859,22 @@ const resolveSubexpressions = (
       ),
   );
   if (first?.kind === "Name" && isGoal(first.name) && !isQualified) return mapped;
-  if (first?.kind === "Name" && selectors[1].kind !== "Name" && !lookup(first.name)) {
+  if (
+    first?.kind === "Name" &&
+    selectors[1].kind !== "Name" &&
+    !lookup(first.name) &&
+    !getStandardDefinition(first.name)
+  ) {
     setGeneratedArguments(0);
     return mapped;
   }
-  const selected = selectSubexpression(selectors, lookup, mapped, isOperator);
+  const selected = selectSubexpression(
+    selectors,
+    lookup,
+    getStandardDefinition,
+    mapped,
+    isOperator,
+  );
   const generated = generatedArgumentCounts.get(mapped);
   if (generated !== undefined) setGeneratedArguments(generated);
   const parenthesized = parenthesizedRanges.get(expression);
@@ -848,12 +886,19 @@ const resolveSubexpressions = (
 const resolveInstance = (
   instance: Instance,
   lookup: Lookup,
+  getStandardDefinition: Lookup,
   isGoal: (name: string) => boolean,
 ): Instance => ({
   ...instance,
   substitutions: instance.substitutions.map((substitution) => ({
     ...substitution,
-    expression: resolveSubexpressions(substitution.expression, lookup, isGoal, true),
+    expression: resolveSubexpressions(
+      substitution.expression,
+      lookup,
+      getStandardDefinition,
+      isGoal,
+      true,
+    ),
   })),
 });
 
@@ -861,6 +906,7 @@ export const resolveInstanceSubexpressions = (instance: Instance, module: Module
   resolveInstance(
     instance,
     (name) => module.definitions.find((definition) => definition.name === name),
+    () => undefined,
     () => false,
   );
 
@@ -868,6 +914,7 @@ export const createModuleSubexpressions = (
   module: Module,
   expand: ((expression: Expression) => Expression) | undefined,
   getAvailable: Lookup,
+  getStandardDefinition: Lookup,
   isBoundBefore: (name: string, location: SourceLocation) => boolean,
 ) => {
   const createLookup = (definitions: Definition[]): Lookup => {
@@ -952,12 +999,13 @@ export const createModuleSubexpressions = (
     resolveSubexpressions(
       expression,
       getVisibleLookup(definitionLookup, location),
+      getStandardDefinition,
       (name) => isGoal(name) && clauses.every((clause) => clause.name !== name),
     );
   const createProofResolver = (lookup: Lookup) => {
     const isProofGoal = (name: string) => isGoal(name) || !lookup(name);
     const resolveInProof = (expression: Expression) =>
-      resolveSubexpressions(expression, lookup, isProofGoal);
+      resolveSubexpressions(expression, lookup, getStandardDefinition, isProofGoal);
     const resolveFacts = (facts: Fact[]) => {
       const resolved = facts.map((fact) =>
         fact.kind === "ModuleFact" ? fact : resolveInProof(fact),
@@ -967,7 +1015,9 @@ export const createModuleSubexpressions = (
     };
     const resolveDefs = (defs: Fact[]) =>
       defs.map((def) =>
-        def.kind === "ModuleFact" ? def : resolveSubexpressions(def, lookup, isProofGoal, true),
+        def.kind === "ModuleFact"
+          ? def
+          : resolveSubexpressions(def, lookup, getStandardDefinition, isProofGoal, true),
       );
     const resolveBounds = (bounds: Bound[]) =>
       bounds.map((bound) => ({ ...bound, set: resolveInProof(bound.set) }));
@@ -989,7 +1039,7 @@ export const createModuleSubexpressions = (
         case "Hide":
           return { ...body, facts: resolveFacts(body.facts), defs: resolveDefs(body.defs) };
         case "Instance":
-          return resolveInstance(body, lookup, isProofGoal);
+          return resolveInstance(body, lookup, getStandardDefinition, isProofGoal);
         case "Define": {
           const defined: Definition[] = [];
           const local = createProofResolver(
@@ -999,7 +1049,12 @@ export const createModuleSubexpressions = (
             ...body,
             definitions: body.definitions.map((definition) => {
               if (definition.kind === "Instance") {
-                return resolveInstance(definition, local.lookup, local.isProofGoal);
+                return resolveInstance(
+                  definition,
+                  local.lookup,
+                  getStandardDefinition,
+                  local.isProofGoal,
+                );
               }
               const resolved = resolveDefinition(definition, local.resolveInProof);
               defined.push(resolved);

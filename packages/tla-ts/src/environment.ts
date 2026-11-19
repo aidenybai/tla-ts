@@ -88,7 +88,7 @@ import {
   STANDARD_DEPENDENCIES,
   STANDARD_EXTENDS,
 } from "./standard-modules";
-import { getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
+import { getStandardModule, getStandardRange, STANDARD_LEVELS } from "./standard-definitions";
 import { createModuleSubexpressions, resolveInstanceSubexpressions } from "./subexpressions";
 import {
   checkModuleLevels,
@@ -184,6 +184,7 @@ export interface LinkedModule {
 
 interface ModuleScope {
   id: string;
+  isHidden: boolean;
   symbols: Symbols;
   getDefinition: (name: string) => Definition | undefined;
   modules: Map<string, LinkedModule>;
@@ -299,11 +300,14 @@ export const createEnvironment = (
   const unresolvedBodyKeys = new Set<string>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
+  const goalOperands = new WeakMap<Expression, Expression[]>();
   const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
   );
   const standardExports = new Map<string, Symbols>();
+  const standardSources = new Map<string, LinkedModule>();
+  const replacedDefinitions = new Map<string, Definition>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   runtime.isTool = options.isTool ?? false;
@@ -442,7 +446,7 @@ export const createEnvironment = (
     return rejectModuleLiterals(module);
   };
 
-  const linkTopLevel = (parsed: Module) => {
+  const linkTopLevel = (parsed: Module, isHidden = false) => {
     const cycleStart = linking.indexOf(parsed.name);
     if (cycleStart !== -1) {
       const cycle = [...linking.slice(cycleStart), parsed.name].map((name) => `${name}.tla`);
@@ -458,6 +462,7 @@ export const createEnvironment = (
     loading.push(closure);
     const linked = linkModule(parsed, {
       id: parsed.name,
+      isHidden,
       symbols: new Map(),
       getDefinition: () => undefined,
       modules: new Map(),
@@ -501,14 +506,21 @@ export const createEnvironment = (
       useModule(name, dependencies.get(name) ?? []);
       return cached;
     }
-    const top = linkTopLevel(loadModule(name, importer));
-    const replaced = new Map<string, Definition>();
+    const top = linkSource(name, importer, false);
+    linkedModules.set(name, top.linked);
+    dependencies.set(name, top.closure);
+    useModule(name, top.closure);
+    return top.linked;
+  };
+
+  const linkSource = (name: string, importer: string, isHidden: boolean) => {
+    const top = linkTopLevel(loadModule(name, importer), isHidden);
     const evaluateReplaced = (
       operator: string,
       args: BuiltinArgument[],
       context: Context | undefined,
     ) => {
-      const definition = replaced.get(operator);
+      const definition = replacedDefinitions.get(top.linked.visible.get(operator)?.key ?? operator);
       const expressions = args.flatMap((arg) =>
         typeof arg === "object" && arg.kind === "Operator" && arg.expression
           ? [arg.expression]
@@ -531,15 +543,20 @@ export const createEnvironment = (
         if (symbol?.kind !== "Definition") return;
         if (symbol.arity !== operator.arity && ANNOTATED_OVERRIDE_MODULES.has(name)) return;
         const definition = definitions.get(symbol.key);
-        if (definition) replaced.set(operator.name, definition);
+        if (definition) replacedDefinitions.set(symbol.key, definition);
         builtins.set(symbol.key, operator);
         definitions.delete(symbol.key);
       },
     );
-    linkedModules.set(name, top.linked);
-    dependencies.set(name, top.closure);
-    useModule(name, top.closure);
-    return top.linked;
+    return top;
+  };
+
+  const getStandardSource = (name: string) => {
+    const cached = standardSources.get(name);
+    if (cached) return cached;
+    const linked = linkSource(name, name, true).linked;
+    standardSources.set(name, linked);
+    return linked;
   };
 
   // SANY infers a substitution for each declaration the instancing module resolves, in the order of the instanced module's symbol table, and appends the others.
@@ -725,6 +742,11 @@ export const createEnvironment = (
                   parameterized.get(entry[1].key) === true))),
         )
         .map((entry): [string, ModuleSymbol] => {
+          const isSubstituted =
+            entry[1].isSubstituted === true ||
+            (entry[1].kind === "Theorem" &&
+              declarations.length > 0 &&
+              (instance.name !== undefined || parameterized.get(entry[1].key) === true));
           if (instance.name === undefined) {
             return [
               entry[0],
@@ -745,6 +767,7 @@ export const createEnvironment = (
                 functionArity:
                   parameterized.get(entry[1].key) === true ? undefined : entry[1].functionArity,
                 goal: entry[1].goal,
+                isSubstituted,
               },
             ];
           }
@@ -761,6 +784,7 @@ export const createEnvironment = (
               kind: entry[1].kind,
               functionArity: declarations.length > 0 ? undefined : entry[1].functionArity,
               goal: entry[1].goal,
+              isSubstituted,
             },
           ];
         }),
@@ -1112,6 +1136,7 @@ export const createEnvironment = (
       instanced,
       reports,
       warnings: scope.warnings,
+      goalOperands,
     });
     const getSymbolsBefore = (location: SourceLocation): Symbols =>
       [
@@ -1143,6 +1168,25 @@ export const createEnvironment = (
         const definition = symbol && definitions.get(symbol.key);
         return definition ? { ...definition, name } : scope.getDefinition(name);
       },
+      (name) => {
+        const symbol = visible.get(name);
+        if (symbol?.kind !== "Definition" || !builtins.has(symbol.key)) return undefined;
+        const source = getStandardModule(symbol.key);
+        const key =
+          source !== undefined && getSanyStandardModules(runtime.version).has(source)
+            ? getStandardSource(source).visible.get(symbol.key)?.key
+            : symbol.key;
+        const definition = key === undefined ? undefined : replacedDefinitions.get(key);
+        if (definition?.kind !== "Operator") return definition && { ...definition, name };
+        return {
+          ...definition,
+          name,
+          params: [
+            ...createArgumentParams(symbol.arity - definition.params.length, symbol.params),
+            ...definition.params,
+          ],
+        };
+      },
       (name, location) =>
         bound.has(name) ||
         parsed.instances.some(
@@ -1164,6 +1208,7 @@ export const createEnvironment = (
       const getDefinitionBefore = subexpressions.getDefinitionsBefore(nested.location);
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
+        isHidden: scope.isHidden,
         symbols: getSymbolsBefore(nested.location),
         getDefinition: (name) => getDefinitionBefore(name) ?? scope.getDefinition(name),
         modules: visibleModules,
@@ -1274,7 +1319,7 @@ export const createEnvironment = (
         warnings,
       ),
     );
-    linkOrder.push(linked);
+    if (!scope.isHidden) linkOrder.push(linked);
     return linked;
   };
 
