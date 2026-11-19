@@ -641,6 +641,41 @@ describe("the CLI reports results like TLC", () => {
     expect(result.stdout).toContain("Error: Temporal properties were violated.\n");
   });
 
+  it("lists an alias's evaluation error in every step with -difftrace, as TLC does", () => {
+    const result = runCli("alias", "AliasErrors", ["-difftrace", "-noGenerateSpecTE"]);
+    expect(result.status).toBe(12);
+    const error = '/\\ _ALIASEvalError = "The second argument of \\\\div is 0."';
+    expect(getSteadyLines(result.stdout)).toEqual([
+      "Starting... (_)",
+      "Computing initial states...",
+      "Finished computing initial states: 1 distinct state generated at _.",
+      "Error: Invariant Inv is violated.",
+      "Error: The behavior up to this point is:",
+      "State 1: <Initial predicate>",
+      "/\\ x = 0",
+      "/\\ y = 0",
+      error,
+      "",
+      "State 2: <Next line 5, col 9 to line 5, col 28 of module AliasErrors>",
+      "/\\ y = 1",
+      error,
+      "",
+      "State 3: <Next line 5, col 9 to line 5, col 28 of module AliasErrors>",
+      "/\\ y = 2",
+      error,
+      "",
+      "State 4: <Next line 5, col 9 to line 5, col 28 of module AliasErrors>",
+      "/\\ x = 0",
+      "/\\ y = 3",
+      error,
+      "",
+      "4 states generated, 4 distinct states found, 0 states left on queue.",
+      "The depth of the complete state graph search is 4.",
+      "Finished in _ at (_)",
+      "",
+    ]);
+  });
+
   it("prints the counterexample before it fails to rebuild the step back of a lasso under a VIEW like TLC", () => {
     const result = runCli("view", "Recover");
     expect(result.status).toBe(1);

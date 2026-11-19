@@ -100,6 +100,7 @@ import { getTlcFingerprint, getTlcFingerprints, setFingerprintPolynomial } from 
 import type { TlcVersion } from "./tlc/version";
 import type { GraphState } from "./state-graph";
 import {
+  ALIAS_EVAL_ERROR,
   createModelValue,
   formatValue,
   freezeStringOrder,
@@ -1443,7 +1444,10 @@ export const createSearch = (
       return record === undefined ? getStateRecord() : setAliasName(record, alias);
     } catch (error) {
       if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
-      return { ...getStateRecord(), _ALIASEvalError: formatNestedMessage(error.message, isTool) };
+      return {
+        ...getStateRecord(),
+        [ALIAS_EVAL_ERROR]: formatNestedMessage(error.message, isTool),
+      };
     }
   };
   const scopeExpressions = getScopeExpressions(spec.scope);
