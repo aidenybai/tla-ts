@@ -989,6 +989,10 @@ export class AstManager {
     return result;
   }
 
+  get isHoldingTemporaries() {
+    return this.temporariesMark !== -1;
+  }
+
   beginTemporaries() {
     const outer = this.temporariesMark;
     this.temporariesMark = this.temporaries.length;

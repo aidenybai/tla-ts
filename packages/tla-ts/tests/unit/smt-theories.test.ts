@@ -478,4 +478,24 @@ describe("theory_bv, as Z3 5.3.2 bit-blasts its terms", () => {
       ]),
     ).toEqual(["unsat", "(:rlimit 95)"]);
   });
+
+  it("frees the negation mk_not_core makes in the simplifiers before bit-blasting", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const v0 (_ BitVec 8))",
+        "(declare-const v1 (_ BitVec 8))",
+        "(declare-const v2 (_ BitVec 8))",
+        "(declare-const p0 Bool)",
+        "(declare-const p1 Bool)",
+        "(assert (= v2 (bvmul v0 (_ bv175 8))))",
+        "(assert (= v0 (bvadd v1 (_ bv150 8))))",
+        "(push 1)",
+        "(assert (bvult v2 (bvsub v1 (_ bv122 8))))",
+        "(assert (and p0 (distinct (bvand (bvudiv v1 v2) (bvmul v2 v0)) (bvadd v1 v0))))",
+        "(check-sat-assuming (p1))",
+        "(get-value (v0 v1 v2))",
+      ]),
+    ).toEqual(["sat", "((v0 #x9d)\n (v1 #x07)\n (v2 #x53))"]);
+  });
 });
