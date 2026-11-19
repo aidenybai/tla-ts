@@ -2561,6 +2561,24 @@ describe("eq2bv, as Z3 5.3.2 encodes the bounded integers", () => {
 });
 
 describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
+  it("frees the rewriter cache of propagate-values when the tactic of the first check ends", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(declare-const w (_ BitVec 4))",
+        "(declare-const q Bool)",
+        "(assert (= x #x8))",
+        "(assert (= (bvmul z (bvor x #x9)) (bvlshr x #xe)))",
+        "(check-sat)",
+        "(assert (bvugt (bvnot #xa) (bvurem (ite q #xd #x6) (bvudiv w #xd))))",
+        "(check-sat)",
+        "(get-value (w q))",
+      ]),
+    ).toEqual(["sat", "sat", "((w #xd)\n (q true))"]);
+  });
+
   it("frees the model converter of apply's goal, so the next bit-blast numbers its bits anew", () => {
     expect(
       run([

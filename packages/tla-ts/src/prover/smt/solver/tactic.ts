@@ -64,7 +64,7 @@ import { Rational } from "./rational";
 import { runNlsat } from "./nlsat-tactic";
 import { runNlqsat } from "./nlqsat";
 import { occf } from "./occf";
-import { propagateValues, type SharedOccs } from "./propagate-values";
+import { propagateValues, type PropagateValuesTactic } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
@@ -2162,21 +2162,21 @@ const compile = (
 };
 
 // inc_sat_solver's init_preprocess, with sat.euf.
-export const mkIncSatEufPreprocess = (manager: AstManager, occs: SharedOccs) =>
+export const mkIncSatEufPreprocess = (manager: AstManager, propagator: PropagateValuesTactic) =>
   runAndThen(
     inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, new Map()))),
-    inPlace((goal) => propagateValues(manager, goal, 4, TACTIC_REWRITER_OPTIONS, occs)),
+    inPlace((goal) => propagator.run(goal)),
   );
 
 // inc_sat_solver's init_preprocess, without sat.euf.
 export const mkIncSatPreprocess = (
   manager: AstManager,
   bitBlaster: BitBlasterRewriter,
-  occs: SharedOccs,
+  propagator: PropagateValuesTactic,
 ) =>
   [
     inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, new Map()))),
-    inPlace((goal) => propagateValues(manager, goal, 4, TACTIC_REWRITER_OPTIONS, occs)),
+    inPlace((goal) => propagator.run(goal)),
     inPlace((goal) => card2bv(manager, goal, getRewriterOptions(manager, new Map()))),
     inPlace((goal) =>
       simplifyGoal(

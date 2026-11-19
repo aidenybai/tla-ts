@@ -208,6 +208,56 @@ describe("sat2goal", () => {
       ]),
     ).toBe(["sat", "sat", "((x #xa))"].join("\n"));
   });
+
+  it("keeps the substitution of its propagate-values across a pop, until it preprocesses again", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(declare-const w (_ BitVec 4))",
+        "(assert (or (bvult x (bvudiv #x0 z)) (bvsge y (bvudiv #x2 #x2))))",
+        "(push 1)",
+        "(assert (= w #xa))",
+        "(assert (= w #x8))",
+        "(check-sat)",
+        "(pop 1)",
+        "(push 1)",
+        "(assert (bvslt (bvlshr #x1 z) (bvurem x #x6)))",
+        "(check-sat)",
+        "(pop 1)",
+        "(check-sat)",
+        "(get-value (z))",
+      ]),
+    ).toBe(["unsat", "sat", "sat", "((z #x7))"].join("\n"));
+  });
+
+  it("keeps the rewriter cache of its propagate-values across a pop, until it preprocesses again", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(declare-const w (_ BitVec 4))",
+        "(declare-const p Bool)",
+        "(push 1)",
+        "(assert p)",
+        "(assert (bvult (ite p #xd z) #xa))",
+        "(check-sat)",
+        "(pop 1)",
+        "(push 1)",
+        "(assert (= (bvurem w (bvurem #x9 y)) (bvxor (bvneg #xf) w)))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (bvugt y #x0))",
+        "(assert (= x (bvlshr x y)))",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toBe(["unsat", "sat", "sat", "((x #x0)", " (y #xa))"].join("\n"));
+  });
 });
 
 describe("sat solver", () => {
