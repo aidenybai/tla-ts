@@ -1,15 +1,16 @@
+import { setAt, shrink } from "./array";
 import { KIND_APP, KIND_QUANTIFIER, OP_EQ, type AstManager } from "./ast";
 import { type Dependency, type Goal, joinDependencies } from "./goal";
 import { Rewriter, TACTIC_REWRITER_OPTIONS } from "./rewriter";
 
 // Quantifier bodies are included and patterns excluded.
 class SharedOccs {
-  private readonly shared = new Set<number>();
+  private readonly sharedById: (number | undefined)[] = [];
 
   constructor(private readonly manager: AstManager) {}
 
   has(expr: number) {
-    return this.shared.has(expr);
+    return this.sharedById[this.manager.ids[expr]] === expr;
   }
 
   compute(forms: readonly number[]) {
@@ -19,8 +20,10 @@ class SharedOccs {
     const todo = [...forms];
     for (let expr = todo.pop(); expr !== undefined; expr = todo.pop()) {
       if (visited.has(expr)) {
-        if (!this.shared.has(expr)) manager.incRef(expr);
-        this.shared.add(expr);
+        if (!this.has(expr)) {
+          manager.incRef(expr);
+          setAt(this.sharedById, manager.ids[expr], expr);
+        }
         continue;
       }
       visited.add(expr);
@@ -29,13 +32,14 @@ class SharedOccs {
     }
   }
 
-  // m_shared is indexed by id, so a reset frees the terms in the order of their ids.
   reset() {
     const manager = this.manager;
-    const ids = manager.ids;
-    for (const expr of [...this.shared].sort((left, right) => ids[left] - ids[right]))
-      manager.decRef(expr);
-    this.shared.clear();
+    const sharedById = this.sharedById;
+    for (let id = 0; id < sharedById.length; id++) {
+      const expr = sharedById[id];
+      if (expr !== undefined) manager.decRef(expr);
+    }
+    shrink(sharedById, 0);
   }
 }
 
