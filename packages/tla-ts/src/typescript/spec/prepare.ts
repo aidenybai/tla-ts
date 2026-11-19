@@ -140,7 +140,11 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
     {
       name: "DescribeResult",
       arity: 1,
-      text: "DescribeResult(r) == DescribeThrown(r.s, r.c.value)",
+      // A thrown error whose message Node writes is described by nothing that reads it.
+      text: `DescribeResult(r) ==
+  IF IsObject(r.c.value) /\\ O(r.s, r.c.value).class = "error" /\\ "hostMessage" \\in DOMAIN O(r.s, r.c.value).slots
+  THEN [name |-> <<>>, message |-> <<>>]
+  ELSE DescribeThrown(r.s, r.c.value)`,
     },
   ];
   const runtimeText = assembleRuntime(library, overrides, INTERPRETER);

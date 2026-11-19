@@ -722,6 +722,57 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("keeps an error that ESCore throws exact but for the message Node writes", () => {
+    const getSource = (expected: string) => `
+      let caught: unknown;
+      try {
+        (null as unknown as { x: number }).x;
+      } catch (error) {
+        caught = error;
+      }
+      let rethrown = "";
+      try {
+        try {
+          [].reduce(() => 0);
+        } catch (error) {
+          throw error;
+        }
+      } catch (error) {
+        rethrown = (error as Error).name;
+      }
+      const error = caught as Error;
+      const result = [error instanceof TypeError, error.name, error.constructor === TypeError, rethrown].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("true|TypeError|true|TypeError"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("true|TypeError|true|RangeError"))).message).toContain(
+        THREW,
+      );
+    });
+
+    it("stops where a program reads the message or lists the error's keys", async () => {
+      const reads = [
+        "error.message",
+        "String(error)",
+        "Object.keys(error)",
+        "JSON.stringify(error)",
+      ];
+      for (const read of reads) {
+        const source = `try { (null as unknown as { x: number }).x; } catch (error) { ${read}; }`;
+        expect((await checkScript(source)).message).toContain(
+          "tla-ts can't read the message that Node writes for an error it throws",
+        );
+      }
+    });
+  });
+
   describe("runs the built-ins of a global that a table of names links", () => {
     const getSource = (expected: string) => `
       const result = [...new Float32Array([3, 1.5])].join();

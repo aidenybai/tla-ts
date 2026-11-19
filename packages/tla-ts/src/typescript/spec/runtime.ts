@@ -514,10 +514,28 @@ const HOST_PATCHES = [
     to: `LET withStack == InstallStack(o.s, Val(o))
       msg == IF message = Undefined THEN Ok(withStack, Empty) ELSE ToStr(withStack, message) IN`,
   },
+  // An error that ESCore throws itself, whose message Node writes as host text. It holds the mark
+  // hostMessage, at which reading its message or listing its own keys stops.
   {
     name: "ThrowError",
-    from: `ThrowValue(a.s, a.v)`,
-    to: `ThrowValue(InstallStack(a.s, a.v), a.v)`,
+    from: `LET a == Alloc(s, MakeObject(Obj(s.realm[kind \\o "Prototype"]), "error", [data |-> Empty])) IN
+  ThrowValue(a.s, a.v)`,
+    to: `LET a == Alloc(s, MakeObject(Obj(s.realm[kind \\o "Prototype"]), "error", [data |-> Empty, hostMessage |-> TRUE])) IN
+  ThrowValue(InstallStack(a.s, a.v), a.v)`,
+  },
+  {
+    name: "GetOwnProperty",
+    from: `    [] OTHER -> Ok(s, OrdinaryGetOwnProperty(o, k))`,
+    to: `    [] o.class = "error" /\\ k = SV("message") /\\ "hostMessage" \\in DOMAIN o.slots ->
+         Assert(FALSE, "tla-ts can't read the message that Node writes for an error it throws")
+    [] OTHER -> Ok(s, OrdinaryGetOwnProperty(o, k))`,
+  },
+  {
+    name: "OwnPropertyKeys",
+    from: `    [] OTHER -> Ok(s, OwnKeysOf(o))`,
+    to: `    [] o.class = "error" /\\ "hostMessage" \\in DOMAIN o.slots ->
+         Assert(FALSE, "tla-ts can't read the message that Node writes for an error it throws")
+    [] OTHER -> Ok(s, OwnKeysOf(o))`,
   },
   {
     name: "CombinatorElementDone",
