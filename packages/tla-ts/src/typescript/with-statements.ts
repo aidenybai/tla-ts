@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
+import { isJavaScriptFile } from "./common-js";
 import {
   findNodes,
   getImplicitGlobals,
@@ -13,34 +14,63 @@ import {
 // Record's methods: ToObject of the statement's value (§14.11.2), HasBinding with its check of
 // @@unscopables (§9.1.1.2.1), GetBindingValue (§9.1.1.2.6), and SetMutableBinding (§9.1.1.2.5). A
 // Set runs in strict mode where the reference does. They stand on the text's first line, so the
-// text keeps its lines.
-const HELPERS = [
-  `declare function ${WITH_STOP}(reason: string): never;`,
-  `const $tlaWithObject = <T,>(value: T): NonNullable<T> => {`,
-  `if (value === null || value === undefined) throw new TypeError("Cannot convert undefined or null to object");`,
-  `if (typeof value !== "object" && typeof value !== "function") ${WITH_STOP}("tla-ts can't run a with statement on a primitive");`,
-  `if ((value as unknown) === globalThis) ${WITH_STOP}("tla-ts can't run a with statement on the global object");`,
-  `return value; };`,
-  `const $tlaWithThrowReference = (name: string): never => { throw new ReferenceError(name + " is not defined"); };`,
-  `const $tlaWithHas = (object: any, name: string): boolean => {`,
-  `if (!(name in object)) return false;`,
-  `const unscopables: unknown = object[Symbol.unscopables];`,
-  `return !(((typeof unscopables === "object" && unscopables !== null) || typeof unscopables === "function") && (unscopables as any)[name]); };`,
-  `const $tlaWithGet = (object: any, name: string, isStrict: boolean): any => {`,
-  `if (name in object) return object[name];`,
-  `return isStrict ? $tlaWithThrowReference(name) : undefined; };`,
-  `const $tlaWithSet = <T,>(object: any, name: string, value: T, isStrict: boolean): T => {`,
-  `const isBound = name in object;`,
-  `if (!isStrict) { object[name] = value; return value; }`,
-  `if (!isBound) $tlaWithThrowReference(name);`,
-  `(() => { "use strict"; object[name] = value; })();`,
-  `return value; };`,
-  `const $tlaWithUpdate = (object: any, name: string, isStrict: boolean, isIncrement: boolean, isPrefix: boolean): any => {`,
-  `let value = $tlaWithGet(object, name, isStrict);`,
-  `const old = isIncrement ? value++ : value--;`,
-  `$tlaWithSet(object, name, value, isStrict);`,
-  `return isPrefix ? value : old; };`,
-].join(" ");
+// text keeps its lines. JavaScript gives their types in JSDoc, and declares the stop as a var that
+// nothing assigns.
+const getHelpers = (isJavaScript: boolean) => {
+  const cast = (type: string, value: string) =>
+    isJavaScript ? `/** @type {${type}} */ (${value})` : `(${value} as ${type})`;
+  const typed = (type: string, value: string) =>
+    isJavaScript ? `/** @type {${type}} */ (${value})` : `${value}`;
+  const parameter = (name: string, type: string) => (isJavaScript ? name : `${name}: ${type}`);
+  const returns = (type: string) => (isJavaScript ? "" : `: ${type}`);
+  return [
+    isJavaScript
+      ? `/** @type {(reason: string) => never} */ var ${WITH_STOP};`
+      : `declare function ${WITH_STOP}(reason: string): never;`,
+    `const $tlaWithObject = ${typed(
+      "<T>(value: T) => NonNullable<T>",
+      `${isJavaScript ? "" : "<T,>"}(${parameter("value", "T")})${returns("NonNullable<T>")} => {` +
+        `if (value === null || value === undefined) throw new TypeError("Cannot convert undefined or null to object");` +
+        `if (typeof value !== "object" && typeof value !== "function") ${WITH_STOP}("tla-ts can't run a with statement on a primitive");` +
+        `if (${cast("unknown", "value")} === globalThis) ${WITH_STOP}("tla-ts can't run a with statement on the global object");` +
+        `return value; }`,
+    )};`,
+    `const $tlaWithThrowReference = ${typed(
+      "(name: string) => never",
+      `(${parameter("name", "string")})${returns("never")} => { throw new ReferenceError(name + " is not defined"); }`,
+    )};`,
+    `const $tlaWithHas = ${typed(
+      "(object: any, name: string) => boolean",
+      `(${parameter("object", "any")}, ${parameter("name", "string")})${returns("boolean")} => {` +
+        `if (!(name in object)) return false;` +
+        `const unscopables = ${cast("unknown", "object[Symbol.unscopables]")};` +
+        `return !(((typeof unscopables === "object" && unscopables !== null) || typeof unscopables === "function") && ${cast("any", "unscopables")}[name]); }`,
+    )};`,
+    `const $tlaWithGet = ${typed(
+      "(object: any, name: string, isStrict: boolean) => any",
+      `(${parameter("object", "any")}, ${parameter("name", "string")}, ${parameter("isStrict", "boolean")})${returns("any")} => {` +
+        `if (name in object) return object[name];` +
+        `return isStrict ? $tlaWithThrowReference(name) : undefined; }`,
+    )};`,
+    `const $tlaWithSet = ${typed(
+      "<T>(object: any, name: string, value: T, isStrict: boolean) => T",
+      `${isJavaScript ? "" : "<T,>"}(${parameter("object", "any")}, ${parameter("name", "string")}, ${parameter("value", "T")}, ${parameter("isStrict", "boolean")})${returns("T")} => {` +
+        `const isBound = name in object;` +
+        `if (!isStrict) { object[name] = value; return value; }` +
+        `if (!isBound) $tlaWithThrowReference(name);` +
+        `(() => { "use strict"; object[name] = value; })();` +
+        `return value; }`,
+    )};`,
+    `const $tlaWithUpdate = ${typed(
+      "(object: any, name: string, isStrict: boolean, isIncrement: boolean, isPrefix: boolean) => any",
+      `(${parameter("object", "any")}, ${parameter("name", "string")}, ${parameter("isStrict", "boolean")}, ${parameter("isIncrement", "boolean")}, ${parameter("isPrefix", "boolean")})${returns("any")} => {` +
+        `let value = $tlaWithGet(object, name, isStrict);` +
+        `const old = isIncrement ? value++ : value--;` +
+        `$tlaWithSet(object, name, value, isStrict);` +
+        `return isPrefix ? value : old; }`,
+    )};`,
+  ].join(" ");
+};
 
 const RESERVED_PREFIX = "$tlaWith";
 
@@ -271,7 +301,10 @@ export const rewriteWithStatements = (file: ts.SourceFile, checker: ts.TypeCheck
     if (ts.isDeleteExpression(node)) {
       return getNameForm(
         node.expression,
-        (object, quoted) => `delete (${object} as any)[${quoted}]`,
+        (object, quoted) =>
+          isJavaScriptFile(file.fileName)
+            ? `delete /** @type {any} */ (${object})[${quoted}]`
+            : `delete (${object} as any)[${quoted}]`,
         (name) => `delete ${name.text}`,
       );
     }
@@ -444,7 +477,7 @@ export const rewriteWithStatements = (file: ts.SourceFile, checker: ts.TypeCheck
     (statement) => !statements.some((other) => other !== statement && isWithin(statement, other)),
   );
   return (
-    HELPERS +
+    getHelpers(isJavaScriptFile(file.fileName)) +
     outermost.reduceRight(
       (current, statement) =>
         current.slice(0, statement.getStart(file)) +

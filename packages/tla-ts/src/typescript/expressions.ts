@@ -13,6 +13,7 @@ import {
   translateMethod,
   translateArrayConstruction,
   translateNew,
+  isSpreadMatchAll,
   translateRegExpCall,
   translateSet,
   translateSetArgument,
@@ -468,6 +469,7 @@ export const translateIterated = (
       context,
     );
   }
+  if (isSpreadMatchAll(iterated)) return translateExpression(iterated, scope, context);
   const ordered = getOrderedIteration(iterated, context);
   if (ordered !== undefined) {
     return translateOrderedValues(
@@ -2381,10 +2383,10 @@ const getUnverifiedPrimitive = (node: ts.Expression, context: Context) => {
           : undefined;
 };
 
-// An arithmetic operator or an ordering of a value of type any that no statement converts first, as
-// in a loop's condition, or where no heap holds objects, whose value is a primitive or an object,
-// which stops where it runs. The operator converts the primitives as JavaScript's does: + joins a
-// string, an ordering runs IsLessThan, and the others run ToNumeric.
+// An arithmetic operator or an ordering of a value of type any that no statement converts first,
+// or where no heap holds objects, whose value is a primitive or an object, which stops where it
+// runs. The operator converts the primitives as JavaScript's does: + joins a string, an ordering
+// runs IsLessThan, and the others run ToNumeric.
 const translateAnyOperation = (node: ts.BinaryExpression, scope: Scope, context: Context) => {
   const kind = node.operatorToken.kind;
   const operands = [node.left, node.right];

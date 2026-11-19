@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../errors";
+import { isJavaScriptFile } from "./common-js";
 import { DELETED_GLOBAL, findNodes, getImplicitGlobals, isStrictCode, skipCasts } from "./context";
 
 // The globals whose properties on the global object can't be deleted.
@@ -51,6 +52,9 @@ export const rewriteNameDeletes = (file: ts.SourceFile, checker: ts.TypeChecker)
     }
     return `${name.text} = ${DELETED_GLOBAL}, true`;
   };
+  // JavaScript gives the types in JSDoc, and declares the deleted global as a var that nothing
+  // assigns.
+  const isJavaScript = isJavaScriptFile(file.fileName);
   const replacements = deletes.flatMap((node) => {
     const name = skipCasts(node.expression);
     const value = ts.isIdentifier(name) ? getValue(name) : undefined;
@@ -58,7 +62,15 @@ export const rewriteNameDeletes = (file: ts.SourceFile, checker: ts.TypeChecker)
     const lines = "\n".repeat(text.slice(start, node.end).split("\n").length - 1);
     return value === undefined
       ? []
-      : [{ start, end: node.end, text: `(${value} as boolean)${lines}` }];
+      : [
+          {
+            start,
+            end: node.end,
+            text: isJavaScript
+              ? `/** @type {boolean} */ (${value})${lines}`
+              : `(${value} as boolean)${lines}`,
+          },
+        ];
   });
   const rewritten = replacements.reduceRight(
     (current, replacement) =>
@@ -66,6 +78,6 @@ export const rewriteNameDeletes = (file: ts.SourceFile, checker: ts.TypeChecker)
     text,
   );
   return rewritten.includes(DELETED_GLOBAL) && !text.includes(DELETED_GLOBAL)
-    ? `declare const ${DELETED_GLOBAL}: any; ${rewritten}`
+    ? `${isJavaScript ? `/** @type {any} */ var ${DELETED_GLOBAL};` : `declare const ${DELETED_GLOBAL}: any;`} ${rewritten}`
     : rewritten;
 };

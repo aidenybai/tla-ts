@@ -1009,6 +1009,95 @@ export const compile = (
     ((ts.isIdentifier(node) && isBufferName(getBuiltIn(node, context) ?? "")) ||
       (ts.forEachChild(node, isMakingBuffer) ?? false));
   // A module whose code reads a module's namespace object holds it on the heap, as a script does.
+  // A name, or a string that keys a property by it, as in Object.getOwnPropertyDescriptor.
+  const isTyped = (node: ts.Expression, flags: ts.TypeFlags) => {
+    const type = context.checker.getTypeAtLocation(node);
+    return (type.isUnion() ? type.types : [type]).every((member) => (member.flags & flags) !== 0);
+  };
+  const isNumeric = (node: ts.Expression) =>
+    isTyped(node, ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike);
+  const usesSpecialNumbers = (node: ts.Node): boolean =>
+    ((ts.isIdentifier(node) || ts.isStringLiteral(node)) &&
+      [
+        "NaN",
+        "isNaN",
+        "Infinity",
+        "POSITIVE_INFINITY",
+        "NEGATIVE_INFINITY",
+        // The properties of Number and Math that hold fractions or integers beyond 32 bits.
+        "EPSILON",
+        "MIN_VALUE",
+        "MAX_VALUE",
+        "MAX_SAFE_INTEGER",
+        "MIN_SAFE_INTEGER",
+        "E",
+        "LN10",
+        "LN2",
+        "LOG10E",
+        "LOG2E",
+        "PI",
+        "SQRT1_2",
+        "SQRT2",
+        // A float's bytes may hold any of them.
+        "DataView",
+        "Float16Array",
+        "Float32Array",
+        "Float64Array",
+        // A time value may be NaN or an integer beyond 32 bits, as may a power, and a Temporal
+        // object's field an integer beyond 32 bits or a fraction.
+        "Date",
+        "pow",
+        "Temporal",
+      ].includes(node.text)) ||
+    (ts.isPrefixUnaryExpression(node) &&
+      node.operator === ts.SyntaxKind.MinusToken &&
+      ts.isNumericLiteral(node.operand) &&
+      Number(node.operand.text) === 0) ||
+    // Division may give an infinity or -0, and ** and >>> an integer beyond 32 bits.
+    (ts.isBinaryExpression(node) &&
+      [
+        ts.SyntaxKind.SlashToken,
+        ts.SyntaxKind.AsteriskAsteriskToken,
+        ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+        ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+        ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+      ].includes(node.operatorToken.kind)) ||
+    // Converting a value that isn't a number, as arithmetic or a call does, may give NaN.
+    (ts.isBinaryExpression(node) &&
+      (NAN_OPERATORS.has(node.operatorToken.kind) ||
+        ((node.operatorToken.kind === ts.SyntaxKind.PlusToken ||
+          node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) &&
+          !isTyped(node.left, ts.TypeFlags.StringLike) &&
+          !isTyped(node.right, ts.TypeFlags.StringLike))) &&
+      !(isNumeric(node.left) && isNumeric(node.right))) ||
+    ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      node.operator !== ts.SyntaxKind.ExclamationToken &&
+      !isNumeric(node.operand)) ||
+    ((ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+      (node.arguments ?? []).some((argument) => {
+        // A parameter that takes a number, or leaves it out.
+        const expected = context.checker.getContextualType(argument);
+        const members =
+          expected === undefined ? [] : expected.isUnion() ? expected.types : [expected];
+        return (
+          members.some((member) => (member.flags & ts.TypeFlags.Number) !== 0) &&
+          members.every(
+            (member) => (member.flags & (ts.TypeFlags.Number | ts.TypeFlags.Undefined)) !== 0,
+          ) &&
+          !isNumeric(argument)
+        );
+      })) ||
+    // Math's functions that may give a fraction or NaN.
+    (ts.isPropertyAccessExpression(node) &&
+      node.expression.getText() === "Math" &&
+      MATH_OPERATORS.has(node.name.text)) ||
+    // A literal may give a fraction or an integer beyond 32 bits, and a string may key a typed
+    // array by a fraction.
+    (ts.isNumericLiteral(node) &&
+      (!Number.isInteger(Number(node.text)) || Number(node.text) > 2 ** 31 - 1)) ||
+    (ts.isStringLiteral(node) && isFractionKey(node.text)) ||
+    (ts.forEachChild(node, usesSpecialNumbers) ?? false);
+  const hasSpecialNumbers = () => roots.some(usesSpecialNumbers) || hasSpecialJsonNumbers(context);
   const isHeapFile =
     isScript(sourceFile) ||
     isSharing ||
@@ -1075,95 +1164,7 @@ export const compile = (
       context,
     );
     context.onlyCalled = findOnlyCalled(context);
-    // A name, or a string that keys a property by it, as in Object.getOwnPropertyDescriptor.
-    const isTyped = (node: ts.Expression, flags: ts.TypeFlags) => {
-      const type = context.checker.getTypeAtLocation(node);
-      return (type.isUnion() ? type.types : [type]).every((member) => (member.flags & flags) !== 0);
-    };
-    const isNumeric = (node: ts.Expression) =>
-      isTyped(node, ts.TypeFlags.NumberLike | ts.TypeFlags.BigIntLike);
-    const usesSpecialNumbers = (node: ts.Node): boolean =>
-      ((ts.isIdentifier(node) || ts.isStringLiteral(node)) &&
-        [
-          "NaN",
-          "isNaN",
-          "Infinity",
-          "POSITIVE_INFINITY",
-          "NEGATIVE_INFINITY",
-          // The properties of Number and Math that hold fractions or integers beyond 32 bits.
-          "EPSILON",
-          "MIN_VALUE",
-          "MAX_VALUE",
-          "MAX_SAFE_INTEGER",
-          "MIN_SAFE_INTEGER",
-          "E",
-          "LN10",
-          "LN2",
-          "LOG10E",
-          "LOG2E",
-          "PI",
-          "SQRT1_2",
-          "SQRT2",
-          // A float's bytes may hold any of them.
-          "DataView",
-          "Float16Array",
-          "Float32Array",
-          "Float64Array",
-          // A time value may be NaN or an integer beyond 32 bits, as may a power, and a Temporal
-          // object's field an integer beyond 32 bits or a fraction.
-          "Date",
-          "pow",
-          "Temporal",
-        ].includes(node.text)) ||
-      (ts.isPrefixUnaryExpression(node) &&
-        node.operator === ts.SyntaxKind.MinusToken &&
-        ts.isNumericLiteral(node.operand) &&
-        Number(node.operand.text) === 0) ||
-      // Division may give an infinity or -0, and ** and >>> an integer beyond 32 bits.
-      (ts.isBinaryExpression(node) &&
-        [
-          ts.SyntaxKind.SlashToken,
-          ts.SyntaxKind.AsteriskAsteriskToken,
-          ts.SyntaxKind.AsteriskAsteriskEqualsToken,
-          ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
-          ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
-        ].includes(node.operatorToken.kind)) ||
-      // Converting a value that isn't a number, as arithmetic or a call does, may give NaN.
-      (ts.isBinaryExpression(node) &&
-        (NAN_OPERATORS.has(node.operatorToken.kind) ||
-          ((node.operatorToken.kind === ts.SyntaxKind.PlusToken ||
-            node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) &&
-            !isTyped(node.left, ts.TypeFlags.StringLike) &&
-            !isTyped(node.right, ts.TypeFlags.StringLike))) &&
-        !(isNumeric(node.left) && isNumeric(node.right))) ||
-      ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-        node.operator !== ts.SyntaxKind.ExclamationToken &&
-        !isNumeric(node.operand)) ||
-      ((ts.isCallExpression(node) || ts.isNewExpression(node)) &&
-        (node.arguments ?? []).some((argument) => {
-          // A parameter that takes a number, or leaves it out.
-          const expected = context.checker.getContextualType(argument);
-          const members =
-            expected === undefined ? [] : expected.isUnion() ? expected.types : [expected];
-          return (
-            members.some((member) => (member.flags & ts.TypeFlags.Number) !== 0) &&
-            members.every(
-              (member) => (member.flags & (ts.TypeFlags.Number | ts.TypeFlags.Undefined)) !== 0,
-            ) &&
-            !isNumeric(argument)
-          );
-        })) ||
-      // Math's functions that may give a fraction or NaN.
-      (ts.isPropertyAccessExpression(node) &&
-        node.expression.getText() === "Math" &&
-        MATH_OPERATORS.has(node.name.text)) ||
-      // A literal may give a fraction or an integer beyond 32 bits, and a string may key a typed
-      // array by a fraction.
-      (ts.isNumericLiteral(node) &&
-        (!Number.isInteger(Number(node.text)) || Number(node.text) > 2 ** 31 - 1)) ||
-      (ts.isStringLiteral(node) && isFractionKey(node.text)) ||
-      (ts.forEachChild(node, usesSpecialNumbers) ?? false);
-    context.hasSpecialNumbers = roots.some(usesSpecialNumbers) || hasSpecialJsonNumbers(context);
+    context.hasSpecialNumbers = hasSpecialNumbers();
     // TypedKey finds a number that a string gives in Fractions by its text.
     const addFractionKeys = (node: ts.Node) => {
       if (ts.isStringLiteral(node) && isFractionKey(node.text)) {
@@ -1279,6 +1280,10 @@ export const compile = (
     isNodeScript && model.exported.length === 0
       ? { sourceFile, isEsModule: isEsModule(sourceFile) }
       : undefined;
+  // A script without objects computes with the same numbers, as no state holds them.
+  if (context.heap === undefined && context.script !== undefined) {
+    context.hasSpecialNumbers = hasSpecialNumbers();
+  }
   // Only where the heap holds every array, set, and map may an object that a value holds still be
   // shared, as the heap decided above found none otherwise.
   if (context.isEveryCollectionHeld) rejectSharing(shareable, context);
