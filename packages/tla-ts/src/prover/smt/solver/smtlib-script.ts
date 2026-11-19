@@ -711,6 +711,7 @@ export const runSmtlibScript = (
     setup: getSetup(),
     intHammerPeriod: getHammerPeriod(settings.parameters),
     isArithPropagatingEqs: settings.parameters.get("smt.arith.propagate_eqs") !== "false",
+    qiCost: settings.parameters.get("smt.qi.cost"),
   });
   const checkFdSolver = (fdSolver: FdSolver, extra: number[]) => {
     const result = fdSolver.check(extra);

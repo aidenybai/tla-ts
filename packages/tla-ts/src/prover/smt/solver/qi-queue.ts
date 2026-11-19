@@ -1,12 +1,20 @@
+import { SmtUnsupportedError } from "../../../errors";
 import { KIND_APP, KIND_VAR, OP_AND, OP_EQ, OP_FALSE, OP_ITE, OP_NOT, OP_OR, OP_TRUE } from "./ast";
 import type { Context } from "./context";
 import type { Enode } from "./enode";
+import { Rational } from "./rational";
 import { RefVector } from "./ref-vector";
 import { VarSubst } from "./var-subst";
 import { setAt, shrink } from "./array";
 
 const EAGER_COST_THRESHOLD = 10;
 const LAZY_COST_THRESHOLD = 20;
+
+const getConstantCost = (text: string | undefined) => {
+  if (text === undefined || text === "(+ weight generation)") return undefined;
+  if (!/^[0-9]+(\.[0-9]+)?$/.test(text)) throw new SmtUnsupportedError(`the qi.cost ${text}`);
+  return Rational.fromDecimal(text);
+};
 
 interface Entry {
   quantifier: number;
@@ -203,12 +211,15 @@ export class QiQueue {
   private bindingOwners: number[] = [];
   private lemmas: RefVector;
   private costExprs: number[];
+  private constantCost: number | undefined;
   numInstances = 0;
 
   constructor(private context: Context) {
     const manager = context.manager;
     this.checker = new Checker(context);
-    this.costExprs = manager.mkQiCostExprs();
+    const constantCost = getConstantCost(context.params.qiCost);
+    this.costExprs = manager.mkQiCostExprs(constantCost);
+    this.constantCost = constantCost?.toDouble();
     for (const expr of this.costExprs) manager.incRef(expr);
     // smt.qi.new_gen is the variable cost, so the queue holds that variable twice.
     manager.incRef(this.costExprs[0]);
@@ -252,7 +263,7 @@ export class QiQueue {
     this.newEntries.push({
       quantifier,
       bindings,
-      cost: weight + generation,
+      cost: this.constantCost ?? weight + generation,
       generation,
       isInstantiated: false,
     });

@@ -320,6 +320,9 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     ),
     intHammerPeriod: getHammerPeriod(environment.parameters),
     isArithPropagatingEqs: getParameter(environment, "smt.arith.propagate_eqs", "true") !== "false",
+    qiCost: params.has("qi.cost")
+      ? String(params.get("qi.cost"))
+      : environment.parameters.get("smt.qi.cost"),
   };
 };
 

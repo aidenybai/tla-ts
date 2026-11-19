@@ -239,6 +239,23 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
       ]),
     ).toEqual(["unknown", "(:rlimit 981)"]);
   });
+
+  it("costs each instance 0 under the qi.cost of the AUFLIA tactic", () => {
+    expect(
+      run([
+        "(set-logic AUFLIA)",
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)) :weight 20)))",
+        "(assert (= (g a) (f b)))",
+        "(assert (> (g b) (f a)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 593)"]);
+  });
 });
 
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {
