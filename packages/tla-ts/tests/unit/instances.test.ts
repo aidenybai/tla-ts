@@ -385,6 +385,21 @@ describe("INSTANCE matches TLC", () => {
       ).rejects.toThrow(new TlaConfigError(message));
     },
   );
+
+  it("applies a standard operator an instance with parameters imports to its own arguments, where TLC fails", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nI(c) == INSTANCE Sub\nAp(Op(_, _), v) == Op(5, v)\nASSUME PrintT(<<I(5)!Len(<<1, 2>>), I(5)!+(1, 2), I(5)!-.(3), 2 \\in I(5)!Nat, I(5)!Append(<<1>>, 2), Ap(I!Len, <<4>>)>>)\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Sub"
+          ? "---- MODULE Sub ----\nEXTENDS Integers, Sequences\nCONSTANT c\n===="
+          : undefined,
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["<<2, 3, -3, TRUE, <<1, 2>>, 1>>"]]);
+  });
 });
 
 const INNER_MODULES: Record<string, string> = {

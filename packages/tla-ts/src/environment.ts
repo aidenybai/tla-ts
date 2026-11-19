@@ -306,6 +306,7 @@ export const createEnvironment = (
   const standardExports = new Map<string, Symbols>();
   const standardSources = new Map<string, LinkedModule>();
   const replacedDefinitions = new Map<string, Definition>();
+  const builtinAliases = new Map<string, string>();
   const runtime = createRuntime(config.checkDeadlock, options.seed);
   runtime.isWarningEnabled = options.isWarningEnabled ?? true;
   runtime.isTool = options.isTool ?? false;
@@ -681,11 +682,14 @@ export const createEnvironment = (
       createName,
       frame,
     });
-    return getInstanceSymbols(instance, linked.exported, declarations, (key, name) => {
+    return getInstanceSymbols(instance, linked.exported, declarations, (symbol, name) => {
+      const key = symbol.key;
       const copy =
         instance.name === undefined
           ? instantiation.getKey(key)
-          : instantiation.getQualifiedKey(key);
+          : params.length > 0 && builtins.has(key) && !definitions.has(key)
+            ? addOwnArgumentsAlias(symbol, name, params, module.name, instance.location)
+            : instantiation.getQualifiedKey(key);
       if (declarations.length > 0) {
         instanceActions.set(copy, {
           name,
@@ -719,7 +723,7 @@ export const createEnvironment = (
     instance: Instance,
     exported: Symbols,
     declarations: Declaration[],
-    getKey: (key: string, name: string) => string,
+    getKey: (symbol: ModuleSymbol, name: string) => string,
   ): Symbols => {
     const declared = new Set(declarations.map((declaration) => declaration.name));
     return new Map(
@@ -745,7 +749,7 @@ export const createEnvironment = (
             return [
               entry[0],
               {
-                key: getKey(entry[1].key, entry[0]),
+                key: getKey(entry[1], entry[0]),
                 arity: entry[1].arity,
                 params: entry[1].params,
                 kind: entry[1].kind,
@@ -769,7 +773,7 @@ export const createEnvironment = (
           return [
             qualified,
             {
-              key: entry[1].kind === "Instance" ? qualified : getKey(entry[1].key, qualified),
+              key: entry[1].kind === "Instance" ? qualified : getKey(entry[1], qualified),
               arity: entry[1].arity + instance.params.length,
               params: entry[1].params && [
                 ...instance.params.map((param) => param.arity),
@@ -790,6 +794,22 @@ export const createEnvironment = (
       name: `argument${index}`,
       arity: params?.[index] ?? 0,
     }));
+
+  // Deviation from TLC: TLC applies a Java override to the arguments of an instance with parameters too, which fails.
+  const addOwnArgumentsAlias = (
+    symbol: ModuleSymbol,
+    name: string,
+    params: OperatorParam[],
+    instancer: string,
+    location: SourceLocation,
+  ) => {
+    const key = createName(`${symbol.key}${KEY_SEPARATOR}${instancer}`);
+    const own = createArgumentParams(symbol.arity, symbol.params);
+    definitions.set(key, createLocalAlias(key, symbol.key, [...params, ...own], own, location));
+    builtinAliases.set(key, symbol.key);
+    instanceNames.set(key, name);
+    return key;
+  };
 
   const getSubstitutionBody = (
     replacement: Expression,
@@ -1110,7 +1130,12 @@ export const createEnvironment = (
         const declarations = getDeclarations(linked);
         return {
           declarations,
-          symbols: getInstanceSymbols(instance, linked.exported, declarations, (key) => key),
+          symbols: getInstanceSymbols(
+            instance,
+            linked.exported,
+            declarations,
+            (symbol) => symbol.key,
+          ),
           instancer: parsed.name,
         };
       },
@@ -1159,17 +1184,19 @@ export const createEnvironment = (
       ),
       (name) => {
         const symbol = visible.get(name);
-        const definition = symbol && definitions.get(symbol.key);
+        const definition =
+          symbol && !builtinAliases.has(symbol.key) ? definitions.get(symbol.key) : undefined;
         return definition ? { ...definition, name } : scope.getDefinition(name);
       },
       (name) => {
         const symbol = visible.get(name);
-        if (symbol?.kind !== "Definition" || !builtins.has(symbol.key)) return undefined;
-        const source = getStandardModule(symbol.key);
+        const builtin = symbol && (builtinAliases.get(symbol.key) ?? symbol.key);
+        if (symbol?.kind !== "Definition" || !builtin || !builtins.has(builtin)) return undefined;
+        const source = getStandardModule(builtin);
         const key =
           source !== undefined && getSanyStandardModules(runtime.version).has(source)
-            ? getStandardSource(source).visible.get(symbol.key)?.key
-            : symbol.key;
+            ? getStandardSource(source).visible.get(builtin)?.key
+            : builtin;
         const definition = key === undefined ? undefined : replacedDefinitions.get(key);
         if (definition?.kind !== "Operator") return definition && { ...definition, name };
         return {
