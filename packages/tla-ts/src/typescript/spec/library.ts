@@ -96,9 +96,11 @@ const GATED_GROUPS = [
   "89",
 ];
 
-// String methods that make regular expressions.
+// String methods that make regular expressions, and the methods of collections and arrays that
+// give iterators, whose helpers, such as every and map, a program may call.
 const EXTRA_TRIGGERS = new Map([
   ["83-regexp", ["match", "matchAll", "replace", "replaceAll", "search", "split"]],
+  ["81-iterator.tla", ["values", "keys", "entries"]],
 ]);
 
 export const createLibrary = (directory: string): Library => {
