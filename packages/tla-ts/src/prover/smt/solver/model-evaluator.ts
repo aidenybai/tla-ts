@@ -64,7 +64,8 @@ export class ModelEvaluator extends RewriterTpl {
     this.rewriter = new Rewriter(manager, {
       ...TACTIC_REWRITER_OPTIONS,
       bv: { ...DEFAULT_BV_OPTIONS, isHiDiv0: manager.isHiDiv0, isMkbv2num: true },
-      isExpandingSelects: true,
+      isExpandingSelectStores: true,
+      isExpandingSelectItes: true,
     });
     this.rewriter.releaseResult = () => this.setLastResult(-1);
   }

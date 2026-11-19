@@ -1008,6 +1008,7 @@ describe("the optimizer releases what Z3 releases", () => {
         hasDefinitions: () => false,
         destructors: [],
         cleanups: [],
+        inits: [],
       },
       { getBaseModel: () => null, setModel: () => {} },
       {
@@ -1683,6 +1684,10 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
       "unsat",
       "(:rlimit 14390)",
     ]);
+    expect(run(["(set-option :lp.int_hammer_period 2.0)", ...lines])).toEqual([
+      "unsat",
+      "(:rlimit 16751)",
+    ]);
     expect(
       run([
         "(set-option :sat.euf true)",
@@ -1695,13 +1700,30 @@ describe("the models check-sat-using leaves, as Z3 5.3.2 makes them", () => {
     ).toEqual(["unsat", "(:rlimit 4414)", "unsat", "(:rlimit 7199)"]);
   });
 
-  it("rejects the other options of lp, and a hammer period that is not a numeral", () => {
+  it("reads smt.arith.propagate_eqs in the kernel and in the smt tactic", () => {
+    const lines = [
+      "(set-option :smt.arith.propagate_eqs false)",
+      "(declare-const x Int)",
+      "(declare-const y Int)",
+      "(declare-fun f (Int) Int)",
+      "(assert (<= x y))",
+      "(assert (<= y x))",
+      "(assert (not (= (f x) (f y))))",
+    ];
+    expect(run([...lines, "(check-sat)", "(get-info :rlimit)"])).toEqual([
+      "unsat",
+      "(:rlimit 196)",
+    ]);
+    expect(run([...lines, "(check-sat-using smt)", "(get-info :rlimit)"])).toEqual([
+      "unsat",
+      "(:rlimit 142)",
+    ]);
+  });
+
+  it("rejects the other options of lp", () => {
     const lines = ["(declare-const x Int)", "(assert (>= (* 3 x) 101))", "(check-sat)"];
     expect(() => run(["(set-option :lp.random_hammers false)", ...lines])).toThrow(
       new SmtUnsupportedError("the option :lp.random_hammers"),
-    );
-    expect(() => run(["(set-option :lp.int_hammer_period 2.0)", ...lines])).toThrow(
-      new SmtUnsupportedError("the option :lp.int_hammer_period"),
     );
     expect(run(["(set-option :lp.int_hammer_period 4294967296)", ...lines])).toEqual([
       "(error \"line 1 column 35: invalid value '4294967296' for unsigned int parameter 'int_hammer_period'\")",
@@ -2427,6 +2449,17 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     );
   });
 
+  it("keeps the 1-bit zero Z3 makes as it starts the smt solver", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 1))",
+        "(assert (= x #b0))",
+        "(check-sat-using smt)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 50)"]);
+  });
+
   it("makes a declared sort at its first use, as psort_user_decl does", () => {
     const getModel = (before: string[], between: string[]) =>
       run([
@@ -2573,6 +2606,45 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
     ]);
   });
 
+  it("frees the children of or-else first to last", () => {
+    expect(
+      run([
+        "(declare-const y Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(push)",
+        "(assert (forall ((x Int)) (> (+ x 0 y) (* 1 a))))",
+        "(assert (and (<= 0 a) (<= a 1) (<= 0 b) (<= b 1) (> (+ a b (* 0 y)) 0)))",
+        "(apply (or-else (then simplify elim-uncnstr fail) (then simplify lia2card fail) skip) :print false)",
+        "(pop)",
+        "(declare-const v0 (_ BitVec 3))",
+        "(declare-const v1 (_ BitVec 3))",
+        "(assert (bvult (bvmul v0 v1) #b010))",
+        "(assert (bvuge (bvadd v1 #b001) v0))",
+        "(apply (then simplify bit-blast))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  (let ((a!1 (= (or (not k!2) (not k!6) (not k!3) (not k!5))",
+        "                (= (or (not k!3) (not k!6)) (or (not k!2) (not k!7))))))",
+        "    (= a!1 (or (not k!4) (not k!5))))",
+        "  (let ((a!1 (not (= k!7 (or (not k!5) (not k!6)))))",
+        "        (a!2 (or k!3 (not (or (not k!2) (not k!5)))))",
+        "        (a!3 (or (not (or (not k!2) (not k!5))) (= k!6 k!5))))",
+        "  (let ((a!4 (or (not (or k!3 (= k!6 k!5))) (not a!2) (not a!3))))",
+        "    (or (not (or k!4 a!1)) (not (or k!4 (not a!4))) (not (or a!1 (not a!4))))))",
+        "  (let ((a!1 (ite k!2",
+        "                  (ite k!3 (not (= k!6 k!5)) k!6)",
+        "                  (not (or (not k!3) (not k!5))))))",
+        "    (not a!1))",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("frees the atoms of the sat tactic, so a second check of QF_BV does Z3's work", () => {
     expect(
       run([
@@ -2701,6 +2773,70 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ]),
     ).toEqual(["sat", "(:rlimit 408)", "sat", "(:rlimit 882)"]);
   });
+
+  it("frees the terms the kernel of the smt tactic makes, so QF_FD numbers the next ones", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (> (+ x y) 3))",
+        "(assert (< (* 2 x) y))",
+        "(check-sat-using smt)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or (and p q) (and (not p) r) (and q (not r))))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(goals",
+        "(goal",
+        "  (not (<= (+ x y) 3))",
+        "  (not (<= y (* 2 x)))",
+        "  (or r p q)",
+        "  (or (not p) q)",
+        "  (or (not p) (not r) q)",
+        "  (or r q)",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("frees the values of the proto model with the kernel of the smt tactic", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult a b))",
+        "(assert (= (bvadd a b) #x9))",
+        "(check-sat-using smt)",
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or (and p q) (and (not p) r) (and q (not r))))",
+        "(apply tseitin-cnf)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(goals",
+        "(goal",
+        "  (not (bvule b a))",
+        "  (= a (bvadd #x9 (bvmul #xf b)))",
+        "  (or r p q)",
+        "  (or (not p) q (not r))",
+        "  (or (not p) q)",
+        "  (or r q)",
+        "  :precision precise :depth 2)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
 });
 
 describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
@@ -2741,6 +2877,23 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ).toEqual(["unknown", "(:rlimit 567)", "unknown", "(:rlimit 1053)"]);
   });
 
+  it("frees and-then's subgoals when a branch fails", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then split-clause dt2bv smt)")',
+        "(declare-datatypes ((C 0)) (((r) (g) (b))))",
+        "(declare-const x C)",
+        "(declare-const q Real)",
+        "(assert (= (^ 2.0 q) 3.0))",
+        "(assert (or (= x b) true))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 344)", "unknown", "(:rlimit 686)"]);
+  });
+
   it("reads tactic.default_tactic as it makes the solver", () => {
     expect(
       run([
@@ -2774,5 +2927,96 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
         "(get-info :rlimit)",
       ]),
     ).toEqual(["unsat", "unknown", '(:reason-unknown "no reason given")', "(:rlimit 87)"]);
+  });
+
+  it("reads tactic.default_tactic as one s-expression", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(fail-if true)")',
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 10: invalid probe, unknown builtin probe true")',
+      "(:rlimit 0)",
+    ]);
+  });
+
+  it("builds tactic.default_tactic as it makes the solver", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(fail-if true)")',
+        "(declare-const q Real)",
+        "(assert (> q 0.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 10: invalid probe, unknown builtin probe true")',
+      '(error "line 3 column 11: unknown constant q")',
+      "unknown",
+      "(:rlimit 0)",
+    ]);
+  });
+
+  it("reports the parse errors of tactic.default_tactic under an empty file name", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then smt")',
+        "(declare-const q Real)",
+        "(assert (> q 0.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error ": line 1 column 10: invalid s-expression, unexpected end of file")',
+      "sat",
+      "(:rlimit 69)",
+    ]);
+  });
+
+  it("parses tactic.default_tactic as a user's tactic, without the lazy combinator", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(lazy smt)")',
+        "(declare-const q Real)",
+        "(assert (> q 0.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 10: invalid tactic, unknown tactic combinator lazy")',
+      '(error "line 3 column 11: unknown constant q")',
+      "unknown",
+      "(:rlimit 0)",
+    ]);
+  });
+
+  it("ignores an empty tactic.default_tactic", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "")',
+        "(declare-const q Real)",
+        "(assert (> q 0.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 69)"]);
+  });
+
+  it("reports a closing parenthesis that starts tactic.default_tactic", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic ")")',
+        "(declare-const q Real)",
+        "(assert (> q 0.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      `(error ": line 1 column 1: invalid s-expression, unexpected ')'")`,
+      "sat",
+      "(:rlimit 69)",
+    ]);
   });
 });

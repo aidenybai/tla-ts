@@ -112,7 +112,7 @@ export abstract class ArithInternalize extends ThSolver {
   constructor(ctx: EufSolver, id: number, hammerPeriod: number) {
     super(ctx, "arith", id);
     this.solver = new LarSolver(() => !ctx.manager.limit.inc());
-    this.solver.settings.updateParams(hammerPeriod);
+    this.solver.settings.updateParams(hammerPeriod, true);
   }
 
   protected isIntVar(thVar: number) {

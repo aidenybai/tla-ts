@@ -560,9 +560,11 @@ const Z3_SMALL_IDS = new Map([
   [OP_U_ACOS, 71],
 ]);
 
-const FIRST_DECLARED_SMALL_ID = 143;
+const FIRST_FREE_SMALL_ID = 142;
 
-const FIRST_FREE_ID = 22;
+const NUM_QI_COST_VARS = 15;
+const QI_COST_GENERATION = 6;
+const QI_COST_WEIGHT = 8;
 const MAX_SMALL_NUM_TO_CACHE = 16;
 const NUM_FINITE_SET_PLUGIN_SORTS = 7;
 
@@ -699,9 +701,9 @@ export class AstManager {
   private appHandles = new Int32Array(1024).fill(-1);
   private appHashes = new Int32Array(1024);
   private numApps = 0;
-  private nextSmallId = FIRST_DECLARED_SMALL_ID;
+  private nextSmallId = FIRST_FREE_SMALL_ID;
   private freeSmallIds: number[] = [];
-  private numDecls = FIRST_DECLARED_SMALL_ID;
+  private numDecls = FIRST_FREE_SMALL_ID;
   private signatureDecls = new Map<number | string, SignatureDecl>();
   private declRefCounts: number[] = [];
   readonly macros = new ObjMap<number>((decl) => this.declHashes[decl]);
@@ -728,6 +730,7 @@ export class AstManager {
   readonly falseExpr: number;
   readonly piExpr: number;
   readonly eulerExpr: number;
+  private startupExprs: number[];
   isHiDiv0 = true;
   maxChar = 196607;
   charBits = 18;
@@ -765,7 +768,9 @@ export class AstManager {
     this.eulerExpr = this.mkApp(OP_E, [], SORT_REAL);
     this.incRef(this.piExpr);
     this.incRef(this.eulerExpr);
-    this.nextId = FIRST_FREE_ID;
+    // Z3 makes its first smt solver before any declared term, so the manager makes its terms first.
+    this.startupExprs = [this.mkBvNumeral(0n, 1), ...this.mkQiCostExprs()];
+    for (const expr of this.startupExprs) this.incRef(expr);
   }
 
   getRefCount(expr: number) {
@@ -773,7 +778,7 @@ export class AstManager {
   }
 
   getNumAsts() {
-    return this.numLive + FIRST_FREE_ID - 4 + this.numDecls;
+    return this.numLive + 1 + this.numDecls;
   }
 
   private getSignatureDecl(key: number | string) {
@@ -796,9 +801,20 @@ export class AstManager {
     this.numDecls--;
   }
 
-  dropSmtSolverDecl() {
-    this.freeSmallIds.push(FIRST_DECLARED_SMALL_ID - 1);
-    this.numDecls--;
+  // Last to first, so the next expressions take the ids in order, as if Z3 never made them.
+  dropStartupExprs() {
+    for (const expr of this.startupExprs.reverse()) this.decRef(expr);
+    this.startupExprs = [];
+  }
+
+  mkQiCostExprs() {
+    const vars = Array.from({ length: NUM_QI_COST_VARS }, (_value, index) =>
+      this.mkVar(index, SORT_REAL),
+    );
+    return [
+      ...vars,
+      this.mkApp(OP_ADD, [vars[QI_COST_WEIGHT], vars[QI_COST_GENERATION]], SORT_REAL),
+    ];
   }
 
   mkMacro(name: string, expr: number) {

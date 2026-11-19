@@ -92,7 +92,8 @@ export interface RewriterOptions {
   readonly localCtxLimit?: number;
   readonly isCoalescingChars?: boolean;
   readonly isSortingStore?: boolean;
-  readonly isExpandingSelects?: boolean;
+  readonly isExpandingSelectStores?: boolean;
+  readonly isExpandingSelectItes?: boolean;
 }
 
 export const KERNEL_REWRITER_OPTIONS: RewriterOptions = {
@@ -142,7 +143,12 @@ export class Rewriter extends RewriterTpl {
         return typeof result === "number" ? result : result.expr;
       },
     });
-    this.array = new ArrayRewriter(manager, options.isSortingStore, options.isExpandingSelects);
+    this.array = new ArrayRewriter(
+      manager,
+      options.isSortingStore,
+      options.isExpandingSelectStores,
+      options.isExpandingSelectItes,
+    );
     this.seq = new SeqRewriter(manager, options.isCoalescingChars ?? true, this);
     this.unusedVarsEliminator = new UnusedVarsEliminator(manager);
     this.der = new Der(manager);

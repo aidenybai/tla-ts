@@ -1,4 +1,3 @@
-import { SmtDefaultError } from "../../../errors";
 import { type AstManager } from "./ast";
 import type { SmtSetup } from "./smt-setup";
 import { AssertedFormulas } from "./asserted-formulas";
@@ -24,6 +23,7 @@ export class SmtKernel {
       relevancyLevel: params.relevancyLevel ?? 2,
       randomSeed: params.randomSeed,
       intHammerPeriod: params.intHammerPeriod,
+      isArithPropagatingEqs: params.isArithPropagatingEqs,
     });
     this.setup = params.setup;
     this.isCoreMinimizing = params.isCoreMinimizing ?? false;
@@ -63,19 +63,12 @@ export class SmtKernel {
     const context = this.context;
     context.popToBaseLevel();
     this.setupContext(false);
-    const wasConsistent = !context.isInconsistent();
-    context.internalizeAssertions(this.asserted);
-    const limit = context.manager.limit;
-    if (!limit.inc()) throw new SmtDefaultError("push canceled");
-    const wasSuspended = limit.isSuspended;
-    limit.isSuspended = true;
-    if (!context.isInconsistent()) context.propagate();
-    if (wasConsistent && context.isInconsistent() && !this.asserted.isInconsistent)
-      context.resolveConflict();
-    limit.isSuspended = wasSuspended;
-    context.push();
-    this.asserted.push();
+    context.internalizeAndPush(this.asserted);
     this.scopeCount++;
+  }
+
+  release() {
+    this.context.release(this.asserted);
   }
 
   getAssertions() {
