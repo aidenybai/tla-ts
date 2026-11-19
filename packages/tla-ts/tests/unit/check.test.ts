@@ -1705,6 +1705,20 @@ ASSUME TLCFP(a) = -887695703
     }
   });
 
+  it("ignores a value for a name the module doesn't declare, as TLC does", async () => {
+    const cases = [
+      ["CONSTANT N\nASSUME N = 1", "CONSTANT Foo = 1 N <- Foo", "N"],
+      ["CONSTANT F(_)\nASSUME F(1) = 1", "CONSTANT Foo(1) = 1 F <- Foo", "F"],
+    ];
+    for (const [body, config, name] of cases) {
+      await expect(checkModule(body, config)).rejects.toThrow(
+        new TlaConfigError(
+          `The configuration file substitutes for ${name} with the undefined identifier Foo.`,
+        ),
+      );
+    }
+  });
+
   it("reports a table's set that mixes types as the unexpected exception TLC throws", async () => {
     await expect(checkModule("CONSTANT F(_)", 'CONSTANT F(1) = {1, "a"}')).rejects.toThrow(
       new TlaEvaluationError(

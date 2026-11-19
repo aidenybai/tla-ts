@@ -138,7 +138,7 @@ const getModuleOrder = (module: LinkedModule, visited: Set<LinkedModule>): Linke
 
 export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): AppliedConfig => {
   const getRootKey = (name: string) => linked.rootKeys.get(name) ?? name;
-  const declaredConstants = linked.root.constants.map((constant) => constant.name);
+  const declaredConstants = new Set(linked.root.constants.map((constant) => constant.name));
   const getScopedSymbol = (item: { name: string; module?: string }) => {
     const symbol = linked.moduleSymbols.get(item.module ?? "")?.get(item.name);
     return symbol?.kind === "Definition" ? symbol : undefined;
@@ -148,8 +148,15 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     const symbol = getScopedSymbol(item);
     return symbol ? [symbol.key] : [];
   };
+  const isDefined = (name: string) => {
+    const key = getRootKey(name);
+    return linked.definitions.has(key) || linked.builtins.has(key) || declaredConstants.has(name);
+  };
+  // SpecProcessor#processConstants reads the value of a root name only for a constant or a definition.
   const getScopedKeys = (item: { name: string; module?: string }) =>
-    item.module === linked.root.module.name ? [] : getSubstitutedKeys(item);
+    item.module === linked.root.module.name || (item.module === undefined && !isDefined(item.name))
+      ? []
+      : getSubstitutedKeys(item);
   const getKeyArity = (key: string) => {
     const definition = linked.definitions.get(key);
     return definition?.kind === "Operator"
@@ -251,13 +258,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     arity: number | undefined,
   ) => {
     if (others.has(target)) throw createReusedTargetError(target);
-    const targetKey = getRootKey(target);
-    const isDefined =
-      linked.definitions.has(targetKey) ||
-      linked.builtins.has(targetKey) ||
-      constants.has(targetKey) ||
-      declaredConstants.includes(target);
-    if (!isDefined) {
+    if (!isDefined(target)) {
       throw new TlaConfigError(
         `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
       );
@@ -290,7 +291,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     }
   });
   const missing = getHashtableOrder([...overrides.keys()]).find(
-    (name) => !declaredConstants.includes(name) && !rootDefinitions.includes(name),
+    (name) => !declaredConstants.has(name) && !rootDefinitions.includes(name),
   );
   if (missing !== undefined) throw createMissingError(missing);
   [...linked.moduleSymbols.keys()].forEach((module) => {
