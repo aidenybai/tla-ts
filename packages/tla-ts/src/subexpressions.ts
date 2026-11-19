@@ -332,7 +332,6 @@ const selectSubexpression = (
     return undefined;
   };
 
-  // SANY rejects selecting an ASSUME/PROVE, a NEW or anything in its scope, which the resolver reports from the reference.
   const isLeftToResolver = (selector: Selector | undefined) => {
     if (!current || !isAssumeProve(current)) return false;
     if (selector === undefined) return true;

@@ -804,8 +804,11 @@ export const createEnvironment = (
     location: SourceLocation,
   ) => {
     const key = createName(`${symbol.key}${KEY_SEPARATOR}${instancer}`);
-    const own = createArgumentParams(symbol.arity, symbol.params);
-    definitions.set(key, createLocalAlias(key, symbol.key, [...params, ...own], own, location));
+    const ownParams = createArgumentParams(symbol.arity, symbol.params);
+    definitions.set(
+      key,
+      createLocalAlias(key, symbol.key, [...params, ...ownParams], ownParams, location),
+    );
     builtinAliases.set(key, symbol.key);
     instanceNames.set(key, name);
     return key;
@@ -1190,8 +1193,9 @@ export const createEnvironment = (
       },
       (name) => {
         const symbol = visible.get(name);
-        const builtin = symbol && (builtinAliases.get(symbol.key) ?? symbol.key);
-        if (symbol?.kind !== "Definition" || !builtin || !builtins.has(builtin)) return undefined;
+        if (symbol?.kind !== "Definition") return undefined;
+        const builtin = builtinAliases.get(symbol.key) ?? symbol.key;
+        if (!builtins.has(builtin)) return undefined;
         const source = getStandardModule(builtin);
         const key =
           source !== undefined && getSanyStandardModules(runtime.version).has(source)

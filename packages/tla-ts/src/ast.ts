@@ -652,15 +652,14 @@ const ASSUME_PROVE_OPERATOR = "$AssumeProve";
 
 const NEW_DECLARATION = "$New";
 
-// An ASSUME/PROVE as an expression TLC can't evaluate. Its operands are its clauses up to its first NEW, as nothing in the NEW's scope can be selected from outside it.
 // Deviation from TLC: TLC never processes the numbers in an ASSUME/PROVE, so a clause selected with arguments, as P(1)!T!1, fails with a NullPointerException.
 export const getAssumeProveExpression = (assumeProve: AssumeProve): Expression => {
   const assumptions = assumeProve.assumptions;
-  const declaration = assumptions.findIndex((assumption) => assumption.kind === "NewSymbol");
+  const declarationIndex = assumptions.findIndex((assumption) => assumption.kind === "NewSymbol");
   const clauses =
-    declaration === -1
+    declarationIndex === -1
       ? [...assumptions, assumeProve.conclusion]
-      : assumptions.slice(0, declaration + 1);
+      : assumptions.slice(0, declarationIndex + 1);
   return {
     kind: "Apply",
     operator: ASSUME_PROVE_OPERATOR,
@@ -679,11 +678,7 @@ export const isAssumeProve = (expression: Expression) =>
   expression.kind === "Apply" && expression.operator === ASSUME_PROVE_OPERATOR;
 
 export const getAssumeProveBody = (body: Expression): Expression | undefined =>
-  body.kind === "Let"
-    ? getAssumeProveBody(body.body)
-    : isAssumeProve(body)
-      ? body
-      : undefined;
+  body.kind === "Let" ? getAssumeProveBody(body.body) : isAssumeProve(body) ? body : undefined;
 
 export const isNewDeclaration = (expression: Expression | undefined) =>
   expression?.kind === "Identifier" && expression.name === NEW_DECLARATION;
