@@ -1305,16 +1305,13 @@ const parse = (
       return { kind: "Lambda", params, body: parseExpression(), location };
     }
     // SANY's Number() reads NUMBER_LITERAL [DOT NUMBER_LITERAL], so spaces and comments may surround the point.
-    if (
-      token.kind === "Number" &&
-      !isTlapm &&
-      isAt(".") &&
-      peek(1).kind === "Number" &&
-      !token.text.startsWith("\\") &&
-      !peek(1).text.startsWith("\\")
-    ) {
+    if (token.kind === "Number" && !isTlapm && isAt(".") && peek(1).kind === "Number") {
       advance();
-      return { kind: "Decimal", text: `${token.text}.${advance().text}`, location };
+      const fraction = advance();
+      const based = [token, fraction].find((part) => part.text.startsWith("\\"));
+      // Deviation from SANY: DecimalNode throws NumberFormatException on a based part, as in \b1.1; tla-ts rejects the part as a syntax error.
+      if (based) throw createError(`Expected decimal digits but found ${based.text}`, based);
+      return { kind: "Decimal", text: `${token.text}.${fraction.text}`, location };
     }
     if (token.kind === "Number")
       return { kind: "Number", value: getNumeralValue(token.text), text: token.text, location };

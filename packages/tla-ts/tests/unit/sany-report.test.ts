@@ -441,6 +441,17 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it.each([
+    ["\\b1.1", "\\b1", 6],
+    ["1 . \\h1F", "\\h1F", 10],
+  ])("rejects the decimal %s with a based part, where SANY crashes", (decimal, part, column) => {
+    const report = getReport({ M: `---- MODULE M ----\nA == ${decimal}\n====\n` });
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(
+      `***Parse Error***\nExpected decimal digits but found ${part} at line 2, column ${column}\n`,
+    );
+  });
+
   it("reports DEF clause entries of bracketed, quantified and infix shapes as SANY does", () => {
     const report = getReport({
       M: "---- MODULE M ----\nA == 1\nB == 2\nTHEOREM TRUE BY DEF CASE A -> 1 [] OTHER -> 2, [a |-> 1], [a : {}], A\nTHEOREM TRUE BY DEF [v \\in {} |-> 1], \\A v, w \\in {} : TRUE, A\nTHEOREM TRUE BY DEF LET Q == 1 IN Q, A \\X B, A /\\ B, {A \\/ B}, A\nTHEOREM TRUE BY DEF [A EXCEPT ![1] = 2], [A -> B], {A : v \\in {}}, WF_A(B), A\nTHEOREM TRUE BY DEF /\\ A\n                    /\\ B\n====\n",
