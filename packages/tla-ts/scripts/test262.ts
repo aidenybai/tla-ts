@@ -3922,26 +3922,27 @@ const isEarlyError = (code: number) =>
 const isModuleSyntaxError = (source: string) =>
   spawnSync(process.execPath, ["--input-type=module", "--check"], { input: source }).status !== 0;
 
-// The first error of TypeScript's parser in a program, which it reports even where Node runs the
-// syntax, as for a private name after ?.
-const getParseError = (text: string, kind: ts.ScriptKind) => {
-  const sourceFile = ts.createSourceFile(
-    kind === ts.ScriptKind.JS ? "/parsed.js" : "/parsed.ts",
-    text,
-    ts.ScriptTarget.Latest,
-    false,
-    kind,
-  );
-  const host = ts.createCompilerHost({});
+// The first error of TypeScript's parser in a program, parsed as the compiler parses it: by its
+// path's extension, and as a module or a script as its module detection decides. TypeScript reports
+// some syntax that Node runs, as a private name after ?.
+const getParseError = (text: string, path: string, moduleDetection: ts.ModuleDetectionKind) => {
   const program = ts.createProgram({
-    rootNames: [sourceFile.fileName],
-    options: { allowJs: true, noLib: true, noResolve: true, types: [] },
+    rootNames: [path],
+    options: {
+      target: ts.ScriptTarget.ESNext,
+      module: ts.ModuleKind.ESNext,
+      moduleDetection,
+      allowJs: true,
+      noLib: true,
+      noResolve: true,
+      types: [],
+    },
     host: {
-      ...host,
-      getSourceFile: (path) => (path === sourceFile.fileName ? sourceFile : undefined),
+      ...ts.createCompilerHost({}),
+      getSourceFile: (fileName, options) => ts.createSourceFile(fileName, text, options),
     },
   });
-  return program.getSyntacticDiagnostics(sourceFile).at(0);
+  return program.getSyntacticDiagnostics().at(0);
 };
 
 const isNodeSyntaxError = (source: string) => {
@@ -4536,10 +4537,24 @@ const runTest = async (path: string): Promise<TestRun> => {
     }
   })();
   if (annotated === undefined) return { id, outcome: "skipped", reason: "TypeScript fails" };
-  // A program that TypeScript's parser rejects both as TypeScript and as JavaScript is one that
-  // tla-ts compiles neither way, and that TypeScript's emitter may fail to print for Node.
+  const isSloppy = metadata.flags.includes("noStrict");
+  // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
+  // Node runs it as a module.
+  const program = isSloppy ? annotated : `"use strict"; ${annotated}`;
+  const compiledPath = isLinked ? programPath : "test262.ts";
+  // A program that TypeScript's parser rejects both as TypeScript and as the JavaScript that a test
+  // runs as where TypeScript rejects it is one that tla-ts compiles neither way, and that
+  // TypeScript's emitter may fail to print for Node. A noStrict test runs as JavaScript as a script
+  // after the harness's.
   const parseError =
-    getParseError(annotated, ts.ScriptKind.TS) && getParseError(source, ts.ScriptKind.JS);
+    getParseError(program, compiledPath, ts.ModuleDetectionKind.Force) &&
+    (isSloppy
+      ? getParseError(source, JAVASCRIPT_PATH, ts.ModuleDetectionKind.Legacy)
+      : getParseError(
+          metadata.isModule ? source : nameGlobalObject(source),
+          JAVASCRIPT_PATH,
+          ts.ModuleDetectionKind.Force,
+        ));
   if (parseError !== undefined) {
     return {
       id,
@@ -4547,7 +4562,6 @@ const runTest = async (path: string): Promise<TestRun> => {
       reason: `TypeScript rejects its syntax: ${ts.flattenDiagnosticMessageText(parseError.messageText, " ")}`,
     };
   }
-  const isSloppy = metadata.flags.includes("noStrict");
   const nodeError = metadata.isModule
     ? getModuleError(annotated, isLinked ? programPath.replace(/\.ts$/, ".js") : undefined)
     : isImporting
@@ -4556,31 +4570,22 @@ const runTest = async (path: string): Promise<TestRun> => {
   if (nodeError !== undefined) {
     return { id, outcome: "skipped", reason: `Node fails: ${getFirstLine(nodeError)}` };
   }
-  // A noStrict test runs outside strict mode, as a script, and any other runs in strict mode, as
-  // Node runs it as a module.
-  const program = isSloppy ? annotated : `"use strict"; ${annotated}`;
   // A linked test's own file is on disk, as its fixtures are, so that TypeScript resolves an
   // import of the test's .js path to the test's code rather than to the .js that Node runs.
   if (isLinked) writeFileSync(programPath, program);
   // A test outside strict mode runs as a script, and can't import fixtures as one. The ESCore
   // backend compiles one script, so it can't run one after the harness's.
-  return checkProgram(
-    id,
-    program,
-    isLinked ? programPath : "test262.ts",
-    metadata.isModule,
-    [],
-    (reason) =>
-      isSloppy && (isLinked || ESCORE !== undefined)
-        ? { id, outcome: "skipped", reason: `type error: ${reason}` }
-        : isSloppy
-          ? runJavaScriptScriptTest(id, source, metadata)
-          : runJavaScriptTest(
-              id,
-              metadata.isModule ? source : nameGlobalObject(source),
-              metadata,
-              fixtures,
-            ),
+  return checkProgram(id, program, compiledPath, metadata.isModule, [], (reason) =>
+    isSloppy && (isLinked || ESCORE !== undefined)
+      ? { id, outcome: "skipped", reason: `type error: ${reason}` }
+      : isSloppy
+        ? runJavaScriptScriptTest(id, source, metadata)
+        : runJavaScriptTest(
+            id,
+            metadata.isModule ? source : nameGlobalObject(source),
+            metadata,
+            fixtures,
+          ),
   );
 };
 
