@@ -40,7 +40,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.18.1
+          node-version: 26.13.1
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter tla-ts conformance:fetch
@@ -65,7 +65,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.18.1
+          node-version: 26.13.1
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter tla-ts conformance:fetch
