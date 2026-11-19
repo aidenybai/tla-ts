@@ -27,7 +27,7 @@ UnitsToString(units) ==
   ELSE IF Head(units) \notin DOMAIN CharacterOf THEN Assert(FALSE, "tla-ts can't show a string of a character TLA+ strings lack")
   ELSE CharacterOf[Head(units)] \o UnitsToString(Tail(units))
 \* The value that the module binds to name.
-BindingValue(s, name) == GetValue(s, Val(ResolveBinding(s, ScriptContext(s), name, TRUE)))
+BindingValue(s, name) == GetValue(s, Val(ResolveBinding(s, ModelContext(s), name, TRUE)))
 \* A call of the function that the module binds to name, and the jobs and timers it leaves.
 ModelCall(s, name, args) ==
   LET f == BindingValue(s, name) IN
@@ -239,6 +239,17 @@ export const compileModelToEscore = (
   // Whether the state may lower out of ESCore's heap, which a test turns off to check the heap.
   isLowerable = true,
 ): EscoreModel => {
+  // The module's text with its JSX the calls it compiles to, which the steps run.
+  const text = getJsxText(fileName, source);
+  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
+  // A model that imports files runs as the ES module it is, whose frame TypeScript's checker gives.
+  const isModule = file.statements.some(
+    (statement) =>
+      (ts.isImportDeclaration(statement) && statement.importClause?.isTypeOnly !== true) ||
+      (ts.isExportDeclaration(statement) &&
+        statement.moduleSpecifier !== undefined &&
+        !statement.isTypeOnly),
+  );
   const today = frameModel(source, fileName, library);
   if (today.isScript) {
     throw new TlaTypeScriptError("tla-ts compiles a script, not a model, to ESCore this way");
@@ -249,9 +260,6 @@ export const compileModelToEscore = (
     module.definitions.map((definition) => [definition.name, definition]),
   );
   const variables = new Set(module.variables.map((variable) => variable.name));
-  // The module's text with its JSX the calls it compiles to, which the steps run.
-  const text = getJsxText(fileName, source);
-  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
   // The module's exported functions, by name, with their parameters and tags.
   const exported = new Map<
     string,
@@ -784,15 +792,15 @@ export const compileModelToEscore = (
       ? [{ name: conjunct.args[0].name, domain: conjunct.args[1] }]
       : [],
   );
-  // A model without state, whose checks read none, runs the module's top level once as its
-  // assumptions do, and has no states, as today's spec has none.
+  // A model without state variables or actions has one state, the one its module's top level
+  // leaves, which no step compares with another, so it keeps it as it is.
   const isStateless = module.variables.length === 0 && actions.length === 0;
   const isAsync = /\b(?:async|Promise|then|setTimeout)\b/.test(text);
   // The bindings that the state lowers out of ESCore's heap, where the module lets it (see
   // lowered.ts), whose variable model holds them, and otherwise the variable heap holds ESCore's
   // state. A step's or a check's ESCore state is what the variable's value gives.
   const lowered =
-    isStateless || isAsync || !isLowerable
+    isStateless || isAsync || isModule || !isLowerable
       ? undefined
       : getLoweredBindings(file, new Set(choices.map((choice) => choice.name)));
   const variable = lowered === undefined ? "heap" : "model";
@@ -911,7 +919,7 @@ export const compileModelToEscore = (
         expression.body.kind === "Apply" &&
         expression.body.operator === "=" &&
         expression.definitions.some((definition) => definition.name === "result");
-  const current = isStateless ? "ApplyTo(StartState, InitialState)" : variable;
+  const current = variable;
   const defined = new Set<string>();
   const defineInvariant = (name: string) => {
     if (defined.has(name)) return;
@@ -937,9 +945,7 @@ export const compileModelToEscore = (
       const bounds = getBounds(name, body);
       const check = defineCheck(name, isCallCheck(body) ? "ReturnsOf" : "HoldsOf", bounds);
       defined.add(name);
-      steps.push(
-        `${name} == ${quantify(bounds, check("ApplyTo(StartState, InitialState)", boundNames(bounds)))}`,
-      );
+      steps.push(`${name} == ${quantify(bounds, check("ModelStartState", boundNames(bounds)))}`);
     }
   });
   // The temporal properties, from the tags of the functions that today's properties name.
@@ -1063,11 +1069,7 @@ export const compileModelToEscore = (
   ];
   steps.push(
     ...(isStateless
-      ? [
-          "Init == TRUE",
-          "ModuleRuns(s) == StartState(s).objs.size > 0",
-          "ASSUME ApplyTo(ModuleRuns, InitialState)",
-        ]
+      ? [`Init == ${variable} = ModelStartState`]
       : lowered === undefined
         ? initialSteps
         : [...loweredInitialSteps, ...initialSteps.slice(1)]),
@@ -1100,10 +1102,10 @@ export const compileModelToEscore = (
   const declarations = file.statements.flatMap((statement) =>
     ts.isVariableStatement(statement) ? statement.declarationList.declarations : [],
   );
-  // The module runs as a strict script, whose top-level declarations the steps read by name, so
-  // its declarations lose their export keywords.
+  // A module that imports none runs as a strict script, whose top-level declarations the steps
+  // read by name, so its declarations lose their export keywords.
   const exports = file.statements.flatMap((statement) =>
-    ts.canHaveModifiers(statement)
+    !isModule && ts.canHaveModifiers(statement)
       ? (ts.getModifiers(statement) ?? []).flatMap((modifier) =>
           modifier.kind === ts.SyntaxKind.ExportKeyword
             ? [{ start: modifier.getStart(), end: modifier.getEnd(), text: "" }]
@@ -1144,11 +1146,18 @@ export const compileModelToEscore = (
   ].join("\n");
   const modelSteps = [
     "CONSTANTS TsNull, TsUndefined",
-    ...(isStateless ? ["vars == <<>>"] : [`VARIABLE ${variable}`, `vars == <<${variable}>>`]),
+    `VARIABLE ${variable}`,
+    `vars == <<${variable}>>`,
     "CanonicalState(s) == CanonicalStateOf(s, InitialState)",
     settle,
+    // The scope that a step reads the module's bindings in: the script's, or the module's own.
+    isModule
+      ? "ModelContext(s) == ModuleContext(ModuleAt(s, s.moduleIds[<<s.realmId, 1>>]).env)"
+      : "ModelContext(s) == ScriptContext(s)",
     MODEL_DEFINITIONS,
     "ModelStart(s) == Completed(ApplyTo(RunProgram, s)).s",
+    // The state after the module's top level, which a model without state checks.
+    "ModelStartState == ApplyTo(ModelStart, InitialState)",
     ...(lowered === undefined
       ? [
           "StepEnd(s) == CanonicalState([s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]])",
@@ -1157,14 +1166,20 @@ export const compileModelToEscore = (
       : [...getLoweredSteps(lowered), NATIVE_DEFINITIONS, ...(native?.definitions ?? [])]),
     STEP_OF,
     ...steps,
-    ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, ${variable})`]),
+    `ModelAlias == ApplyTo(${alias}, ${variable})`,
   ].join("\n");
   // The module runs as an ES module does, in strict mode.
-  const compiled = compileToEscore(`"use strict";\n${augmented}`, fileName, runtime, false, {
-    steps: modelSteps,
-    entries: [...entries],
-    reads: CANONICAL_MODULE,
-  });
+  const compiled = compileToEscore(
+    isModule ? augmented : `"use strict";\n${augmented}`,
+    fileName,
+    runtime,
+    isModule,
+    {
+      steps: modelSteps,
+      entries: [...entries],
+      reads: CANONICAL_MODULE,
+    },
+  );
   const configLines = [
     ...compiled.config
       .trimEnd()
@@ -1186,7 +1201,7 @@ export const compileModelToEscore = (
     ...config.postconditions.map((name) => `POSTCONDITION ${name}`),
     ...(view === undefined ? [] : [`VIEW ${view}`]),
     ...(config.checkDeadlock ? [] : ["CHECK_DEADLOCK FALSE"]),
-    ...(isStateless ? [] : ["ALIAS ModelAlias"]),
+    "ALIAS ModelAlias",
     "",
   ];
   const assumptions = module.assumptions.flatMap((assumption) =>

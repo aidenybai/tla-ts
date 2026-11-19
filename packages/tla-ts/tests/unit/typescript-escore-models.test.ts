@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -135,6 +136,52 @@ const EXAMPLES = join(import.meta.dirname, "../fixtures/typescript/examples");
 const getCounts = (result: ModelResult) => [result.status, result.distinct, result.generated];
 
 describe("checks a module's exported functions as a model on ESCore", () => {
+  // A model that imports a file runs as an ES module, with the module it imports beside it.
+  describe("checks the exported functions of a model that imports a file", () => {
+    const directory = mkdtempSync(join(tmpdir(), "tla-ts-escore-plan-"));
+    afterAll(() => rmSync(directory, { recursive: true, force: true }));
+    writeFileSync(
+      join(directory, "flip.ts"),
+      "export const flip = (value: 0 | 1) => (value === 0 ? 1 : 0);\n",
+    );
+    const check = (body: string) => {
+      const source = `import { flip } from "./flip";\n${body}`;
+      writeFileSync(join(directory, "model.ts"), source);
+      return checkModel(source, join(directory, "model.ts"));
+    };
+
+    it("agrees with Node", async () => {
+      expect(
+        getCounts(
+          await check("export const isUndone = (value: 0 | 1) => flip(flip(value)) === value;\n"),
+        ),
+      ).toEqual(["success", 1, 1]);
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        getCounts(
+          await check("export const isUndone = (value: 0 | 1) => flip(value) === value;\n"),
+        ),
+      ).toEqual(["invariant-violation", 1, 1]);
+    });
+
+    it("fails where a call that only returns throws for a value it takes", async () => {
+      const result = await check(
+        'export const twice = (value: 0 | 1 | 2) => {\n  if (value === 2) throw new RangeError("two");\n  return flip(flip(value));\n};\n',
+      );
+      expect(result.message).toContain('"two"');
+    });
+
+    it("calls none of the functions whose parameters take values it can't list", async () => {
+      expect(
+        getCounts(
+          await check("export const isSame = (get: () => 0 | 1) => flip(get()) === get();\n"),
+        ),
+      ).toEqual(["success", 1, 1]);
+    });
+  });
+
   describe("checks the port of DieHard.tla as TLC checks the ESCore model", () => {
     const path = join(EXAMPLES, "die-hard/die-hard.ts");
     const source = readFileSync(path, "utf8");
