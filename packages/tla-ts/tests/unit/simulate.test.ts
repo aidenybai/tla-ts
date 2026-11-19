@@ -218,6 +218,39 @@ it("draws on the generator of TLC's Simulator thread as it prints a behavior and
   expect([status, aliases, printed]).toEqual([12, [73, 91, 91], ['<<"post", "4", 69>>']]);
 });
 
+it("rejects a constant postcondition after a violation, as TLC's Simulator does", () => {
+  const getOutcome = (invariant: string) => {
+    const messages: [number, string][] = [];
+    const status = simulate({
+      source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nInv == ${invariant}\nPost == TRUE\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nPOSTCONDITION Post",
+      seed: 4n,
+      traceDepth: 5,
+      traceCount: 1n,
+      aril: 0n,
+      isGenerating: false,
+      scheduler: "random",
+      onSimulation: (output) => {
+        if (output.kind === "message" && output.isError) {
+          messages.push([output.code, output.message]);
+        }
+      },
+    });
+    return [status, messages];
+  };
+  expect(() => getOutcome("x < 2")).toThrow("The post condition Post cannot be a constant.");
+  expect(getOutcome("x # 0")).toEqual([
+    255,
+    [
+      [2107, "Invariant Inv is violated by the initial state:\nx = 0\n"],
+      [
+        2102,
+        "The post condition Post cannot be a constant.\nWhile working on the initial state:\nx = 0\n",
+      ],
+    ],
+  ]);
+});
+
 const getCounterExample = (body: string, config: string) => {
   const printed: string[] = [];
   simulate({
