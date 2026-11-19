@@ -12,7 +12,7 @@ import type { LinkedModule } from "./environment";
 import type { Builtin } from "./evaluate";
 import { createLocalAlias } from "./instances";
 import type { Symbols } from "./resolve";
-import type { TlcOrder } from "./tlc/order";
+import { getHashtableOrder, type TlcOrder } from "./tlc/order";
 import {
   createModelValue,
   formatValue,
@@ -119,6 +119,23 @@ const createReusedTargetError = (target: string) =>
     `In the configuration file, the identifier ${target} appears\non the right-hand side of a <- after already appearing on the\nleft-hand side of one.`,
   );
 
+const createArityError = (name: string, target: string) =>
+  new TlaConfigError(
+    `The configuration file substitutes for ${name} with ${target} of different number of arguments.`,
+  );
+
+const createMissingError = (name: string) =>
+  new TlaConfigError(
+    `In the configuration file, the identifier ${name} does not appear in the specification.`,
+  );
+
+// SANY finishes a module after the modules it extends, and SpecProcessor#processConstantDefns follows that order.
+const getModuleOrder = (module: LinkedModule, visited: Set<LinkedModule>): LinkedModule[] => {
+  if (visited.has(module)) return [];
+  visited.add(module);
+  return [...module.extended.flatMap((extended) => getModuleOrder(extended, visited)), module];
+};
+
 export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): AppliedConfig => {
   const getRootKey = (name: string) => linked.rootKeys.get(name) ?? name;
   const declaredConstants = linked.root.constants.map((constant) => constant.name);
@@ -222,7 +239,13 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     ),
   );
   [...substitutions.keys()].forEach((key) => constants.delete(key));
-  const checkSubstitutionTarget = (name: string, target: string, arity: number | undefined) => {
+  const checkTarget = (
+    name: string,
+    target: string,
+    others: Map<string, string>,
+    arity: number | undefined,
+  ) => {
+    if (others.has(target)) throw createReusedTargetError(target);
     const targetKey = getRootKey(target);
     const definition = linked.definitions.get(targetKey);
     const isDefined =
@@ -235,67 +258,84 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
         `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
       );
     }
-    if (definition?.kind === "Operator" && definition.params.length !== arity) {
-      throw new TlaConfigError(
-        `The configuration file substitutes for ${name} with ${target} of different number of arguments.`,
-      );
+    if (
+      arity !== undefined &&
+      definition?.kind === "Operator" &&
+      definition.params.length !== arity
+    ) {
+      throw createArityError(name, target);
     }
   };
   // ModelConfig keeps the last <- of a name for each module.
-  const getOverrides = (module: string | undefined) => [
-    ...new Map(
+  const getOverrides = (module: string | undefined) =>
+    new Map(
       config.substitutions
         .filter((substitution) => substitution.module === module)
-        .map((substitution) => [substitution.name, substitution]),
-    ).values(),
-  ];
-  const overrides = getOverrides(undefined);
-  overrides.forEach((substitution) => {
-    const name = substitution.name;
-    const target = substitution.target;
-    if (!declaredConstants.includes(name) && linked.root.visible.get(name)?.kind !== "Definition") {
-      throw new TlaConfigError(
-        `In the configuration file, the identifier ${name} does not appear in the specification.`,
-      );
-    }
-    if (overrides.some((other) => other.name === target)) {
-      throw createReusedTargetError(target);
-    }
-    checkSubstitutionTarget(
-      name,
-      target,
-      linked.root.constants.find((constant) => constant.name === name)?.arity ??
-        linked.root.visible.get(name)?.arity,
+        .map((substitution) => [substitution.name, substitution.target]),
     );
+  const overrides = getOverrides(undefined);
+  // SpecProcessor#processConstants checks the root module's <- for its constants in SANY's order of constant declarations, then for its definitions in definition order, then the names left in the order of ModelConfig's Hashtable, then each other module's.
+  linked.order.getDeclarationOrder("constant").forEach((name) => {
+    const target = overrides.get(name);
+    if (target !== undefined) checkTarget(name, target, overrides, undefined);
   });
-  const scopedSubstitutions = config.substitutions.filter(
-    (substitution) => substitution.module !== undefined,
-  );
-  [...linked.moduleSymbols.keys()].forEach((name) => {
-    const inModule = getOverrides(name);
-    inModule.forEach((substitution) => {
-      const symbol = getScopedSymbol(substitution);
-      if (!symbol) return;
-      if (inModule.some((other) => other.name === substitution.target)) {
-        throw createReusedTargetError(substitution.target);
-      }
-      checkSubstitutionTarget(substitution.name, substitution.target, symbol.arity);
-    });
-    const missing = inModule.find((substitution) => !getScopedSymbol(substitution));
-    if (missing) {
-      throw new TlaConfigError(
-        `In the configuration file, the identifier ${missing.name} does not appear in the specification.`,
-      );
+  const rootDefinitions = linked.order
+    .getDefinitionOrder(undefined)
+    .filter((name) => linked.root.visible.get(name)?.kind === "Definition");
+  rootDefinitions.forEach((name) => {
+    const target = overrides.get(name);
+    if (target !== undefined) {
+      checkTarget(name, target, overrides, linked.root.visible.get(name)?.arity);
     }
   });
-  const unknownModule = scopedSubstitutions.find(
-    (substitution) => !linked.moduleSymbols.has(substitution.module ?? ""),
+  const missing = getHashtableOrder([...overrides.keys()]).find(
+    (name) => !declaredConstants.includes(name) && !rootDefinitions.includes(name),
   );
-  if (unknownModule) {
+  if (missing !== undefined) throw createMissingError(missing);
+  [...linked.moduleSymbols.keys()].forEach((module) => {
+    const moduleOverrides = getOverrides(module);
+    if (moduleOverrides.size === 0) return;
+    const definitions = linked.order
+      .getDefinitionOrder(module === linked.root.module.name ? undefined : module)
+      .filter((name) => getScopedSymbol({ name, module }) !== undefined);
+    definitions.forEach((name) => {
+      const target = moduleOverrides.get(name);
+      if (target !== undefined) {
+        checkTarget(name, target, moduleOverrides, getScopedSymbol({ name, module })?.arity);
+      }
+    });
+    const moduleMissing = getHashtableOrder([...moduleOverrides.keys()]).find(
+      (name) => !definitions.includes(name),
+    );
+    if (moduleMissing !== undefined) throw createMissingError(moduleMissing);
+  });
+  const unknownModule = getHashtableOrder(
+    config.substitutions.flatMap((substitution) => substitution.module ?? []),
+  ).find((module) => !linked.moduleSymbols.has(module));
+  if (unknownModule !== undefined) {
     throw new TlaConfigError(
-      `In the configuration file, the module name ${unknownModule.module} is not a module in the specification.`,
+      `In the configuration file, the module name ${unknownModule} is not a module in the specification.`,
     );
   }
+  // SpecProcessor#processConstantDefns then checks the arity of a definition substituted for a constant, module by module.
+  [
+    ...new Set(
+      getModuleOrder(linked.root, new Set()).flatMap((module) =>
+        linked.order.getDeclarationOrder(
+          "constant",
+          module === linked.root ? undefined : module.module.name,
+        ),
+      ),
+    ),
+  ].forEach((name) => {
+    const target = overrides.get(name);
+    if (target === undefined) return;
+    const definition = linked.definitions.get(getRootKey(target));
+    const arity = linked.root.constants.find((constant) => constant.name === name)?.arity;
+    if (definition?.kind === "Operator" && definition.params.length !== arity) {
+      throw createArityError(name, target);
+    }
+  });
   const scopedKeys = new Set(
     [...config.constants, ...config.substitutions]
       .filter((item) => item.module !== undefined)

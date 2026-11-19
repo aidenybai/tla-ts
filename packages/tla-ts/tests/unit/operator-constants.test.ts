@@ -106,6 +106,14 @@ describe("operator constants match TLC", () => {
         "The configuration file substitutes for F with the undefined identifier Nope.",
       ],
       [
+        "F <- Add G <- Inc C <- Nope",
+        "The configuration file substitutes for C with the undefined identifier Nope.",
+      ],
+      [
+        "C <- Zero G <- Inc F <- Add",
+        "The configuration file substitutes for F with Add of different number of arguments.",
+      ],
+      [
         "F <- Inc G <- Add C <- x",
         "The configuration file substitutes for C with the undefined identifier x.",
       ],

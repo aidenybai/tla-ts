@@ -1658,6 +1658,39 @@ ASSUME TLCFP(a) = -887695703
     }
   });
 
+  it("reports the first wrong <- in TLC's order", async () => {
+    const cases = [
+      [
+        "CONSTANT N\nOp == 1",
+        "CONSTANT Op <- Nope N <- Nope2",
+        "The configuration file substitutes for N with the undefined identifier Nope2.",
+      ],
+      [
+        "Def2 == 1\nDef == 2",
+        "CONSTANT Def <- Nope Def2 <- Nope2",
+        "The configuration file substitutes for Def2 with the undefined identifier Nope2.",
+      ],
+      [
+        "Def == 1",
+        "CONSTANT Q1 <- Def Q2 <- Def Q3 <- Def",
+        "In the configuration file, the identifier Q3 does not appear in the specification.",
+      ],
+      [
+        "CONSTANT F(_)\nDef == 3\nOp(a) == a",
+        "CONSTANT F <- Def Op <- Nope",
+        "The configuration file substitutes for Op with the undefined identifier Nope.",
+      ],
+      [
+        "Def == 1",
+        "CONSTANT Def <- [Nope1] Def Def <- [Nope2] Def Def <- [Nope3] Def",
+        "In the configuration file, the module name Nope3 is not a module in the specification.",
+      ],
+    ];
+    for (const [body, config, message] of cases) {
+      await expect(checkModule(body, config)).rejects.toThrow(new TlaConfigError(message));
+    }
+  });
+
   it("reports a table's set that mixes types as the unexpected exception TLC throws", async () => {
     await expect(checkModule("CONSTANT F(_)", 'CONSTANT F(1) = {1, "a"}')).rejects.toThrow(
       new TlaEvaluationError(
