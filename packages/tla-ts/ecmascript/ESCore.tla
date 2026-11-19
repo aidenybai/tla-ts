@@ -11232,9 +11232,15 @@ RunModuleFrom(harness, specifier, directory, canSuspend, parses) ==
   TestResult(IF IsAbrupt(harness) THEN harness
              ELSE RunModule([harness.s EXCEPT !.parses = parses, !.directory = directory, !.canSuspend = canSuspend],
                             specifier))
+\* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
+\* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==
-  LET thrown == IF r.c.type = "throw" THEN DescribeThrown(r.s, r.c.value) ELSE [name |-> <<>>, message |-> <<>>]
-  IN [ok |-> ~IsAbrupt(r), name |-> thrown.name, message |-> thrown.message, out |-> r.s.out]
+  LET rejected == {i \in 1..r.s.objs.size :
+                     LET o == HeapGet(r.s.objs, i) IN o.class = "promise" /\ o.slots.state = "rejected" /\ ~o.slots.isHandled}
+      ended == IF IsAbrupt(r) \/ rejected = {} THEN r
+               ELSE ThrowValue(r.s, HeapGet(r.s.objs, CHOOSE i \in rejected : \A j \in rejected : i <= j).slots.result)
+      thrown == IF ended.c.type = "throw" THEN DescribeThrown(ended.s, ended.c.value) ELSE [name |-> <<>>, message |-> <<>>]
+  IN [ok |-> ~IsAbrupt(ended), name |-> thrown.name, message |-> thrown.message, out |-> ended.s.out]
 \* Keyed collections (§24.1 to §24.4) and weak references (§26.1, §26.2). A [[MapData]] list
 \* holds [key, value] records and a [[SetData]] list holds values, in insertion order, with a
 \* deleted element replaced by Empty, so iteration during mutation sees what the spec says. The
