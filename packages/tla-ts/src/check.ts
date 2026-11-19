@@ -1478,6 +1478,7 @@ const searchStates = (
           state,
           environment,
           (successor) => {
+            successor.action ??= action.name;
             isStopped = onSuccessor(successor, action);
             return isStopped;
           },
