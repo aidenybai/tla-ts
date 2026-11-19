@@ -276,6 +276,36 @@ describe("gives a module the host's globals that ESCore lacks, which stop where 
   });
 });
 
+describe("gives a module the part of Node's console that writes primitives and makes tasks", () => {
+  const getFiles = (expected: string) => ({
+    "main.js": getMain(
+      `const log = [];
+      const task = console.createTask("work");
+      log.push(typeof console.log, console.log === console.log, console.log.name, console.log.length, task.run(() => 7), Object.keys(task).join(), task.run === console.createTask("other").run);
+      console.error("warning", 1, true);`,
+      expected,
+    ),
+  });
+
+  it("agrees with Node", async () => {
+    expect(
+      (await checkModules(getFiles("function,true,log,0,7,run,true"))).message,
+    ).toBeUndefined();
+  });
+
+  it("rejects another result", async () => {
+    expect((await checkModules(getFiles("function,true,log,0,7,run,false"))).message).toContain(
+      THREW,
+    );
+  });
+
+  it("stops at a write of an object, which Node formats", async () => {
+    expect((await checkModules({ "main.js": "console.log({});" })).message).toContain(
+      "tla-ts can't write an object to the host's console",
+    );
+  });
+});
+
 describe("compiles CommonJS modules as Node loads them", () => {
   // A CommonJS module that requires others, of a package without a type.
   const getFiles = (main: string, expected: string) => ({

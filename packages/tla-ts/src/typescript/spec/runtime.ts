@@ -175,9 +175,9 @@ const DEFINITIONS = [
       module == OrdinaryObjectCreate(exports.s, Intrinsic(exports.s, "ObjectPrototype"))
       made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(exports))
       require == CreateBuiltinFunction(made.s, <<"Module", "require">>, 1, N("require"), id)
-      moduleProxy == CommonJsProxy(require.s, Val(module), <<[trap |-> SV("get"), method |-> "moduleExportsGet"],
+      moduleProxy == StoppingProxy(require.s, Val(module), <<[trap |-> SV("get"), method |-> "moduleExportsGet"],
                                                               [trap |-> SV("set"), method |-> "moduleExportsSet"]>>)
-      requireProxy == CommonJsProxy(moduleProxy.s, Val(require), <<[trap |-> SV("apply"), method |-> "requireApply"]>>)
+      requireProxy == StoppingProxy(moduleProxy.s, Val(require), <<[trap |-> SV("apply"), method |-> "requireApply"]>>)
       f == CodeFunctionCreate(requireProxy.s, Intrinsic(requireProxy.s, "FunctionPrototype"), node.code, FALSE, s.globalEnv, NoPrivateEnvironment)
       r == Call([f.s EXCEPT !.required = (id :> [module |-> Val(module), loaded |-> FALSE]) @@ @], f.v, Val(exports),
                 <<Val(exports), Val(requireProxy), Val(moduleProxy), Str(node.filename), Str(node.dirname)>>)
@@ -191,11 +191,10 @@ const DEFINITIONS = [
   LET esModule == Get(s, exports, SV("__esModule")) IN
   IF IsAbrupt(esModule) \\/ ToBooleanValue(Val(esModule)) THEN IF IsAbrupt(esModule) THEN esModule ELSE Ok(esModule.s, exports)
   ELSE Assert(FALSE, "tla-ts can't give the exports of a CommonJS module in a cycle the prototype that Node gives them")`,
-  // The module or the require that a CommonJS module's code reaches: a proxy whose handler stops at
-  // every operation but its allowed traps, as Node's Module and require have more than the
-  // runtime's, which the allowed ones don't reach: a read or write of module.exports, and a call of
-  // require.
-  `CommonJsProxy(s, target, allowed) ==
+  // What of Node a program reaches that the runtime has only part of, such as a CommonJS module's
+  // module and require: a proxy whose handler stops at every operation but its allowed traps,
+  // which reach only what the runtime has, such as module.exports and a call of require.
+  `StoppingProxy(s, target, allowed) ==
   LET handler == OrdinaryObjectCreate(s, Null)
       stop == CreateBuiltinFunction(handler.s, <<"Module", "commonJsStop">>, 0, <<>>, Empty)
   IN ProxyCreate(AllowTraps(DefineTraps(stop.s, Val(handler), Val(stop), CommonJsTraps), Val(handler), allowed),
@@ -221,13 +220,30 @@ const DEFINITIONS = [
   `DefineHostGlobalsWith(s, handler, stop, globals) ==
   IF globals = <<>> THEN Ok(s, Empty) ELSE
   LET g == Head(globals)
-      target == IF g.kind = "function" THEN Ok(s, stop) ELSE OrdinaryObjectCreate(s, Null)
-      proxy == IF g.kind = "undefined" THEN Ok(target.s, Undefined) ELSE ProxyCreate(target.s, Val(target), handler)
+      target == CASE g.kind = "function" -> Ok(s, stop)
+                  [] g.kind = "console" -> ConsoleObject(s)
+                  [] OTHER -> OrdinaryObjectCreate(s, Null)
+      proxy == CASE g.kind = "undefined" -> Ok(target.s, Undefined)
+                 [] g.kind = "console" -> StoppingProxy(target.s, Val(target), <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
+                 [] OTHER -> ProxyCreate(target.s, Val(target), handler)
       getter == CreateBuiltinFunction(proxy.s, <<"Module", "hostGlobal">>, 0, <<>>, Val(proxy))
       d == IF g.isAccessor
            THEN DefinePropertyOrThrow(getter.s, Intrinsic(s, "GlobalObject"), Str(g.name), AccessorDesc(Val(getter), stop, g.enumerable, g.configurable))
            ELSE DefinePropertyOrThrow(proxy.s, Intrinsic(s, "GlobalObject"), Str(g.name), DataDesc(Val(proxy), g.writable, g.enumerable, g.configurable))
   IN IF IsAbrupt(d) THEN d ELSE DefineHostGlobalsWith(d.s, handler, stop, Tail(globals))`,
+  // Node's console, of which a program reads only the methods that write what they're given and
+  // createTask: each of the former writes nothing that the program reads, where the values it's
+  // given are primitives, which no code of the program runs to format.
+  `ConsoleObject(s) ==
+  LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+      run == CreateBuiltinFunction(o.s, <<"Module", "taskRun">>, 0, N("run"), Empty)
+      createTask == CreateBuiltinFunction(run.s, <<"Module", "createTask">>, 0, N("createTask"), Val(run))
+      made == CreateDataProperty(createTask.s, Val(o), SV("createTask"), Val(createTask))
+  IN Ok(ConsoleMethods(made.s, Val(o), <<N("log"), N("info"), N("debug"), N("warn"), N("error")>>), Val(o))`,
+  `ConsoleMethods(s, o, names) ==
+  IF names = <<>> THEN s ELSE
+  LET f == CreateBuiltinFunction(s, <<"Module", "consoleWrite">>, 0, Head(names), Empty) IN
+  ConsoleMethods(CreateDataProperty(f.s, o, Str(Head(names)), Val(f)).s, o, Tail(names))`,
   // The properties of the host's built-ins that a module program names and ESCore's realm lacks,
   // each an accessor that stops, on the intrinsic that holds it.
   `DefineHostProperties(s, properties) ==
@@ -436,6 +452,22 @@ const HOST_PATCHES = [
          LET list == CreateListFromArrayLike(s, Arg(args, 3), "all") IN
          IF IsAbrupt(list) THEN list ELSE Call(list.s, Arg(args, 1), Arg(args, 2), Val(list))
     [] m = "hostGlobal" -> Ok(s, data)
+    [] m = "consoleGet" ->
+         IF Arg(args, 2) \\notin {SV("log"), SV("info"), SV("debug"), SV("warn"), SV("error"), SV("createTask")}
+         THEN Assert(FALSE, "tla-ts can't use the host's console other than to write primitives and createTask")
+         ELSE Get(s, Arg(args, 1), Arg(args, 2))
+    [] m = "consoleWrite" ->
+         IF \\E i \\in DOMAIN args : IsObject(args[i])
+         THEN Assert(FALSE, "tla-ts can't write an object to the host's console, which formats it")
+         ELSE Ok(s, Undefined)
+    [] m = "createTask" ->
+         IF ~IsString(Arg(args, 1)) \\/ Arg(args, 1).value = <<>> THEN Assert(FALSE, "tla-ts can't make a task of the host's console without a name")
+         ELSE LET task == Alloc(s, MakeObject(Intrinsic(s, "ObjectPrototype"), "ordinary", [consoleTask |-> TRUE])) IN
+              ResultThen(task.v, CreateDataProperty(task.s, task.v, SV("run"), data))
+    [] m = "taskRun" ->
+         IF ~IsObject(this) \\/ "consoleTask" \\notin DOMAIN O(s, this).slots \\/ ~IsCallable(s, Arg(args, 1))
+         THEN Assert(FALSE, "tla-ts can't run a task of the host's console other than a function")
+         ELSE Call(s, Arg(args, 1), Undefined, <<>>)
     [] m = "hostStop" -> Assert(FALSE, "tla-ts can't run a global of the host that ESCore leaves out")
     [] m = "commonJsStop" -> Assert(FALSE, "tla-ts can't use a CommonJS module's module or require other than for module.exports and a call")`,
   },

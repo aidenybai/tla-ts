@@ -218,8 +218,9 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
 };
 
 // The host's globals of the names given, as the records that DefineHostGlobals defines them by:
-// each one's kind, as typeof gives the value that the host's own context has, and its attributes. A
-// global whose value is another primitive is left out.
+// each one's kind, as typeof gives the value that the host's own context has, or console, which
+// the runtime has part of, and its attributes. A global whose value is another primitive is left
+// out.
 const getHostGlobals = (names: readonly string[]) =>
   names.flatMap((name) => {
     const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
@@ -227,8 +228,16 @@ const getHostGlobals = (names: readonly string[]) =>
       descriptor === undefined || "value" in descriptor
         ? descriptor?.value
         : Reflect.get(globalThis, name);
-    const kind = value === undefined ? "undefined" : value === null ? "null" : typeof value;
-    return descriptor === undefined || !["function", "object", "undefined"].includes(kind)
+    const kind =
+      name === "console"
+        ? "console"
+        : value === undefined
+          ? "undefined"
+          : value === null
+            ? "null"
+            : typeof value;
+    return descriptor === undefined ||
+      !["function", "object", "undefined", "console"].includes(kind)
       ? []
       : [
           `[name |-> N("${name}"), kind |-> "${kind}", isAccessor |-> ${getBoolean(!("value" in descriptor))}, writable |-> ${getBoolean(descriptor.writable === true)}, enumerable |-> ${getBoolean(descriptor.enumerable === true)}, configurable |-> ${getBoolean(descriptor.configurable === true)}]`,
