@@ -199,10 +199,10 @@ Spec == Init /\\ [][Next]_x
         ...[
           ["line 3, col 6 to line 3, col 6", "y"],
           ["line 6, col 6 to line 6, col 6", "z"],
-        ].flatMap(([range, name]) => [
-          `${range} of module M`,
+        ].flatMap((error) => [
+          `${error[0]} of module M`,
           "",
-          `Unknown operator: \`${name}'.`,
+          `Unknown operator: \`${error[1]}'.`,
           "",
           "",
         ]),
