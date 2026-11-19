@@ -301,6 +301,29 @@ describe("compiles CommonJS modules as Node loads them", () => {
     });
   });
 
+  describe("reads Node's process.env as the process that compiles has it", () => {
+    const main = (
+      path: string,
+    ) => `const mode = process.env.TLA_TS_UNSET === "production" ? require("./missing.js") : require("./counter.js");
+      log.push(typeof process, process.env.PATH === ${JSON.stringify(path)}, process.env.TLA_TS_UNSET, mode.next());`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkModules(getFiles(main(process.env.PATH ?? ""), "object,true,,1"))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles(main("/"), "object,true,,1"))).message).toContain(THREW);
+    });
+
+    it("stops at another use of process", async () => {
+      expect((await checkModules(getFiles("log.push(process.argv);", ""))).message).toContain(
+        "tla-ts can't run the host's process",
+      );
+    });
+  });
+
   it("stops at a module object's property other than exports", async () => {
     expect((await checkModules(getFiles("log.push(module.id);", "."))).message).toContain(
       "tla-ts can't use a CommonJS module's module",

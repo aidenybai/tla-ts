@@ -1,5 +1,6 @@
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
+import { isProcessDeclared } from "../common-js";
 import type { GeneratedDefinition } from "./library";
 
 // Specializes ESCore's evaluation rules to a program: each syntax node gives the TLA+ that ESCore's
@@ -601,6 +602,13 @@ export const specialize = (
     ts.forEachChild(node, countNames);
   };
   files.forEach((file) => countNames(file.sourceFile));
+  // Whether the program's process is Node's, which a module's code reads only as typeof process
+  // and process.env.NAME, where no file declares process and a module runs in Node's context, whose
+  // global object has it. A read of process otherwise stops the compile.
+  const isHostProcess =
+    typeof process !== "undefined" &&
+    files[0].kind !== "script" &&
+    !files.some((file) => isProcessDeclared(file.sourceFile));
   // Each file's number, from 1, and where its text starts in the program's texts, one after
   // another, which makes the sites of the program's nodes distinct.
   const fileNumbers = new Map(files.map((file, index) => [file.sourceFile, index + 1]));
@@ -1083,6 +1091,19 @@ export const specialize = (
       words.add(node.text);
       return (state) => `Ok(${state}, ${getStr(node.text)})`;
     }
+    // A read of process.env.NAME, of Node's process, is the environment's value as the process
+    // that compiles has it.
+    if (
+      isHostProcess &&
+      ts.isPropertyAccessExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "env" &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "process"
+    ) {
+      const variable = process.env[node.name.text];
+      return (state) => `Ok(${state}, ${variable === undefined ? "Undefined" : getStr(variable)})`;
+    }
     if (
       ts.isIdentifier(node) ||
       ts.isPropertyAccessExpression(node) ||
@@ -1137,6 +1158,14 @@ export const specialize = (
       }[operator];
       const operand = value(node.operand, scope);
       return defineCode("Unary", `UnaryThen("${name}", ${operand("s", "ctx")})`);
+    }
+    if (
+      ts.isTypeOfExpression(node) &&
+      isHostProcess &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "process"
+    ) {
+      return (state) => `Ok(${state}, ${getStr("object")})`;
     }
     if (ts.isTypeOfExpression(node)) {
       const operand = reference(node.expression, scope);
