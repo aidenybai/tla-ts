@@ -1839,6 +1839,48 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  // theory_array_base::include_func_interp puts array-ext in the model, so model::compress keeps
+  // the functions of the arrays it compares, and get-model prints them.
+  it("interprets array-ext in the model and keeps the arrays it compares", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a1 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(declare-const i1 Int)",
+        "(assert (not (= a1 (store a1 (select a0 i0) i1))))",
+        "(assert (not (= (store a0 (select a1 i1) (select a1 i1)) a1)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a0 () (Array Int Int)",
+        "    (store (store ((as const (Array Int Int)) 3) 9 11) 4 7))",
+        "  (define-fun a1 () (Array Int Int)",
+        "    (store (store (store ((as const (Array Int Int)) 2) 5 6) 9 10) 7 8))",
+        "  (define-fun i1 () Int",
+        "    5)",
+        "  (define-fun i0 () Int",
+        "    4)",
+        "  (define-fun k!3 ((x!0 Int)) Int",
+        "    (ite (= x!0 6) 6",
+        "    (ite (= x!0 9) 11",
+        "    (ite (= x!0 4) 7",
+        "      3))))",
+        "  (define-fun k!0 ((x!0 Int)) Int",
+        "    (ite (= x!0 5) 6",
+        "    (ite (= x!0 9) 10",
+        "    (ite (= x!0 7) 8",
+        "      2))))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
