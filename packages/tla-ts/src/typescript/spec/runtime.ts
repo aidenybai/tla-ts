@@ -208,29 +208,39 @@ const DEFINITIONS = [
   IF allowed = <<>> THEN s ELSE
   LET f == CreateBuiltinFunction(s, <<"Module", Head(allowed).method>>, 0, <<>>, Empty) IN
   AllowTraps(CreateDataProperty(f.s, handler, Head(allowed).trap, Val(f)).s, handler, Tail(allowed))`,
-  // The host's globals that a module program names and ESCore's realm lacks, on the global object as
-  // the host's own context has them, where a module runs: each a proxy whose handler stops at every
-  // operation, whose target is a function where the host's global is one, or undefined where the
-  // host's is. A global that the host gives with a getter has one that gives the proxy, and a
-  // setter that stops.
-  `DefineHostGlobals(s, globals) ==
+  // The host's globals and built-ins' properties that a module program names and ESCore's realm
+  // lacks, on the global object and the intrinsics as the host's own context has them, where a
+  // module runs. One whose value is a primitive has the host's value. One whose value is a function
+  // or an object is a proxy whose handler stops at every operation, whose target is a function
+  // where the host's value is one, and one that the host gives a getter has a getter that gives the
+  // proxy, or undefined where the host's gives undefined, and a setter that stops. Any other
+  // accessor stops where it's read or written.
+  `DefineHost(s, properties) ==
   LET handler == OrdinaryObjectCreate(s, Null)
-      stop == CreateBuiltinFunction(handler.s, <<"Module", "hostStop">>, 0, <<>>, Empty)
-  IN DefineHostGlobalsWith(DefineTraps(stop.s, Val(handler), Val(stop), CommonJsTraps), Val(handler), Val(stop), globals)`,
-  `DefineHostGlobalsWith(s, handler, stop, globals) ==
-  IF globals = <<>> THEN Ok(s, Empty) ELSE
-  LET g == Head(globals)
-      target == CASE g.kind = "function" -> Ok(s, stop)
-                  [] g.kind = "console" -> ConsoleObject(s)
-                  [] OTHER -> OrdinaryObjectCreate(s, Null)
-      proxy == CASE g.kind = "undefined" -> Ok(target.s, Undefined)
-                 [] g.kind = "console" -> StoppingProxy(target.s, Val(target), <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
+      trap == CreateBuiltinFunction(handler.s, <<"Module", "hostTrap">>, 0, <<>>, Empty)
+  IN DefineHostWith(DefineTraps(trap.s, Val(handler), Val(trap), CommonJsTraps), Val(handler), properties)`,
+  `DefineHostWith(s, handler, properties) ==
+  IF properties = <<>> THEN Ok(s, Empty) ELSE
+  LET p == Head(properties)
+      stop == CreateBuiltinFunction(s, <<"Module", "hostStop">>, 0, <<>>, p.name)
+      target == CASE p.kind = "function" -> stop
+                  [] p.kind = "console" -> ConsoleObject(stop.s)
+                  [] OTHER -> LET a == Alloc(stop.s, MakeObject(Null, "ordinary", [hostName |-> p.name])) IN Ok(a.s, a.v)
+      value == CASE p.kind = "value" -> Ok(target.s, p.value)
+                 [] p.kind \\in {"undefined", "accessor"} -> Ok(target.s, Undefined)
+                 [] p.kind = "console" -> StoppingProxy(target.s, Val(target), <<[trap |-> SV("get"), method |-> "consoleGet"]>>)
                  [] OTHER -> ProxyCreate(target.s, Val(target), handler)
-      getter == CreateBuiltinFunction(proxy.s, <<"Module", "hostGlobal">>, 0, <<>>, Val(proxy))
-      d == IF g.isAccessor
-           THEN DefinePropertyOrThrow(getter.s, Intrinsic(s, "GlobalObject"), Str(g.name), AccessorDesc(Val(getter), stop, g.enumerable, g.configurable))
-           ELSE DefinePropertyOrThrow(proxy.s, Intrinsic(s, "GlobalObject"), Str(g.name), DataDesc(Val(proxy), g.writable, g.enumerable, g.configurable))
-  IN IF IsAbrupt(d) THEN d ELSE DefineHostGlobalsWith(d.s, handler, stop, Tail(globals))`,
+      getter == IF p.kind = "accessor" THEN Ok(value.s, Val(stop))
+                ELSE CreateBuiltinFunction(value.s, <<"Module", "hostGlobal">>, 0, <<>>, Val(value))
+      d == IF p.isAccessor
+           THEN DefinePropertyOrThrow(getter.s, Intrinsic(s, p.owner), Str(p.name), AccessorDesc(Val(getter), Val(stop), p.enumerable, p.configurable))
+           ELSE DefinePropertyOrThrow(value.s, Intrinsic(s, p.owner), Str(p.name), DataDesc(Val(value), p.writable, p.enumerable, p.configurable))
+  IN IF IsAbrupt(d) THEN d ELSE DefineHostWith(d.s, handler, Tail(properties))`,
+  // A stop at what of the host that ESCore leaves out a program uses, by its name's code units.
+  `HostStop(name) == Assert(FALSE, "tla-ts can't run the host's " \\o UnitsText(name) \\o ", which ESCore leaves out")`,
+  // The TLA+ string of code units that a TLA+ string can hold.
+  `UnitsText(units) ==
+  IF units = <<>> THEN "" ELSE (CHOOSE c \\in DOMAIN CharacterUnits : CharacterUnits[c] = Head(units)) \\o UnitsText(Tail(units))`,
   // Node's console, of which a program reads only the methods that write what they're given and
   // createTask: each of the former writes nothing that the program reads, where the values it's
   // given are primitives, which no code of the program runs to format.
@@ -244,14 +254,6 @@ const DEFINITIONS = [
   IF names = <<>> THEN s ELSE
   LET f == CreateBuiltinFunction(s, <<"Module", "consoleWrite">>, 0, Head(names), Empty) IN
   ConsoleMethods(CreateDataProperty(f.s, o, Str(Head(names)), Val(f)).s, o, Tail(names))`,
-  // The properties of the host's built-ins that a module program names and ESCore's realm lacks,
-  // each an accessor that stops, on the intrinsic that holds it.
-  `DefineHostProperties(s, properties) ==
-  IF properties = <<>> THEN Ok(s, Empty) ELSE
-  LET p == Head(properties)
-      stop == CreateBuiltinFunction(s, <<"Module", "hostStop">>, 0, <<>>, Empty)
-      d == DefinePropertyOrThrow(stop.s, Intrinsic(s, p.owner), Str(p.key), AccessorDesc(Val(stop), Val(stop), p.enumerable, TRUE))
-  IN IF IsAbrupt(d) THEN d ELSE DefineHostProperties(d.s, Tail(properties))`,
   // Module.prototype.require of Node's CommonJS loader for the module of the file referrer, which
   // loads the file of a specifier that its code requires.
   `Require(s, referrer, id) ==
@@ -468,7 +470,9 @@ const HOST_PATCHES = [
          IF ~IsObject(this) \\/ "consoleTask" \\notin DOMAIN O(s, this).slots \\/ ~IsCallable(s, Arg(args, 1))
          THEN Assert(FALSE, "tla-ts can't run a task of the host's console other than a function")
          ELSE Call(s, Arg(args, 1), Undefined, <<>>)
-    [] m = "hostStop" -> Assert(FALSE, "tla-ts can't run a global of the host that ESCore leaves out")
+    [] m = "hostStop" -> HostStop(data)
+    [] m = "hostTrap" ->
+         HostStop(IF "hostName" \\in DOMAIN O(s, Arg(args, 1)).slots THEN O(s, Arg(args, 1)).slots.hostName ELSE O(s, Arg(args, 1)).slots.data)
     [] m = "commonJsStop" -> Assert(FALSE, "tla-ts can't use a CommonJS module's module or require other than for module.exports and a call")`,
   },
   // A program's functions hold their source text as the program's code gives it, which
@@ -562,7 +566,7 @@ export const getHostOnlyGlobals = (library: Library, host: object = HOST_GLOBAL)
 };
 
 // The properties of the host's built-ins whose keys ESCore's realm has nowhere, such as V8's
-// Error.captureStackTrace, by the intrinsic that holds each, with whether the host's enumerates it.
+// Error.captureStackTrace, by the intrinsic that holds each, with the host's descriptor of it.
 export const getHostOnlyProperties = (library: Library) => {
   const known = new Set(
     [...library.definitions.values()].flatMap((definition) =>
@@ -575,11 +579,7 @@ export const getHostOnlyProperties = (library: Library) => {
       ? []
       : Object.getOwnPropertyNames(object)
           .filter((key) => !known.has(key))
-          .map((key) => ({
-            owner,
-            key,
-            isEnumerable: Object.getOwnPropertyDescriptor(object, key)?.enumerable === true,
-          }));
+          .map((key) => ({ owner, key, descriptor: Object.getOwnPropertyDescriptor(object, key) }));
   });
 };
 

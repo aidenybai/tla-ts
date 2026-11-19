@@ -52,7 +52,7 @@ export interface EscoreRuntime {
   // The host's globals and built-in keys that ESCore's realm lacks, at whose names a compile stops.
   hostOnlyGlobals: string[];
   hostOnlyModuleGlobals: string[];
-  hostOnlyProperties: { owner: string; key: string; isEnumerable: boolean }[];
+  hostOnlyProperties: { owner: string; key: string; descriptor: PropertyDescriptor | undefined }[];
 }
 
 // Every compiled spec's root module. It extends each module of the runtime before the program's,

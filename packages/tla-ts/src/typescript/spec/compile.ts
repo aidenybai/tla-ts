@@ -7,7 +7,7 @@ import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
 import { getTlaString, LOCALE_METHODS } from "./runtime";
-import { type ProgramFile, specialize } from "./specialize";
+import { getNumber, type ProgramFile, specialize } from "./specialize";
 import { suspendDefinitions } from "./suspend";
 
 export interface EscoreSpec {
@@ -217,32 +217,55 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
   return files;
 };
 
-// The host's globals of the names given, as the records that DefineHostGlobals defines them by:
-// each one's kind, as typeof gives the value that the host's own context has, or console, which
-// the runtime has part of, and its attributes. A global whose value is another primitive is left
-// out.
-const getHostGlobals = (names: readonly string[]) =>
-  names.flatMap((name) => {
-    const descriptor = Object.getOwnPropertyDescriptor(globalThis, name);
-    const value: unknown =
-      descriptor === undefined || "value" in descriptor
-        ? descriptor?.value
-        : Reflect.get(globalThis, name);
-    const kind =
-      name === "console"
-        ? "console"
-        : value === undefined
-          ? "undefined"
-          : value === null
-            ? "null"
-            : typeof value;
-    return descriptor === undefined ||
-      !["function", "object", "undefined", "console"].includes(kind)
-      ? []
-      : [
-          `[name |-> N("${name}"), kind |-> "${kind}", isAccessor |-> ${getBoolean(!("value" in descriptor))}, writable |-> ${getBoolean(descriptor.writable === true)}, enumerable |-> ${getBoolean(descriptor.enumerable === true)}, configurable |-> ${getBoolean(descriptor.configurable === true)}]`,
-        ];
-  });
+// A property of the host's global object or of one of its built-ins, as the record that DefineHost
+// defines it by: its kind, as typeof gives its value, or value for a primitive, or console, which
+// the runtime has part of, or accessor for a built-in's accessor, and its attributes. A global's
+// getter gives its value, and a property whose value is a symbol or a BigInt is left out.
+const getHostProperty = (
+  owner: string,
+  name: string,
+  descriptor: PropertyDescriptor | undefined,
+  host: object | undefined,
+) => {
+  if (descriptor === undefined) return [];
+  const isAccessor = !("value" in descriptor);
+  const value: unknown = !isAccessor
+    ? descriptor.value
+    : host === undefined
+      ? undefined
+      : Reflect.get(host, name);
+  const primitive =
+    value === undefined
+      ? "Undefined"
+      : value === null
+        ? "Null"
+        : typeof value === "boolean"
+          ? value
+            ? "True"
+            : "False"
+          : typeof value === "number"
+            ? `Num(${getNumber(value)})`
+            : typeof value === "string"
+              ? `Str(N(${JSON.stringify(value)}))`
+              : undefined;
+  const kind =
+    name === "console" && host !== undefined
+      ? "console"
+      : isAccessor && host === undefined
+        ? "accessor"
+        : typeof value === "function" || (typeof value === "object" && value !== null)
+          ? typeof value
+          : value === undefined && isAccessor
+            ? "undefined"
+            : primitive !== undefined
+              ? "value"
+              : undefined;
+  return kind === undefined
+    ? []
+    : [
+        `[owner |-> "${owner}", name |-> N("${name}"), kind |-> "${kind}", value |-> ${primitive ?? "Undefined"}, isAccessor |-> ${getBoolean(isAccessor)}, writable |-> ${getBoolean(descriptor.writable === true)}, enumerable |-> ${getBoolean(descriptor.enumerable === true)}, configurable |-> ${getBoolean(descriptor.configurable === true)}]`,
+      ];
+};
 
 const getBoolean = (value: boolean) => (value ? "TRUE" : "FALSE");
 
@@ -326,20 +349,28 @@ export const compileToEscore = (
             : definition;
         }),
         {
-          name: "HostGlobals",
-          arity: 0,
-          text: `HostGlobals == <<${getHostGlobals(runtime.hostOnlyModuleGlobals.filter((name) => isModule && program.words.has(name))).join(", ")}>>`,
-        },
-        {
           name: "HostProperties",
           arity: 0,
-          text: `HostProperties == <<${runtime.hostOnlyProperties
-            .filter((property) => isModule && program.words.has(property.key))
-            .map(
-              (property) =>
-                `[owner |-> "${property.owner}", key |-> N("${property.key}"), enumerable |-> ${getBoolean(property.isEnumerable)}]`,
-            )
-            .join(", ")}>>`,
+          text: `HostProperties == <<${(isModule
+            ? [
+                ...runtime.hostOnlyModuleGlobals
+                  .filter((name) => program.words.has(name))
+                  .flatMap((name) =>
+                    getHostProperty(
+                      "GlobalObject",
+                      name,
+                      Object.getOwnPropertyDescriptor(globalThis, name),
+                      globalThis,
+                    ),
+                  ),
+                ...runtime.hostOnlyProperties
+                  .filter((property) => program.words.has(property.key))
+                  .flatMap((property) =>
+                    getHostProperty(property.owner, property.key, property.descriptor, undefined),
+                  ),
+              ]
+            : []
+          ).join(", ")}>>`,
         },
         {
           name: "SourceUnits",
@@ -353,9 +384,9 @@ export const compileToEscore = (
           // to run, as Node does.
           text:
             files[0].kind === "module"
-              ? `RunProgram(s) == LET g == DefineHostGlobals(s, HostGlobals) IN IF IsAbrupt(g) THEN g ELSE LET h == DefineHostProperties(g.s, HostProperties) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
+              ? `RunProgram(s) == LET h == DefineHost(s, HostProperties) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
               : isModule
-                ? `RunProgram(s) == LET g == DefineHostGlobals(s, HostGlobals) IN IF IsAbrupt(g) THEN g ELSE LET h == DefineHostProperties(g.s, HostProperties) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
+                ? `RunProgram(s) == LET h == DefineHost(s, HostProperties) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
                 : isQueuing
                   ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
                   : "RunProgram(s) == Program(s)",

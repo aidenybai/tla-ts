@@ -241,37 +241,39 @@ describe("compiles modules by specializing ESCore", () => {
   });
 });
 
-describe("gives a module the host's globals that ESCore lacks, which stop where its code uses them", () => {
+describe("gives a module the host's globals and properties that ESCore lacks, which stop where its code uses them", () => {
   const getFiles = (expected: string) => ({
     "main.js": getMain(
       `const log = [];
       function warn(error) { console.warn(error); Error.captureStackTrace(error); }
-      log.push(typeof setImmediate, typeof console, typeof Buffer, typeof process, "process" in globalThis, typeof warn, "stackTraceLimit" in Error);`,
+      log.push(typeof setImmediate, typeof console, typeof Buffer, typeof process, "process" in globalThis, typeof warn, Error.stackTraceLimit, typeof Error.captureStackTrace);`,
       expected,
     ),
   });
 
   it("agrees with Node", async () => {
     expect(
-      (await checkModules(getFiles("function,object,function,object,true,function,true"))).message,
+      (await checkModules(getFiles("function,object,function,object,true,function,10,function")))
+        .message,
     ).toBeUndefined();
   });
 
   it("rejects another result", async () => {
     expect(
-      (await checkModules(getFiles("function,object,object,object,true,function,true"))).message,
+      (await checkModules(getFiles("function,object,object,object,true,function,10,function")))
+        .message,
     ).toContain(THREW);
   });
 
   it("stops at a call of a global", async () => {
     expect((await checkModules({ "main.js": "setImmediate(() => {});" })).message).toContain(
-      "tla-ts can't run a global of the host",
+      "tla-ts can't run the host's setImmediate",
     );
   });
 
-  it("stops at a read of a built-in's property that only the host has", async () => {
-    expect((await checkModules({ "main.js": "Error.stackTraceLimit;" })).message).toContain(
-      "tla-ts can't run a global of the host",
+  it("stops at a call of a built-in's method that only the host has", async () => {
+    expect((await checkModules({ "main.js": "Error.captureStackTrace({});" })).message).toContain(
+      "tla-ts can't run the host's captureStackTrace",
     );
   });
 });
@@ -384,7 +386,7 @@ describe("compiles CommonJS modules as Node loads them", () => {
 
     it("stops at another use of process", async () => {
       expect((await checkModules(getFiles("log.push(process.argv);", ""))).message).toContain(
-        "tla-ts can't run a global of the host",
+        "tla-ts can't run the host's process",
       );
     });
   });
