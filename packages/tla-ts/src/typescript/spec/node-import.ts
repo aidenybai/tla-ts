@@ -7,9 +7,23 @@
 // namespace, as ESCore's module semantics do, which a module index names.
 export const NODE_IMPORT = `(function (hostLoad, hostDependencies, hostIsInstantiated, hostInstantiate, hostEvaluate, hostNamespace) {
   "use strict";
-  const resolvedPromise = Promise.resolve();
+  // Node's primordials: the built-ins as the realm first has them, which the program's code can't
+  // replace.
+  const uncurryThis = Function.prototype.bind.bind(Function.prototype.call);
+  const SafePromise = Promise;
+  const PromiseResolve = Promise.resolve.bind(Promise);
+  const PromisePrototypeThen = uncurryThis(Promise.prototype.then);
+  const SafeMap = Map;
+  const MapPrototypeGet = uncurryThis(Map.prototype.get);
+  const MapPrototypeSet = uncurryThis(Map.prototype.set);
+  const SafeSet = Set;
+  const SetPrototypeHas = uncurryThis(Set.prototype.has);
+  const SetPrototypeAdd = uncurryThis(Set.prototype.add);
+  const ArrayPrototypeMap = uncurryThis(Array.prototype.map);
+  const ArrayPrototypePush = uncurryThis(Array.prototype.push);
+  const resolvedPromise = PromiseResolve();
   const SafePromiseAllReturnVoid = (promises, mapFn) =>
-    new Promise((resolve, reject) => {
+    new SafePromise((resolve, reject) => {
       let pendingPromises = promises.length;
       if (pendingPromises === 0) resolve();
       const onFulfilled = () => {
@@ -19,32 +33,36 @@ export const NODE_IMPORT = `(function (hostLoad, hostDependencies, hostIsInstant
       };
       for (let i = 0; i < promises.length; i++) {
         const promise = mapFn != null ? mapFn(promises[i], i) : promises[i];
-        Promise.resolve(promise).then(onFulfilled, reject);
+        PromisePrototypeThen(PromiseResolve(promise), onFulfilled, reject);
       }
     });
-  const loadCache = new Map();
+  const loadCache = new SafeMap();
   const getOrCreateModuleJob = (module) => {
-    const cached = loadCache.get(module);
+    const cached = MapPrototypeGet(loadCache, module);
     if (cached !== undefined) return cached;
     const job = { module, linked: undefined, instantiated: hostIsInstantiated(module) ? resolvedPromise : undefined };
-    loadCache.set(module, job);
-    job.linked = hostDependencies(module).map(getOrCreateModuleJob);
+    MapPrototypeSet(loadCache, module, job);
+    job.linked = ArrayPrototypeMap(hostDependencies(module), getOrCreateModuleJob);
     return job;
   };
   const asyncInstantiate = async (job) => {
-    const jobsInGraph = new Set();
+    const jobsInGraph = new SafeSet();
+    // The jobs in the order that the set has them, which a SafeSet iterates without the program's
+    // iterators.
+    const jobsInOrder = [];
     const addJobsToDependencyGraph = async (moduleJob) => {
-      if (jobsInGraph.has(moduleJob)) {
+      if (SetPrototypeHas(jobsInGraph, moduleJob)) {
         return;
       }
-      jobsInGraph.add(moduleJob);
+      SetPrototypeAdd(jobsInGraph, moduleJob);
+      ArrayPrototypePush(jobsInOrder, moduleJob);
       const dependencyJobs = moduleJob.linked;
       return SafePromiseAllReturnVoid(dependencyJobs, addJobsToDependencyGraph);
     };
     await addJobsToDependencyGraph(job);
     hostInstantiate(job.module);
-    for (const dependencyJob of jobsInGraph) {
-      dependencyJob.instantiated = resolvedPromise;
+    for (let i = 0; i < jobsInOrder.length; i++) {
+      jobsInOrder[i].instantiated = resolvedPromise;
     }
   };
   const instantiate = (job) => {

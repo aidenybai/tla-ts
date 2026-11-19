@@ -301,6 +301,29 @@ describe("compiles modules by specializing ESCore", () => {
     });
   });
 
+  describe("runs import() on the built-ins as the realm first has them, as Node's primordials", () => {
+    const getFiles = (expected: string) => ({
+      "main.js": `const log = [];
+        const then = Promise.prototype.then;
+        globalThis.Promise = function () { throw new Error("Promise"); };
+        Map.prototype.get = function () { throw new Error("get"); };
+        Set.prototype.has = function () { throw new Error("has"); };
+        Array.prototype.map = function () { throw new Error("map"); };
+        then.call(import("./imported.js"), (ns) => log.push(ns.value), (error) => log.push(error.message));
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+      "imported.js": 'import "./leaf.js"; export const value = 1;',
+      "leaf.js": "export const leaf = 1;",
+    });
+
+    it("agrees with Node", async () => {
+      expect((await checkModules(getFiles("1"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getFiles("Promise"))).message).toContain(THREW);
+    });
+  });
+
   describe("throws a SyntaxError where Node loads a module with an early error", () => {
     const getFiles = (expected: string) => ({
       "main.js": `import requires from "./requires.cjs";
