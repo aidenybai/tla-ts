@@ -75,6 +75,21 @@ describe("TLCExt matches TLC", () => {
     },
   );
 
+  it("counts the steps that TLCTrace rebuilds for Trace in an invariant under coverage", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x < 3 /\\ x' = x + 1\nInv == Len(Trace) > 0\n====",
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\nINVARIANT Inv",
+      coverage: 1,
+    });
+    expect(
+      result.coverage?.relations.map(
+        (relation) =>
+          `${relation.distinct}:${relation.generated} ${relation.expressions.map((expression) => expression.count).join(" ")}`,
+      ),
+    ).toEqual(["4:4 4", "3:6 6 7 6", "0:0 4"]);
+  });
+
   it("reads Trace of a state that a VIEW rebuilds as the path to it", async () => {
     const prints: string[] = [];
     const result = await check({
