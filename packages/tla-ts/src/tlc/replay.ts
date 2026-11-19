@@ -28,7 +28,6 @@ import {
   getContextElements,
   getLazyFunction,
   getQuantifierElements,
-  getStartupValue,
   mapBoundSets,
   toKeepLazyContext,
   lookupScope,
@@ -517,11 +516,7 @@ const visitDefined = (
       operator?.kind === "Closure" &&
       operator.params.length === 0 &&
       !replay.environment.variableIndex.has(expression.name) &&
-      !(
-        definition &&
-        isConstantLevel(definition, replay.environment) &&
-        getStartupValue(definition, replay.environment) !== undefined
-      )
+      !(definition && isConstantLevel(definition, replay.environment))
     ) {
       return visit(replay, operator.body, items, operator.scope, partial, node);
     }
