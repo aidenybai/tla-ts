@@ -114,6 +114,37 @@ describe("printing matches TLC", () => {
     ]);
   });
 
+  it("keeps the records inside a set sorted once PrintT prints them, as TLC sorts the set it shares in place", async () => {
+    const body = [
+      "yy == 0",
+      "zz == 0",
+      "ASSUME LET S == {[zz |-> 1, yy |-> 2]} IN PrintT(ToString(S)) /\\ PrintT(S) /\\ PrintT(ToString(S))",
+      "ASSUME LET T == <<[zz |-> 1, yy |-> 2]>> IN PrintT(T) /\\ PrintT(ToString(T))",
+      "ASSUME LET U == <<{[zz |-> 1, yy |-> 2]}>> IN PrintT(U) /\\ PrintT(ToString(U))",
+      "ASSUME LET W == {<<[zz |-> 1, yy |-> 2]>>} IN PrintT(W) /\\ PrintT(ToString(W))",
+      "ASSUME LET X == [k \\in {1} |-> {[zz |-> 1, yy |-> 2]}] IN PrintT(X) /\\ PrintT(ToString(X))",
+      "ASSUME LET Y == {[k \\in {1} |-> [zz |-> 1, yy |-> 2]]} IN PrintT(Y) /\\ PrintT(ToString(Y))",
+      "ASSUME LET Z == {[zz |-> 1, yy |-> 2]} IN Print(Z, TRUE) /\\ PrintT(ToString(Z))",
+    ].join("\n");
+    expect((await checkPrinting(body)).printed).toEqual([
+      '"{[zz |-> 1, yy |-> 2]}"',
+      "{[yy |-> 2, zz |-> 1]}",
+      '"{[yy |-> 2, zz |-> 1]}"',
+      "<<[yy |-> 2, zz |-> 1]>>",
+      '"<<[zz |-> 1, yy |-> 2]>>"',
+      "<<{[yy |-> 2, zz |-> 1]}>>",
+      '"<<{[yy |-> 2, zz |-> 1]}>>"',
+      "{<<[yy |-> 2, zz |-> 1]>>}",
+      '"{<<[yy |-> 2, zz |-> 1]>>}"',
+      "<<{[yy |-> 2, zz |-> 1]}>>",
+      '"<<{[yy |-> 2, zz |-> 1]}>>"',
+      "{<<[yy |-> 2, zz |-> 1]>>}",
+      '"{<<[yy |-> 2, zz |-> 1]>>}"',
+      "{[yy |-> 2, zz |-> 1]}  TRUE",
+      '"{[yy |-> 2, zz |-> 1]}"',
+    ]);
+  });
+
   it.each([
     ["{F(1), F(2), F(3)}", ["2  0", "1  0", "3  0"]],
     ["{F(4), F(2), F(1), F(3), F(5)}", ["2  0", "4  0", "1  0", "3  0", "5  0"]],
@@ -146,6 +177,71 @@ describe("printing matches TLC", () => {
       expect(run.printed).toEqual(expected);
     },
   );
+
+  it.each([
+    [
+      "x = {F(2), F(1)}",
+      'x\' = x /\\ "a" \\in x',
+      'Attempted to compare string "a" with non-string:\n(0 :> 2)',
+    ],
+    [
+      "x = 0",
+      'x\' = 1 /\\ LET S == {F(2), F(1)} IN Print(S, TRUE) /\\ "a" \\in S',
+      'Attempted to compare string "a" with non-string:\n(0 :> 2)',
+    ],
+    ["x = {1, 2}", 'x\' = x /\\ "a" \\in x', 'Attempted to compare string "a" with non-string:\n2'],
+    [
+      "x = 0",
+      'x\' = 1 /\\ LET S == {[a |-> 2], [a |-> 1]} IN PrintT(S) /\\ "a" \\in S',
+      'Attempted to compare string "a" with non-string:\n[a |-> 2]',
+    ],
+    [
+      "x = 0",
+      'x\' = 1 /\\ "a" \\in {2, 1}',
+      'Attempted to check equality of integer 2 with non-integer:\n"a"',
+    ],
+    [
+      "x = {F(2), F(1)}",
+      'x\' = x /\\ x \\ {"a"} = {}',
+      'Attempted to check equality of string "a" with non-string:\n(0 :> 1)',
+    ],
+    [
+      "x = {[a |-> 2], [a |-> 1]}",
+      'x\' = x /\\ x \\ {"a"} = {}',
+      'Attempted to check equality of string "a" with non-string:\n[a |-> 1]',
+    ],
+    [
+      "x = 0",
+      'x\' = 1 /\\ {[a |-> 2], [a |-> 1]} \\ {"a"} = {}',
+      'Attempted to check equality of string "a" with non-string:\n[a |-> 2]',
+    ],
+    [
+      "x = <<{}>>",
+      "x' = [x EXCEPT ![1] = {2, 1}] /\\ \"a\" \\in x'[1]",
+      'Attempted to check equality of integer 2 with non-integer:\n"a"',
+    ],
+  ])(
+    "searches the set in %s, %s as TLC does, which sorts a set literal in place as it fingerprints or prints it",
+    async (init, next, message) => {
+      const run = await checkPrinting(
+        `VARIABLE x\nF(c) == LET r[n \\in 0..0] == IF n = 0 THEN c ELSE r[n - 1] IN r\nInit == ${init}\nNext == ${next}`,
+        "INIT Init\nNEXT Next",
+      );
+      expect(run.result.failure?.message).toBe(
+        `TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: ${message}`,
+      );
+    },
+  );
+
+  it("searches a set literal that EXCEPT stores as sorted once TLC fingerprints the function", async () => {
+    const run = await checkPrinting(
+      'VARIABLE x\nInit == x = <<{}>>\nNext == x\' = [x EXCEPT ![1] = {2, 1}]\nInv == "a" \\notin x[1]',
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(run.result.failure?.message).toBe(
+      'Evaluating invariant Inv failed.\nAttempted to compare string "a" with non-string:\n2',
+    );
+  });
 });
 
 const NESTED_TUPLE_LINES = Array.from({ length: 10 }, () => "<<1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>");

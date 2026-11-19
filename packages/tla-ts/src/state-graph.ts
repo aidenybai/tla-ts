@@ -182,7 +182,7 @@ const createDotWriter = (
     writeConstrained: (state, successor, action, constraint) =>
       writeEdge(state, successor, false, action, constraint),
     writeStuttering: (state) => {
-      if (isDuplicate(state, state)) return;
+      if (!(is174 || dump.stuttering) || isDuplicate(state, state)) return;
       lines.push(
         `${state.fingerprint} -> ${state.fingerprint} [style="dashed"${is174 ? "" : ',color="lightgray"'}];\n`,
       );

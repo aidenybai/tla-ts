@@ -95,7 +95,7 @@ export const createCounterExample = (
   isConsole = true,
 ) => {
   const states = stateRecords.map((state, index) =>
-    createTuple([index + 1, createRecord(Object.entries(state))]),
+    createTuple([index + 1, createTlcRecord(Object.entries(state))]),
   );
   const steps = states
     .slice(1)
@@ -230,12 +230,9 @@ export const createTlcExtOperators = (
       if (!context.state) return createTuple([createRecord([])]);
       return createTuple(
         runtime.getBehavior(state).map((step) => {
-          const fields = context.environment.variables.map((name, index): [string, Value] => [
-            name,
-            step[index],
-          ]);
+          const fields = Object.entries(runtime.toRecord(step));
           const action = runtime.getSimulationValue?.("action", step);
-          return createRecord(action === undefined ? fields : [["_action", action], ...fields]);
+          return createTlcRecord(action === undefined ? fields : [["_action", action], ...fields]);
         }),
       );
     }),

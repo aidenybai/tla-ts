@@ -1,4 +1,5 @@
-import { readFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import { FIXTURES } from "./check-harness";
@@ -836,6 +837,42 @@ describe("the CLI reports results like TLC", () => {
       "End of statistics.",
     ]);
   });
+
+  const runCliWithUserFile = (name: string) => {
+    const directory = mkdtempSync(join(tmpdir(), "user-file-"));
+    const path = join(directory, "user.txt");
+    const result = runCli("cli-output", name, ["-noGenerateSpecTE", "-userFile", path]);
+    const written = readFileSync(path, "utf8");
+    rmSync(directory, { recursive: true });
+    return { result, written };
+  };
+
+  it("writes the output of Print and PrintT to -userFile, also while it rebuilds the trace, like TLC", () => {
+    const run = runCliWithUserFile("UserFile");
+    expect(run.result.status).toBe(12);
+    expect(run.result.stdout.split("\n").filter((line) => line.startsWith("<<"))).toEqual([]);
+    expect(run.written).toBe(
+      [
+        '<<"init", 0>>',
+        '<<"next", 0>>  TRUE',
+        '<<"next", 1>>  TRUE',
+        '<<"init", 0>>',
+        '<<"next", 0>>  TRUE',
+        '<<"next", 1>>  TRUE',
+        '<<"init", 0>>',
+        '<<"next", 0>>  TRUE',
+        '<<"next", 1>>  TRUE',
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("writes the counts of the _POSSIBLE predicates to -userFile like TLC", () => {
+    const run = runCliWithUserFile("UserFilePossible");
+    expect(run.result.status).toBe(10);
+    expect(run.result.stdout).not.toContain("[Seen |-> 1, Unseen |-> 0]");
+    expect(run.written).toBe("[Seen |-> 1, Unseen |-> 0]\n");
+  });
 });
 
 describe("the CLI answers PickSuccessor from standard input like TLC", () => {
@@ -1233,6 +1270,8 @@ describe("the CLI takes several specs and globs", () => {
       "Checking UnfingerprintedProduct.tla with UnfingerprintedProduct.cfg",
       "Checking UnfingerprintedState.tla with UnfingerprintedState.cfg",
       "Checking UnspecifiedFairness.tla with UnspecifiedFairness.cfg",
+      "Checking UserFile.tla with UserFile.cfg",
+      "Checking UserFilePossible.tla with UserFilePossible.cfg",
       "Checking ViewLasso.tla with ViewLasso.cfg",
       "Checking Warned.tla with Warned.cfg",
     ]);
@@ -1275,8 +1314,17 @@ describe("the CLI takes several specs and globs", () => {
 });
 
 describe("the CLI prints messages for a program to read like TLC", () => {
-  const runTool = (name: string) =>
-    runCli("tool-output", name, ["-tool", "-workers", "1", "-fp", "0", "-lncheck", "final"]);
+  const runTool = (name: string, args: string[] = []) =>
+    runCli("tool-output", name, [
+      "-tool",
+      "-workers",
+      "1",
+      "-fp",
+      "0",
+      "-lncheck",
+      "final",
+      ...args,
+    ]);
 
   it("prints again what the spec prints as it rebuilds a safety trace", () => {
     const result = runTool("Steps");
@@ -1339,6 +1387,103 @@ describe("the CLI prints messages for a program to read like TLC", () => {
       getAlias(0),
       getAlias(1),
       getAlias(2),
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+  });
+
+  const getView = (value: number, level: number) => `<<"view", ${value}, ${level}>>`;
+
+  it("evaluates the VIEW as TLC fingerprints the states of a trace it prints and rebuilds, and seeds its random generator for them", () => {
+    const result = runTool("ViewSteps");
+    expect(result.status).toBe(11);
+    expect(getToolSequence(result.stdout)).toEqual([
+      "2262",
+      "2187",
+      "2220",
+      "2219",
+      "2185",
+      "2189",
+      getView(0, 1),
+      getView(1, 1),
+      "2190",
+      getView(1, 2),
+      getView(2, 2),
+      getView(3, 3),
+      "2114",
+      getView(0, 1),
+      getView(1, 1),
+      getView(2, 2),
+      getView(1, 1),
+      "2121",
+      "2217",
+      getView(2, 2),
+      "2217",
+      getView(3, 3),
+      getView(3, 3),
+      getView(3, 3),
+      "2217",
+      getView(2, 2),
+      getView(0, 1),
+      getView(1, 1),
+      getView(2, 2),
+      getView(1, 1),
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+  });
+
+  it("evaluates the VIEW as TLC fingerprints an initial state it prints alone and rebuilds", () => {
+    const result = runTool("ViewSteps", ["-config", "ViewInitial.cfg"]);
+    expect(result.status).toBe(11);
+    expect(getToolSequence(result.stdout)).toEqual([
+      "2262",
+      "2187",
+      "2220",
+      "2219",
+      "2185",
+      "2189",
+      getView(0, 1),
+      getView(1, 1),
+      "2190",
+      getView(1, 2),
+      "2114",
+      "2121",
+      getView(1, 1),
+      "2217",
+      getView(1, 1),
+      getView(0, 1),
+      getView(1, 1),
+      "2200",
+      "2199",
+      "2194",
+      "2186",
+    ]);
+  });
+
+  it("evaluates the VIEW only for the candidates as TLC rebuilds a lasso from the fingerprints the search stored", () => {
+    const result = runTool("ViewLoop");
+    expect(result.status).toBe(13);
+    const sequence = getToolSequence(result.stdout);
+    expect(sequence.slice(sequence.indexOf("2192"))).toEqual([
+      "2192",
+      getView(0, 1),
+      getView(1, 2),
+      getView(2, 3),
+      getView(3, 4),
+      "2116",
+      "2264",
+      "2217",
+      "2217",
+      "2217",
+      "2217",
+      getView(1, 5),
+      "2122",
+      "2267",
       "2200",
       "2199",
       "2194",
