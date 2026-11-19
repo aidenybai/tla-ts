@@ -122,7 +122,6 @@ const createReusedTargetError = (target: string) =>
 export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): AppliedConfig => {
   const getRootKey = (name: string) => linked.rootKeys.get(name) ?? name;
   const declaredConstants = linked.root.constants.map((constant) => constant.name);
-  const variables = linked.root.variables;
   const getScopedSymbol = (item: { name: string; module?: string }) => {
     const symbol = linked.moduleSymbols.get(item.module ?? "")?.get(item.name);
     return symbol?.kind === "Definition" ? symbol : undefined;
@@ -208,8 +207,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       definition !== undefined ||
       linked.builtins.has(targetKey) ||
       constants.has(targetKey) ||
-      declaredConstants.includes(target) ||
-      variables.includes(target);
+      declaredConstants.includes(target);
     if (!isDefined) {
       throw new TlaConfigError(
         `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
