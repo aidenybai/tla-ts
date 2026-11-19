@@ -477,6 +477,15 @@ const getMayUseArguments = (node: ts.Node): boolean => {
   return ts.forEachChild(node, (child) => (getMayUseArguments(child) ? true : undefined)) ?? false;
 };
 
+// The lexical environment of a context that a TLA+ expression gives.
+const getLex = (context: string) =>
+  /^[\w.]+(?:\(.*\))?$/s.test(context) ? `${context}.lex` : `(${context}).lex`;
+
+// Whether a with statement holds a node, whose object environment may then resolve its names, in
+// the functions that close over it too.
+const hasWithAround = (node: ts.Node): boolean =>
+  node.parent !== undefined && (ts.isWithStatement(node.parent) || hasWithAround(node.parent));
+
 // Whether code makes a function or a class, whose closure keeps the environment it runs in.
 const hasClosure = (node: ts.Node): boolean =>
   ts.isFunctionDeclaration(node) ||
@@ -823,6 +832,19 @@ export const specialize = (
     if (ts.isIdentifier(callee) && callee.text === "eval") {
       throw new TlaTypeScriptError("tla-ts can't run eval", node);
     }
+    // A name's this value is undefined (EvaluateCall, §13.3.6.2) but where a with statement's object
+    // environment holds it.
+    if (ts.isIdentifier(callee) && !hasWithAround(node)) {
+      const fn = value(callee, scope);
+      const shortCircuit =
+        node.questionDotToken === undefined
+          ? ""
+          : `IF IsNullish(Val(c)) THEN Abrupt(c.s, Completion("nullish", Undefined, Empty)) ELSE `;
+      return defineCode(
+        "Call",
+        `LET c == ${fn("s", "ctx")} IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsThen(Val(c), Undefined, FALSE, ${args("c.s", "ctx")})`,
+      );
+    }
     const base = reference(node.expression, scope);
     const shortCircuit =
       node.questionDotToken === undefined
@@ -1111,11 +1133,12 @@ export const specialize = (
       const variable = process.env[node.name.text];
       return (state) => `Ok(${state}, ${variable === undefined ? "Undefined" : getStr(variable)})`;
     }
-    if (
-      ts.isIdentifier(node) ||
-      ts.isPropertyAccessExpression(node) ||
-      ts.isElementAccessExpression(node)
-    ) {
+    if (ts.isIdentifier(node)) {
+      reference(node, scope);
+      return (state, context) =>
+        `IdentifierValue(${state}, ${getLex(context)}, ${getUnits(node.text)}, ${getBool(scope.isStrict)})`;
+    }
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const ref = reference(node, scope);
       return (state, context) => `GetValueThen(${ref(state, context)})`;
     }
