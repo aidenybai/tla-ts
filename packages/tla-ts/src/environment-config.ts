@@ -367,6 +367,12 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       if (table) setTable(table);
       return;
     }
+    // Defns holds the value or table the configuration assigns a definition, and a constant substituted with that definition gets it and normalizes it here.
+    const forwarded = values.get(`!${target}`);
+    if (forwarded) setValue({ name }, forwarded.value, [getRootKey(name)]);
+    tables
+      .get(`!${target}`)
+      ?.rows.forEach((row) => [...(row.args ?? []), row.value].forEach(toConstantValue));
     const targetArity = getTargetArity(target);
     const arity = linked.root.constants.find((constant) => constant.name === name)?.arity;
     if (targetArity !== undefined && targetArity !== arity) throw createArityError(name, target);
@@ -379,10 +385,10 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
   tables.forEach((table) => {
     if (!isConstant(table)) setTable(table);
   });
-  // Defns holds the value of a definition the configuration assigns one, and a <- of that definition takes the value.
+  // A definition substituted with such a definition gets its value as written.
   lastSubstitutions.forEach((substitution) => {
     const assignment = values.get(`!${substitution.target}`);
-    if (assignment) {
+    if (assignment && !isConstant(substitution)) {
       setValue(substitution, assignment.value, getSubstitutedKeys(substitution));
     }
   });

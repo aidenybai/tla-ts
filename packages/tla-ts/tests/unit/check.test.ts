@@ -1759,6 +1759,26 @@ ASSUME TLCFP(a) = -887695703
       ],
       ["CONSTANTS N, B\nOp(a) == a", 'CONSTANT B = {1, "a"} N <- Op', getCompareError("a", 1)],
       ["CONSTANTS N, B", 'CONSTANT N = {1, "a"} B = {2, "b"}', getCompareError("b", 2)],
+      [
+        "CONSTANTS A, B\nDef == 3",
+        'CONSTANT Def = {1, "a"} A <- Def B = {2, "b"}',
+        getCompareError("a", 1),
+      ],
+      [
+        "CONSTANTS B, A\nDef == 3",
+        'CONSTANT Def = {1, "a"} B <- Def A = {2, "b"}',
+        getCompareError("b", 2),
+      ],
+      [
+        "CONSTANT N(_)\nDef(a) == a",
+        'CONSTANT Def(1) = {1, "a"} N <- Def',
+        getCompareError("a", 1),
+      ],
+      [
+        "CONSTANTS B, A(_)\nDef(a) == a",
+        'CONSTANT Def(1) = {1, "a"} A <- Def B = {2, "b"}',
+        getCompareError("a", 1),
+      ],
     ] as const;
     for (const [body, config, error] of cases) {
       await expect(checkModule(body, config)).rejects.toThrow(error);
