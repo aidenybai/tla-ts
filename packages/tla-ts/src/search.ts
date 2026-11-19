@@ -769,6 +769,7 @@ export interface Search {
   getTlcOrder: () => number[];
   isSymmetric: boolean;
   isConstrained: boolean;
+  isNextVarying: boolean;
   getTypedChecks: (liveness: Solution[] | undefined) =>
     | {
         init: Expression;
@@ -1422,6 +1423,7 @@ export const createSearch = (
       : setViewText(record, () => getViewText(view.expression, state));
   };
   runtime.toRecord = toRecord;
+  const scopeExpressions = getScopeExpressions(spec.scope);
   return {
     properties,
     spec,
@@ -1445,6 +1447,10 @@ export const createSearch = (
     },
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,
+    isNextVarying:
+      spec.next !== undefined &&
+      (scopeExpressions === undefined ||
+        isExpressionImpure([spec.next, ...scopeExpressions], environment, "varying")),
     getTypedChecks: (liveness) => {
       const isInterpreted =
         coverage !== undefined ||
@@ -1463,7 +1469,6 @@ export const createSearch = (
         (predicate) => predicate.expression,
       );
       const definitions = [...environment.facts.ids.keys()];
-      const scopeExpressions = getScopeExpressions(spec.scope);
       // The interpreter evaluates again what the tier evaluated before it fell back. TLC evaluates
       // a constant definition without parameters once as it starts, so one with a startup value
       // never draws again. An operator a scope binds without its expression can reach any
