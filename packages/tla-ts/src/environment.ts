@@ -1198,11 +1198,13 @@ export const createEnvironment = (
   const isPreparedLevelsLinked = preparedTexts.every(
     (texts) => texts !== undefined && !runtimeVariables.some((name) => texts.includes(name)),
   );
+  const getPreparedLevels = (name: string) =>
+    isPreparedLevelsLinked ? preparedLevels.get(name) : undefined;
   const analyzer = createLevelAnalyzer({
     constants: new Set(constants.keys()),
     variables: new Set([...variables, ...runtimeVariables]),
     getDefinition: (name) => getDefinition(name, environment),
-    getPreparedLevels: (name) => (isPreparedLevelsLinked ? preparedLevels.get(name) : undefined),
+    getPreparedLevels,
   });
   const environment: Environment = {
     runtime,
@@ -1224,6 +1226,7 @@ export const createEnvironment = (
     initRunners: new WeakMap(),
     nextRunners: new WeakMap(),
     getOperatorLevels: analyzer.getOperatorLevels,
+    getPreparedLevels,
   };
   preparedValues.forEach((values) =>
     values.forEach((value, definition) => {

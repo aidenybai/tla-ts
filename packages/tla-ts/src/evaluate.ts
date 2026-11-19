@@ -185,6 +185,8 @@ export interface Environment {
   // The levels that SANY's level checking gives a global operator: its own and the formals whose
   // arguments' levels it takes.
   getOperatorLevels: (name: string) => OperatorLevels | undefined;
+  // The levels that a prepared module gives a global operator, where they hold in this check.
+  getPreparedLevels: (name: string) => OperatorLevels | undefined;
   callStack?: CallStack;
   coverage?: Coverage;
 }

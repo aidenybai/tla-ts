@@ -441,6 +441,28 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("checks an invariant's level through the runtime's prepared levels", () => {
+    const source = `
+      let count = 0;
+      export const step = () => {
+        if (count < 2) count += 1;
+      };
+      export const isSmall = () => count <= 2;
+    `;
+
+    it("checks a state predicate, as TLC counts", async () => {
+      expect(getCounts(await checkModel(source))).toEqual(["deadlock", 3, 3]);
+    });
+
+    it("tells an invariant that reads the next state", async () => {
+      const result = await checkModel(source, "spec.ts", "canonical", [
+        "isSmall == ApplyTo(",
+        "isSmall == model' = model /\\ ApplyTo(",
+      ]);
+      expect(result.message).toContain("The invariant isSmall is not a state predicate");
+    });
+  });
+
   describe("computes a model's initial states once, as a constant", () => {
     const source = `
       /** @noDeadlock */
