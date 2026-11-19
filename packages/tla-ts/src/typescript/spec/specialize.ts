@@ -1104,7 +1104,10 @@ export const specialize = (
     if (ts.isMetaProperty(node)) {
       if (node.keywordToken === ts.SyntaxKind.NewKeyword)
         return (state, context) => `Ok(${state}, GetNewTarget(${state}, ${context}))`;
-      throw new TlaTypeScriptError("tla-ts can't compile import.meta to ESCore yet", node);
+      if (files[(fileNumbers.get(node.getSourceFile()) ?? 1) - 1].kind !== "module") {
+        throw new TlaTypeScriptError("tla-ts can't compile import.meta outside a module", node);
+      }
+      return (state, context) => `EvaluateImportMeta(${state}, ${context}, Empty)`;
     }
     if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
       const operator = node.operator;

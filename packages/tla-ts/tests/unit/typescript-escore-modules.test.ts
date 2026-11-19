@@ -209,6 +209,43 @@ describe("compiles modules by specializing ESCore", () => {
     });
   });
 
+  describe("gives each module the import.meta that Node gives it", () => {
+    const getFiles = (expected: string) => ({
+      "main.js": getMain(
+        `import { meta as other } from "./other.js";
+        const log = [typeof import.meta, Object.getPrototypeOf(import.meta), Reflect.ownKeys(import.meta).join("|"), import.meta.main, other.main, other === import.meta, import.meta === import.meta, Object.isExtensible(import.meta)];`,
+        expected,
+      ),
+      "other.js": "export const meta = import.meta;",
+    });
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModules(
+            getFiles("object,,dirname|filename|main|resolve|url,true,false,false,true,true"),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkModules(
+            getFiles("object,,dirname|filename|main|resolve|url,true,true,false,true,true"),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+
+    it("stops at its url, which the runtime leaves out", async () => {
+      expect((await checkModules({ "main.js": "import.meta.url;" })).message).toContain(
+        "tla-ts can't run the host's import.meta",
+      );
+    });
+  });
+
   describe("fails as Node does where a module throws or imports a name no module exports", () => {
     it("rejects a module that throws", async () => {
       expect(

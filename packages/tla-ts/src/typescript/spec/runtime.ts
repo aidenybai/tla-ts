@@ -237,6 +237,19 @@ const DEFINITIONS = [
            THEN DefinePropertyOrThrow(getter.s, Intrinsic(s, p.owner), Str(p.name), AccessorDesc(Val(getter), Val(stop), p.enumerable, p.configurable))
            ELSE DefinePropertyOrThrow(value.s, Intrinsic(s, p.owner), Str(p.name), DataDesc(Val(value), p.writable, p.enumerable, p.configurable))
   IN IF IsAbrupt(d) THEN d ELSE DefineHostWith(d.s, handler, Tail(properties))`,
+  // import.meta of module m, as Node gives it: an object without a prototype whose dirname,
+  // filename, resolve, and url, which the runtime leaves out, are accessors that stop, and whose
+  // main tells whether m is the entry, the module the host loaded first.
+  `ImportMeta(s, m) ==
+  LET o == OrdinaryObjectCreate(s, Null)
+      stop == CreateBuiltinFunction(o.s, <<"Module", "hostStop">>, 0, <<>>, N("import.meta"))
+      d == DefineMetaProperties(stop.s, Val(o), Val(stop), <<N("dirname"), N("filename"), N("main"), N("resolve"), N("url")>>, m = 1)
+  IN IF IsAbrupt(d) THEN d ELSE Ok(d.s, Val(o))`,
+  `DefineMetaProperties(s, o, stop, names, isMain) ==
+  IF names = <<>> THEN Ok(s, Empty) ELSE
+  LET d == DefinePropertyOrThrow(s, o, Str(Head(names)),
+             IF Head(names) = N("main") THEN DataDesc(Bool(isMain), TRUE, TRUE, TRUE) ELSE AccessorDesc(stop, stop, TRUE, TRUE))
+  IN IF IsAbrupt(d) THEN d ELSE DefineMetaProperties(d.s, o, stop, Tail(names), isMain)`,
   // A stop at what of the host that ESCore leaves out a program uses, by its name's code units.
   `HostStop(name) == Assert(FALSE, "tla-ts can't run the host's " \\o UnitsText(name) \\o ", which ESCore leaves out")`,
   // The TLA+ string of code units that a TLA+ string can hold.
@@ -442,6 +455,12 @@ const HOST_PATCHES = [
     name: "InnerModuleEvaluation",
     from: `CASE rec.kind = "synthetic" -> Ok(SyntheticEvaluate(s, m), [stack |-> stack, index |-> index])`,
     to: `CASE rec.kind = "synthetic" -> SyntheticEvaluateThen(s, m, [stack |-> stack, index |-> index])`,
+  },
+  // import.meta of a module, with the properties that Node gives it (HostGetImportMetaProperties).
+  {
+    name: "EvaluateImportMeta",
+    from: "LET meta == OrdinaryObjectCreate(s, Null) IN",
+    to: "LET meta == ImportMeta(s, m) IN",
   },
   // The require that a CommonJS module's code calls.
   {
