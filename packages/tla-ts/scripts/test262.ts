@@ -648,7 +648,8 @@ const loosen = () => {
         ts.isCallExpression(nullable) ||
         ts.isParenthesizedExpression(nullable);
       if (!isOperand) edits.set(nullable.getStart(), "(");
-      edits.set(nullable.getEnd(), isOperand ? "!" : ")!");
+      // The assertion comes before a cast that another error puts at the same end, as of new's.
+      edits.set(nullable.getEnd(), `${isOperand ? "!" : ")!"}${edits.get(nullable.getEnd()) ?? ""}`);
     }
     // A variable that holds an object literal may get properties that the literal lacks.
     const accessed =
@@ -841,7 +842,7 @@ const loosen = () => {
       edits.set(created.expression.getStart(), "(");
       edits.set(
         created.expression.getEnd(),
-        " as unknown as new (...args: unknown[]) => { [key: string | symbol]: unknown })",
+        `${edits.get(created.expression.getEnd()) ?? ""} as unknown as new (...args: unknown[]) => { [key: string | symbol]: unknown })`,
       );
     }
     // A test may call a value of an unknown type, such as a built-in method that it stores under a
