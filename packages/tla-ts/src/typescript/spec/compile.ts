@@ -7,6 +7,7 @@ import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
 import { getHostTimeZone, getTlaString, LOCALE_METHODS } from "./runtime";
+import { parseCommonJs } from "./cjs-lexer";
 import { getNumber, type ProgramFile, specialize } from "./specialize";
 import { suspendDefinitions } from "./suspend";
 
@@ -169,6 +170,13 @@ const getKind = (path: string, text: string): ProgramFile["kind"] =>
       ? "commonjs"
       : "module";
 
+// The names that Node's ModuleWrap of a CommonJS module exports: its lexer's, then default and
+// module.exports.
+const getWrapperNames = (names: ReadonlySet<string>) => [
+  ...names,
+  ...["default", "module.exports"].filter((name) => !names.has(name)),
+];
+
 // A program's files: the script, or the module and each file that its imports and requires load,
 // as the model's resolver finds them, each once, by path. A require of a file that Node reads as
 // other than code, such as JSON, loads none.
@@ -180,6 +188,7 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
         path: fileName,
         kind: "script",
         targets: new Map(),
+        exportNames: [],
       },
     ];
   }
@@ -189,6 +198,40 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
   // Each file's number, by its path, in the order the program finds them.
   const numbers = new Map([[entry, 1]]);
   const files: ProgramFile[] = [];
+  // cjsPreparseModuleExports of Node's ESM loader: the names that a CommonJS module exports, as its
+  // lexer finds them, with those of each module that it re-exports, which a require from it
+  // resolves to and Node reads as CommonJS or JavaScript. A module's names are read once, before
+  // its re-exports', so that a cycle of re-exports ends, as Node's loader keeps them.
+  const preparsed = new Map<string, Set<string>>();
+  const preparse = (path: string, text: string): Set<string> => {
+    const found = preparsed.get(path);
+    if (found !== undefined) return found;
+    const analysis = parseCommonJs(text);
+    const names = new Set(analysis.exports);
+    preparsed.set(path, names);
+    for (const reexport of analysis.reexports) {
+      const call = ts.createSourceFile(
+        path,
+        `require(${JSON.stringify(reexport)})`,
+        ts.ScriptTarget.ESNext,
+        true,
+      );
+      const statement = call.statements[0];
+      const literal =
+        ts.isExpressionStatement(statement) && ts.isCallExpression(statement.expression)
+          ? statement.expression.arguments[0]
+          : undefined;
+      const resolved =
+        literal !== undefined && ts.isStringLiteral(literal) ? resolve(literal) : undefined;
+      if (resolved === undefined) continue;
+      const target = getRealPath(resolved);
+      const targetText = readFileSync(target, "utf8");
+      if (getKind(target, targetText) === "commonjs" || target.endsWith(".js")) {
+        preparse(target, targetText).forEach((name) => names.add(name));
+      }
+    }
+    return names;
+  };
   for (const path of numbers.keys()) {
     const text = path === entry ? source : readFileSync(path, "utf8");
     const kind = getKind(path, text);
@@ -212,7 +255,13 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
         return [[specifier, numbers.get(target) ?? 0] as const];
       }),
     );
-    files.push({ sourceFile, path, kind, targets });
+    files.push({
+      sourceFile,
+      path,
+      kind,
+      targets,
+      exportNames: kind === "commonjs" ? getWrapperNames(preparse(path, text)) : [],
+    });
   }
   return files;
 };

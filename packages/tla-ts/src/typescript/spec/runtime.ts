@@ -150,9 +150,35 @@ const DEFINITIONS = [
   CASE rec.node = None -> Ok(SyntheticEvaluate(s, m), value)
     [] rec.status = "evaluated" -> IF rec.error = Empty THEN Ok(s, value) ELSE ThrowValue(s, rec.error)
     [] OTHER ->
-         LET r == RequireFile(s, rec.node.file) IN
-         IF IsAbrupt(r) THEN Abrupt(SetModule(r.s, m, [status |-> "evaluated", error |-> r.c.value]), r.c)
-         ELSE Ok(SetModule(SetMutableBinding(r.s, rec.env, N("default"), Val(r), TRUE).s, m, [status |-> "evaluated"]), value)`,
+         LET r == RequireFile(s, rec.node.file)
+             set == IF IsAbrupt(r) THEN r ELSE SetCommonJsExports(r.s, rec.env, Val(r), rec.node.exportNames)
+         IN IF IsAbrupt(set) THEN Abrupt(SetModule(set.s, m, [status |-> "evaluated", error |-> set.c.value]), set.c)
+            ELSE Ok(SetModule(set.s, m, [status |-> "evaluated"]), value)`,
+  // The evaluation steps of Node's ModuleWrap of a CommonJS module (createCJSModuleWrap in
+  // lib/internal/modules/esm/translators.js): each name its lexer found that the exports have as
+  // their own, bound to its value, or undefined where reading it throws, then default and
+  // module.exports bound to the exports.
+  `SetCommonJsExports(s, env, exports, names) ==
+  IF names = <<>> THEN Ok(s, Empty) ELSE
+  LET name == Head(names) IN
+  IF name \\in {N("default"), N("module.exports")}
+  THEN SetCommonJsExports(SetMutableBinding(s, env, name, exports, TRUE).s, env, exports, Tail(names))
+  ELSE LET o == ToObject(s, exports) IN
+       IF IsAbrupt(o) THEN o ELSE
+       LET own == HasOwnProperty(o.s, Val(o), Str(name)) IN
+       IF IsAbrupt(own) THEN own
+       ELSE IF Val(own) = False THEN SetCommonJsExports(own.s, env, exports, Tail(names)) ELSE
+       LET v == Get(own.s, Val(o), Str(name))
+           bound == IF IsAbrupt(v) THEN SetMutableBinding(v.s, env, name, Undefined, TRUE)
+                    ELSE SetMutableBinding(v.s, env, name, Val(v), TRUE)
+       IN SetCommonJsExports(bound.s, env, exports, Tail(names))`,
+  // The bindings of a Synthetic Module Record's export names, undefined until it evaluates.
+  `BindExportNames(s, env, names) ==
+  IF names = <<>> THEN s ELSE
+  BindExportNames(InitializeBinding(CreateMutableBinding(s, env, Head(names), FALSE).s, env, Head(names), Undefined).s, env, Tail(names))`,
+  // The names that a Synthetic Module Record exports: a CommonJS module's, which Node's lexer finds,
+  // and default.
+  `SyntheticExportNames(rec) == IF rec.node = None THEN <<N("default")>> ELSE rec.node.exportNames`,
   // RunModule for a program whose code is a module, as the host runs its entry: the module loaded,
   // linked, and evaluated, with the promise of its evaluation as the result's value.
   `RunModuleNode(s, node) ==
@@ -512,8 +538,24 @@ const HOST_PATCHES = [
   // link reaches keeps its exports.
   {
     name: "SyntheticLink",
-    from: "SyntheticLink(s, m) ==\n",
-    to: "SyntheticLink(s, m) ==\n  IF ModuleAt(s, m).env # 0 THEN s ELSE\n",
+    from: `SyntheticLink(s, m) ==
+  LET env == NewModuleEnvironment(s, s.globalEnv, m)
+      created == CreateMutableBinding(env.s, env.e, N("default"), FALSE)
+  IN SetModule(InitializeBinding(created.s, env.e, N("default"), Undefined).s, m, [env |-> env.e])`,
+    to: `SyntheticLink(s, m) ==
+  IF ModuleAt(s, m).env # 0 THEN s ELSE
+  LET env == NewModuleEnvironment(s, s.globalEnv, m)
+  IN SetModule(BindExportNames(env.s, env.e, SyntheticExportNames(ModuleAt(s, m))), m, [env |-> env.e])`,
+  },
+  {
+    name: "GetExportedNames",
+    from: `CASE rec.kind = "synthetic" -> [names |-> <<N("default")>>, set |-> starSet]`,
+    to: `CASE rec.kind = "synthetic" -> [names |-> SyntheticExportNames(rec), set |-> starSet]`,
+  },
+  {
+    name: "ResolveExport",
+    from: `[result |-> IF name = N("default") THEN Resolved(m, name, FALSE, FALSE) ELSE NoResolution, set |-> resolveSet]`,
+    to: `[result |-> IF name \\in Range(SyntheticExportNames(rec)) THEN Resolved(m, name, FALSE, FALSE) ELSE NoResolution, set |-> resolveSet]`,
   },
   {
     name: "InnerModuleEvaluation",

@@ -612,15 +612,63 @@ describe("compiles CommonJS modules as Node loads them", () => {
       expect((await checkModules(getImporting("true,1,2,side,counter"))).message).toContain(THREW);
     });
 
-    it("stops at an import of another name", async () => {
+    it("fails as Node does at an import of a name its lexer doesn't find", async () => {
       expect(
         (
           await checkModules({
-            "main.js": 'import { next } from "./counter.cjs";',
-            "counter.cjs": "exports.next = () => 1;",
+            "main.js": 'import { hidden } from "./counter.cjs";',
+            "counter.cjs": 'const name = "hidden"; exports[name] = 1;',
           })
         ).message,
-      ).toContain("tla-ts can't import names other than default from a CommonJS module");
+      ).toContain(THREW);
+    });
+  });
+
+  describe("gives an ES module the names that Node's lexer finds a CommonJS module exports", () => {
+    const getNamed = (expected: string) => ({
+      ...getFiles("", ""),
+      "package.json": '{ "type": "module" }',
+      "main.js": getMain(
+        `import * as ns from "./lib.cjs";
+        import lib, { a, b, later, thrower, "module.exports" as whole } from "./lib.cjs";
+        import { c, d } from "./reexport.cjs";
+        export * from "./reexport.cjs";
+        import * as self from "./main.js";
+        const log = [Object.keys(ns).join("|"), a, b, later, thrower, whole === lib, lib.notListed, c, d, Object.keys(self).join("|")];`,
+        expected,
+      ),
+      "lib.cjs": `exports.a = 1;
+        module.exports.b = 2;
+        Object.defineProperty(exports, "thrower", { enumerable: true, get: function () { return x.thrower; } });
+        exports.notListed2 = 0;
+        if (false) exports.later = 3;
+        const name = "notListed"; exports[name] = 4;`,
+      "reexport.cjs": 'module.exports = require("./inner.cjs");',
+      "inner.cjs": 'exports.c = "C"; exports.d = "D";',
+    });
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkModules(
+            getNamed(
+              "a|b|default|later|module.exports|notListed2|thrower,1,2,,,true,4,C,D,c|d|module.exports",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkModules(
+            getNamed(
+              "a|b|default|later|module.exports|notListed2|thrower,1,2,3,,true,4,C,D,c|d|module.exports",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
     });
   });
 

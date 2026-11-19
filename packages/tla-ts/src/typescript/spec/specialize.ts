@@ -58,6 +58,8 @@ export interface ProgramFile {
   path: string;
   kind: "script" | "module" | "commonjs";
   targets: ReadonlyMap<string, number>;
+  // The names that Node's ModuleWrap of a CommonJS module exports, which its lexer finds.
+  exportNames: readonly string[];
 }
 
 export interface SpecializedProgram {
@@ -2399,32 +2401,7 @@ export const specialize = (
           statement,
         );
       }
-      // Node finds the names a CommonJS module exports by reading its code, other than default.
-      const specifier =
-        ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)
-          ? statement.moduleSpecifier
-          : undefined;
-      const target =
-        specifier !== undefined && ts.isStringLiteral(specifier)
-          ? files[(file.targets.get(specifier.text) ?? 0) - 1]
-          : undefined;
       const clause = ts.isImportDeclaration(statement) ? statement.importClause : undefined;
-      const exported = ts.isExportDeclaration(statement) ? statement.exportClause : undefined;
-      if (
-        target?.kind === "commonjs" &&
-        (clause?.namedBindings !== undefined ||
-          (ts.isExportDeclaration(statement) &&
-            (exported === undefined ||
-              !ts.isNamedExports(exported) ||
-              exported.elements.some(
-                (element) => (element.propertyName ?? element.name).text !== "default",
-              ))))
-      ) {
-        throw new TlaTypeScriptError(
-          "tla-ts can't import names other than default from a CommonJS module, which Node finds by reading its code",
-          statement,
-        );
-      }
       if (ts.isImportDeclaration(statement)) {
         const request = getRequest(statement);
         if (request === undefined) continue;
@@ -2575,7 +2552,7 @@ export const specialize = (
     definitions.push({
       name: `ModuleNode${number}`,
       arity: 0,
-      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "commonjs", code |-> ${code}, filename |-> ${getUnits(file.path)}, dirname |-> ${getUnits(directory)}, targets |-> ${getTargets(file)}]`,
+      text: `ModuleNode${number} == [file |-> ${number}, kind |-> "commonjs", code |-> ${code}, filename |-> ${getUnits(file.path)}, dirname |-> ${getUnits(directory)}, targets |-> ${getTargets(file)}, exportNames |-> ${getSequence(file.exportNames.map(getUnits))}]`,
     });
     return undefined;
   };
