@@ -51,6 +51,31 @@ const checkShadowed = (unit: string, assumption: string, config = "") =>
     loadModule: (name) => SHADOWED_MODULES.get(name),
   });
 
+const checkInstancedEnabled = (
+  inner: string,
+  substitution: string,
+  maxSetSize: number | undefined,
+  warnings: string[],
+) =>
+  check({
+    source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\n---- MODULE Hi ----\nEXTENDS Integers\nVARIABLES c, d\n${inner}\n====\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ UNCHANGED y\nH == INSTANCE Hi WITH c <- ${substitution}, d <- y\nInv == H!Can\n====`,
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+    maxSetSize,
+    onProgress: (progress) => {
+      if (progress.kind === "warning") warnings.push(progress.text);
+    },
+  });
+
+const getInstancedEnabledOutcome = async (
+  inner: string,
+  substitution: string,
+  maxSetSize: number | undefined,
+) => {
+  const warnings: string[] = [];
+  const result = await checkInstancedEnabled(inner, substitution, maxSetSize, warnings);
+  return [result.status, result.violation?.trace.map((step) => step.state.x), warnings];
+};
+
 describe("INSTANCE matches TLC", () => {
   it("substitutes constants and variables in named, parameterized, and unnamed instances", async () => {
     const result = await checkInstances("Instances.cfg");
@@ -581,6 +606,111 @@ describe("INSTANCE matches TLC", () => {
       expect([result.violation?.name, result.violation?.trace.map((step) => step.state.x)]).toEqual(
         ["Inv", [0, 1, 2]],
       );
+    },
+  );
+
+  const getChangedWarning = (name: string, location: string) =>
+    `The variable ${name} was changed while it is specified as UNCHANGED at\n${location} of module M`;
+
+  it.each([
+    [
+      "Keep(v) == v\nA == c' = c + 1 /\\ UNCHANGED Keep(c)\nCan == ENABLED A",
+      "x",
+      ["invariant-violation", [0], []],
+    ],
+    [
+      "Keep(v) == v\nA == c' = c /\\ UNCHANGED Keep(c)\nCan == ENABLED A",
+      "x + 0",
+      ["success", undefined, []],
+    ],
+    [
+      "Keep(v) == v\nA == c' = c + 1 /\\ UNCHANGED Keep(c)\nCan == ENABLED A",
+      "x + 0",
+      ["invariant-violation", [0], []],
+    ],
+    [
+      "Op(v) == UNCHANGED v\nA == c' = c + 1 /\\ Op(d)\nCan == ENABLED <<A>>_<<c, d>>",
+      "x",
+      ["success", undefined, []],
+    ],
+    [
+      "A == LET k == d IN c' = c + 1 /\\ UNCHANGED k\nCan == ENABLED <<A>>_<<c, d>>",
+      "x",
+      ["success", undefined, []],
+    ],
+    [
+      "Op(v) == v' = v\nA == c' = c + 1 /\\ Op(d)\nCan == ENABLED <<A>>_<<c, d>>",
+      "x",
+      ["success", undefined, []],
+    ],
+    [
+      "Op(v) == UNCHANGED v\nA == c' = c + 1 /\\ d' = 1 - d /\\ Op(d)\nCan == ENABLED <<A>>_<<c, d>>",
+      "x",
+      ["invariant-violation", [0], [getChangedWarning("d", "line 7, col 20 to line 7, col 20")]],
+    ],
+  ])(
+    "reads a primed variable of an instance inside its ENABLED as the variable ENABLED binds, however it is reached, as TLC's OPCODE_enabled branches the context: %s with c <- %s",
+    async (inner, substitution, outcome) => {
+      expect(await getInstancedEnabledOutcome(inner, substitution, undefined)).toEqual(outcome);
+      expect(await getInstancedEnabledOutcome(inner, substitution, 1_000_000)).toEqual(outcome);
+    },
+  );
+
+  it.each([
+    [
+      "A == c' = c + 1 /\\ UNCHANGED (LET k == <<d>> IN k)\nCan == ENABLED <<A>>_<<c, d>>",
+      [
+        "Line 10, column 9 to line 10, column 22 in M",
+        "Line 10, column 9 to line 10, column 13 in M",
+        "Line 10, column 18 to line 10, column 22 in M",
+        "Line 13, column 8 to line 13, column 12 in M",
+        "Line 12, column 1 to line 12, column 36 in M",
+        "Line 8, column 8 to line 8, column 29 in M",
+        "Line 8, column 16 to line 8, column 29 in M",
+        "Line 8, column 18 to line 8, column 18 in M",
+        "Line 7, column 6 to line 7, column 50 in M",
+        "Line 7, column 6 to line 7, column 15 in M",
+        "Line 7, column 20 to line 7, column 50 in M",
+        "Line 7, column 31 to line 7, column 49 in M",
+        "Line 7, column 49 to line 7, column 49 in M",
+        "Line 7, column 40 to line 7, column 44 in M",
+        "Line 7, column 42 to line 7, column 42 in M",
+      ],
+    ],
+    [
+      "hv == <<d>>\nA == c' = c + 1 /\\ UNCHANGED (LET k == hv IN k)\nCan == ENABLED <<A>>_<<c, d>>",
+      [
+        "Line 11, column 9 to line 11, column 22 in M",
+        "Line 11, column 9 to line 11, column 13 in M",
+        "Line 11, column 18 to line 11, column 22 in M",
+        "Line 14, column 8 to line 14, column 12 in M",
+        "Line 13, column 1 to line 13, column 36 in M",
+        "Line 9, column 8 to line 9, column 29 in M",
+        "Line 9, column 16 to line 9, column 29 in M",
+        "Line 9, column 18 to line 9, column 18 in M",
+        "Line 8, column 6 to line 8, column 47 in M",
+        "Line 8, column 6 to line 8, column 15 in M",
+        "Line 8, column 20 to line 8, column 47 in M",
+        "Line 8, column 31 to line 8, column 46 in M",
+        "Line 8, column 46 to line 8, column 46 in M",
+        "Line 8, column 40 to line 8, column 41 in M",
+        "Line 7, column 7 to line 7, column 11 in M",
+        "Line 7, column 9 to line 7, column 9 in M",
+      ],
+    ],
+  ])(
+    "names the variable of an instance that its ENABLED leaves unassigned under UNCHANGED of a LET tuple, as TLC's Tool#enabledUnchanged evaluates it: %s",
+    async (inner, callStack) => {
+      const result = await checkInstancedEnabled(inner, "x", undefined, []);
+      expect([
+        result.failure?.message,
+        result.failure?.exitCode,
+        formatCallStackLines(result),
+      ]).toEqual([
+        "The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable d occurring in the state formula v.\n",
+        75,
+        callStack,
+      ]);
     },
   );
 });

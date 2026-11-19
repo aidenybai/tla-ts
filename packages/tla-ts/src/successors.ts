@@ -44,7 +44,7 @@ import {
   type Scope,
   type State,
 } from "./evaluate";
-import { forEachChild } from "./instances";
+import { enabledExpressions, forEachChild } from "./instances";
 import { getRandomSubset, nextPrime, type JavaRandom } from "./tlc/random";
 import {
   bindUnchangedApplication,
@@ -200,7 +200,11 @@ const getRuntimeVariableIndex = (
     const letScope = bindDefinitions(expression.definitions, getContext(run, scope, partial));
     return getRuntimeVariableIndex(expression.body, letScope, partial, run, isPrimed);
   }
-  if (expression.kind !== "Identifier") return undefined;
+  if (expression.kind !== "Identifier") {
+    return expression.kind === "EnabledVariable" && !isPrimed
+      ? run.environment.variableIndex.get(expression.name)
+      : undefined;
+  }
   const binding = lookupScope(scope, expression.name);
   if (binding?.kind === "Thunk" && !binding.isReleased) {
     return getRuntimeVariableIndex(binding.expression, binding.scope, partial, run, isPrimed);
@@ -557,12 +561,34 @@ const compileFunctionAction = (
   };
 };
 
+// TLC's Tool#enabledUnchanged evaluates what it keeps, where an instance's variable reads its substitution.
+const compileEnabledUnchanged =
+  (expression: Expression, runner: Runner): Runner =>
+  (run, scope, partial, action, isFixed, onComplete) => {
+    const index = getRuntimeVariableIndex(expression, scope, partial, run, false);
+    if (index === undefined) {
+      runner(run, scope, partial, action, isFixed, onComplete);
+      return;
+    }
+    const value = evaluate(expression, getContext(run, scope, partial));
+    const assigned = partial[index];
+    if (assigned === undefined) {
+      onComplete(assign(partial, index, value), action);
+      return;
+    }
+    if (!isEqualLikeTlc(assigned, value)) {
+      warnChangedUnchanged(run.environment, index, expression);
+      return;
+    }
+    onComplete(partial, action);
+  };
+
 const compileUnchanged = (expression: Expression, environment: Environment): Runner => {
   const unchanged = getUnchangedWrapper(expression);
   if (getUnchangedVariables(expression, environment))
     return compileConjunction([unchanged], environment, false);
   if (expression.kind === "Tuple") return getRunner(unchanged, environment, false);
-  return (run, scope, partial, action, isFixed, onComplete) => {
+  const runner: Runner = (run, scope, partial, action, isFixed, onComplete) => {
     const index = getRuntimeVariableIndex(expression, scope, partial, run, false);
     if (index !== undefined) {
       const value = run.current?.[index];
@@ -620,6 +646,7 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
       onComplete,
     );
   };
+  return enabledExpressions.has(expression) ? compileEnabledUnchanged(expression, runner) : runner;
 };
 
 const compileCall = (

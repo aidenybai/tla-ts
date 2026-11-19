@@ -397,7 +397,7 @@ export const createUnassignedError = (name: string, expression: Expression) =>
 export const toUnspecifiedSubscriptError = (error: unknown, version: TlcVersion | undefined) =>
   error instanceof TlaUnassignedError && version !== "1.7.4"
     ? new TlaEvaluationError(
-        `The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable ${error.variable} occurring in the state formula v.\n`,
+        `The action formula A appearing in a WF_v(A) or SF_v(A) operator does not specify the primed value of the variable ${getKeyName(error.variable)} occurring in the state formula v.\n`,
       )
     : error;
 
@@ -2676,6 +2676,18 @@ const compile = (expression: Expression, environment: Environment): Evaluator =>
         }
         return binding.value;
       };
+    case "EnabledVariable": {
+      const name = expression.name;
+      const index = environment.variableIndex.get(name) ?? -1;
+      const substitution = getChildEvaluator(expression.substitution);
+      // Inside ENABLED only toNextContext leaves no next state, so a context without one evaluates a primed expression.
+      return (context) => {
+        if (context.next !== undefined) return substitution(context);
+        const value = context.state?.[index];
+        if (value === undefined) throw createUnassignedError(name, expression);
+        return value;
+      };
+    }
     case "FunctionApplication": {
       keepLazy(expression.function);
       const evaluated = getChildEvaluator(expression.function);

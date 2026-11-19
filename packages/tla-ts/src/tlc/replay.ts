@@ -49,6 +49,7 @@ import {
   type Value,
 } from "../values";
 import { isSubstitutionDefinition, substitutedExpressions, substitutionFrames } from "../instances";
+import { getKeyName } from "../resolve";
 import { CORE_OPERATORS } from "../standard-modules";
 import type { SuccessorGenerator } from "../successors";
 import { MESSAGE_CODE } from "./messages";
@@ -199,7 +200,11 @@ const getVariable = (
     );
   }
   const name = getIdentifierName(expression);
-  if (name === undefined) return undefined;
+  if (name === undefined) {
+    return expression.kind === "EnabledVariable"
+      ? environment.variableIndex.get(expression.name)
+      : undefined;
+  }
   const binding = lookupScope(scope, name);
   if (binding?.kind === "Thunk") {
     return getVariable(environment, binding.expression, binding.scope, frames);
@@ -418,7 +423,7 @@ const isChanged = (replay: Replay, item: ActionItem, partial: State) => {
     environment: replay.environment,
     scope: item.scope,
     state: replay.current,
-    next: undefined,
+    next: partial,
   });
   const after = evaluateInPartial(replay, item.node, item.expression, item.scope, partial);
   if (after instanceof TlaUnassignedError) {
@@ -994,11 +999,15 @@ export const warnChangedUnchanged = (
   environment: Environment,
   index: number,
   expression: Expression,
-) =>
+) => {
+  const name =
+    environment.variables[index] ??
+    getKeyName([...environment.variableIndex].find((entry) => entry[1] === index)?.[0] ?? "");
   environment.runtime.warn(
     MESSAGE_CODE.unchangedVariableChanged,
-    `The variable ${environment.variables[index]} was changed while it is specified as UNCHANGED at\n${describeRange(expression)}`,
+    `The variable ${name} was changed while it is specified as UNCHANGED at\n${describeRange(expression)}`,
   );
+};
 
 // Deviation from TLC: Tool#enabledUnchanged fails on a variable the step leaves unassigned in an application, whose body tla-ts keeps unchanged instead.
 export const bindUnchangedApplication = (
@@ -1030,16 +1039,16 @@ const visitUnchanged = (
     const node = getNode(replay, parent, expression);
     const index = getVariable(replay.environment, expression, scope);
     if (index !== undefined) {
-      const value = replay.current?.[index];
+      // TLC's Tool#enabledUnchanged evaluates what it keeps, where an instance's variable reads its substitution.
+      const value = replay.isEnabled
+        ? evaluateAt(replay, node, expression, {
+            environment: replay.environment,
+            scope,
+            state: replay.current,
+            next: partial,
+          })
+        : replay.current?.[index];
       if (value === undefined) return false;
-      if (replay.isEnabled && replay.coverage) {
-        evaluateAt(replay, node, expression, {
-          environment: replay.environment,
-          scope,
-          state: replay.current,
-          next: undefined,
-        });
-      }
       const assigned = partial[index];
       if (assigned !== undefined && !isEqualLikeTlc(assigned, value)) {
         warnChangedUnchanged(replay.environment, index, expression);
@@ -1075,7 +1084,7 @@ const visitUnchanged = (
       environment: replay.environment,
       scope,
       state: replay.current,
-      next: undefined,
+      next: partial,
     });
     const callStack = replay.callStack;
     const depth = callStack?.expressions.length ?? 0;

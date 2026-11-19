@@ -134,6 +134,8 @@ export const mapChildren = (
       return { ...expression, args: expression.args.map(mapUnbound) };
     case "Lambda":
       return { ...expression, body: map(expression.body, expression.params) };
+    case "EnabledVariable":
+      return { ...expression, substitution: mapUnbound(expression.substitution) };
     case "And":
     case "Or":
       return { ...expression, operands: expression.operands.map(mapUnbound) };
@@ -291,6 +293,8 @@ export const forEachChild = (
       return visitAll(expression.args, visit);
     case "Lambda":
       return visit(expression.body, expression.params);
+    case "EnabledVariable":
+      return visit(expression.substitution, NO_NAMES);
     case "And":
     case "Or":
       return visitAll(expression.operands, visit);
@@ -556,6 +560,9 @@ const renameNames = (
 
 export const getEnabledVariableName = (name: string) => `${name}@ENABLED`;
 
+// What an instance's ENABLED substitutes, where UNCHANGED evaluates what it keeps, as TLC's Tool#enabledUnchanged does.
+export const enabledExpressions = new WeakSet<Expression>();
+
 const getMode = (rewrite: Rewrite, mode: RewriteMode) => rewrite.modes.get(mode) ?? rewrite;
 
 const isVariable = (expression: Expression, rewrite: Rewrite, bound: Map<string, string>) =>
@@ -759,6 +766,7 @@ const substitute = (
   bound: Map<string, string>,
 ): Expression => {
   const substituted = substituteExpression(expression, rewrite, bound);
+  if (rewrite.mode === "Enabled") enabledExpressions.add(substituted);
   if (syntheticIdentifiers.has(expression)) syntheticIdentifiers.add(substituted);
   const substitution = substitutedExpressions.get(expression);
   if (!substitution || substituted === expression || substitutedExpressions.has(substituted)) {
@@ -821,7 +829,15 @@ const substituteExpression = (
       const copy = withReplacedFrames(replacement, expression);
       const substitution = substitutedExpressions.get(replacement);
       if (substitution) substitutedExpressions.set(copy, substitution);
-      return copy;
+      // TLC's OPCODE_enabled branches the context, so a primed variable of the instance skips its substitution however it is reached.
+      return rewrite.mode === "Enabled" && instantiation.variables.has(expression.name)
+        ? {
+            kind: "EnabledVariable",
+            name: getEnabledVariableName(expression.name),
+            substitution: copy,
+            location: expression.location,
+          }
+        : copy;
     }
     if (replacement && bindings) {
       const name = getSubstitutionName(expression.name);

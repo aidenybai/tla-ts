@@ -3532,6 +3532,37 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each([
+    [
+      "K4",
+      "d' = d",
+      "d' = d",
+      [
+        "||line 8, col 32 to line 8, col 37 of module K4: 2",
+        "||line 9, col 10 to line 9, col 29 of module K4: 1",
+        "||line 9, col 34 to line 9, col 50 of module K4: 2",
+      ],
+    ],
+  ])(
+    "counts an instance's variable that its ENABLED primes as an operator argument under UNCHANGED, as TLC's Tool#evalAppl counts each reference: %s",
+    async (name, incremented, reset, lines) => {
+      const result = await check({
+        source: `---- MODULE ${name} ----\nEXTENDS Integers\nVARIABLES x, y\n---- MODULE Hi ----\nEXTENDS Integers\nVARIABLES c, d\nKeep(v) == v\nHInc == c < 2 /\\ c' = c + 1 /\\ ${incremented}\nHFlip == c' = c /\\ d' = 1 - d /\\ UNCHANGED Keep(c)\nHReset == c = 2 /\\ c' = 0 /\\ ${reset}\nHNext == HInc \\/ HFlip \\/ HReset\nHCanMove == ENABLED HNext\n====\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ UNCHANGED y\nH == INSTANCE Hi WITH c <- x, d <- y\nInv == H!HCanMove\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+      });
+      expect(formatCoverage(result)?.at(-1)).toEqual([
+        `line 17, col 8 to line 17, col 17 of module ${name}: 3`,
+        `|line 16, col 28 to line 16, col 28 of module ${name}: 3`,
+        `|line 16, col 36 to line 16, col 36 of module ${name}: 3`,
+        `|line 12, col 13 to line 12, col 25 of module ${name}: 3`,
+        `||line 8, col 9 to line 8, col 13 of module ${name}: 3`,
+        `||line 8, col 18 to line 8, col 27 of module ${name}: 2`,
+        ...lines,
+      ]);
+    },
+  );
+
   it("counts a substitution at each primed reference and again for UNCHANGED, as TLC's LazyValue caches it only for the states it was evaluated in", async () => {
     const lines = formatCoverage(
       await check({

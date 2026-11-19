@@ -50,6 +50,7 @@ const NONCONSTANT_KINDS = new Set<Expression["kind"]>([
   ...ACTION_KINDS,
   ...TEMPORAL_KINDS,
   "Enabled",
+  "EnabledVariable",
 ]);
 
 const TEMPORAL_OPERATORS = new Set(["~>", "-+->"]);
@@ -92,7 +93,7 @@ const collectLocalFacts = (
     if (ACTION_KINDS.has(kind) || (kind === "Apply" && node.operator === "\\cdot")) {
       return ACTION_LEVEL_FLAGS;
     }
-    if (kind === "Enabled") return VARIABLE_LEVEL_FLAGS;
+    if (kind === "Enabled" || kind === "EnabledVariable") return VARIABLE_LEVEL_FLAGS;
     if (
       TEMPORAL_KINDS.has(kind) ||
       (kind === "UnboundedQuantifier" && node.isTemporal === true) ||
