@@ -22,6 +22,7 @@ import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
 import { getNumber, type ProgramFile, specialize } from "./specialize";
 import { stripTypes } from "./strip-types";
+import { getHostIntl } from "./intl";
 import { suspendDefinitions } from "./suspend";
 
 export interface EscoreSpec {
@@ -603,6 +604,10 @@ export const compileToEscore = (
           arity: 1,
           text: getHostDateFormat(program.words),
         },
+        ...getHostIntl(
+          files.map((file) => file.sourceFile),
+          program.words,
+        ),
         ...getHostCalendars(files.map((file) => file.sourceFile.text).join("\n"), program.words),
         {
           name: "HostLocale",

@@ -1730,10 +1730,10 @@ const getLocale = (tag: string) => {
 };
 
 // The program's HostLocale: for each string it writes that may be a locale tag, and each one's
-// canonical form, what the host's Intl gives of it, where the program names Intl. Any other tag
-// stops, which the host may hold data of.
+// canonical form, what the host's Intl gives of it, where the program names Intl or a method that
+// reads it. Any other tag stops, which the host may hold data of.
 export const getHostLocale = (text: string, words: ReadonlySet<string>) => {
-  const tags = words.has("Intl")
+  const tags = ["Intl", "toLocaleString", "localeCompare"].some((word) => words.has(word))
     ? [...new Set([...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]))]
     : [];
   const entries = new Map<string, string>();

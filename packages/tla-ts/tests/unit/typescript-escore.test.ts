@@ -510,7 +510,9 @@ describe("compiles scripts by specializing ESCore", () => {
     });
 
     it("stops at a locale-sensitive method and at a date string outside ECMA-262's formats", async () => {
-      expect((await checkScript("(1234.5).toLocaleString();")).message).toContain("tla-ts can't");
+      expect((await checkScript("new Date(0).toLocaleString();")).message).toContain(
+        "tla-ts can't",
+      );
       expect((await checkScript('Date.parse("Thu Jan 01 1970");')).message).toContain(
         "tla-ts can't",
       );
@@ -1075,7 +1077,7 @@ describe("compiles scripts by specializing ESCore", () => {
     });
 
     it("stops at a constructor whose options it leaves out", async () => {
-      expect((await checkScript("new Intl.NumberFormat();")).message).toContain("tla-ts can't");
+      expect((await checkScript("new Intl.DurationFormat();")).message).toContain("tla-ts can't");
     });
 
     it("stops at a locale that the program doesn't write", async () => {
@@ -1134,7 +1136,7 @@ describe("compiles scripts by specializing ESCore", () => {
     });
 
     it("stops at a method, which reads locale data", async () => {
-      const source = "new Intl.Collator().resolvedOptions();";
+      const source = 'new Intl.Collator().compare(String.fromCharCode(120), "b");';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });
@@ -1189,6 +1191,63 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("stops where a call without new chains an instance, as Intl's legacy symbol does", async () => {
       const source = "Intl.DateTimeFormat.call(new Intl.DateTimeFormat());";
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("answers Intl's methods from the host's Intl for the literals a program writes", () => {
+    const getSource = (expected: string) => `
+      const format = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
+      const parts = format.formatToParts(-1234.5).map((part) => part.type).join(",");
+      const list = new Intl.ListFormat("en-US", { type: "disjunction" });
+      const time = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
+      const locale = new Intl.Locale("en", { region: "GB" });
+      const dates = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
+      const words = [...new Intl.Segmenter("en-US", { granularity: "word" }).segment("Hi there")];
+      let errors = "";
+      for (const run of [
+        () => new Intl.NumberFormat("en-US", { style: "currency" }),
+        () => new Intl.NumberFormat("en-US", { maximumFractionDigits: 101 }),
+        () => new Intl.ListFormat("en-US").format(["a", 1 as unknown as string]),
+        () => time.format(1, "fortnight" as "day"),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [
+        format.format(-1234.5),
+        parts,
+        (12345.678).toLocaleString("en-US"),
+        format.resolvedOptions().minimumFractionDigits,
+        list.format(["a", "b", "c"]),
+        time.format(-1, "day"),
+        new Intl.Collator("en-US").compare("a", "B"),
+        locale.toString(),
+        locale.maximize().toString(),
+        dates.format(0),
+        words.filter((word) => word.isWordLike).map((word) => word.segment).join("+"),
+        errors,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "-1.234,50\\u00a0€|minusSign,integer,group,integer,decimal,fraction,literal,currency|12,345.678|2|a, b, or c|yesterday|-1|en-GB|en-Latn-GB|Jan 1, 1970|Hi+there|TypeError;RangeError;TypeError;RangeError;";
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const expected =
+        "-1.234,50\\u00a0€|minusSign,integer,group,integer,decimal,fraction,literal,currency|12,345.678|2|a, b, or c|tomorrow|-1|en-GB|en-Latn-GB|Jan 1, 1970|Hi+there|TypeError;RangeError;TypeError;RangeError;";
+      expect((await checkScript(getSource(expected))).message).toContain(THREW);
+    });
+
+    it("stops at a value that the program doesn't write", async () => {
+      const source = 'new Intl.NumberFormat("en-US").format(Math.PI);';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });

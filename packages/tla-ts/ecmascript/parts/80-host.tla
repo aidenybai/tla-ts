@@ -155,6 +155,15 @@ HostCalendarYear(key) == [found |-> "unknown"]
 \* they aren't where no year that the host searches has them. Else found is "unknown".
 HostCalendarMonthDay(key) == [found |-> "unknown"]
 
+\* HostIntl(<<service, config, method, args>>): what the host's Intl gives for a method of an object
+\* of a service whose requested locales and options config gives, with arguments args. found is
+\* "options", with the pairs of a property's units and its value that resolvedOptions gives, "parts",
+\* with the parts of a formatted value, each a sequence of a property's units and its value's, or
+\* "error", with the name of the error it throws. <<"currencyDigits", code>> gives "digits", with
+\* the digits of a currency. Else found is "unknown", where the host's table leaves the key out,
+\* and "none" where the host has no Intl, as engine262 has none.
+HostIntl(key) == [found |-> "none"]
+
 \* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
 \* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==

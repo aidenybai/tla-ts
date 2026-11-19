@@ -102,6 +102,7 @@ const GATED_GROUPS = [
 const EXTRA_TRIGGERS = new Map([
   ["83-regexp", ["match", "matchAll", "replace", "replaceAll", "search", "split"]],
   ["81-iterator.tla", ["values", "keys", "entries"]],
+  ["90-intl.tla", ["toLocaleString", "localeCompare"]],
 ]);
 
 export const createLibrary = (directory: string): Library => {
@@ -243,6 +244,7 @@ export const HOOKS = new Map([
   ["HostLocale", "tag"],
   ["HostCalendarYear", "key"],
   ["HostCalendarMonthDay", "key"],
+  ["HostIntl", "key"],
   ["ModuleNode", "id"],
   ["ModuleDeclarations", "s, ctx, node"],
 ]);
@@ -305,7 +307,8 @@ export const assembleRuntime = (
 };
 
 // A program's CallBuiltin, which runs the built-ins of the families given and stops at the others
-// and at the methods in stoppedMethods, but for Temporal's, which format through HostDateFormat.
+// and at the methods in stoppedMethods, but for Temporal's, which format through HostDateFormat,
+// and the toLocaleString of a Number and of a BigInt, which format through HostIntl.
 export const getCallBuiltin = (
   name: string,
   families: readonly Family[],
@@ -318,7 +321,7 @@ export const getCallBuiltin = (
       .map((family) => `"${family.name}"`)
       .join(
         ", ",
-      )}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
+      )}} /\\ id \\notin {<<"Number", "toLocaleString">>, <<"BigInt", "toLocaleString">>} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
     ...families.map(
       (family, index) =>
         `  ${index === 0 ? "CASE" : "  []"} id[1] = "${family.name}" -> ${family.name}Builtin(s, f, id[2], this, args, nt)`,
