@@ -393,7 +393,21 @@ const canonicalStateOf = (state: Value, initial: Value): Value => {
   const renameObject = (object: Value) =>
     except(object, {
       proto: renameMaybe,
-      props: (props) => mapRange(props, (bucket) => mapRange(bucket, renameDescriptor)),
+      props: (props) => {
+        const buckets = toFiniteFunction(props);
+        const kept = buckets.range.flatMap((bucket, position) =>
+          toFiniteFunction(bucket).domain.length === 0
+            ? []
+            : [{ key: buckets.domain[position], bucket: mapRange(bucket, renameDescriptor) }],
+        );
+        return setFunctionClass(
+          createSortedFunction(
+            kept.map((entry) => entry.key),
+            kept.map((entry) => entry.bucket),
+          ),
+          getFunctionClass(buckets),
+        );
+      },
       privs: renameElements,
       slots: () => renameSlots(object),
     });

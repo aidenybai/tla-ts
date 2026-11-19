@@ -8,7 +8,8 @@
 // them, which only the graph decides: the realm's changed objects by id, an object's prototype,
 // its properties in OrdinaryOwnPropertyKeys order, its private elements and its internal slots,
 // an environment's outer one and its bindings by name. A Map's or a Set's deleted entries go, as
-// no iterator can read them once a step ends. Where a state holds what the walk can't number,
+// no iterator can read them once a step ends, and so do the buckets of properties that deletes
+// emptied, which no lookup tells from a bucket never made. Where a state holds what the walk can't number,
 // such as a suspended generator or a pending job, the check stops.
 export const CANONICAL_MODULE = String.raw`---- MODULE ESCanonical ----
 EXTENDS ESRuntime
@@ -111,7 +112,7 @@ RenameSlots(o, number, r) ==
     [] o.class = "proxy" -> [o.slots EXCEPT !.target = RenameMaybe(@, number, r), !.handler = RenameMaybe(@, number, r)]
 RenameObject(o, number, r) ==
   [o EXCEPT !.proto = RenameMaybe(@, number, r),
-            !.props = [b \in DOMAIN @ |-> [k \in DOMAIN @[b] |-> RenameDescriptor(@[b][k], number, r)]],
+            !.props = [b \in {c \in DOMAIN @ : DOMAIN @[c] # {}} |-> [k \in DOMAIN @[b] |-> RenameDescriptor(@[b][k], number, r)]],
             !.privs = RenameElements(@, number, r),
             !.slots = RenameSlots(o, number, r)]
 RenameBindings(b, number, r) == [name \in DOMAIN b |-> [b[name] EXCEPT !.value = RenameMaybe(@, number, r)]]

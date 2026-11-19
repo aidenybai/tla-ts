@@ -222,6 +222,37 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("tells no array that a step emptied from one never filled", () => {
+    const getSource = (pops: string) => `
+      /** @noDeadlock */
+      let q: number[] = [];
+      export const push = () => {
+        if (q.length > 0) return;
+        q.push(1);
+      };
+      export const pop = () => {
+        if (q.length === 0) return;
+        ${pops};
+      };
+    `;
+
+    it("merges the state after a shift with the initial one", async () => {
+      expect(getCounts(await checkModel(getSource("q.shift()"), "spec.ts", "compared"))).toEqual([
+        "success",
+        2,
+        3,
+      ]);
+    });
+
+    it("tells a TLA+ that keeps the emptied bucket", async () => {
+      const result = await checkModel(getSource("q.shift()"), "spec.ts", "compared", [
+        "{c \\in DOMAIN @ : DOMAIN @[c] # {}}",
+        "DOMAIN @",
+      ]);
+      expect(result.message).toContain("the native canonical form differs");
+    });
+  });
+
   describe("computes natively the canonical form that ESCanonical's TLA+ defines", () => {
     const source = `
       type Key = "a" | "b";
