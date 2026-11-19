@@ -574,7 +574,33 @@ export const compileProbe = (sexpr: SExpr, isInternal = false): Probe => {
   return (goal) => probes.map((probe) => probe(goal)).reduce(nary);
 };
 
-export const formatProbeValue = (value: number) =>
-  Number.isInteger(value) && Math.abs(value) < 1e6
-    ? String(value)
-    : String(Number(value.toPrecision(6)));
+// An ostream prints a double as %g does: its exact value to six digits, and a tie to even.
+export const formatDouble = (value: number) => {
+  if (!Number.isFinite(value)) return Number.isNaN(value) ? "nan" : value < 0 ? "-inf" : "inf";
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, Math.abs(value));
+  const bits = view.getBigUint64(0);
+  const biased = Number(bits >> 52n);
+  const shift = Math.max(biased, 1) - 1075;
+  const mantissa = (bits & 0xfffffffffffffn) | (biased === 0 ? 0n : 1n << 52n);
+  const exact = shift < 0 ? mantissa * 5n ** BigInt(-shift) : mantissa << BigInt(shift);
+  const sign = value < 0 || Object.is(value, -0) ? "-" : "";
+  if (exact === 0n) return `${sign}0`;
+  const length = exact.toString().length;
+  const unit = 10n ** BigInt(Math.max(length - 6, 0));
+  const quotient = (exact * 10n ** BigInt(Math.max(6 - length, 0))) / unit;
+  const remainder = 2n * (exact % unit);
+  const rounded =
+    remainder > unit || (remainder === unit && quotient % 2n === 1n) ? quotient + 1n : quotient;
+  const isCarried = rounded === 1000000n;
+  const digits = String(isCarried ? 100000n : rounded);
+  const exponent = length - 1 + Math.min(shift, 0) + (isCarried ? 1 : 0);
+  const trimZeros = (text: string) => text.replace(/\.?0*$/, "");
+  if (exponent < -4 || exponent >= 6)
+    return `${sign}${trimZeros(`${digits[0]}.${digits.slice(1)}`)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  return `${sign}${trimZeros(
+    exponent < 0
+      ? `0.${"0".repeat(-exponent - 1)}${digits}`
+      : `${digits.slice(0, exponent + 1)}.${digits.slice(exponent + 1)}`,
+  )}`;
+};

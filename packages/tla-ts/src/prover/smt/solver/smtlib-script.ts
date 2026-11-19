@@ -61,6 +61,7 @@ import { getVerdict, solveAssertions, solveAssuming } from "./solver";
 import { getConsequences } from "./smt-consequences";
 import { FdSolver } from "./fd-solver";
 import { checkParameterValue, isDoubleParameter } from "./gparams";
+import { formatDouble } from "./probes";
 import { SmtKernel } from "./smt-kernel";
 import { RefVector } from "./ref-vector";
 import { IncSatSolver } from "./sat/inc-sat-solver";
@@ -347,16 +348,6 @@ const getFirstArgument = (list: SmtList) => {
   if (argument === undefined)
     throw new SmtParseError("invalid command, argument(s) missing", list.end);
   return argument;
-};
-
-// An ostream prints a double as printf's %g, with six significant digits.
-const formatDouble = (value: number) => {
-  const [mantissa, exponentText] = value.toExponential(5).split("e");
-  const exponent = Number(exponentText);
-  const trimZeros = (text: string) => (text.includes(".") ? text.replace(/\.?0+$/, "") : text);
-  return exponent >= -4 && exponent < 6
-    ? trimZeros(value.toFixed(5 - exponent))
-    : `${trimZeros(mantissa)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
 };
 
 const checkArgumentCount = (list: SmtList, count: number) => {
@@ -2313,11 +2304,7 @@ export const runSmtlibScript = (
             ? undefined
             : (settings.parameters.get(name) ?? PARAMETER_DEFAULTS.get(name)));
         if (value === undefined) throw new SmtUnsupportedError(`the option ${option.text}`);
-        print(
-          typeof value === "string" && isDoubleParameter(name)
-            ? formatDouble(Number(value))
-            : String(value),
-        );
+        print(isDoubleParameter(name) ? formatDouble(Number(value)) : String(value));
       },
     ],
     [

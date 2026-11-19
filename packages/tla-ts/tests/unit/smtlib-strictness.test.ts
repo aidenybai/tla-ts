@@ -874,6 +874,23 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ).toEqual(["1.23457", "100.125", "1.23457e+06", "1e-05", "3/2"]);
   });
 
+  it("rounds a double's exact value to six digits and a tie to even, as %g does", () => {
+    expect(
+      run([
+        "(set-option :sat.restart.factor 100000.5)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 1234565)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 999999.5)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 0.00001234565)",
+        "(get-option :sat.restart.factor)",
+        `(set-option :sat.restart.factor ${"1".repeat(400)}.0)`,
+        "(get-option :sat.restart.factor)",
+      ]),
+    ).toEqual(["100000", "1.23456e+06", "1e+06", "1.23456e-05", "inf"]);
+  });
+
   it("sets an option before it finds too many arguments", () => {
     expect(
       run([

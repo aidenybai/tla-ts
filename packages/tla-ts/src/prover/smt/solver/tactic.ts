@@ -70,7 +70,7 @@ import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { SmtKernel } from "./smt-kernel";
 import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
-import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
+import { compileProbe, formatDouble, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
 import { runQe } from "./qe";
 import { applyQeLite } from "./qe-lite";
@@ -2136,7 +2136,7 @@ const compile = (
           };
         const probe = compileProbe(piece, isInternal);
         return (goal) => {
-          environment.write(formatProbeValue(probe(goal)) + newline, true);
+          environment.write(formatDouble(probe(goal)) + newline, true);
           return [goal];
         };
       });

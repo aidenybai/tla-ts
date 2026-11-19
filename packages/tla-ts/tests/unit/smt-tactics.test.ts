@@ -1284,6 +1284,17 @@ describe("the arithmetic probes, as Z3 5.3.2 measures a goal", () => {
     ]);
   });
 
+  it("print their values as an ostream prints a double", () => {
+    expect(
+      run([
+        '(set-option :diagnostic-output-channel "stdout")',
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        '(apply (and-then (echo "v " (/ 1 30000000)) (echo "u " (/ 1 0)) (echo "t " (/ num-exprs 3000000)) (fail-if (> 1 0))))',
+      ]),
+    ).toEqual(["v 3.33333e-08", "u inf", "t 1e-06", '(error "tactic failed: fail-if tactic")']);
+  });
+
   it("finds no QF_AUFLIA goal once an array is selected from", () => {
     const probe =
       '(apply (and-then (if is-qfauflia (echo "qfauflia") (echo "other")) (fail-if (> 1 0))))';
