@@ -136,6 +136,13 @@ HostTimeZone(key) == [found |-> "rejected"]
 \* table leaves the key out, and "none" where the host has no Intl, as engine262 has none.
 HostDateFormat(key) == [found |-> "none"]
 
+\* HostLocale(tag): what the host's Intl gives of a locale tag's units. found is "locale", with its
+\* canonical form (CanonicalizeUnicodeLocaleId) and the services whose supportedLocalesOf support it
+\* with the lookup matcher and with the best fit one, and those where the two differ, which the
+\* table leaves out, or "invalid", where it isn't a structurally valid language tag. Else found is
+\* "unknown", as engine262 has no locale data.
+HostLocale(tag) == [found |-> "unknown"]
+
 \* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
 \* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==

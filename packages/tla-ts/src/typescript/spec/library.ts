@@ -237,6 +237,7 @@ export const HOOKS = new Map([
   ["ResumeCode", "args, r"],
   ["HostTimeZone", "key"],
   ["HostDateFormat", "key"],
+  ["HostLocale", "tag"],
   ["ModuleNode", "id"],
   ["ModuleDeclarations", "s, ctx, node"],
 ]);

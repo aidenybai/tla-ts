@@ -855,6 +855,7 @@ RECURSIVE RunFrom(_, _, _, _, _)
 RECURSIVE RunModuleFrom(_, _, _, _, _)
 RECURSIVE HostTimeZone(_)
 RECURSIVE HostDateFormat(_)
+RECURSIVE HostLocale(_)
 RECURSIVE TestResult(_)
 RECURSIVE HasClass(_, _, _)
 RECURSIVE CanonicalizeKeyedCollectionKey(_)
@@ -1864,9 +1865,11 @@ RECURSIVE DurationBuiltin(_, _, _, _, _, _)
 RECURSIVE CompareDurations(_, _, _, _)
 RECURSIVE DurationRound(_, _, _)
 RECURSIVE DurationTotal(_, _, _)
+RECURSIVE IntlServiceOf(_)
 RECURSIVE CanonicalizeLocaleList(_, _)
-RECURSIVE CanonicalizeLocalesFrom(_, _, _, _)
-RECURSIVE FilterLocales(_, _, _)
+RECURSIVE CanonicalizeLocalesFrom(_, _, _, _, _)
+RECURSIVE CanonicalizeLocale(_, _, _)
+RECURSIVE FilterLocales(_, _, _, _)
 RECURSIVE IntlBuiltin(_, _, _, _, _, _)
 RECURSIVE Unsupported(_, _)
 RECURSIVE CallBuiltin(_, _, _, _, _, _)
@@ -11556,6 +11559,12 @@ HostTimeZone(key) == [found |-> "rejected"]
 \* "error", with the name of the error that it throws. Else found is "unknown" where the host's
 \* table leaves the key out, and "none" where the host has no Intl, as engine262 has none.
 HostDateFormat(key) == [found |-> "none"]
+\* HostLocale(tag): what the host's Intl gives of a locale tag's units. found is "locale", with its
+\* canonical form (CanonicalizeUnicodeLocaleId) and the services whose supportedLocalesOf support it
+\* with the lookup matcher and with the best fit one, and those where the two differ, which the
+\* table leaves out, or "invalid", where it isn't a structurally valid language tag. Else found is
+\* "unknown", as engine262 has no locale data.
+HostLocale(tag) == [found |-> "unknown"]
 \* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
 \* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==
@@ -19739,38 +19748,53 @@ DurationTotal(s, d, totalOfArg) ==
   IN IF IsAbrupt(total) THEN total ELSE Ok(total.s, Num(Val(total)))
 \* ECMA-402's Intl, which engine262 lacks, without its locale data: the namespace, its constructors
 \* and their prototypes, as the spec lays them out, and what each of their functions does before it
-\* reads locale data. A constructor stops before it makes an object, so no Intl object exists, and
-\* each prototype method throws the TypeError of RequireInternalSlot. CanonicalizeLocaleList walks
-\* its list and stops at the first locale, whose canonical form is locale data.
+\* reads locale data, or with what HostLocale gives of it. A constructor stops before it makes an
+\* object, so no Intl object exists, and each prototype method throws the TypeError of
+\* RequireInternalSlot.
 \* The constructors that a call without new constructs too (ECMA-402's normative optional
 \* constructor mode), and the methods that UnwrapNumberFormat and UnwrapDateTimeFormat read their
 \* receiver through, by the constructor's intrinsic.
-\* CanonicalizeLocaleList (ECMA-402 §9.2.1) up to the first locale of the list. A list longer than
-\* any a program makes stops, which would take that many steps to walk.
+IntlServiceOf(m) == CHOOSE c \in IntlConstructors : c \o ".supportedLocalesOf" = m
+\* CanonicalizeLocaleList (ECMA-402 §9.2.1), as a list of canonical tags, which reads whether a tag
+\* is valid and its canonical form from HostLocale. A list longer than any a program makes stops,
+\* which would take that many steps to walk.
 CanonicalizeLocaleList(s, locales) ==
   IF locales = Undefined THEN Ok(s, <<>>)
-  ELSE IF IsString(locales) THEN Unsupported(s, N("Unsupported: a locale, whose canonical form is locale data")) ELSE
+  ELSE IF IsString(locales) THEN CanonicalizeLocale(s, locales.value, <<>>) ELSE
   LET o == ToObject(s, locales) IN IF IsAbrupt(o) THEN o ELSE
   LET len == LengthOfArrayLike(o.s, Val(o)) IN IF IsAbrupt(len) THEN len
   ELSE IF NumLess(NumFromInt(10000000), Val(len).value) THEN Unsupported(len.s, N("Unsupported: a long list of locales"))
-  ELSE CanonicalizeLocalesFrom(len.s, Val(o), 0, NumToSmallInt(Val(len).value))
-CanonicalizeLocalesFrom(s, o, k, len) ==
-  IF k = len THEN Ok(s, <<>>) ELSE
+  ELSE CanonicalizeLocalesFrom(len.s, Val(o), 0, NumToSmallInt(Val(len).value), <<>>)
+CanonicalizeLocalesFrom(s, o, k, len, seen) ==
+  IF k = len THEN Ok(s, seen) ELSE
   LET key == Str(NumToString(NumFromInt(k)))
       present == HasProperty(s, o, key)
   IN IF IsAbrupt(present) THEN present
-     ELSE IF Val(present) = False THEN CanonicalizeLocalesFrom(present.s, o, k + 1, len) ELSE
+     ELSE IF Val(present) = False THEN CanonicalizeLocalesFrom(present.s, o, k + 1, len, seen) ELSE
      LET value == Get(present.s, o, key) IN IF IsAbrupt(value) THEN value
-     ELSE IF ~IsString(Val(value)) /\ ~IsObject(Val(value)) THEN ThrowTypeError(value.s)
-     ELSE Unsupported(value.s, N("Unsupported: a locale, whose canonical form is locale data"))
-\* The supportedLocalesOf of each constructor: FilterLocales, which reads localeMatcher from its
-\* options before it reads the locale data of the requested locales.
-FilterLocales(s, requested, options) ==
+     ELSE IF ~IsString(Val(value)) /\ ~IsObject(Val(value)) THEN ThrowTypeError(value.s) ELSE
+     LET tag == ToStr(value.s, Val(value)) IN IF IsAbrupt(tag) THEN tag ELSE
+     LET added == CanonicalizeLocale(tag.s, Val(tag).value, seen) IN IF IsAbrupt(added) THEN added
+     ELSE CanonicalizeLocalesFrom(added.s, o, k + 1, len, Val(added))
+\* A tag's canonical form appended to seen where it isn't there yet: IsStructurallyValidLanguageTag
+\* and CanonicalizeUnicodeLocaleId, as the host answers them.
+CanonicalizeLocale(s, tag, seen) ==
+  LET host == HostLocale(tag) IN
+  CASE host.found = "invalid" -> ThrowError(s, "RangeError")
+    [] host.found = "locale" -> Ok(s, IF host.canonical \in Range(seen) THEN seen ELSE Append(seen, host.canonical))
+    [] OTHER -> Unsupported(s, N("Unsupported: a locale the host's table leaves out"))
+\* The supportedLocalesOf of a constructor, FilterLocales: the requested locales that the host
+\* supports for the constructor's service, by the localeMatcher option.
+FilterLocales(s, service, requested, options) ==
   LET o == IF options = Undefined THEN OrdinaryObjectCreate(s, Null) ELSE ToObject(s, options) IN IF IsAbrupt(o) THEN o ELSE
   LET matcher == GetStringOption(o.s, Val(o), SV("localeMatcher"), {N("lookup"), N("best fit")}, N("best fit")) IN
-  IF IsAbrupt(matcher) THEN matcher
-  ELSE IF requested = <<>> THEN CreateArrayFromList(matcher.s, <<>>)
-  ELSE Unsupported(matcher.s, N("Unsupported: the locales that the host supports"))
+  IF IsAbrupt(matcher) THEN matcher ELSE
+  LET hosts == [i \in DOMAIN requested |-> HostLocale(requested[i])]
+      supported(i) == service \in (IF Val(matcher) = N("lookup") THEN hosts[i].lookup ELSE hosts[i].bestFit)
+  IN IF \E i \in DOMAIN requested : hosts[i].found # "locale" \/ service \in hosts[i].differs
+     THEN Unsupported(matcher.s, N("Unsupported: a locale the host's table leaves out"))
+     ELSE CreateArrayFromList(matcher.s, [i \in 1..Len(SelectSeq([j \in DOMAIN requested |-> j], supported)) |->
+                                          Str(requested[SelectSeq([j \in DOMAIN requested |-> j], supported)[i]])])
 \* Intl's functions. A method on an Intl prototype throws the TypeError of RequireInternalSlot, as
 \* no Intl object exists, but where it unwraps its receiver first: an object that inherits from the
 \* constructor's prototype, through which it would read %Intl%.[[FallbackSymbol]], stops.
@@ -19779,14 +19803,16 @@ IntlBuiltin(s, f, m, this, args, nt) ==
          IF nt = Undefined /\ m \notin IntlCallableConstructors THEN ThrowTypeError(s)
          ELSE Unsupported(s, N("Unsupported: an Intl constructor, which reads locale data"))
     [] m = "getCanonicalLocales" ->
-         LET list == CanonicalizeLocaleList(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list ELSE CreateArrayFromList(list.s, Val(list))
+         LET list == CanonicalizeLocaleList(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list
+         ELSE CreateArrayFromList(list.s, [i \in DOMAIN Val(list) |-> Str(Val(list)[i])])
     [] m = "supportedValuesOf" ->
          LET key == ToStr(s, Arg(args, 1)) IN IF IsAbrupt(key) THEN key
          ELSE IF Val(key).value \notin {N("calendar"), N("collation"), N("currency"), N("numberingSystem"), N("timeZone"), N("unit")}
          THEN ThrowError(key.s, "RangeError")
          ELSE Unsupported(key.s, N("Unsupported: the values that the host supports"))
     [] m \in IntlSupportedLocalesOf ->
-         LET list == CanonicalizeLocaleList(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list ELSE FilterLocales(list.s, Val(list), Arg(args, 2))
+         LET list == CanonicalizeLocaleList(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list
+         ELSE FilterLocales(list.s, IntlServiceOf(m), Val(list), Arg(args, 2))
     [] m \in DOMAIN IntlUnwrappingMethods ->
          IF ~IsObject(this) THEN ThrowTypeError(s) ELSE
          LET inherits == OrdinaryHasInstance(s, Intrinsic(s, IntlUnwrappingMethods[m]), this) IN IF IsAbrupt(inherits) THEN inherits

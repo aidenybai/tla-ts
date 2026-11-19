@@ -6,7 +6,13 @@ import { createFileResolver } from "../program";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
-import { getHostDateFormat, getHostTimeZone, getTlaString, LOCALE_METHODS } from "./runtime";
+import {
+  getHostDateFormat,
+  getHostLocale,
+  getHostTimeZone,
+  getTlaString,
+  LOCALE_METHODS,
+} from "./runtime";
 import { getNumber, type ProgramFile, specialize } from "./specialize";
 import { suspendDefinitions } from "./suspend";
 
@@ -414,6 +420,11 @@ export const compileToEscore = (
           name: "HostDateFormat",
           arity: 1,
           text: getHostDateFormat(program.words),
+        },
+        {
+          name: "HostLocale",
+          arity: 1,
+          text: getHostLocale(files.map((file) => file.sourceFile.text).join("\n"), program.words),
         },
         {
           name: "SourceUnits",

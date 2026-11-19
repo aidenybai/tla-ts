@@ -837,6 +837,7 @@ describe("compiles scripts by specializing ESCore", () => {
         () => Intl.getCanonicalLocales([1 as unknown as string]),
         () => Reflect.getOwnPropertyDescriptor(Intl.NumberFormat.prototype, "format")?.get?.call(5),
         () => Intl.Collator.supportedLocalesOf([], { localeMatcher: "first" as "lookup" }),
+        () => Intl.getCanonicalLocales("en_US"),
       ]) {
         try {
           run();
@@ -853,6 +854,8 @@ describe("compiles scripts by specializing ESCore", () => {
         Object.prototype.toString.call(Intl.Segmenter.prototype),
         Intl.getCanonicalLocales().length,
         Intl.Collator.supportedLocalesOf([]).length,
+        Intl.getCanonicalLocales(["EN-us", "en-US", "art-lojban"]).join(),
+        Intl.ListFormat.supportedLocalesOf(["art-lojban", "en-US"], { localeMatcher: "lookup" }).join(),
         errors,
       ].join("|");
       if (result !== "${expected}") throw new Error(result);
@@ -860,18 +863,23 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("agrees with Node", async () => {
       const expected =
-        "[object Intl]|0|2|Locale|22|[object Intl.Segmenter]|0|0|TypeError;TypeError;RangeError;TypeError;TypeError;RangeError;";
+        "[object Intl]|0|2|Locale|22|[object Intl.Segmenter]|0|0|en-US,jbo|en-US|TypeError;TypeError;RangeError;TypeError;TypeError;RangeError;RangeError;";
       expect((await checkScript(getSource(expected))).message).toBeUndefined();
     });
 
     it("rejects another result", async () => {
       const expected =
-        "[object Intl]|0|1|Locale|22|[object Intl.Segmenter]|0|0|TypeError;TypeError;RangeError;TypeError;TypeError;RangeError;";
+        "[object Intl]|0|2|Locale|22|[object Intl.Segmenter]|0|0|en-US,jbo|jbo,en-US|TypeError;TypeError;RangeError;TypeError;TypeError;RangeError;RangeError;";
       expect((await checkScript(getSource(expected))).message).toContain(THREW);
     });
 
     it("stops at a constructor, which reads locale data", async () => {
       expect((await checkScript("new Intl.Collator();")).message).toContain("tla-ts can't");
+    });
+
+    it("stops at a locale that the program doesn't write", async () => {
+      const source = 'Intl.getCanonicalLocales(["en", "US"].join("-"));';
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });
 

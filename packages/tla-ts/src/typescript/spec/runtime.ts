@@ -870,5 +870,75 @@ export const getHostDateFormat = (words: ReadonlySet<string>) => {
     : `HostDateFormat(key) ==\n  LET table == ${entries.map(([key, format]) => `("${key}" :> ${getEntry(format)})`).join("\n    @@ ")}\n  IN IF key \\in DOMAIN table THEN table[key] ELSE [found |-> "unknown"]`;
 };
 
+// The services of Intl whose supportedLocalesOf HostLocale answers for.
+const LOCALE_SERVICES = [
+  "Collator",
+  "DateTimeFormat",
+  "DisplayNames",
+  "DurationFormat",
+  "ListFormat",
+  "NumberFormat",
+  "PluralRules",
+  "RelativeTimeFormat",
+  "Segmenter",
+];
+
+// What the host's Intl gives of a tag: its canonical form and the services that support it with
+// each locale matcher, or undefined where it isn't a structurally valid language tag.
+const getLocale = (tag: string) => {
+  const canonical = (() => {
+    try {
+      return Intl.getCanonicalLocales(tag)[0];
+    } catch {
+      return undefined;
+    }
+  })();
+  if (canonical === undefined) return undefined;
+  const getSupported = (localeMatcher: string) =>
+    LOCALE_SERVICES.filter((service) => {
+      const supported: unknown = Reflect.apply(
+        Reflect.get(Reflect.get(Intl, service), "supportedLocalesOf"),
+        undefined,
+        [canonical, { localeMatcher }],
+      );
+      return Array.isArray(supported) && supported.length > 0;
+    });
+  const lookup = getSupported("lookup");
+  const bestFit = getSupported("best fit");
+  return {
+    canonical,
+    lookup,
+    bestFit,
+    differs: LOCALE_SERVICES.filter(
+      (service) => lookup.includes(service) !== bestFit.includes(service),
+    ),
+  };
+};
+
+// The program's HostLocale: for each string it writes that may be a locale tag, and each one's
+// canonical form, what the host's Intl gives of it, where the program names Intl. Any other tag
+// stops, which the host may hold data of.
+export const getHostLocale = (text: string, words: ReadonlySet<string>) => {
+  const tags = words.has("Intl")
+    ? [...new Set([...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]))]
+    : [];
+  const entries = new Map<string, string>();
+  for (const tag of tags) {
+    const locale = getLocale(tag);
+    if (locale === undefined) {
+      entries.set(tag, `[found |-> "invalid"]`);
+      continue;
+    }
+    const getSet = (services: string[]) =>
+      `{${services.map((service) => `"${service}"`).join(", ")}}`;
+    const entry = `[found |-> "locale", canonical |-> ${getUnitsOf(locale.canonical)}, lookup |-> ${getSet(locale.lookup)}, bestFit |-> ${getSet(locale.bestFit)}, differs |-> ${getSet(locale.differs)}]`;
+    entries.set(tag, entry);
+    if (!entries.has(locale.canonical)) entries.set(locale.canonical, entry);
+  }
+  return entries.size === 0
+    ? `HostLocale(tag) == [found |-> "unknown"]`
+    : `HostLocale(tag) ==\n  CASE ${[...entries].map(([tag, entry]) => `tag = ${getUnitsOf(tag)} -> ${entry}`).join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`;
+};
+
 const getUnitsOf = (text: string) =>
   `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
