@@ -401,6 +401,15 @@ describe("selections into standard operators match SANY and TLC", () => {
     ]);
   });
 
+  it("passes a selected operator to the operator parameter of a standard operator", async () => {
+    const prints: string[] = [];
+    const result = await checkStandard(
+      "G(a) == a > 1\nH(a, b) == a < b\nASSUME PrintT(<<SelectSeq(<<1, 2>>, G!:)!1, S!SelectSeq(<<1, 2>>, G!:)!1, SortSeq(<<3, 1>>, H!:)!1>>)",
+      (text) => prints.push(text),
+    );
+    expect([result.status, prints]).toEqual(["success", ["<<<<2>>, <<2>>, <<1, 3>>>>"]]);
+  });
+
   it("fails on a selected standard body that TLC fails to evaluate", async () => {
     const result = await checkStandard("ASSUME PrintT(Cardinality({1, 2})!1)");
     expect(result.violation?.message).toBe(
