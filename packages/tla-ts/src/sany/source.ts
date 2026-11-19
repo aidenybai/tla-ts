@@ -28,7 +28,9 @@ export const createSourceFile = (name: string, source: string): SourceFile => {
     .map(readAtAsIdentifier);
   const lineOffsets = [0, 0];
   for (let index = 0; index < source.length; index++) {
-    if (source[index] === "\n") lineOffsets.push(index + 1);
+    if (source[index] === "\n" || (source[index] === "\r" && source[index + 1] !== "\n")) {
+      lineOffsets.push(index + 1);
+    }
   }
   return {
     name,

@@ -578,6 +578,7 @@ const INNER_MODULES: Record<string, string> = {
   Twice: "CONSTANT c, Op(_, _)\nUse == Op(c, c)\nOther(d) == Op(d, c)",
   Passed: "CONSTANT c, Op(_)\nAp(F(_), a) == F(a)\nUse == Ap(Op, c)",
   Handed: "CONSTANT Op(_)\nVARIABLE v\nH(F(_)) == F(v')\nUse == H(Op)",
+  Primes: "F(a) == LET G == a' IN G",
   Outer:
     "EXTENDS Naturals\nCONSTANT c\nN == INSTANCE Twice WITH c <- c, Op <- LAMBDA a, b : a + b\nUse == N!Use",
   Functions:
@@ -679,6 +680,13 @@ describe("substitution levels match SANY", () => {
       [
         getLevelError("Handed", "Op", 0),
         "Level error in instantiating module 'Handed':\nThe level of the argument 1 of the operator F \nmust be at least 2.",
+      ],
+    ],
+    [
+      "Q == INSTANCE Primes\nI == INSTANCE Nested WITH c <- 1, Op <- Q!F, v <- x",
+      [
+        getLevelError("Nested", "Op", 0),
+        "Level error in instantiating module 'Nested':\nThe level of the argument 1 of the operator Q!F \nmust be at least 2.",
       ],
     ],
     [

@@ -3797,6 +3797,10 @@ describe("rejecting literals matches TLC", () => {
 
   it.each([
     ["an evaluated decimal", "EXTENDS Reals\nVARIABLE x\nInit == x = 1.5"],
+    [
+      "a decimal with a comment around its point",
+      "EXTENDS Reals\nVARIABLE x\nInit == x = 1 .(* c *) 5",
+    ],
     ["a decimal that is never evaluated", "VARIABLE x\nHalf == 1.5\nInit == x = 0"],
     ["a decimal in an unused LET", "VARIABLE x\nF == LET h == 1.5 IN 0\nInit == x = 0"],
     ["a decimal in an unnamed theorem", "VARIABLE x\nTHEOREM 1.5 = 1.5\nInit == x = 0"],
