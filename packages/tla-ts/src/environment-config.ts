@@ -14,6 +14,7 @@ import { createLocalAlias } from "./instances";
 import type { Symbols } from "./resolve";
 import { getHashtableOrder, type TlcOrder } from "./tlc/order";
 import {
+  createEnumeratedSet,
   createModelValue,
   formatValue,
   isTlcInteger,
@@ -28,9 +29,12 @@ export interface CopySource {
   prefix: number;
 }
 
-interface ConfigTable {
+interface ConfigName {
   name: string;
   module?: string;
+}
+
+interface ConfigTable extends ConfigName {
   rows: ConstantAssignment[];
 }
 
@@ -89,8 +93,13 @@ const toConstantValue = (value: ConfigValue) => {
   }
 };
 
+// TLC normalizes only the value of a constant, and keeps a definition's as written, like a set literal.
+const toLiteralValue = (value: ConfigValue): Value =>
+  value.kind === "Set" ? createEnumeratedSet(value.elements.map(toLiteralValue)) : toValue(value);
+
 const createOperatorTable = (name: string, arity: number, rows: [Value[], Value][]): Builtin => {
-  const table = `{ ${rows.map((row) => `<${[...row[0], row[1]].map((value) => formatValue(value)).join(", ")}>`).join(", ")}}`;
+  const getTable = () =>
+    `{ ${rows.map((row) => `<${[...row[0], row[1]].map((value) => formatValue(value)).join(", ")}>`).join(", ")}}`;
   return {
     kind: "Builtin",
     name,
@@ -99,7 +108,7 @@ const createOperatorTable = (name: string, arity: number, rows: [Value[], Value]
       const row = rows.find((candidate) => {
         if (candidate[0].length !== args.length) {
           throw new TlaEvaluationError(
-            `Attempted to apply the operator ${table}\nwith wrong number of arguments.`,
+            `Attempted to apply the operator ${getTable()}\nwith wrong number of arguments.`,
           );
         }
         return candidate[0].every((value, index) => {
@@ -112,7 +121,7 @@ const createOperatorTable = (name: string, arity: number, rows: [Value[], Value]
       });
       if (row) return row[1];
       throw new TlaEvaluationError(
-        `Attempted to apply operator:\n${table}\nto arguments (${args.map((argument) => (typeof argument === "object" && argument.kind === "Operator" ? argument.name : formatValue(argument))).join(", ")}), which is undefined.`,
+        `Attempted to apply operator:\n${getTable()}\nto arguments (${args.map((argument) => (typeof argument === "object" && argument.kind === "Operator" ? argument.name : formatValue(argument))).join(", ")}), which is undefined.`,
       );
     },
     evaluateUnary: undefined,
@@ -145,11 +154,11 @@ const getModuleOrder = (module: LinkedModule, visited: Set<LinkedModule>): Linke
 export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): AppliedConfig => {
   const getRootKey = (name: string) => linked.rootKeys.get(name) ?? name;
   const declaredConstants = new Set(linked.root.constants.map((constant) => constant.name));
-  const getScopedSymbol = (item: { name: string; module?: string }) => {
+  const getScopedSymbol = (item: ConfigName) => {
     const symbol = linked.moduleSymbols.get(item.module ?? "")?.get(item.name);
     return symbol?.kind === "Definition" ? symbol : undefined;
   };
-  const getSubstitutedKeys = (item: { name: string; module?: string }) => {
+  const getSubstitutedKeys = (item: ConfigName) => {
     if (item.module === undefined) return [getRootKey(item.name)];
     const symbol = getScopedSymbol(item);
     return symbol ? [symbol.key] : [];
@@ -159,7 +168,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     return linked.definitions.has(key) || linked.builtins.has(key) || declaredConstants.has(name);
   };
   // SpecProcessor#processConstants reads the value of a root name only for a constant or a definition.
-  const getScopedKeys = (item: { name: string; module?: string }) =>
+  const getScopedKeys = (item: ConfigName) =>
     item.module === linked.root.module.name || (item.module === undefined && !isDefined(item.name))
       ? []
       : getSubstitutedKeys(item);
@@ -303,16 +312,27 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     linked.definitions.delete(key);
     constants.delete(key);
   };
-  const setValue = (name: string, configValue: ConfigValue, keys: string[]) => {
-    const value = toConstantValue(configValue);
-    markNormalized(value);
+  const constantOrder = new Set(
+    getModuleOrder(linked.root, new Set()).flatMap((module) =>
+      linked.order.getDeclarationOrder(
+        "constant",
+        module === linked.root ? undefined : module.module.name,
+      ),
+    ),
+  );
+  const isConstant = (item: ConfigName) =>
+    item.module === undefined && constantOrder.has(item.name);
+  const setValue = (item: ConfigName, configValue: ConfigValue, keys: string[]) => {
+    const isNormalized = isConstant(item);
+    const value = isNormalized ? toConstantValue(configValue) : toLiteralValue(configValue);
+    if (isNormalized) markNormalized(value);
     keys.forEach((key) => {
       const arity = getKeyArity(key);
       if (arity === 0) constants.set(key, value);
       else
         setOperator(key, {
           kind: "Builtin",
-          name,
+          name: item.name,
           arity,
           evaluate: () => value,
           evaluateUnary: undefined,
@@ -322,9 +342,10 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     });
   };
   const setTable = (table: ConfigTable) => {
+    const toRowValue = isConstant(table) ? toConstantValue : toLiteralValue;
     const rows = table.rows.map((row): [Value[], Value] => [
-      (row.args ?? []).map(toConstantValue),
-      toConstantValue(row.value),
+      (row.args ?? []).map(toRowValue),
+      toRowValue(row.value),
     ]);
     getScopedKeys(table).forEach((key) =>
       setOperator(key, createOperatorTable(table.name, getKeyArity(key), rows)),
@@ -337,20 +358,12 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       .map((assignment) => [`${assignment.module ?? ""}!${assignment.name}`, assignment]),
   );
   // SpecProcessor#processConstantDefns then normalizes the value of each constant and checks the arity of a definition substituted for one, module by module.
-  const constantOrder = new Set(
-    getModuleOrder(linked.root, new Set()).flatMap((module) =>
-      linked.order.getDeclarationOrder(
-        "constant",
-        module === linked.root ? undefined : module.module.name,
-      ),
-    ),
-  );
   constantOrder.forEach((name) => {
     const target = overrides.get(name);
     if (target === undefined) {
       const assignment = values.get(`!${name}`);
       const table = tables.get(`!${name}`);
-      if (assignment) setValue(name, assignment.value, getScopedKeys(assignment));
+      if (assignment) setValue(assignment, assignment.value, getScopedKeys(assignment));
       if (table) setTable(table);
       return;
     }
@@ -358,21 +371,19 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     const arity = linked.root.constants.find((constant) => constant.name === name)?.arity;
     if (targetArity !== undefined && targetArity !== arity) throw createArityError(name, target);
   });
-  const isOrdered = (item: { name: string; module?: string }) =>
-    item.module === undefined && constantOrder.has(item.name);
   values.forEach((assignment) => {
-    if (!isOrdered(assignment)) {
-      setValue(assignment.name, assignment.value, getScopedKeys(assignment));
+    if (!isConstant(assignment)) {
+      setValue(assignment, assignment.value, getScopedKeys(assignment));
     }
   });
   tables.forEach((table) => {
-    if (!isOrdered(table)) setTable(table);
+    if (!isConstant(table)) setTable(table);
   });
   // Defns holds the value of a definition the configuration assigns one, and a <- of that definition takes the value.
   lastSubstitutions.forEach((substitution) => {
     const assignment = values.get(`!${substitution.target}`);
     if (assignment) {
-      setValue(substitution.name, assignment.value, getSubstitutedKeys(substitution));
+      setValue(substitution, assignment.value, getSubstitutedKeys(substitution));
     }
   });
   const substitutions = new Map<string, string>();

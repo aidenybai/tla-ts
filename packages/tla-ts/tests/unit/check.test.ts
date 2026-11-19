@@ -1781,6 +1781,30 @@ ASSUME TLCFP(a) = -887695703
     ).rejects.toThrow(getCompareError("b", 2));
   });
 
+  it("keeps the value the configuration assigns a definition as written, as TLC does", async () => {
+    const statuses = await Promise.all(
+      [
+        ["Def == 3", 'CONSTANT Def = {1, "a"}'],
+        ["Op(a) == a", 'CONSTANT Op = {1, "a"}'],
+        ["Op(a) == a", 'CONSTANT Op(1) = {1, "a"}'],
+        ["Op == 3\nDef == 4", 'CONSTANT Def = {1, "a"} Op <- Def'],
+        ["Op(a) == 0\nDef(a) == a", 'CONSTANT Def(1) = {1, "a"} Op <- Def'],
+      ].map(async (item) => (await checkModule(item[0], item[1])).status),
+    );
+    expect(statuses).toEqual(["success", "success", "success", "success", "success"]);
+    const messages = await Promise.all(
+      [
+        ["Def == 3\nASSUME PrintT(Def)", 'CONSTANT Def = {1, "a"}'],
+        ["Op(a) == a\nASSUME PrintT(Op(1))", 'CONSTANT Op(1) = {1, "a"}'],
+      ].map(async (item) => (await checkModule(item[0], item[1])).violation?.message),
+    );
+    expect(messages).toEqual(
+      Array(2).fill(
+        'Attempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.Value tlc2.module.TLC.PrintT(tlc2.value.impl.Value),\nbut it produced the following error:\nAttempted to compare string "a" with non-string:\n1',
+      ),
+    );
+  });
+
   it("reports a table's set that mixes types as the unexpected exception TLC throws", async () => {
     await expect(checkModule("CONSTANT F(_)", 'CONSTANT F(1) = {1, "a"}')).rejects.toThrow(
       new TlaEvaluationError(
