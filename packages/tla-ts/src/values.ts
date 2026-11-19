@@ -1082,10 +1082,16 @@ const searchLikeTlc = (element: Value, sorted: Value[]) => {
 const isElementOfLikeTlc = (element: Value, elements: Value[]) =>
   elements.some((member) => callTracedMethod(member, () => equalsLikeTlc(member, element)));
 
+// TLC sorts a set literal in place the first time an operation needs it sorted.
+export const isNormalizedSet = (set: SetValue | MixedSetValue) =>
+  set.kind === "MixedSet" ? set.enumerated !== undefined : set.isNormalized;
+
 export const getWrittenElements = (set: SetValue | MixedSetValue) =>
-  set.kind === "MixedSet" || set.isNormalized
-    ? set.elements
-    : (set.writtenElements ?? set.elements);
+  set.kind === "MixedSet"
+    ? (set.enumerated?.elements ?? set.elements)
+    : set.isNormalized
+      ? set.elements
+      : (set.writtenElements ?? set.elements);
 
 export const markNormalized = (value: Value): void => {
   if (typeof value !== "object") return;
@@ -2223,7 +2229,9 @@ const isElementOfAnySet = (element: Value, set: Value): boolean => {
       cacheSet(element);
       return computeLikeTlcOnFailure(isInSortedSet, isInSortedSetLikeTlc, element, set);
     case "MixedSet":
-      return isElementOfLikeTlc(element, set.elements);
+      return set.enumerated
+        ? searchLikeTlc(element, set.enumerated.elements).isFound
+        : isElementOfLikeTlc(element, set.elements);
     case "Interval":
       if (typeof element === "number") return element >= set.low && element <= set.high;
       if (set.low <= set.high && (!isModelValue(element) || element.type !== undefined)) {
@@ -2830,6 +2838,8 @@ export const getValueHash = (value: Value): number => {
   if (typeof value === "boolean") return value ? 0x2b7e1516 : 0x28aed2a6;
   if (typeof value === "string") return hashString(value);
   if (value.kind === "Set" || value.kind === "Function") {
+    // TLC sorts a set in place as it fingerprints it. A union inherits its hash unsorted, so this marks every lookup.
+    if (value.kind === "Set") value.isNormalized = true;
     if (value.hash === 0) value.hash = computeValueHash(value);
     return value.hash;
   }
@@ -3014,19 +3024,16 @@ const toPrintedFunction = (value: LazyFunctionValue) => {
 };
 
 export const formatNormalizedCopies = (values: Value[]) => {
-  const markedSets: SetValue[] = [];
   const writtenFunctions: [FunctionValue, Value[]][] = [];
   const copiedFunctions: LazyFunctionValue[] = [];
-  // TLC prints a deep copy, which copies functions but shares sets, so the functions inside a set stay normalized and cached.
+  // TLC prints a deep copy, which copies functions but shares sets, so a set and the functions inside it stay normalized and cached.
   const normalize = (value: Value, isWrittenOrderKept: boolean, isCopied: boolean): void => {
     if (typeof value !== "object") return;
     const normalizeInner = (inner: Value) => normalize(inner, isWrittenOrderKept, false);
     switch (value.kind) {
       case "Set":
         value.elements.forEach(normalizeInner);
-        if (value.isNormalized) return;
         value.isNormalized = true;
-        markedSets.push(value);
         return;
       case "MixedSet":
         value.elements.forEach(normalizeInner);
@@ -3073,9 +3080,6 @@ export const formatNormalizedCopies = (values: Value[]) => {
     values.forEach((value) => normalize(value, false, true));
     return values.map((value) => formatValue(value, true, true));
   } finally {
-    markedSets.forEach((set) => {
-      set.isNormalized = false;
-    });
     copiedFunctions.forEach((copied) => {
       copied.enumerated = undefined;
     });
