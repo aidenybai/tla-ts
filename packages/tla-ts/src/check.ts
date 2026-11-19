@@ -698,9 +698,11 @@ const searchStates = (
           }
           return isUnseen;
         };
+        const distinctStates = runtime.distinctStates;
         if (!search.checkReplayedSuccessor(state, next, tracing, addFingerprint)) {
           throw STOP_REPLAY;
         }
+        runtime.queueSize += runtime.distinctStates - distinctStates;
       });
     });
   const tlcFingerprints: number[] = [];
