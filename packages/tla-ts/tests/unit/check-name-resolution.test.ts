@@ -169,6 +169,10 @@ describe("name resolution matches SANY", () => {
       "D(Op(_)) == Op(42)\nFoo == 1 = 1\nASSUME A == D(LAMBDA a : a) = 42\nAXIOM B == <<D(LAMBDA a : a)>> # <<>>\nASSUME C == \\A v \\in {1} : D(LAMBDA a : a) = 42 /\\ Foo!1 = 1",
     ],
     [
+      "an operator argument in a bound set several names share",
+      "EXTENDS Naturals\nAp1(F(_)) == F(1)\nASSUME (\\A a, b \\in Ap1(LAMBDA p : {p, 2}) : a = b) = FALSE /\\ {<<a, b>> : a, b \\in Ap1(LAMBDA p : {p})} = {<<1, 1>>} /\\ [a, b \\in Ap1(LAMBDA p : {p}) |-> a + b][1, 1] = 2",
+    ],
+    [
       "an operator argument to an operator of a standard module a LET instantiates",
       "ASSUME LET S == INSTANCE Sequences IN S!SelectSeq(<<1, 2>>, LAMBDA a : a = 2) = <<2>>",
     ],

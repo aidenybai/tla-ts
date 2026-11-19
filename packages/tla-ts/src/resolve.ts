@@ -1024,7 +1024,7 @@ const getSymbolArity = (
 };
 
 const resolveBounds = (bounds: Bound[], scope: LocalName | undefined, unit: Unit) => {
-  bounds.forEach((bound) => resolveExpression(bound.set, scope, unit));
+  getBoundSets(bounds).forEach((set) => resolveExpression(set, scope, unit));
   return bounds.reduce(
     (current, bound) =>
       bindNames(current, getPatternNames(bound.pattern), bound.pattern.ranges, unit),
