@@ -263,8 +263,20 @@ const getHostProperty = (
   return kind === undefined
     ? []
     : [
-        `[owner |-> "${owner}", name |-> N("${name}"), kind |-> "${kind}", value |-> ${primitive ?? "Undefined"}, isAccessor |-> ${getBoolean(isAccessor)}, writable |-> ${getBoolean(descriptor.writable === true)}, enumerable |-> ${getBoolean(descriptor.enumerable === true)}, configurable |-> ${getBoolean(descriptor.configurable === true)}]`,
+        `[owner |-> "${owner}", name |-> N("${name}"), kind |-> "${kind}", value |-> ${primitive ?? "Undefined"}, isConstructor |-> ${getBoolean(isConstructor(value))}, isAccessor |-> ${getBoolean(isAccessor)}, writable |-> ${getBoolean(descriptor.writable === true)}, enumerable |-> ${getBoolean(descriptor.enumerable === true)}, configurable |-> ${getBoolean(descriptor.configurable === true)}]`,
       ];
+};
+
+// Whether a value of the host is a constructor, which Reflect.construct tells by throwing where
+// it isn't one, without running it.
+const isConstructor = (value: unknown) => {
+  if (typeof value !== "function") return false;
+  try {
+    Reflect.construct(String, [], value);
+    return true;
+  } catch {
+    return false;
+  }
 };
 
 const getBoolean = (value: boolean) => (value ? "TRUE" : "FALSE");

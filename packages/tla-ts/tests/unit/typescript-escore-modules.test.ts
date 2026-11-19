@@ -308,6 +308,18 @@ describe("gives a module the host's globals and properties that ESCore lacks, wh
     );
   });
 
+  it("stops at a new of a global that the host constructs, rather than throw", async () => {
+    expect(
+      (await checkModules({ "main.js": "const encoder = new TextEncoder();" })).message,
+    ).toContain("tla-ts can't run the host's TextEncoder");
+  });
+
+  it("stops at a class that extends a global of the host", async () => {
+    expect(
+      (await checkModules({ "main.js": "class Target extends EventTarget {}" })).message,
+    ).toContain("tla-ts can't run the host's EventTarget");
+  });
+
   it("stops at a call of a built-in's method that only the host has", async () => {
     expect((await checkModules({ "main.js": "Error.captureStackTrace({});" })).message).toContain(
       "tla-ts can't run the host's captureStackTrace",

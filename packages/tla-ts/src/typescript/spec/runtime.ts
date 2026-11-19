@@ -164,7 +164,8 @@ const DEFINITIONS = [
   // program, which require calls: the exports of the module, whose code runs the first time, in
   // the function Node wraps it in, with this as its exports; and, for a module whose code still
   // runs, its exports so far. The state's required holds each module object and whether its code
-  // ran, and forgets a module whose code threw.
+  // ran, and forgets a module whose code threw. Node's require is a function that new constructs
+  // too, which the proxy of it stops at.
   `RequireFile(s, id) ==
   IF id \\in DOMAIN s.required THEN
     LET exports == Get(s, s.required[id].module, SV("exports")) IN
@@ -174,7 +175,9 @@ const DEFINITIONS = [
   LET exports == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
       module == OrdinaryObjectCreate(exports.s, Intrinsic(exports.s, "ObjectPrototype"))
       made == CreateDataProperty(module.s, Val(module), SV("exports"), Val(exports))
-      require == CreateBuiltinFunction(made.s, <<"Module", "require">>, 1, N("require"), id)
+      require == LET a == Alloc(made.s, BuiltinObject(Intrinsic(made.s, "FunctionPrototype"), <<"Module", "require">>, 1,
+                                                       N("require"), TRUE, id, made.s.realmId))
+                 IN Ok(a.s, a.v)
       moduleProxy == StoppingProxy(require.s, Val(module), <<[trap |-> SV("get"), method |-> "moduleExportsGet"],
                                                               [trap |-> SV("set"), method |-> "moduleExportsSet"]>>)
       requireProxy == StoppingProxy(moduleProxy.s, Val(require), <<[trap |-> SV("apply"), method |-> "requireApply"]>>)
@@ -212,7 +215,8 @@ const DEFINITIONS = [
   // lacks, on the global object and the intrinsics as the host's own context has them, where a
   // module runs. One whose value is a primitive has the host's value. One whose value is a function
   // or an object is a proxy whose handler stops at every operation, whose target is a function
-  // where the host's value is one, and one that the host gives a getter has a getter that gives the
+  // where the host's value is one, and a constructor where it's one, so that a new of it reaches
+  // the handler, and one that the host gives a getter has a getter that gives the
   // proxy, or undefined where the host's gives undefined, and a setter that stops. Any other
   // accessor stops where it's read or written.
   `DefineHost(s, properties) ==
@@ -223,7 +227,9 @@ const DEFINITIONS = [
   `DefineHostWith(s, handler, properties) ==
   IF properties = <<>> THEN Ok(s, Empty) ELSE
   LET p == Head(properties)
-      stop == CreateBuiltinFunction(s, <<"Module", "hostStop">>, 0, <<>>, p.name)
+      stop == LET a == Alloc(s, BuiltinObject(Intrinsic(s, "FunctionPrototype"), <<"Module", "hostStop">>, 0, <<>>,
+                                              p.isConstructor, p.name, s.realmId))
+              IN Ok(a.s, a.v)
       target == CASE p.kind = "function" -> stop
                   [] p.kind = "console" -> ConsoleObject(stop.s)
                   [] OTHER -> LET a == Alloc(stop.s, MakeObject(Null, "ordinary", [hostName |-> p.name])) IN Ok(a.s, a.v)
