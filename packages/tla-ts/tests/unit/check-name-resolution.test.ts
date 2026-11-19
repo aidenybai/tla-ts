@@ -189,6 +189,22 @@ describe("name resolution matches SANY", () => {
       "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nI == INSTANCE Base\nX == I!Foo!1",
     ],
     [
+      "a selection through an instance into a label that an ASSUME/PROVE theorem selects",
+      "---- MODULE Base ----\nTHEOREM Thm == ASSUME TRUE PROVE l2 :: 1 = 2\nTHEOREM T3 == ASSUME TRUE PROVE Thm!l2\n====\nI == INSTANCE Base\nX == I!T3!2!1!1\nINSTANCE Base\nY == T3!2!1!2",
+    ],
+    [
+      "an ASSUME/PROVE theorem a named instance substitutes into, used as an expression",
+      "---- MODULE Base ----\nCONSTANT c\nTHEOREM Foo == ASSUME NEW y PROVE y = c\n====\nI == INSTANCE Base WITH c <- 1\nX == I!Foo\nLEMMA I!Foo",
+    ],
+    [
+      "an ASSUME/PROVE theorem an instance with a parameter substitutes into, used as an expression or operator",
+      "---- MODULE Base ----\nCONSTANT c\nTHEOREM Foo == ASSUME NEW y PROVE y = c\n====\nJ(p) == INSTANCE Base WITH c <- p\nY == J(1)!Foo\nOp(G(_)) == 1\nZ == Op(J!Foo)",
+    ],
+    [
+      "an ASSUME/PROVE theorem an unnamed instance substitutes into, used as an expression",
+      "---- MODULE Base ----\nCONSTANT c\nTHEOREM Foo == ASSUME NEW y PROVE y = c\n====\nINSTANCE Base WITH c <- 1\nX == Foo",
+    ],
+    [
       "a definition named like a theorem that an instance with substitutions reuses from a module without parameters, which SANY never imports",
       "---- MODULE P ----\nTHEOREM Foo == TRUE\n====\n---- MODULE Base ----\nEXTENDS P\nCONSTANT c\n====\nFoo == 1\nINSTANCE Base WITH c <- 1",
     ],
@@ -2867,6 +2883,55 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "an ASSUME/PROVE theorem an instance with a parameter imports, used as an expression or operator",
+      "---- MODULE Base ----\nTHEOREM Foo == ASSUME NEW y PROVE y = y\n====\nI(p) == INSTANCE Base\nX == I(1)!Foo\nOp(G(_)) == 1\nZ == Op(I!Foo)",
+      [
+        {
+          location: "line 6, col 6 to line 6, col 13 of module M",
+          message: "ASSUME/PROVE used where an expression is required.",
+        },
+        {
+          location: "line 8, col 9 to line 8, col 13 of module M",
+          message: "ASSUME/PROVE used where an expression is required.",
+        },
+        {
+          location: "line 8, col 6 to line 8, col 14 of module M",
+          message: "Argument number 1 to operator 'Op' \nshould be a 1-parameter operator.",
+        },
+      ],
+      [],
+    ],
+    [
+      "selections whose names before an operand name no symbol",
+      "X == J!Ta!1\nUSE J!Ti!1\nLEMMA J!K!Ta!<<",
+      [
+        {
+          location: "line 2, col 6 to line 2, col 9 of module M",
+          message: "Unknown operator: `J!Ta'.",
+        },
+        {
+          location: "line 3, col 5 to line 3, col 8 of module M",
+          message: "Unknown operator: `J!Ti'.",
+        },
+        {
+          location: "line 4, col 7 to line 4, col 12 of module M",
+          message: "Unknown operator: `J!K!Ta'.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a selection of a label and an operand of a variable",
+      "VARIABLE y\nX == y!Ta!1",
+      [
+        {
+          location: "line 3, col 6 to line 3, col 6 of module M",
+          message: "Cannot take subexpression of `y'.",
+        },
+      ],
+      [],
+    ],
+    [
       "the statement of a theorem named like an earlier definition",
       "Foo == 1 = 1\nBar == 1\nTHEOREM Bar == Foo!1 = Undefined",
       [
@@ -3994,6 +4059,40 @@ describe("name resolution matches SANY", () => {
         },
         { location: "In module --TLA+ BUILTINS--", message: hidden },
         { location: "line 10, col 17 to line 10, col 22 of module M", message: hidden },
+      ]),
+    );
+  });
+
+  const goalSteps =
+    "EXTENDS Naturals\nOp(a) == a + 1\nTHEOREM Thm == ASSUME NEW m \\in Nat, l1 :: m = 1 PROVE l2 :: Op(m) = m + 1\n<1>1. Thm!l2\n  OBVIOUS\n";
+
+  it("selects into a step that selects from an ASSUME/PROVE theorem or a step like SANY", async () => {
+    const result = await checkNames(
+      `${goalSteps}<1>2. 1 + 1 = 2\n  OBVIOUS\n<1>3. <1>2!1\n  OBVIOUS\n<1>4. QED BY <1>1!1, <1>1!1!1!1, <1>3!1!1, <1>1!<<`,
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("reports selections into a step that selects from an ASSUME/PROVE theorem like SANY", async () => {
+    await expect(
+      checkNames(
+        `${goalSteps}<1>2. <1>1!1!1 = Thm!l1\n  OBVIOUS\n<1>3. Thm!l2(1)\n  OBVIOUS\n<1>4. QED BY <1>1!2, <1>2!2!2, <1>3!1`,
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 9, col 11 to line 9, col 12 of module M",
+          message: "Label `l2' used with wrong number of arguments.",
+        },
+        {
+          location: "line 11, col 19 to line 11, col 19 of module M",
+          message: "Nonexistent operand specified by `argument selector 2'.",
+        },
+        {
+          location: "line 11, col 29 to line 11, col 29 of module M",
+          message: "Nonexistent operand specified by `argument selector 2'.",
+        },
+        { location: "line 11, col 37 to line 11, col 37 of module M", message: noOperands },
       ]),
     );
   });

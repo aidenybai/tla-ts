@@ -315,6 +315,8 @@ export const generateSanySpecification = (
   };
   loadSpecification(rootName);
   calculateDependencies(rootName, rootSource);
+  const assumeProveScopes: ModuleGeneration["assumeProveScopes"] = new WeakMap();
+  const labelGoals: ModuleGeneration["labelGoals"] = new WeakMap();
 
   const generateModule = (
     ast: Module,
@@ -367,8 +369,8 @@ export const generateSanySpecification = (
         goal: undefined,
         goalClause: 0,
       },
-      assumeProveScopes: new WeakMap(),
-      labelGoals: new WeakMap(),
+      assumeProveScopes,
+      labelGoals,
       recursiveDeclarations: [],
       selectorToNode: createSelectorResolver({
         version: options.version,
