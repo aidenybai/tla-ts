@@ -1,6 +1,7 @@
 import { runInNewContext } from "node:vm";
 import { TlaError } from "../../errors";
 import type { GeneratedDefinition, Library } from "./library";
+import { TIME_ZONES } from "./time-zones";
 
 // The ESCore operators that a compiled spec defines its own way, each a port of ESCore's with
 // what the parse node gave as a parameter: a function's code is the record [id, strict, kind,
@@ -195,9 +196,10 @@ export const INTERPRETER = new Set([
 ]);
 
 // Where ESCore, which has no Intl, as engine262 has none, and a host with ICU, as Node, answer
-// differently, a compiled spec stops: at a calendar other than ISO 8601, at a named time zone
-// other than UTC, and at a date string in none of the formats that ECMA-262 defines, which a host
-// may still read. The method names CallBuiltin stops at are the locale-sensitive built-ins'.
+// differently, a compiled spec stops: at a calendar other than ISO 8601, at a named time zone that
+// the host's recorded table leaves out, and at a date string in none of the formats that ECMA-262
+// defines, which a host may still read. The method names CallBuiltin stops at are the
+// locale-sensitive built-ins'.
 export const LOCALE_METHODS = [
   "toLocaleString",
   "toLocaleDateString",
@@ -214,16 +216,6 @@ const HOST_PATCHES = [
     name: "CanonicalizeCalendar",
     from: `ELSE ThrowError(s, "RangeError")`,
     to: `ELSE Unsupported(s, <<>>)`,
-  },
-  {
-    name: "ToTemporalTimeZoneIdentifier",
-    from: `ELSE ThrowError(r.s, "RangeError")`,
-    to: `ELSE Unsupported(r.s, <<>>)`,
-  },
-  {
-    name: "ZonedConstructorTimeZone",
-    from: `ELSE ThrowError(r.s, "RangeError")`,
-    to: `ELSE Unsupported(r.s, <<>>)`,
   },
   {
     name: "ParseISODateTime",
@@ -381,6 +373,51 @@ export const getRealmDefinitions = (library: Library): GeneratedDefinition[] => 
       text: `RealmProperties == SelectSeq(HostRealmProperties, LAMBDA p : <<p.o, p.k>> \\notin {${missing.join(", ")}}) \\o <<M("GlobalObject", Str(${getUnitsOf("setTimeout")}), "Global", "setTimeout", 2)>>`,
     },
   ];
+};
+
+// The time zone names a program writes in strings, as test262's recorder finds them: each string,
+// and the annotations in brackets of a date-time string.
+const getZoneNames = (text: string) =>
+  [...text.matchAll(/["'`]([^"'`\n]{1,60})["'`]/g)].flatMap((match) => [
+    match[1],
+    ...[...match[1].matchAll(/\[!?([^\]=]+)\]/g)].map((annotation) => annotation[1]),
+  ]);
+
+// Whether the host has no time zone of a name, which only a host with Temporal can tell.
+const isRejectedZone = (name: string) => {
+  const temporal: unknown = Reflect.get(HOST_GLOBAL, "Temporal");
+  if (typeof temporal !== "object" || temporal === null) return false;
+  const zoned: unknown = Reflect.get(temporal, "ZonedDateTime");
+  if (typeof zoned !== "function") return false;
+  try {
+    Reflect.construct(zoned, [0n, name]);
+    return false;
+  } catch {
+    return true;
+  }
+};
+
+// The program's HostTimeZone: the recorded table's entries of the time zones its strings name, and
+// for the other names in them that the host rejects, "rejected". Any other name may be one that the
+// host has and the table leaves out.
+export const getHostTimeZone = (text: string) => {
+  const keys = [...new Set(getZoneNames(text).map((name) => name.toLowerCase()))].sort();
+  const entries = keys.filter((key) => Object.hasOwn(TIME_ZONES, key));
+  const rejected = keys.filter((key) => !Object.hasOwn(TIME_ZONES, key) && isRejectedZone(key));
+  const getEntry = (key: string) => {
+    const table = TIME_ZONES[key];
+    const days = table.times.map((time) => Math.floor(time / 86400));
+    return `[found |-> "zone", id |-> ${getUnitsOf(table.id)}, primary |-> ${getUnitsOf(table.primary)}, offsets |-> <<${table.offsets.join(", ")}>>, days |-> <<${days.join(", ")}>>, seconds |-> <<${table.times.map((time, index) => time - days[index] * 86400).join(", ")}>>, isFinal |-> ${table.isFinal ? "TRUE" : "FALSE"}, rule |-> <<${table.rule.join(", ")}>>]`;
+  };
+  const arms = [
+    ...entries.map((key) => `key = ${getUnitsOf(key)} -> ${getEntry(key)}`),
+    ...(rejected.length === 0
+      ? []
+      : [`key \\in {${rejected.map(getUnitsOf).join(", ")}} -> [found |-> "rejected"]`]),
+  ];
+  return arms.length === 0
+    ? `HostTimeZone(key) == [found |-> "unknown"]`
+    : `HostTimeZone(key) ==\n  CASE ${arms.join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`;
 };
 
 const getUnitsOf = (text: string) =>

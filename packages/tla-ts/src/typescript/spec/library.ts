@@ -232,6 +232,7 @@ export const HOOKS = new Map([
   ["SourceUnits", "t"],
   ["RunBody", "s, ctx, body"],
   ["ResumeCode", "args, r"],
+  ["HostTimeZone", "key"],
 ]);
 
 // The module ESRuntime: every ESCore definition, with the overrides in place of ESCore's and a

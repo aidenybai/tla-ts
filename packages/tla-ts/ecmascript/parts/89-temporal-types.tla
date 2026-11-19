@@ -158,7 +158,7 @@ PlainDateToZonedDateTime(s, plain, item) ==
   LET ns == IF Val(temporalTime) = Undefined THEN GetStartOfDay(temporalTime.s, Val(tz), plain.date)
             ELSE LET time == ToTemporalTimeRecord(temporalTime.s, Val(temporalTime), Undefined) IN IF IsAbrupt(time) THEN time ELSE
                  LET dt == [date |-> plain.date, time |-> Val(time)] IN
-                 IF ~ISODateTimeWithinLimits(dt) THEN ThrowError(time.s, "RangeError") ELSE GetEpochNanosecondsFor(time.s, Val(tz), dt)
+                 IF ~ISODateTimeWithinLimits(dt) THEN ThrowError(time.s, "RangeError") ELSE GetEpochNanosecondsFor(time.s, Val(tz), dt, N("compatible"))
   IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), Val(tz), plain.calendar, Empty)
 
 \* PlainDateTime (Temporal §5). A Temporal.PlainDateTime has class "temporalDateTime" and slots
@@ -323,7 +323,7 @@ PlainDateTimeBuiltin(s, f, m, this, args, nt) ==
                    LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN IF IsAbrupt(tz) THEN tz ELSE
                    LET opts == GetOptionsObject(tz.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                    LET disambiguation == GetTemporalDisambiguationOption(opts.s, Val(opts)) IN IF IsAbrupt(disambiguation) THEN disambiguation ELSE
-                   LET ns == GetEpochNanosecondsFor(disambiguation.s, Val(tz), dt) IN
+                   LET ns == GetEpochNanosecondsFor(disambiguation.s, Val(tz), dt, Val(disambiguation)) IN
                    IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), Val(tz), plain.calendar, Empty)
               [] m = "toPlainDate" -> CreateTemporalDate(s, dt.date, plain.calendar, Empty)
               [] m = "toPlainTime" -> CreateTemporalTime(s, dt.time, Empty)
@@ -352,7 +352,7 @@ GetZonedOptions(s, options, offsetFallback) ==
   LET disambiguation == GetTemporalDisambiguationOption(opts.s, Val(opts)) IN IF IsAbrupt(disambiguation) THEN disambiguation ELSE
   LET offset == GetTemporalOffsetOption(disambiguation.s, Val(opts), offsetFallback) IN IF IsAbrupt(offset) THEN offset ELSE
   LET overflow == GetTemporalOverflowOption(offset.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow
-  ELSE Ok(overflow.s, [offset |-> Val(offset), overflow |-> Val(overflow)])
+  ELSE Ok(overflow.s, [disambiguation |-> Val(disambiguation), offset |-> Val(offset), overflow |-> Val(overflow)])
 
 \* ToTemporalZonedDateTime, as the slots of a ZonedDateTime.
 ToTemporalZonedDateTimeRecord(s, item, options) ==
@@ -368,7 +368,7 @@ ToTemporalZonedDateTimeRecord(s, item, options) ==
          LET offsetString == Val(fields).offset
              ns == InterpretISODateTimeOffset(dt.s, Val(dt).date, Val(dt).time, IF offsetString = Empty THEN "wall" ELSE "option",
                                               IF offsetString = Empty THEN TI(0) ELSE Val(ParseDateTimeUTCOffset(dt.s, offsetString)),
-                                              Val(fields).timeZone, Val(o).offset, "match-exactly")
+                                              Val(fields).timeZone, Val(o).disambiguation, Val(o).offset, "match-exactly")
          IN IF IsAbrupt(ns) THEN ns ELSE Ok(ns.s, [epochNs |-> Val(ns), timeZone |-> Val(fields).timeZone, calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "zoned-date-time") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -380,7 +380,8 @@ ToTemporalZonedDateTimeRecord(s, item, options) ==
        LET behaviour == CASE r.z -> "exact" [] r.offset = Empty -> "wall" [] OTHER -> "option"
            ns == InterpretISODateTimeOffset(o.s, [year |-> r.year, month |-> r.month, day |-> r.day], r.time, behaviour,
                                             IF behaviour = "option" THEN Val(ParseDateTimeUTCOffset(o.s, r.offset)) ELSE TI(0),
-                                            Val(tz), Val(o).offset, IF r.offset # Empty /\ Len(r.offset) > 6 THEN "match-exactly" ELSE "match-minutes")
+                                            Val(tz), Val(o).disambiguation, Val(o).offset,
+                                            IF r.offset # Empty /\ Len(r.offset) > 6 THEN "match-exactly" ELSE "match-minutes")
        IN IF IsAbrupt(ns) THEN ns ELSE Ok(ns.s, [epochNs |-> Val(ns), timeZone |-> Val(tz), calendar |-> Val(calendar)])
 
 \* RoundEpochNanoseconds: RoundNumberToIncrementAsIfPositive.
@@ -405,7 +406,7 @@ RoundEpochNanoseconds(ns, increment, unit, mode) ==
 TemporalZonedDateTimeToString(z, precision, showCalendar, showTimeZone, showOffset, increment, unit, mode) ==
   LET ns == RoundEpochNanoseconds(z.epochNs, increment, unit, mode) IN
   FormatISODateTime(GetISODateTimeFor(z.timeZone, ns), ISO8601, precision, N("never")) \o
-  (IF showOffset = N("never") THEN <<>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(z.timeZone))) \o
+  (IF showOffset = N("never") THEN <<>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(z.timeZone, ns))) \o
   (IF showTimeZone = N("never") THEN <<>> ELSE <<91>> \o (IF showTimeZone = N("critical") THEN <<33>> ELSE <<>>) \o z.timeZone.id \o <<93>>) \o
   FormatCalendarAnnotation(z.calendar, showCalendar)
 
@@ -453,8 +454,8 @@ RoundZonedDateTime(s, z, roundToArg) ==
        IN IF IsAbrupt(rounded) THEN rounded
           ELSE CreateTemporalZonedDateTime(rounded.s, TIAdd(Val(rounded), Val(start)), z.timeZone, z.calendar, Empty)
      ELSE LET result == RoundISODateTime(dt, o.increment, o.unit, o.mode)
-              ns == InterpretISODateTimeOffset(r.s, result.date, result.time, "option", GetOffsetNanosecondsFor(z.timeZone),
-                                               z.timeZone, N("prefer"), "match-exactly")
+              ns == InterpretISODateTimeOffset(r.s, result.date, result.time, "option", GetOffsetNanosecondsFor(z.timeZone, z.epochNs),
+                                               z.timeZone, N("compatible"), N("prefer"), "match-exactly")
           IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
 
 \* Temporal.ZonedDateTime.prototype.with.
@@ -464,23 +465,21 @@ WithZonedDateTime(s, z, item, options) ==
   LET partial == PrepareCalendarFields(isPartial.s, item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset"}, "partial") IN
   IF IsAbrupt(partial) THEN partial ELSE
   LET dt == GetISODateTimeFor(z.timeZone, z.epochNs)
-      fields == CalendarMergeFields([ISODateTimeToFields(dt) EXCEPT !.offset = FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone))],
+      fields == CalendarMergeFields([ISODateTimeToFields(dt) EXCEPT !.offset = FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone, z.epochNs))],
                                     Val(partial))
       o == GetZonedOptions(partial.s, options, N("prefer"))
   IN IF IsAbrupt(o) THEN o ELSE
   LET result == InterpretTemporalDateTimeFields(o.s, fields, Val(o).overflow) IN IF IsAbrupt(result) THEN result ELSE
   LET ns == InterpretISODateTimeOffset(result.s, Val(result).date, Val(result).time, "option",
-                                       Val(ParseDateTimeUTCOffset(result.s, fields.offset)), z.timeZone, Val(o).offset, "match-exactly")
+                                       Val(ParseDateTimeUTCOffset(result.s, fields.offset)), z.timeZone, Val(o).disambiguation,
+                                       Val(o).offset, "match-exactly")
   IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
 
 \* The time zone of a ZonedDateTime constructor's argument.
 ZonedConstructorTimeZone(s, v) ==
   IF ~IsString(v) THEN ThrowTypeError(s)
   ELSE LET r == ParseTimeZoneIdentifier(s, v.value) IN IF IsAbrupt(r) THEN r
-  ELSE IF Val(r).offsetMinutes # Empty THEN
-    Ok(r.s, [id |-> FormatOffsetTimeZoneIdentifier(Val(r).offsetMinutes, TRUE), offset |-> Val(r).offsetMinutes])
-  ELSE IF TPLower(Val(r).name) = N("utc") THEN Ok(r.s, UTCTimeZone)
-  ELSE ThrowError(r.s, "RangeError")
+  ELSE TimeZoneFromParse(r.s, Val(r))
 
 \* The epoch nanoseconds a constructor or fromEpochNanoseconds argument gives.
 ToEpochNanoseconds(s, v) ==
@@ -516,13 +515,13 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
                    ELSE Ok(tomorrow.s, Num(RatioToNumber(TISub(Val(tomorrow), Val(today)), TINsPerHour)))
               [] m = "epochMilliseconds" -> Ok(s, TINumber(TIFloorDiv(z.epochNs, TI(1000000))))
               [] m = "epochNanoseconds" -> Ok(s, BigInt(z.epochNs))
-              [] m = "offsetNanoseconds" -> Ok(s, TINumber(GetOffsetNanosecondsFor(z.timeZone)))
-              [] m = "offset" -> Ok(s, Str(FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone))))
+              [] m = "offsetNanoseconds" -> Ok(s, TINumber(GetOffsetNanosecondsFor(z.timeZone, z.epochNs)))
+              [] m = "offset" -> Ok(s, Str(FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone, z.epochNs))))
               [] m = "with" -> WithZonedDateTime(s, z, Arg(args, 1), Arg(args, 2))
               [] m = "withPlainTime" ->
                    LET ns == IF Arg(args, 1) = Undefined THEN GetStartOfDay(s, z.timeZone, dt.date)
                              ELSE LET time == ToTemporalTimeRecord(s, Arg(args, 1), Undefined) IN IF IsAbrupt(time) THEN time
-                                  ELSE GetEpochNanosecondsFor(time.s, z.timeZone, [date |-> dt.date, time |-> Val(time)])
+                                  ELSE GetEpochNanosecondsFor(time.s, z.timeZone, [date |-> dt.date, time |-> Val(time)], N("compatible"))
                    IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
               [] m = "withTimeZone" ->
                    LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN
@@ -559,8 +558,11 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
                    LET param == StringOrOptionsObject(s, Arg(args, 1), SV("direction")) IN IF IsAbrupt(param) THEN param ELSE
                    LET direction == GetStringOption(param.s, Val(param), SV("direction"), {N("next"), N("previous")}, Empty) IN
                    IF IsAbrupt(direction) THEN direction
-                   ELSE IF Val(direction) = Empty THEN ThrowError(direction.s, "RangeError")
-                   ELSE Ok(direction.s, Null)
+                   ELSE IF Val(direction) = Empty THEN ThrowError(direction.s, "RangeError") ELSE
+                   LET transition == IF Val(direction) = N("next") THEN GetNamedTimeZoneNextTransition(z.timeZone, z.epochNs)
+                                     ELSE GetNamedTimeZonePreviousTransition(z.timeZone, z.epochNs)
+                   IN IF transition = Empty THEN Ok(direction.s, Null)
+                      ELSE CreateTemporalZonedDateTime(direction.s, transition, z.timeZone, z.calendar, Empty)
               [] m = "toInstant" -> CreateTemporalInstant(s, z.epochNs, Empty)
               [] m = "toPlainDate" -> CreateTemporalDate(s, dt.date, z.calendar, Empty)
               [] m = "toPlainTime" -> CreateTemporalTime(s, dt.time, Empty)
@@ -588,7 +590,7 @@ ToTemporalInstantNs(s, item) ==
 \* TemporalInstantToString, for a time zone or Empty.
 TemporalInstantToString(ns, tz, precision) ==
   FormatISODateTime(GetISODateTimeFor(IF tz = Empty THEN UTCTimeZone ELSE tz, ns), ISO8601, precision, N("never")) \o
-  (IF tz = Empty THEN <<90>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(tz)))
+  (IF tz = Empty THEN <<90>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(tz, ns)))
 
 \* DifferenceTemporalInstant and AddDurationToInstant.
 DifferenceTemporalInstant(s, operation, ns, other, options) ==

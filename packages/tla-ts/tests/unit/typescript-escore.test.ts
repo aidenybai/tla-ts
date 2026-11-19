@@ -609,6 +609,75 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  // The realm has Temporal only where the host that compiles the script has it.
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "runs a named time zone from the host's recorded table",
+    () => {
+      const getSource = (expected: string) => `
+      const zoned = new Temporal.ZonedDateTime(1588402800_000_000_000n, "America/Vancouver");
+      const gap = Temporal.ZonedDateTime.from({
+        year: 2020,
+        month: 3,
+        day: 8,
+        hour: 2,
+        minute: 30,
+        timeZone: "America/Vancouver",
+      });
+      const fold = Temporal.PlainDateTime.from("2020-11-01T01:30").toZonedDateTime("America/Vancouver", {
+        disambiguation: "later",
+      });
+      const later = new Temporal.ZonedDateTime(2200000000_000_000_000n, "America/Vancouver");
+      const link = new Temporal.ZonedDateTime(0n, "Asia/Calcutta");
+      let rejected = "none";
+      try {
+        new Temporal.ZonedDateTime(0n, "Mars/Olympus");
+      } catch (error) {
+        rejected = (error as Error).name;
+      }
+      const result = [
+        zoned.offset,
+        gap.toString(),
+        fold.offset,
+        String(zoned.getTimeZoneTransition("next")),
+        later.offset,
+        link.timeZoneId,
+        link.equals(new Temporal.ZonedDateTime(0n, "Asia/Kolkata")),
+        rejected,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (
+            await checkScript(
+              getSource(
+                "-07:00|2020-03-08T03:30:00-07:00[America/Vancouver]|-08:00|2020-11-01T01:00:00-08:00[America/Vancouver]|-07:00|Asia/Calcutta|true|RangeError",
+              ),
+            )
+          ).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect(
+          (
+            await checkScript(
+              getSource(
+                "-07:00|2020-03-08T03:30:00-07:00[America/Vancouver]|-07:00|2020-11-01T01:00:00-08:00[America/Vancouver]|-07:00|Asia/Calcutta|true|RangeError",
+              ),
+            )
+          ).message,
+        ).toContain(THREW);
+      });
+
+      it("stops at a time zone that the table leaves out", async () => {
+        const source = 'new Temporal.ZonedDateTime(0n, ["Europe", "Oslo"].join("/"));';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
   describe("runs the built-ins of a global that a table of names links", () => {
     const getSource = (expected: string) => `
       const result = [...new Float32Array([3, 1.5])].join();

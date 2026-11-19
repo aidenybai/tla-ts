@@ -853,6 +853,7 @@ RECURSIVE DescribeThrown(_, _)
 RECURSIVE HarnessResult(_, _)
 RECURSIVE RunFrom(_, _, _, _, _)
 RECURSIVE RunModuleFrom(_, _, _, _, _)
+RECURSIVE HostTimeZone(_)
 RECURSIVE TestResult(_)
 RECURSIVE HasClass(_, _, _)
 RECURSIVE CanonicalizeKeyedCollectionKey(_)
@@ -1483,6 +1484,8 @@ RECURSIVE ActiveModule(_, _)
 RECURSIVE EvaluateExportDeclaration(_, _, _)
 RECURSIVE ExportDefaultThen(_, _, _)
 RECURSIVE RunModule(_, _)
+RECURSIVE OffsetTimeZone(_)
+RECURSIVE IsOffsetTimeZone(_)
 RECURSIVE ISODaysInMonth(_, _)
 RECURSIVE BalanceISOYearMonth(_, _)
 RECURSIVE ISODateToEpochDays(_, _, _)
@@ -1524,16 +1527,32 @@ RECURSIVE GetTemporalCalendarIdentifierWithISODefault(_, _)
 RECURSIVE FormatOffsetTimeZoneIdentifier(_, _)
 RECURSIVE ParseTemporalTimeZoneString(_, _)
 RECURSIVE ToTemporalTimeZoneIdentifier(_, _)
+RECURSIVE TimeZoneFromParse(_, _)
 RECURSIVE TimeZoneEquals(_, _)
-RECURSIVE GetOffsetNanosecondsFor(_)
+RECURSIVE TZSecondOf(_)
+RECURSIVE TZTransitionsUpTo(_, _, _, _)
+RECURSIVE TZSecondsNs(_)
+RECURSIVE TZTransitionNs(_, _)
+RECURSIVE TZRuleDay(_, _, _, _)
+RECURSIVE TZRuleStartEnd(_, _)
+RECURSIVE TZRuleTransitions(_, _)
+RECURSIVE TZRule(_)
+RECURSIVE TZRuleOffset(_, _, _)
+RECURSIVE TZEarliestAfter(_, _)
+RECURSIVE TZLatestBefore(_, _)
+RECURSIVE GetOffsetNanosecondsFor(_, _)
 RECURSIVE GetISODateTimeFor(_, _)
-RECURSIVE GetEpochNanosecondsFor(_, _, _)
+RECURSIVE GetNamedTimeZoneNextTransition(_, _)
+RECURSIVE GetNamedTimeZonePreviousTransition(_, _)
+RECURSIVE GetPossibleEpochNanoseconds(_, _, _)
+RECURSIVE DisambiguatePossibleEpochNanoseconds(_, _, _, _, _)
+RECURSIVE GetEpochNanosecondsFor(_, _, _, _)
 RECURSIVE GetStartOfDay(_, _, _)
 RECURSIVE EpochNsOf(_, _, _)
 RECURSIVE FormatUTCOffsetNanoseconds(_)
 RECURSIVE FormatDateTimeUTCOffsetRounded(_)
 RECURSIVE AddEpochNanoseconds(_, _, _)
-RECURSIVE InterpretISODateTimeOffset(_, _, _, _, _, _, _, _)
+RECURSIVE InterpretISODateTimeOffset(_, _, _, _, _, _, _, _, _)
 RECURSIVE ConvertCalendarField(_, _, _)
 RECURSIVE PrepareFrom(_, _, _, _, _, _)
 RECURSIVE PrepareCalendarFields(_, _, _, _)
@@ -4978,11 +4997,12 @@ HexDigits == N("0123456789abcdef")
 NoAttributes == [key \in {} |-> <<>>]
 NoResolution == [kind |-> "null"]
 ISO8601 == N("iso8601")
-UTCTimeZone == [id |-> N("UTC"), offset |-> 0]
+UTCTimeZone == [id |-> N("UTC"), primary |-> N("UTC"), offset |-> 0, zone |-> Empty]
 TINsPerSecond == TI(1000000000)
 TINsPerDay == TIMul(TI(86400), TINsPerSecond)
 TINsMaxInstant == TIMul(TI(100000000), TINsPerDay)
 CalendarClasses == {"temporalDate", "temporalDateTime", "temporalMonthDay", "temporalYearMonth", "temporalZonedDateTime"}
+TZEndDay == 24837
 CalendarFieldNames ==
   <<"day", "hour", "microsecond", "millisecond", "minute", "month", "monthCode", "nanosecond", "offset", "second",
     "timeZone", "year">>
@@ -11232,6 +11252,15 @@ RunModuleFrom(harness, specifier, directory, canSuspend, parses) ==
   TestResult(IF IsAbrupt(harness) THEN harness
              ELSE RunModule([harness.s EXCEPT !.parses = parses, !.directory = directory, !.canSuspend = canSuspend],
                             specifier))
+\* The named time zone that the host has of a lowercase name (AvailableNamedTimeZoneIdentifiers,
+\* §11.1.2): an entry [found, id, primary, offsets, days, seconds, isFinal, rule], whose found is
+\* "zone", with its identifier and its primary identifier as code units, its offsets in seconds, the first before any transition,
+\* the epoch days and the seconds within the day of its transitions before 2038, whether it has no
+\* transition after them, and otherwise the rule of its later transitions: its standard and daylight
+\* offsets in seconds, and the month, week, weekday, and local time in seconds of the start and of
+\* the end of daylight time. Else found is "rejected" where the host has no such time zone, and
+\* "unknown" where it may have one that this table leaves out. engine262 has none but UTC.
+HostTimeZone(key) == [found |-> "rejected"]
 \* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
 \* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==
@@ -16452,10 +16481,13 @@ RunModule(s, specifier) ==
         ELSE jobs
 \* Temporal's ISO 8601 calendar (§12), time zones (§11), and relative durations (§7.5). An ISO
 \* date record is [year, month, day] and an ISO date-time record [date, time], of TLA+ integers.
-\* A calendar is "iso8601", the only one engine262 has, and a time zone is [id, offset], its
-\* identifier and its offset in minutes: UTC, the only named time zone engine262 has, or an offset
-\* time zone. Calendar loops over days, months, and years have closed forms here, which give the
+\* A calendar is "iso8601", the only one engine262 has, and a time zone is [id, primary, offset,
+\* zone]: its identifier and its primary identifier, its offset in minutes for UTC or an offset time
+\* zone, and for another named time zone, its HostTimeZone entry, else Empty. Calendar loops over days, months, and years have closed forms here, which give the
 \* loops' results.
+OffsetTimeZone(minutes) ==
+  LET id == FormatOffsetTimeZoneIdentifier(minutes, TRUE) IN [id |-> id, primary |-> id, offset |-> minutes, zone |-> Empty]
+IsOffsetTimeZone(tz) == tz.id[1] \in {43, 45}
 ISODaysInMonth(year, month) ==
   CASE month \in {1, 3, 5, 7, 8, 10, 12} -> 31
     [] month \in {4, 6, 9, 11} -> 30
@@ -16615,24 +16647,149 @@ ToTemporalTimeZoneIdentifier(s, v) ==
   IF IsObject(v) /\ O(s, v).class = "temporalZonedDateTime" THEN Ok(s, O(s, v).slots.timeZone)
   ELSE IF ~IsString(v) THEN ThrowTypeError(s)
   ELSE LET r == ParseTemporalTimeZoneString(s, v.value) IN IF IsAbrupt(r) THEN r
-  ELSE IF Val(r).offsetMinutes # Empty THEN
-    Ok(r.s, [id |-> FormatOffsetTimeZoneIdentifier(Val(r).offsetMinutes, TRUE), offset |-> Val(r).offsetMinutes])
-  ELSE IF TPLower(Val(r).name) = N("utc") THEN Ok(r.s, UTCTimeZone)
-  ELSE ThrowError(r.s, "RangeError")
-TimeZoneEquals(x, y) == x.id = y.id
-\* GetOffsetNanosecondsFor, GetISODateTimeFor, and GetPossibleEpochNanoseconds, which has one
-\* result for a time zone with a fixed offset, so GetEpochNanosecondsFor and GetStartOfDay need no
-\* disambiguation.
-GetOffsetNanosecondsFor(tz) == TIMul(TI(tz.offset), TINsPerMinute)
-GetISODateTimeFor(tz, ns) == EpochNsToISODateTime(TIAdd(ns, GetOffsetNanosecondsFor(tz)))
-GetEpochNanosecondsFor(s, tz, dt) ==
-  LET balanced == AddNanosecondsToISODateTime(dt, TINeg(GetOffsetNanosecondsFor(tz)))
-      ns == GetUTCEpochNanoseconds(balanced)
-  IN IF (tz # UTCTimeZone /\ ~IsValidISODaysRange(balanced.date)) \/ ~IsWithinEpochNanosecondsInterval(ns)
-     THEN ThrowError(s, "RangeError") ELSE Ok(s, ns)
-GetStartOfDay(s, tz, date) == GetEpochNanosecondsFor(s, tz, [date |-> date, time |-> MidnightTimeRecord])
+  ELSE TimeZoneFromParse(r.s, Val(r))
+\* The time zone of a ParseTimeZoneIdentifier result: an offset time zone, or the named time zone
+\* that GetAvailableNamedTimeZoneIdentifier (§11.1.3) finds, whose name it matches in any case.
+TimeZoneFromParse(s, r) ==
+  IF r.offsetMinutes # Empty THEN Ok(s, OffsetTimeZone(r.offsetMinutes)) ELSE
+  LET key == TPLower(r.name)
+      entry == HostTimeZone(key)
+  IN CASE key = N("utc") -> Ok(s, UTCTimeZone)
+       [] entry.found = "rejected" -> ThrowError(s, "RangeError")
+       [] entry.found = "unknown" -> Unsupported(s, N("Unsupported: a time zone that the host's table leaves out"))
+       [] OTHER -> Ok(s, [id |-> entry.id, primary |-> entry.primary, offset |-> Empty, zone |-> entry])
+\* TimeZoneEquals (§11.1.4): the same identifier, or named time zones of the same primary identifier.
+TimeZoneEquals(x, y) == x.id = y.id \/ (~IsOffsetTimeZone(x) /\ ~IsOffsetTimeZone(y) /\ x.primary = y.primary)
+\* A named time zone's offsets from its HostTimeZone entry: the second of epoch nanoseconds, rounded
+\* down, as its epoch day and its second within the day, and the number of the entry's transitions
+\* at or before it, found by halving the range.
+TZSecondOf(ns) ==
+  LET seconds == TIFloorDiv(ns, TINsPerSecond)
+  IN <<TIToInt(TIFloorDiv(seconds, TI(86400))), TIToInt(TIMod(seconds, TI(86400)))>>
+TZTransitionsUpTo(entry, second, low, high) ==
+  IF low >= high THEN low
+  ELSE LET middle == (low + high + 1) \div 2
+       IN IF entry.days[middle] < second[1] \/ (entry.days[middle] = second[1] /\ entry.seconds[middle] <= second[2])
+          THEN TZTransitionsUpTo(entry, second, middle, high)
+          ELSE TZTransitionsUpTo(entry, second, low, middle - 1)
+TZSecondsNs(seconds) == TIMul(TI(seconds), TINsPerSecond)
+TZTransitionNs(entry, i) == TIAdd(TIMul(TI(entry.days[i]), TINsPerDay), TZSecondsNs(entry.seconds[i]))
+\* The first epoch day of 2038, where an entry's transitions end.
+\* The epoch day of a rule's transition in a year: the week's weekday of the month, where week 5 is
+\* the last, and 1970-01-01 a Thursday.
+TZRuleDay(year, month, week, weekday) ==
+  LET first == ISODateToEpochDays(year, month, 1)
+      day == first + ((weekday - ((first + 4) % 7) + 7) % 7) + 7 * (week - 1)
+  IN IF day - first >= ISODaysInMonth(year, month) THEN day - 7 ELSE day
+\* The epoch nanoseconds of the start and of the end of daylight time in a year under a rule, whose
+\* times are local, in standard time and in daylight time.
+TZRuleStartEnd(rule, year) ==
+  LET at(day, time, offset) == TIAdd(TIMul(TI(day), TINsPerDay), TZSecondsNs(time - offset))
+  IN <<at(TZRuleDay(year, rule[3], rule[4], rule[5]), rule[6], rule[1]),
+       at(TZRuleDay(year, rule[7], rule[8], rule[9]), rule[10], rule[2])>>
+TZRuleTransitions(rule, year) == LET pair == TZRuleStartEnd(rule, year) IN {pair[1], pair[2]}
+\* The rule of an entry past its transitions, which a host's table may not have.
+TZRule(entry) ==
+  IF entry.rule = <<>> THEN Assert(FALSE, "tla-ts can't tell a time zone's offsets after 2037") ELSE entry.rule
+\* An offset under a rule: daylight time from its start in the year to its end, or, south of the
+\* equator, outside its end to its start.
+TZRuleOffset(rule, ns, year) ==
+  LET pair == TZRuleStartEnd(rule, year)
+      isDaylight == IF rule[3] < rule[7] THEN ~BigIntLess(ns, pair[1]) /\ BigIntLess(ns, pair[2])
+                    ELSE BigIntLess(ns, pair[2]) \/ ~BigIntLess(ns, pair[1])
+  IN TZSecondsNs(IF isDaylight THEN rule[2] ELSE rule[1])
+TZEarliestAfter(transitions, ns) ==
+  LET later == {t \in transitions : BigIntLess(ns, t)}
+  IN IF later = {} THEN Empty ELSE CHOOSE t \in later : \A u \in later : ~BigIntLess(u, t)
+TZLatestBefore(transitions, ns) ==
+  LET earlier == {t \in transitions : BigIntLess(t, ns)}
+  IN IF earlier = {} THEN Empty ELSE CHOOSE t \in earlier : \A u \in earlier : ~BigIntLess(t, u)
+\* GetOffsetNanosecondsFor (§11.1.8) and GetISODateTimeFor (§11.1.9).
+GetOffsetNanosecondsFor(tz, ns) ==
+  IF tz.zone = Empty THEN TIMul(TI(tz.offset), TINsPerMinute) ELSE
+  LET entry == tz.zone
+      second == TZSecondOf(ns)
+  IN IF ~entry.isFinal /\ second[1] >= TZEndDay
+     THEN TZRuleOffset(TZRule(entry), ns, EpochDaysToISODate(second[1]).year)
+     ELSE TZSecondsNs(entry.offsets[TZTransitionsUpTo(entry, second, 0, Len(entry.days)) + 1])
+GetISODateTimeFor(tz, ns) == EpochNsToISODateTime(TIAdd(ns, GetOffsetNanosecondsFor(tz, ns)))
+\* GetNamedTimeZoneNextTransition and GetNamedTimeZonePreviousTransition (§11.1.6, §11.1.7), Empty
+\* for none, and for a transition past the limits of epoch nanoseconds.
+GetNamedTimeZoneNextTransition(tz, ns) ==
+  IF tz.zone = Empty THEN Empty ELSE
+  LET entry == tz.zone
+      second == TZSecondOf(ns)
+      count == TZTransitionsUpTo(entry, second, 0, Len(entry.days))
+      year == EpochDaysToISODate(second[1]).year
+  IN CASE count < Len(entry.days) -> TZTransitionNs(entry, count + 1)
+       [] entry.isFinal -> Empty
+       [] OTHER ->
+            LET ruled == TZEarliestAfter(TZRuleTransitions(TZRule(entry), year) \cup TZRuleTransitions(TZRule(entry), year + 1), ns)
+            IN IF ruled # Empty /\ IsWithinEpochNanosecondsInterval(ruled) THEN ruled ELSE Empty
+GetNamedTimeZonePreviousTransition(tz, ns) ==
+  IF tz.zone = Empty THEN Empty ELSE
+  LET entry == tz.zone
+      second == TZSecondOf(TISub(ns, TI(1)))
+      count == TZTransitionsUpTo(entry, second, 0, Len(entry.days))
+      year == EpochDaysToISODate(second[1]).year
+  IN CASE ~entry.isFinal /\ second[1] >= TZEndDay ->
+            LET ruled == TZLatestBefore(TZRuleTransitions(TZRule(entry), year - 1) \cup TZRuleTransitions(TZRule(entry), year), ns)
+            IN IF ruled # Empty /\ IsWithinEpochNanosecondsInterval(ruled) THEN ruled ELSE Empty
+       [] count = 0 -> Empty
+       [] OTHER -> TZTransitionNs(entry, count)
+\* GetPossibleEpochNanoseconds (§11.1.11), earliest first. A named time zone's offsets a day before
+\* and a day after the date-time give the candidates (GetNamedTimeZoneEpochNanoseconds), as its
+\* transitions are more than two days apart.
+GetPossibleEpochNanoseconds(s, tz, dt) ==
+  LET possible ==
+        IF tz.zone = Empty THEN
+          LET balanced == AddNanosecondsToISODateTime(dt, TINeg(GetOffsetNanosecondsFor(tz, TI(0))))
+          IN IF tz # UTCTimeZone /\ ~IsValidISODaysRange(balanced.date) THEN Empty ELSE <<GetUTCEpochNanoseconds(balanced)>>
+        ELSE
+          LET utc == GetUTCEpochNanoseconds(dt)
+              before == GetOffsetNanosecondsFor(tz, TISub(utc, TINsPerDay))
+              after == GetOffsetNanosecondsFor(tz, TIAdd(utc, TINsPerDay))
+              isAt(offset) == GetOffsetNanosecondsFor(tz, TISub(utc, offset)) = offset
+              offsets == CASE before = after -> SelectSeq(<<before>>, isAt)
+                           [] BigIntLess(after, before) -> SelectSeq(<<before, after>>, isAt)
+                           [] OTHER -> SelectSeq(<<after, before>>, isAt)
+          IN [i \in DOMAIN offsets |-> TISub(utc, offsets[i])]
+  IN IF possible = Empty \/ \E i \in DOMAIN possible : ~IsWithinEpochNanosecondsInterval(possible[i])
+     THEN ThrowError(s, "RangeError") ELSE Ok(s, possible)
+\* DisambiguatePossibleEpochNanoseconds (§11.1.10). Where a gap skips the date-time, the change of
+\* offset across it moves the date-time to one that the time zone has.
+DisambiguatePossibleEpochNanoseconds(s, possible, tz, dt, disambiguation) ==
+  LET n == Len(possible) IN
+  IF n = 1 THEN Ok(s, possible[1])
+  ELSE IF n # 0 THEN
+    CASE disambiguation \in {N("earlier"), N("compatible")} -> Ok(s, possible[1])
+      [] disambiguation = N("later") -> Ok(s, possible[n])
+      [] OTHER -> ThrowError(s, "RangeError")
+  ELSE IF disambiguation = N("reject") THEN ThrowError(s, "RangeError") ELSE
+  LET utc == GetUTCEpochNanoseconds(dt)
+      dayBefore == TISub(utc, TINsPerDay)
+      dayAfter == TIAdd(utc, TINsPerDay)
+  IN IF ~IsWithinEpochNanosecondsInterval(dayBefore) \/ ~IsWithinEpochNanosecondsInterval(dayAfter) THEN ThrowError(s, "RangeError") ELSE
+  LET shift == TISub(GetOffsetNanosecondsFor(tz, dayAfter), GetOffsetNanosecondsFor(tz, dayBefore))
+      moved == AddNanosecondsToISODateTime(dt, IF disambiguation = N("earlier") THEN TINeg(shift) ELSE shift)
+      again == GetPossibleEpochNanoseconds(s, tz, moved)
+  IN IF IsAbrupt(again) THEN again
+     ELSE Ok(again.s, IF disambiguation = N("earlier") THEN Val(again)[1] ELSE Val(again)[Len(Val(again))])
+\* GetEpochNanosecondsFor (§11.1.12) and GetStartOfDay (§11.1.13): midnight, or where a gap skips
+\* midnight, the transition that ends the gap.
+GetEpochNanosecondsFor(s, tz, dt, disambiguation) ==
+  LET possible == GetPossibleEpochNanoseconds(s, tz, dt) IN IF IsAbrupt(possible) THEN possible
+  ELSE DisambiguatePossibleEpochNanoseconds(possible.s, Val(possible), tz, dt, disambiguation)
+GetStartOfDay(s, tz, date) ==
+  LET dt == [date |-> date, time |-> MidnightTimeRecord]
+      possible == GetPossibleEpochNanoseconds(s, tz, dt)
+      dayBefore == TISub(GetUTCEpochNanoseconds(dt), TINsPerDay)
+  IN IF IsAbrupt(possible) THEN possible
+     ELSE IF Val(possible) # <<>> THEN Ok(possible.s, Val(possible)[1])
+     ELSE IF ~IsWithinEpochNanosecondsInterval(dayBefore) THEN ThrowError(possible.s, "RangeError")
+     ELSE Ok(possible.s, GetNamedTimeZoneNextTransition(tz, dayBefore))
 \* The epoch nanoseconds of a date-time in a time zone, or as UTC for no time zone (Empty).
-EpochNsOf(s, dt, tz) == IF tz = Empty THEN Ok(s, GetUTCEpochNanoseconds(dt)) ELSE GetEpochNanosecondsFor(s, tz, dt)
+EpochNsOf(s, dt, tz) == IF tz = Empty THEN Ok(s, GetUTCEpochNanoseconds(dt)) ELSE GetEpochNanosecondsFor(s, tz, dt, N("compatible"))
 \* FormatUTCOffsetNanoseconds and FormatDateTimeUTCOffsetRounded.
 FormatUTCOffsetNanoseconds(ns) ==
   LET a == TIAbs(ns)
@@ -16646,24 +16803,30 @@ FormatDateTimeUTCOffsetRounded(ns) ==
 \* AddEpochNanoseconds.
 AddEpochNanoseconds(s, ns, d) ==
   LET r == TIAdd(ns, d) IN IF IsWithinEpochNanosecondsInterval(r) THEN Ok(s, r) ELSE ThrowError(s, "RangeError")
-\* InterpretISODateTimeOffset, for an offset behaviour "option", "exact", or "wall" and a match
-\* behaviour "match-exactly" or "match-minutes". A time of Empty is the start of the day.
-InterpretISODateTimeOffset(s, date, time, offsetBehaviour, offsetNs, tz, offsetOption, matchBehaviour) ==
+\* InterpretISODateTimeOffset (§6.5.2), for an offset behaviour "option", "exact", or "wall" and a
+\* match behaviour "match-exactly" or "match-minutes". A time of Empty is the start of the day.
+InterpretISODateTimeOffset(s, date, time, offsetBehaviour, offsetNs, tz, disambiguation, offsetOption, matchBehaviour) ==
   IF time = Empty THEN GetStartOfDay(s, tz, date) ELSE
   LET dt == [date |-> date, time |-> time] IN
-  IF offsetBehaviour = "wall" \/ (offsetBehaviour = "option" /\ offsetOption = N("ignore")) THEN GetEpochNanosecondsFor(s, tz, dt)
+  IF offsetBehaviour = "wall" \/ (offsetBehaviour = "option" /\ offsetOption = N("ignore"))
+  THEN GetEpochNanosecondsFor(s, tz, dt, disambiguation)
   ELSE IF offsetBehaviour = "exact" \/ (offsetBehaviour = "option" /\ offsetOption = N("use")) THEN
     LET balanced == AddNanosecondsToISODateTime(dt, TINeg(offsetNs))
         ns == GetUTCEpochNanoseconds(balanced)
     IN IF ~IsValidISODaysRange(balanced.date) \/ ~IsWithinEpochNanosecondsInterval(ns) THEN ThrowError(s, "RangeError")
        ELSE Ok(s, ns)
   ELSE IF ~IsValidISODaysRange(date) THEN ThrowError(s, "RangeError")
-  ELSE LET candidate == GetEpochNanosecondsFor(s, tz, dt) IN IF IsAbrupt(candidate) THEN candidate ELSE
-       LET candidateOffset == TISub(GetUTCEpochNanoseconds(dt), Val(candidate)) IN
-       IF candidateOffset = offsetNs \/
-          (matchBehaviour = "match-minutes" /\ RoundNumberToIncrement(candidateOffset, TINsPerMinute, N("halfExpand")) = offsetNs) \/
-          offsetOption # N("reject")
-       THEN candidate ELSE ThrowError(candidate.s, "RangeError")
+  ELSE LET utc == GetUTCEpochNanoseconds(dt)
+           possible == GetPossibleEpochNanoseconds(s, tz, dt)
+       IN IF IsAbrupt(possible) THEN possible ELSE
+       LET isMatch(candidate) ==
+             LET candidateOffset == TISub(utc, candidate)
+             IN candidateOffset = offsetNs \/
+                (matchBehaviour = "match-minutes" /\ RoundNumberToIncrement(candidateOffset, TINsPerMinute, N("halfExpand")) = offsetNs)
+           matching == SelectSeq(Val(possible), isMatch)
+       IN IF matching # <<>> THEN Ok(possible.s, matching[1])
+          ELSE IF offsetOption = N("reject") THEN ThrowError(possible.s, "RangeError")
+          ELSE DisambiguatePossibleEpochNanoseconds(possible.s, Val(possible), tz, dt, disambiguation)
 \* Calendar fields records: the fields below, with Empty for an absent one. Numbers are BigInts,
 \* monthCode and offset are units, and timeZone is a time zone.
 ConvertCalendarField(s, name, v) ==
@@ -16821,8 +16984,8 @@ NudgeToCalendarUnit(s, sign, duration, origin, dest, dt, tz, increment, unit, mo
 \* NudgeToZonedTime.
 NudgeToZonedTime(s, sign, duration, dt, tz, increment, unit, mode) ==
   LET start == CalendarDateAdd(s, dt.date, duration.date, N("constrain")) IN IF IsAbrupt(start) THEN start ELSE
-  LET startNs == GetEpochNanosecondsFor(start.s, tz, [date |-> Val(start), time |-> dt.time]) IN IF IsAbrupt(startNs) THEN startNs ELSE
-  LET endNs == GetEpochNanosecondsFor(startNs.s, tz, [date |-> AddDaysToISODate(Val(start), sign), time |-> dt.time]) IN
+  LET startNs == GetEpochNanosecondsFor(start.s, tz, [date |-> Val(start), time |-> dt.time], N("compatible")) IN IF IsAbrupt(startNs) THEN startNs ELSE
+  LET endNs == GetEpochNanosecondsFor(startNs.s, tz, [date |-> AddDaysToISODate(Val(start), sign), time |-> dt.time], N("compatible")) IN
   IF IsAbrupt(endNs) THEN endNs ELSE
   LET length == TIMul(TemporalUnitLength(unit), TI(increment))
       rounded == RoundTimeDurationToIncrement(endNs.s, duration.time, length, mode)
@@ -16913,7 +17076,7 @@ DifferencePlainDateTimeWithTotal(s, from, to, unit) ==
 \* DifferenceZonedDateTime, with its loop over day corrections.
 DayCorrectionFrom(s, tz, start, end, to, sign, correction, maxCorrection) ==
   LET intermediate == [date |-> AddDaysToISODate(end.date, correction * sign), time |-> start.time]
-      ns == GetEpochNanosecondsFor(s, tz, intermediate)
+      ns == GetEpochNanosecondsFor(s, tz, intermediate, N("compatible"))
   IN IF IsAbrupt(ns) THEN ns
      ELSE IF TISign(TISub(to, Val(ns))) # sign \/ correction >= maxCorrection
      THEN Ok(ns.s, [date |-> intermediate.date, time |-> TISub(to, Val(ns))])
@@ -16950,7 +17113,7 @@ AddZonedDateTime(s, ns, tz, duration, overflow) ==
       added == CalendarDateAdd(s, dt.date, duration.date, overflow)
   IN IF IsAbrupt(added) THEN added
      ELSE IF ~ISODateTimeWithinLimits([date |-> Val(added), time |-> dt.time]) THEN ThrowError(added.s, "RangeError")
-     ELSE LET intermediate == GetEpochNanosecondsFor(added.s, tz, [date |-> Val(added), time |-> dt.time]) IN
+     ELSE LET intermediate == GetEpochNanosecondsFor(added.s, tz, [date |-> Val(added), time |-> dt.time], N("compatible")) IN
           IF IsAbrupt(intermediate) THEN intermediate ELSE AddEpochNanoseconds(intermediate.s, Val(intermediate), duration.time)
 \* The start and end of Temporal.Duration.prototype.round and total relative to a PlainDate
 \* (steps 22 and 13), as [from, to] date-times.
@@ -16969,7 +17132,7 @@ RelativeToFrom(s, date, time, calendar, tz, offsetBehaviour, offsetString, match
     IF ISODateWithinLimits(date) THEN Ok(s, [plain |-> [date |-> date, calendar |-> calendar], zoned |-> Empty])
     ELSE ThrowError(s, "RangeError")
   ELSE LET offsetNs == IF offsetBehaviour = "option" THEN Val(ParseDateTimeUTCOffset(s, offsetString)) ELSE TI(0)
-           ns == InterpretISODateTimeOffset(s, date, time, offsetBehaviour, offsetNs, tz, N("reject"), matchBehaviour)
+           ns == InterpretISODateTimeOffset(s, date, time, offsetBehaviour, offsetNs, tz, N("compatible"), N("reject"), matchBehaviour)
        IN IF IsAbrupt(ns) THEN ns
           ELSE Ok(ns.s, [plain |-> Empty, zoned |-> [epochNs |-> Val(ns), timeZone |-> tz, calendar |-> calendar]])
 GetTemporalRelativeToOption(s, options) ==
@@ -17479,7 +17642,7 @@ PlainDateToZonedDateTime(s, plain, item) ==
   LET ns == IF Val(temporalTime) = Undefined THEN GetStartOfDay(temporalTime.s, Val(tz), plain.date)
             ELSE LET time == ToTemporalTimeRecord(temporalTime.s, Val(temporalTime), Undefined) IN IF IsAbrupt(time) THEN time ELSE
                  LET dt == [date |-> plain.date, time |-> Val(time)] IN
-                 IF ~ISODateTimeWithinLimits(dt) THEN ThrowError(time.s, "RangeError") ELSE GetEpochNanosecondsFor(time.s, Val(tz), dt)
+                 IF ~ISODateTimeWithinLimits(dt) THEN ThrowError(time.s, "RangeError") ELSE GetEpochNanosecondsFor(time.s, Val(tz), dt, N("compatible"))
   IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), Val(tz), plain.calendar, Empty)
 \* PlainDateTime (Temporal §5). A Temporal.PlainDateTime has class "temporalDateTime" and slots
 \* [dateTime, calendar].
@@ -17635,7 +17798,7 @@ PlainDateTimeBuiltin(s, f, m, this, args, nt) ==
                    LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN IF IsAbrupt(tz) THEN tz ELSE
                    LET opts == GetOptionsObject(tz.s, Arg(args, 2)) IN IF IsAbrupt(opts) THEN opts ELSE
                    LET disambiguation == GetTemporalDisambiguationOption(opts.s, Val(opts)) IN IF IsAbrupt(disambiguation) THEN disambiguation ELSE
-                   LET ns == GetEpochNanosecondsFor(disambiguation.s, Val(tz), dt) IN
+                   LET ns == GetEpochNanosecondsFor(disambiguation.s, Val(tz), dt, Val(disambiguation)) IN
                    IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), Val(tz), plain.calendar, Empty)
               [] m = "toPlainDate" -> CreateTemporalDate(s, dt.date, plain.calendar, Empty)
               [] m = "toPlainTime" -> CreateTemporalTime(s, dt.time, Empty)
@@ -17661,7 +17824,7 @@ GetZonedOptions(s, options, offsetFallback) ==
   LET disambiguation == GetTemporalDisambiguationOption(opts.s, Val(opts)) IN IF IsAbrupt(disambiguation) THEN disambiguation ELSE
   LET offset == GetTemporalOffsetOption(disambiguation.s, Val(opts), offsetFallback) IN IF IsAbrupt(offset) THEN offset ELSE
   LET overflow == GetTemporalOverflowOption(offset.s, Val(opts)) IN IF IsAbrupt(overflow) THEN overflow
-  ELSE Ok(overflow.s, [offset |-> Val(offset), overflow |-> Val(overflow)])
+  ELSE Ok(overflow.s, [disambiguation |-> Val(disambiguation), offset |-> Val(offset), overflow |-> Val(overflow)])
 \* ToTemporalZonedDateTime, as the slots of a ZonedDateTime.
 ToTemporalZonedDateTimeRecord(s, item, options) ==
   IF IsObject(item) THEN
@@ -17676,7 +17839,7 @@ ToTemporalZonedDateTimeRecord(s, item, options) ==
          LET offsetString == Val(fields).offset
              ns == InterpretISODateTimeOffset(dt.s, Val(dt).date, Val(dt).time, IF offsetString = Empty THEN "wall" ELSE "option",
                                               IF offsetString = Empty THEN TI(0) ELSE Val(ParseDateTimeUTCOffset(dt.s, offsetString)),
-                                              Val(fields).timeZone, Val(o).offset, "match-exactly")
+                                              Val(fields).timeZone, Val(o).disambiguation, Val(o).offset, "match-exactly")
          IN IF IsAbrupt(ns) THEN ns ELSE Ok(ns.s, [epochNs |-> Val(ns), timeZone |-> Val(fields).timeZone, calendar |-> Val(calendar)])
   ELSE IF ~IsString(item) THEN ThrowTypeError(s)
   ELSE LET parsed == ParseISODateTime(s, item.value, "zoned-date-time") IN IF IsAbrupt(parsed) THEN parsed ELSE
@@ -17688,7 +17851,8 @@ ToTemporalZonedDateTimeRecord(s, item, options) ==
        LET behaviour == CASE r.z -> "exact" [] r.offset = Empty -> "wall" [] OTHER -> "option"
            ns == InterpretISODateTimeOffset(o.s, [year |-> r.year, month |-> r.month, day |-> r.day], r.time, behaviour,
                                             IF behaviour = "option" THEN Val(ParseDateTimeUTCOffset(o.s, r.offset)) ELSE TI(0),
-                                            Val(tz), Val(o).offset, IF r.offset # Empty /\ Len(r.offset) > 6 THEN "match-exactly" ELSE "match-minutes")
+                                            Val(tz), Val(o).disambiguation, Val(o).offset,
+                                            IF r.offset # Empty /\ Len(r.offset) > 6 THEN "match-exactly" ELSE "match-minutes")
        IN IF IsAbrupt(ns) THEN ns ELSE Ok(ns.s, [epochNs |-> Val(ns), timeZone |-> Val(tz), calendar |-> Val(calendar)])
 \* RoundEpochNanoseconds: RoundNumberToIncrementAsIfPositive.
 RoundEpochNanoseconds(ns, increment, unit, mode) ==
@@ -17711,7 +17875,7 @@ RoundEpochNanoseconds(ns, increment, unit, mode) ==
 TemporalZonedDateTimeToString(z, precision, showCalendar, showTimeZone, showOffset, increment, unit, mode) ==
   LET ns == RoundEpochNanoseconds(z.epochNs, increment, unit, mode) IN
   FormatISODateTime(GetISODateTimeFor(z.timeZone, ns), ISO8601, precision, N("never")) \o
-  (IF showOffset = N("never") THEN <<>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(z.timeZone))) \o
+  (IF showOffset = N("never") THEN <<>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(z.timeZone, ns))) \o
   (IF showTimeZone = N("never") THEN <<>> ELSE <<91>> \o (IF showTimeZone = N("critical") THEN <<33>> ELSE <<>>) \o z.timeZone.id \o <<93>>) \o
   FormatCalendarAnnotation(z.calendar, showCalendar)
 \* DifferenceTemporalZonedDateTime and AddDurationToZonedDateTime.
@@ -17756,8 +17920,8 @@ RoundZonedDateTime(s, z, roundToArg) ==
        IN IF IsAbrupt(rounded) THEN rounded
           ELSE CreateTemporalZonedDateTime(rounded.s, TIAdd(Val(rounded), Val(start)), z.timeZone, z.calendar, Empty)
      ELSE LET result == RoundISODateTime(dt, o.increment, o.unit, o.mode)
-              ns == InterpretISODateTimeOffset(r.s, result.date, result.time, "option", GetOffsetNanosecondsFor(z.timeZone),
-                                               z.timeZone, N("prefer"), "match-exactly")
+              ns == InterpretISODateTimeOffset(r.s, result.date, result.time, "option", GetOffsetNanosecondsFor(z.timeZone, z.epochNs),
+                                               z.timeZone, N("compatible"), N("prefer"), "match-exactly")
           IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
 \* Temporal.ZonedDateTime.prototype.with.
 WithZonedDateTime(s, z, item, options) ==
@@ -17766,22 +17930,20 @@ WithZonedDateTime(s, z, item, options) ==
   LET partial == PrepareCalendarFields(isPartial.s, item, DateFieldNames \cup CalendarTimeFieldNames \cup {"offset"}, "partial") IN
   IF IsAbrupt(partial) THEN partial ELSE
   LET dt == GetISODateTimeFor(z.timeZone, z.epochNs)
-      fields == CalendarMergeFields([ISODateTimeToFields(dt) EXCEPT !.offset = FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone))],
+      fields == CalendarMergeFields([ISODateTimeToFields(dt) EXCEPT !.offset = FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone, z.epochNs))],
                                     Val(partial))
       o == GetZonedOptions(partial.s, options, N("prefer"))
   IN IF IsAbrupt(o) THEN o ELSE
   LET result == InterpretTemporalDateTimeFields(o.s, fields, Val(o).overflow) IN IF IsAbrupt(result) THEN result ELSE
   LET ns == InterpretISODateTimeOffset(result.s, Val(result).date, Val(result).time, "option",
-                                       Val(ParseDateTimeUTCOffset(result.s, fields.offset)), z.timeZone, Val(o).offset, "match-exactly")
+                                       Val(ParseDateTimeUTCOffset(result.s, fields.offset)), z.timeZone, Val(o).disambiguation,
+                                       Val(o).offset, "match-exactly")
   IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
 \* The time zone of a ZonedDateTime constructor's argument.
 ZonedConstructorTimeZone(s, v) ==
   IF ~IsString(v) THEN ThrowTypeError(s)
   ELSE LET r == ParseTimeZoneIdentifier(s, v.value) IN IF IsAbrupt(r) THEN r
-  ELSE IF Val(r).offsetMinutes # Empty THEN
-    Ok(r.s, [id |-> FormatOffsetTimeZoneIdentifier(Val(r).offsetMinutes, TRUE), offset |-> Val(r).offsetMinutes])
-  ELSE IF TPLower(Val(r).name) = N("utc") THEN Ok(r.s, UTCTimeZone)
-  ELSE ThrowError(r.s, "RangeError")
+  ELSE TimeZoneFromParse(r.s, Val(r))
 \* The epoch nanoseconds a constructor or fromEpochNanoseconds argument gives.
 ToEpochNanoseconds(s, v) ==
   LET b == ToBigInt(s, v) IN IF IsAbrupt(b) THEN b
@@ -17815,13 +17977,13 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
                    ELSE Ok(tomorrow.s, Num(RatioToNumber(TISub(Val(tomorrow), Val(today)), TINsPerHour)))
               [] m = "epochMilliseconds" -> Ok(s, TINumber(TIFloorDiv(z.epochNs, TI(1000000))))
               [] m = "epochNanoseconds" -> Ok(s, BigInt(z.epochNs))
-              [] m = "offsetNanoseconds" -> Ok(s, TINumber(GetOffsetNanosecondsFor(z.timeZone)))
-              [] m = "offset" -> Ok(s, Str(FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone))))
+              [] m = "offsetNanoseconds" -> Ok(s, TINumber(GetOffsetNanosecondsFor(z.timeZone, z.epochNs)))
+              [] m = "offset" -> Ok(s, Str(FormatUTCOffsetNanoseconds(GetOffsetNanosecondsFor(z.timeZone, z.epochNs))))
               [] m = "with" -> WithZonedDateTime(s, z, Arg(args, 1), Arg(args, 2))
               [] m = "withPlainTime" ->
                    LET ns == IF Arg(args, 1) = Undefined THEN GetStartOfDay(s, z.timeZone, dt.date)
                              ELSE LET time == ToTemporalTimeRecord(s, Arg(args, 1), Undefined) IN IF IsAbrupt(time) THEN time
-                                  ELSE GetEpochNanosecondsFor(time.s, z.timeZone, [date |-> dt.date, time |-> Val(time)])
+                                  ELSE GetEpochNanosecondsFor(time.s, z.timeZone, [date |-> dt.date, time |-> Val(time)], N("compatible"))
                    IN IF IsAbrupt(ns) THEN ns ELSE CreateTemporalZonedDateTime(ns.s, Val(ns), z.timeZone, z.calendar, Empty)
               [] m = "withTimeZone" ->
                    LET tz == ToTemporalTimeZoneIdentifier(s, Arg(args, 1)) IN
@@ -17858,8 +18020,11 @@ ZonedDateTimeBuiltin(s, f, m, this, args, nt) ==
                    LET param == StringOrOptionsObject(s, Arg(args, 1), SV("direction")) IN IF IsAbrupt(param) THEN param ELSE
                    LET direction == GetStringOption(param.s, Val(param), SV("direction"), {N("next"), N("previous")}, Empty) IN
                    IF IsAbrupt(direction) THEN direction
-                   ELSE IF Val(direction) = Empty THEN ThrowError(direction.s, "RangeError")
-                   ELSE Ok(direction.s, Null)
+                   ELSE IF Val(direction) = Empty THEN ThrowError(direction.s, "RangeError") ELSE
+                   LET transition == IF Val(direction) = N("next") THEN GetNamedTimeZoneNextTransition(z.timeZone, z.epochNs)
+                                     ELSE GetNamedTimeZonePreviousTransition(z.timeZone, z.epochNs)
+                   IN IF transition = Empty THEN Ok(direction.s, Null)
+                      ELSE CreateTemporalZonedDateTime(direction.s, transition, z.timeZone, z.calendar, Empty)
               [] m = "toInstant" -> CreateTemporalInstant(s, z.epochNs, Empty)
               [] m = "toPlainDate" -> CreateTemporalDate(s, dt.date, z.calendar, Empty)
               [] m = "toPlainTime" -> CreateTemporalTime(s, dt.time, Empty)
@@ -17884,7 +18049,7 @@ ToTemporalInstantNs(s, item) ==
 \* TemporalInstantToString, for a time zone or Empty.
 TemporalInstantToString(ns, tz, precision) ==
   FormatISODateTime(GetISODateTimeFor(IF tz = Empty THEN UTCTimeZone ELSE tz, ns), ISO8601, precision, N("never")) \o
-  (IF tz = Empty THEN <<90>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(tz)))
+  (IF tz = Empty THEN <<90>> ELSE FormatDateTimeUTCOffsetRounded(GetOffsetNanosecondsFor(tz, ns)))
 \* DifferenceTemporalInstant and AddDurationToInstant.
 DifferenceTemporalInstant(s, operation, ns, other, options) ==
   LET o == ToTemporalInstantNs(s, other) IN IF IsAbrupt(o) THEN o ELSE

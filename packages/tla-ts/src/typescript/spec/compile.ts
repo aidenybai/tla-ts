@@ -3,7 +3,7 @@ import { TlaTypeScriptError } from "../../errors";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT } from "./prepare";
-import { getTlaString, LOCALE_METHODS } from "./runtime";
+import { getHostTimeZone, getTlaString, LOCALE_METHODS } from "./runtime";
 import { specialize } from "./specialize";
 import { suspendDefinitions } from "./suspend";
 
@@ -180,6 +180,13 @@ export const compileToEscore = (
             ? { ...definition, text: `SourceText == ${sourceString}` }
             : definition,
         ),
+        {
+          name: "HostTimeZone",
+          arity: 1,
+          text: program.words.has("Temporal")
+            ? getHostTimeZone(sourceFile.text)
+            : `HostTimeZone(key) == [found |-> "unknown"]`,
+        },
         {
           name: "SourceUnits",
           arity: 1,
