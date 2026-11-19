@@ -113,6 +113,16 @@ describe("TLCExt matches TLC", () => {
     ).toEqual(["1", "2", "3", "4"]);
   });
 
+  // Deviation from TLC: it prints n = 0 for both states, though n = 1, 2, 3 for a trace of three.
+  it("reads Trace in an ALIAS of an initial state and its successor as the path to each, unlike TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nNext == x' = x + 1\nAlias == [x |-> x, n |-> Len(Trace)]\nInv == x < 1\n====",
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias",
+    });
+    expect(result.violation?.trace.map((step) => step.state.n)).toEqual([1, 2]);
+  });
+
   // Deviation from TLC: it reports 8:11-24, 8:11-20 and 8:15-19 in Constr and exits with 75.
   it("replays a failed step with a constraint that reads Trace, unlike TLC", async () => {
     const result = await check({

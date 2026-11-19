@@ -238,6 +238,7 @@ export const createTraceBuilder = (context: TraceContext) => {
                 traceOptions.incomplete ??
                 steps[loopStart ?? position].state,
               position + 1,
+              // Deviation from TLC: TLCTrace#printTrace gives the ALIAS an empty Trace when the trace is an initial state and its successor.
               () => steps.slice(0, position + 1).map((inner) => inner.state),
             ),
           );
