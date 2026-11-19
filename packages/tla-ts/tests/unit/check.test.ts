@@ -1643,6 +1643,21 @@ ASSUME TLCFP(a) = -887695703
     expect(result.status).toBe("success");
   });
 
+  it("accepts only a constant or a definition on the left of <-, as TLC does", async () => {
+    const cases = [
+      ["Def == 3\nTHEOREM T == TRUE", "T"],
+      ["Def == 3", "TRUE"],
+      ["Def == 3\nASSUME TRUE", "BOOLEAN"],
+    ];
+    for (const [body, name] of cases) {
+      await expect(checkModule(body, `CONSTANT ${name} <- Def`)).rejects.toThrow(
+        new TlaConfigError(
+          `In the configuration file, the identifier ${name} does not appear in the specification.`,
+        ),
+      );
+    }
+  });
+
   it("reports a table's set that mixes types as the unexpected exception TLC throws", async () => {
     await expect(checkModule("CONSTANT F(_)", 'CONSTANT F(1) = {1, "a"}')).rejects.toThrow(
       new TlaEvaluationError(

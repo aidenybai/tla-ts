@@ -253,7 +253,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
   overrides.forEach((substitution) => {
     const name = substitution.name;
     const target = substitution.target;
-    if (!declaredConstants.includes(name) && !linked.root.visible.has(name)) {
+    if (!declaredConstants.includes(name) && linked.root.visible.get(name)?.kind !== "Definition") {
       throw new TlaConfigError(
         `In the configuration file, the identifier ${name} does not appear in the specification.`,
       );
