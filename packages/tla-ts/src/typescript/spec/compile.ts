@@ -477,6 +477,21 @@ const getHostFileLocation = (file: ProgramFile) =>
           : pathToFileURL(resolve(file.path)).href,
       );
 
+// The program's HostParseDate, where it names Date: the time value that the host's Date.parse
+// gives each string that the program writes between quotes, and an ordinary object's string, for
+// those outside ECMA-262's formats, whose reading is the host's own.
+const getHostParseDate = (text: string, words: ReadonlySet<string>) => {
+  const strings = words.has("Date")
+    ? new Set([
+        ...[...text.matchAll(/(["'`])((?:(?!\1)[^\\\n]){1,100})\1/g)].map((match) => match[2]),
+        "[object Object]",
+      ])
+    : new Set<string>();
+  return strings.size === 0
+    ? "HostParseDate(u) == [found |-> FALSE]"
+    : `HostParseDate(u) ==\n  CASE ${[...strings].map((string) => `u = ${getUnitsOf(string)} -> [found |-> TRUE, time |-> ${getNumber(Date.parse(string))}]`).join("\n    [] ")}\n    [] OTHER -> [found |-> FALSE]`;
+};
+
 // The groups of ESCore's parts that a module runs on: its loading, linking, and evaluation, the
 // promise of its evaluation, and the proxies that stand for what of the host ESCore lacks.
 const MODULE_GROUPS = new Set(["79-proxy.tla", "86-promise.tla", "88-modules.tla"]);
@@ -601,6 +616,11 @@ export const compileToEscore = (
           name: "HostDateFormat",
           arity: 1,
           text: getHostDateFormat(program.words),
+        },
+        {
+          name: "HostParseDate",
+          arity: 1,
+          text: getHostParseDate(files.map((file) => file.sourceFile.text).join("\n"), program.words),
         },
         {
           name: "HostLocale",

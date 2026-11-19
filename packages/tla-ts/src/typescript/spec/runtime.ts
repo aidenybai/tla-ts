@@ -1321,7 +1321,9 @@ export const getHostDefinitions = (library: Library): GeneratedDefinition[] => [
     arity: 1,
     text: `ParseDate(u) ==
   LET t == ParseSpecDate(u) IN
-  IF t = NaN THEN Assert(FALSE, "tla-ts can't tell whether the host reads this date string") ELSE t`,
+  IF t # NaN THEN t ELSE
+  LET h == HostParseDate(u) IN
+  IF h.found THEN h.time ELSE Assert(FALSE, "tla-ts can't tell whether the host reads this date string")`,
   },
 ];
 

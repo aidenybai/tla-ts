@@ -552,12 +552,36 @@ describe("compiles scripts by specializing ESCore", () => {
       );
     });
 
-    it("stops at a locale-sensitive method and at a date string outside ECMA-262's formats", async () => {
+    it("stops at a locale-sensitive method and at a computed date string outside ECMA-262's formats", async () => {
       expect((await checkScript("(1234.5).toLocaleString();")).message).toContain("tla-ts can't");
-      expect((await checkScript('Date.parse("Thu Jan 01 1970");')).message).toContain(
+      expect((await checkScript('Date.parse("Thu Jan 01 " + 1970);')).message).toContain(
         "tla-ts can't",
       );
       expect((await checkScript('"I".toLocaleLowerCase("tr");')).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("reads a date string outside ECMA-262's formats that the program writes as the host does", () => {
+    const getSource = (expected: string) => `
+      const result = [
+        new Date("10/31/2010 08:00").getTime(),
+        Date.parse("-000000-03-31T00:45Z"),
+        new Date({}).getTime(),
+        Date.parse("Thu, 01 Jan 1970 00:00:00 GMT+0100"),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource(`${Date.parse("10/31/2010 08:00")},NaN,NaN,-3600000`))).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(`${Date.parse("10/31/2010 08:00")},NaN,NaN,NaN`))).message,
+      ).toContain(THREW);
     });
   });
 
