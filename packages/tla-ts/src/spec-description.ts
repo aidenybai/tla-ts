@@ -592,11 +592,13 @@ const describeSpecification = (
   }
   const level = getLevel(expression, scope, environment);
   // SpecProcessor#processConfigSpec drops a name whose value is TRUE, though it keeps a formula such as 1 = 1.
-  const isTrueName =
+  if (
     expression.kind === "Identifier" &&
     level === CONSTANT_LEVEL &&
-    evaluate(expression, getConstantContext(environment, scope)) === true;
-  if (isTrueName) return;
+    evaluate(expression, getConstantContext(environment, scope)) === true
+  ) {
+    return;
+  }
   if (level <= VARIABLE_LEVEL) {
     description.inits.push(createConjunct(UNNAMED_ACTION, expression, scope));
   } else if (level === TEMPORAL_LEVEL) {

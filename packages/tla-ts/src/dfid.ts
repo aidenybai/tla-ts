@@ -125,7 +125,6 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   if (!search) {
     throw new TlaUnsupportedError("tla-ts can't search a specification without variables");
   }
-  // Tool's constructor splits the next-state relation before TLC creates the checker.
   const description = prepared.getDescription();
   const message = (code: number, text: string, toolText = text, isError = true) =>
     output({ kind: "message", code, isError, message: text, toolMessage: toolText });
