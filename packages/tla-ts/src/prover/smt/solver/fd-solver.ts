@@ -107,8 +107,12 @@ class SolverFormulas extends Goal {
     pinned.reset();
   }
 
+  // expr_ref_vector::shrink frees the formulas it drops first to last.
   shrinkTo(size: number) {
-    this.forms.shrink(size);
+    const dropped = this.forms.items.slice(size);
+    for (const form of dropped) this.manager.incRef(form);
+    while (this.forms.size > size) this.forms.pop();
+    for (const form of dropped) this.manager.decRef(form);
     this.dependencies.length = size;
   }
 }

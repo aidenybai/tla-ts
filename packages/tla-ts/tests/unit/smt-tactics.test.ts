@@ -2632,6 +2632,22 @@ describe("eq2bv, as Z3 5.3.2 encodes the bounded integers", () => {
 });
 
 describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
+  it("keeps the formulas that a tactic replaces in the copy of the goal that or-else shares", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-const p Bool)",
+        "(assert (! (>= (* (ite (>= b b) b a) (ite (<= a b) a a)) (- (+ b a) (ite (< b b) 1 b))) :named n1))",
+        "(assert p)",
+        "(assert (! (or p p) :named n2))",
+        "(check-sat)",
+        "(check-sat)",
+        "(get-value (a b))",
+      ]),
+    ).toEqual(["sat", "sat", "((a 5)\n (b 2))"]);
+  });
+
   it("frees the rewriter cache of propagate-values when the tactic of the first check ends", () => {
     expect(
       run([
