@@ -18,6 +18,8 @@ export interface EscoreSpec {
 export interface EscoreSteps {
   steps: string;
   entries: readonly string[];
+  // The text of other modules the steps extend, whose reads of the runtime the spec keeps.
+  reads?: string;
 }
 
 interface CodeDefinition {
@@ -225,7 +227,7 @@ export const compileToEscore = (
   );
   const code = definitions.map((definition) => definition.text).join("\n");
   const view = runtime.getView(
-    `${code}\n${model.steps}\n${ROOT}\n${CONFIG}`,
+    `${code}\n${model.steps}\n${model.reads ?? ""}\n${ROOT}\n${CONFIG}`,
     leaves.map((leaf) => leaf.name),
   );
   const viewed = new Set(view.module.definitions.map((definition) => definition.name));

@@ -36,8 +36,12 @@ const worker = new Worker(
     const loaded = await loading;
     try {
       const compiled = loaded.compileModelToEscore(spec.source, spec.fileName, loaded.runtime);
+      const code = compiled.loadModule("ProgramCode");
+      // A raw model's steps end in the state they leave.
+      const changed = spec.isRaw ? code.replace(/^StepEnd\\(s\\) == CanonicalState\\((.*)\\)$/m, "StepEnd(s) == $1") : code;
       const result = await loaded.check({
         ...compiled,
+        loadModule: (name) => (name === "ProgramCode" ? changed : compiled.loadModule(name)),
         workers: 1,
         onPrint: () => {},
       });
@@ -76,10 +80,10 @@ const ready = new Promise((resolve) => {
 // The worker prepares the runtime before the first check, which takes longer than a check.
 beforeAll(() => ready, 60_000);
 
-// Checks a module's model on ESCore.
-const checkModel = (source: string, fileName = "spec.ts") =>
+// Checks a module's model on ESCore, with its steps' states canonical unless isRaw.
+const checkModel = (source: string, fileName = "spec.ts", isRaw = false) =>
   new Promise<ModelResult>((resolve) => {
-    worker.postMessage({ id: pending.length, source, fileName });
+    worker.postMessage({ id: pending.length, source, fileName, isRaw });
     pending.push(resolve);
   });
 
@@ -137,6 +141,35 @@ describe("checks a module's exported functions as a model on ESCore", () => {
 
     it("reaches more states under a higher limit", async () => {
       expect(getCounts(await checkModel(getSource(3)))).toEqual(["deadlock", 7, 10]);
+    });
+  });
+
+  describe("drops what a step leaves behind and numbers the rest as the heap's graph does", () => {
+    const getSource = (bound: number) => `
+      /** @noDeadlock */
+      let items: number[] = [];
+      let steps = 0;
+      export const add = (item: 1 | 2) => {
+        if (steps >= 2) return;
+        items = [...items, item].slice(-1);
+        steps++;
+      };
+      export const isBounded = () => steps <= ${bound};
+    `;
+
+    it("merges the states that differ only in the objects a step left behind", async () => {
+      expect(getCounts(await checkModel(getSource(2)))).toEqual(["success", 5, 7]);
+      expect(getCounts(await checkModel(getSource(2), "spec.ts", true))).toEqual(["success", 7, 7]);
+    });
+
+    it("shows the arrays of a counterexample as sequences", async () => {
+      const result = await checkModel(getSource(1));
+      expect(getCounts(result)).toEqual(["invariant-violation", 4, 4]);
+      expect(result.trace).toEqual([
+        { items: "<<>>", steps: "0" },
+        { items: "<<1>>", steps: "1" },
+        { items: "<<1>>", steps: "2" },
+      ]);
     });
   });
 });

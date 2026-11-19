@@ -6,6 +6,7 @@ import { printDefinition } from "../../printer";
 import { compile } from "../compile";
 import type { StateVariable } from "../emit";
 import type { Library } from "../program";
+import { CANONICAL_MODULE } from "./canonical";
 import { compileToEscore, type EscoreSpec } from "./compile";
 import { foldNames } from "./library";
 import type { EscoreRuntime } from "./prepare";
@@ -41,7 +42,7 @@ ThrownText(r) ==
 Completed(r) == IF r.c.type = "throw" THEN Assert(FALSE, ThrownText(r)) ELSE r
 \* A step's state, which starts counting the writes to what exists, and its state once it ends.
 StepStart(s) == [s EXCEPT !.written = FALSE, !.writeMark = [objects |-> s.objs.size, environments |-> s.envs.size]]
-StepEnd(s) == [s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]]
+StepEnd(s) == CanonicalState([s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]])
 \* A step that calls name with the arguments that convert makes, from the state s: no state where
 \* the call writes nothing that existed before it.
 StepOf(s, name, converted) ==
@@ -204,7 +205,7 @@ interface Converter {
 }
 
 // The model of a TypeScript module, checked on ESCore: one variable heap holds ESCore's state after
-// the module's top level, and each exported function that today's compiler makes an
+// the module's top level, canonical, and each exported function that today's compiler makes an
 // action calls the function through ESCore with the arguments that today's compiler chooses.
 // Invariants, properties, and the other checks call the functions they name. A trace shows each
 // state variable as today's compiler does.
@@ -1010,6 +1011,7 @@ export const compileModelToEscore = (
   const modelSteps = [
     "CONSTANTS TsNull, TsUndefined",
     ...(isStateless ? ["vars == <<>>"] : ["VARIABLE heap", "vars == <<heap>>"]),
+    "CanonicalState(s) == CanonicalStateOf(s, InitialState)",
     settle,
     MODEL_DEFINITIONS,
     "ModelStart(s) == Completed(ApplyTo(RunProgram, s)).s",
@@ -1021,6 +1023,7 @@ export const compileModelToEscore = (
   const compiled = compileToEscore(`"use strict";\n${augmented}`, fileName, runtime, {
     steps: modelSteps,
     entries: [...entries],
+    reads: CANONICAL_MODULE,
   });
   const configLines = [
     ...compiled.config
@@ -1049,14 +1052,17 @@ export const compileModelToEscore = (
   const assumptions = module.assumptions.flatMap((assumption) =>
     assumption.expression.kind === "Identifier" ? [`ASSUME ${assumption.expression.name}`] : [],
   );
-  const finalCode = (compiled.loadModule("ProgramCode") ?? "").replace(
-    /\n====\n$/,
-    `\n${assumptions.join("\n")}${assumptions.length === 0 ? "" : "\n"}====\n`,
-  );
+  const finalCode = (compiled.loadModule("ProgramCode") ?? "")
+    .replace("\nEXTENDS ESRuntime\n", "\nEXTENDS ESRuntime, ESCanonical\n")
+    .replace(
+      /\n====\n$/,
+      `\n${assumptions.join("\n")}${assumptions.length === 0 ? "" : "\n"}====\n`,
+    );
   return {
     ...compiled,
     config: configLines.join("\n"),
-    loadModule: (name) => (name === "ProgramCode" ? finalCode : undefined),
+    loadModule: (name) =>
+      name === "ProgramCode" ? finalCode : name === "ESCanonical" ? CANONICAL_MODULE : undefined,
     variables: today.variables,
     notes,
   };
