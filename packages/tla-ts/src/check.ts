@@ -682,6 +682,7 @@ const searchStates = (
       if (deferred.length > 0) throw deferred[0];
     });
   };
+  // Deviation from TLC: ModelChecker replays a failed step on its main thread, where getTrace in a constraint throws a NullPointerException, so TLC reports the constraint's positions.
   const replayNext = (index: number) =>
     getReplayFailure(environment, (tracing) => {
       const state = states[index];

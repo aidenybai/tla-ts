@@ -93,4 +93,21 @@ describe("TLCExt matches TLC", () => {
       ),
     ).toEqual(["1", "2", "3", "4"]);
   });
+
+  // Deviation from TLC: it reports 8:11-24, 8:11-20 and 8:15-19 in Constr and exits with 75.
+  it("replays a failed step with a constraint that reads Trace, unlike TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals, Sequences, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nA == x' = x + 1\nB == x' = Len(x)\nNext == A \\/ B\nConstr == Len(Trace) < 3\n====",
+      config: "INIT Init\nNEXT Next\nCONSTRAINT Constr",
+    });
+    const ranges = result.failure?.callStack?.flatMap((expression) => {
+      const range = expression.location.range;
+      return range ? [`${range.start.line}:${range.start.column}-${range.end.column}`] : [];
+    });
+    expect([
+      result.failure?.exitCode,
+      ranges?.filter((range, index) => range !== ranges[index - 1]),
+    ]).toEqual([255, ["6:6-16", "6:11-16"]]);
+  });
 });
