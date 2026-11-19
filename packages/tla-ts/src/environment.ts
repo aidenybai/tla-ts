@@ -1080,7 +1080,7 @@ export const createEnvironment = (
     const modules = new Map<string, LinkedModule>();
     const extended: LinkedModule[] = [];
     const getKey = (item: { name: string }) => `${item.name}${KEY_SEPARATOR}${scope.id}`;
-    const constants = parsed.constants.map((constant) => ({ ...constant, key: getKey(constant) }));
+    const extendedConstants: KeyedDeclaration[] = [];
     const declaredVariables = parsed.variables.filter(
       (variable, index) =>
         parsed.variables.findIndex((other) => other.name === variable.name) === index,
@@ -1095,16 +1095,19 @@ export const createEnvironment = (
         return;
       }
       const linked = nested ?? getLinkedModule(name, parsed.name);
-      constants.push(
+      extendedConstants.push(
         ...linked.constants.filter(
           (constant) =>
-            constants.every((existing) => existing.name !== constant.name) &&
+            extendedConstants.every((existing) => existing.name !== constant.name) &&
             !variables.includes(constant.name),
         ),
       );
       linked.variables.forEach((variable, index) => {
         const isDeclared =
-          variables.includes(variable) || constants.some((constant) => constant.name === variable);
+          variables.includes(variable) ||
+          [...parsed.constants, ...extendedConstants].some(
+            (constant) => constant.name === variable,
+          );
         if (isDeclared) return;
         variables.push(variable);
         variableLocations.push(linked.variableLocations[index]);
@@ -1113,6 +1116,15 @@ export const createEnvironment = (
       linked.modules.forEach((module, moduleName) => modules.set(moduleName, module));
       extended.push(linked);
     });
+    // SANY keeps an extended constant that the module declares again, so TLC assigns its value to that one.
+    const constants = [
+      ...parsed.constants
+        .filter((constant) =>
+          extendedConstants.every((existing) => existing.name !== constant.name),
+        )
+        .map((constant) => ({ ...constant, key: getKey(constant) })),
+      ...extendedConstants,
+    ];
     const bound = new Map(visible);
     const declarations = [
       ...parsed.constants.map((constant) => ({ ...constant, kind: "Constant" as const })),

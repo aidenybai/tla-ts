@@ -71,6 +71,7 @@ interface LocalName extends Binding {
 }
 
 interface ModuleBinding extends Binding {
+  key?: string;
   position: SourceLocation;
   isPending?: boolean;
 }
@@ -348,6 +349,7 @@ const findSymbol = (name: string, unit: Unit): ModuleSymbol | undefined => {
   if (binding?.isPending) {
     return { key: name, arity: binding.arity, params: binding.params, kind: binding.kind };
   }
+  if (binding?.key !== undefined) return { ...binding, key: binding.key };
   return binding ? unit.imported.get(name) : undefined;
 };
 
@@ -2446,26 +2448,30 @@ export const isTheoremDefinition = (module: Module, definition: Definition) =>
       item.location.column === definition.location.column,
   );
 
-const createSymbols = (module: Module, unit: ModuleUnit) => {
-  const symbols = new Map([...CORE_SYMBOLS, ...unit.imported]);
-  module.constants.forEach((constant) =>
-    symbols.set(constant.name, {
-      key: unit.getKey(constant),
-      arity: constant.arity,
-      kind: "Constant",
-      range: constant.location.range,
-    }),
-  );
-  module.variables.forEach((variable) =>
-    symbols.set(variable.name, {
-      key: variable.name,
-      arity: 0,
-      kind: "Variable",
-      range: variable.location.range,
-    }),
-  );
-  return symbols;
-};
+const getDeclarationSymbol = (
+  declaration: Declaration,
+  kind: "Constant" | "Variable",
+  getKey: (item: { name: string }) => string,
+): ModuleSymbol => ({
+  key: kind === "Constant" ? getKey(declaration) : declaration.name,
+  arity: declaration.arity,
+  kind,
+  range: declaration.location.range,
+});
+
+const createSymbols = (module: Module, unit: ModuleUnit) =>
+  new Map([
+    ...CORE_SYMBOLS,
+    ...unit.imported,
+    ...module.constants.map((constant): [string, ModuleSymbol] => [
+      constant.name,
+      getDeclarationSymbol(constant, "Constant", unit.getKey),
+    ]),
+    ...module.variables.map((variable): [string, ModuleSymbol] => [
+      variable.name,
+      getDeclarationSymbol(variable, "Variable", unit.getKey),
+    ]),
+  ]);
 
 const checkSubstitutions = (
   instance: Instance,
@@ -2774,7 +2780,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         bindModuleName(
           bindings,
           declaration.name,
-          { kind, arity: declaration.arity, range: declaration.location.range },
+          getDeclarationSymbol(declaration, kind, inner.getKey),
           inner,
         ),
       ),

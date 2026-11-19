@@ -1875,6 +1875,63 @@ describe("name resolution matches SANY", () => {
       [],
     ],
     [
+      "a constant and a variable named after imported operators, and refers to the operators",
+      "EXTENDS Sequences\nVARIABLE Seq\nCONSTANT Len\nA == Seq(1, 2)\nB == Len",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Seq': this definition or declaration conflicts \nwith the one at line 20, col 1 to line 20, col 41 of module Sequences.",
+        },
+        {
+          location: "line 4, col 10 to line 4, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 25, col 1 to line 25, col 44 of module Sequences.",
+        },
+        {
+          location: "line 5, col 9 to line 5, col 14 of module M",
+          message: "The operator Seq requires 1 arguments.",
+        },
+        {
+          location: "line 6, col 6 to line 6, col 8 of module M",
+          message: "The operator Len requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a variable named after a constant operator, and refers to the constant",
+      "CONSTANT G(_)\nVARIABLE G\nA == G",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'G': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 13 of module M.",
+        },
+        {
+          location: "line 4, col 6 to line 4, col 6 of module M",
+          message: "The operator G requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a constant named after an operator an instance imports, and refers to the operator",
+      "---- MODULE Inner ----\nF(a) == a\n====\nINSTANCE Inner\nCONSTANT F\nA == F",
+      [
+        {
+          location: "line 6, col 10 to line 6, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'F': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 9 of module M.",
+        },
+        {
+          location: "line 7, col 6 to line 7, col 6 of module M",
+          message: "The operator F requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
       "an operator parameter named after a definition",
       "B == 1\nF(B) == B",
       [
@@ -3167,6 +3224,21 @@ describe("name resolution matches SANY", () => {
       onPrint: (text) => printed.push(text),
     });
     expect([result.status, printed[0]]).toEqual(["success", warnings]);
+  });
+
+  it("assigns a constant that a module declares again after EXTENDS like TLC", async () => {
+    const printed: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS A\nCONSTANT N\nVARIABLE x\nInit == x = N\nNext == x' = x\n====",
+      config: "CONSTANT N = 1\nINIT Init\nNEXT Next",
+      loadModule: (name) => (name === "A" ? "---- MODULE A ----\nCONSTANT N\n====" : undefined),
+      onPrint: (text) => printed.push(text),
+    });
+    expect([result.status, printed[0]]).toEqual([
+      "success",
+      "*** Warnings: 1\n\nline 3, col 10 to line 3, col 10 of module M\n\nMultiple declarations or definitions for symbol N.  \nThis duplicates the one at line 2, col 10 to line 2, col 10 of module A.\n\n\n",
+    ]);
   });
 
   it("reports RECURSIVE declarations it never defines like SANY", async () => {
