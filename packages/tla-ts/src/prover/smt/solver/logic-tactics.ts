@@ -307,7 +307,7 @@ export const LOGIC_TACTICS: ReadonlyMap<string, string> = new Map([
   [
     "auflia",
     `(and-then ${QUANT_PREPROCESSOR(false)} (or-else (and-then (fail-if (> num-exprs 128)) ` +
-      "(using-params smt :qi.cost 0) fail-if-undecided) smt))",
+      '(using-params smt :qi.cost "0") fail-if-undecided) smt))',
   ],
   ["ufnia", `(and-then ${QUANT_PREPROCESSOR(false)} qe-light smt)`],
   ["ufbv", UFBV],
