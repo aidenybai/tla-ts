@@ -36,10 +36,10 @@ export class QSolver extends ThSolver {
   private expanded: RefVector;
   private der: DerRewriter;
 
-  constructor(ctx: EufSolver) {
+  constructor(ctx: EufSolver, parameters: ReadonlyMap<string, string>) {
     super(ctx, "quant", FAMILY_QUANT);
     this.mbqi = new Mbqi(ctx, this);
-    this.ematch = new Ematch(ctx, this);
+    this.ematch = new Ematch(ctx, this, parameters);
     this.expanded = new RefVector(ctx.manager);
     this.der = new DerRewriter(ctx.manager);
   }

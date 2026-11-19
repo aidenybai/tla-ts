@@ -22,7 +22,7 @@ import type { ThSolver } from "./th-solver";
 export const mkThSolver =
   (parameters: ReadonlyMap<string, string>) =>
   (ctx: EufSolver, family: number): ThSolver | null => {
-    if (family === -1) return new QSolver(ctx);
+    if (family === -1) return new QSolver(ctx, parameters);
     if (family === FAMILY_MODEL_VALUE) return null;
     if (family === FAMILY_ARITH) return new ArithSolver(ctx, family, getHammerPeriod(parameters));
     if (family === FAMILY_ARRAY) return new ArraySolver(ctx, family);
