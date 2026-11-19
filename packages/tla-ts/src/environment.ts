@@ -177,6 +177,7 @@ export interface LinkedModule {
   constants: KeyedDeclaration[];
   variables: string[];
   variableLocations: SourceLocation[];
+  declarations: KeyedDeclaration[];
   visible: Symbols;
   exported: Symbols;
   modules: Map<string, LinkedModule>;
@@ -194,16 +195,6 @@ interface ModuleScope {
   warnings: SanyError[];
   levelChecks: ReturnType<typeof checkModuleLevels>[];
 }
-
-const getDeclarations = (linked: LinkedModule): KeyedDeclaration[] => [
-  ...linked.constants,
-  ...linked.variables.map((variable, index) => ({
-    name: variable,
-    key: variable,
-    arity: 0,
-    location: linked.variableLocations[index],
-  })),
-];
 
 const createModuleRedefinedError = (module: Module) =>
   new TlaSyntaxError(
@@ -610,7 +601,7 @@ export const createEnvironment = (
       );
     }
     const linked = nested ?? getLinkedModule(instance.module, module.name);
-    const declarations = getDeclarations(linked);
+    const declarations = linked.declarations;
     const suffix = `#${copyCount++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
     const substitutions = resolveSubstitutions(
@@ -896,7 +887,7 @@ export const createEnvironment = (
     const explicitSubstitutions = new Map(
       instance.substitutions.map((item) => [item.name, item.expression]),
     );
-    const declarations = getDeclarations(linked);
+    const declarations = linked.declarations;
     const getReplacement = (declaration: OperatorParam): Expression =>
       explicitSubstitutions.get(declaration.name) ?? {
         kind: "Identifier",
@@ -1138,9 +1129,17 @@ export const createEnvironment = (
       kind: declaration.kind,
       range: declaration.location.range,
     });
-    declarations.forEach((declaration) =>
-      exported.set(declaration.name, getDeclarationSymbol(declaration)),
-    );
+    // SymbolTable#addSymbol keeps the first symbol of a name, so SANY's Context has no declaration of a name bound before it.
+    declarations
+      .filter(
+        (declaration) =>
+          !bound.has(declaration.name) &&
+          declarations.every(
+            (other) =>
+              other.name !== declaration.name || !isBefore(other.location, declaration.location),
+          ),
+      )
+      .forEach((declaration) => exported.set(declaration.name, getDeclarationSymbol(declaration)));
     const getDefinitionSymbol = (definition: Definition): ModuleSymbol => ({
       key: getKey(definition),
       arity: getArity(definition),
@@ -1179,13 +1178,12 @@ export const createEnvironment = (
           };
         }
         const linked = nested ?? getLinkedModule(instance.module, parsed.name);
-        const declarations = getDeclarations(linked);
         return {
-          declarations,
+          declarations: linked.declarations,
           symbols: getInstanceSymbols(
             instance,
             linked.exported,
-            declarations,
+            linked.declarations,
             (symbol) => symbol.key,
           ),
           instancer: parsed.name,
@@ -1397,6 +1395,18 @@ export const createEnvironment = (
       constants,
       variables,
       variableLocations,
+      declarations: [
+        ...declarations
+          .filter((declaration) => !getSymbolsBefore(declaration.location).has(declaration.name))
+          .map((declaration) => ({ ...declaration, key: getDeclarationSymbol(declaration).key })),
+        ...extended
+          .flatMap((other) => other.declarations)
+          .filter(
+            (declaration, index, all) =>
+              bound.get(declaration.name)?.key === declaration.key &&
+              all.findIndex((other) => other.key === declaration.key) === index,
+          ),
+      ],
       visible,
       exported,
       modules,
@@ -1587,9 +1597,7 @@ export const createEnvironment = (
     variableLocations: linkedRoot.variableLocations,
     instanceActions,
     startupDefinitions: linkOrder
-      .filter(
-        (linked) => !instantiated.has(linked.module.name) || getDeclarations(linked).length === 0,
-      )
+      .filter((linked) => !instantiated.has(linked.module.name) || linked.declarations.length === 0)
       .flatMap((linked) =>
         getDefinitionOrder(linked === linkedRoot ? undefined : linked.module.name).flatMap(
           (name) => {

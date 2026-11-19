@@ -3434,6 +3434,105 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "an instance of a constant that conflicts with a definition before the module",
+      "Op(k) == k\n---- MODULE In ----\nCONSTANT Op, S\n====\nINSTANCE In WITH S <- 1",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 2, col 1 to line 2, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance of a constant that conflicts with a definition before it",
+      "---- MODULE In ----\nOp(k) == k\nCONSTANT Op, S\n====\nINSTANCE In WITH S <- 1",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 10 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a substitution for a constant that conflicts with a definition before it",
+      "---- MODULE In ----\nOp(k) == k\nCONSTANT Op, S\n====\nINSTANCE In WITH Op <- 1, S <- 1",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 10 of module M.",
+        },
+        {
+          location: "line 6, col 18 to line 6, col 19 of module M",
+          message:
+            "Identifier 'Op' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance of a constant that conflicts with an instance before it",
+      "---- MODULE A ----\n====\n---- MODULE In ----\nI == INSTANCE A\nCONSTANT I\n====\nINSTANCE In",
+      [
+        {
+          location: "line 6, col 10 to line 6, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 5, col 1 to line 5, col 15 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance of a constant that conflicts with a theorem before it",
+      "---- MODULE In ----\nTHEOREM Op == TRUE\nCONSTANT Op, S\n====\nINSTANCE In WITH S <- 1",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 11 of module M",
+          message:
+            "Multiply-defined symbol 'Op': this definition or declaration conflicts \nwith the one at line 3, col 1 to line 3, col 18 of module M.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a substitution for a constant that conflicts with an operator before the module",
+      "EXTENDS Sequences\n---- MODULE In ----\nCONSTANT Len, S\n====\nINSTANCE In WITH Len <- 1, S <- 1",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 25, col 1 to line 25, col 44 of module Sequences.",
+        },
+        {
+          location: "line 6, col 18 to line 6, col 20 of module M",
+          message:
+            "Identifier 'Len' is not a legal target of a substitution. \nA legal target must be a declared CONSTANT or VARIABLE in the module being instantiated. \n(Also, check for warnings about multiple declarations of this same identifier.)",
+        },
+      ],
+      [],
+    ],
+    [
+      "an instance of a variable that conflicts with a constant",
+      "---- MODULE In ----\nCONSTANT k\nVARIABLE k\n====\nINSTANCE In",
+      [
+        {
+          location: "line 4, col 10 to line 4, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'k': this definition or declaration conflicts \nwith the one at line 3, col 10 to line 3, col 10 of module M.",
+        },
+        {
+          location: "line 6, col 1 to line 6, col 11 of module M",
+          message:
+            "Substitution missing for symbol k declared at line 3, col 10 to line 3, col 10 of module M \nand instantiated in module M.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
