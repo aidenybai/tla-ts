@@ -1,4 +1,4 @@
-import type { Expression, SourceLocation } from "../ast";
+import { isAssumeProve, type Expression, type SourceLocation } from "../ast";
 import { getKindString } from "../builtins";
 import { TlaEvaluationError, TlaUncodedError } from "../errors";
 import { EXIT_STATUS, setExitCode } from "../exit-codes";
@@ -226,7 +226,7 @@ export const createRunError = (run: RunKind, message: string) => {
   return run.isInit ? error : setExitCode(error, EXIT_STATUS.error);
 };
 
-const getRelationMessage = (run: RunKind, expression: Expression) => {
+export const getRelationMessage = (run: RunKind, expression: Expression) => {
   const node = describeNode(expression);
   return run.isEnabled
     ? `Attempted to compute ENABLED on a non-boolean expression.\n${node}`
@@ -446,7 +446,7 @@ const visitFramed = (
       case "Selection":
         return visit(replay, expression.expression, items, scope, partial, node);
       default:
-        if (LITERAL_KINDS.has(expression.kind)) {
+        if (LITERAL_KINDS.has(expression.kind) || isAssumeProve(expression)) {
           throw createRunError(replay, getRelationMessage(replay, expression));
         }
         return withFrame(replay, expression, () =>

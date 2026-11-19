@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { check } from "../../src";
 import { getUnexpectedException } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
-import { checkFixture } from "./check-harness";
+import { checkFixture, formatCallStackLines } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/liveness");
 
@@ -244,6 +244,39 @@ describe("liveness matches TLC", () => {
       ["7.12-7.24", "7.21-7.24", "4.9-4.22", "4.9-4.18"],
     ]);
   });
+
+  it.each([
+    [
+      "Bad == x < 3 /\\ 1 \\div (x - x) = 0",
+      "The second argument of \\div is 0.",
+      [
+        "Line 4, column 8 to line 4, column 34 in M",
+        "Line 4, column 17 to line 4, column 34 in M",
+        "Line 4, column 17 to line 4, column 30 in M",
+      ],
+    ],
+    [
+      "Bad == CHOOSE v \\in {} : TRUE",
+      "Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 4, col 8 to line 4, col 29 of module M",
+      ["Line 4, column 8 to line 4, column 29 in M"],
+    ],
+  ])(
+    "keeps the reference in [] of %s as TLC's implied invariant does",
+    async (definition, message, frames) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n${definition}\nProp == []Bad\nInit == x = 0\nNext == x' = (x + 1) % 3\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+      });
+      expect([result.failure?.message, formatCallStackLines(result)]).toEqual([
+        message,
+        [
+          "Line 6, column 9 to line 6, column 13 in M",
+          "Line 5, column 11 to line 5, column 13 in M",
+          ...frames,
+        ],
+      ]);
+    },
+  );
 
   it("evaluates a constant part of a definition a temporal property calls at startup, as TLC expands the call", async () => {
     const printed: string[] = [];

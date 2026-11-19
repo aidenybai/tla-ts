@@ -2,6 +2,7 @@ import {
   getChildren,
   getFunctionConstruction,
   getReferencedName,
+  isAssumeProve,
   isLocallyResolved,
   isRecursiveConstruction,
   type Bound,
@@ -1825,6 +1826,13 @@ const compileApply = (
   environment: Environment,
 ): Evaluator => {
   const args = expression.args;
+  if (isAssumeProve(expression)) {
+    return () => {
+      throw new TlaEvaluationError(
+        `Attempted to evaluate an expression that cannot be evaluated.\n${describeRange(expression)}`,
+      );
+    };
+  }
   if (expression.operator === "=>") {
     const left = getEvaluator(args[0], environment);
     const right = getEvaluator(args[1], environment);

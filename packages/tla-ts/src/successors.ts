@@ -1,5 +1,6 @@
 import {
   getChildren,
+  isAssumeProve,
   isLocallyResolved,
   type Definition,
   type Expression,
@@ -48,6 +49,7 @@ import {
   getEnabledFailure,
   getIfConditionMessage,
   getImpliesConditionMessage,
+  getRelationMessage,
   holdsValue,
   isAssignedShortcut,
   replayEnabled,
@@ -1120,6 +1122,11 @@ const compileAction = (
     case "FunctionApplication":
       return compileFunctionAction(expression, environment, isInit);
     case "Apply": {
+      if (isAssumeProve(expression)) {
+        return (run) => {
+          throw createRunError(run, getRelationMessage(run, expression));
+        };
+      }
       const args = expression.args;
       if (isAssignmentOperator(expression.operator)) {
         const index = getAssignableIndex(args[0], environment, isInit);
