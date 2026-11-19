@@ -11,9 +11,9 @@ import { getNumber } from "./specialize";
 // existed before it, as SetO and SetE tell ESCore's step, and the value it returns. A composite
 // value that a call stores or passes is one that an object or array literal just made, and LBail
 // otherwise, so that no two places hold one object.
-export const NATIVE_DEFINITIONS = foldNames(String.raw`LBail == [type |-> "bail"]
-\* The lowered value of a converter's [s, v], an argument of a native call.
-LowerConverted(c) == LowerValue(c.s, c.v, 0).v
+export const NATIVE_MODULE = foldNames(String.raw`---- MODULE ESNative ----
+EXTENDS ESRuntime
+LBail == [type |-> "bail"]
 IsLComposite(v) == v.type \in {"lobject", "larray", "lset", "lmap"}
 LIsPrimitive(v) == v.type \in {"undefined", "null", "boolean", "number", "string"}
 \* A value that a call stores or passes, which mustn't be an object the state holds.
@@ -155,7 +155,9 @@ LSlice(c, start, end) ==
 LFrom(length, F(_, _)) ==
   IF length.type = "number" /\ length.value.k = "int" /\ length.value.i >= 0 /\ length.value.i <= 65536
   THEN LArray([i \in 1..length.value.i |-> F(Undefined, IntV(i - 1))])
-  ELSE LBail`);
+  ELSE LBail
+====
+`);
 
 // The methods LMethod runs, which change the receiver where they're in MUTATORS. ESCore's step
 // counts a call of a mutator on what existed before it as a write, as ModelCallBuiltin does.
@@ -275,6 +277,16 @@ export const getNativeFunctions = (
     return `${prefix === "Native" ? prefix : `nv${prefix}`}${count}`;
   };
   const isBinding = (name: string, scope: Scope) => !scope.locals.has(name) && bindings.has(name);
+  // A literal's value, defined once as a constant of its own, before the code that reads it.
+  const constants = new Map<string, string>();
+  const getConstant = (text: string) => {
+    const known = constants.get(text);
+    if (known !== undefined) return known;
+    const name = fresh("Constant");
+    constants.set(text, name);
+    definitions.push(`${name} == ${text}`);
+    return name;
+  };
 
   // The function of a call's callee, where it names one of the module's functions.
   const getCallee = (node: ts.Expression, scope: Scope) =>
@@ -428,10 +440,11 @@ export const getNativeFunctions = (
     ) {
       return compileExpression(node.expression, scope);
     }
-    if (ts.isNumericLiteral(node))
-      return { text: `Num(${getNumber(Number(node.text))})`, isFresh: false };
+    if (ts.isNumericLiteral(node)) {
+      return { text: getConstant(`Num(${getNumber(Number(node.text))})`), isFresh: false };
+    }
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-      return { text: `Str(${getUnits(node.text)})`, isFresh: false };
+      return { text: getConstant(`Str(${getUnits(node.text)})`), isFresh: false };
     }
     if (node.kind === ts.SyntaxKind.TrueKeyword) return { text: "True", isFresh: false };
     if (node.kind === ts.SyntaxKind.FalseKeyword) return { text: "False", isFresh: false };

@@ -40,9 +40,27 @@ const worker = new Worker(
       // spec.mutation replaces text in ESCanonicalPlain where the model compares canonical forms,
       // and in the model's code otherwise.
       const isCompared = spec.mode === "compared";
-      const code = compiled
-        .loadModule("ProgramCode")
-        .replace(isCompared ? "" : (spec.mutation?.[0] ?? ""), isCompared ? "" : (spec.mutation?.[1] ?? ""));
+      const isOperators = spec.mode === "operators";
+      const mutate = (text, isMutated) =>
+        isMutated ? text.replace(spec.mutation?.[0] ?? "", spec.mutation?.[1] ?? "") : text;
+      // A mutation runs ESNative's TLA+, which tla-ts otherwise runs natively where it can, as the
+      // module ESNativeTla.
+      const nativeName = spec.mutation !== undefined && !isCompared && !isOperators ? "ESNativeTla" : "ESNative";
+      const code = mutate(compiled.loadModule("ProgramCode"), !isCompared && !isOperators).replace(
+        /^(EXTENDS .*)ESNative$/m,
+        "$1" + nativeName,
+      );
+      const native = compiled.loadModule("ESNative") ?? "";
+      const nativeTla = mutate(native.replace("MODULE ESNative", "MODULE " + nativeName), !isCompared && !isOperators);
+      // The operators mode compares ESNative's operators with their TLA+, as the module
+      // ESNativePlain whose definitions take other names, on every argument of a pool.
+      const nativeNames = [...native.matchAll(/^([A-Z]\\w*)(?:\\(.*\\))? ==/gm)].map((match) => match[1]);
+      const nativePlain = mutate(
+        native
+          .replace("MODULE ESNative", "MODULE ESNativePlain")
+          .replace(new RegExp("\\\\b(" + nativeNames.join("|") + ")\\\\b", "g"), "Plain$1"),
+        isOperators,
+      );
       // A raw model's steps end in the state they leave, and a compared model's compute the
       // canonical form both natively and with ESCanonical's TLA+, as the module ESCanonicalPlain
       // whose definitions take other names, which tla-ts runs as written, with spec.mutation
@@ -72,11 +90,21 @@ const worker = new Worker(
           : spec.mode === "lowered"
             ? escore + "(a)"
             : line,
-      ).replace("\\nEXTENDS ESRuntime, ESCanonical\\n", spec.mode === "compared" ? "\\nEXTENDS ESRuntime, ESCanonical, ESCanonicalPlain\\n" : "\\nEXTENDS ESRuntime, ESCanonical\\n");
+      ).replace("\\nEXTENDS ESRuntime, ESCanonical", spec.mode === "compared" ? "\\nEXTENDS ESRuntime, ESCanonical, ESCanonicalPlain" : "\\nEXTENDS ESRuntime, ESCanonical")
+        .replace(/^(EXTENDS .*)$/m, (line) => (isOperators ? line + ", ESNativePlain" : line))
+        .replace(/\\n====\\n$/, isOperators ? "\\n" + spec.operators + "\\n====\\n" : "\\n====\\n");
       const result = await loaded.check({
         ...compiled,
         loadModule: (name) =>
-          name === "ProgramCode" ? changed : name === "ESCanonicalPlain" ? plain : compiled.loadModule(name),
+          name === "ProgramCode"
+            ? changed
+            : name === "ESCanonicalPlain"
+              ? plain
+              : name === nativeName
+                ? nativeTla
+                : name === "ESNativePlain"
+                  ? nativePlain
+                  : compiled.loadModule(name),
         workers: 1,
         onPrint: () => {},
       });
@@ -117,16 +145,18 @@ beforeAll(() => ready, 60_000);
 
 // Checks a module's model on ESCore, with its steps' states lowered where the module lets them,
 // raw, canonical where the native canonical form and ESCanonical's TLA+ compare equal, lowered
-// where each lowered state materializes to the canonical state it lowers, or lowered where each
-// native call gives what ESCore's gives.
+// where each lowered state materializes to the canonical state it lowers, lowered where each native call
+// gives what ESCore's gives, or with the assumptions operators, which read ESNative's operators
+// and their TLA+ as PlainX.
 const checkModel = (
   source: string,
   fileName = "spec.ts",
-  mode: "canonical" | "raw" | "compared" | "lowered" | "native" = "canonical",
+  mode: "canonical" | "raw" | "compared" | "lowered" | "native" | "operators" = "canonical",
   mutation?: [string, string],
+  operators?: string,
 ) =>
   new Promise<ModelResult>((resolve) => {
-    worker.postMessage({ id: pending.length, source, fileName, mode, mutation });
+    worker.postMessage({ id: pending.length, source, fileName, mode, mutation, operators });
     pending.push(resolve);
   });
 
@@ -485,6 +515,88 @@ describe("checks a module's exported functions as a model on ESCore", () => {
         "LAMBDA i : ~LTruthy(rs[i])",
       ]);
       expect(result.message).toContain("the native call differs from ESCore's");
+    });
+  });
+  describe("runs ESNative's operators natively, as their TLA+ runs them", () => {
+    // A model that lowers its state, whose module ESNative the checks read.
+    const source = `
+      let count = 0;
+      export const step = () => {
+        if (count < 1) count += 1;
+      };
+    `;
+    // Every operator that tla-ts runs natively, on every argument of a pool of lowered values:
+    // integers at ESNumber's limits, the other kinds of Number, strings, objects, arrays, Sets,
+    // Maps, a BigInt, and LBail.
+    const operators = String.raw`
+PoolNumber(k, neg, i, m, e) == [type |-> "number", value |-> [k |-> k, neg |-> neg, i |-> i, m |-> m, e |-> e]]
+PoolInt(i) == PoolNumber("int", i < 0, i, <<>>, 0)
+PoolInts == {PoolInt(i) : i \in {0, 1, -1, 2, -2, 7, -7, 32767, -32767, 32768, -32768, 65535, 1073741823, -1073741823}}
+PoolNumbers == PoolInts \cup {PoolNumber("nzero", TRUE, 0, <<>>, 0), PoolNumber("nan", FALSE, 0, <<>>, 0),
+  PoolNumber("inf", FALSE, 0, <<>>, 0), PoolNumber("inf", TRUE, 0, <<>>, 0), PoolNumber("fin", FALSE, 0, <<1>>, -1)}
+PoolStrings == {[type |-> "string", value |-> u] : u \in {<<>>, <<97>>, <<98>>, <<48>>, <<108, 101, 110, 103, 116, 104>>, <<115, 105, 122, 101>>}}
+PoolPrimitives == PoolNumbers \cup PoolStrings \cup {[type |-> "undefined"], [type |-> "null"],
+  [type |-> "boolean", value |-> TRUE], [type |-> "boolean", value |-> FALSE],
+  [type |-> "bigint", value |-> [neg |-> FALSE, mag |-> <<>>]], [type |-> "bigint", value |-> [neg |-> FALSE, mag |-> <<3>>]]}
+PoolComposites == {[type |-> "lobject", keys |-> <<>>, vals |-> <<>>],
+  [type |-> "lobject", keys |-> <<<<97>>>>, vals |-> <<97>> :> PoolInt(1)],
+  [type |-> "lobject", keys |-> <<<<97>>, <<98>>>>, vals |-> (<<97>> :> PoolInt(1)) @@ (<<98>> :> [type |-> "lobject", keys |-> <<>>, vals |-> <<>>])],
+  [type |-> "larray", elems |-> <<>>], [type |-> "larray", elems |-> <<PoolInt(1), PoolInt(0)>>],
+  [type |-> "larray", elems |-> <<[type |-> "string", value |-> <<97>>], [type |-> "null"], PoolInt(2)>>],
+  [type |-> "lset", elems |-> <<PoolInt(1)>>], [type |-> "lmap", keys |-> <<PoolInt(1)>>, vals |-> <<PoolInt(2)>>]}
+PoolBail == [type |-> "bail"]
+Pool == PoolPrimitives \cup PoolComposites \cup {PoolBail}
+PoolKeys == {<<97>>, <<98>>, <<99>>, <<108, 101, 110, 103, 116, 104>>, <<115, 105, 122, 101>>}
+PoolArithmetic == {"+", "-", "*", "/", "%", "**"}
+PoolRelations == {"<", ">", "<=", ">="}
+PoolResults == {PoolBail, [type |-> "ok", m |-> 0, w |-> FALSE, v |-> PoolInt(1)]}
+PoolIndices == {[type |-> "undefined"], PoolInt(-5), PoolInt(-1), PoolInt(0), PoolInt(1), PoolInt(5),
+  PoolNumber("nan", FALSE, 0, <<>>, 0), PoolNumber("fin", FALSE, 0, <<1>>, -1), [type |-> "string", value |-> <<48>>]}
+PoolLists == {<<>>, <<PoolInt(1)>>, <<PoolBail>>, <<PoolInt(1), PoolBail>>, <<[type |-> "null"], PoolInt(3)>>}
+PoolCallbacks(c, F(_, _)) ==
+  /\ c.type = "larray" => LResults(c.elems, F) = PlainLResults(c.elems, F)
+  /\ LEvery(c, F) = PlainLEvery(c, F)
+  /\ LSome(c, F) = PlainLSome(c, F)
+  /\ LMap(c, F) = PlainLMap(c, F)
+  /\ LFilter(c, F) = PlainLFilter(c, F)
+ASSUME \A v \in Pool :
+  /\ IsLComposite(v) = PlainIsLComposite(v)
+  /\ LIsPrimitive(v) = PlainLIsPrimitive(v)
+  /\ LNumber(v) = PlainLNumber(v)
+  /\ LOwn(v) = PlainLOwn(v)
+  /\ LTruthy(v) = PlainLTruthy(v)
+  /\ LNot(v) = PlainLNot(v)
+  /\ \A k \in PoolKeys : LGet(v, k) = PlainLGet(v, k)
+  /\ \A i \in Pool, n \in 0..3 : LIsIndex(v, i, n) = PlainLIsIndex(v, i, n)
+  /\ \A i \in Pool : LIndex(v, i) = PlainLIndex(v, i)
+  /\ \A b \in Pool, op \in PoolArithmetic : LArith(op, v, b) = PlainLArith(op, v, b)
+  /\ \A b \in Pool, op \in PoolRelations : LRelation(op, v, b) = PlainLRelation(op, v, b)
+  /\ \A b \in Pool : LStrict(v, b) = PlainLStrict(v, b)
+  /\ \A o \in Pool, k \in PoolKeys : LPut(o, k, v) = PlainLPut(o, k, v)
+  /\ \A c \in Pool, k \in Pool : LAssign(c, k, v) = PlainLAssign(c, k, v)
+  /\ \A s \in PoolIndices, e \in PoolIndices : LSlice(v, s, e) = PlainLSlice(v, s, e)
+  /\ PoolCallbacks(v, LAMBDA x, i : x)
+  /\ PoolCallbacks(v, LAMBDA x, i : i)
+  /\ PoolCallbacks(v, LAMBDA x, i : PoolBail)
+  /\ PoolCallbacks(v, LAMBDA x, i : IF i = PoolInt(1) THEN PoolBail ELSE [type |-> "boolean", value |-> i = PoolInt(0)])
+ASSUME \A r \in PoolResults : LValue(r) = PlainLValue(r)
+ASSUME \A list \in PoolLists : LArray(list) = PlainLArray(list)`;
+
+    it("agrees with the TLA+ on every argument of the pool", async () => {
+      const result = await checkModel(source, "spec.ts", "operators", undefined, operators);
+      expect(result.message).toBeUndefined();
+      expect(getCounts(result)).toEqual(["deadlock", 2, 2]);
+    });
+
+    it("tells a TLA+ that gives another result", async () => {
+      const result = await checkModel(
+        source,
+        "spec.ts",
+        "operators",
+        ["[] OTHER -> PlainLBail\nPlainLIsIndex", '[] OTHER -> [type |-> "other"]\nPlainLIsIndex'],
+        operators,
+      );
+      expect(result.status).toBe("assumption-violation");
     });
   });
 });

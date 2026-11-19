@@ -8,7 +8,7 @@ import type { StateVariable } from "../emit";
 import type { Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
-import { getNativeFunctions, NATIVE_DEFINITIONS } from "./native";
+import { getNativeFunctions, NATIVE_MODULE } from "./native";
 import { compileToEscore, type EscoreSpec } from "./compile";
 import { foldNames } from "./library";
 import type { EscoreRuntime } from "./prepare";
@@ -1140,7 +1140,12 @@ export const compileModelToEscore = (
           "StepEnd(s) == CanonicalState([s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]])",
           "StartState(s) == StepEnd(ModelStart(s))",
         ]
-      : [...getLoweredSteps(lowered), NATIVE_DEFINITIONS, ...(native?.definitions ?? [])]),
+      : [
+          ...getLoweredSteps(lowered),
+          // The lowered value of a converter's [s, v], an argument of a native call.
+          "LowerConverted(c) == LowerValue(c.s, c.v, 0).v",
+          ...(native?.definitions ?? []),
+        ]),
     STEP_OF,
     ...steps,
     ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, ${variable})`]),
@@ -1149,7 +1154,7 @@ export const compileModelToEscore = (
   const compiled = compileToEscore(`"use strict";\n${augmented}`, fileName, runtime, false, {
     steps: modelSteps,
     entries: [...entries],
-    reads: CANONICAL_MODULE,
+    reads: lowered === undefined ? CANONICAL_MODULE : `${CANONICAL_MODULE}\n${NATIVE_MODULE}`,
   });
   const configLines = [
     ...compiled.config
@@ -1179,7 +1184,10 @@ export const compileModelToEscore = (
     assumption.expression.kind === "Identifier" ? [`ASSUME ${assumption.expression.name}`] : [],
   );
   const finalCode = (compiled.loadModule("ProgramCode") ?? "")
-    .replace("\nEXTENDS ESRuntime\n", "\nEXTENDS ESRuntime, ESCanonical\n")
+    .replace(
+      "\nEXTENDS ESRuntime\n",
+      `\nEXTENDS ESRuntime, ESCanonical${lowered === undefined ? "" : ", ESNative"}\n`,
+    )
     .replace(
       /\n====\n$/,
       `\n${assumptions.join("\n")}${assumptions.length === 0 ? "" : "\n"}====\n`,
@@ -1188,7 +1196,13 @@ export const compileModelToEscore = (
     ...compiled,
     config: configLines.join("\n"),
     loadModule: (name) =>
-      name === "ProgramCode" ? finalCode : name === "ESCanonical" ? CANONICAL_MODULE : undefined,
+      name === "ProgramCode"
+        ? finalCode
+        : name === "ESCanonical"
+          ? CANONICAL_MODULE
+          : name === "ESNative" && lowered !== undefined
+            ? NATIVE_MODULE
+            : undefined,
     variables: today.variables,
     notes,
   };

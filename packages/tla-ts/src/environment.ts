@@ -28,6 +28,7 @@ import {
 } from "./errors";
 import {
   bindOperatorArguments,
+  bindValue,
   createBigNumberError,
   createRealNumberError,
   evaluate,
@@ -37,6 +38,7 @@ import {
   type BuiltinArgument,
   type Context,
   type Environment,
+  type Scope,
 } from "./evaluate";
 import {
   createInstantiation,
@@ -457,12 +459,26 @@ export const createEnvironment = (
           ? [arg.expression]
           : [],
       );
-      if (definition?.kind !== "Operator" || !context || expressions.length !== args.length) {
+      if (definition?.kind !== "Operator" || !context || args.length !== definition.params.length) {
         throw new TlaEvaluationError(`No definition of ${operator} to fall back to`);
       }
+      // A lazy builtin falls back with the expressions of its arguments, and any other with the
+      // values and operators it took.
       return evaluate(definition.body, {
         environment: context.environment,
-        scope: bindOperatorArguments(getDefinitionClosure(definition), expressions, context),
+        scope:
+          expressions.length === args.length
+            ? bindOperatorArguments(getDefinitionClosure(definition), expressions, context)
+            : definition.params.reduce<Scope | undefined>((scope, param, index) => {
+                const arg = args[index];
+                return typeof arg === "object" && arg.kind === "Operator"
+                  ? {
+                      name: param.name,
+                      binding: { kind: "Operator", operator: arg },
+                      parent: scope,
+                    }
+                  : bindValue(scope, param.name, arg);
+              }, undefined),
         state: context.state,
         next: context.next,
         isKeepLazy: context.isKeepLazy,
