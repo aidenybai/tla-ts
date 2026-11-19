@@ -157,7 +157,7 @@ const hasConstantArguments = (
   const analyzer = createLevelAnalyzer({
     constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
     variables: new Set(environment.variables),
-    getDefinition: (name) => getDefinition(name, environment),
+    getDefinition: (name) => environment.definitions.get(name),
     instances: environment.instances,
     recursiveSections: environment.recursiveSections,
   });

@@ -128,6 +128,21 @@ it.each([
   },
 );
 
+it.each([
+  ["Def", "CONSTANT C = 0\nCONSTANT Def <- Alt", "A line 10, col 9 to line 10, col 14 of module M"],
+  ["C", "CONSTANT C <- Lit", "A(1) line 9, col 9 to line 9, col 49 of module M"],
+])(
+  "splits Next == A(%s) by the level SANY gives the declaration the model replaces, as TLC's Tool does",
+  async (arg, constants, label) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nCONSTANT C\nVARIABLE x\nInit == x = 0\nDef == x\nAlt == 1\nLit == IF FALSE THEN x ELSE 1\nA(p) == x < 1 /\\ x' = x + 1 /\\ PrintT(<<"A", p>>)\nNext == A(${arg})\nInv == x < 1\n====`,
+      config: `${constants}\nINIT Init\nNEXT Next\nINVARIANT Inv`,
+      onPrint: () => {},
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label]);
+  },
+);
+
 it('reads TLCGet("level") as 0 in the initial predicate as it rebuilds an initial state for a trace, as TLC does', async () => {
   const printed: string[] = [];
   const result = await check({
