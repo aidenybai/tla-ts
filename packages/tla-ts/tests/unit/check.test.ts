@@ -1467,6 +1467,34 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  it.each(["1..2", "SUBSET Permutations({a, b})", "{f \\in SUBSET {a} : TRUE}"])(
+    "reports that the symmetry %s, which TLC keeps lazy or as an interval, isn't a set of functions",
+    async (symmetry) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS TLC, Naturals\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSym == ${symmetry}\n====`,
+          config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+        }),
+      ).rejects.toThrow(
+        new TlaEvaluationError(
+          `${UNEXPECTED_EXCEPTION}The symmetry operator must specify a set of functions.`,
+        ),
+      );
+    },
+  );
+
+  // Deviation from TLC: TLC fails each with "The symmetry operator must specify a set of functions.", since it keeps the set lazy.
+  it.each(["{f \\in [{a, b} -> {a, b}] : f[a] # f[b]}", "Perms"])(
+    "checks the symmetry %s as a set of functions",
+    async (symmetry) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nPerms == {f \\in [{a, b} -> {a, b}] : f[a] # f[b]}\nSym == ${symmetry}\n====`,
+        config: "CONSTANTS a = a\nb = b\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+      });
+      expect([result.status, result.distinctStates]).toEqual(["success", 1]);
+    },
+  );
+
   it("reports a failing constant part of a property while processing the spec like TLC", async () => {
     const properties = [
       "<>(1 = {})",

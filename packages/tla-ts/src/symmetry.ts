@@ -13,6 +13,7 @@ import {
   createSortedFunction,
   createSortedSet,
   isEnumerable,
+  isEnumeratedSet,
   isFunctionValue,
   isModelValue,
   isSetValue,
@@ -126,8 +127,14 @@ export const getSymmetryGroup = (
     throw createSymmetryError("The symmetry operator must specify a set of functions.");
   }
   const elements = toFiniteSet(value).elements;
+  // Tool#getSymmetryPerms rejects a set that isn't a SetEnumValue before it looks at the values.
+  // Deviation from TLC: it rejects a set of functions it keeps lazy, such as {f \in [S -> S] : P}, too.
   if (!elements.every(isFunctionValue)) {
-    throw createSymmetryError("The symmetry values must be function records.");
+    throw createSymmetryError(
+      isEnumeratedSet(value)
+        ? "The symmetry values must be function records."
+        : "The symmetry operator must specify a set of functions.",
+    );
   }
   const body = definition.body;
   const permutedSets =
