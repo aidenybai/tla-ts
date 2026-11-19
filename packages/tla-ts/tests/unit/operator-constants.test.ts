@@ -44,15 +44,17 @@ describe("operator constants match TLC", () => {
     );
   });
 
-  it("prefers a substitution over a table and leaves the root module's definitions to scoped tables", async () => {
+  it("prefers a substitution over a table", async () => {
     expect(await getTrace("F(0) = 1 F <- Inc G <- Add C = 1")).toEqual([
       "invariant-violation",
       [0, 1, 2],
     ]);
-    expect(await getTrace("F <- Inc G <- Add C = 1 Inc(0) = [Op] 7")).toEqual([
-      "invariant-violation",
-      [0, 1, 2],
-    ]);
+  });
+
+  it("gives a <- the table a [Mod] entry gives its target, where TLC evaluates the target's body", async () => {
+    expect((await checkConstants("F <- Inc G <- Add C = 1 Inc(0) = [Op] 7")).failure?.message).toBe(
+      `${UNEXPECTED_EXCEPTION}Attempted to apply operator:\n{ <0, 7>}\nto arguments (7), which is undefined.`,
+    );
   });
 
   it("checks and uses only the last <- of a name, as TLC's ModelConfig keeps it", async () => {

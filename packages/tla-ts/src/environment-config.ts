@@ -168,10 +168,9 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     return linked.definitions.has(key) || linked.builtins.has(key) || declaredConstants.has(name);
   };
   // SpecProcessor#processConstants reads the value of a root name only for a constant or a definition.
+  // Deviation from TLC: a [Mod] value becomes the tool object of the definition's body, which a lookup of the name returns, but a <- evaluates the body, which keeps it only in the slot where TLC caches a literal's value. tla-ts gives the <- the value too.
   const getScopedKeys = (item: ConfigName) =>
-    item.module === linked.root.module.name || (item.module === undefined && !isDefined(item.name))
-      ? []
-      : getSubstitutedKeys(item);
+    item.module === undefined && !isDefined(item.name) ? [] : getSubstitutedKeys(item);
   const getKeyArity = (key: string) => {
     const definition = linked.definitions.get(key);
     return definition?.kind === "Operator"

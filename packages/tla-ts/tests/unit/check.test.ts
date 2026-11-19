@@ -1825,6 +1825,27 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
+  it("applies a [Mod] value to a definition of the root module, as TLC does", async () => {
+    const statuses = await Promise.all(
+      [
+        ["Def == 3\nASSUME Def = 4", "CONSTANT Def = [M] 4"],
+        ["Def == 3 + 0\nASSUME Def = 4", "CONSTANT Def = [M] 4"],
+        ["Def(a) == 3\nASSUME Def(1) = 4", "CONSTANT Def = [M] 4"],
+        ["CONSTANT N\nDef == 3\nASSUME N = 4", "CONSTANT Def = [M] 4 N <- Def"],
+        ['CONSTANT N\nDef == "s"\nASSUME N = 4', "CONSTANT Def = [M] 4 N <- Def"],
+      ].map(async (item) => (await checkModule(item[0], item[1])).status),
+    );
+    expect(statuses).toEqual(Array(5).fill("success"));
+  });
+
+  it("gives a <- the [Mod] value of its target whatever the body, where TLC keeps it only for a literal", async () => {
+    const result = await checkModule(
+      "CONSTANT N\nDef == 3 + 0\nASSUME N = 4",
+      "CONSTANT Def = [M] 4 N <- Def",
+    );
+    expect(result.status).toBe("success");
+  });
+
   it("reports a table's set that mixes types as the unexpected exception TLC throws", async () => {
     await expect(checkModule("CONSTANT F(_)", 'CONSTANT F(1) = {1, "a"}')).rejects.toThrow(
       new TlaEvaluationError(
