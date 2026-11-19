@@ -1630,6 +1630,17 @@ ASSUME TLCFP(a) = -887695703
     }
   });
 
+  it("looks for a reused <- target only among the same module's <-, as TLC does", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nCONSTANT N\nVARIABLE x\nDef == 3\nOther == 4\nI == INSTANCE Sub\nInit == x = 0\nNext == x' = x\nASSUME N = 3 /\\ I!Def = 4\n====",
+      config: "INIT Init\nNEXT Next\nCONSTANT N <- Def Def <- [Sub] Other",
+      loadModule: (name) =>
+        name === "Sub" ? "---- MODULE Sub ----\nDef == 1\nSubOp(a) == a\n====" : undefined,
+    });
+    expect(result.status).toBe("success");
+  });
+
   it("names why a state-level substitute failed like TLC", async () => {
     await expect(
       checkModule(

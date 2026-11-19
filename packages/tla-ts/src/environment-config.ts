@@ -227,7 +227,8 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
         .map((substitution) => [substitution.name, substitution]),
     ).values(),
   ];
-  getOverrides(undefined).forEach((substitution) => {
+  const overrides = getOverrides(undefined);
+  overrides.forEach((substitution) => {
     const name = substitution.name;
     const target = substitution.target;
     if (!declaredConstants.includes(name) && !linked.root.visible.has(name)) {
@@ -235,7 +236,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
         `In the configuration file, the identifier ${name} does not appear in the specification.`,
       );
     }
-    if (config.substitutions.some((other) => other.name === target)) {
+    if (overrides.some((other) => other.name === target)) {
       throw createReusedTargetError(target);
     }
     checkSubstitutionTarget(
