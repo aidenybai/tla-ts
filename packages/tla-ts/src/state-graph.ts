@@ -19,7 +19,7 @@ export interface GraphState {
   fingerprint: bigint;
   level: number;
   getRecord: () => Record<string, Value>;
-  getAlias: () => Record<string, Value>;
+  getAlias: () => Record<string, Value> | undefined;
 }
 
 interface GraphAction {
@@ -72,6 +72,8 @@ const getLongHash = (value: bigint) =>
 
 const escapeDotString = (text: string) =>
   text.replaceAll("\\", "\\\\").replaceAll('"', '\\"').trim();
+
+const getLabelRecord = (state: GraphState) => state.getAlias() ?? state.getRecord();
 
 const toDotLabel = (text: string) => escapeDotString(text).replaceAll("\n", "\\n");
 
@@ -181,10 +183,15 @@ const createDotWriter = (
     lines.push(`${state.fingerprint} -> ${successor.fingerprint}${attributes};\n`);
     if (!isSeen) {
       const tooltip = is174 ? "" : `,tooltip="${toDotLabel(formatState(successor.getRecord()))}"`;
-      const label = formatState(
-        successor.getAlias(),
-        dump.isDiffTrace && !is174 ? state.getAlias() : undefined,
-      );
+      const alias = successor.getAlias();
+      const isDiffed = dump.isDiffTrace && !is174;
+      // TLC diffs a successor that its ALIAS leaves as it is against the predecessor as it is.
+      const previous = !isDiffed
+        ? undefined
+        : alias === undefined
+          ? state.getRecord()
+          : getLabelRecord(state);
+      const label = formatState(alias ?? successor.getRecord(), previous);
       const fill = constraint === undefined ? "" : ",style = filled, fillcolor=lightyellow";
       lines.push(`${successor.fingerprint} [label="${toDotLabel(label)}"${tooltip}${fill}];\n`);
     }
@@ -194,7 +201,7 @@ const createDotWriter = (
   return {
     writeInitialState: (state) => {
       lines.push(
-        `${state.fingerprint} [label="${toDotLabel(formatState(state.getAlias()))}",style = filled]\n`,
+        `${state.fingerprint} [label="${toDotLabel(formatState(getLabelRecord(state)))}",style = filled]\n`,
       );
       addRank(state);
       writeSnapshot();

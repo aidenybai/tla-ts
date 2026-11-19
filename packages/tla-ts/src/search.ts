@@ -1449,8 +1449,14 @@ export const createSearch = (
   };
   runtime.toRecord = toRecord;
   // Deviation from TLC: StatePrinter fingerprints the alias it prints, so a VIEW that fails on the alias's values crashes TLC.
-  const evaluateAlias: Search["evaluateAlias"] = (alias, state, next, isTool) => {
-    const getStateRecord = () => toRecord(state.map((value) => value ?? createModelValue("null")));
+  const getStateRecord = (state: State) =>
+    toRecord(state.map((value) => value ?? createModelValue("null")));
+  const getAliasRecord = (
+    alias: string,
+    state: State,
+    next: State | undefined,
+    isTool: boolean,
+  ): Record<string, Value> | undefined => {
     try {
       getConfigDefinition("alias", alias, environment);
       const value = evaluate(
@@ -1458,15 +1464,17 @@ export const createSearch = (
         getContext(environment, state, next),
       );
       const record = toAliasRecord(value);
-      return record === undefined ? getStateRecord() : setAliasName(record, alias);
+      return record === undefined ? undefined : setAliasName(record, alias);
     } catch (error) {
       if (!(error instanceof TlaConfigError || error instanceof TlaEvaluationError)) throw error;
       return {
-        ...getStateRecord(),
+        ...getStateRecord(state),
         [ALIAS_EVAL_ERROR]: formatNestedMessage(error.message, isTool),
       };
     }
   };
+  const evaluateAlias: Search["evaluateAlias"] = (alias, state, next, isTool) =>
+    getAliasRecord(alias, state, next, isTool) ?? getStateRecord(state);
   const scopeExpressions = getScopeExpressions(spec.scope);
   return {
     properties,
@@ -1479,8 +1487,8 @@ export const createSearch = (
       getRecord: () => toRecord(state),
       getAlias: () =>
         config.alias === undefined
-          ? toRecord(state)
-          : evaluateAlias(config.alias, state, undefined, isTool),
+          ? undefined
+          : getAliasRecord(config.alias, state, undefined, isTool),
     }),
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,

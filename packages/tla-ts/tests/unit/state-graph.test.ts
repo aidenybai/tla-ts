@@ -87,6 +87,15 @@ describe("check dumps the state graph like TLC's -dump", () => {
     expect(dump.written.get("Changes.dot")).toBe(readTlcDump("Changes.dot"));
   });
 
+  it("labels a successor its alias leaves as it is by what changes from the predecessor itself with -difftrace", async () => {
+    const dump = await dumpFixture("state-graph", "Unaliased", {
+      path: "Unaliased.dot",
+      dot: true,
+      isDiffTrace: true,
+    });
+    expect(dump.written.get("Unaliased.dot")).toBe(readTlcDump("Unaliased.dot"));
+  });
+
   it("lists the reachable states without dot", async () => {
     const dump = await dumpFixture("counter", "Counter", { path: "Counter.dump" });
     expect(dump.written.get("Counter.dump")).toBe(readTlcDump("Counter.dump"));
