@@ -844,12 +844,11 @@ const checkReference = (
 ) => {
   if (!isReference(expression)) return false;
   const selectors = getSelectors(expression);
-  const names: string[] = [];
+  let name = "";
   for (let nameLength = 1; nameLength < selectors.length; nameLength++) {
     const selector = selectors[nameLength - 1];
     if (selector.kind !== "Name") return undefined;
-    names.push(selector.name);
-    const name = names.join("!");
+    name = nameLength === 1 ? selector.name : `${name}!${selector.name}`;
     const goal =
       (nameLength === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
     if (goal) {
@@ -2229,6 +2228,12 @@ const getStepGoal = (body: StepBody, location: SourceLocation): Goal | undefined
   }
 };
 
+const moveStep = (
+  named: LocalName | undefined,
+  from: LocalName | undefined,
+  parent: LocalName | undefined,
+) => (parent === from ? named : named && named !== from ? { ...named, parent } : parent);
+
 const resolveStep = (
   step: ProofStep,
   scope: LocalName | undefined,
@@ -2241,11 +2246,11 @@ const resolveStep = (
       : { ...unit, hasLabelScope: true, labelParams: [], labels: new Set<string>() };
   const goal = getStepGoal(body, step.location);
   const start = step.head.start;
-  const numberRange = {
-    ...step.head,
-    end: { ...start, column: start.column + step.token.length - 1 },
-  };
-  if (step.name !== undefined && (step.token[1] === "*" || step.token[1] === "+")) {
+  const numberRange =
+    step.name === undefined
+      ? undefined
+      : { ...step.head, end: { ...start, column: start.column + step.token.length - 1 } };
+  if (numberRange && (step.token[1] === "*" || step.token[1] === "+")) {
     unit.errors.push({
       location: formatRange(numberRange),
       message: "<*> and <+> cannot be used for a named step.",
@@ -2269,11 +2274,6 @@ const resolveStep = (
           { kind: "Theorem", arity: 0, range: step.head, nonFactStep },
           unit,
         );
-  const moveStep = (
-    named: LocalName | undefined,
-    from: LocalName | undefined,
-    parent: LocalName | undefined,
-  ) => (named && named !== from ? { ...named, parent } : parent);
   switch (body.kind) {
     case "Assert": {
       const assumed = resolveStatement(body.statement, scope, stepUnit);

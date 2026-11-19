@@ -928,11 +928,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       params: new Set(body.params),
       constraints: new Map(body.constraints),
       argConstraints: new Map(body.argConstraints),
-      argParams: new Set([
-        ...body.argParams,
-        ...(instances?.flatMap((instance) => getInstanceArgParams(instance, inner)) ?? []),
-      ]),
+      argParams: new Set(body.argParams),
     };
+    instances?.forEach((instance) =>
+      getInstanceArgParams(instance, inner).forEach((key) => data.argParams.add(key)),
+    );
     definitions.forEach((levels) => mergeConstraints(data, levels));
     return data;
   };
@@ -1389,10 +1389,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   const staleDefinitions = new Set<Definition>();
 
   const analyzeDefinition = (definition: Definition, scope: Scope): OperatorLevels => {
-    const members = context.recursiveSections.get(definition);
-    if (definition.isRecursive && members && !definitionLevels.has(definition)) {
-      checkRecursiveSection(members);
-    }
+    const members = definition.isRecursive && context.recursiveSections.get(definition);
+    if (members && !definitionLevels.has(definition)) checkRecursiveSection(members);
     const cached = definitionLevels.get(definition);
     if (cached && !staleDefinitions.delete(definition)) return cached;
     const prior = cached ?? createPlaceholder(definition, TEMPORAL_LEVEL, 0);

@@ -1132,15 +1132,18 @@ export const createModuleSubexpressions = (
       );
       return {
         ...module,
-        units: module.units.map((unit) =>
-          unit.kind === "Definition"
-            ? { ...unit, definition: resolvedDefinitions.get(unit.definition) ?? unit.definition }
-            : unit.kind === "Assumption"
-              ? { ...unit, assumption: assumptions.get(unit.assumption) ?? unit.assumption }
-              : unit.kind === "Theorem"
-                ? { ...unit, theorem: theorems.get(unit.theorem) ?? unit.theorem }
-                : unit,
-        ),
+        units: module.units.map((unit) => {
+          if (unit.kind === "Definition") {
+            const definition = resolvedDefinitions.get(unit.definition);
+            return definition ? { ...unit, definition } : unit;
+          }
+          if (unit.kind === "Assumption") {
+            return { ...unit, assumption: assumptions.get(unit.assumption) ?? unit.assumption };
+          }
+          return unit.kind === "Theorem"
+            ? { ...unit, theorem: theorems.get(unit.theorem) ?? unit.theorem }
+            : unit;
+        }),
         definitions: module.definitions.map(
           (definition) => resolvedDefinitions.get(definition) ?? definition,
         ),
