@@ -101,6 +101,12 @@ interface LabelScope {
   params: FormalParamNode[][];
 }
 
+export interface Recursion {
+  sectionCount: number;
+  unresolvedCount: number[];
+  unresolvedSum: number;
+}
+
 export interface ModuleGeneration {
   version: TlcVersion | undefined;
   addError: (location: SanyLocation | string | undefined, text: string) => void;
@@ -113,10 +119,8 @@ export interface ModuleGeneration {
   contexts: Context[];
   currentModule: ModuleNode;
   curLevel: number;
-  unresolvedCount: number[];
-  unresolvedSum: number;
-  // Generator#recursiveSectionCount counts the recursive sections of a file's modules together.
-  recursiveSections: { count: number };
+  // A module's inner modules share its Generator, so its RECURSIVE counters too.
+  recursion: Recursion;
   functions: { name: string; node: OpApplNode }[];
   exceptStack: OpApplNode[];
   exceptSpecStack: OpApplNode[];
@@ -259,9 +263,9 @@ export const createOpDef = (
 
 export const setRecursionFields = (generation: ModuleGeneration, definition: OpDefNode) => {
   definition.letInLevel = generation.curLevel;
-  if (generation.unresolvedSum > 0) {
-    definition.recursiveSection = generation.recursiveSections.count;
-    definition.inRecursiveSection = generation.unresolvedCount[generation.curLevel] > 0;
+  if (generation.recursion.unresolvedSum > 0) {
+    definition.recursiveSection = generation.recursion.sectionCount;
+    definition.inRecursiveSection = generation.recursion.unresolvedCount[generation.curLevel] > 0;
     generation.currentModule.opDefsInRecursiveSection.push(definition);
   }
 };
