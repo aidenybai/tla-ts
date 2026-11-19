@@ -2981,6 +2981,69 @@ describe("ctx-solver-simplify, as Z3 5.3.2 keeps its kernel", () => {
   });
 });
 
+describe("the instantiation parameters of ctx-solver-simplify, as Z3 5.3.2 reads them", () => {
+  const quantified = [
+    "(declare-fun f (Int) Int)",
+    "(declare-fun g (Int) Int)",
+    "(declare-const a Int)",
+    "(assert (forall ((x Int)) (! (<= (g x) (f (g x))) :pattern ((g x)) :weight 25)))",
+    "(assert (distinct 0 (f (g a))))",
+  ];
+  const goal = [
+    "(goals",
+    "(goal",
+    "  (forall ((x Int)) (! (<= (g x) (f (g x))) :pattern ((g x)) :weight 25))",
+    "  (distinct 0 (f (g a)))",
+    "  :precision precise :depth 1)",
+    ")",
+  ].join("\n");
+
+  it("reads the global eager threshold", () => {
+    expect(
+      run([
+        "(set-option :smt.qi.eager_threshold 50.0)",
+        ...quantified,
+        "(apply ctx-solver-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([goal, "(:rlimit 1638)"]);
+  });
+
+  it("reads the global cost function", () => {
+    expect(
+      run([
+        '(set-option :smt.qi.cost "15")',
+        ...quantified,
+        "(apply ctx-solver-simplify)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([goal, "(:rlimit 1697)"]);
+  });
+
+  it("reads the lazy threshold of using-params", () => {
+    expect(
+      run([
+        ...quantified,
+        "(apply (using-params ctx-solver-simplify :qi.lazy_threshold 100.0))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([goal, "(:rlimit 1697)"]);
+  });
+
+  it("reads the eager threshold of using-params only in the kernels that cleanup makes", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then (using-params ctx-solver-simplify :qi.eager_threshold 50.0) smt)")',
+        ...quantified,
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1747)", "sat", "(:rlimit 3696)"]);
+  });
+});
+
 describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
   it("keeps the cache of lia2card's rewriter across the checks", () => {
     expect(

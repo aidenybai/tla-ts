@@ -900,11 +900,25 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
       descrs: SMT_DESCRS,
       isRejectingUnknown: false,
       build: (environment, params) => {
-        const simplifier = createCtxSolverSimplify(environment.manager, () => ({
-          isMbqi: getBool(params, "mbqi", environment.isMbqi),
-          mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
+        const getSimplifierParams = (tacticParams: TacticParams) => ({
+          isMbqi: getBool(tacticParams, "mbqi", environment.isMbqi),
+          mbqiMaxIterations: getUint(
+            tacticParams,
+            "mbqi.max_iterations",
+            environment.mbqiMaxIterations,
+          ),
           isFindingMacros: environment.isFindingMacros,
-        }));
+          qiCost: tacticParams.has("qi.cost")
+            ? String(tacticParams.get("qi.cost"))
+            : environment.parameters.get("smt.qi.cost"),
+          qiEagerThreshold: getSmtDouble(environment, tacticParams, "qi.eager_threshold"),
+          qiLazyThreshold: getSmtDouble(environment, tacticParams, "qi.lazy_threshold"),
+        });
+        const simplifier = createCtxSolverSimplify(
+          environment.manager,
+          getSimplifierParams(new Map()),
+          getSimplifierParams(params),
+        );
         environment.destructors.push(simplifier.release);
         return inPlace(simplifier.run);
       },

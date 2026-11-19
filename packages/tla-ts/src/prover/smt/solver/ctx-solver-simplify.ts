@@ -15,9 +15,15 @@ interface ExprPos {
   expr: number;
 }
 
-// The tactic makes its kernel when it is made, and cleanup_tactical resets the kernel after each run.
-export const createCtxSolverSimplify = (manager: AstManager, getParams: () => KernelParams) => {
-  let kernel = new SmtKernel(manager, getParams());
+// The tactic makes its kernel with the global parameters when it is made, and using_params updates
+// them after the kernel has read some. cleanup_tactical resets the kernel after each run.
+export const createCtxSolverSimplify = (
+  manager: AstManager,
+  frontParams: KernelParams,
+  params: KernelParams,
+) => {
+  let kernel = new SmtKernel(manager, frontParams);
+  kernel.updateParams(params);
   const boolFn = manager.mkFuncDecl(FRESH_SYMBOL, [SORT_INT], SORT_BOOL);
   const fns = new Map<number, number>();
   const reduceGoal = (goal: Goal) => {
@@ -141,7 +147,7 @@ export const createCtxSolverSimplify = (manager: AstManager, getParams: () => Ke
     run: (goal: Goal) => {
       reduceGoal(goal);
       kernel.release();
-      kernel = new SmtKernel(manager, getParams());
+      kernel = new SmtKernel(manager, params);
     },
     release: () => kernel.release(),
   };
