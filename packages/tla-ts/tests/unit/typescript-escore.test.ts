@@ -206,6 +206,22 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("compares values of different types as unequal", () => {
+    const getSource = (expected: string) => `
+      const values: unknown[] = [null, true, "", 0];
+      const result = [JSON.stringify(""), JSON.stringify([true, ""]), values.indexOf(""), values.includes(false)].join();
+      if (result !== '${expected}') throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource('"",[true,""],2,false'))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource('"",[true,""],1,false'))).message).toContain(THREW);
+    });
+  });
+
   describe("runs the helpers of the iterators that collections and arrays give", () => {
     const getSource = (expected: string) => `
       const set = new Set([1, 2, 3]);

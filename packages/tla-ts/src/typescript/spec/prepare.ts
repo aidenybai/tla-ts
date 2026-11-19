@@ -58,9 +58,13 @@ export interface EscoreRuntime {
 // so that the strings of the runtime come first in TLC's order of strings for every program, and
 // what the runtime's definitions evaluate to as a check starts is the same for every program. Its
 // text is the same for every program too, as TLC ranks the strings of the root's tokens first: the
-// program's code declares the variables and defines Init and Next.
+// program's code declares the variables and defines Init and Next. TLC orders a record's fields as
+// it ranks their names, and = compares the fields in that order, so RootOrder, which no spec reads,
+// ranks a value's type before its value: = on two values of different types, such as a string and
+// true, then finds the types unequal before it would compare a sequence with a boolean, and fail.
 export const ROOT = `---- MODULE Program ----
 EXTENDS Naturals, Integers, Sequences, FiniteSets, TLC, ESBigNat, ESNumber, ESRuntime, ProgramCode
+RootOrder(r) == r.c.type = "throw"
 ====
 `;
 
