@@ -14,6 +14,9 @@ interface Literals {
   bigints: Set<string>;
   // The time values of the dates that Date's constructor and Date.UTC make of literals.
   times: Set<number>;
+  // The Temporal objects that Temporal's constructors and methods make of literals, each with the
+  // key of ESCore's HostIntl entries for it.
+  temporals: Map<string, object>;
   // The lists of strings that array literals write.
   lists: string[][];
   objects: ts.ObjectLiteralExpression[];
@@ -81,17 +84,32 @@ const TABLE_SIZE = 200;
 
 const getNumberKey = (value: number) => (Object.is(value, -0) ? "-0" : String(value));
 
+// What a call of the host gives, or undefined where it throws.
+const attempt = <T>(run: () => T) => {
+  try {
+    return run();
+  } catch {
+    return undefined;
+  }
+};
+
+// A numeric literal's value, whose separators Number doesn't read.
+const getNumber = (text: string) => Number(text.replaceAll("_", ""));
+
 const getLiteralValue = (node: ts.Expression): { value: unknown } | undefined => {
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return { value: node.text };
   }
-  if (ts.isNumericLiteral(node)) return { value: Number(node.text) };
+  if (ts.isNumericLiteral(node)) return { value: getNumber(node.text) };
+  if (ts.isBigIntLiteral(node))
+    return { value: BigInt(node.text.slice(0, -1).replaceAll("_", "")) };
   if (
     ts.isPrefixUnaryExpression(node) &&
     node.operator === ts.SyntaxKind.MinusToken &&
-    ts.isNumericLiteral(node.operand)
+    (ts.isNumericLiteral(node.operand) || ts.isBigIntLiteral(node.operand))
   ) {
-    return { value: -Number(node.operand.text) };
+    const operand = getLiteralValue(node.operand)?.value;
+    return { value: typeof operand === "bigint" ? -operand : -Number(operand) };
   }
   if (node.kind === ts.SyntaxKind.TrueKeyword) return { value: true };
   if (node.kind === ts.SyntaxKind.FalseKeyword) return { value: false };
@@ -114,6 +132,99 @@ const getCalleeName = (node: ts.NewExpression | ts.CallExpression) =>
       ? node.expression.text
       : "";
 
+// The value of an expression of literals and Temporal's constructors and methods, which runs no code
+// of the program's, as the host's Temporal gives it, or undefined where it isn't one or throws.
+const getTemporal = (node: ts.Expression): { value: unknown } | undefined => {
+  const temporal: unknown = Reflect.get(globalThis, "Temporal");
+  if (typeof temporal !== "object" || temporal === null) return undefined;
+  const evaluate = (inner: ts.Expression): { value: unknown } | undefined => {
+    const literal = getLiteralValue(inner);
+    if (literal !== undefined) return literal;
+    if (ts.isParenthesizedExpression(inner)) return evaluate(inner.expression);
+    if (ts.isIdentifier(inner)) return inner.text === "Temporal" ? { value: temporal } : undefined;
+    if (ts.isObjectLiteralExpression(inner)) {
+      const entries = inner.properties.flatMap((property) => {
+        if (
+          !ts.isPropertyAssignment(property) ||
+          !(ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+        ) {
+          return [];
+        }
+        const evaluated = evaluate(property.initializer);
+        return evaluated === undefined ? [] : [[property.name.text, evaluated.value]];
+      });
+      return entries.length === inner.properties.length
+        ? { value: Object.fromEntries(entries) }
+        : undefined;
+    }
+    if (ts.isPropertyAccessExpression(inner)) {
+      const target = evaluate(inner.expression);
+      return target === undefined || typeof target.value !== "object" || target.value === null
+        ? undefined
+        : { value: Reflect.get(target.value, inner.name.text) };
+    }
+    if (ts.isNewExpression(inner) || ts.isCallExpression(inner)) {
+      const args = (inner.arguments ?? []).map(evaluate);
+      if (args.some((arg) => arg === undefined)) return undefined;
+      const values = args.map((arg) => arg?.value);
+      if (ts.isNewExpression(inner)) {
+        const callee = evaluate(inner.expression);
+        return typeof callee?.value === "function"
+          ? { value: Reflect.construct(callee.value, values) }
+          : undefined;
+      }
+      if (!ts.isPropertyAccessExpression(inner.expression)) return undefined;
+      const target = evaluate(inner.expression.expression);
+      if (
+        target === undefined ||
+        (typeof target.value !== "object" && typeof target.value !== "function")
+      ) {
+        return undefined;
+      }
+      const method: unknown = Reflect.get(target.value as object, inner.expression.name.text);
+      return typeof method === "function"
+        ? { value: Reflect.apply(method, target.value, values) }
+        : undefined;
+    }
+    return undefined;
+  };
+  try {
+    return evaluate(node);
+  } catch {
+    return undefined;
+  }
+};
+
+// The key of ESCore's HostIntl entries for a Temporal object (TemporalFormatKey): its kind, its
+// ISO fields or its epoch nanoseconds, its time zone's identifier, and its calendar.
+const getTemporalKey = (value: unknown) => {
+  if (typeof value !== "object" || value === null) return undefined;
+  const kind = /^\[object Temporal\.(\w+)\]$/.exec(Object.prototype.toString.call(value))?.[1];
+  const get = (key: string) => Reflect.get(value, key);
+  const getIso = () => {
+    const match = /^([+-]?\d{4,6})-(\d\d)-(\d\d)/.exec(
+      String(Reflect.apply(get("toString"), value, [{ calendarName: "always" }])),
+    );
+    return match === null ? [] : [Number(match[1]), Number(match[2]), Number(match[3])];
+  };
+  const time = ["hour", "minute", "second", "millisecond", "microsecond", "nanosecond"];
+  const calendar = () => getUnitsOf(String(get("calendarId")));
+  if (kind === "PlainDate" || kind === "PlainYearMonth" || kind === "PlainMonthDay") {
+    return `<<"${kind}", ${getIso().join(", ")}, ${calendar()}>>`;
+  }
+  if (kind === "PlainDateTime") {
+    const iso = Reflect.apply(get("withCalendar"), value, ["iso8601"]) as object;
+    return `<<"${kind}", ${["year", "month", "day", ...time].map((key) => String(Reflect.get(iso, key))).join(", ")}, ${calendar()}>>`;
+  }
+  if (kind === "PlainTime")
+    return `<<"${kind}", ${time.map((key) => String(get(key))).join(", ")}>>`;
+  if (kind === "ZonedDateTime") {
+    return `<<"${kind}", ${getUnitsOf(String(get("epochNanoseconds")))}, ${getUnitsOf(String(get("timeZoneId")))}, ${calendar()}>>`;
+  }
+  if (kind === "Instant") return `<<"${kind}", ${getUnitsOf(String(get("epochNanoseconds")))}>>`;
+  return undefined;
+};
+
 const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
   const literals: Literals = {
     strings: new Set(),
@@ -123,6 +234,7 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
     ),
     bigints: new Set(),
     times: new Set(),
+    temporals: new Map(),
     lists: [[]],
     objects: [],
     locales: new Map(),
@@ -139,11 +251,11 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
         literals.arguments.add(node.text);
       }
     } else if (ts.isNumericLiteral(node)) {
-      for (const value of [Number(node.text), -Number(node.text)]) {
+      for (const value of [getNumber(node.text), -getNumber(node.text)]) {
         literals.numbers.set(getNumberKey(value), value);
       }
     } else if (ts.isBigIntLiteral(node)) {
-      const digits = BigInt(node.text.slice(0, -1));
+      const digits = BigInt(node.text.slice(0, -1).replaceAll("_", ""));
       literals.bigints.add(digits.toString());
       literals.bigints.add((-digits).toString());
     } else if (ts.isObjectLiteralExpression(node)) {
@@ -164,15 +276,19 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
       const values = (node.arguments ?? []).map((argument) => getLiteralValue(argument));
       const isDate = ts.isNewExpression(node) ? name === "Date" : name === "UTC";
       if (isDate && values.every((value) => value !== undefined && value.value !== undefined)) {
-        const args = values.map((value) => value?.value) as number[];
-        const time = ts.isNewExpression(node)
-          ? new Date(...(args as [number])).getTime()
-          : Date.UTC(...(args as [number]));
-        literals.times.add(time);
+        const args = values.map((value) => value?.value) as [number];
+        const time = attempt(() =>
+          ts.isNewExpression(node) ? new Date(...args).getTime() : Date.UTC(...args),
+        );
+        if (time !== undefined) literals.times.add(time);
       }
       const locales = node.arguments?.[0];
       const named = literals.locales.get(name) ?? [undefined];
       literals.locales.set(name, named);
+      const temporal = getTemporal(node);
+      const key = temporal === undefined ? undefined : getTemporalKey(temporal.value);
+      if (key !== undefined && temporal !== undefined)
+        literals.temporals.set(key, temporal.value as object);
       const literal = locales === undefined ? { value: undefined } : getLiteralValue(locales);
       const list = locales === undefined ? undefined : getStringList(locales);
       if (
@@ -560,7 +676,9 @@ const SERVICES: Service[] = [
       numberingSystem: isTypeSequence,
       hour12: isBoolean,
       hourCycle: isOneOf("h11", "h12", "h23", "h24"),
-      timeZone: (value) => typeof value === "string",
+      timeZone: (value) =>
+        typeof value === "string" &&
+        /^(?:[A-Za-z_-]+\/[A-Za-z0-9_+/-]+|utc|gmt|[+-]\d\d(?::?\d\d)?)$/i.test(value),
       weekday: isOneOf("narrow", "short", "long"),
       era: isOneOf("narrow", "short", "long"),
       year: isOneOf("2-digit", "numeric"),
@@ -606,21 +724,29 @@ const SERVICES: Service[] = [
       const methods = new Map<string, string | undefined>();
       // ESCore's local time zone is UTC, which the host's must be for a format without one.
       if (new Intl.DateTimeFormat().resolvedOptions().timeZone !== "UTC") return new Map();
-      const times = [...new Set([...getNumbers(literals), ...literals.times])];
+      const values = [
+        ...[...new Set([...getNumbers(literals), ...literals.times])].map((time) => ({
+          key: getNumberArgument(time),
+          value: time as unknown,
+        })),
+        ...[...literals.temporals].map(([key, value]) => ({ key, value: value as unknown })),
+      ];
       if (words.has("format") || words.has("formatToParts")) {
-        for (const time of times) {
+        for (const value of values) {
           methods.set(
-            `"formatToParts", <<${getNumberArgument(time)}>>`,
-            getAnswer(() => getParts(format.formatToParts(time))),
+            `"formatToParts", <<${value.key}>>`,
+            getAnswer(() => getParts(format.formatToParts(value.value as number))),
           );
         }
       }
       if (words.has("formatRange") || words.has("formatRangeToParts")) {
-        for (const start of times) {
-          for (const end of times) {
+        for (const start of values) {
+          for (const end of values) {
             methods.set(
-              `"formatRangeToParts", <<${getNumberArgument(start)}, ${getNumberArgument(end)}>>`,
-              getAnswer(() => getParts(format.formatRangeToParts(start, end))),
+              `"formatRangeToParts", <<${start.key}, ${end.key}>>`,
+              getAnswer(() =>
+                getParts(format.formatRangeToParts(start.value as number, end.value as number)),
+              ),
             );
           }
         }
@@ -652,6 +778,71 @@ const SERVICES: Service[] = [
 
 // The options of Intl.Locale, any of whose strings the host may reject.
 const isStringLike: Validator = (value) => typeof value === "string" || isInteger(value);
+// The options of a Temporal object's toLocaleString after its locale matcher, its calendar and
+// numbering system, its hour cycle, and its time zone, in the order it reads them.
+const TEMPORAL_FORMAT_OPTIONS = [
+  "weekday",
+  "era",
+  "year",
+  "month",
+  "day",
+  "dayPeriod",
+  "hour",
+  "minute",
+  "second",
+  "fractionalSecondDigits",
+  "timeZoneName",
+  "formatMatcher",
+  "dateStyle",
+  "timeStyle",
+];
+
+// The entries of the toLocaleString of the Temporal objects that the program's literals make, for
+// each of its locales and option bags, keyed as ESCore's TemporalToLocaleString keys them.
+const getTemporalEntries = (literals: Literals) => {
+  const entries = new Map<string, string>();
+  const service = SERVICES.find((candidate) => candidate.name === "DateTimeFormat");
+  if (service === undefined) return entries;
+  const bags = getBags(service, literals);
+  const locales = getLocaleCandidates(
+    { ...service, name: "toLocaleString", callers: [] },
+    literals,
+  );
+  for (const [key, value] of literals.temporals) {
+    for (const locale of locales) {
+      const requested = getCanonical(locale);
+      if (requested === undefined) continue;
+      for (const bag of bags) {
+        const read = [
+          ...["localeMatcher", "calendar", "numberingSystem"].map((option) =>
+            bag[option] === undefined ? "Empty" : getTlaValue(String(bag[option])),
+          ),
+          bag.hour12 === undefined ? "Empty" : getTlaValue(Boolean(bag.hour12)),
+          bag.hourCycle === undefined ? "Empty" : getTlaValue(String(bag.hourCycle)),
+          bag.timeZone === undefined ? "Empty" : getTlaValue(String(bag.timeZone)),
+          ...TEMPORAL_FORMAT_OPTIONS.map((option) =>
+            bag[option] === undefined
+              ? "Empty"
+              : option === "fractionalSecondDigits"
+                ? String(Math.floor(Number(bag[option])))
+                : getTlaValue(String(bag[option])),
+          ),
+        ];
+        const answer = getAnswer(() =>
+          getValue(Reflect.apply(Reflect.get(value, "toLocaleString"), value, [locale, bag])),
+        );
+        if (answer !== undefined && entries.size <= MOST_ENTRIES) {
+          entries.set(
+            `<<"Temporal", <<<<${requested.map(getUnitsOf).join(", ")}>>, <<${read.join(", ")}>>>>, "toLocaleString", <<${key}>>>>`,
+            answer,
+          );
+        }
+      }
+    }
+  }
+  return entries;
+};
+
 const LOCALE_OPTIONS: Record<string, Validator> = {
   language: isStringLike,
   script: isStringLike,
@@ -851,6 +1042,9 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
   }
   if (words.has("Locale")) {
     for (const [key, answer] of getLocaleEntries(literals)) entries.set(key, answer);
+  }
+  if (words.has("toLocaleString") && literals.temporals.size > 0) {
+    for (const [key, answer] of getTemporalEntries(literals)) entries.set(key, answer);
   }
   // Tables of a few entries each, as a check evaluates an expression of fewer parts.
   const tables = Array.from({ length: Math.ceil(entries.size / TABLE_SIZE) }, (_, index) => ({

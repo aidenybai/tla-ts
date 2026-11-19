@@ -1023,8 +1023,46 @@ describe("compiles scripts by specializing ESCore", () => {
         expect((await checkScript(getSource(expected))).message).toContain(THREW);
       });
 
-      it("stops at a locale other than English", async () => {
-        const source = 'new Temporal.PlainDate(2024, 12, 26).toLocaleString("de");';
+      it("stops at a locale other than English for an object that the host's Intl doesn't format", async () => {
+        const source = 'new Temporal.PlainDate(2024, 12, [26].length).toLocaleString("de");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "formats the Temporal objects that a program's literals make through the host's Intl",
+    () => {
+      const getSource = (expected: string) => `
+      const date = new Temporal.PlainDate(2021, 8, 4);
+      let error = "none";
+      try {
+        new Intl.DateTimeFormat("en-US", { timeStyle: "short" }).format(date);
+      } catch (caught) {
+        error = (caught as Error).name;
+      }
+      const result = [
+        date.toLocaleString("de-AT", { dateStyle: "long" }),
+        new Intl.DateTimeFormat("en-US", { dateStyle: "short" }).format(date),
+        Temporal.Instant.fromEpochMilliseconds(0).toLocaleString("en-US", { timeZone: "UTC", timeStyle: "short" }),
+        error,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected = "4. August 2021|8/4/21|12:00 AM|TypeError";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = "4. August 2021|8/4/21|12:00 PM|TypeError";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a Temporal object that the program's literals don't make", async () => {
+        const source =
+          'new Temporal.PlainDate(2021, 8, 4).add({ days: [1].length }).toLocaleString("de-AT");';
         expect((await checkScript(source)).message).toContain("tla-ts can't");
       });
     },

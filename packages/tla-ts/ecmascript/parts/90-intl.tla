@@ -638,11 +638,12 @@ DateTimeFormatConfig(s, o) ==
   IN <<config[1], [i \in DOMAIN read |-> IF IntlConstructorOptions.DateTimeFormat[i].kind = "timeZone" /\ read[i] # Empty
                                          THEN read[i].id ELSE read[i]]>>
 
-\* ToDateTimeFormattable (ECMA-402 §11.5.10) as the key of HostIntl's entries: the Number of a value
-\* other than a Temporal object, which stops, as does undefined, whose time is now.
+\* ToDateTimeFormattable (ECMA-402 §11.5.10) as the key of HostIntl's entries: a Temporal object's,
+\* or the Number of another value. undefined, whose time is now, stops.
 DateTimeFormattableKey(s, value) ==
   IF value = Undefined THEN Unsupported(s, N("Unsupported: the time now"))
-  ELSE IF IsObject(value) /\ O(s, value).class \in TemporalClasses \cup {"temporalInstant", "temporalDuration"} THEN Unsupported(s, N("Unsupported: a Temporal object that Intl formats"))
+  ELSE IF IsObject(value) /\ O(s, value).class \in DOMAIN TemporalKinds THEN
+    Ok(s, TemporalFormatKey(TemporalKinds[O(s, value).class], O(s, value).slots))
   ELSE LET n == ToNumber(s, value) IN IF IsAbrupt(n) THEN n ELSE Ok(n.s, IntlNumberKey(Val(n).value))
 
 \* The methods of an Intl.DateTimeFormat, dtf, whose format is a function bound to it.
