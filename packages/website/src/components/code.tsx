@@ -108,7 +108,7 @@ export const CodeContent = () => {
                 />
               )
             }
-            className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number === 1 && "pr-14")}
+            className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number <= 2 && "pr-14")}
           />
         ))}
     </code>
