@@ -175,6 +175,8 @@ const isNonFpQfnra = (manager: AstManager, expr: number) => {
 const INTERNAL_PROBES = new Map<string, Probe>([
   ["is-fp-qfnra", mkTest(isNonFpQfnra)],
   ["memory", () => 0],
+  ["has-ff", () => 0],
+  ["ff-small-field", () => 0],
 ]);
 
 const LINEAR_OPS = [OP_LE, OP_GE, OP_LT, OP_GT, OP_ADD, OP_NUM];

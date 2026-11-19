@@ -275,11 +275,13 @@ const QFUF =
   "symmetry-reduce)) smt)";
 
 const DEFAULT =
-  "(and-then simplify (if (and is-propositional (not produce-proofs)) (lazy qffd) (if is-qfbv " +
-  "(lazy qfbv) (if is-qfaufbv (lazy qfaufbv) (if is-qflia (lazy qflia) (if is-qfauflia (lazy " +
-  "qfauflia) (if is-qflra (lazy qflra) (if is-qfnra (lazy qfnra) (if is-qfnia (lazy qfnia) (if " +
-  "is-lira (lazy lira) (if is-nra (lazy nra) (if is-qffp (lazy qffp) (if is-qffplra (lazy " +
-  `qffplra) (and-then ${QFLIA_PREAMBLE} (lazy smt)))))))))))))))`;
+  "(if has-ff (and-then ff-unique ff-simplify (or-else ff-solve ff-sat (if ff-small-field smt " +
+  "(using-params smt :relevancy 0)))) (and-then simplify (if (and is-propositional (not " +
+  "produce-proofs)) (lazy qffd) (if is-qfbv (lazy qfbv) (if is-qfaufbv (lazy qfaufbv) (if " +
+  "is-qflia (lazy qflia) (if is-qfauflia (lazy qfauflia) (if is-qflra (lazy qflra) (if is-qfnra " +
+  "(lazy qfnra) (if is-qfnia (lazy qfnia) (if is-lira (lazy lira) (if is-nra (lazy nra) (if " +
+  "is-qffp (lazy qffp) (if is-qffplra (lazy qffplra) (and-then " +
+  `${QFLIA_PREAMBLE} (lazy smt))))))))))))))))`;
 
 const QFFP_SIMPLIFY = "(using-params simplify :arith_lhs true :elim_and true)";
 

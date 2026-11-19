@@ -3072,4 +3072,14 @@ describe("the default tactic, as Z3 5.3.2 builds it", () => {
       ]),
     ).toThrow(SmtUnsupportedError);
   });
+
+  it("takes the parameters of the smt tactic its finite-field branch runs", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        "(check-sat-using (using-params default :random_seed 3))",
+      ]),
+    ).toEqual(["sat"]);
+  });
 });
