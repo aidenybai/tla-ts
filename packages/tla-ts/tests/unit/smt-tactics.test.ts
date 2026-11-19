@@ -2962,6 +2962,23 @@ describe("ctx-solver-simplify, as Z3 5.3.2 keeps its kernel", () => {
       ]),
     ).toEqual(["(goals\n(goal\n  :precision precise :depth 1)\n)", "(:rlimit 63)"]);
   });
+
+  it("frees each assumption when it asserts the next one, and its names before the pop", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(then ctx-solver-simplify smt)")',
+        "(declare-fun f (Int) Int)",
+        "(declare-fun g (Int) Int)",
+        "(declare-const a Int)",
+        "(assert (forall ((x Int)) (! (<= (g x) (f (g x))) :pattern ((g x)) :weight 25)))",
+        "(assert (distinct 0 (f (g a))))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1747)", "sat", "(:rlimit 3479)"]);
+  });
 });
 
 describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
