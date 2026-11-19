@@ -512,6 +512,24 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
+  it("rejects a string parameter of the smt tactic at the end of the command", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(assert (> x 0))",
+        '(check-sat-using (using-params smt :qi.cost "(+ weight generation)"))',
+        '(check-sat-using (using-params smt :smt.mbqi.id "x"))',
+        "(check-sat-using (using-params smt :qi.cost 3))",
+        '(apply (using-params simplify :qi.cost "x"))',
+      ]),
+    ).toEqual([
+      '(error "line 3 column 68: invalid using-params combinator, unsupported parameter kind")',
+      '(error "line 4 column 52: invalid using-params combinator, unsupported parameter kind")',
+      '(error "line 5 column 46: invalid using-params combinator, unsupported parameter kind")',
+      '(error "line 6 column 39: invalid using-params combinator, unknown parameter qi.cost")',
+    ]);
+  });
+
   it("takes a whole decimal as a probe constant and rejects any other decimal", () => {
     expect(
       run([
@@ -854,6 +872,71 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
       "2",
       "unknown",
       '(:reason-unknown "max. resource limit exceeded")',
+    ]);
+  });
+
+  it("prints a double with six digits and any other numeral as its rational", () => {
+    expect(
+      run([
+        "(set-option :sat.restart.factor 1.23456789)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 100.125)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 1234567.5)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 0.00001)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.phase 1.5)",
+        "(get-option :sat.phase)",
+      ]),
+    ).toEqual(["1.23457", "100.125", "1.23457e+06", "1e-05", "3/2"]);
+  });
+
+  it("rounds a double's exact value to six digits and a tie to even, as %g does", () => {
+    expect(
+      run([
+        "(set-option :sat.restart.factor 100000.5)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 1234565)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 999999.5)",
+        "(get-option :sat.restart.factor)",
+        "(set-option :sat.restart.factor 0.00001234565)",
+        "(get-option :sat.restart.factor)",
+        `(set-option :sat.restart.factor ${"1".repeat(400)}.0)`,
+        "(get-option :sat.restart.factor)",
+      ]),
+    ).toEqual(["100000", "1.23456e+06", "1e+06", "1.23456e-05", "inf"]);
+  });
+
+  it("reads a double option as Z3's rational, which skips the characters it doesn't expect", () => {
+    expect(
+      run([
+        '(set-option :sat.restart.factor "3/2")',
+        "(get-option :sat.restart.factor)",
+        '(set-option :sat.restart.factor "1.2.3")',
+        "(get-option :sat.restart.factor)",
+        '(set-option :sat.restart.factor "--1")',
+        "(get-option :sat.restart.factor)",
+        '(set-option :sat.restart.factor "1/0")',
+        "(get-option :sat.restart.factor)",
+      ]),
+    ).toEqual(["1.5", "1.23", "-1", '(error "line 7 column 32: division by zero")', "-1"]);
+  });
+
+  it("sets an option before it finds too many arguments", () => {
+    expect(
+      run([
+        "(set-option :smt.random_seed 3 4)",
+        "(get-option :smt.random_seed)",
+        "(set-option :print-success true 3)",
+        "(get-option :print-success)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 32: invalid command, too many arguments")',
+      "3",
+      '(error "line 3 column 32: invalid command, too many arguments")',
+      "true",
     ]);
   });
 });

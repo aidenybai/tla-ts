@@ -1,9 +1,16 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
-import { check, formatValue, parseModule, TlaConfigError, TlaSyntaxError } from "../../src";
-import { createSanyError } from "../../src/errors";
-import { checkFixture, getModuleLoader } from "./check-harness";
+import {
+  check,
+  formatValue,
+  parseModule,
+  TlaConfigError,
+  TlaEvaluationError,
+  TlaSyntaxError,
+} from "../../src";
+import { createSanyError, UNEXPECTED_EXCEPTION } from "../../src/errors";
+import { checkFixture, formatCallStackLines, getModuleLoader } from "./check-harness";
 
 const DIRECTORY = join(import.meta.dirname, "../fixtures/instances");
 
@@ -24,6 +31,18 @@ const SHADOWED_MODULES = new Map([
   ["Plus", "---- MODULE Plus ----\na + b == 99\n===="],
   ["Universe", "---- MODULE Universe ----\nCONSTANT Nat\n===="],
 ]);
+
+const checkTheorem = (definitions: string, config: string) =>
+  check({
+    source: `---- MODULE M ----\nEXTENDS TLC\nCONSTANT c\nVARIABLE x\nI == INSTANCE Inner WITH k <- c\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+    config: `CONSTANT c = 1\n${config}`,
+    loadModule: (name) =>
+      name === "Inner"
+        ? "---- MODULE Inner ----\nCONSTANT k\nTHEOREM Ta == ASSUME NEW y PROVE y = k\n===="
+        : undefined,
+  });
+
+const THEOREM_LOCATION = "line 3, col 15 to line 3, col 38 of module Inner";
 
 const checkShadowed = (unit: string, assumption: string, config = "") =>
   check({
@@ -385,6 +404,167 @@ describe("INSTANCE matches TLC", () => {
       ).rejects.toThrow(new TlaConfigError(message));
     },
   );
+
+  it("applies a standard operator an instance with parameters imports to its own arguments, where TLC fails", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nI(c) == INSTANCE Sub\nAp(Op(_, _), v) == Op(5, v)\nASSUME PrintT(<<I(5)!Len(<<1, 2>>), I(5)!+(1, 2), I(5)!-.(3), 2 \\in I(5)!Nat, I(5)!Append(<<1>>, 2), Ap(I!Len, <<4>>)>>)\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Sub"
+          ? "---- MODULE Sub ----\nEXTENDS Integers, Sequences\nCONSTANT c\n===="
+          : undefined,
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["<<2, 3, -3, TRUE, <<1, 2>>, 1>>"]]);
+  });
+
+  it("applies an operator of a standard module instanced with parameters to its own arguments, where TLC fails", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nS(a) == INSTANCE Sequences\nN(a) == INSTANCE Naturals\nAp(Op(_, _, _), v) == Op(1, v, 2)\nASSUME PrintT(<<S(1)!Append(<<5>>, 1), S(1)!Len(<<5>>), N(1)!+(2, 3), Ap(S!Append, <<4>>)>>)\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["<<<<5, 1>>, 1, 5, <<4, 2>>>>"]]);
+  });
+
+  it("selects into an operator of a standard module instanced with parameters like TLC", async () => {
+    const prints: string[] = [];
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\nS(a) == INSTANCE Sequences\nASSUME PrintT(<<S(5)!Append(<<1>>, 2)!1, S(5)!Len(<<1, 2>>)!1>>)\nInit == x = 0\nNext == x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      onPrint: (text) => prints.push(text),
+    });
+    expect([result.status, prints]).toEqual(["success", ["<<<<1>>, Nat>>"]]);
+  });
+
+  it("can't evaluate an ASSUME/PROVE theorem a substituting instance imports, like TLC", async () => {
+    const assumed = await checkTheorem("ASSUME PrintT(I!Ta)", "INIT Init\nNEXT Next");
+    expect([assumed.status, assumed.violation?.name, assumed.violation?.message]).toEqual([
+      "assumption-violation",
+      "line 6, col 8 to line 6, col 19 of module M",
+      `Attempted to evaluate an expression that cannot be evaluated.\n${THEOREM_LOCATION}`,
+    ]);
+    const initial = await checkTheorem("Init2 == x = 0 /\\ I!Ta", "INIT Init2\nNEXT Next");
+    expect([initial.failure?.message, formatCallStackLines(initial)]).toEqual([
+      `Attempted to evaluate an expression that cannot be evaluated.\n${THEOREM_LOCATION}`,
+      [
+        "Line 6, column 10 to line 6, column 22 in M",
+        "Line 6, column 10 to line 6, column 14 in M",
+        "Line 6, column 19 to line 6, column 22 in M",
+        "Line 5, column 1 to line 5, column 31 in M",
+        "Line 3, column 15 to line 3, column 38 in Inner",
+      ],
+    ]);
+  });
+
+  it.each([
+    [
+      "Init2 == I!Ta /\\ x = 0",
+      "INIT Init2\nNEXT Next",
+      `The init state relation is not a boolean expression.\n${THEOREM_LOCATION}`,
+      [
+        "Line 6, column 10 to line 6, column 22 in M",
+        "Line 6, column 10 to line 6, column 13 in M",
+      ],
+    ],
+    [
+      "Next2 == I!Ta /\\ x' = x",
+      "INIT Init\nNEXT Next2",
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${THEOREM_LOCATION}`,
+      [
+        "Line 6, column 10 to line 6, column 23 in M",
+        "Line 6, column 10 to line 6, column 13 in M",
+      ],
+    ],
+    [
+      "Next2 == x' = x /\\ ENABLED I!Ta",
+      "INIT Init\nNEXT Next2",
+      `${UNEXPECTED_EXCEPTION}Attempted to compute ENABLED on a non-boolean expression.\n${THEOREM_LOCATION}`,
+      [
+        "Line 6, column 10 to line 6, column 31 in M",
+        "Line 6, column 10 to line 6, column 15 in M",
+        "Line 6, column 20 to line 6, column 31 in M",
+        "Line 6, column 28 to line 6, column 31 in M",
+      ],
+    ],
+  ])(
+    "reports an ASSUME/PROVE theorem a substituting instance imports in %s as not boolean, like TLC",
+    async (definitions, config, message, frames) => {
+      const result = await checkTheorem(definitions, config);
+      expect([result.failure?.message, formatCallStackLines(result)]).toEqual([
+        message,
+        [
+          ...frames,
+          "Line 5, column 1 to line 5, column 31 in M",
+          "Line 3, column 15 to line 3, column 38 in Inner",
+        ],
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "Foo == I!Ta\nNext2 == Foo",
+      ["Line 7, column 10 to line 7, column 12 in M", "Line 6, column 8 to line 6, column 11 in M"],
+    ],
+    [
+      "Next2 == \\E i \\in {1} : x' = x \\/ I!Ta",
+      [
+        "Line 6, column 10 to line 6, column 38 in M",
+        "Line 6, column 25 to line 6, column 38 in M",
+        "Line 6, column 35 to line 6, column 38 in M",
+      ],
+    ],
+  ])(
+    "keeps the operator or \\E around an ASSUME/PROVE theorem in %s as one action, like TLC",
+    async (definitions, frames) => {
+      const result = await checkTheorem(definitions, "INIT Init\nNEXT Next2");
+      expect([result.failure?.message, formatCallStackLines(result)]).toEqual([
+        `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${THEOREM_LOCATION}`,
+        [
+          ...frames,
+          "Line 5, column 1 to line 5, column 31 in M",
+          "Line 3, column 15 to line 3, column 38 in Inner",
+        ],
+      ]);
+    },
+  );
+
+  it("reports an ASSUME/PROVE theorem as an action of the next-state relation as not boolean, where TLC crashes", async () => {
+    await expect(checkTheorem("Next2 == x' = x \\/ I!Ta", "INIT Init\nNEXT Next2")).rejects.toThrow(
+      new TlaEvaluationError(
+        `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\n${THEOREM_LOCATION}`,
+      ),
+    );
+  });
+
+  it("keeps the \\E around an ASSUME/PROVE theorem an instance substitutes an expression into as one action, like TLC", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nCONSTANT c\nVARIABLE x\nI == INSTANCE Inner WITH k <- {c}\nInit == x = 0\nNext == \\E i \\in {1} : x' = x \\/ I!Tb\n====",
+      config: "CONSTANT c = 1\nINIT Init\nNEXT Next",
+      loadModule: (name) =>
+        name === "Inner"
+          ? "---- MODULE Inner ----\nCONSTANT k\nTHEOREM Tb == ASSUME k = k PROVE TRUE\n===="
+          : undefined,
+    });
+    expect([result.failure?.message, formatCallStackLines(result)]).toEqual([
+      `${UNEXPECTED_EXCEPTION}The next state relation is not a boolean expression.\nline 3, col 15 to line 3, col 37 of module Inner`,
+      [
+        "Line 6, column 9 to line 6, column 37 in M",
+        "Line 6, column 24 to line 6, column 37 in M",
+        "Line 6, column 34 to line 6, column 37 in M",
+        "Line 4, column 1 to line 4, column 33 in M",
+        "",
+        "Line 3, column 15 to line 3, column 37 in Inner",
+      ],
+    ]);
+  });
 });
 
 const INNER_MODULES: Record<string, string> = {

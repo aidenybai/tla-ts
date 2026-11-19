@@ -173,6 +173,91 @@ describe("sat2goal", () => {
       ].join("\n"),
     );
   });
+
+  it("keeps the atoms of popped variables until their variables are reused, as flush_smc does", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(push 1)",
+        "(assert (bvsge (bvadd #x8 x) (bvsub #b0011 y)))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (= x (bvadd y (bvashr y #x4))))",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toBe(["sat", "sat", "((x #x8)", " (y #x9))"].join("\n"));
+  });
+
+  it("keeps the shared terms of its propagate-values across a pop, until it preprocesses again", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(push 1)",
+        "(assert (bvsge #b0011 (bvsub #b0111 z)))",
+        "(assert (bvsge x z))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (bvsge #b0001 (bvurem x #b0101)))",
+        "(check-sat)",
+        "(get-value (x))",
+      ]),
+    ).toBe(["sat", "sat", "((x #xa))"].join("\n"));
+  });
+
+  it("keeps the substitution of its propagate-values across a pop, until it preprocesses again", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(declare-const w (_ BitVec 4))",
+        "(assert (or (bvult x (bvudiv #x0 z)) (bvsge y (bvudiv #x2 #x2))))",
+        "(push 1)",
+        "(assert (= w #xa))",
+        "(assert (= w #x8))",
+        "(check-sat)",
+        "(pop 1)",
+        "(push 1)",
+        "(assert (bvslt (bvlshr #x1 z) (bvurem x #x6)))",
+        "(check-sat)",
+        "(pop 1)",
+        "(check-sat)",
+        "(get-value (z))",
+      ]),
+    ).toBe(["unsat", "sat", "sat", "((z #x7))"].join("\n"));
+  });
+
+  it("keeps the rewriter cache of its propagate-values across a pop, until it preprocesses again", () => {
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(declare-const z (_ BitVec 4))",
+        "(declare-const w (_ BitVec 4))",
+        "(declare-const p Bool)",
+        "(push 1)",
+        "(assert p)",
+        "(assert (bvult (ite p #xd z) #xa))",
+        "(check-sat)",
+        "(pop 1)",
+        "(push 1)",
+        "(assert (= (bvurem w (bvurem #x9 y)) (bvxor (bvneg #xf) w)))",
+        "(check-sat)",
+        "(pop 1)",
+        "(assert (bvugt y #x0))",
+        "(assert (= x (bvlshr x y)))",
+        "(check-sat)",
+        "(get-value (x y))",
+      ]),
+    ).toBe(["unsat", "sat", "sat", "((x #x0)", " (y #xa))"].join("\n"));
+  });
 });
 
 describe("sat solver", () => {

@@ -17,7 +17,13 @@ import type { OutputLine } from "../../src/check";
 import { UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
 import { formatState } from "../../src/values";
-import { checkFixture, checkModule, checkSteps, FIXTURES } from "./check-harness";
+import {
+  checkFixture,
+  checkModule,
+  checkSteps,
+  FIXTURES,
+  formatCallStackLines,
+} from "./check-harness";
 
 const DIST = join(import.meta.dirname, "../../dist/index.js");
 
@@ -56,16 +62,6 @@ const formatCoverage = (result: Awaited<ReturnType<typeof check>>) =>
 
 const getCoverageLines = async (source: string, config: string) =>
   formatCoverage(await check({ source, config, coverage: 1 }));
-
-const formatCallStackLines = (result: Awaited<ReturnType<typeof check>>) =>
-  result.failure?.callStack
-    ?.filter((expression, index, stack) => expression !== stack[index - 1])
-    .map((expression) => {
-      const range = expression.location.range;
-      return range
-        ? `Line ${range.start.line}, column ${range.start.column} to line ${range.end.line}, column ${range.end.column} in ${range.module}`
-        : "";
-    });
 
 describe("check matches TLC", () => {
   it("evaluates every assumption in the semantics fixture", async () => {

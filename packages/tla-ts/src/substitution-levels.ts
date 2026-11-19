@@ -30,7 +30,7 @@ export interface KeyedDeclaration extends Declaration {
 interface ModuleContext {
   constants: KeyedDeclaration[];
   variables: string[];
-  definitions: Definition[];
+  getDefinitions: () => Definition[];
   assumptions: Expression[];
   theorems: Theorem[];
   getDefinition: (name: string) => Definition | undefined;
@@ -110,9 +110,9 @@ export const createInstanceChecker = (
     if (cached) return cached;
     const module = getModule(name);
     const analyzer = getAnalyzer(name);
-    const definitions = module.definitions.map((definition) =>
-      analyzer.analyzeDefinition(definition, new Map()),
-    );
+    const definitions = module
+      .getDefinitions()
+      .map((definition) => analyzer.analyzeDefinition(definition, new Map()));
     const levels: ModuleLevels = {
       isConstant:
         module.variables.length === 0 && definitions.every((definition) => definition.level === 0),

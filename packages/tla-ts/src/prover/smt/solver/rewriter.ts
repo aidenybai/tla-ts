@@ -683,9 +683,17 @@ export class Rewriter extends RewriterTpl {
   mkNot(arg: number): number {
     const manager = this.manager;
     if (manager.isNot(arg)) return manager.getArg(arg, 0);
-    if (manager.getOp(arg) === OP_EQ && manager.sorts[manager.getArg(arg, 0)] === SORT_BOOL)
+    if (manager.getOp(arg) !== OP_EQ || manager.sorts[manager.getArg(arg, 0)] !== SORT_BOOL)
+      return manager.mkNot(arg);
+    if (!manager.isHoldingTemporaries)
       return this.mkEq(this.mkNot(manager.getArg(arg, 0)), manager.getArg(arg, 1));
-    return manager.mkNot(arg);
+    // Z3 frees the negation of the left side before it returns, not with the other temporaries.
+    const outer = manager.beginTemporaries();
+    const result = this.mkEq(this.mkNot(manager.getArg(arg, 0)), manager.getArg(arg, 1));
+    manager.incRef(result);
+    manager.endTemporaries(outer);
+    manager.releaseLater(result);
+    return result;
   }
 
   mkOr(args: number[]): number {

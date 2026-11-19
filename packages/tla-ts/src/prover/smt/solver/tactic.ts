@@ -64,13 +64,13 @@ import { Rational } from "./rational";
 import { runNlsat } from "./nlsat-tactic";
 import { runNlqsat } from "./nlqsat";
 import { occf } from "./occf";
-import { propagateValues } from "./propagate-values";
+import { propagateValues, type PropagateValuesTactic } from "./propagate-values";
 import { purifyArith } from "./purify-arith";
 import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, ProtoModel } from "./proto-model";
 import { SmtKernel } from "./smt-kernel";
 import { isMbqiByFeatures, type SmtSetup } from "./smt-setup";
-import { compileProbe, formatProbeValue, isQfufbv, type Probe } from "./probes";
+import { compileProbe, formatDouble, isQfufbv, type Probe } from "./probes";
 import { runHorn } from "./muz/horn-tactic";
 import { runQe } from "./qe";
 import { applyQeLite } from "./qe-lite";
@@ -97,6 +97,7 @@ const PARAM_BOOL = 0;
 const PARAM_UINT = 1;
 const PARAM_SYMBOL = 2;
 const PARAM_NUMERAL = 3;
+const PARAM_STRING = 4;
 
 export type TacticParam = boolean | number | string;
 export type TacticParams = ReadonlyMap<string, TacticParam>;
@@ -291,6 +292,8 @@ const SMT_DESCRS = getDescrs("smt", [
   ["arith.branch_cut_ratio", PARAM_UINT, 2, true],
   ["random_seed", PARAM_UINT, 0, true],
   ["auto_config", PARAM_BOOL, true, true],
+  ["mbqi.id", PARAM_STRING, ""],
+  ["qi.cost", PARAM_STRING, "(+ weight generation)", true],
 ]);
 
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
@@ -320,6 +323,9 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     ),
     intHammerPeriod: getHammerPeriod(environment.parameters),
     isArithPropagatingEqs: getParameter(environment, "smt.arith.propagate_eqs", "true") !== "false",
+    qiCost: params.has("qi.cost")
+      ? String(params.get("qi.cost"))
+      : environment.parameters.get("smt.qi.cost"),
   };
 };
 
@@ -1624,9 +1630,13 @@ const parseParamValue = (kind: number, value: SExpr) =>
         ? value.kind === "numeral" || value.kind === "decimal"
           ? value.text
           : undefined
-        : isSymbol(value)
-          ? value.text
-          : undefined;
+        : kind === PARAM_STRING
+          ? value.kind === "string"
+            ? value.text
+            : undefined
+          : isSymbol(value)
+            ? value.text
+            : undefined;
 
 const getUntypedParamValue = (value: SExpr) =>
   value.kind === "list"
@@ -1684,6 +1694,8 @@ const getParams = (
         getSexprPosition(value),
       );
     }
+    if (found.descr.kind === PARAM_STRING)
+      throw new SmtDefaultError("invalid using-params combinator, unsupported parameter kind");
     const parsed = parseParamValue(found.descr.kind, value);
     if (parsed === undefined)
       throw new SmtParseError(
@@ -1736,7 +1748,17 @@ const assertUnsat = (goal: Goal, unsatGoals: Goal[]) => {
 
 const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
   const goals = first(goal);
-  if (goals.length === 1) return goals[0].isDecided() ? goals : second(goals[0]);
+  if (goals.length === 1) {
+    const subgoal = goals[0];
+    if (subgoal.isDecided()) return goals;
+    let subresults: Goal[] = [];
+    try {
+      subresults = second(subgoal);
+      return subresults;
+    } finally {
+      if (subgoal !== goal && !subresults.includes(subgoal)) subgoal.release();
+    }
+  }
   const results: Goal[] = [];
   const unsatGoals: Goal[] = [];
   try {
@@ -2053,9 +2075,10 @@ const compile = (
     case "lazy": {
       if (!isInternal)
         throw new SmtParseError(`invalid tactic, unknown tactic combinator lazy`, sexpr.end);
-      const child = compile(environment, sexpr.items[1], isInternal);
       return {
-        ...mergeDescrs([child]),
+        descrs: new Map(),
+        isRejectingUnknown: true,
+        isTrackingDependencies: false,
         build: (params) => {
           let tactic: Tactic | undefined;
           let destructors: (() => void)[] = [];
@@ -2063,7 +2086,7 @@ const compile = (
           return (goal) => {
             if (tactic === undefined) {
               const start = environment.destructors.length;
-              tactic = child.build(params);
+              tactic = compile(environment, sexpr.items[1], isInternal).build(params);
               destructors = environment.destructors.splice(start);
             }
             return tactic(goal);
@@ -2122,7 +2145,7 @@ const compile = (
           };
         const probe = compileProbe(piece, isInternal);
         return (goal) => {
-          environment.write(formatProbeValue(probe(goal)) + newline, true);
+          environment.write(formatDouble(probe(goal)) + newline, true);
           return [goal];
         };
       });
@@ -2139,17 +2162,21 @@ const compile = (
 };
 
 // inc_sat_solver's init_preprocess, with sat.euf.
-export const mkIncSatEufPreprocess = (manager: AstManager) =>
+export const mkIncSatEufPreprocess = (manager: AstManager, propagator: PropagateValuesTactic) =>
   runAndThen(
     inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, new Map()))),
-    inPlace((goal) => propagateValues(manager, goal)),
+    inPlace((goal) => propagator.run(goal)),
   );
 
 // inc_sat_solver's init_preprocess, without sat.euf.
-export const mkIncSatPreprocess = (manager: AstManager, bitBlaster: BitBlasterRewriter) =>
+export const mkIncSatPreprocess = (
+  manager: AstManager,
+  bitBlaster: BitBlasterRewriter,
+  propagator: PropagateValuesTactic,
+) =>
   [
     inPlace((goal) => simplifyGoal(manager, goal, getRewriterOptions(manager, new Map()))),
-    inPlace((goal) => propagateValues(manager, goal)),
+    inPlace((goal) => propagator.run(goal)),
     inPlace((goal) => card2bv(manager, goal, getRewriterOptions(manager, new Map()))),
     inPlace((goal) =>
       simplifyGoal(

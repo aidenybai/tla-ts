@@ -3077,6 +3077,29 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "standard operators of an instance with parameters, applied without them",
+      "S(a) == INSTANCE Sequences\nAp(Op(_, _)) == 1\nX == S(1)!Append(<<5>>)\nY == S(1)!Len\nZ == Ap(S!Append)",
+      [
+        {
+          location: "line 4, col 17 to line 4, col 23 of module M",
+          message: "The operator S!Append requires 2 arguments.",
+        },
+        {
+          location: "line 5, col 6 to line 5, col 13 of module M",
+          message: "The operator S!Len requires 1 arguments.",
+        },
+        {
+          location: "line 6, col 9 to line 6, col 16 of module M",
+          message: "Expected arity 2 but found operator of arity 3.",
+        },
+        {
+          location: "line 6, col 6 to line 6, col 17 of module M",
+          message: "Argument number 1 to operator 'Ap' \nshould be a 2-parameter operator.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });

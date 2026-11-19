@@ -171,6 +171,7 @@ export interface SmtParams {
   randomSeed?: number;
   intHammerPeriod?: number;
   isArithPropagatingEqs?: boolean;
+  qiCost?: string;
   // The model checker's auxiliary context pretends every array operation is supported.
   isArrayFakeSupport?: boolean;
 }
@@ -260,6 +261,7 @@ export class Context extends Internalizer {
     this.params.randomSeed = params.randomSeed;
     this.params.intHammerPeriod = params.intHammerPeriod;
     this.params.isArithPropagatingEqs = params.isArithPropagatingEqs;
+    this.params.qiCost = params.qiCost;
     this.arith?.updateParams();
     this.config = {
       ...DEFAULT_CONFIG,
@@ -1596,7 +1598,7 @@ export class Context extends Internalizer {
     }
     const formulas = asserted.getFormulas();
     const size = asserted.getNumFormulas();
-    for (let qhead = asserted.getQhead(); qhead < size && !this.isInconsistent(); qhead++) {
+    for (let qhead = asserted.getQhead(); qhead < size; qhead++) {
       if (this.checkCanceled()) {
         asserted.commit(qhead);
         return;

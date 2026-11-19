@@ -1914,6 +1914,34 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ]);
   });
 
+  it("puts a named formula among the defined functions, in the order of their hash table", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-const p Bool)",
+        "(define-fun c2 () Int a)",
+        "(assert (! (>= b 0) :named n1))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(",
+      "  (define-fun b () Int",
+      "    0)",
+      "  (define-fun p () Bool",
+      "    false)",
+      "  (define-fun a () Int",
+      "    0)",
+      "  (define-fun c2 () Int",
+      "    a)",
+      "  (define-fun n1 () Bool",
+      "    (>= b 0))",
+      ")",
+    ]);
+  });
+
   it("names the if-then-else terms of an integer problem before the search", () => {
     expect(
       run([
@@ -2327,6 +2355,131 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
       "  (or p q r)",
       "  (or q r)",
       "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
+  it("makes the 1-bit numerals of a bv logic's tactic before its solvers", () => {
+    const getOutput = (logic: string) =>
+      run([
+        `(set-logic ${logic})`,
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(declare-const z (_ BitVec 8))",
+        "(assert (bvult x y))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]).slice(3, 7);
+    expect(getOutput("QF_AUFBV")).toEqual([
+      "  (or q (not p))",
+      "  (or p q r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+    ]);
+    expect(getOutput("QF_BV")).toEqual([
+      "  (or q r p)",
+      "  (or q (not p))",
+      "  (or q r)",
+      "  (or q (not r) (not p))",
+    ]);
+  });
+
+  it("keeps each bv term solve-eqs solves for only in its equation", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(declare-const z (_ BitVec 8))",
+        "(assert (= (bvadd x y z (bvmul x z)) #x01))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or (not p) q)",
+      "  (or r q p)",
+      "  (or r q)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
+  it("keeps each arithmetic term solve-eqs solves for only in its equation", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(assert (= (+ (* (- 1) y) x) 8))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or q p r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
+  it("keeps the formulas solve-eqs replaces until its next round", () => {
+    expect(
+      run([
+        "(set-logic QF_LIA)",
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(assert (= (+ (* (- 1) z) y (* 3 y)) 2))",
+        "(assert (= 2 (+ (* (- 1) x) z)))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or q (not r) (not p))",
+      "  (or q p r)",
+      "  (or q r)",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
+  it("keeps the formulas the nested equalities replace in the model trail", () => {
+    expect(
+      run([
+        "(declare-const x Int)",
+        "(declare-const y Int)",
+        "(declare-const z Int)",
+        "(declare-const w Int)",
+        "(assert (or (and (= w z) (< (+ z w) w)) (<= x (+ z y)) (= y z)))",
+        "(assert (> (+ z x) 2))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or p q r)",
+      "  (or (not p) q)",
+      "  (or q r)",
+      "  (or (not p) q (not r))",
       "  :precision precise :depth 2)",
       ")",
     ]);
