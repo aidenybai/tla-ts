@@ -119,6 +119,16 @@ const assign = (partial: State, index: number, value: Value) => {
 const holds = (run: Run, expression: Expression, context: Context) =>
   holdsValue(run, expression, evaluate(expression, context));
 
+const holdsUnchanged = (run: Run, unchanged: Expression, context: Context) => {
+  try {
+    return holds(run, unchanged, context);
+  } catch (error) {
+    throw run.isEnabled
+      ? toUnspecifiedSubscriptError(error, context.environment.runtime.version)
+      : error;
+  }
+};
+
 const evaluateCached = (
   evaluators: (Evaluator | undefined)[],
   index: number,
@@ -606,7 +616,7 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
         return;
       }
     }
-    if (holds(run, unchanged, context)) onComplete(partial, action);
+    if (holdsUnchanged(run, unchanged, context)) onComplete(partial, action);
   };
 };
 
@@ -1093,18 +1103,11 @@ const compileAction = (
         expression: expression.subscript,
         location: expression.subscript.location,
       };
-      const isUnchanged = (run: Run, scope: Scope | undefined, nextPartial: State) => {
-        try {
-          return holds(run, unchanged, getContext(run, scope, nextPartial));
-        } catch (error) {
-          throw run.isEnabled
-            ? toUnspecifiedSubscriptError(error, environment.runtime.version)
-            : error;
-        }
-      };
       return (run, scope, partial, action, isFixed, onComplete) =>
         body(run, scope, partial, action, isFixed, (nextPartial, nextAction) => {
-          if (!isUnchanged(run, scope, nextPartial)) onComplete(nextPartial, nextAction);
+          if (!holdsUnchanged(run, unchanged, getContext(run, scope, nextPartial))) {
+            onComplete(nextPartial, nextAction);
+          }
         });
     }
     case "BoxAction":
