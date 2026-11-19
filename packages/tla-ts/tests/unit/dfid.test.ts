@@ -66,6 +66,19 @@ it("reads in Init a register that ASSUME sets, as model checking does", () => {
   expect(messages.at(-1)).toBe("3 states generated, 2 distinct states found.");
 });
 
+it("splits the next-state relation before it checks the assumptions, as TLC's Tool does", () => {
+  const prints: string[] = [];
+  checkDepthFirst({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == \\E i \\in (IF PrintT("split") THEN {1} ELSE {}) : x\' = (x + i) % 3\nASSUME PrintT("assume")\n====',
+    config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    maxDepth: 3,
+    onPrint: (text) => prints.push(text),
+    onOutput: () => {},
+  });
+  expect(prints).toEqual(['"split"', '"assume"']);
+});
+
 it("replays the step whose invariant fails to evaluate with the actions it counts under coverage, as TLC's DFIDModelChecker does", () => {
   const outputs: DepthFirstOutput[] = [];
   checkDepthFirst({

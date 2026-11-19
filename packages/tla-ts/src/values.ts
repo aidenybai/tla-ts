@@ -441,6 +441,7 @@ export const setViewText = (state: Record<string, Value>, getText: () => string)
 };
 
 const aliasNames = new WeakMap<Record<string, Value>, string>();
+const aliasedStates = new WeakMap<Record<string, Value>, () => Record<string, Value>>();
 
 export const ALIAS_EVAL_ERROR = "_ALIASEvalError";
 
@@ -448,6 +449,18 @@ export const setAliasName = (state: Record<string, Value>, alias: string) => {
   aliasNames.set(state, alias);
   return state;
 };
+
+export const setAliasedState = (
+  record: Record<string, Value>,
+  getState: () => Record<string, Value>,
+) => {
+  aliasedStates.set(record, getState);
+  return record;
+};
+
+// StatePrinter#getPreviousState diffs a state that its ALIAS leaves as it is against the predecessor as it is.
+export const getDiffBase = (state: Record<string, Value>, previous: Record<string, Value>) =>
+  aliasedStates.has(state) ? previous : (aliasedStates.get(previous)?.() ?? previous);
 
 export const rankString = (text: string) => {
   if (stringOrder.ranks[text] === undefined) stringOrder.ranks[text] = stringOrder.size++;

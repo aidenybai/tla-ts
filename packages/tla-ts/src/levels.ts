@@ -129,6 +129,18 @@ const NEW_SYMBOL_LEVELS = {
 
 const SEPARATOR = "\u0000";
 
+export const createBoundScope = (bindings: [string, Definition | undefined][]) =>
+  bindings.reduce<Scope>(
+    (outer, binding) =>
+      new Map(outer).set(
+        binding[0],
+        binding[1]
+          ? { kind: "Let", definition: binding[1], scope: outer }
+          : { kind: "Formal", arity: 0, level: CONSTANT_LEVEL },
+      ),
+    new Map(),
+  );
+
 export const getArgumentKey = (operator: string, index: number) =>
   `${operator}${SEPARATOR}${index}`;
 

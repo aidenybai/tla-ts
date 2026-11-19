@@ -130,7 +130,7 @@ const getRuntimeValue = (
       return getRegisterFunction(getNamedRegisters(runtime));
   }
   if (key.startsWith(NAMED_REGISTER_PREFIX)) {
-    const value = getNamedRegisters(runtime).get(key);
+    const value = state === EMPTY_STATE ? undefined : getNamedRegisters(runtime).get(key);
     if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
     return value;
   }
@@ -141,7 +141,7 @@ const getRuntimeValue = (
 const getTlcValue = (runtime: CheckerRuntime, key: Value, context: Context | undefined) => {
   // Deviation from TLC: under -dfid, a register read or set before the search, as in ASSUME or Init, reaches a DFIDWorker that DFIDModelChecker hasn't created and throws a NullPointerException.
   if (typeof key === "number" && key >= 0) {
-    const value = runtime.registers.get(key);
+    const value = context?.state === EMPTY_STATE ? undefined : runtime.registers.get(key);
     if (value === undefined) throw new TlaModuleError(`TLCGet(${key}) was undefined.`);
     return value;
   }

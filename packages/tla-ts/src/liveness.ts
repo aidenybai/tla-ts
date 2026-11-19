@@ -298,6 +298,10 @@ export const expandTemporal = (
         definitionThunks.has(binding) ? expression.name : expansion.name,
       );
     }
+    const operator = binding?.kind === "Operator" ? binding.operator : undefined;
+    if (operator?.kind === "Closure" && operator.params.length === 0) {
+      return expand(operator.body, operator.scope, expression.name);
+    }
     const definition = environment.constants.has(expression.name)
       ? undefined
       : getDefinition(expression.name, environment);

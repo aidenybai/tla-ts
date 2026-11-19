@@ -676,6 +676,39 @@ describe("the CLI reports results like TLC", () => {
     ]);
   });
 
+  it("diffs a step that the alias leaves as it is against the step before as it is with -difftrace, as TLC's StatePrinter does", () => {
+    const result = runCli("alias", "PartialAlias", ["-difftrace", "-noGenerateSpecTE"]);
+    const label = "<Next line 5, col 9 to line 5, col 28 of module PartialAlias>";
+    expect([result.status, getSteadyLines(result.stdout).slice(4, 27)]).toEqual([
+      12,
+      [
+        "Error: The behavior up to this point is:",
+        "State 1: <Initial predicate>",
+        "/\\ x = 0",
+        "/\\ y = 100",
+        "",
+        `State 2: ${label}`,
+        "/\\ x = 1",
+        "/\\ y = 0",
+        '/\\ _ALIASEvalError = "The second argument of \\\\div is 0."',
+        "",
+        `State 3: ${label}`,
+        "/\\ x = 2",
+        "",
+        `State 4: ${label}`,
+        "/\\ x = 3",
+        "/\\ y = 100",
+        "",
+        `State 5: ${label}`,
+        "/\\ x = 4",
+        "",
+        `State 6: ${label}`,
+        "/\\ x = 5",
+        "/\\ y = 0",
+      ],
+    ]);
+  });
+
   it("prints the counterexample before it fails to rebuild the step back of a lasso under a VIEW like TLC", () => {
     const result = runCli("view", "Recover");
     expect(result.status).toBe(1);

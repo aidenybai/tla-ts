@@ -82,6 +82,21 @@ describe("check with workers matches TLC", () => {
     expect(printed).toEqual(['"start"']);
   });
 
+  it("ranks the strings that constant definitions create before those TLC interns as it creates the checker", async () => {
+    const printed: string[] = [];
+    await tlaTs.check({
+      source:
+        '---- MODULE R1 ----\nEXTENDS TLC, Sequences, Naturals\nVARIABLE x\nS == {"st" \\o "ate", "ac" \\o "tion"}\nT == {"lo" \\o "cation", "na" \\o "me"}\nASSUME PrintT(<<S, T>>)\nASSUME PrintT({"tag" \\o "s", "ta" \\o "g", "dur" \\o "ation"})\nInit == x \\in 0..3\nNext == x\' = (x + 1) % 4\n====',
+      config: "INIT Init\nNEXT Next",
+      workers: 2,
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual([
+      '<<{"state", "action"}, {"location", "name"}>>',
+      '{"tag", "duration", "tags"}',
+    ]);
+  });
+
   it("reports the string the search orders as it checks again on the calling thread", async () => {
     const ordered: string[] = [];
     const result = await tlaTs.check({

@@ -506,6 +506,8 @@ const searchStates = (
   const findViolatedAssumption = () =>
     findAssumptionViolation(specification.assumptions, environment);
   if (!search) {
+    // Tool's constructor describes the specification before TLC creates the checker.
+    getDescription();
     runtime.isStarted = true;
     const assumptionViolation = findViolatedAssumption();
     if (assumptionViolation) return createResult("assumption-violation", assumptionViolation);

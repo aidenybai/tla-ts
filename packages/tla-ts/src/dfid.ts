@@ -125,6 +125,7 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   if (!search) {
     throw new TlaUnsupportedError("tla-ts can't search a specification without variables");
   }
+  const description = prepared.getDescription();
   const message = (code: number, text: string, toolText = text, isError = true) =>
     output({ kind: "message", code, isError, message: text, toolMessage: toolText });
   const temporalProperties = search.properties.liveness;
@@ -184,7 +185,6 @@ export const checkDepthFirst = (options: DepthFirstOptions): number => {
   );
   if (assumptionStatus !== undefined) return closeDump(assumptionStatus);
 
-  const description = prepared.getDescription();
   const nextActions = description.actions;
   const coverage = prepared.coverage;
   const covered = coverage && addActionCoverage(coverage, environment, description);
