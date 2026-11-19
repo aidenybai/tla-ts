@@ -267,12 +267,12 @@ export const createTraceBuilder = (context: TraceContext) => {
     }));
     // TLCTrace#printTrace leaves current the last state it aliases, else the state it rebuilds the last one from.
     // Deviation from TLC: Worker#doPostCondition misses a random initial state drawn from this seed and skips the postcondition.
-    const seeding = alias === undefined ? last - 1 : last;
+    const seedPosition = alias === undefined ? last - 1 : last;
     const rebuiltOutput = isRebuiltAgain
       ? [
-          getViewOutput(steps[seeding].state, seeding + 1, true),
+          getViewOutput(steps[seedPosition].state, seedPosition + 1, true),
           ...runtime.runWithNewRandom(() => [
-            captureOutput(() => rebuildInitialState(path[0], steps[seeding].state)).lines,
+            captureOutput(() => rebuildInitialState(path[0], steps[seedPosition].state)).lines,
             ...steps
               .slice(1, last)
               .map((_step, position) => findPositionAction(position + 1).lines),
