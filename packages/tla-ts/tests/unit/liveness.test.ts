@@ -347,4 +347,25 @@ describe("liveness matches TLC", () => {
     });
     expect([result.status, result.distinctStates]).toEqual(["success", 3]);
   });
+
+  it.each([
+    ["[][x' >= x]_vars", 1],
+    ['[][x\' >= x \\/ TLCGet("level") < 0]_vars', undefined],
+  ])(
+    "checks LET H == %s IN H as the action property H under coverage %j, as TLC's SpecProcessor expands the LET",
+    async (box, coverage) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, TLC\nVARIABLES x, y\nvars == <<x, y>>\nInc == x < 3 /\\ x' = x + 1 /\\ y' = y\nDec == x > 0 /\\ x' = x - 1 /\\ y' = y\nInit == x = 0 /\\ y \\in {0, 1}\nSpec == Init /\\ [][Inc \\/ Dec]_vars\nProp == LET H == ${box} IN H\n====`,
+        config: "SPECIFICATION Spec\nPROPERTY Prop\nCHECK_DEADLOCK FALSE",
+        coverage,
+      });
+      expect([
+        result.status,
+        result.violation?.name,
+        result.violation?.trace.length,
+        result.generatedStates,
+        result.distinctStates,
+      ]).toEqual(["liveness-violation", "H", 3, 6, 5]);
+    },
+  );
 });
