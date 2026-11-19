@@ -1148,6 +1148,12 @@ export const createEnvironment = (
       range: definition.location.range,
       functionArity: getFunctionArity(definition),
     });
+    const getInstanceSymbol = (instance: Instance, name: string): ModuleSymbol => ({
+      key: `${name}${KEY_SEPARATOR}${scope.id}`,
+      arity: instance.params.length,
+      kind: "Instance",
+      range: instance.location.range,
+    });
     const isParameterFree = constants.length === 0 && variables.length === 0;
     const instanced = new Map<Instance, Symbols>();
     const getVisibleModules = () => new Map([...scope.modules, ...modules]);
@@ -1214,13 +1220,22 @@ export const createEnvironment = (
           name: definition.name,
           symbol: getDefinitionSymbol(definition),
         })),
-        ...parsed.instances.flatMap((instance) =>
-          [...(instanced.get(instance) ?? [])].map((entry) => ({
+        ...parsed.instances.flatMap((instance) => [
+          ...(instance.name === undefined
+            ? []
+            : [
+                {
+                  location: instance.location,
+                  name: instance.name,
+                  symbol: getInstanceSymbol(instance, instance.name),
+                },
+              ]),
+          ...[...(instanced.get(instance) ?? [])].map((entry) => ({
             location: instance.location,
             name: entry[0],
             symbol: entry[1],
           })),
-        ),
+        ]),
       ]
         .filter((item) => isBefore(item.location, location))
         .toSorted((left, right) => compareLocations(left.location, right.location))
@@ -1316,12 +1331,7 @@ export const createEnvironment = (
             if (!instance.isLocal) exported.set(name, symbol);
           });
           if (instance.name !== undefined && !instance.isLocal) {
-            exported.set(instance.name, {
-              key: `${instance.name}${KEY_SEPARATOR}${scope.id}`,
-              arity: instance.params.length,
-              kind: "Instance",
-              range: instance.location.range,
-            });
+            exported.set(instance.name, getInstanceSymbol(instance, instance.name));
           }
         },
       })),

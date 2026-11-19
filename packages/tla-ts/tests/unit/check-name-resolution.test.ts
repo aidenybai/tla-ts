@@ -3370,6 +3370,29 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "an inner module that uses an instance with parameters without arguments",
+      "---- MODULE A ----\n====\nI(a) == INSTANCE A\n---- MODULE In ----\nF == I\n====",
+      [
+        {
+          location: "line 6, col 6 to line 6, col 6 of module M",
+          message: "The operator I requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an inner module that declares a constant named after an instance",
+      "---- MODULE A ----\n====\nI == INSTANCE A\n---- MODULE In ----\nCONSTANT I\n====",
+      [
+        {
+          location: "line 6, col 10 to line 6, col 10 of module M",
+          message:
+            "Multiply-defined symbol 'I': this definition or declaration conflicts \nwith the one at line 4, col 1 to line 4, col 15 of module M.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });
