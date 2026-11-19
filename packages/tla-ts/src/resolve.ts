@@ -97,6 +97,7 @@ interface Unit {
   labelParams: string[];
   labels: Set<string>;
   isGenerated: boolean;
+  goalOperands: WeakMap<Expression, Expression[]>;
 }
 
 export interface SelectionArguments {
@@ -730,13 +731,14 @@ const checkSelection = (
       }
       const sets = binder?.sets;
       const operands =
-        expression.kind === "Identifier"
+        unit.goalOperands.get(expression) ??
+        (expression.kind === "Identifier"
           ? []
           : sets
             ? sets.length > 0
               ? sets
               : undefined
-            : getOperands(expression);
+            : getOperands(expression));
       if (!operands) return node;
       const isExcept = expression.kind === "Except";
       const position = getPosition(isExcept ? expression.updates.length + 1 : operands.length);
@@ -859,7 +861,14 @@ const checkReference = (
     const goal =
       (nameLength === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
     if (goal) {
-      return { node: checkSelection(expression, selectors, nameLength, goal, unit, isFact) };
+      const node = checkSelection(expression, selectors, nameLength, goal, unit, isFact);
+      if (!node) emptyExpressions.add(expression);
+      if (node && node.kind !== "NewSymbol" && node.kind !== "AssumeProve") {
+        const args = selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
+        // SANY applies a LAMBDA to a selection's arguments, or wraps a selection without them in $Nop.
+        unit.goalOperands.set(expression, args.length > 0 ? args : [node]);
+      }
+      return { node };
     }
   }
   return undefined;
@@ -2675,6 +2684,7 @@ export const resolveSubstitutions = (
     labelParams: [],
     labels: new Set(),
     isGenerated: false,
+    goalOperands: new WeakMap(),
   });
 };
 
@@ -2720,6 +2730,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
   );
   const recursive = new Set<Binding>();
   const declarations: { declaration: Declaration; binding: ModuleBinding | undefined }[] = [];
+  const goalOperands = new WeakMap<Expression, Expression[]>();
   const createCheck = (
     location: SourceLocation,
     self: Definition | undefined,
@@ -2745,6 +2756,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         labelParams: [],
         labels: new Set(),
         isGenerated: false,
+        goalOperands,
       }),
   });
   const isDefinitionBody = (statement: Expression | AssumeProve) =>

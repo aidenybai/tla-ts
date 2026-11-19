@@ -4059,6 +4059,40 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  const goalSteps =
+    "EXTENDS Naturals\nOp(a) == a + 1\nTHEOREM Thm == ASSUME NEW m \\in Nat, l1 :: m = 1 PROVE l2 :: Op(m) = m + 1\n<1>1. Thm!l2\n  OBVIOUS\n";
+
+  it("selects into a step that selects from an ASSUME/PROVE theorem or a step like SANY", async () => {
+    const result = await checkNames(
+      `${goalSteps}<1>2. 1 + 1 = 2\n  OBVIOUS\n<1>3. <1>2!1\n  OBVIOUS\n<1>4. QED BY <1>1!1, <1>1!1!1!1, <1>3!1!1, <1>1!<<`,
+    );
+    expect(result.status).toBe("success");
+  });
+
+  it("reports selections into a step that selects from an ASSUME/PROVE theorem like SANY", async () => {
+    await expect(
+      checkNames(
+        `${goalSteps}<1>2. <1>1!1!1 = Thm!l1\n  OBVIOUS\n<1>3. Thm!l2(1)\n  OBVIOUS\n<1>4. QED BY <1>1!2, <1>2!2!2, <1>3!1`,
+      ),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 9, col 11 to line 9, col 12 of module M",
+          message: "Label `l2' used with wrong number of arguments.",
+        },
+        {
+          location: "line 11, col 19 to line 11, col 19 of module M",
+          message: "Nonexistent operand specified by `argument selector 2'.",
+        },
+        {
+          location: "line 11, col 29 to line 11, col 29 of module M",
+          message: "Nonexistent operand specified by `argument selector 2'.",
+        },
+        { location: "line 11, col 37 to line 11, col 37 of module M", message: noOperands },
+      ]),
+    );
+  });
+
   it("selects from LET operators inside theorems and proofs like SANY", async () => {
     await expect(
       checkNames(
