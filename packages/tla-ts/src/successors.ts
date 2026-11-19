@@ -56,10 +56,13 @@ import {
   getIfConditionMessage,
   getImpliesConditionMessage,
   getRelationMessage,
+  getUnchangedVariables,
+  getZeroArityBody,
   holdsValue,
   isAssignedShortcut,
   replayEnabled,
   warnChangedUnchanged,
+  type UnchangedVariable,
 } from "./tlc/replay";
 import {
   getStreamedElements,
@@ -161,12 +164,6 @@ const getRunner = (expression: Expression, environment: Environment, isInit: boo
   return runner;
 };
 
-const getZeroArityBody = (name: string, environment: Environment) => {
-  if (environment.constants.has(name)) return undefined;
-  const definition = getDefinition(name, environment);
-  return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
-};
-
 const getStaticVariableIndex = (
   expression: Expression,
   environment: Environment,
@@ -219,32 +216,6 @@ const isPossiblyAssignable = (target: Expression, isInit: boolean) =>
   target.kind === "Let" ||
   (target.kind === "Identifier" && (isInit || isLocallyResolved(target))) ||
   (!isInit && target.kind === "Prime");
-
-interface UnchangedVariable {
-  index: number;
-  expression: Expression;
-}
-
-const getUnchangedVariables = (
-  expression: Expression,
-  environment: Environment,
-  visited = new Set<string>(),
-  written = expression,
-): UnchangedVariable[] | undefined => {
-  if (expression.kind === "Tuple") {
-    const variables = expression.elements.map((element) =>
-      getUnchangedVariables(element, environment, visited),
-    );
-    return variables.every((item) => item !== undefined) ? variables.flat() : undefined;
-  }
-  if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
-  const index = environment.variableIndex.get(expression.name);
-  if (index !== undefined) return [{ index, expression: written }];
-  const definition = getZeroArityBody(expression.name, environment);
-  if (!definition) return undefined;
-  visited.add(expression.name);
-  return getUnchangedVariables(definition.body, environment, visited, written);
-};
 
 const ACTION_KINDS = new Set([
   "Label",

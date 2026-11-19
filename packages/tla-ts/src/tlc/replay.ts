@@ -25,6 +25,7 @@ import {
   forEachBoundElement,
   freezeCallStack,
   getContextElements,
+  getDefinition,
   getLazyFunction,
   getQuantifierElements,
   mapBoundSets,
@@ -301,6 +302,38 @@ export const holdsValue = (run: RunKind, expression: Expression, value: Value, i
   throw run.isInit && isWalked && isBuiltInOperation(expression)
     ? new TlaUncodedError(message)
     : createRunError(run, message);
+};
+
+export const getZeroArityBody = (name: string, environment: Environment) => {
+  if (environment.constants.has(name)) return undefined;
+  const definition = getDefinition(name, environment);
+  return definition?.kind === "Operator" && definition.params.length === 0 ? definition : undefined;
+};
+
+export interface UnchangedVariable {
+  index: number;
+  expression: Expression;
+}
+
+export const getUnchangedVariables = (
+  expression: Expression,
+  environment: Environment,
+  visited = new Set<string>(),
+  written = expression,
+): UnchangedVariable[] | undefined => {
+  if (expression.kind === "Tuple") {
+    const variables = expression.elements.map((element) =>
+      getUnchangedVariables(element, environment, visited),
+    );
+    return variables.every((item) => item !== undefined) ? variables.flat() : undefined;
+  }
+  if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
+  const index = environment.variableIndex.get(expression.name);
+  if (index !== undefined) return [{ index, expression: written }];
+  const definition = getZeroArityBody(expression.name, environment);
+  if (!definition) return undefined;
+  visited.add(expression.name);
+  return getUnchangedVariables(definition.body, environment, visited, written);
 };
 
 export const isAssignedShortcut = (replay: Pick<Replay, "environment" | "isInit" | "isEnabled">) =>
