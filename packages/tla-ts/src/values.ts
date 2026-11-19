@@ -2702,7 +2702,12 @@ export const updateFunction = (
   );
   updated.writtenKeys = finite.writtenKeys;
   updated.lambdaDomain = finite.lambdaDomain;
-  if (finite.hash !== 0 && finite.hash !== UNFINGERPRINTABLE_HASH) {
+  // Hashing marks a set sorted, and TLC sorts a set that EXCEPT stores only once it fingerprints the function.
+  if (
+    finite.hash !== 0 &&
+    finite.hash !== UNFINGERPRINTABLE_HASH &&
+    !(isEnumeratedSet(next) && !isNormalizedSet(next))
+  ) {
     const nextHash = getValueHash(next);
     if (nextHash !== UNFINGERPRINTABLE_HASH) {
       const keyHash = getValueHash(finite.domain[position]);

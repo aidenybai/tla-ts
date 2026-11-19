@@ -215,6 +215,11 @@ describe("printing matches TLC", () => {
       'x\' = 1 /\\ {[a |-> 2], [a |-> 1]} \\ {"a"} = {}',
       'Attempted to check equality of string "a" with non-string:\n[a |-> 2]',
     ],
+    [
+      "x = <<{}>>",
+      "x' = [x EXCEPT ![1] = {2, 1}] /\\ \"a\" \\in x'[1]",
+      'Attempted to check equality of integer 2 with non-integer:\n"a"',
+    ],
   ])(
     "searches the set in %s, %s as TLC does, which sorts a set literal in place as it fingerprints or prints it",
     async (init, next, message) => {
@@ -227,6 +232,16 @@ describe("printing matches TLC", () => {
       );
     },
   );
+
+  it("searches a set literal that EXCEPT stores as sorted once TLC fingerprints the function", async () => {
+    const run = await checkPrinting(
+      'VARIABLE x\nInit == x = <<{}>>\nNext == x\' = [x EXCEPT ![1] = {2, 1}]\nInv == "a" \\notin x[1]',
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(run.result.failure?.message).toBe(
+      'Evaluating invariant Inv failed.\nAttempted to compare string "a" with non-string:\n2',
+    );
+  });
 });
 
 const NESTED_TUPLE_LINES = Array.from({ length: 10 }, () => "<<1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>");
