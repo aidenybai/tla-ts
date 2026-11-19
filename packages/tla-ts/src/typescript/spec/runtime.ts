@@ -131,13 +131,27 @@ const DEFINITIONS = [
   // HostLoadImportedModule (§16.2.1.10) for a program's host, which loads the module of the file
   // that the referrer's request names, made the first time the host loads it in the realm.
   `HostLoadModuleFrom(s, referrer, request) ==
-  LET node == ModuleNode(ModuleAt(s, referrer).node.targets[request.specifier]) IN
-  IF node.kind # "module" THEN Assert(FALSE, "tla-ts can't import a CommonJS module yet")
-  ELSE LoadModuleNode(s, node)`,
+  LoadModuleNode(s, ModuleNode(ModuleAt(s, referrer).node.targets[request.specifier]))`,
+  // A CommonJS module that an ES module imports is a Synthetic Module Record whose default export
+  // is the module's exports, as Node's ModuleWrap for it gives them.
   `LoadModuleNode(s, node) ==
   IF <<s.realmId, node.file>> \\in DOMAIN s.moduleIds THEN Ok(s, s.moduleIds[<<s.realmId, node.file>>])
-  ELSE LET m == Len(s.modules) + 1 IN
-       Ok([s EXCEPT !.modules = Append(@, SourceTextModule(node)), !.moduleIds = (<<s.realmId, node.file>> :> m) @@ @], m)`,
+  ELSE LET m == Len(s.modules) + 1
+           record == IF node.kind = "commonjs"
+                     THEN ModuleRecord("synthetic", node, Undefined, <<>>, <<>>, FALSE, <<>>, <<>>, <<>>, <<>>)
+                     ELSE SourceTextModule(node)
+       IN Ok([s EXCEPT !.modules = Append(@, record), !.moduleIds = (<<s.realmId, node.file>> :> m) @@ @], m)`,
+  // The evaluation of a Synthetic Module Record in InnerModuleEvaluation, with the result value
+  // given. A CommonJS module's runs its code, as Node's ModuleWrap does once, and sets its default
+  // export to the exports, and evaluates to the error it threw from then on.
+  `SyntheticEvaluateThen(s, m, value) ==
+  LET rec == ModuleAt(s, m) IN
+  CASE rec.node = None -> Ok(SyntheticEvaluate(s, m), value)
+    [] rec.status = "evaluated" -> IF rec.error = Empty THEN Ok(s, value) ELSE ThrowValue(s, rec.error)
+    [] OTHER ->
+         LET r == RequireFile(s, rec.node.file) IN
+         IF IsAbrupt(r) THEN Abrupt(SetModule(r.s, m, [status |-> "evaluated", error |-> r.c.value]), r.c)
+         ELSE Ok(SetModule(SetMutableBinding(r.s, rec.env, N("default"), Val(r), TRUE).s, m, [status |-> "evaluated"]), value)`,
   // RunModule for a program whose code is a module, as the host runs its entry: the module loaded,
   // linked, and evaluated, with the promise of its evaluation as the result's value.
   `RunModuleNode(s, node) ==
@@ -393,6 +407,18 @@ const HOST_PATCHES = [
     name: "ExecuteAsyncModule",
     from: "EvaluateDisposing(then.s, ModuleContext(ModuleAt(s, m).env), ModuleItems(ModuleAt(s, m).node))",
     to: "RunBody(then.s, ModuleContext(ModuleAt(s, m).env), ModuleAt(s, m).node.body)",
+  },
+  // A Synthetic Module Record links once, as Node's does, so that a CommonJS module that a later
+  // link reaches keeps its exports.
+  {
+    name: "SyntheticLink",
+    from: "SyntheticLink(s, m) ==\n",
+    to: "SyntheticLink(s, m) ==\n  IF ModuleAt(s, m).env # 0 THEN s ELSE\n",
+  },
+  {
+    name: "InnerModuleEvaluation",
+    from: `CASE rec.kind = "synthetic" -> Ok(SyntheticEvaluate(s, m), [stack |-> stack, index |-> index])`,
+    to: `CASE rec.kind = "synthetic" -> SyntheticEvaluateThen(s, m, [stack |-> stack, index |-> index])`,
   },
   // The require that a CommonJS module's code calls.
   {

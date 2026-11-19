@@ -382,6 +382,43 @@ describe("compiles CommonJS modules as Node loads them", () => {
     });
   });
 
+  describe("gives an ES module a CommonJS module's exports as its default export", () => {
+    const getImporting = (expected: string) => ({
+      ...getFiles("", ""),
+      "package.json": '{ "type": "module" }',
+      "main.js": getMain(
+        `import counter from "./counter.cjs";
+        import again from "./counter.cjs";
+        import "./side.cjs";
+        import { order } from "./order.js";
+        const log = [counter === again, counter.next(), again.next(), order];`,
+        expected,
+      ),
+      "counter.cjs": 'let count = 0; exports.next = () => ++count; globalThis.order = "counter";',
+      "side.cjs": 'globalThis.order += ",side";',
+      "order.js": "export const order = globalThis.order;",
+    });
+
+    it("agrees with Node", async () => {
+      expect((await checkModules(getImporting("true,1,2,counter,side"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getImporting("true,1,2,side,counter"))).message).toContain(THREW);
+    });
+
+    it("stops at an import of another name", async () => {
+      expect(
+        (
+          await checkModules({
+            "main.js": 'import { next } from "./counter.cjs";',
+            "counter.cjs": "exports.next = () => 1;",
+          })
+        ).message,
+      ).toContain("tla-ts can't import names other than default from a CommonJS module");
+    });
+  });
+
   it("stops at a module object's property other than exports", async () => {
     expect((await checkModules(getFiles("log.push(module.id);", "."))).message).toContain(
       "tla-ts can't use a CommonJS module's module",

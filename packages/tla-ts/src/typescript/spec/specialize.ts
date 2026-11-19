@@ -2397,11 +2397,36 @@ export const specialize = (
           statement,
         );
       }
+      // Node finds the names a CommonJS module exports by reading its code, other than default.
+      const specifier =
+        ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)
+          ? statement.moduleSpecifier
+          : undefined;
+      const target =
+        specifier !== undefined && ts.isStringLiteral(specifier)
+          ? files[(file.targets.get(specifier.text) ?? 0) - 1]
+          : undefined;
+      const clause = ts.isImportDeclaration(statement) ? statement.importClause : undefined;
+      const exported = ts.isExportDeclaration(statement) ? statement.exportClause : undefined;
+      if (
+        target?.kind === "commonjs" &&
+        (clause?.namedBindings !== undefined ||
+          (ts.isExportDeclaration(statement) &&
+            (exported === undefined ||
+              !ts.isNamedExports(exported) ||
+              exported.elements.some(
+                (element) => (element.propertyName ?? element.name).text !== "default",
+              ))))
+      ) {
+        throw new TlaTypeScriptError(
+          "tla-ts can't import names other than default from a CommonJS module, which Node finds by reading its code",
+          statement,
+        );
+      }
       if (ts.isImportDeclaration(statement)) {
         const request = getRequest(statement);
         if (request === undefined) continue;
         requests.push(request);
-        const clause = statement.importClause;
         if (clause?.phaseModifier !== undefined) {
           throw new TlaTypeScriptError(
             "tla-ts can't import a module's source or defer it yet",
