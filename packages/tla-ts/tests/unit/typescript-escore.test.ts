@@ -1435,6 +1435,29 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("scopes an if clause's function declaration to a block of its own outside strict mode", () => {
+    const getSource = (expected: string) => `
+      const result = (function () {
+        let shadowed = 1;
+        if (true) function shadowed() {}
+        if (false);
+        else function shadowed() {}
+        return String(shadowed);
+      })();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("1"), false)).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("function shadowed() {}"), false)).message).toContain(
+        THREW,
+      );
+    });
+  });
+
   describe("models the realm of the host that compiles it", () => {
     const getSource = (expected: string) => `
       const result = [

@@ -136,6 +136,13 @@ export const getLocals = (
       return;
     }
     if (isNested(child)) {
+      // §B.3.4: a function declaration that is an if statement's clause runs as a block that
+      // holds it, whose scope its name is.
+      if (ts.isFunctionDeclaration(child) && ts.isIfStatement(child.parent) && child.name) {
+        const name = child.name;
+        inScope(getBlockDeclarations([child]), () => visit(name));
+        return;
+      }
       // A declaration's name is its scope's; what it holds is the function's or class's own.
       if ((ts.isFunctionDeclaration(child) || ts.isClassDeclaration(child)) && child.name) {
         visit(child.name);
