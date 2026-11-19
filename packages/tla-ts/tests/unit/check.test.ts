@@ -1638,6 +1638,62 @@ describe("initial predicate and next-state relation match TLC", () => {
     );
     expect([result.generatedStates, result.distinctStates]).toEqual(counts);
   });
+
+  const checkPrints = async (variables: string, init: string, next: string, invariant = "TRUE") => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE ${variables}\nBoth(a) == a /\\ a\nOuter(b) == Both(b = TRUE)\nInit == ${init}\nNext == ${next}\nInv == ${invariant}\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: (text) => printed.push(text),
+    });
+    return { result, printed };
+  };
+
+  it.each([
+    ["x", 'x = IF Outer(PrintT("init")) THEN 0 ELSE 1', "UNCHANGED x", ['"init"']],
+    ["x", 'x \\in {1, 2} /\\ Outer(PrintT("init"))', "UNCHANGED x", ['"init"', '"init"']],
+    [
+      "x, y",
+      "x \\in {1, 2} /\\ y = IF Outer(PrintT(x)) THEN 0 ELSE 1",
+      "UNCHANGED <<x, y>>",
+      ["1", "2"],
+    ],
+    ["x", "x \\in {1, 2}", 'x\' = IF Outer(PrintT("next")) THEN x ELSE x', ['"next"', '"next"']],
+    ["x", "x \\in {1, 2}", "x' = IF Outer(PrintT(x)) THEN x ELSE x", ["1", "2"]],
+    [
+      "x, y",
+      'y = (LET d == PrintT("d") IN IF Outer(d) THEN {e \\in 1..3 : Outer(d)} ELSE {}) /\\ x \\in {0, 1}',
+      'x\' = (x + 1) % 3 /\\ UNCHANGED y /\\ 2 \\in {e \\in y : Outer(LET c == PrintT("c") IN c)}',
+      ['"d"', ...Array<string>(9).fill('"c"')],
+    ],
+  ])(
+    "prints from an operator argument a definition forces with Init %s as often as TLC",
+    async (variables, init, next, expected) => {
+      const checked = await checkPrints(variables, init, next);
+      expect([checked.result.status, checked.printed]).toEqual(["success", expected]);
+    },
+  );
+
+  it("prints from an operator argument again as TLC does when it replays a violation", async () => {
+    const checked = await checkPrints(
+      "x",
+      'x = IF Outer(PrintT("init")) THEN 0 ELSE 1',
+      "x' = IF Outer(PrintT(x)) THEN x + 1 ELSE x",
+      "x < 2",
+    );
+    const violation = checked.result.violation;
+    expect([
+      checked.result.status,
+      checked.printed,
+      violation?.trace.map((step) => step.output),
+      violation?.traceOutput,
+    ]).toEqual([
+      "invariant-violation",
+      ['"init"', "0", "1"],
+      [['"init"'], ["0"], ["1"]],
+      ['"init"', "0", "1"],
+    ]);
+  });
 });
 
 describe("check without code generation from strings", () => {

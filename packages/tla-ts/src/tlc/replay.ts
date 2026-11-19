@@ -111,8 +111,14 @@ const evaluateOperatorAt = (
 
 const getContext = (replay: Replay, scope: Scope | undefined, partial: State): Context =>
   replay.isInit
-    ? { environment: replay.environment, scope, state: partial, next: undefined }
-    : { environment: replay.environment, scope, state: replay.current, next: partial };
+    ? { environment: replay.environment, scope, state: partial, next: undefined, isNaming: true }
+    : {
+        environment: replay.environment,
+        scope,
+        state: replay.current,
+        next: partial,
+        isNaming: true,
+      };
 
 const isComplete = (partial: State): partial is Value[] => !partial.includes(undefined);
 

@@ -147,6 +147,9 @@ export interface Thunk {
   cache: Value | undefined;
   isStreamed: boolean;
   isReleased?: boolean;
+  // Whether a step or a replay of one bound the thunk, so it may run the thunk's expression again in
+  // its scope rather than read the cached value.
+  isNamed?: boolean;
 }
 
 type Binding =
@@ -241,6 +244,8 @@ export interface Context {
   state: State | undefined;
   next: State | undefined;
   isKeepLazy?: boolean;
+  // Whether a step or a replay of one binds the thunks of this context, which it may run by name.
+  isNaming?: boolean;
 }
 
 export type Evaluator = (context: Context) => Value;
@@ -874,6 +879,9 @@ const isStateWithin = (state: State | undefined, cached: State | undefined) => {
   }
 };
 
+const isUnassigned = (state: State | undefined) =>
+  state === undefined || state.every((value) => value === undefined);
+
 const forceThunk = (thunk: Thunk, context: Context) => {
   const cache = thunk.cache;
   const isCached =
@@ -900,7 +908,13 @@ const forceThunk = (thunk: Thunk, context: Context) => {
     thunk.state = context.state;
     thunk.next = context.next;
   }
-  if (thunk.cache !== undefined && thunk.state === undefined && thunk.next === undefined) {
+  // A value cached where no variable is assigned holds in every state, so forcing the thunk never
+  // reads its scope again. A step may still run a thunk it bound by name.
+  if (
+    thunk.cache !== undefined &&
+    ((thunk.state === undefined && thunk.next === undefined) ||
+      (!thunk.isNamed && isUnassigned(thunk.state) && isUnassigned(thunk.next)))
+  ) {
     thunk.scope = undefined;
     thunk.isReleased = true;
   }
@@ -1046,6 +1060,7 @@ const createThunk = (
   next: context.next,
   cache: undefined,
   isStreamed: false,
+  isNamed: context.isNaming === true,
 });
 
 export const findGlobalName = (name: string, environment: Environment): GlobalName | undefined => {
@@ -1396,6 +1411,7 @@ export const bindDefinitions = (
             next: context.next,
             cache: undefined,
             isStreamed: false,
+            isNamed: context.isNaming === true,
           }
         : definition.params.length > 0 || reevaluated?.impure.has(definition)
           ? {
@@ -1418,6 +1434,7 @@ export const bindDefinitions = (
               next: context.next,
               cache: undefined,
               isStreamed: reevaluated?.streamed.has(definition) ?? false,
+              isNamed: context.isNaming === true,
             };
   });
   const coverage = context.environment.coverage;
