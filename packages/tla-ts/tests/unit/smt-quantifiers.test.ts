@@ -151,8 +151,6 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
     ]);
   });
 
-  // The analyzer counts a step for each quantifier, and model_finder::checkpoint counts one for
-  // each formula it visits and each qinfo it compares.
   it("counts the steps of the quantifier analyzer", () => {
     expect(
       run([
@@ -174,8 +172,6 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
     ).toEqual(["(:rlimit 185)"]);
   });
 
-  // default_qm_plugin makes the model finder whether smt.mbqi is on or not, and its auf_solver
-  // counts a step.
   it("makes the model finder with smt.mbqi off", () => {
     const lines = ["(set-option :smt.mbqi false)", "(declare-const x Int)", "(assert (> x 0))"];
     expect(run([...lines, "(push)", "(get-info :rlimit)"])).toEqual(["(:rlimit 50)"]);
@@ -209,8 +205,6 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
 });
 
 describe("e-matching, as Z3 5.3.2 counts its steps", () => {
-  // qi_queue::instantiate reads the cancel flag for each entry, and the matcher reads it for each
-  // match and checks the resource limits for each candidate.
   it("counts the steps of the matcher and of the instantiation queue", () => {
     const lines = [
       "(declare-fun f (Int) Int)",
@@ -248,8 +242,6 @@ describe("e-matching, as Z3 5.3.2 counts its steps", () => {
 });
 
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {
-  // context::push internalizes and propagates the auxiliary context's formulas before it opens
-  // the scope.
   it("pushes its context as the kernel does", () => {
     expect(
       run([

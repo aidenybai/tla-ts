@@ -1839,8 +1839,6 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
-  // theory_array_base::include_func_interp puts array-ext in the model, so model::compress keeps
-  // the functions of the arrays it compares, and get-model prints them.
   it("interprets array-ext in the model and keeps the arrays it compares", () => {
     expect(
       run([
@@ -1881,8 +1879,6 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
-  // set_eliminate_and turns expand_select_store on in the rewriter of asserted_formulas, which
-  // turns a select of a store whose array nothing else uses into an if-then-else.
   it("expands a select of a store as it asserts the formula", () => {
     expect(
       run([

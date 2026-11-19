@@ -676,8 +676,6 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unsat", "(:rlimit 27949)"]);
   });
 
-  // context::push_eq drops an equality whose sides share a root, so propagate_eqs never reads the
-  // cancel flag for it.
   it("queues no equality between nodes of one class", () => {
     expect(
       run([
@@ -699,8 +697,6 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unknown", "(:rlimit 870)"]);
   });
 
-  // nra's check_assignment has nlsat evaluate a clause's literals once to see whether all are
-  // false and again to see whether one is true.
   it("evaluates nlsat's clauses twice to check nla's assignment", () => {
     expect(
       run([
@@ -712,7 +708,6 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "(:rlimit 1038)"]);
   });
 
-  // nla's grobner solver reads the cancel flag of the reslimit, which counts no step.
   it("counts no step when nla's grobner solver checks the limit", () => {
     expect(
       run([
@@ -2198,7 +2193,6 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
   });
 });
 
-// The ids reset-assertions frees and takes again decide the order of tseitin-cnf's clauses.
 describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
   const ARITH = [
     "(declare-const x Int)",
@@ -2224,8 +2218,6 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
     ")",
   ];
 
-  // The smt kernel frees qi_queue's cost variables, its formulas, bit2int's 1-bit zero and the
-  // last result of its rewriter, and the next kernel makes the zero and the variables again.
   it("frees the kernel before it makes the next one, and the assertions after", () => {
     expect(run([...ARITH, "(reset-assertions)", ...CLAUSES])).toEqual(GOAL);
     expect(run([...ARITH, "(reset-assertions)", "(reset-assertions)", ...CLAUSES])).toEqual(GOAL);
@@ -2235,8 +2227,6 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
     ]);
   });
 
-  // The tactic2solver of a combined solver keeps its own copy of the assertions, which it frees
-  // after the smt kernel or the sat solver.
   it("frees the assertions of the solver that the last check-sat holds after the solver", () => {
     expect(run([...ARITH, "(check-sat)", "(reset-assertions)", ...CLAUSES])).toEqual([
       "sat",
@@ -2342,8 +2332,6 @@ describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
     ]);
   });
 
-  // cmd_context's m_check_sat_result keeps the finite-domain solver that answered past
-  // reset-assertions, and the next assert frees it.
   it("keeps the solver of the last check-sat until the next assert", () => {
     expect(
       run([

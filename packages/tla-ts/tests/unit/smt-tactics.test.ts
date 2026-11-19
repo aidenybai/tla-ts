@@ -2449,8 +2449,6 @@ describe("qffd, as Z3 5.3.2 stops its finite-domain solver", () => {
     );
   });
 
-  // The 1-bit zero of the smt solver's bit2int is older than x, so theory_bv's mk_eq makes a new
-  // atom (= #b0 x) as it copies the zero's bit to x.
   it("keeps the 1-bit zero Z3 makes as it starts the smt solver", () => {
     expect(
       run([
@@ -2608,7 +2606,6 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
     ]);
   });
 
-  // The order or-else frees what its children hold sets the ids the next bit-blast takes.
   it("frees the children of or-else first to last", () => {
     expect(
       run([
@@ -2777,9 +2774,6 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
     ).toEqual(["sat", "(:rlimit 408)", "sat", "(:rlimit 882)"]);
   });
 
-  // The kernel makes bit2int's 1-bit zero and qi_queue's cost terms, and frees them as the tactic
-  // returns. The solver of QF_FD has no kernel, so the next terms take their ids, which order the
-  // clauses of tseitin-cnf.
   it("frees the terms the kernel of the smt tactic makes, so QF_FD numbers the next ones", () => {
     expect(
       run([
@@ -2812,8 +2806,6 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
     ]);
   });
 
-  // proto_model::mk_model leaves the values of the factories to the proto model, which ~context
-  // frees before bit2int's 1-bit zero.
   it("frees the values of the proto model with the kernel of the smt tactic", () => {
     expect(
       run([
@@ -2885,8 +2877,6 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ).toEqual(["unknown", "(:rlimit 567)", "unknown", "(:rlimit 1053)"]);
   });
 
-  // The failed branch's #b10 is freed, so in the second check dt2bv makes x!1 before #b10 again,
-  // and theory_bv finds the atom (= x!1 #b10).
   it("frees and-then's subgoals when a branch fails", () => {
     expect(
       run([
@@ -2939,7 +2929,6 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ).toEqual(["unsat", "unknown", '(:reason-unknown "no reason given")', "(:rlimit 87)"]);
   });
 
-  // The parser numbers the first line's columns from 1.
   it("reads tactic.default_tactic as one s-expression", () => {
     expect(
       run([
@@ -2953,8 +2942,6 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ]);
   });
 
-  // The first declaration makes the solver, so an error in the default tactic drops that
-  // declaration and leaves cmd_context without a solver.
   it("builds tactic.default_tactic as it makes the solver", () => {
     expect(
       run([
@@ -2972,7 +2959,6 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ]);
   });
 
-  // parse_sexpr reports its own errors, and the solver takes the logic's tactic.
   it("reports the parse errors of tactic.default_tactic under an empty file name", () => {
     expect(
       run([

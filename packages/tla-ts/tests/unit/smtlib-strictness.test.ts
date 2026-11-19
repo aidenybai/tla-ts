@@ -828,8 +828,6 @@ describe("messages of the reader, as Z3 5.3.2 prints them", () => {
     ]);
   });
 
-  // set_option_cmd passes a numeral to gparams as the string of its rational, so a whole decimal
-  // sets an unsigned parameter.
   it("sets a whole decimal as an integer", () => {
     expect(
       run([
