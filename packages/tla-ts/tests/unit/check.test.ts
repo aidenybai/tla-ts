@@ -1105,6 +1105,25 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it("names a permuted set with fewer than two elements by its source, with the parentheses of its operands, as TLC does", async () => {
+    const warnings: CheckProgress[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS TLC\nCONSTANTS a, b, c\nVARIABLE x\nInit == x \\in {a, b}\nNext == UNCHANGED x\nSym == ({( a :> b @@ b :> a )}) \\cup Permutations(({c}))\n====",
+      config: "CONSTANTS a = a\nb = b\nc = c\nINIT Init\nNEXT Next\nSYMMETRY Sym",
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress);
+      },
+    });
+    expect(warnings).toEqual([
+      {
+        kind: "warning",
+        code: 2300,
+        text: "The sets {(a:>b@@b:>a)}, and ({c}) have been defined to be a symmetry set but contain less than two elements.",
+      },
+    ]);
+  });
+
   it("warns about symmetry during liveness checking whenever the configuration declares it, as TLC's Tool#hasSymmetry asks", async () => {
     const progress: CheckProgress[] = [];
     await check({
