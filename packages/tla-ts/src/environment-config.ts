@@ -239,6 +239,11 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     ),
   );
   [...substitutions.keys()].forEach((key) => constants.delete(key));
+  const getTargetArity = (target: string) => {
+    const definition = linked.definitions.get(getRootKey(target));
+    if (definition === undefined) return undefined;
+    return definition.kind === "Operator" ? definition.params.length : 0;
+  };
   const checkTarget = (
     name: string,
     target: string,
@@ -247,9 +252,8 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
   ) => {
     if (others.has(target)) throw createReusedTargetError(target);
     const targetKey = getRootKey(target);
-    const definition = linked.definitions.get(targetKey);
     const isDefined =
-      definition !== undefined ||
+      linked.definitions.has(targetKey) ||
       linked.builtins.has(targetKey) ||
       constants.has(targetKey) ||
       declaredConstants.includes(target);
@@ -258,11 +262,8 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
         `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
       );
     }
-    if (
-      arity !== undefined &&
-      definition?.kind === "Operator" &&
-      definition.params.length !== arity
-    ) {
+    const targetArity = getTargetArity(target);
+    if (arity !== undefined && targetArity !== undefined && targetArity !== arity) {
       throw createArityError(name, target);
     }
   };
@@ -330,11 +331,9 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
   ].forEach((name) => {
     const target = overrides.get(name);
     if (target === undefined) return;
-    const definition = linked.definitions.get(getRootKey(target));
+    const targetArity = getTargetArity(target);
     const arity = linked.root.constants.find((constant) => constant.name === name)?.arity;
-    if (definition?.kind === "Operator" && definition.params.length !== arity) {
-      throw createArityError(name, target);
-    }
+    if (targetArity !== undefined && targetArity !== arity) throw createArityError(name, target);
   });
   const scopedKeys = new Set(
     [...config.constants, ...config.substitutions]

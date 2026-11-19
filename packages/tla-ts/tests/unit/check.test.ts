@@ -1691,6 +1691,20 @@ ASSUME TLCFP(a) = -887695703
     }
   });
 
+  it("counts a function definition as taking no arguments in <-, as TLC does", async () => {
+    const cases = [
+      ["CONSTANT F(_)\nf[n \\in {1}] == n\nASSUME TRUE", "F"],
+      ["Op(a) == a\nf[n \\in {1}] == n\nASSUME TRUE", "Op"],
+    ];
+    for (const [body, name] of cases) {
+      await expect(checkModule(body, `CONSTANT ${name} <- f`)).rejects.toThrow(
+        new TlaConfigError(
+          `The configuration file substitutes for ${name} with f of different number of arguments.`,
+        ),
+      );
+    }
+  });
+
   it("reports a table's set that mixes types as the unexpected exception TLC throws", async () => {
     await expect(checkModule("CONSTANT F(_)", 'CONSTANT F(1) = {1, "a"}')).rejects.toThrow(
       new TlaEvaluationError(
