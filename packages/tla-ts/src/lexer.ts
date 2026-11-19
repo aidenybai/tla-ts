@@ -403,7 +403,7 @@ const matchUnicodeOperator = (source: string, index: number) => {
   return UNICODE_OPERATORS.has(single) ? single : undefined;
 };
 
-export const matchOperator = (source: string, index: number): OperatorMatch | undefined => {
+const matchOperator = (source: string, index: number): OperatorMatch | undefined => {
   const code = source.charCodeAt(index);
   if (code === CODE_BACKSLASH && isInClass(source.charCodeAt(index + 1), LETTER)) {
     const word = source.slice(index + 1, skipClass(source, index + 1, LETTER));
@@ -422,12 +422,6 @@ export const matchOperator = (source: string, index: number): OperatorMatch | un
 };
 
 const UNICODE_NAMES = new Set(["ℕ", "ℤ", "ℝ"]);
-export const matchUnicodeToken = (source: string, index: number): OperatorMatch | undefined => {
-  const token = [source.slice(index, index + 2), source[index]].find(
-    (candidate) => UNICODE_OPERATORS.has(candidate) || UNICODE_NAMES.has(candidate),
-  );
-  return token === undefined ? undefined : { text: token, length: token.length };
-};
 
 export const skipWhile = (
   source: string,
@@ -469,7 +463,7 @@ const BASED_NUMBER_DIGITS = new Map([
 ]);
 
 // tlapm's lexer reads only \b, \o and \h, and SANY's their capitals too.
-export const matchBasedNumber = (source: string, index: number, isTlapm = false) => {
+const matchBasedNumber = (source: string, index: number, isTlapm = false) => {
   if (source.charCodeAt(index) !== CODE_BACKSLASH) return 0;
   const base = source.charAt(index + 1);
   const digits = BASED_NUMBER_DIGITS.get(isTlapm ? base : base.toLowerCase());

@@ -2044,8 +2044,12 @@ export const getSanyParseError = (source: string) => {
   const state: ParserState = {
     readToken: () => {
       const token = readToken();
-      if (typeof token !== "string") return token;
-      state.lexicalError ??= token;
+      if ("kind" in token) return token;
+      // SANY's parser reports a lexical error at the end of a token that spans lines as an open comment.
+      state.lexicalError ??=
+        token.message.includes("EOF") && token.beginLine !== token.endLine
+          ? `Lexical {error: EOF reached, possibly open comment starting around line ${token.beginLine}`
+          : token.message;
       return { ...start, next: undefined };
     },
     lexicalError: undefined,

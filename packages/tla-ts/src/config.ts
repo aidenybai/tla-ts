@@ -1,7 +1,6 @@
 import { getUnexpectedException, TlaConfigError } from "./errors";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
-import { matchBasedNumber, matchOperator, matchUnicodeToken } from "./lexer";
-import { formatLexicalError } from "./sany/lexer";
+import { createSanyLexer, getKind } from "./sany/lexer";
 import type { TlcVersion } from "./tlc/version";
 
 export type ConfigValue =
@@ -46,7 +45,7 @@ export interface ModelConfig {
 }
 
 interface ConfigToken {
-  kind: "Word" | "Number" | "String" | "Symbol" | "End" | "Error";
+  kind: "Word" | "Number" | "String" | "End" | "Error";
   text: string;
   line: number;
 }
@@ -83,113 +82,27 @@ const KEYWORDS = new Set([
 const TYPE_KEYWORDS = ["TYPE", "TYPE_CONSTRAINT"];
 const KEYWORDS_174 = new Set([...SHARED_KEYWORDS, ...TYPE_KEYWORDS]);
 
-const SYMBOLS = ["<-", "<<", ">>", "=", "{", "}", ",", "[", "]", "(", ")", "!"];
-
-const getCommentLength = (text: string) => {
-  let position = 0;
-  let depth = 0;
-  do {
-    if (position >= text.length) return undefined;
-    const pair = text.slice(position, position + 2);
-    const step = pair === "(*" ? 1 : pair === "*)" ? -1 : 0;
-    depth += step;
-    position += step === 0 ? 1 : 2;
-  } while (depth > 0);
-  return position;
-};
-
+// TLC reads the file with SANY's token manager, in the state for a module's body.
 const tokenizeConfig = (source: string) => {
+  // TLC appends a line break, so a \* comment can end the file.
+  const readToken = createSanyLexer(`${source}\n`, "SPEC");
   const tokens: ConfigToken[] = [];
-  let position = 0;
-  let lineNumber = 1;
-  let lineStart = 0;
-  const addLexicalError = (index: number, after: string) => {
-    tokens.push({
-      kind: "Error",
-      text: formatLexicalError(lineNumber, index - lineStart + 1, source[index], after),
-      line: lineNumber,
-    });
-  };
-  const addEndOfInputError = (after: string) => {
-    tokens.push({
-      kind: "Error",
-      text: formatLexicalError(lineNumber + 1, 0, undefined, after),
-      line: lineNumber,
-    });
-  };
-  const skip = (text: string) => {
-    const lines = text.split("\n");
-    if (lines.length > 1) {
-      lineNumber += lines.length - 1;
-      lineStart = position + text.length - lines[lines.length - 1].length;
-    }
-    position += text.length;
-  };
-  while (position < source.length) {
-    const rest = source.slice(position);
-    const whitespace = /^\s+/.exec(rest)?.[0];
-    if (whitespace) {
-      skip(whitespace);
-      continue;
-    }
-    if (rest.startsWith("\\*")) {
-      const lineEnd = rest.indexOf("\n");
-      skip(lineEnd === -1 ? rest : rest.slice(0, lineEnd));
-      continue;
-    }
-    if (rest.startsWith("(*")) {
-      const length = getCommentLength(rest);
-      if (length === undefined) {
-        skip(rest);
-        addEndOfInputError("");
-        return tokens;
-      }
-      skip(rest.slice(0, length));
-      continue;
-    }
-    const line = lineNumber;
-    const basedLength = matchBasedNumber(source, position);
-    const number =
-      basedLength > 0 ? rest.slice(0, basedLength) : /^\d+(?![A-Za-z_])/.exec(rest)?.[0];
-    if (number) {
-      tokens.push({ kind: "Number", text: number, line });
-      skip(number);
-      continue;
-    }
-    const word = /^[A-Za-z0-9_]+/.exec(rest)?.[0];
-    if (word) {
-      tokens.push({ kind: "Word", text: word, line });
-      skip(word);
-      continue;
-    }
-    if (rest.startsWith('"')) {
-      const string = /^"((?:[^"\\\n]|\\[^\n])*)("?)/.exec(rest);
-      const text = string?.[0] ?? '"';
-      if (string?.[2] !== '"') {
-        skip(text);
-        if (position === source.length) addEndOfInputError(`${text}\n`);
-        else addLexicalError(position, text);
-        return tokens;
-      }
-      tokens.push({ kind: "String", text, line });
-      skip(text);
-      continue;
-    }
-    const operator = matchUnicodeToken(source, position) ?? matchOperator(source, position);
-    const symbol = SYMBOLS.find((candidate) => rest.startsWith(candidate));
-    if (symbol && symbol.length >= (operator?.length ?? 0)) {
-      tokens.push({ kind: "Symbol", text: symbol, line });
-      skip(symbol);
-      continue;
-    }
-    if (!operator) {
-      addLexicalError(position, "");
-      return tokens;
-    }
-    tokens.push({ kind: "Word", text: operator.text, line });
-    skip(source.slice(position, position + operator.length));
+  let token = readToken();
+  while ("kind" in token && token.kind !== getKind("EOF")) {
+    const kind =
+      token.kind === getKind("NUMBER_LITERAL")
+        ? "Number"
+        : token.kind === getKind("STRING_LITERAL")
+          ? "String"
+          : "Word";
+    tokens.push({ kind, text: token.image, line: token.beginLine });
+    token = readToken();
   }
-  tokens.push({ kind: "End", text: "", line: lineNumber });
+  tokens.push(
+    "kind" in token
+      ? { kind: "End", text: "", line: token.beginLine }
+      : { kind: "Error", text: token.message, line: token.endLine },
+  );
   return tokens;
 };
 
