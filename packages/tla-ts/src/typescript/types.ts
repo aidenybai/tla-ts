@@ -809,7 +809,7 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
   const symbol = ts.isIdentifier(node) ? getSymbol(node, context.checker) : undefined;
   const declaration = getValueDeclaration(symbol, context);
   // A variable that a declaration without a type or a value types by what it's assigned holds what
-  // the heap holds where each assignment gives it an array literal that the heap holds.
+  // the heap holds where each assignment gives it an array that the heap holds.
   const assigned =
     symbol !== undefined && ts.isIdentifier(node) && isAutoTyped(node, context)
       ? getAssignedValues(symbol, context)
@@ -826,9 +826,7 @@ const isHeld = (node: ts.Expression, context: Context): boolean => {
     arrays.length > 0 &&
     (arrays.length === assigned.length ||
       isArrayLike(checker.getNonNullableType(checker.getTypeAtLocation(node)))) &&
-    arrays.every(
-      (value) => ts.isArrayLiteralExpression(value) && context.heapCollections.has(value),
-    )
+    arrays.every((value) => context.heapCollections.has(value))
   ) {
     return true;
   }

@@ -58399,4 +58399,28 @@ describe("runs the script's methods in a conversion inside at most one other", (
       expect((await checkModel(getSource(wrong))).failure?.message).toContain(`seen ${expected}`);
     });
   });
+
+  describe("reads the array that the heap holds through a variable that only assignments type", () => {
+    const getSource = (expected: string) => `
+      const box = { seen: [] as string[] };
+      let holed;
+      holed = new Array(3);
+      holed[1] = 3;
+      holed[2] = 4;
+      box.seen.push(
+        String(holed.reduce((sum: number, value: number) => sum + value)),
+        String(holed.length),
+      );
+      const seen = box.seen.join();
+      if (seen !== "${expected}") throw new Error("seen " + seen);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkModel(getSource("7,3"))).failure).toBeUndefined();
+    });
+
+    it("rejects another outcome", async () => {
+      expect((await checkModel(getSource("7,2"))).failure?.message).toContain("seen 7,3");
+    });
+  });
 });
