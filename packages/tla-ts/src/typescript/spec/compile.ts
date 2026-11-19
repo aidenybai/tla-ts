@@ -2,7 +2,7 @@ import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { createJavaScriptFile, isCommonJsFile } from "../common-js";
 import { rejectEarlyErrors } from "../early-errors";
-import { createFileResolver } from "../program";
+import { createFileResolver, getJsxText } from "../program";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
@@ -128,7 +128,7 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
 // level awaits, which its JavaScript marks with an empty export after its code. A CommonJS
 // module's JavaScript is in the function that Node wraps it in, where a .js file may return.
 const transpile = (source: string, fileName: string, isModule: boolean, wrapper = ["", ""]) => {
-  const isTypeScript = /\.[cm]?ts$/.test(fileName);
+  const isTypeScript = /\.[cm]?tsx?$/.test(fileName);
   const transpiled = ts.transpileModule(
     isTypeScript ? source : `${wrapper[0]}${source}${wrapper[1]}`,
     {
@@ -249,7 +249,11 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
   // A script loads modules only where it calls import().
   const isScript = !isModule;
   if (isScript && !/\bimport\s*\(/.test(source)) {
-    const sourceFile = parse(transpile(source, fileName, false), fileName, false);
+    const sourceFile = parse(
+      transpile(getJsxText(fileName, source), fileName, false),
+      fileName,
+      false,
+    );
     // Node runs nothing of a script that it fails to parse.
     rejectEarlyErrors(sourceFile);
     return [
@@ -311,9 +315,7 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
     const text =
       original !== undefined
         ? `export * from ${JSON.stringify(original)};\nexport { default } from ${JSON.stringify(original)};\nexport const __esModule = true;\n`
-        : path === entry
-          ? source
-          : readFileSync(path, "utf8");
+        : getJsxText(path, path === entry ? source : readFileSync(path, "utf8"));
     if (path.endsWith(".json")) {
       files.push({
         sourceFile: ts.createSourceFile(path, "", ts.ScriptTarget.ESNext),

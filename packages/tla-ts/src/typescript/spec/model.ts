@@ -3,7 +3,7 @@ import type { Bound, Definition, Expression, OperatorDefinition } from "../../as
 import { parseConfig } from "../../config";
 import { TlaTypeScriptError } from "../../errors";
 import { printDefinition } from "../../printer";
-import type { Library } from "../program";
+import { getJsxText, type Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
 import { getNativeFunctions, NATIVE_DEFINITIONS } from "./native";
@@ -249,7 +249,9 @@ export const compileModelToEscore = (
     module.definitions.map((definition) => [definition.name, definition]),
   );
   const variables = new Set(module.variables.map((variable) => variable.name));
-  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.ESNext, true);
+  // The module's text with its JSX the calls it compiles to, which the steps run.
+  const text = getJsxText(fileName, source);
+  const file = ts.createSourceFile(fileName, text, ts.ScriptTarget.ESNext, true);
   // The module's exported functions, by name, with their parameters and tags.
   const exported = new Map<
     string,
@@ -785,7 +787,7 @@ export const compileModelToEscore = (
   // A model without state, whose checks read none, runs the module's top level once as its
   // assumptions do, and has no states, as today's spec has none.
   const isStateless = module.variables.length === 0 && actions.length === 0;
-  const isAsync = /\b(?:async|Promise|then|setTimeout)\b/.test(source);
+  const isAsync = /\b(?:async|Promise|then|setTimeout)\b/.test(text);
   // The bindings that the state lowers out of ESCore's heap, where the module lets it (see
   // lowered.ts), whose variable model holds them, and otherwise the variable heap holds ESCore's
   // state. A step's or a check's ESCore state is what the variable's value gives.
@@ -1016,7 +1018,7 @@ export const compileModelToEscore = (
     set: printExpression(rewriteGuards(choice.domain)),
   }));
   // As compileToEscore runs a script's jobs and timers, a step runs the ones a call leaves.
-  const settle = /\b(?:async|Promise|then|setTimeout)\b/.test(source)
+  const settle = isAsync
     ? "ModelSettle(r) == LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE [t EXCEPT !.c = r.c]"
     : "ModelSettle(r) == r";
   // The module's top level reads each state variable that starts at every value of its type, at
@@ -1129,8 +1131,8 @@ export const compileModelToEscore = (
     .concat(exports)
     .sort((left, right) => right.start - left.start)
     .reduce(
-      (text, change) => text.slice(0, change.start) + change.text + text.slice(change.end),
-      source,
+      (changed, change) => changed.slice(0, change.start) + change.text + changed.slice(change.end),
+      text,
     );
   const augmented = [
     replaced,

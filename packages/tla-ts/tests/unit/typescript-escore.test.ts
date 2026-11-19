@@ -67,12 +67,12 @@ const ready = new Promise((resolve) => {
 beforeAll(() => ready, 60_000);
 
 // Checks a script, with the definitions in appended added to the module of its code.
-const checkScript = (source: string, isStrict = true, appended = "") =>
+const checkScript = (source: string, isStrict = true, appended = "", fileName = "spec.ts") =>
   new Promise<ScriptResult>((resolve) => {
     worker.postMessage({
       id: pending.length,
       source: `${isStrict ? '"use strict";' : ""}\n${source}`,
-      fileName: "spec.ts",
+      fileName,
       isModule: false,
       appended,
     });
@@ -1815,6 +1815,42 @@ describe("compiles scripts by specializing ESCore", () => {
         (await checkScript('function unused() { return 1; } (globalThis as any)["un" + "used"]();'))
           .message,
       ).toContain("tla-ts can't call a function that its script names nowhere else");
+    });
+  });
+
+  // Node runs no JSX, which a bundler compiles to the calls that TypeScript emits for it, here by
+  // the factories that the file's pragmas name.
+  describe("runs a file of JSX as the calls that TypeScript emits for it", () => {
+    const getSource = (expected: string) => `/** @jsxRuntime classic */
+/** @jsx h */
+/** @jsxFrag Fragment */
+const Fragment = "frag";
+const h = (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) =>
+  \`\${String(type)}(\${props === null ? "" : Object.keys(props).join("+")}:\${children.join(",")})\`;
+const label = "t";
+const view = (
+  <div id="a" title={label}>
+    {1}
+    {" "}
+    <span>x</span>
+    <>y</>
+  </div>
+);
+if (view !== "${expected}") throw new Error(view);
+`;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("div(id+title:1, ,span(:x),frag(:y))"), false, "", "spec.tsx"))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("div(id+title:1,span(:x),frag(:y))"), false, "", "spec.tsx"))
+          .message,
+      ).toContain(THREW);
     });
   });
 
