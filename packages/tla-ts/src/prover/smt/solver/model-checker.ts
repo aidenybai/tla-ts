@@ -41,8 +41,8 @@ class AuxContext {
   }
 
   push() {
-    this.context.push();
-    this.asserted.push();
+    this.context.popToBaseLevel();
+    this.context.internalizeAndPush(this.asserted);
   }
 
   pop() {
@@ -51,6 +51,7 @@ class AuxContext {
   }
 
   assert(formula: number) {
+    if (this.context.checkCanceled()) return;
     this.context.popToBaseLevel();
     this.asserted.assertExpr(formula);
   }
@@ -255,7 +256,6 @@ export class ModelChecker {
     let isFoundRelevant = false;
     let numFailures = 0;
     for (const quantifier of this.qmanager.quantifiers) {
-      if (context.checkCanceled()) return { isFoundRelevant, numFailures: numFailures + 1 };
       if (
         !context.isRelevant(quantifier) ||
         context.getAssignment(context.getLiteral(quantifier)) !== L_TRUE

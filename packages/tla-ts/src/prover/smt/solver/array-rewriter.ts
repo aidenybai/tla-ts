@@ -24,7 +24,8 @@ export class ArrayRewriter {
   constructor(
     private manager: AstManager,
     private isSortingStore = false,
-    private isExpandingSelects = false,
+    private isExpandingSelectStores = false,
+    private isExpandingSelectItes = false,
   ) {}
 
   private isOp(expr: number, op: number) {
@@ -197,7 +198,7 @@ export class ArrayRewriter {
       if (
         !this.isOp(base, OP_CONST_ARRAY) &&
         !areValues &&
-        !(this.isExpandingSelects && manager.getRefCount(base) === 1)
+        !(this.isExpandingSelectStores && manager.getRefCount(base) === 1)
       )
         return undefined;
       const selectBase = this.mkApp(OP_SELECT, [base, ...indices]);
@@ -215,7 +216,7 @@ export class ArrayRewriter {
       const thenArray = manager.getArg(array, 1);
       const elseArray = manager.getArg(array, 2);
       if (
-        !this.isExpandingSelects &&
+        !this.isExpandingSelectItes &&
         manager.getRefCount(thenArray) !== 1 &&
         manager.getRefCount(elseArray) !== 1
       )

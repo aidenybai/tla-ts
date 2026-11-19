@@ -15,7 +15,10 @@ export abstract class TheoryLraState extends Theory {
   }
 
   updateParams() {
-    this.solver.settings.updateParams(this.context.params.intHammerPeriod ?? DEFAULT_HAMMER_PERIOD);
+    this.solver.settings.updateParams(
+      this.context.params.intHammerPeriod ?? DEFAULT_HAMMER_PERIOD,
+      this.context.params.isArithPropagatingEqs ?? true,
+    );
   }
 
   protected isIntExpr(expr: number) {

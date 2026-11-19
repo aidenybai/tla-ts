@@ -111,7 +111,7 @@ export class Grobner {
 
   constructor(private core: NlaCore) {
     this.manager = new PddManager(core.lra.getColumnCount());
-    this.solver = new PddSolver(this.manager, () => core.isCanceled());
+    this.solver = new PddSolver(this.manager, () => core.limit.isExhausted());
   }
 
   updateParams() {

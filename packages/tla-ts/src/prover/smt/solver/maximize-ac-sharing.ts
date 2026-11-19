@@ -84,13 +84,25 @@ export class MaxBvSharing extends RewriterTpl {
     );
   }
 
+  reset() {
+    this.pairCache.clear();
+  }
+
+  release() {
+    this.restoreEntries(0);
+    super.release();
+  }
+
   pushScope() {
     this.isInit = true;
     this.pairScopes.push(this.entries.length);
   }
 
   popScope() {
-    const size = this.pairScopes.pop() as number;
+    this.restoreEntries(this.pairScopes.pop() as number);
+  }
+
+  private restoreEntries(size: number) {
     for (let index = this.entries.length - 1; index >= size; index--) {
       const entry = this.entries[index];
       this.pairCache

@@ -676,6 +676,49 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["unsat", "(:rlimit 27949)"]);
   });
 
+  it("queues no equality between nodes of one class", () => {
+    expect(
+      run([
+        "(declare-datatypes ((C 0)) (((r) (g) (b))))",
+        "(declare-datatypes ((D 0)) (((u) (v) (w) (z))))",
+        "(declare-fun f (C) Int)",
+        "(declare-fun h (C C) Int)",
+        "(declare-const x C)",
+        "(declare-const y C)",
+        "(declare-const d D)",
+        "(declare-const q Real)",
+        "(assert (= (^ 2.0 q) 3.0))",
+        "(assert (not (= d u)))",
+        "(assert (> (h x y) 0))",
+        "(assert (or (= x b) (= (f x) 3)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unknown", "(:rlimit 870)"]);
+  });
+
+  it("evaluates nlsat's clauses twice to check nla's assignment", () => {
+    expect(
+      run([
+        "(declare-const q Real)",
+        "(assert (> (* q q) 2.0))",
+        "(check-sat-using smt)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1038)"]);
+  });
+
+  it("counts no step when nla's grobner solver checks the limit", () => {
+    expect(
+      run([
+        "(declare-const q Real)",
+        "(assert (= (* q q) 2.0))",
+        "(check-sat-using smt)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 1173)"]);
+  });
+
   it("counts the steps of an unknown answer", () => {
     expect(
       run([
@@ -2145,6 +2188,171 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
       "    #x00)",
       "  (define-fun fb ((x!0 (_ BitVec 4))) (_ BitVec 4)",
       "    #x0)",
+      ")",
+    ]);
+  });
+});
+
+describe("reset-assertions, as Z3 5.3.2 frees the solver", () => {
+  const ARITH = [
+    "(declare-const x Int)",
+    "(declare-const y Int)",
+    "(assert (> (+ x y) 3))",
+    "(assert (< (* 2 x) y))",
+  ];
+  const CLAUSES = [
+    "(declare-const p Bool)",
+    "(declare-const q Bool)",
+    "(declare-const r Bool)",
+    "(assert (or (and p q) (and (not p) r) (and q (not r))))",
+    "(apply tseitin-cnf)",
+  ];
+  const GOAL = [
+    "(goals",
+    "(goal",
+    "  (or p r q)",
+    "  (or q (not p))",
+    "  (or r q)",
+    "  (or (not r) q (not p))",
+    "  :precision precise :depth 2)",
+    ")",
+  ];
+
+  it("frees the kernel before it makes the next one, and the assertions after", () => {
+    expect(run([...ARITH, "(reset-assertions)", ...CLAUSES])).toEqual(GOAL);
+    expect(run([...ARITH, "(reset-assertions)", "(reset-assertions)", ...CLAUSES])).toEqual(GOAL);
+    expect(run([...ARITH, "(check-sat-using smt)", "(reset-assertions)", ...CLAUSES])).toEqual([
+      "sat",
+      ...GOAL,
+    ]);
+  });
+
+  it("frees the assertions of the solver that the last check-sat holds after the solver", () => {
+    expect(run([...ARITH, "(check-sat)", "(reset-assertions)", ...CLAUSES])).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or p q r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+    expect(
+      run([
+        ...ARITH,
+        "(push)",
+        "(assert (> x 0))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or q (not p) (not r))",
+      "  (or p q r)",
+      "  (or q r)",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+    expect(
+      run([
+        "(set-logic QF_BV)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult a b))",
+        "(assert (= (bvadd a b) #x9))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or (not p) q)",
+      "  (or r p q)",
+      "  (or r q)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
+  it("frees the pairs and caches of bv sharing after the theories", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(declare-const z (_ BitVec 8))",
+        "(push)",
+        "(assert (= (bvadd x y z (bvmul x z)) #x01))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or q p r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
+  it("keeps the 1-bit numerals of the QF_BV tactic it makes on the first QF_BV goal", () => {
+    expect(
+      run([
+        "(declare-const x (_ BitVec 8))",
+        "(declare-const y (_ BitVec 8))",
+        "(declare-const z (_ BitVec 8))",
+        "(assert (= (bvadd (bvmul x y) (bvmul y z) (bvmul x z)) #x00))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or p q r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
+      ")",
+    ]);
+  });
+
+  it("keeps the solver of the last check-sat until the next assert", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const a (_ BitVec 4))",
+        "(declare-const b (_ BitVec 4))",
+        "(assert (bvult a b))",
+        "(assert (= (bvadd a b) #x9))",
+        "(check-sat)",
+        "(reset-assertions)",
+        ...CLAUSES,
+      ]),
+    ).toEqual([
+      "sat",
+      "(goals",
+      "(goal",
+      "  (or q (not p))",
+      "  (or p q r)",
+      "  (or q r)",
+      "  (or q (not p) (not r))",
+      "  :precision precise :depth 2)",
       ")",
     ]);
   });

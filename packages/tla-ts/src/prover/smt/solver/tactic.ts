@@ -32,7 +32,7 @@ import { type BitBlasterRewriter, runBitBlast } from "./bit-blast-tactic";
 import { runMaxBvSharing } from "./max-bv-sharing-tactic";
 import { runBvBoundChk } from "./bv-bound-chk";
 import { runBvDivremBounds } from "./bv-divrem-bounds";
-import { runBv1Blast } from "./bv1-blast";
+import { createBv1Blast } from "./bv1-blast";
 import { runReduceBvSize } from "./reduce-bv-size";
 import { createSatTactic } from "./sat/sat-tactic";
 import { mkThSolver } from "./euf/th-solvers";
@@ -127,6 +127,7 @@ export interface TacticEnvironment {
   hasDefinitions: () => boolean;
   destructors: (() => void)[];
   cleanups: (() => void)[];
+  inits: (() => void)[];
 }
 
 // Z3's and-then frees its last tactic first.
@@ -318,6 +319,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
       Number(getParameter(environment, "smt.random_seed", "0")),
     ),
     intHammerPeriod: getHammerPeriod(environment.parameters),
+    isArithPropagatingEqs: getParameter(environment, "smt.arith.propagate_eqs", "true") !== "false",
   };
 };
 
@@ -455,7 +457,8 @@ const createTacticSolver = (environment: TacticEnvironment, strategy: string): A
   const manager = environment.manager;
   const destructors: (() => void)[] = [];
   const cleanups: (() => void)[] = [];
-  const tactic = compileInternalTactic({ ...environment, destructors, cleanups }, strategy);
+  const inits: (() => void)[] = [];
+  const tactic = compileInternalTactic({ ...environment, destructors, cleanups, inits }, strategy);
   const assertions = new RefVector(manager);
   let model: ProtoModel | undefined;
   let converters: Goal["converters"] = [];
@@ -463,6 +466,7 @@ const createTacticSolver = (environment: TacticEnvironment, strategy: string): A
     assert: (expr) => assertions.push(expr),
     check: () => {
       for (const cleanup of cleanups) cleanup();
+      for (const init of inits) init();
       model?.decRef();
       model = undefined;
       const goal = new Goal(manager);
@@ -1370,7 +1374,12 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
         ["max_steps", PARAM_UINT, UINT_MAX],
       ]),
       isTrackingDependencies: true,
-      build: (environment) => runBv1Blast(environment.manager),
+      build: (environment) => {
+        const tactic = createBv1Blast(environment.manager);
+        environment.inits.push(tactic.init);
+        environment.destructors.push(tactic.release);
+        return tactic.run;
+      },
     },
   ],
   [
@@ -1730,10 +1739,16 @@ const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
   if (goals.length === 1) return goals[0].isDecided() ? goals : second(goals[0]);
   const results: Goal[] = [];
   const unsatGoals: Goal[] = [];
-  for (const subgoal of goals) {
-    const subresults = second(subgoal);
-    if (isDecidedSat(subresults)) return subresults;
-    (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
+  try {
+    for (const subgoal of goals) {
+      const subresults = second(subgoal);
+      if (isDecidedSat(subresults)) return subresults;
+      (isDecidedUnsat(subresults) ? unsatGoals : results).push(...subresults);
+    }
+  } catch (error) {
+    for (const subgoal of goals) if (!results.includes(subgoal)) subgoal.release();
+    for (const result of results) result.release();
+    throw error;
   }
   return results.length > 0 ? results : assertUnsat(goal, unsatGoals);
 };
@@ -1803,6 +1818,23 @@ const checkHasArgument = (list: SmtList, combinator: string) => {
     );
 };
 
+const buildFirstToLast = (
+  environment: TacticEnvironment,
+  children: TacticBuilder[],
+  params: TacticParams,
+) => {
+  const destructors = environment.destructors;
+  const built = children.map((child) => {
+    const start = destructors.length;
+    const tactic = child.build(params);
+    return { tactic, destructors: destructors.splice(start) };
+  });
+  destructors.push(() => {
+    for (const child of built) destroyTactics(child.destructors);
+  });
+  return built.map((child) => child.tactic);
+};
+
 const compile = (
   environment: TacticEnvironment,
   sexpr: SExpr,
@@ -1866,7 +1898,7 @@ const compile = (
       if (children.length === 1) return children[0];
       return {
         ...mergeDescrs(children),
-        build: (params) => runOrElse(children.map((child) => child.build(params))),
+        build: (params) => runOrElse(buildFirstToLast(environment, children, params)),
       };
     }
     // Z3 runs these children in threads, and running them in order is one schedule it may pick.
@@ -1876,7 +1908,7 @@ const compile = (
       if (children.length === 1) return children[0];
       return {
         ...mergeDescrs(children),
-        build: (params) => runOrElse(children.map((child) => child.build(params))),
+        build: (params) => runOrElse(buildFirstToLast(environment, children, params)),
       };
     }
     case "par-then": {
@@ -1998,7 +2030,12 @@ const compile = (
       const own = getParams(child, sexpr.items, isInternal);
       return {
         ...mergeDescrs([child]),
-        build: (params) => child.build(new Map([...params, ...own])),
+        build: (params) => {
+          const start = environment.inits.length;
+          const tactic = child.build(new Map([...params, ...own]));
+          for (const init of environment.inits.slice(start)) init();
+          return tactic;
+        },
       };
     }
     case "skip-if-failed": {
@@ -2011,6 +2048,27 @@ const compile = (
       return {
         ...mergeDescrs([child]),
         build: (params) => runOrElse([child.build(params), (goal) => [goal]]),
+      };
+    }
+    case "lazy": {
+      if (!isInternal)
+        throw new SmtParseError(`invalid tactic, unknown tactic combinator lazy`, sexpr.end);
+      const child = compile(environment, sexpr.items[1], isInternal);
+      return {
+        ...mergeDescrs([child]),
+        build: (params) => {
+          let tactic: Tactic | undefined;
+          let destructors: (() => void)[] = [];
+          environment.destructors.push(() => destroyTactics(destructors));
+          return (goal) => {
+            if (tactic === undefined) {
+              const start = environment.destructors.length;
+              tactic = child.build(params);
+              destructors = environment.destructors.splice(start);
+            }
+            return tactic(goal);
+          };
+        },
       };
     }
     case "if":
@@ -2127,10 +2185,8 @@ export const mkIncSatPreprocess = (manager: AstManager, bitBlaster: BitBlasterRe
 export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr) =>
   compile(environment, sexpr, false);
 
-export const compileInternalTactic = (environment: TacticEnvironment, text: string) => {
-  const list = createCommandReader(`(${text})`).read() as SmtList;
-  return compile(environment, list.items[0], true).build(new Map());
-};
+export const compileInternalTactic = (environment: TacticEnvironment, text: string) =>
+  compile(environment, createCommandReader(text).readSExpr(), true).build(new Map());
 
 interface TacticCheck {
   status: number;

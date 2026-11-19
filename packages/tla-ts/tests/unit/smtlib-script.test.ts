@@ -1839,6 +1839,124 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  it("interprets array-ext in the model and keeps the arrays it compares", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a1 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(declare-const i1 Int)",
+        "(assert (not (= a1 (store a1 (select a0 i0) i1))))",
+        "(assert (not (= (store a0 (select a1 i1) (select a1 i1)) a1)))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a0 () (Array Int Int)",
+        "    (store (store ((as const (Array Int Int)) 3) 9 11) 4 7))",
+        "  (define-fun a1 () (Array Int Int)",
+        "    (store (store (store ((as const (Array Int Int)) 2) 5 6) 9 10) 7 8))",
+        "  (define-fun i1 () Int",
+        "    5)",
+        "  (define-fun i0 () Int",
+        "    4)",
+        "  (define-fun k!3 ((x!0 Int)) Int",
+        "    (ite (= x!0 6) 6",
+        "    (ite (= x!0 9) 11",
+        "    (ite (= x!0 4) 7",
+        "      3))))",
+        "  (define-fun k!0 ((x!0 Int)) Int",
+        "    (ite (= x!0 5) 6",
+        "    (ite (= x!0 9) 10",
+        "    (ite (= x!0 7) 8",
+        "      2))))",
+        ")",
+      ].join("\n"),
+    ]);
+  });
+
+  it("expands a select of a store as it asserts the formula", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(assert (< (select (store a0 2 -1) i0) 0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 224)"]);
+  });
+
+  it("counts the steps of a model cleanup as Z3 does", () => {
+    expect(
+      run([
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a2 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(declare-const i1 Int)",
+        "(assert (>= (select (store a0 (select a0 i0) i1) 0) 2))",
+        "(assert (= a2 a0))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a0 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 3) 4 0))",
+        "  (define-fun i1 () Int",
+        "    2)",
+        "  (define-fun i0 () Int",
+        "    4)",
+        "  (define-fun a2 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 3) 4 0))",
+        ")",
+      ].join("\n"),
+      "(:rlimit 288)",
+    ]);
+  });
+
+  it("keeps the array of a function interpretation as Z3 does", () => {
+    expect(
+      run([
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const a1 (Array Int Int))",
+        "(declare-const a2 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(declare-const i1 Int)",
+        "(assert (= (store a1 i1 (select a2 i0)) a2))",
+        "(assert (= (store a2 i0 i0) a0))",
+        "(check-sat)",
+        "(get-model)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      "sat",
+      [
+        "(",
+        "  (define-fun a1 () (Array Int Int)",
+        "    ((as const (Array Int Int)) 2))",
+        "  (define-fun i1 () Int",
+        "    3)",
+        "  (define-fun a2 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 2) 3 4))",
+        "  (define-fun i0 () Int",
+        "    3)",
+        "  (define-fun a0 () (Array Int Int)",
+        "    (store ((as const (Array Int Int)) 2) 3 3))",
+        ")",
+      ].join("\n"),
+      "(:rlimit 270)",
+    ]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
