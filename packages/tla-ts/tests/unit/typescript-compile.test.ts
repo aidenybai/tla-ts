@@ -57543,3 +57543,53 @@ describe("reads a value whose intersection type is an error's as the error it ho
     );
   });
 });
+
+describe("gives the methods and accessors of a class with numeric names the type function", () => {
+  const getSource = (expected: string) => `
+    class Numbered {
+      1() {
+        return 1;
+      }
+      get 2() {
+        return 2;
+      }
+      set 3(_: number) {}
+      static 4() {
+        return 4;
+      }
+      static get 5() {
+        return 5;
+      }
+      static set 6(_: number) {}
+    }
+    const getTypes = (object: object, key: string) => {
+      const descriptor = Object.getOwnPropertyDescriptor(object, key)!;
+      return [typeof descriptor.value, typeof descriptor.get, typeof descriptor.set].join(" ");
+    };
+    const result = [
+      getTypes(Numbered.prototype, "1"),
+      getTypes(Numbered.prototype, "2"),
+      getTypes(Numbered.prototype, "3"),
+      getTypes(Numbered, "4"),
+      getTypes(Numbered, "5"),
+      getTypes(Numbered, "6"),
+    ].join(",");
+    if (result !== "${expected}") throw new Error("result " + result);
+  `;
+  const types = [
+    "function undefined undefined",
+    "undefined function undefined",
+    "undefined undefined function",
+  ];
+
+  it("agrees with Node", async () => {
+    expect((await checkModel(getSource([...types, ...types].join(",")))).failure).toBeUndefined();
+  });
+
+  it("rejects the type object", async () => {
+    const wrong = ["object undefined undefined", ...types.slice(1), ...types].join(",");
+    expect((await checkModel(getSource(wrong))).failure?.message).toContain(
+      `result ${[...types, ...types].join(",")}`,
+    );
+  });
+});

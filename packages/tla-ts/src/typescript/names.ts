@@ -115,7 +115,10 @@ export const createNames = (reserved: ReadonlySet<string>): Names => {
   return {
     getFresh: (base) => {
       const sanitized = base.replace(/[^A-Za-z0-9_]/g, "_");
-      const name = /[A-Za-z]/.test(sanitized) ? sanitized : `v${sanitized}`;
+      // The prelude's TypeOf takes a model value whose name starts with a digit, as a numeric
+      // method's would, for a number or an object.
+      const name =
+        /^[A-Za-z_]/.test(sanitized) && /[A-Za-z]/.test(sanitized) ? sanitized : `v${sanitized}`;
       const getIndex = (index: number): number => {
         const candidate = index === 0 ? name : `${name}_${index}`;
         return used.has(candidate) || RESERVED.has(candidate) || reserved.has(candidate)
