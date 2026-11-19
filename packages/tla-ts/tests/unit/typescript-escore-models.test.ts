@@ -225,6 +225,20 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       });
     });
 
+    // A parameter of a literal's type or undefined takes each value of its set, by the set it's in.
+    describe("passes a value of a union with undefined", () => {
+      const getBody = (bound: number) =>
+        `export const isShort = (text: "a" | "bb" | undefined) => flip(0) === 1 && (text === undefined || text.length < ${bound});\n`;
+
+      it("agrees with Node", async () => {
+        expect(getCounts(await check(getBody(3)))).toEqual(["success", 1, 1]);
+      });
+
+      it("rejects another result", async () => {
+        expect(getCounts(await check(getBody(2)))).toEqual(["invariant-violation", 1, 1]);
+      });
+    });
+
     it("calls none of the functions whose parameters take values it can't list", async () => {
       expect(
         getCounts(

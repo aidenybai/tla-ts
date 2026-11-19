@@ -509,13 +509,11 @@ export const compileModelToEscore = (
         );
       }
     }
-    // A union of record sets, such as a discriminated union: each value by the set it's in.
-    if (
-      domain.kind === "Apply" &&
-      domain.operator === "\\cup" &&
-      domain.args.every((arg) => arg.kind === "RecordSet")
-    ) {
-      const parts = domain.args.map((arg) => ({
+    // A union, such as a discriminated union of record sets or a literal's set with undefined:
+    // each value by the set it's in, which TLC compares it with, as today's domain is of values
+    // it can compare.
+    if (domain.kind === "Apply" && domain.operator === "\\cup") {
+      const parts = getUnion(domain).map((arg) => ({
         set: printExpression(renameModelValues(arg)),
         converter: getConverter(arg),
       }));
