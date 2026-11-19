@@ -1089,37 +1089,66 @@ export const createModuleSubexpressions = (
     },
     resolve: (): Module => {
       resolveDefinitionsBefore(undefined);
+      const getSharedBody = (statement: Expression | AssumeProve) => {
+        const definition = module.definitions.find((candidate) => candidate.body === statement);
+        return definition && (resolvedDefinitions.get(definition) ?? definition).body;
+      };
+      const assumptions = new Map(
+        module.assumptions.map((assumption) => {
+          const shared = getSharedBody(assumption.expression);
+          if (shared) return [assumption, { ...assumption, expression: shared }];
+          return [
+            assumption,
+            isMapped(assumption.expression)
+              ? {
+                  ...assumption,
+                  expression: resolve(getExpanded(assumption.expression), assumption.location),
+                }
+              : assumption,
+          ];
+        }),
+      );
+      const theorems = new Map(
+        module.theorems.map((theorem) => {
+          const resolver = createProofResolver(getVisibleLookup(proofLookup, theorem.location));
+          const statement = theorem.statement;
+          return [
+            theorem,
+            {
+              ...theorem,
+              statement:
+                getSharedBody(statement) ??
+                (statement.kind === "AssumeProve"
+                  ? resolver.resolveStatement(statement)
+                  : resolver.resolveStatement(getExpanded(statement))),
+              proof:
+                theorem.proof &&
+                createProofResolver(
+                  getVisibleLookup(proofLookup, theorem.proof.location),
+                ).resolveProof(theorem.proof),
+            },
+          ];
+        }),
+      );
       return {
         ...module,
+        units: module.units.map((unit) => {
+          if (unit.kind === "Definition") {
+            const definition = resolvedDefinitions.get(unit.definition);
+            return definition ? { ...unit, definition } : unit;
+          }
+          if (unit.kind === "Assumption") {
+            return { ...unit, assumption: assumptions.get(unit.assumption) ?? unit.assumption };
+          }
+          return unit.kind === "Theorem"
+            ? { ...unit, theorem: theorems.get(unit.theorem) ?? unit.theorem }
+            : unit;
+        }),
         definitions: module.definitions.map(
           (definition) => resolvedDefinitions.get(definition) ?? definition,
         ),
-        assumptions: module.assumptions.map((assumption) =>
-          isMapped(assumption.expression)
-            ? {
-                ...assumption,
-                expression: resolve(getExpanded(assumption.expression), assumption.location),
-              }
-            : assumption,
-        ),
-        theorems: module.theorems.map((theorem) => {
-          const resolver = createProofResolver(getVisibleLookup(proofLookup, theorem.location));
-          const statement = theorem.statement;
-          return {
-            ...theorem,
-            statement:
-              statement.kind === "AssumeProve"
-                ? resolver.resolveStatement(statement)
-                : theorem.name === undefined
-                  ? resolver.resolveStatement(getExpanded(statement))
-                  : statement,
-            proof:
-              theorem.proof &&
-              createProofResolver(
-                getVisibleLookup(proofLookup, theorem.proof.location),
-              ).resolveProof(theorem.proof),
-          };
-        }),
+        assumptions: [...assumptions.values()],
+        theorems: [...theorems.values()],
         uses: module.uses.map((use) => {
           const resolver = createProofResolver(getVisibleLookup(proofLookup, use.location));
           return {
