@@ -1736,7 +1736,17 @@ const assertUnsat = (goal: Goal, unsatGoals: Goal[]) => {
 
 const runAndThen = (first: Tactic, second: Tactic) => (goal: Goal) => {
   const goals = first(goal);
-  if (goals.length === 1) return goals[0].isDecided() ? goals : second(goals[0]);
+  if (goals.length === 1) {
+    const subgoal = goals[0];
+    if (subgoal.isDecided()) return goals;
+    const subresults: Goal[] = [];
+    try {
+      subresults.push(...second(subgoal));
+      return subresults;
+    } finally {
+      if (subgoal !== goal && !subresults.includes(subgoal)) subgoal.release();
+    }
+  }
   const results: Goal[] = [];
   const unsatGoals: Goal[] = [];
   try {

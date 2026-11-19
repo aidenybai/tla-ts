@@ -2894,6 +2894,42 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ).toEqual(["unknown", "(:rlimit 344)", "unknown", "(:rlimit 686)"]);
   });
 
+  it("frees and-then's one new subgoal when the second tactic returns or fails", () => {
+    const getClauses = (tactic: string) =>
+      run([
+        "(declare-fun f ((_ BitVec 4)) (_ BitVec 4))",
+        "(declare-const x (_ BitVec 4))",
+        "(declare-const y (_ BitVec 4))",
+        "(assert (bvult (f (f x)) (f y)))",
+        "(assert (or (= x y) (= (f x) #x2)))",
+        `(apply ${tactic})`,
+        "(declare-const p Bool)",
+        "(declare-const q Bool)",
+        "(declare-const r Bool)",
+        "(assert (or (and p q) (and (not p) r) (and q (not r))))",
+        "(apply tseitin-cnf)",
+      ])
+        .join("\n")
+        .split("\n")
+        .slice(-8, -2);
+    expect(getClauses("(then ackermannize_bv ackermannize_bv)")).toEqual([
+      "  (not (bvule (f y) (f (f x))))",
+      "  (or (= x y) (= (f x) #x2))",
+      "  (or p q r)",
+      "  (or q (not p) (not r))",
+      "  (or q (not p))",
+      "  (or q r)",
+    ]);
+    expect(getClauses("(then ackermannize_bv fail)")).toEqual([
+      "  (not (bvule (f y) (f (f x))))",
+      "  (or (= x y) (= (f x) #x2))",
+      "  (or p q r)",
+      "  (or q (not p) (not r))",
+      "  (or q (not p))",
+      "  (or q r)",
+    ]);
+  });
+
   it("reads tactic.default_tactic as it makes the solver", () => {
     expect(
       run([
