@@ -18,6 +18,7 @@ const build = spawnSync(
     "build",
     `scripts/${name}.ts`,
     ...WORKER_ENTRIES,
+    "scripts/escore-graph.ts",
     "--target=node",
     "--packages=external",
     "--outdir",
@@ -37,6 +38,13 @@ const graph = spawnSync(
   },
 );
 if (graph.status !== 0) process.exit(graph.status ?? 1);
+// ESCore's runtime is prepared on the host that runs the bundles, as its realm is the host's.
+const runtimeGraph = spawnSync(
+  "node",
+  ["--stack-size=4000", join(OUT_DIRECTORY, "escore-graph.js"), OUT_DIRECTORY],
+  { stdio: ["ignore", "ignore", "inherit"] },
+);
+if (runtimeGraph.status !== 0) process.exit(runtimeGraph.status ?? 1);
 
 const run = spawnSync("node", [join(OUT_DIRECTORY, `${name}.js`), ...process.argv.slice(3)], {
   stdio: "inherit",

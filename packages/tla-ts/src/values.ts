@@ -1328,6 +1328,69 @@ const getIntervalDomain = (length: number): Value[] => {
   return domain;
 };
 
+// The kind of the mark that stands for 1..n, the elements of an array of their own class, in a
+// copy of a value that encodeGraph holds.
+const INTERVAL_MARK = "IntervalElements";
+
+interface IntervalMark {
+  kind: typeof INTERVAL_MARK;
+  length: number;
+}
+
+const isIntervalMark = (value: object): value is IntervalMark =>
+  Reflect.get(value, "kind") === INTERVAL_MARK;
+
+// Copies of values of plain objects and arrays, which share what the values share, as encodeGraph
+// holds them, with a mark for each array of 1..n. A value that holds a function, as a lazy one
+// does, keeps it, which encodeGraph rejects.
+export const getPlainValues = (values: Value[]): unknown[] => {
+  const copies = new Map<object, unknown>();
+  const copy = (value: unknown): unknown => {
+    if (typeof value !== "object" || value === null) return value;
+    const known = copies.get(value);
+    if (known !== undefined) return known;
+    if (value instanceof IntervalElements) {
+      const mark: IntervalMark = { kind: INTERVAL_MARK, length: value.length };
+      copies.set(value, mark);
+      return mark;
+    }
+    if (Array.isArray(value)) {
+      const array: unknown[] = [];
+      copies.set(value, array);
+      for (const item of value) array.push(copy(item));
+      return array;
+    }
+    const object: Record<string, unknown> = {};
+    copies.set(value, object);
+    for (const [key, item] of Object.entries(value)) object[key] = copy(item);
+    return object;
+  };
+  return values.map(copy);
+};
+
+// The values that getPlainValues copied, as decodeGraph reads them, made values again in place: each
+// mark its array of 1..n, and what made the values noted, as it is where a check makes them.
+export const readPlainValues = (plain: unknown[]): Value[] => {
+  const isRead = new Set<object>();
+  const read = (value: unknown): unknown => {
+    if (typeof value !== "object" || value === null) return value;
+    if (isIntervalMark(value)) return getIntervalDomain(value.length);
+    if (isRead.has(value)) return value;
+    isRead.add(value);
+    if (Array.isArray(value)) {
+      for (let index = 0; index < value.length; index++) value[index] = read(value[index]);
+      return value;
+    }
+    for (const key of Object.keys(value)) Reflect.set(value, key, read(Reflect.get(value, key)));
+    const kind: unknown = Reflect.get(value, "kind");
+    if (kind === "Function" && Reflect.get(value, "functionClass") === "lambda") hasLambda = true;
+    if (kind === "Union" || kind === "SetOperation") hasStreamedSet = true;
+    if (Reflect.get(value, "writtenKeys") !== undefined) isWrittenOrderUsed = true;
+    return value;
+  };
+  return plain.map((value) => read(value) as Value);
+};
+
 export const getIntervalElements = (value: IntervalValue): Value[] => {
   getCardinality(value);
   if (value.low === 1 && value.high >= 1) return getIntervalDomain(value.high);

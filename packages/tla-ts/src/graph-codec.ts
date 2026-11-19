@@ -5,7 +5,8 @@
 // The stream is a string of variable-length integers, five bits to a character with a sixth that
 // marks one more character. A value is a tag, or a small integer stored as itself plus SMALL_START.
 // SHARED comes before an object the graph holds more than once, which REFERENCE then names by the
-// order in which such objects come.
+// order in which such objects come. A typed array is its class's tag, its length, and its elements
+// as numbers.
 const UNDEFINED = 0;
 const NULL = 1;
 const FALSE = 2;
@@ -19,6 +20,9 @@ const MAP = 9;
 const SET = 10;
 const BIGINT = 11;
 const SHARED = 12;
+const INT32_ARRAY = 13;
+const UINT32_ARRAY = 14;
+const UINT8_ARRAY = 15;
 const SMALL_START = 16;
 const SMALL_END = 1 << 28;
 
@@ -140,6 +144,22 @@ export const encodeGraph = (root: unknown): EncodedGraph => {
       value.forEach(write);
       return;
     }
+    if (
+      value instanceof Int32Array ||
+      value instanceof Uint32Array ||
+      value instanceof Uint8Array
+    ) {
+      stream.push(
+        value instanceof Int32Array
+          ? INT32_ARRAY
+          : value instanceof Uint32Array
+            ? UINT32_ARRAY
+            : UINT8_ARRAY,
+        value.length,
+      );
+      for (let index = 0; index < value.length; index++) write(value[index]);
+      return;
+    }
     if (prototype !== Object.prototype) throw new TypeError("A graph holds only plain objects");
     const keys = Object.keys(value);
     stream.push(OBJECT, getShapeId(keys));
@@ -222,6 +242,20 @@ export const decodeGraph = (encoded: EncodedGraph): unknown => {
         if (isShared) shared.push(set);
         for (let index = 0; index < size; index++) set.add(read());
         return set;
+      }
+      case INT32_ARRAY:
+      case UINT32_ARRAY:
+      case UINT8_ARRAY: {
+        const length = next();
+        const array =
+          tag === INT32_ARRAY
+            ? new Int32Array(length)
+            : tag === UINT32_ARRAY
+              ? new Uint32Array(length)
+              : new Uint8Array(length);
+        if (isShared) shared.push(array);
+        for (let index = 0; index < length; index++) array[index] = Number(read());
+        return array;
       }
       case OBJECT: {
         const shape = next();

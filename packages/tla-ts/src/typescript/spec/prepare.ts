@@ -8,10 +8,18 @@ import { tokenize } from "../../lexer";
 import { parseModuleTokens } from "../../parser";
 import { createCheckEnvironment } from "../../search";
 import { getParsedTexts, type PreparedModule } from "../../tlc/order";
-import { getRankedStrings, type Value } from "../../values";
+import { getPlainValues, getRankedStrings, readPlainValues, type Value } from "../../values";
 import { getPreparedFacts } from "../../dependencies";
+import { decodeGraph, encodeGraph, type EncodedGraph } from "../../graph-codec";
 import { createModuleView } from "../../module-view";
-import { assembleRuntime, createLibrary, type Family, getDependencies, HOOKS } from "./library";
+import {
+  assembleRuntime,
+  createLibrary,
+  type Family,
+  getDependencies,
+  HOOKS,
+  type Library,
+} from "./library";
 import {
   getHostDefinitions,
   getHostOnlyGlobals,
@@ -121,47 +129,50 @@ const prepare = (name: string, text: string): PreparedModule => {
 
 const files = { readFile: undefined, writeFile: undefined, makeDirectory: undefined };
 
-// ESCore's runtime, read, checked by SANY's checks, and started once for every program a process
-// compiles: its modules, the levels of their definitions, and what their definitions without
-// parameters evaluate to, among them the realm.
-export const prepareRuntime = (directory: string): EscoreRuntime => {
-  const library = createLibrary(directory);
-  const overrides = [
-    ...RUNTIME_DEFINITIONS,
-    ...getHostDefinitions(library),
-    ...getRealmDefinitions(library),
-    // The realm's first objects, which the runtime evaluates once, as it starts, rather than
-    // deep in the realm's properties, where building them would take a deeper stack.
-    {
-      name: "InitialObjects",
-      arity: 0,
-      text: "InitialObjects == HeapOf(IntrinsicObjects(0, 1))",
-    },
-    {
-      name: "InitialState",
-      arity: 0,
-      text: (library.definitions.get("InitialState")?.text ?? "")
-        .replace("HeapOf(IntrinsicObjects(0, 1))", "InitialObjects")
-        .replace(
-          "jobs |-> <<>>,",
-          "jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty, written |-> FALSE, writeMark |-> [objects |-> 0, environments |-> 0], hostImport |-> Empty,",
-        ),
-    },
-    {
-      name: "DescribeResult",
-      arity: 1,
-      // A thrown error whose message Node writes is described by nothing that reads it.
-      text: `DescribeResult(r) ==
+// The definitions that the runtime puts in place of ESCore's, as a compiled spec runs them.
+const getOverrides = (library: Library) => [
+  ...RUNTIME_DEFINITIONS,
+  ...getHostDefinitions(library),
+  ...getRealmDefinitions(library),
+  // The realm's first objects, which the runtime evaluates once, as it starts, rather than
+  // deep in the realm's properties, where building them would take a deeper stack.
+  {
+    name: "InitialObjects",
+    arity: 0,
+    text: "InitialObjects == HeapOf(IntrinsicObjects(0, 1))",
+  },
+  {
+    name: "InitialState",
+    arity: 0,
+    text: (library.definitions.get("InitialState")?.text ?? "")
+      .replace("HeapOf(IntrinsicObjects(0, 1))", "InitialObjects")
+      .replace(
+        "jobs |-> <<>>,",
+        "jobs |-> <<>>, timers |-> <<>>, required |-> <<>>, hostHandler |-> Empty, written |-> FALSE, writeMark |-> [objects |-> 0, environments |-> 0], hostImport |-> Empty,",
+      ),
+  },
+  {
+    name: "DescribeResult",
+    arity: 1,
+    // A thrown error whose message Node writes is described by nothing that reads it.
+    text: `DescribeResult(r) ==
   IF IsObject(r.c.value) /\\ O(r.s, r.c.value).class = "error" /\\ "hostMessage" \\in DOMAIN O(r.s, r.c.value).slots
   THEN [name |-> <<>>, message |-> <<>>]
   ELSE DescribeThrown(r.s, r.c.value)`,
-    },
-  ];
-  const runtimeText = assembleRuntime(library, overrides, INTERPRETER);
-  const modules = [
-    ...[...library.modules].map((entry) => prepare(entry[0], entry[1])),
-    prepare("ESRuntime", runtimeText),
-  ];
+  },
+];
+
+// The names and texts of the modules of the runtime: those that ESCore extends, then the runtime.
+const getModuleTexts = (library: Library) => [
+  ...library.modules,
+  ["ESRuntime", assembleRuntime(library, getOverrides(library), INTERPRETER)] as const,
+];
+
+// The modules of the texts, read, checked by SANY's checks, and started: each one's levels, the
+// strings it ranks, what its definitions without parameters evaluate to, among them the realm, and
+// the facts of its definitions, of the runtime's as its views stand in its values.
+const prepareModules = (texts: readonly (readonly [string, string])[]): PreparedModule[] => {
+  const modules = texts.map((entry) => prepare(entry[0], entry[1]));
   const config = parseConfig(CONFIG);
   const levels = new Map<Module, (OperatorLevels | undefined)[]>();
   let warning: string | undefined;
@@ -194,18 +205,6 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
   // The strings of the values, some of which only evaluating them makes, keep their order in a
   // check that ranks every string the runtime ranked as it started before any of a program's.
   const strings = getRankedStrings();
-  const [numbers, bigNats, runtime] = accepted.map((prepared) => ({
-    ...prepared,
-    texts: prepared.name === "ESRuntime" ? { parsed: strings, strings: [] } : prepared.texts,
-    values: new Map(
-      prepared.module.definitions.flatMap((definition): [Definition, Value][] => {
-        const value = getStartupValue(definition, started.environment);
-        return value === undefined ? [] : [[definition, value]];
-      }),
-    ),
-  }));
-  // The facts of each definition, of the runtime as its views stand in its values, collected in
-  // the check that started it, whose variables, constants, and builtins every program's has.
   const getFacts = (definitions: readonly Definition[]) =>
     new Map(
       definitions.map((definition) => [
@@ -213,14 +212,87 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
         getPreparedFacts(definition, started.environment, started.environment.facts.words),
       ]),
     );
-  const getView = createModuleView({
-    ...runtime,
-    facts: getFacts(
-      createModuleView(runtime)(
-        runtime.module.definitions.map((definition) => definition.name).join(" "),
-      ).module.definitions,
-    ),
+  return accepted.map((prepared) => {
+    const isRuntime = prepared.name === "ESRuntime";
+    const valued = {
+      ...prepared,
+      texts: isRuntime ? { parsed: strings, strings: [] } : prepared.texts,
+      values: new Map(
+        prepared.module.definitions.flatMap((definition): [Definition, Value][] => {
+          const value = getStartupValue(definition, started.environment);
+          return value === undefined ? [] : [[definition, value]];
+        }),
+      ),
+    };
+    const definitions = isRuntime
+      ? createModuleView(valued)(
+          valued.module.definitions.map((definition) => definition.name).join(" "),
+        ).module.definitions
+      : valued.module.definitions;
+    return { ...valued, facts: getFacts(definitions) };
   });
+};
+
+// The prepared modules as a graph holds them, with the texts they were prepared from and each
+// value a plain copy.
+interface PreparedGraph {
+  texts: string[];
+  modules: (Omit<PreparedModule, "values"> & { values: Map<Definition, unknown> })[];
+}
+
+// The graph of the modules of the runtime of ESCore's directory, prepared, which a build writes
+// into a bundle so that a process reads the modules rather than prepares them.
+export const getRuntimeGraph = (directory: string) => {
+  const texts = getModuleTexts(createLibrary(directory));
+  const modules = prepareModules(texts);
+  const entries = modules.map((prepared) => [...(prepared.values ?? [])]);
+  const plain = getPlainValues(entries.flat().map((entry) => entry[1]));
+  let position = 0;
+  const graph: PreparedGraph = {
+    texts: texts.map((entry) => entry[1]),
+    modules: modules.map((prepared, index) => ({
+      ...prepared,
+      values: new Map(entries[index].map((entry) => [entry[0], plain[position++]])),
+    })),
+  };
+  return encodeGraph(graph);
+};
+
+// The build writes the graph of the prepared runtime in place of these strings, its tables as JSON
+// and its stream as it is. Unbuilt, the tables are JSON for a string.
+const RUNTIME_TABLES = '"tla-ts:escore-tables"';
+const RUNTIME_STREAM = "tla-ts:escore-stream";
+
+// The modules that the build prepared, where it prepared them from the same texts.
+const readPreparedModules = (texts: readonly string[]): PreparedModule[] | undefined => {
+  const tables: unknown = JSON.parse(RUNTIME_TABLES);
+  if (!Array.isArray(tables)) return undefined;
+  const graph = decodeGraph({
+    tables: tables as EncodedGraph["tables"],
+    stream: RUNTIME_STREAM,
+  }) as PreparedGraph;
+  if (graph.texts.length !== texts.length || graph.texts.some((text, i) => text !== texts[i])) {
+    return undefined;
+  }
+  const entries = graph.modules.map((prepared) => [...prepared.values]);
+  const values = readPlainValues(entries.flat().map((entry) => entry[1]));
+  let position = 0;
+  return graph.modules.map((prepared, index) => ({
+    ...prepared,
+    values: new Map(entries[index].map((entry) => [entry[0], values[position++]])),
+  }));
+};
+
+// ESCore's runtime, read, checked by SANY's checks, and started once for every program a process
+// compiles, or read as the build prepared it: its modules, the levels of their definitions, and
+// what their definitions without parameters evaluate to, among them the realm.
+export const prepareRuntime = (directory: string): EscoreRuntime => {
+  const library = createLibrary(directory);
+  const texts = getModuleTexts(library);
+  const modules = readPreparedModules(texts.map((entry) => entry[1])) ?? prepareModules(texts);
+  const runtime = modules[modules.length - 1];
+  const overridden = new Set(getOverrides(library).map((override) => override.name));
+  const getView = createModuleView(runtime);
   const realm = new Set(
     getView(REALM_ROOTS).module.definitions.map((definition) => definition.name),
   );
@@ -235,17 +307,14 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
   );
   const stubGroups = new Map(stubs.map((stub) => [stub.name, stub.group]));
   return {
-    modules: [numbers, bigNats].map((prepared) => ({
-      ...prepared,
-      facts: getFacts(prepared.module.definitions),
-    })),
+    modules: modules.slice(0, -1),
     getView,
     families: library.families,
     internalKeys: library.internalKeys,
     resumableSteps: new Set(
       [...(library.definitions.get("ResumeFrame")?.text ?? "").matchAll(/frame\.step = "(\w+)"/g)]
         .map((match) => match[1])
-        .filter((name) => overrides.every((override) => override.name !== name)),
+        .filter((name) => !overridden.has(name)),
     ),
     gates: [...library.triggers].map((entry) => ({
       group: entry[0],
