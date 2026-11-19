@@ -477,6 +477,16 @@ const getMayUseArguments = (node: ts.Node): boolean => {
   return ts.forEachChild(node, (child) => (getMayUseArguments(child) ? true : undefined)) ?? false;
 };
 
+// Whether code makes a function or a class, whose closure keeps the environment it runs in.
+const hasClosure = (node: ts.Node): boolean =>
+  ts.isFunctionDeclaration(node) ||
+  ts.isFunctionExpression(node) ||
+  ts.isArrowFunction(node) ||
+  ts.isMethodDeclaration(node) ||
+  ts.isAccessor(node) ||
+  ts.isClassLike(node) ||
+  (ts.forEachChild(node, (child) => (hasClosure(child) ? true : undefined)) ?? false);
+
 const isAnonymousFunctionDefinition = (node: ts.Expression): boolean => {
   const inner = ts.isParenthesizedExpression(node) ? node.expression : node;
   if (ts.isParenthesizedExpression(node)) return isAnonymousFunctionDefinition(inner);
@@ -2192,7 +2202,11 @@ export const specialize = (
       isLexical(initializer)
     ) {
       const names = getDeclaredNames(initializer);
-      const lets = isConst(initializer) ? "<<>>" : getSequence(names.map(getUnits));
+      // CreatePerIterationEnvironment (§14.7.4.4) copies the let bindings so that each closure an
+      // iteration makes keeps its own. Where the statement makes no closure, nothing can tell the
+      // copies from the bindings they copy, so the iterations share one environment.
+      const lets =
+        isConst(initializer) || !hasClosure(node) ? "<<>>" : getSequence(names.map(getUnits));
       const declaration = declarationList(initializer, scope);
       return defineCode(
         "For",
