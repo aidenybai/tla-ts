@@ -44,6 +44,7 @@ import {
   createWrittenRecord,
   getCardinality,
   getFunctionDomain,
+  isElementOf,
   isBeyondSetBound,
   isReducibleSet,
   isTlcInteger,
@@ -103,6 +104,12 @@ const createGeneratedHelpers = () => ({
   expectFunction,
   tuple: createTuple,
   set: createEnumeratedSet,
+  // x \in S, or x \notin S where isNegated, for S an enumeration of strings, which holds a string x
+  // where it's one of them, without making S, and of any other x is what the set tells.
+  inStrings: (value: Value, strings: string[], isNegated: boolean) =>
+    (typeof value === "string"
+      ? strings.includes(value)
+      : isElementOf(value, createEnumeratedSet([...strings]))) !== isNegated,
   record: createSortedRecord,
   writtenRecord: createWrittenRecord,
   equal: valuesEqual,
@@ -293,6 +300,13 @@ const generateFunctionConstruction = (
     return `const ${domain} = ${set}; ${built} const ${isBeyond} = isBeyondBound(${domain}); const ${keys} = ${isBeyond} ? ${domain} : functionDomain(${domain}); if (${isBeyond}) cardinality(${domain}); const ${values} = []; ${generateLoop(generator, keys, element, store)} return ${isBeyond} ? ${builder}.createLazy(${domain}, ${builtContext}) : sortedFunction(${keys}, ${values});`;
   });
 
+// The strings of a set enumeration of string literals, such as {"a", "b"}, or undefined for any
+// other.
+const getStringLiterals = (elements: Expression[]) =>
+  elements.every((element) => element.kind === "String")
+    ? elements.map((element) => (element.kind === "String" ? element.value : ""))
+    : undefined;
+
 const generateApply = (
   generator: Generator,
   expression: Expression & { kind: "Apply" },
@@ -327,6 +341,17 @@ const generateApply = (
   if (builtin.evaluateUnary && args.length === 1 && isValueArgument(args[0], environment)) {
     const operation = addReference(generator, builtin.evaluateUnary);
     return `${operation}(${generateExpression(generator, args[0], frame)})`;
+  }
+  const strings =
+    (builtin.name === "\\in" || builtin.name === "\\notin") &&
+    args.length === 2 &&
+    args[1].kind === "SetEnumeration" &&
+    isValueArgument(args[0], environment)
+      ? getStringLiterals(args[1].elements)
+      : undefined;
+  if (strings) {
+    const isNegated = builtin.name === "\\notin";
+    return `inStrings(${generateExpression(generator, args[0], frame)}, ${addReference(generator, strings)}, ${isNegated})`;
   }
   const isBinary =
     args.length === 2 &&
