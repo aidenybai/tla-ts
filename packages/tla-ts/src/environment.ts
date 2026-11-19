@@ -1128,14 +1128,17 @@ export const createEnvironment = (
       kind: declaration.kind,
       range: declaration.location.range,
     });
+    const firstDeclarations = new Map<string, (typeof declarations)[number]>();
+    declarations.forEach((declaration) => {
+      const first = firstDeclarations.get(declaration.name);
+      if (first === undefined || isBefore(declaration.location, first.location)) {
+        firstDeclarations.set(declaration.name, declaration);
+      }
+    });
     declarations
       .filter(
         (declaration) =>
-          !bound.has(declaration.name) &&
-          declarations.every(
-            (other) =>
-              other.name !== declaration.name || !isBefore(other.location, declaration.location),
-          ),
+          !bound.has(declaration.name) && firstDeclarations.get(declaration.name) === declaration,
       )
       .forEach((declaration) => exported.set(declaration.name, getDeclarationSymbol(declaration)));
     const getDefinitionSymbol = (definition: Definition): ModuleSymbol => ({
@@ -1205,68 +1208,22 @@ export const createEnvironment = (
       warnings: scope.warnings,
       goalOperands,
     });
-    const orderedUnits = [
-      ...declarations.map((declaration) => ({
-        location: declaration.location,
-        getEntries: (): [string, ModuleSymbol][] => [
-          [declaration.name, getDeclarationSymbol(declaration)],
-        ],
-      })),
-      ...parsed.definitions.map((definition) => ({
-        location: definition.location,
-        getEntries: (): [string, ModuleSymbol][] => [
-          [definition.name, getDefinitionSymbol(definition)],
-        ],
-      })),
-      ...parsed.theorems.map((theorem) => ({
-        location: theorem.location,
-        getEntries: (): [string, ModuleSymbol][] => {
-          const name = theorem.name;
-          const goal = getTheoremGoal(theorem);
-          return name === undefined || goal === undefined
-            ? []
-            : [
-                [
-                  name,
-                  {
-                    key: getKey({ name }),
-                    arity: 0,
-                    kind: "Theorem",
-                    range: theorem.location.range,
-                    goal,
-                  },
-                ],
-              ];
-        },
-      })),
-      ...parsed.instances.map((instance) => ({
-        location: instance.location,
-        getEntries: (): [string, ModuleSymbol][] => [
-          ...(instance.name === undefined
-            ? []
-            : [
-                [instance.name, getInstanceSymbol(instance, instance.name)] satisfies [
-                  string,
-                  ModuleSymbol,
-                ],
-              ]),
-          ...(instanced.get(instance) ?? []),
-        ],
-      })),
-    ].toSorted((left, right) => compareLocations(left.location, right.location));
-    const getSymbolsBefore = (location: SourceLocation): Symbols =>
-      orderedUnits
-        .filter((unit) => isBefore(unit.location, location))
-        .flatMap((unit) => unit.getEntries())
-        .reduce(
-          (symbols, entry) => (symbols.has(entry[0]) ? symbols : symbols.set(entry[0], entry[1])),
-          new Map(bound),
-        );
+    const symbolsBefore = new Map(bound);
+    const boundLocations = new Map<string, SourceLocation>();
+    const bindBefore = (name: string, symbol: ModuleSymbol, location: SourceLocation) => {
+      if (symbolsBefore.has(name)) return;
+      symbolsBefore.set(name, symbol);
+      boundLocations.set(name, location);
+    };
+    const isBoundBefore = (name: string, location: SourceLocation) => {
+      const boundLocation = boundLocations.get(name);
+      return bound.has(name) || (boundLocation !== undefined && isBefore(boundLocation, location));
+    };
     const subexpressions = createModuleSubexpressions(
       parsed,
       getLetInstanceExpansion(parsed, (instance, lets) =>
         instantiateLocally(instance, lets, parsed.name, getLetModule(instance), (name) =>
-          getSymbolsBefore(instance.location).has(name),
+          isBoundBefore(name, instance.location),
         ),
       ),
       (name) => {
@@ -1318,7 +1275,7 @@ export const createEnvironment = (
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         isHidden: scope.isHidden,
-        symbols: getSymbolsBefore(nested.location),
+        symbols: symbolsBefore,
         getDefinition: (name) => getDefinitionBefore(name) ?? scope.getDefinition(name),
         modules: visibleModules,
         nested: scope.nested,
@@ -1331,17 +1288,44 @@ export const createEnvironment = (
     };
     const instancingUnit = getUnit(parsed);
     [
+      ...declarations.map((declaration) => ({
+        location: declaration.location,
+        link: () =>
+          bindBefore(declaration.name, getDeclarationSymbol(declaration), declaration.location),
+      })),
+      ...parsed.definitions.map((definition) => ({
+        location: definition.location,
+        link: () =>
+          bindBefore(definition.name, getDefinitionSymbol(definition), definition.location),
+      })),
+      ...parsed.theorems.map((theorem) => ({
+        location: theorem.location,
+        link: () => {
+          const goal = getTheoremGoal(theorem);
+          if (theorem.name === undefined || goal === undefined) return;
+          bindBefore(
+            theorem.name,
+            {
+              key: getKey({ name: theorem.name }),
+              arity: 0,
+              kind: "Theorem",
+              range: theorem.location.range,
+              goal,
+            },
+            theorem.location,
+          );
+        },
+      })),
       ...parsed.instances.map((instance) => ({
         location: instance.location,
         link: () => {
-          const symbolsBefore = getSymbolsBefore(instance.location);
           const symbols = instantiate(
             instance,
             parsed,
             instancingUnit,
             isParameterFree,
             getVisibleModules().get(instance.module),
-            symbolsBefore,
+            new Map(symbolsBefore),
           );
           instanced.set(instance, symbols);
           symbols.forEach((symbol, name) => {
@@ -1356,6 +1340,14 @@ export const createEnvironment = (
           ) {
             exported.set(instance.name, getInstanceSymbol(instance, instance.name));
           }
+          if (instance.name !== undefined) {
+            bindBefore(
+              instance.name,
+              getInstanceSymbol(instance, instance.name),
+              instance.location,
+            );
+          }
+          symbols.forEach((symbol, name) => bindBefore(name, symbol, instance.location));
         },
       })),
       ...parsed.modules.map((nested) => ({
@@ -1363,7 +1355,7 @@ export const createEnvironment = (
         link: () => linkNested(nested),
       })),
     ]
-      .sort((left, right) => (isBefore(left.location, right.location) ? -1 : 1))
+      .sort((left, right) => compareLocations(left.location, right.location))
       .forEach((unit) => unit.link());
     const module = subexpressions.resolve();
     parsed.theorems
@@ -1421,7 +1413,7 @@ export const createEnvironment = (
       variableLocations,
       declarations: [
         ...declarations
-          .filter((declaration) => !getSymbolsBefore(declaration.location).has(declaration.name))
+          .filter((declaration) => !isBoundBefore(declaration.name, declaration.location))
           .map((declaration) => ({ ...declaration, key: getDeclarationSymbol(declaration).key })),
         ...extended
           .flatMap((other) => other.declarations)
