@@ -78,7 +78,6 @@ import { ModelEvaluator } from "./model-evaluator";
 import { FuncInterp, getManagerSomeValue, ProtoModel } from "./proto-model";
 import {
   applyTactic,
-  buildInternalTactic,
   checkSatUsing,
   compileInternalTactic,
   compileTactic,
@@ -888,14 +887,17 @@ export const runSmtlibScript = (
     const parameters = settings.parameters;
     const isProofsEnabled = settings.isProducingProofs || state.isProofsEnabled === true;
     const defaultTactic = parameters.get("tactic.default_tactic");
-    const sexpr = defaultTactic === undefined ? undefined : readDefaultTactic(defaultTactic);
+    const sexpr =
+      defaultTactic === undefined || defaultTactic === ""
+        ? undefined
+        : readDefaultTactic(defaultTactic);
     const destructors: (() => void)[] = [];
     const cleanups: (() => void)[] = [];
     const inits: (() => void)[] = [];
     const tactic =
       sexpr === undefined
         ? undefined
-        : buildInternalTactic(getTacticEnvironment(destructors, cleanups, inits), sexpr);
+        : compileTactic(getTacticEnvironment(destructors, cleanups, inits), sexpr).build(new Map());
     const isParallel = parameters.get("parallel.enable") === "true";
     const isFdSolver =
       !isParallel &&

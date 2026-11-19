@@ -2185,11 +2185,8 @@ export const mkIncSatPreprocess = (manager: AstManager, bitBlaster: BitBlasterRe
 export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr) =>
   compile(environment, sexpr, false);
 
-export const buildInternalTactic = (environment: TacticEnvironment, sexpr: SExpr) =>
-  compile(environment, sexpr, true).build(new Map());
-
 export const compileInternalTactic = (environment: TacticEnvironment, text: string) =>
-  buildInternalTactic(environment, createCommandReader(text).readSExpr());
+  compile(environment, createCommandReader(text).readSExpr(), true).build(new Map());
 
 interface TacticCheck {
   status: number;

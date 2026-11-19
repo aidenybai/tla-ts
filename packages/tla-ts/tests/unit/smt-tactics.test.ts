@@ -2988,4 +2988,49 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
       "(:rlimit 69)",
     ]);
   });
+
+  it("parses tactic.default_tactic as a user's tactic, without the lazy combinator", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "(lazy smt)")',
+        "(declare-const q Real)",
+        "(assert (> q 0.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      '(error "line 1 column 10: invalid tactic, unknown tactic combinator lazy")',
+      '(error "line 3 column 11: unknown constant q")',
+      "unknown",
+      "(:rlimit 0)",
+    ]);
+  });
+
+  it("ignores an empty tactic.default_tactic", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic "")',
+        "(declare-const q Real)",
+        "(assert (> q 0.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 69)"]);
+  });
+
+  it("reports a closing parenthesis that starts tactic.default_tactic", () => {
+    expect(
+      run([
+        '(set-option :tactic.default_tactic ")")',
+        "(declare-const q Real)",
+        "(assert (> q 0.0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual([
+      `(error ": line 1 column 1: invalid s-expression, unexpected ')'")`,
+      "sat",
+      "(:rlimit 69)",
+    ]);
+  });
 });

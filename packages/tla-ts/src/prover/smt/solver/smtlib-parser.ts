@@ -899,6 +899,7 @@ export const createCommandReader = (text: string) => {
         "invalid s-expression, unexpected end of file",
         scanner.getPosition(),
       );
+    if (token.kind === ")") throw new SmtParseError("invalid s-expression, unexpected ')'", token);
     if (token.kind !== "(") return token;
     state.depth = 1;
     const list = readList(token);
