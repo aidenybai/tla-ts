@@ -394,6 +394,8 @@ const selectSubexpression = (
     // TLC evaluates the LAMBDA SANY makes of a whole body selected by !: as the body's Java override.
     const isOverride =
       !local &&
+      // Deviation from TLC: TLC passes the arguments of an instance with parameters to the override too, which fails.
+      found.earlier === 0 &&
       arity > 0 &&
       selectorIndex === selectors.length - 2 &&
       selectors[selectorIndex + 1].kind === "Colon" &&

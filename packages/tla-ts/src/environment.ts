@@ -1162,7 +1162,15 @@ export const createEnvironment = (
             ? getStandardSource(source).visible.get(symbol.key)?.key
             : symbol.key;
         const definition = key === undefined ? undefined : replacedDefinitions.get(key);
-        return definition && { ...definition, name };
+        if (definition?.kind !== "Operator") return definition && { ...definition, name };
+        return {
+          ...definition,
+          name,
+          params: [
+            ...createArgumentParams(symbol.arity - definition.params.length, symbol.params),
+            ...definition.params,
+          ],
+        };
       },
       (name, location) =>
         bound.has(name) ||
