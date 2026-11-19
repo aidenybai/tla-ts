@@ -71,24 +71,26 @@ export const suspendDefinitions = (
   definitions: readonly CodeDefinition[],
   resumable: ReadonlySet<string>,
 ): CodeDefinition[] => {
-  const references = new Map(
-    definitions.map((definition) => [
-      definition.name,
-      getReferencedNames(definition.text.slice(definition.text.indexOf("=="))),
-    ]),
-  );
+  // The definitions that read each name, but CodeN, which starts a driver rather than suspends.
+  const readers = new Map<string, string[]>();
+  definitions.forEach((definition) => {
+    if (/^Code\d+$/.test(definition.name)) return;
+    getReferencedNames(definition.text.slice(definition.text.indexOf("=="))).forEach((name) => {
+      const names = readers.get(name);
+      if (names === undefined) readers.set(name, [definition.name]);
+      else names.push(definition.name);
+    });
+  });
+  // The steps that suspend, and each definition that reads one.
   const suspending = new Set(SUSPENDING);
-  const addSuspending = () => {
-    const added = definitions.filter(
-      (definition) =>
-        !suspending.has(definition.name) &&
-        !/^Code\d+$/.test(definition.name) &&
-        [...(references.get(definition.name) ?? [])].some((name) => suspending.has(name)),
-    );
-    added.forEach((definition) => suspending.add(definition.name));
-    if (added.length > 0) addSuspending();
-  };
-  addSuspending();
+  const pending = [...SUSPENDING];
+  while (pending.length > 0) {
+    readers.get(pending.pop() ?? "")?.forEach((name) => {
+      if (suspending.has(name)) return;
+      suspending.add(name);
+      pending.push(name);
+    });
+  }
   // A loop's record, [id |-> N, labels |-> ...], whose iterations LoopN runs, which makes an
   // operator applied to it suspend.
   const isSuspendingLoop = (expression: Expression) =>
