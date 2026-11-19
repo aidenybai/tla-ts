@@ -79,6 +79,20 @@ it("splits the next-state relation before it checks the assumptions, as TLC's To
   expect(prints).toEqual(['"split"', '"assume"']);
 });
 
+// Deviation from TLC: past an initial state, Trace fails with 'Cannot invoke "tlc2.tool.TLCState.isInitial()" because "currentState" is null'.
+it("reads Trace as the states on the path to the state, unlike TLC", () => {
+  const prints: string[] = [];
+  checkDepthFirst({
+    source:
+      "---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nInit == x = 0\nA(p) == x < 3 /\\ x' = x + 1 /\\ PrintT(p)\nNext == A(Trace)\n====",
+    config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+    maxDepth: 3,
+    onPrint: (text) => prints.push(text),
+    onOutput: () => {},
+  });
+  expect(prints).toEqual(["<<[x |-> 0]>>", "<<[x |-> 0]>>", "<<[x |-> 0], [x |-> 1]>>"]);
+});
+
 it("replays the step whose invariant fails to evaluate with the actions it counts under coverage, as TLC's DFIDModelChecker does", () => {
   const outputs: DepthFirstOutput[] = [];
   checkDepthFirst({
