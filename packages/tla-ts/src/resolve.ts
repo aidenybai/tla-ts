@@ -2397,6 +2397,11 @@ const resolveStep = (
   }
 };
 
+export const getTheoremGoal = (theorem: Theorem): Goal | undefined =>
+  theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
+    ? { statement: theorem.statement, isSuffices: false, isInProof: false, keyword: undefined }
+    : undefined;
+
 const resolveTheorem = (
   theorem: Theorem,
   unit: Unit,
@@ -2404,10 +2409,7 @@ const resolveTheorem = (
   isDefinitionBody: boolean,
 ) => {
   const scope = isDefinitionBody ? undefined : resolveStatement(theorem.statement, undefined, unit);
-  const goal =
-    theorem.name !== undefined && theorem.statement.kind === "AssumeProve"
-      ? { statement: theorem.statement, isSuffices: false, isInProof: false, keyword: undefined }
-      : undefined;
+  const goal = getTheoremGoal(theorem);
   if (theorem.name !== undefined) {
     bindModuleName(
       bindings,

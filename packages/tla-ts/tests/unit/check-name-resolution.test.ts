@@ -3533,6 +3533,40 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "an inner module that uses an ASSUME/PROVE theorem as an expression",
+      "THEOREM T == ASSUME NEW a, a \\in {1} PROVE a = a\n---- MODULE In ----\nF == T\n====",
+      [
+        {
+          location: "line 4, col 6 to line 4, col 6 of module M",
+          message: "ASSUME/PROVE used where an expression is required.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an inner module that selects the NEW of an ASSUME/PROVE theorem",
+      "THEOREM T == ASSUME NEW a, a \\in {1} PROVE a = a\n---- MODULE In ----\nF == T!1\n====",
+      [
+        {
+          location: "line 4, col 6 to line 4, col 8 of module M",
+          message: "Selected a NEW declaration as an expression or operator.",
+        },
+      ],
+      [],
+    ],
+    [
+      "an inner module that selects an assumption past the NEW of an ASSUME/PROVE theorem",
+      "THEOREM T == ASSUME NEW a, a \\in {1} PROVE a = a\n---- MODULE In ----\nF == T!2\n====",
+      [
+        {
+          location: "line 4, col 8 to line 4, col 8 of module M",
+          message:
+            "Accessing ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });

@@ -64,6 +64,7 @@ import {
   getFunctionArity,
   getKeyName,
   getParamArities,
+  getTheoremGoal,
   isBefore,
   isSameSanyError,
   isTheoremDefinition,
@@ -1219,6 +1220,25 @@ export const createEnvironment = (
           name: definition.name,
           symbol: getDefinitionSymbol(definition),
         })),
+        ...parsed.theorems.flatMap((theorem) => {
+          const name = theorem.name;
+          const goal = getTheoremGoal(theorem);
+          return name === undefined || goal === undefined
+            ? []
+            : [
+                {
+                  location: theorem.location,
+                  name,
+                  symbol: {
+                    key: getKey({ name }),
+                    arity: 0,
+                    kind: "Theorem",
+                    range: theorem.location.range,
+                    goal,
+                  } satisfies ModuleSymbol,
+                },
+              ];
+        }),
         ...parsed.instances.flatMap((instance) => [
           ...(instance.name === undefined
             ? []
