@@ -47,7 +47,7 @@ const getBoxes = (container: Element, paneName: string) => {
       }
     } else if (middle > view.top && box.bottom < view.bottom) {
       boxes.set(name, {
-        left: element.parentElement?.parentElement?.getBoundingClientRect().left ?? box.left,
+        left: element.closest("[data-line]")?.getBoundingClientRect().left ?? box.left,
         right: box.right,
         middle,
         isClipped: box.right > view.right,
