@@ -19,6 +19,24 @@ const getFailureSummary = (result: CheckResult) => [
   result.failure?.exitCode,
 ];
 
+const ALL_MODULES = "Integers, Sequences, FiniteSets, TLC, Bags, Json";
+
+const getJavaError = (signature: string, message: string) =>
+  `Attempted to apply the operator overridden by the Java method\npublic static tlc2.${signature},\nbut it produced the following error:\n${message}`;
+
+const getOverrideMessages = (cases: string[][]) =>
+  Promise.all(
+    cases.map(
+      async (item) =>
+        (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS ${item[0]}\n${item[1]}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+            config: `INIT Init\nNEXT Next\nCONSTANT ${item[2]}`,
+          })
+        ).violation?.message,
+    ),
+  );
+
 describe("evaluation errors match TLC", () => {
   it.each([
     ['IF "a" :> 1 THEN 1 ELSE 2', "(a function  of the form (d1 :> e1 @@ ... @@ dN :> eN))"],
@@ -935,6 +953,40 @@ describe("evaluation errors match TLC", () => {
       cases.map(async (item) => (await checkModule(`ASSUME ${item[0]}`)).violation?.message),
     );
     expect(messages).toEqual(cases.map((item) => item[1]));
+  });
+
+  it("fails a Java override of no arguments that a <- applies to some, like TLC", async () => {
+    const getError = (signature: string) =>
+      getJavaError(
+        `value.impl.Value tlc2.module.${signature}()`,
+        "cannot convert MethodHandle()Value to (Value[])Value",
+      );
+    const one = "CONSTANT F(_)\nASSUME PrintT(F(1))";
+    const cases = [
+      ["Naturals, TLC", one, "F <- Nat", getError("Naturals.Nat")],
+      [ALL_MODULES, one, "F <- Int", getError("Integers.Int")],
+      [
+        "Integers, Sequences, FiniteSets, TLC",
+        "Op(a) == a\nASSUME PrintT(Op(1))",
+        "Op <- STRING",
+        getError("Strings.STRING"),
+      ],
+      [ALL_MODULES, one, "F <- EmptyBag", getError("Bags.EmptyBag")],
+      [
+        ALL_MODULES,
+        "CONSTANT F(_)\nASSUME PrintT(F(1) = 1)",
+        "F <- JavaTime",
+        getError("TLC.JavaTime"),
+      ],
+      [ALL_MODULES, one, "F <- Any", getError("TLC.Any")],
+      [
+        ALL_MODULES,
+        "CONSTANT F(_)\nAp(Op(_)) == Op(1)\nASSUME PrintT(Ap(F))",
+        "F <- Nat",
+        getError("Integers.Nat"),
+      ],
+    ];
+    expect(await getOverrideMessages(cases)).toEqual(cases.map((item) => item[3]));
   });
 
   it.each([

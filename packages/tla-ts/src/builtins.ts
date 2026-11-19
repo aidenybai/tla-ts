@@ -251,7 +251,14 @@ export const overrideWithJava = (builtin: Builtin, signature: string): Builtin =
     ...builtin,
     evaluate: (args, context) => {
       if (args.length !== builtin.arity) {
-        throw createJavaOverrideError(signature, `array is not of length ${builtin.arity}`);
+        // TLC's MethodValue invokes a method without parameters exactly, so java.lang.invoke rejects arguments.
+        const result = signature.split(" ")[2].split(".").pop();
+        throw createJavaOverrideError(
+          signature,
+          builtin.arity === 0
+            ? `cannot convert MethodHandle()${result} to (Value[])Value`
+            : `array is not of length ${builtin.arity}`,
+        );
       }
       return evaluate(args, context);
     },

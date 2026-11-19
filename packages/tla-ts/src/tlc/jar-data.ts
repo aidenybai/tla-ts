@@ -945,6 +945,7 @@ export const TLC_JAVA_METHODS = new Map([
   [
     "Bags",
     new Map([
+      ["EmptyBag", "public static tlc2.value.impl.Value tlc2.module.Bags.EmptyBag()"],
       [
         "IsABag",
         "public static tlc2.value.IBoolValue tlc2.module.Bags.IsABag(tlc2.value.impl.Value)",
@@ -1060,6 +1061,7 @@ export const TLC_JAVA_METHODS = new Map([
         "Assert",
         "public static tlc2.value.impl.Value tlc2.module.TLC.Assert(tlc2.value.impl.Value,tlc2.value.impl.Value)",
       ],
+      ["JavaTime", "public static tlc2.value.impl.Value tlc2.module.TLC.JavaTime()"],
       [
         ":>",
         "public static tlc2.value.impl.Value tlc2.module.TLC.MakeFcn(tlc2.value.impl.Value,tlc2.value.impl.Value)",
@@ -1080,6 +1082,7 @@ export const TLC_JAVA_METHODS = new Map([
         "RandomElement",
         "public static tlc2.value.impl.Value tlc2.module.TLC.RandomElement(tlc2.value.impl.Value)",
       ],
+      ["Any", "public static tlc2.value.impl.Value tlc2.module.TLC.Any()"],
       [
         "TLCEval",
         "public static tlc2.value.impl.Value tlc2.module.TLCEval.tlcEval(tlc2.tool.impl.Tool,tla2sany.semantic.ExprOrOpArgNode[],tlc2.util.Context,tlc2.tool.TLCState,tlc2.tool.TLCState,int,tlc2.tool.coverage.CostModel)",
