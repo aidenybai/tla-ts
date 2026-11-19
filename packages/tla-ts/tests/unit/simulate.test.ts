@@ -197,6 +197,27 @@ it("checks a behavior against one solution after another up to the first it viol
   ]);
 });
 
+it("draws on the generator of TLC's Simulator thread as it prints a behavior and checks the postcondition", () => {
+  const aliases: unknown[] = [];
+  const printed: string[] = [];
+  const status = simulate({
+    source:
+      '---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0\nNext == x\' = x + RandomElement(1..3)\nInv == x < 5\nAlias == [x |-> x, r |-> RandomElement(0..99)]\nPost == PrintT(<<"post", TLCGet("config").seed, RandomElement(0..99)>>)\n====',
+    config: "INIT Init\nNEXT Next\nINVARIANT Inv\nALIAS Alias\nPOSTCONDITION Post",
+    seed: 4n,
+    traceDepth: 5,
+    traceCount: 1n,
+    aril: 0n,
+    isGenerating: false,
+    scheduler: "random",
+    onSimulation: (output) => {
+      if (output.kind === "behavior") aliases.push(...output.trace.map((step) => step.state.r));
+    },
+    onPrint: (text) => printed.push(text),
+  });
+  expect([status, aliases, printed]).toEqual([12, [73, 91, 91], ['<<"post", "4", 69>>']]);
+});
+
 const getCounterExample = (body: string, config: string) => {
   const printed: string[] = [];
   simulate({

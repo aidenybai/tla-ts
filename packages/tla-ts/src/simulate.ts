@@ -732,6 +732,7 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     return { positions, failure: undefined };
   };
 
+  const getSimulatorRandom = runtime.getRandom;
   const enumerableRandom = createJavaRandom(seed);
   runtime.getRandom = () => enumerableRandom;
   const errors: WorkerError[] = [];
@@ -760,6 +761,8 @@ export const simulate = (options: SimulationOptions & CliSettings): number => {
     }
   }
   isOnWorker = false;
+  // The Simulator's thread draws on from where it computed the initial states.
+  runtime.getRandom = getSimulatorRandom;
   const printed = errors.findIndex(
     (error) => error.isException || !isContinued || FATAL_CODES.has(error.code),
   );
