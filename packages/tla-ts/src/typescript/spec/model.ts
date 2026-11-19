@@ -984,6 +984,17 @@ export const compileModelToEscore = (
   const declarations = file.statements.flatMap((statement) =>
     ts.isVariableStatement(statement) ? statement.declarationList.declarations : [],
   );
+  // The module runs as a strict script, whose top-level declarations the steps read by name, so
+  // its declarations lose their export keywords.
+  const exports = file.statements.flatMap((statement) =>
+    ts.canHaveModifiers(statement)
+      ? (ts.getModifiers(statement) ?? []).flatMap((modifier) =>
+          modifier.kind === ts.SyntaxKind.ExportKeyword
+            ? [{ start: modifier.getStart(), end: modifier.getEnd(), text: "" }]
+            : [],
+        )
+      : [],
+  );
   const replaced = choose
     .map((choice, index) => {
       const declaration = declarations.find(
@@ -1001,6 +1012,7 @@ export const compileModelToEscore = (
         text: `${choice.name} = ${INITIAL}[${index}]`,
       };
     })
+    .concat(exports)
     .sort((left, right) => right.start - left.start)
     .reduce(
       (text, change) => text.slice(0, change.start) + change.text + text.slice(change.end),
