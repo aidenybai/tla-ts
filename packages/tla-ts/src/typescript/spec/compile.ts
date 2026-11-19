@@ -194,7 +194,9 @@ const getWrapperNames = (names: ReadonlySet<string>) => [
 // as the model's resolver finds them, each once, by path. A require of a file that Node reads as
 // other than code, such as JSON, loads none.
 const loadFiles = (source: string, fileName: string, isModule: boolean): ProgramFile[] => {
-  if (!isModule) {
+  // A script loads modules only where it calls import().
+  const isScript = !isModule;
+  if (isScript && !/\bimport\s*\(/.test(source)) {
     return [
       {
         sourceFile: transpile(source, fileName, false),
@@ -268,7 +270,7 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
       });
       continue;
     }
-    const kind = getKind(path, text);
+    const kind = isScript && path === entry ? "script" : getKind(path, text);
     const written = getSpecifiers(
       ts.createSourceFile(path, text, ts.ScriptTarget.ESNext, true),
       kind,
@@ -278,7 +280,7 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
     const sourceFile =
       kind === "commonjs"
         ? transpile(`${WRAPPER[0]}${code}${WRAPPER[1]}`, path, false)
-        : transpile(code, path, true);
+        : transpile(code, path, kind !== "script");
     const targets = new Map(
       [...getSpecifiers(sourceFile, kind).keys()].flatMap((specifier) => {
         const literal = written.get(specifier);
@@ -453,7 +455,7 @@ export const compileToEscore = (
     program.words.has("then") ||
     program.identifiers.has("setTimeout");
   const isIncluded = (gate: EscoreRuntime["gates"][number]) =>
-    (isModule && MODULE_GROUPS.has(gate.group)) ||
+    ((isModule || files.length > 1) && MODULE_GROUPS.has(gate.group)) ||
     // A JSON file's exports are what JSON.parse gives.
     (gate.group === "77-json.tla" && files.some((file) => file.kind === "json")) ||
     // A TextEncoder's encode makes a Uint8Array.
@@ -536,9 +538,11 @@ export const compileToEscore = (
               ? `RunProgram(s) == LET h == ${hostImport} IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} LET t == RunTimers(u.s) IN IF IsAbrupt(t) THEN t ELSE IF Slots(t.s, Val(p)).state = "pending" THEN ThrowError(t.s, "Error") ELSE t`
               : isModule
                 ? `RunProgram(s) == LET h == ${hostImport} IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
-                : isQueuing
-                  ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
-                  : "RunProgram(s) == Program(s)",
+                : hostFile !== 0
+                  ? `RunProgram(s) == LET h == SetupHostImport(s, ${hostFile}) IN IF IsAbrupt(h) THEN h ELSE LET p == Program(h.s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
+                  : isQueuing
+                    ? `RunProgram(s) == LET p == Program(s) IN IF IsAbrupt(p) THEN p ELSE ${runJobs} RunTimers(u.s)`
+                    : "RunProgram(s) == Program(s)",
         },
         {
           name: "CallBuiltin",

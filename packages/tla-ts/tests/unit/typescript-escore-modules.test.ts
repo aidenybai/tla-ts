@@ -32,7 +32,7 @@ const worker = new Worker(
   parentPort.on("message", async (spec) => {
     const loaded = await loading;
     try {
-      const compiled = loaded.compileToEscore(readFileSync(spec.path, "utf8"), spec.path, loaded.runtime, true);
+      const compiled = loaded.compileToEscore(readFileSync(spec.path, "utf8"), spec.path, loaded.runtime, spec.isModule);
       const result = await loaded.check({ ...compiled, workers: 1, onPrint: () => {} });
       parentPort.postMessage({ id: spec.id, status: result.status, message: result.failure?.message });
     } catch (error) {
@@ -68,7 +68,7 @@ beforeAll(() => ready, 60_000);
 // Checks a program whose entry is main.js, in a directory of its files, whose package makes each
 // JavaScript file an ES module unless the files give a package.json of their own, as Node runs
 // them.
-const checkModules = (files: Record<string, string>) => {
+const checkModules = (files: Record<string, string>, isModule = true) => {
   const directory = mkdtempSync(join(tmpdir(), "escore-modules-"));
   directories.push(directory);
   Object.entries({ "package.json": '{ "type": "module" }', ...files }).forEach((entry) => {
@@ -76,7 +76,7 @@ const checkModules = (files: Record<string, string>) => {
     writeFileSync(join(directory, entry[0]), entry[1]);
   });
   return new Promise<ModuleResult>((resolve) => {
-    worker.postMessage({ id: pending.length, path: join(directory, "main.js") });
+    worker.postMessage({ id: pending.length, path: join(directory, "main.js"), isModule });
     pending.push(resolve);
   });
 };
@@ -296,6 +296,23 @@ describe("compiles modules by specializing ESCore", () => {
           )
         ).message,
       ).toContain(THREW);
+    });
+  });
+
+  describe("runs import() of a script, which loads modules as a module's does", () => {
+    const getScript = (expected: string) => ({
+      "main.js": `var log = [];
+        import("./static.js").then((ns) => { log.push(Object.keys(ns).join()); return import("./static.js"); }).then(() => log.push("again"));
+        setTimeout(() => { if (log.join() !== "${expected}") throw new Error(log.join()); });`,
+      "static.js": "export const s = 1;",
+    });
+
+    it("agrees with Node", async () => {
+      expect((await checkModules(getScript("s,again"), false)).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkModules(getScript("again,s"), false)).message).toContain(THREW);
     });
   });
 

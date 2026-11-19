@@ -2582,8 +2582,13 @@ export const specialize = (
   };
 
   const entry = files[0];
+  // A script that calls import() loads the files of its specifiers.
   if (entry.kind === "script" && files.length > 1) {
-    throw new TlaTypeScriptError("tla-ts can't compile a script that loads modules to ESCore yet");
+    definitions.push({
+      name: "ModuleNode1",
+      arity: 0,
+      text: `ModuleNode1 == [file |-> 1, kind |-> "script", targets |-> ${getTargets(entry)}]`,
+    });
   }
   // A JSON file's node: its text without a byte order mark, which Node strips, where it's valid.
   const jsonCode = (file: ProgramFile, number: number) => {
@@ -2672,7 +2677,7 @@ export const specialize = (
     {
       name: "ModuleNode",
       arity: 1,
-      text: `ModuleNode(id) ==\n  ${entry.kind === "script" ? `Assert(FALSE, "tla-ts can't load a module the program doesn't have")` : getDispatch("id", 1, files.length, (number) => `ModuleNode${number}`)}`,
+      text: `ModuleNode(id) ==\n  ${files.length === 1 && entry.kind === "script" ? `Assert(FALSE, "tla-ts can't load a module the program doesn't have")` : getDispatch("id", 1, files.length, (number) => `ModuleNode${number}`)}`,
     },
     {
       name: "ModuleDeclarations",
