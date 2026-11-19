@@ -224,6 +224,7 @@ const getUnchangedVariables = (
   expression: Expression,
   environment: Environment,
   visited = new Set<string>(),
+  written = expression,
 ): UnchangedVariable[] | undefined => {
   if (expression.kind === "Tuple") {
     const variables = expression.elements.map((element) =>
@@ -233,11 +234,11 @@ const getUnchangedVariables = (
   }
   if (expression.kind !== "Identifier" || visited.has(expression.name)) return undefined;
   const index = environment.variableIndex.get(expression.name);
-  if (index !== undefined) return [{ index, expression }];
+  if (index !== undefined) return [{ index, expression: written }];
   const definition = getZeroArityBody(expression.name, environment);
   if (!definition) return undefined;
   visited.add(expression.name);
-  return getUnchangedVariables(definition.body, environment, visited);
+  return getUnchangedVariables(definition.body, environment, visited, written);
 };
 
 const ACTION_KINDS = new Set([

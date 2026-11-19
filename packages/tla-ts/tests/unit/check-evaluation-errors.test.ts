@@ -411,6 +411,21 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("warns about a changed variable that a definition names under UNCHANGED at the name written there, as TLC's Tool#processUnchanged does", async () => {
+    const warnings: string[] = [];
+    await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nZy == y\nInit == x = 0 /\\ y = 0\nNext == y' = 1 /\\ UNCHANGED Zy /\\ x' = x\n====",
+      config: "INIT Init\nNEXT Next",
+      onProgress: (progress) => {
+        if (progress.kind === "warning") warnings.push(progress.text);
+      },
+    });
+    expect(warnings).toEqual([
+      "The variable y was changed while it is specified as UNCHANGED at\nline 6, col 29 to line 6, col 30 of module M",
+    ]);
+  });
+
   it("warns about a changed variable that a LET definition names under UNCHANGED with -coverage, which evaluates the definition at each reference as TLC does", async () => {
     const warnings: string[] = [];
     await check({
