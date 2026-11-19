@@ -111,6 +111,7 @@ import {
   isUpdatedElementOf,
   markNormalized,
   rankString,
+  setAliasedState,
   setAliasName,
   setStringOrder,
   setValueOptions,
@@ -1485,8 +1486,10 @@ export const createSearch = (
       };
     }
   };
-  const evaluateAlias: Search["evaluateAlias"] = (alias, state, next, isTool) =>
-    getAliasRecord(alias, state, next, isTool) ?? getStateRecord(state);
+  const evaluateAlias: Search["evaluateAlias"] = (alias, state, next, isTool) => {
+    const record = getAliasRecord(alias, state, next, isTool);
+    return record ? setAliasedState(record, () => getStateRecord(state)) : getStateRecord(state);
+  };
   const scopeExpressions = getScopeExpressions(spec.scope);
   return {
     properties,
