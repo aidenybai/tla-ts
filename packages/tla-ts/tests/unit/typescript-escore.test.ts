@@ -398,6 +398,32 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("runs the built-ins that a generator's helpers and an async disposal reach", () => {
+    const getSource = (expected: string) => `
+      function* numbers() {
+        yield 1;
+        yield 2;
+        yield 3;
+      }
+      const helped = numbers()
+        .filter((value) => value !== 2)
+        .map((value) => value * 10)
+        .toArray();
+      const stack = new AsyncDisposableStack();
+      stack.disposeAsync();
+      const result = [helped.join(), stack.disposed].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("10,30,true"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("10,20,30,true"))).message).toContain(THREW);
+    });
+  });
+
   describe("runs the methods of a buffer's view", () => {
     const getSource = (expected: string) => `
       const view = new DataView(new ArrayBuffer(4));

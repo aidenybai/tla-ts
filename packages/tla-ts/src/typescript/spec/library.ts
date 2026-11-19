@@ -97,12 +97,19 @@ const GATED_GROUPS = [
   "90-intl.tla",
 ];
 
-// String methods that make regular expressions, and the methods of collections and arrays that
-// give iterators, whose helpers, such as every and map, a program may call.
+// String methods that make regular expressions, the methods of collections and arrays that give
+// iterators, whose helpers, such as every and map, a program may call, the methods that give
+// promises, and Date's method that gives a Temporal.Instant.
 const EXTRA_TRIGGERS = new Map([
   ["83-regexp", ["match", "matchAll", "replace", "replaceAll", "search", "split"]],
   ["81-iterator.tla", ["values", "keys", "entries"]],
+  ["86-promise.tla", ["waitAsync", "disposeAsync", "asyncDispose"]],
+  ["89", ["toTemporalInstant"]],
 ]);
+
+// The prototypes that every generator's and built-in iterator's prototype chain reaches, whose
+// methods a program calls without naming any global.
+const ITERATOR_PROTOTYPES = new Set(["IteratorPrototype", "AsyncIteratorPrototype"]);
 
 export const createLibrary = (directory: string): Library => {
   const core = readFileSync(join(directory, "ESCore.tla"), "utf8");
@@ -140,6 +147,17 @@ export const createLibrary = (directory: string): Library => {
     )) {
       if (!match[1].endsWith("Prototype")) {
         triggers.get(groupOf.get(`${match[3]}Builtin`) ?? "")?.add(match[2]);
+      }
+    }
+    // The iterator prototypes' methods, such as map and Symbol.dispose, by the word that names
+    // each.
+    for (const match of part.text.matchAll(
+      /\bM\("([A-Za-z]+)", (?:SV\("([^"]+)"\)|Sym([A-Za-z]+)), "([A-Za-z0-9]+)"/g,
+    )) {
+      if (ITERATOR_PROTOTYPES.has(match[1])) {
+        triggers
+          .get(groupOf.get(`${match[4]}Builtin`) ?? "")
+          ?.add(match[2] ?? `${match[3].charAt(0).toLowerCase()}${match[3].slice(1)}`);
       }
     }
   }
