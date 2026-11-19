@@ -34,7 +34,14 @@ import {
   type Environment,
   type Scope,
 } from "./evaluate";
-import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
+import {
+  ACTION_LEVEL,
+  CONSTANT_LEVEL,
+  createBoundScope,
+  createLevelAnalyzer,
+  TEMPORAL_LEVEL,
+  VARIABLE_LEVEL,
+} from "./levels";
 import { bindLetDefinitions, getLevel } from "./liveness";
 import { EMPTY_STATE } from "./runtime";
 import { createRecord, createSet, createTuple, formatValue, type Value } from "./values";
@@ -129,6 +136,27 @@ const getSplitContext = (environment: Environment, scope: Scope | undefined) => 
   state: EMPTY_STATE,
   next: undefined,
 });
+
+// Tool#getActionsAppl reads the level SANY gives each argument, which is constant for TLCGet.
+const hasConstantArguments = (
+  args: Expression[],
+  scope: Scope | undefined,
+  environment: Environment,
+) => {
+  const bindings: [string, Definition | undefined][] = [];
+  for (let node = scope; node; node = node.parent) {
+    bindings.unshift([node.name, letDefinitions.get(node)]);
+  }
+  const analyzer = createLevelAnalyzer({
+    constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
+    variables: new Set(environment.variables),
+    getDefinition: (name) => getDefinition(name, environment),
+    instances: environment.instances,
+    recursiveSections: environment.recursiveSections,
+  });
+  const boundScope = createBoundScope(bindings);
+  return args.every((arg) => analyzer.analyze(arg, boundScope).level === CONSTANT_LEVEL);
+};
 
 const getOperatorName = (expression: Expression) =>
   expression.kind === "Identifier"
@@ -274,9 +302,7 @@ const getInstanceActions = (
     return [{ ...instanceAction, parameters: [], expression: called.body, scope: called.scope }];
   }
   if (!called) return [{ ...instanceAction, parameters: [], expression, scope }];
-  if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
-    return callAction();
-  }
+  if (!hasConstantArguments(args, scope, environment)) return callAction();
   return tryCollect(() => {
     const values = args.map((arg) => evaluate(arg, getSplitContext(environment, scope)));
     return [
@@ -428,9 +454,7 @@ const getActions = (
     },
   ];
   if (isConstantDefinition(called, environment)) return callAction();
-  if (args.some((arg) => getLevel(arg, scope, environment) !== CONSTANT_LEVEL)) {
-    return callAction();
-  }
+  if (!hasConstantArguments(args, scope, environment)) return callAction();
   return tryCollect(() => {
     const boundScope = args.reduce<Scope | undefined>(
       (current, arg, index) => ({

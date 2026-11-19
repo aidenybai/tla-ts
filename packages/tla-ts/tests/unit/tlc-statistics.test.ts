@@ -103,6 +103,31 @@ it.each([
   },
 );
 
+it.each([
+  ['A(TLCGet("level"))', "A(1) line 6, col 9 to line 6, col 49 of module M"],
+  [
+    'LET D(q) == TLCGet("level") + q IN A(D(1))',
+    "A(2) line 6, col 9 to line 6, col 49 of module M",
+  ],
+  ['\\E q \\in {2} : A(q + TLCGet("level"))', "A(3) line 6, col 9 to line 6, col 49 of module M"],
+  ['A(TLCSet("exit", TRUE))', "A(TRUE) line 6, col 9 to line 6, col 49 of module M"],
+  ["A(TLCGet(1))", "A line 7, col 9 to line 7, col 20 of module M"],
+  ["A(TLCSet(1, 5))", "A line 7, col 9 to line 7, col 23 of module M"],
+  ["A(Trace)", "A line 7, col 9 to line 7, col 16 of module M"],
+  ["LET D == FALSE /\\ x = 0 IN A(D)", "A line 7, col 36 to line 7, col 39 of module M"],
+  ["A(x)", "A line 7, col 9 to line 7, col 12 of module M"],
+])(
+  "splits Next == %s by the level SANY gives the arguments, as TLC's Tool does before the checker exists",
+  async (next, label) => {
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nASSUME TLCSet(1, 7)\nInit == x = 0\nA(p) == x < 1 /\\ x' = x + 1 /\\ PrintT(<<"A", p>>)\nNext == ${next}\nInv == x < 1\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+      onPrint: () => {},
+    });
+    expect(result.violation?.trace.map((step) => step.label)).toEqual([undefined, label]);
+  },
+);
+
 it('reads TLCGet("level") as 0 in the initial predicate as it rebuilds an initial state for a trace, as TLC does', async () => {
   const printed: string[] = [];
   const result = await check({
