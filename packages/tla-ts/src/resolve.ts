@@ -2644,22 +2644,17 @@ const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit:
 export const resolveSubstitutions = (
   instance: Instance,
   declarations: Declaration[],
-  module: Module,
+  symbols: Symbols,
+  instancer: string,
   unit: ModuleUnit,
 ) => {
-  const imported = createSymbols(module, unit);
-  const positions = new Map(
-    [...module.constants, ...module.variables].map((declaration) => [
-      declaration.name,
-      declaration.location,
-    ]),
-  );
+  const imported = new Map([...CORE_SYMBOLS, ...symbols]);
   const report: ModuleReport = { location: instance.location, errors: [], warnings: [] };
   unit.reports.push(report);
   return checkSubstitutions(
     instance,
     declarations,
-    module.name,
+    instancer,
     instance.params.reduce<LocalName | undefined>(
       (parent, param) => ({
         name: param.name,
@@ -2681,32 +2676,10 @@ export const resolveSubstitutions = (
       self: undefined,
       bindings: {
         get: (name): ModuleBinding | undefined => {
-          const other = module.instances.findLast((candidate) => candidate.name === name);
-          if (other) {
-            return {
-              kind: "Instance",
-              arity: other.params.length,
-              range: other.location.range,
-              position: other.location,
-            };
-          }
-          const definition = unit.definitions.get(name);
-          if (definition) {
-            return {
-              kind: "Definition",
-              arity: getArity(definition),
-              range: definition.location.range,
-              position: definition.location,
-            };
-          }
           const symbol = imported.get(name);
-          return symbol && { ...symbol, position: positions.get(name) ?? MODULE_START };
+          return symbol && { ...symbol, position: MODULE_START };
         },
-        keys: () => [
-          ...imported.keys(),
-          ...unit.definitions.keys(),
-          ...module.instances.flatMap((other) => (other.name === undefined ? [] : [other.name])),
-        ],
+        keys: () => imported.keys(),
       },
       errors: report.errors,
       warnings: report.warnings,

@@ -3393,6 +3393,47 @@ describe("name resolution matches SANY", () => {
       ],
       [],
     ],
+    [
+      "a substitution of an operator that a variable redeclares",
+      "EXTENDS Sequences\nVARIABLE Len\n---- MODULE C ----\nCONSTANT c\n====\nINSTANCE C WITH c <- Len",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 25, col 1 to line 25, col 44 of module Sequences.",
+        },
+        {
+          location: "line 7, col 22 to line 7, col 24 of module M",
+          message: "The operator Len requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
+    [
+      "a substitution of an operator that a variable and a definition redeclare",
+      "EXTENDS Sequences\nVARIABLE Len\nLen == 1\n---- MODULE C ----\nCONSTANT c\n====\nINSTANCE C WITH c <- Len",
+      [
+        {
+          location: "line 3, col 10 to line 3, col 12 of module M",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 25, col 1 to line 25, col 44 of module Sequences.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 8 of module M",
+          message: "Operator Len already defined or declared.",
+        },
+        {
+          location: "line 4, col 1 to line 4, col 8 of module M",
+          message:
+            "Multiply-defined symbol 'Len': this definition or declaration conflicts \nwith the one at line 25, col 1 to line 25, col 44 of module Sequences.",
+        },
+        {
+          location: "line 8, col 22 to line 8, col 24 of module M",
+          message: "The operator Len requires 1 arguments.",
+        },
+      ],
+      [],
+    ],
   ])("rejects %s like SANY", async (_title, source, errors, warnings) => {
     await expect(checkNames(source)).rejects.toMatchObject({ sany: { errors, warnings } });
   });

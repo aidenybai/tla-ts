@@ -616,7 +616,8 @@ export const createEnvironment = (
     const substitutions = resolveSubstitutions(
       resolveInstanceSubexpressions(instance, module),
       declarations,
-      module,
+      resolved,
+      module.name,
       unit,
     );
     // SANY substitutes into the bodies of a module with parameters, or of any module a named instance substitutes for.
