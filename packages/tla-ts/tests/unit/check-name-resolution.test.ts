@@ -189,6 +189,10 @@ describe("name resolution matches SANY", () => {
       "---- MODULE Base ----\nTHEOREM Foo == ASSUME TRUE PROVE TRUE\n====\nI == INSTANCE Base\nX == I!Foo!1",
     ],
     [
+      "a selection through an instance into a label that an ASSUME/PROVE theorem selects",
+      "---- MODULE Base ----\nTHEOREM Thm == ASSUME TRUE PROVE l2 :: 1 = 2\nTHEOREM T3 == ASSUME TRUE PROVE Thm!l2\n====\nI == INSTANCE Base\nX == I!T3!2!1!1\nINSTANCE Base\nY == T3!2!1!2",
+    ],
+    [
       "an ASSUME/PROVE theorem a named instance substitutes into, used as an expression",
       "---- MODULE Base ----\nCONSTANT c\nTHEOREM Foo == ASSUME NEW y PROVE y = c\n====\nI == INSTANCE Base WITH c <- 1\nX == I!Foo\nLEMMA I!Foo",
     ],

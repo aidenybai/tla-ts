@@ -298,6 +298,7 @@ export const createEnvironment = (
   const unresolvedBodyKeys = new Set<string>();
   const copySources = new Map<string, CopySource>();
   const substitutedDefinitions = new Set<Definition>();
+  const goalOperands = new WeakMap<Expression, Expression[]>();
   const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
@@ -1129,6 +1130,7 @@ export const createEnvironment = (
       instanced,
       reports,
       warnings: scope.warnings,
+      goalOperands,
     });
     const getSymbolsBefore = (location: SourceLocation): Symbols =>
       [

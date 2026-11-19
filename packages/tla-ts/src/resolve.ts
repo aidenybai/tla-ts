@@ -2428,6 +2428,7 @@ export interface ModuleUnit {
   instanced: Map<Instance, Symbols>;
   reports: ModuleReport[];
   warnings: SanyError[];
+  goalOperands: WeakMap<Expression, Expression[]>;
 }
 
 export const MODULE_START: SourceLocation = { line: 0, column: 0 };
@@ -2684,7 +2685,7 @@ export const resolveSubstitutions = (
     labelParams: [],
     labels: new Set(),
     isGenerated: false,
-    goalOperands: new WeakMap(),
+    goalOperands: unit.goalOperands,
   });
 };
 
@@ -2730,7 +2731,6 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
   );
   const recursive = new Set<Binding>();
   const declarations: { declaration: Declaration; binding: ModuleBinding | undefined }[] = [];
-  const goalOperands = new WeakMap<Expression, Expression[]>();
   const createCheck = (
     location: SourceLocation,
     self: Definition | undefined,
@@ -2756,7 +2756,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         labelParams: [],
         labels: new Set(),
         isGenerated: false,
-        goalOperands,
+        goalOperands: unit.goalOperands,
       }),
   });
   const isDefinitionBody = (statement: Expression | AssumeProve) =>
