@@ -58,16 +58,11 @@ export class BitBlaster {
 
   mkNot(arg: number, previous = -1) {
     const manager = this.manager;
-    if (manager.getOp(arg) !== OP_EQ || manager.sorts[manager.getArg(arg, 0)] !== SORT_BOOL) {
-      const outer = manager.beginTemporaries();
-      const result = this.endRewrite(this.rewriter.mkNot(arg), outer);
-      release(manager, previous);
-      return result;
-    }
-    const negation = this.mkNot(manager.getArg(arg, 0));
-    const result = this.mkIff(negation, manager.getArg(arg, 1));
+    if (manager.getOp(arg) === OP_EQ && manager.sorts[manager.getArg(arg, 0)] === SORT_BOOL)
+      return this.mkXor(manager.getArg(arg, 0), manager.getArg(arg, 1), previous);
+    const outer = manager.beginTemporaries();
+    const result = this.endRewrite(this.rewriter.mkNot(arg), outer);
     release(manager, previous);
-    this.drop(negation);
     return result;
   }
 
