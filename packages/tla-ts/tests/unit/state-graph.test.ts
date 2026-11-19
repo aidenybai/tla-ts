@@ -78,6 +78,15 @@ describe("check dumps the state graph like TLC's -dump", () => {
     expect(dump.written.get("Labels.dot")).toBe(readTlcDump("Labels.dot"));
   });
 
+  it("labels a successor by what its alias changes with -difftrace", async () => {
+    const dump = await dumpFixture("state-graph", "Changes", {
+      path: "Changes.dot",
+      dot: true,
+      isDiffTrace: true,
+    });
+    expect(dump.written.get("Changes.dot")).toBe(readTlcDump("Changes.dot"));
+  });
+
   it("lists the reachable states without dot", async () => {
     const dump = await dumpFixture("counter", "Counter", { path: "Counter.dump" });
     expect(dump.written.get("Counter.dump")).toBe(readTlcDump("Counter.dump"));
@@ -240,5 +249,17 @@ describe("the CLI takes TLC's -dump flag", () => {
     const directory = createDirectory();
     runCli(["-dump", "dot,actionlabels,strict,stuttering,constrained", join(directory, "Counter")]);
     expect(readFileSync(join(directory, "Counter.dot"), "utf8")).toBe(readTlcDump("Counter.dot"));
+  });
+
+  it("labels the successors in the dot file by what changes with -difftrace", () => {
+    const directory = createDirectory();
+    runCliWith("state-graph", [
+      "Changes.tla",
+      "-difftrace",
+      "-dump",
+      "dot",
+      join(directory, "Changes"),
+    ]);
+    expect(readFileSync(join(directory, "Changes.dot"), "utf8")).toBe(readTlcDump("Changes.dot"));
   });
 });

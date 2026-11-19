@@ -101,7 +101,6 @@ import type { TlcVersion } from "./tlc/version";
 import type { GraphState } from "./state-graph";
 import {
   createModelValue,
-  formatState,
   formatValue,
   freezeStringOrder,
   getWrittenPairs,
@@ -1456,13 +1455,11 @@ export const createSearch = (
     getGraphState: (state, fingerprint, level, isTool) => ({
       fingerprint: BigInt.asIntN(64, fingerprint),
       level,
-      getLabel: () =>
-        formatState(
-          config.alias === undefined
-            ? toRecord(state)
-            : evaluateAlias(config.alias, state, undefined, isTool),
-        ),
-      getText: () => formatState(toRecord(state)),
+      getRecord: () => toRecord(state),
+      getAlias: () =>
+        config.alias === undefined
+          ? toRecord(state)
+          : evaluateAlias(config.alias, state, undefined, isTool),
     }),
     isSymmetric: symmetryGroup !== undefined,
     isConstrained: constraints.length > 0 || actionConstraints.length > 0,

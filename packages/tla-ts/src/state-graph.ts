@@ -1,5 +1,6 @@
 import { getJavaHashCode } from "./java-hash";
 import type { TlcVersion } from "./tlc/version";
+import { formatState, type Value } from "./values";
 
 export interface StateDump {
   path: string;
@@ -10,13 +11,15 @@ export interface StateDump {
   constrained?: boolean;
   stuttering?: boolean;
   strict?: boolean;
+  /** TLC's -difftrace, which labels a successor with the variables its step changes. */
+  isDiffTrace?: boolean;
 }
 
 export interface GraphState {
   fingerprint: bigint;
   level: number;
-  getLabel: () => string;
-  getText: () => string;
+  getRecord: () => Record<string, Value>;
+  getAlias: () => Record<string, Value>;
 }
 
 interface GraphAction {
@@ -75,7 +78,7 @@ const toDotLabel = (text: string) => escapeDotString(text).replaceAll("\n", "\\n
 const createPlainWriter = (dump: StateDump, writeFile: WriteFile): StateWriter => {
   const states: string[] = [];
   const writeState = (state: GraphState) =>
-    states.push(`State ${states.length + 1}:\n${state.getText()}\n`);
+    states.push(`State ${states.length + 1}:\n${formatState(state.getRecord())}\n`);
   const writeSuccessor = (_state: GraphState, successor: GraphState, isSeen: boolean) => {
     if (!isSeen) writeState(successor);
   };
@@ -169,18 +172,22 @@ const createDotWriter = (
     const attributes = isLabeled ? ` [label="${label}",color="${color}",fontcolor="${color}"]` : "";
     lines.push(`${state.fingerprint} -> ${successor.fingerprint}${attributes};\n`);
     if (!isSeen) {
-      const tooltip = is174 ? "" : `,tooltip="${toDotLabel(successor.getText())}"`;
-      const fill = constraint === undefined ? "" : ",style = filled, fillcolor=lightyellow";
-      lines.push(
-        `${successor.fingerprint} [label="${toDotLabel(successor.getLabel())}"${tooltip}${fill}];\n`,
+      const tooltip = is174 ? "" : `,tooltip="${toDotLabel(formatState(successor.getRecord()))}"`;
+      const label = formatState(
+        successor.getAlias(),
+        dump.isDiffTrace && !is174 ? state.getAlias() : undefined,
       );
+      const fill = constraint === undefined ? "" : ",style = filled, fillcolor=lightyellow";
+      lines.push(`${successor.fingerprint} [label="${toDotLabel(label)}"${tooltip}${fill}];\n`);
     }
     addRank(state);
     writeSnapshot();
   };
   return {
     writeInitialState: (state) => {
-      lines.push(`${state.fingerprint} [label="${toDotLabel(state.getLabel())}",style = filled]\n`);
+      lines.push(
+        `${state.fingerprint} [label="${toDotLabel(formatState(state.getAlias()))}",style = filled]\n`,
+      );
       addRank(state);
       writeSnapshot();
     },
