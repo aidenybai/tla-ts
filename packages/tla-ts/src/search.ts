@@ -673,7 +673,11 @@ const getMembership = (
 };
 
 const getPredicate = (expression: Expression, environment: Environment) => {
-  if (expression.kind !== "Identifier" || environment.constants.has(expression.name)) {
+  if (
+    expression.kind !== "Identifier" ||
+    expression.location.range ||
+    environment.constants.has(expression.name)
+  ) {
     return expression;
   }
   const definition = getDefinition(expression.name, environment);
