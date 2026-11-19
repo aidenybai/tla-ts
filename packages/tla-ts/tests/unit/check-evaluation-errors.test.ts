@@ -1057,6 +1057,15 @@ describe("evaluation errors match TLC", () => {
       "INIT Init\nNEXT Next\nINVARIANT Inv",
       "z",
       75,
+      undefined,
+    ],
+    [
+      "an invariant under coverage",
+      "Inv == ENABLED (y' = 1 - y /\\ UNCHANGED (IF z = 2 THEN 0 ELSE x))",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+      "z",
+      75,
+      1,
     ],
     [
       "a fair action",
@@ -1064,13 +1073,15 @@ describe("evaluation errors match TLC", () => {
       "SPECIFICATION Spec\nPROPERTY Prop",
       "x",
       255,
+      undefined,
     ],
   ])(
     "words an unassigned variable under UNCHANGED of an expression in ENABLED in %s like TLC",
-    async (_place, definitions, config, variable, exitCode) => {
+    async (_place, definitions, config, variable, exitCode, coverage) => {
       const result = await check({
         source: `---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y, z\nInit == x = 0 /\\ y = 0 /\\ z = 0\nNext == x' = 1 - x /\\ UNCHANGED <<y, z>>\n${definitions}\n====`,
         config,
+        coverage,
       });
       expect([result.failure?.message, result.failure?.exitCode]).toEqual([
         expect.stringContaining(
