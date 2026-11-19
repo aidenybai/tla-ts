@@ -275,6 +275,31 @@ describe("sat2goal", () => {
       ]),
     ).toBe(["unknown", "", "sat", "((x #b110)", " (y #b101)", " (z #b101))"].join("\n"));
   });
+
+  it("frees the state of its propagate-values at the start of get-consequences", () => {
+    expect(
+      run([
+        "(set-logic QF_FD)",
+        "(declare-const x (_ BitVec 3))",
+        "(declare-const y (_ BitVec 3))",
+        "(declare-const z (_ BitVec 3))",
+        "(declare-const p Bool)",
+        "(assert (bvule z (bvsdiv (_ bv0 3) y)))",
+        "(get-consequences () (x p y z))",
+        "(push 1)",
+        "(assert (= z (_ bv2 3)))",
+        "(assert (bvsge (bvsub z (bvadd x (_ bv7 3))) (bvurem (bvneg y) (bvlshr z x))))",
+        "(check-sat)",
+        "(pop 1)",
+        "(get-consequences (p) (z p x))",
+        "(assert (bvult z (bvsdiv (bvadd y x) z)))",
+        "(check-sat)",
+        "(get-value (x y z))",
+      ]),
+    ).toBe(
+      ["sat", "", "sat", "sat", "", "sat", "((x #b100)", " (y #b000)", " (z #b011))"].join("\n"),
+    );
+  });
 });
 
 describe("sat solver", () => {
