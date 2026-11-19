@@ -233,8 +233,13 @@ export class AssertedFormulas {
     this.macros = new MacroManager(manager);
     this.substitution = new Substitution(manager);
     // set_eliminate_and turns coalesce_chars off when smt.string_solver is seq, its default, so
-    // string literals reach the seq theory as concatenations of units.
-    this.rewriter = new Rewriter(manager, { ...KERNEL_REWRITER_OPTIONS, isCoalescingChars: false });
+    // string literals reach the seq theory as concatenations of units. It turns
+    // expand_select_store on.
+    this.rewriter = new Rewriter(manager, {
+      ...KERNEL_REWRITER_OPTIONS,
+      isCoalescingChars: false,
+      isExpandingSelectStores: true,
+    });
     this.names = new DefinedNames(manager);
     this.termIteElim = new ElimTermIteRw(manager, this.names);
     this.patternInference = new PatternInferenceRw(manager, new PatternInference(manager));

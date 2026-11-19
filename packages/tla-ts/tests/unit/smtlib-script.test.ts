@@ -1881,6 +1881,21 @@ describe("runSmtlibScript prints what Z3 prints", () => {
     ]);
   });
 
+  // set_eliminate_and turns expand_select_store on in the rewriter of asserted_formulas, which
+  // turns a select of a store whose array nothing else uses into an if-then-else.
+  it("expands a select of a store as it asserts the formula", () => {
+    expect(
+      run([
+        "(set-option :produce-models true)",
+        "(declare-const a0 (Array Int Int))",
+        "(declare-const i0 Int)",
+        "(assert (< (select (store a0 2 -1) i0) 0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["sat", "(:rlimit 224)"]);
+  });
+
   it("throws at a theory it does not implement", () => {
     expect(() =>
       run(["(declare-const b (_ BitVec 8))", '(assert (= (str.from_ubv b) "12"))', "(check-sat)"]),
