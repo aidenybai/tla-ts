@@ -944,6 +944,28 @@ describe("a canceled rewrite, as Z3 5.3.2 reports it", () => {
   });
 });
 
+describe("the resource limit, as the simplifiers of Z3 5.3.2 stop at it", () => {
+  it("stops qe-light between formulas without failing", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-fun f (Int) Int)",
+        "(assert (> a 0))",
+        "(assert (> b a))",
+        "(assert (forall ((x Int)) (or (> (f x) 0) (and (< x a) (= x 3)))))",
+        "(set-option :rlimit 1)",
+        "(apply qe-light)",
+        "(set-option :rlimit 2)",
+        "(apply qe-light)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (> a 0)\n  (> b a)\n  (forall ((x Int)) (or (> (f x) 0) (and (< x a) (= x 3))))\n  :precision precise :depth 1)\n)",
+      '(error "tactic failed: max. resource limit exceeded")',
+    ]);
+  });
+});
+
 describe("the logic check names a theory as Z3 does", () => {
   // check_logic prints m.get_family_name(fid), and the label family is a builtin it accepts.
   it("names the recfun family and accepts a label", () => {

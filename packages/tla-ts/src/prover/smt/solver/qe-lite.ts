@@ -361,7 +361,7 @@ export const applyQeLite = (manager: AstManager, goal: Goal) => {
         formula = assignOwned(manager, formula, qe.apply(formula));
         if (formula !== form) goal.update(index, formula);
       }
-      manager.limit.checkpoint();
+      if (!manager.limit.inc()) break;
     }
     release(manager, formula);
   }
