@@ -11,6 +11,20 @@ const checkModule = (body: string, config: string) =>
     config: `INIT Init\nNEXT Next\n${config}`,
   });
 
+const getAliasRegisters = async (
+  setup: string,
+  invariant: string,
+  config: string,
+  maxSetSize: number | undefined,
+) =>
+  (
+    await check({
+      source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\n${setup}\nNext == x < 3 /\\ x' = x + 1 /\\ TLCSet(1, TLCGet(1) + 1)\nInv == ${invariant}\nAlias == [x |-> x, register |-> TLCGet(1)]\n====`,
+      config: `INIT Init\nNEXT Next\nALIAS Alias\n${config}`,
+      maxSetSize,
+    })
+  ).violation?.trace.map((step) => formatValue(step.state.register));
+
 const formatTrace = (trace: TraceStep[] | undefined) =>
   (trace ?? []).map((step) =>
     Object.entries(step.state).map(([name, value]) => `${name} = ${formatValue(value)}`),
@@ -55,6 +69,129 @@ describe("ALIAS matches TLC", () => {
       ["a = 0", "b = TRUE"],
     ]);
   });
+
+  it.each([
+    [
+      "an invariant",
+      "Init == x = 0 /\\ TLCSet(1, 0)",
+      "x < 3",
+      "INVARIANT Inv",
+      ["1", "1", "2", "3"],
+    ],
+    ["a deadlock", "Init == x = 0 /\\ TLCSet(1, 0)", "TRUE", "", ["2", "2", "2", "3"]],
+    [
+      "an initial state's successor",
+      "Init == x = 0 /\\ TLCSet(1, 0)",
+      "x < 1",
+      "INVARIANT Inv",
+      ["1", "2"],
+    ],
+    [
+      "an invariant after ASSUME sets the register",
+      "ASSUME TLCSet(1, 0)\nInit == x = 0",
+      "x < 3",
+      "INVARIANT Inv",
+      ["4", "4", "5", "6"],
+    ],
+  ])(
+    "aliases each state of a trace for %s as TLC's TLCTrace#printTrace rebuilds it, so the alias reads the registers set by then",
+    async (_name, setup, invariant, config, registers) => {
+      expect(await getAliasRegisters(setup, invariant, config, undefined)).toEqual(registers);
+      expect(await getAliasRegisters(setup, invariant, config, 1_000_000)).toEqual(registers);
+    },
+  );
+
+  it.each([
+    ["(x + 1) % 3", 0, ["1", "2", "2"]],
+    ["IF x = 3 THEN 1 ELSE x + 1", 1, ["1", "2", "3", "3"]],
+  ])(
+    "aliases each state of a lasso to x' = %s once it rebuilds the next, as TLC's LiveWorker#printTrace does",
+    async (successor, loopStart, registers) => {
+      const getLasso = async (maxSetSize: number | undefined) => {
+        const result = await check({
+          source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLE x\nInit == x = 0 /\\ TLCSet(1, 0)\nNext == x' = (${successor}) /\\ TLCSet(1, TLCGet(1) + 1)\nSpec == Init /\\ [][Next]_x /\\ WF_x(Next)\nProp == <>[](x = 0)\nAlias == [x |-> x, register |-> TLCGet(1)]\n====`,
+          config: "SPECIFICATION Spec\nPROPERTY Prop\nALIAS Alias",
+          maxSetSize,
+        });
+        return [
+          result.violation?.loopStart,
+          result.violation?.trace.map((step) => formatValue(step.state.register)),
+        ];
+      };
+      expect(await getLasso(undefined)).toEqual([loopStart, registers]);
+      expect(await getLasso(1_000_000)).toEqual([loopStart, registers]);
+    },
+  );
+
+  it.each([
+    [
+      "a lasso",
+      "Next == x' = (x + 1) % 3 /\\ y' = y /\\ TLCSet(1, TLCGet(1) + 1)\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nProp == <>[](x = 0)",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+      ["13", "14", "14"],
+    ],
+    [
+      "an invariant under a VIEW",
+      "Next == x < 3 /\\ x' = x + 1 /\\ y' = 1 - y /\\ TLCSet(1, TLCGet(1) + 1)\nInv == x < 3\nView == x",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View\nCHECK_DEADLOCK FALSE",
+      ["4", "4", "5", "6"],
+    ],
+  ])(
+    "rebuilds each state of %s once for the registers its ALIAS reads, as TLC does",
+    async (_name, definitions, config, registers) => {
+      const getRegisters = async (maxSetSize: number | undefined) =>
+        (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nASSUME TLCSet(1, 0)\nInit == x = 0 /\\ y = 0\n${definitions}\nAlias == [x |-> x, register |-> TLCGet(1)]\n====`,
+            config: `${config}\nALIAS Alias`,
+            maxSetSize,
+          })
+        ).violation?.trace.map((step) => formatValue(step.state.register));
+      expect(await getRegisters(undefined)).toEqual(registers);
+      expect(await getRegisters(1_000_000)).toEqual(registers);
+    },
+  );
+
+  it.each([
+    [
+      "a lasso",
+      "Next == x' = (x + 1) % 3 /\\ y' = y /\\ Count\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nProp == <>[](x = 0)",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+      [
+        ["13", '"13"'],
+        ["14", '"14"'],
+        ["14", '"14"'],
+      ],
+    ],
+    [
+      "an invariant under a VIEW",
+      "Next == x < 3 /\\ x' = x + 1 /\\ y' = 1 - y /\\ Count\nInv == x < 3\nView == x",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View\nCHECK_DEADLOCK FALSE",
+      [
+        ["4", '"4"'],
+        ["4", '"4"'],
+        ["5", '"5"'],
+        ["6", '"6"'],
+      ],
+    ],
+  ])(
+    "rebuilds each state of %s once for the named registers and -D properties its ALIAS reads, as TLC does",
+    async (_name, definitions, config, values) => {
+      const getValues = async (maxSetSize: number | undefined) =>
+        (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nASSUME TLCSet("s:n", 0) /\\ TLCSet("-Dk", 0)\nCount == TLCSet("s:n", TLCGet("s:n") + 1) /\\ TLCSet("-Dk", 1 + CHOOSE n \\in 0..99 : ToString(n) = TLCGet("-Dk"))\nInit == x = 0 /\\ y = 0\n${definitions}\nAlias == [x |-> x, named |-> TLCGet("s:n"), property |-> TLCGet("-Dk")]\n====`,
+            config: `${config}\nALIAS Alias`,
+            maxSetSize,
+          })
+        ).violation?.trace.map((step) => [
+          formatValue(step.state.named),
+          formatValue(step.state.property),
+        ]);
+      expect(await getValues(undefined)).toEqual(values);
+      expect(await getValues(1_000_000)).toEqual(values);
+    },
+  );
 
   it("adds _ALIASEvalError to the state when the alias fails", async () => {
     const next = "Next == x < 1 /\\ x' = x + 1\nArgument(n) == [n |-> n]\nConstant == [c |-> 1]";

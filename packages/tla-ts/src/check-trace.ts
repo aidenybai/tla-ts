@@ -218,42 +218,57 @@ export const createTraceBuilder = (context: TraceContext) => {
             }
           });
     // TLC's TLCStateRandom reseeds only for another state, so TLC rebuilds the step to a known successor drawing on from where the search stopped, unless it rebuilt a step before it.
-    const findStepActions = (start: number, end: number) =>
-      steps
-        .slice(start, end)
-        .map((_step, offset) =>
-          findPositionAction(
-            start + offset,
-            known === 2 && start + offset === last && last === 1 && !is174,
-          ),
-        );
-    const prefixActions = findStepActions(0, rebuilt);
+    const findTraceAction = (position: number) =>
+      findPositionAction(position, known === 2 && position === last && last === 1 && !is174);
+    const getAlias = (name: string, position: number) =>
+      getAliasState(
+        name,
+        steps[position].state,
+        steps[position + 1]?.state ?? traceOptions.incomplete ?? steps[loopStart ?? position].state,
+        position + 1,
+        // Deviation from TLC: TLCTrace#printTrace gives the ALIAS an empty Trace when the trace is an initial state and its successor.
+        // Deviation from TLC: LiveWorker#printTrace leaves each state of a lasso's prefix out of the Trace its ALIAS reads.
+        () => steps.slice(0, position + 1).map((inner) => inner.state),
+      );
+    const loopPosition = loopStart ?? 0;
+    const isLasso = known === 0 && !is174;
+    const rebuiltFirst = isLasso ? loopPosition + 1 : rebuilt;
+    const aliasLag = isLasso ? 1 : 0;
+    const isAliasedInTurn = (known > 0 || isLasso) && alias !== undefined;
+    const prefixActions = steps
+      .slice(0, rebuiltFirst)
+      .map((_step, position) => findTraceAction(position));
     const seedOutput =
       isPrintFingerprinted && rebuilt > 1
         ? getViewOutput(steps[rebuilt - 2].state, rebuilt - 1, true)
         : [];
-    const stepActions = [...prefixActions, ...findStepActions(rebuilt, steps.length)];
+    const prefixAliases = isAliasedInTurn
+      ? prefixActions.slice(aliasLag).map((_step, position) => getAlias(alias, position))
+      : [];
+    const knownActions = steps.slice(rebuiltFirst).map((_step, offset) => {
+      const position = rebuiltFirst + offset;
+      const step = findTraceAction(position);
+      return {
+        ...step,
+        aliased:
+          isAliasedInTurn && !step.result.error ? getAlias(alias, position - aliasLag) : undefined,
+      };
+    });
+    const lastAliases = isAliasedInTurn && isLasso ? [getAlias(alias, last)] : [];
+    const stepActions = [...prefixActions, ...knownActions];
     const outputs = stepActions.map((step) => step.lines);
     const failed = stepActions[last].result.error;
     const traceFailure = failed && getTraceFailure(failed, outputs[last]);
     const printed = traceFailure ? steps.slice(0, last) : steps;
     const getAliases = () =>
-      alias === undefined
-        ? []
-        : printed.map((step, position) =>
-            getAliasState(
-              alias,
-              step.state,
-              steps[position + 1]?.state ??
-                traceOptions.incomplete ??
-                steps[loopStart ?? position].state,
-              position + 1,
-              // Deviation from TLC: TLCTrace#printTrace gives the ALIAS an empty Trace when the trace is an initial state and its successor.
-              // Deviation from TLC: LiveWorker#printTrace leaves each state of a lasso's prefix out of the Trace its ALIAS reads.
-              () => steps.slice(0, position + 1).map((inner) => inner.state),
-            ),
-          );
-    const aliases = getAliases();
+      alias === undefined ? [] : printed.map((_step, position) => getAlias(alias, position));
+    const aliases = isAliasedInTurn
+      ? [
+          ...prefixAliases,
+          ...knownActions.flatMap((step) => (step.aliased ? [step.aliased] : [])),
+          ...lastAliases,
+        ]
+      : getAliases();
     const getAliasOutput = (position: number) => aliases[position]?.lines ?? [];
     const viewOutputs = printed.map((step, position) => ({
       rebuilt:
@@ -283,21 +298,19 @@ export const createTraceBuilder = (context: TraceContext) => {
       : [];
     // TLC's Worker#doPostCondition evaluates the alias of each state again after it rebuilds the trace.
     const postconditionAliases = isRebuiltAgain && !traceFailure ? getAliases() : [];
-    const loopPosition = loopStart ?? 0;
-    const prefixOutput =
-      known === 0 && !is174
-        ? [
-            initialOutput,
-            ...outputs.slice(1, loopPosition + 1),
-            ...aliases.slice(0, loopPosition).map((aliased) => aliased.lines),
-            ...outputs
-              .slice(loopPosition + 1)
-              .flatMap((lines, offset) => [lines, getAliasOutput(loopPosition + offset)]),
-            getAliasOutput(last),
-          ].flat()
-        : rebuilt > 0
-          ? [initialOutput, ...outputs.slice(1, rebuilt), seedOutput].flat()
-          : [];
+    const prefixOutput = isLasso
+      ? [
+          initialOutput,
+          ...outputs.slice(1, loopPosition + 1),
+          ...aliases.slice(0, loopPosition).map((aliased) => aliased.lines),
+          ...outputs
+            .slice(loopPosition + 1)
+            .flatMap((lines, offset) => [lines, getAliasOutput(loopPosition + offset)]),
+          getAliasOutput(last),
+        ].flat()
+      : rebuilt > 0
+        ? [initialOutput, ...outputs.slice(1, rebuilt), seedOutput].flat()
+        : [];
     return {
       trace: printed.map((step, position) => {
         const action = stepActions[position].result.action;
@@ -348,8 +361,11 @@ export const createTraceBuilder = (context: TraceContext) => {
     current.rebuilt = rebuilt;
     return successor;
   };
-  const getPathStates = (path: number[], nextFailure: string) =>
-    runtime.runWithNewRandom(() => {
+  const getPathStates = (path: number[], nextFailure: string) => {
+    const registers = new Map(runtime.registers);
+    const namedRegisters = new Map(runtime.namedRegisters);
+    const properties = new Map(runtime.properties);
+    const steps = runtime.runWithNewRandom(() => {
       const initial = captureOutput(() =>
         isReducing || isImpure(environment)
           ? runtime.runWithCurrentState(undefined, () =>
@@ -375,6 +391,11 @@ export const createTraceBuilder = (context: TraceContext) => {
       }
       return steps;
     });
+    runtime.registers = registers;
+    runtime.namedRegisters = namedRegisters;
+    runtime.properties = properties;
+    return steps;
+  };
   const getIndexPath = (index: number) => {
     const path: number[] = [];
     for (let position = index; position !== -1; position = context.parents[position]) {

@@ -2161,6 +2161,43 @@ ASSUME TLCFP(a) = -887695703
     ]);
   });
 
+  it.each([
+    [
+      "read primed",
+      "VARIABLES c\nInit == c \\in 0..2\nNext == UNCHANGED c\nA == LET k == c IN k' = k + 1 /\\ k' > k\nInv == ENABLED A",
+      [
+        "line 7, col 8 to line 7, col 16 of module M: 3",
+        "|line 6, col 15 to line 6, col 15 of module M: 6",
+        "|line 6, col 20 to line 6, col 39 of module M: 3",
+      ],
+    ],
+    [
+      "bound outside it",
+      "VARIABLES c\nInit == c = 0\nNext == c < 3 /\\ c' = c + 1\nInv == LET k == c IN k >= 0 /\\ k < 5 /\\ ENABLED (c' = k + 1 /\\ k' > k)",
+      [
+        "line 6, col 17 to line 6, col 17 of module M: 12",
+        "line 6, col 22 to line 6, col 70 of module M: 4",
+      ],
+    ],
+    [
+      "read again outside it",
+      "VARIABLES c\nInit == c = 0\nNext == c < 3 /\\ c' = c + 1\nInv == LET k == c IN ENABLED (c' = k + 1 /\\ k' > k) /\\ k >= 0 /\\ ENABLED (c' = k + 2) /\\ ENABLED (c' = k + 3)",
+      [
+        "line 6, col 17 to line 6, col 17 of module M: 16",
+        "line 6, col 22 to line 6, col 109 of module M: 4",
+      ],
+    ],
+  ])(
+    "counts a LET definition under ENABLED %s as TLC's LazyValue caches it, afresh where primed and only under the EvalControl it cached it under",
+    async (_name, definitions, expected) => {
+      const lines = await getCoverageLines(
+        `---- MODULE M ----\nEXTENDS Integers\n${definitions}\n====`,
+        "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+      );
+      expect(lines?.at(-1)).toEqual(expected);
+    },
+  );
+
   it("counts the LET definition that UNCHANGED keeps under ENABLED, as TLC's Tool#enabledUnchanged evaluates the expression", async () => {
     const lines = await getCoverageLines(
       "---- MODULE M ----\nEXTENDS Integers\nVARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == x' = 1 - x /\\ UNCHANGED y\nInv == ENABLED (y' = y /\\ LET w == x IN UNCHANGED w)\n====",
@@ -3918,6 +3955,38 @@ ASSUME TLCFP(a) = -887695703
         `||line 8, col 9 to line 8, col 13 of module ${name}: 3`,
         `||line 8, col 18 to line 8, col 27 of module ${name}: 2`,
         ...lines,
+      ]);
+    },
+  );
+
+  it.each([
+    ["T11", "v' = v", "d' = d", ["||line 9, col 18 to line 9, col 18 of module T11: 3"]],
+    [
+      "M1",
+      "UNCHANGED v",
+      "Op(d)",
+      [
+        "||line 8, col 6 to line 8, col 15 of module M1: 3",
+        "||line 7, col 10 to line 7, col 20 of module M1: 3",
+        "||line 8, col 23 to line 8, col 23 of module M1: 3",
+      ],
+    ],
+    ["M3", "v' = v", "Op(d)", ["||line 9, col 18 to line 9, col 18 of module M3: 3"]],
+  ])(
+    "counts the subscript of an instance's <<A>>_v under ENABLED twice at its own location, as TLC's Tool#enabled checks it CHANGED: %s",
+    async (name, kept, keep, lines) => {
+      const result = await check({
+        source: `---- MODULE ${name} ----\nEXTENDS Integers\nVARIABLES x, y\n---- MODULE Hi ----\nEXTENDS Integers\nVARIABLES c, d\nOp(v) == ${kept}\nA == c' = c + 1 /\\ ${keep}\nCan == ENABLED <<A>>_<<c, d>>\n====\nInit == x = 0 /\\ y = 0\nNext == x < 2 /\\ x' = x + 1 /\\ UNCHANGED y\nH == INSTANCE Hi WITH c <- x, d <- y\nInv == H!Can\n====`,
+        config: "INIT Init\nNEXT Next\nINVARIANT Inv\nCHECK_DEADLOCK FALSE",
+        coverage: 1,
+      });
+      expect(formatCoverage(result)?.at(-1)).toEqual([
+        `line 14, col 8 to line 14, col 12 of module ${name}: 3`,
+        `|line 13, col 28 to line 13, col 28 of module ${name}: 3`,
+        `|line 13, col 36 to line 13, col 36 of module ${name}: 3`,
+        `|line 9, col 8 to line 9, col 29 of module ${name}: 3`,
+        ...lines,
+        `||line 9, col 22 to line 9, col 29 of module ${name}: 6`,
       ]);
     },
   );

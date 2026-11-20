@@ -585,36 +585,12 @@ const substituteInEnabled = (
         }
       : undefined;
   }
-  if (expression.kind === "Prime") {
-    return {
-      ...expression,
-      expression: substitute(expression.expression, getMode(rewrite, "Primed"), bound),
-    };
-  }
-  if (expression.kind === "AngleAction") {
-    const location = expression.location;
-    return {
-      kind: "And",
-      operands: [
-        substitute(expression.action, rewrite, bound),
-        {
-          kind: "Apply",
-          operator: "#",
-          args: [
-            {
-              kind: "Prime",
-              expression: substitute(expression.subscript, getMode(rewrite, "Primed"), bound),
-              location,
-            },
-            substitute(expression.subscript, rewrite, bound),
-          ],
-          location,
-        },
-      ],
-      location,
-    };
-  }
-  return undefined;
+  return expression.kind === "Prime"
+    ? {
+        ...expression,
+        expression: substitute(expression.expression, getMode(rewrite, "Primed"), bound),
+      }
+    : undefined;
 };
 
 export const createLocalIdentifier = (name: string, location: SourceLocation): Expression => ({
