@@ -4,6 +4,7 @@ import {
   createSortedFunction,
   createTuple,
   getSequenceElements,
+  isNormalizedSet,
   setFunctionClass,
   type FunctionValue,
   updateFunction,
@@ -146,6 +147,22 @@ const isStrictlyEqual = (left: Value, right: Value) => {
   return leftInt === undefined || rightInt === undefined ? undefined : leftInt === rightInt;
 };
 
+// Whether a list of primitives has an element SameValueZero to another, which for primitives is
+// IsStrictlyEqual but on NaN and -0, or undefined where a Number other than an "int" one decides.
+const hasElement = (list: Value[], element: Value) => {
+  const sames = list.map((inner) => isStrictlyEqual(inner, element));
+  return sames.includes(true) ? true : sames.includes(undefined) ? undefined : false;
+};
+
+// The elements of a list that test keeps, or undefined where test can't tell for one.
+const keepElements = (list: Value[], test: (element: Value) => boolean | undefined) => {
+  const tests = list.map(test);
+  return tests.includes(undefined) ? undefined : list.filter((_, index) => tests[index]);
+};
+
+const createSet = (elements: Value[] | undefined) =>
+  elements && arrayShape(["lset", createTuple(elements)]);
+
 // NumberOperation of two "int" Numbers, where its result is an "int" Number or -0.
 const getArithmetic = (operator: Value, left: number, right: number) => {
   if (operator === "+") return toInt(left + right);
@@ -206,8 +223,10 @@ const getRelative = (value: Value, length: number, fallback: number) => {
 const isOperator = (value: BuiltinArgument): value is OperatorValue =>
   typeof value === "object" && value.kind === "Operator";
 
-export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin[] => {
-  const define = (
+// An operator that runs natively, or through its TLA+ where evaluate gives undefined.
+const createDefine =
+  (callReplaced: CallReplaced) =>
+  (
     name: string,
     arity: number,
     evaluate: (args: BuiltinArgument[]) => Value | undefined,
@@ -219,6 +238,34 @@ export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin
     evaluateUnary: undefined,
     evaluateBinary: undefined,
   });
+
+// The code units that StringUnits gives the characters a TLA+ string can hold.
+const isStringCharacter = (code: number) =>
+  (code >= 32 && code <= 126) || code === 9 || code === 10 || code === 12 || code === 13;
+
+// The operators of an ESCore program's module that convert TLA+ values to ESCore's: StringUnits,
+// a string's code units, and a model's SetToSeq, a set's elements in the order CHOOSE takes them,
+// which for a normalized set is the order it holds them in.
+export const createEscoreProgramOperators = (callReplaced: CallReplaced): Builtin[] => {
+  const define = createDefine(callReplaced);
+  return [
+    define("StringUnits", 1, (args) => {
+      const text = args[0];
+      if (typeof text !== "string") return undefined;
+      const codes = [...text].map((character) => character.charCodeAt(0));
+      return codes.every(isStringCharacter) ? createTuple(codes) : undefined;
+    }),
+    define("SetToSeq", 1, (args) => {
+      const set = args[0];
+      return typeof set === "object" && set.kind === "Set" && isNormalizedSet(set)
+        ? createTuple(set.elements)
+        : undefined;
+    }),
+  ];
+};
+
+export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin[] => {
+  const define = createDefine(callReplaced);
   // An operator of values, which falls back where an argument is an operator.
   const defineValues = (
     name: string,
@@ -425,6 +472,60 @@ export const createEscoreNativeOperators = (callReplaced: CallReplaced): Builtin
       const elements = getList(getField(args[0], "elems"));
       if (elements === undefined) return undefined;
       return createArray(getResults(elements, callback));
+    }),
+    defineValues("LSetMethod", 3, (args) => {
+      const receiverType = getType(args[0]);
+      const otherType = getType(args[2]);
+      if (receiverType === undefined || otherType === undefined) return undefined;
+      if (receiverType !== "lset" || otherType !== "lset") return createBail();
+      const left = getList(getField(args[0], "elems"));
+      const right = getList(getField(args[2], "elems"));
+      if (left === undefined || right === undefined) return undefined;
+      const types = [...left, ...right].map(getType);
+      if (types.includes(undefined)) return undefined;
+      if (types.some((type) => COMPOSITES.has(type ?? ""))) return createBail();
+      const isIn = (list: Value[]) => (element: Value) => hasElement(list, element);
+      const isOut = (list: Value[]) => (element: Value) => {
+        const has = hasElement(list, element);
+        return has === undefined ? undefined : !has;
+      };
+      const isEvery = (list: Value[], other: Value[]) => {
+        const hases = list.map(isIn(other));
+        return hases.includes(false) ? false : hases.includes(undefined) ? undefined : true;
+      };
+      const isNone = (list: Value[], other: Value[]) => {
+        const hases = list.map(isIn(other));
+        return hases.includes(true) ? false : hases.includes(undefined) ? undefined : true;
+      };
+      const toBool = (truth: boolean | undefined) =>
+        truth === undefined ? undefined : createBool(truth);
+      switch (args[1]) {
+        case "union": {
+          const kept = keepElements(right, isOut(left));
+          return createSet(kept && [...left, ...kept]);
+        }
+        case "intersection":
+          return createSet(
+            left.length <= right.length
+              ? keepElements(left, isIn(right))
+              : keepElements(right, isIn(left)),
+          );
+        case "difference":
+          return createSet(keepElements(left, isOut(right)));
+        case "symmetricDifference": {
+          const leftKept = keepElements(left, isOut(right));
+          const rightKept = keepElements(right, isOut(left));
+          return createSet(leftKept && rightKept && [...leftKept, ...rightKept]);
+        }
+        case "isSubsetOf":
+          return toBool(left.length <= right.length ? isEvery(left, right) : false);
+        case "isSupersetOf":
+          return toBool(left.length >= right.length ? isEvery(right, left) : false);
+        case "isDisjointFrom":
+          return toBool(isNone(left, right));
+        default:
+          return createBail();
+      }
     }),
     define("LFilter", 2, (args) => {
       const callback = args[1];

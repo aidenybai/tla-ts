@@ -1,5 +1,5 @@
 import { ESCORE_CANONICAL_OPERATORS } from "./escore-canonical";
-import { createEscoreNativeOperators } from "./escore-native";
+import { createEscoreNativeOperators, createEscoreProgramOperators } from "./escore-native";
 import { TlaEvaluationError, TlaModuleError, TlaSetBoundError } from "./errors";
 import {
   createModuleArgumentError,
@@ -580,6 +580,7 @@ export const getJavaOverrides = (
   if (name === "TransitiveClosure") return TRANSITIVE_CLOSURE_OPERATORS;
   if (name === "ESCanonical") return ESCORE_CANONICAL_OPERATORS;
   if (name === "ESNative") return createEscoreNativeOperators(evaluateReplaced);
+  if (name === "ProgramCode") return createEscoreProgramOperators(evaluateReplaced);
   if (name === "AnySet") return [defineConstant("ANY", ANY_SET)];
   if (name === "IOUtils") return createIoUtilsOperators(files, evaluateReplaced);
   if (name === "_TLCTrace") return createTlcTraceOperators(files);
