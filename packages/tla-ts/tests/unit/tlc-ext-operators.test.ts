@@ -129,6 +129,17 @@ describe("TLCExt operators match TLC", () => {
     expect(printed).toEqual(["5", "6"]);
   });
 
+  it("sets a named register each time a constant definition calls TLCSet, where TLC drops the write as it starts", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nC == TLCSet("s:k", 7)\nInit == x = 0 /\\ C\nNext == x < 2 /\\ PrintT(TLCGetOrDefault("s:k", 0)) /\\ x\' = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["7", "7"]);
+  });
+
   it("stops checking when TLCGetAndSet sets the exit key", async () => {
     const result = await checkModule(
       'Init == x = 0\nNext == x < 5 /\\ x\' = x + 1 /\\ (x = 2 => TLCGetAndSet("exit", LAMBDA old, new : new, TRUE, FALSE) = FALSE)',
