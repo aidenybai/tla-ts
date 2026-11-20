@@ -1469,6 +1469,18 @@ describe("name resolution matches SANY", () => {
       ],
     ],
     [
+      "THEOREM T == t :: (T!t)\nD == t :: Undefined\nE == T!1 /\\ D!1 /\\ T!1!1\nTHEOREM U == u :: (U!1)\nF == U!1",
+      [
+        ["line 2, col 20 to line 2, col 22", "Unknown operator: `T!t'."],
+        ["line 3, col 11 to line 3, col 19", "Unknown operator: `Undefined'."],
+        ["line 4, col 8 to line 4, col 8", noOperands],
+        ["line 4, col 15 to line 4, col 15", noOperands],
+        ["line 4, col 22 to line 4, col 22", noOperands],
+        ["line 5, col 20 to line 5, col 20", "Unknown operator: `U'."],
+        ["line 6, col 8 to line 6, col 8", noOperands],
+      ],
+    ],
+    [
       "VARIABLE y\nASSUME AS == TRUE\nOp == {y, y', AS}\nA == Op!1!1 /\\ Op!2!1!1 /\\ Op!3!1\nTHEOREM T == TRUE\n<1>1. TRUE OBVIOUS\n<1>2. {<1>1, 1} OBVIOUS\n<1>3. <1>2!1!1 OBVIOUS\n<1>4. QED",
       [
         ["line 5, col 11 to line 5, col 11", noOperands],
