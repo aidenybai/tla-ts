@@ -2,9 +2,9 @@ import { examples } from "virtual:site-data";
 import { getHighlightColors } from "./highlight-colors";
 
 const LABELS: Record<string, { article: string; label: string }> = {
-  "likes.ts": { article: "a", label: "like button" },
   "search-box.ts": { article: "a", label: "React search box" },
-  "hour-clock.ts": { article: "a", label: "TLA+ clock" },
+  "likes.ts": { article: "a", label: "like button" },
+  "hour-clock.ts": { article: "a", label: "clock" },
 };
 
 export const EXAMPLES = examples.map((example) => ({

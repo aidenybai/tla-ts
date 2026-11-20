@@ -1,4 +1,5 @@
-// A React search box. Each key fetches.
+// A React search box. Each key sends a request.
+// A test that types, then gets the response, passes.
 type Query = "t" | "tl";
 
 let query: Query | "" = "";
@@ -11,11 +12,10 @@ export const type = (text: Query) => {
 };
 
 export const respond = (text: Query) => {
-  if (!sent.has(text)) return;
-  sent.delete(text);
-  results = text;
+  if (sent.has(text)) {
+    sent.delete(text);
+    results = text;
+  }
 };
 
-export const showsLatest = () => {
-  return sent.size > 0 || results === query;
-};
+export const showsLatest = () => sent.size > 0 || results === query;

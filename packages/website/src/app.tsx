@@ -19,8 +19,8 @@ export const App = () => (
       <Hero.Title>TLA-ts</Hero.Title>
       <Hero.Body>
         <p>
-          Formally verify TypeScript code with{" "}
-          <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link>.
+          Find the order of events that breaks your TypeScript. A test checks one order. TLA-ts
+          checks them all.
         </p>
         <div className="flex gap-2">
           <a
@@ -42,10 +42,13 @@ export const App = () => (
         <Section.Title>How it works</Section.Title>
         <ol className="flex list-decimal flex-col gap-1.5 pl-5 text-pretty marker:text-faint">
           <li>
-            Run <InlineCode>npx tla-ts [file].ts</InlineCode>
+            Export a rule, a function that must always return <InlineCode>true</InlineCode>
           </li>
-          <li>TLA-ts converts it into TLA+ and formally checks every state</li>
-          <li>Get any violations, with the steps that caused them</li>
+          <li>
+            Run <InlineCode>npx tla-ts [file].ts</InlineCode> to call your functions in every
+            possible order
+          </li>
+          <li>If any order breaks the rule, get the exact steps</li>
         </ol>
         <Example.Root>
           <Example.Description />
@@ -76,8 +79,9 @@ export const App = () => (
           TLA-ts is a research project by <Link href="https://aidenybai.com">Aiden Bai</Link>.
         </p>
         <p className="text-pretty">
-          Under the hood, TLA-ts is a transpiler that turns TypeScript/JavaScript into TLA+, and
-          uses a 1:1 reimplementation of{" "}
+          Under the hood, TLA-ts is a transpiler that turns TypeScript/JavaScript into{" "}
+          <Link href="https://github.com/tlaplus/tlaplus">TLA+</Link>, a language for checking every
+          state of a system, and uses a 1:1 reimplementation of{" "}
           <Link href="https://lamport.azurewebsites.net/tla/tools.html">TLC</Link>/
           <Link href="https://proofs.tlapl.us">TLAPM</Link> in TypeScript that runs 2× faster.
         </p>

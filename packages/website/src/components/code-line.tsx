@@ -1,5 +1,5 @@
 import { X } from "@phosphor-icons/react";
-import { memo, type ReactNode } from "react";
+import { memo } from "react";
 import { cn } from "cn";
 import type { Mark, Token } from "../site-data";
 import type { LineNote } from "../run-worker";
@@ -109,7 +109,6 @@ interface CodeLineProps {
   tokens: Token[];
   number?: number;
   note?: LineNote;
-  aside?: ReactNode;
   isActive?: boolean;
   isDimmed?: boolean;
   isWrapped?: boolean;
@@ -151,7 +150,6 @@ export const CodeLine = memo((props: CodeLineProps) => (
         colors={props.colors}
       />
     </span>
-    {props.aside}
     {props.note && (
       <span
         className={cn(

@@ -16,6 +16,10 @@ export interface CompiledExample {
   typescript: Source;
   tla: Source;
   highlightNames: string[];
+  /** The line of the TypeScript that declares each name. */
+  lines: Record<string, number>;
+  /** The same code once its bug is fixed. */
+  fixed?: CompiledExample;
 }
 
 export interface Benchmark {

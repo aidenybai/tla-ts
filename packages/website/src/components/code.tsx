@@ -2,7 +2,7 @@ import { useRef, type ReactNode } from "react";
 import { cn } from "cn";
 import { createPartsContext } from "@/lib/utils";
 import type { LineNote } from "../run-worker";
-import type { Search, SearchState } from "../search";
+import type { SearchState } from "../search";
 import type { Source } from "../site-data";
 import { useCopy } from "../use-copy";
 import { useIsHydrated } from "../use-is-hydrated";
@@ -10,7 +10,6 @@ import { useTokenMorph } from "../use-token-morph";
 import { CodeLine } from "./code-line";
 import { CopyIcon } from "./copy-icon";
 import { RunIcon } from "./run-icon";
-import { SearchCell } from "./search-cell";
 import { Button } from "./ui/button";
 
 const NO_HIGHLIGHTS = {};
@@ -21,9 +20,7 @@ interface CodeState {
   isMultiline: boolean;
   activeLine: number | undefined;
   notes: LineNote[];
-  search: Search | undefined;
   path: SearchState[];
-  onHoverState: (stateId: string | undefined) => void;
   highlights: Record<string, string>;
   onMorphEnd: (() => void) | undefined;
 }
@@ -34,9 +31,7 @@ interface RootProps {
   source: Source;
   activeLine?: number;
   notes?: LineNote[];
-  search?: Search;
   path?: SearchState[];
-  onHoverState?: (stateId: string | undefined) => void;
   highlights?: Record<string, string>;
   onMorphEnd?: () => void;
   children: ReactNode;
@@ -51,9 +46,7 @@ export const CodeRoot = (props: RootProps) => {
         isMultiline,
         activeLine: props.activeLine,
         notes: props.notes ?? [],
-        search: props.search,
         path: props.path ?? NO_PATH,
-        onHoverState: props.onHoverState ?? (() => {}),
         highlights: props.highlights ?? NO_HIGHLIGHTS,
         onMorphEnd: props.onMorphEnd,
       }}
@@ -96,17 +89,6 @@ export const CodeContent = () => {
             isActive={activeLine === line.number}
             isDimmed={
               code.path.length > 0 && code.path.every((state) => state.line !== line.number)
-            }
-            aside={
-              code.search && (
-                <SearchCell
-                  search={code.search}
-                  line={line.number}
-                  path={code.path}
-                  onHover={code.onHoverState}
-                  className="xl:hidden"
-                />
-              )
             }
             className={cn("-mr-4 -ml-4 pr-4 pl-4", line.number <= 2 && "pr-14")}
           />
@@ -154,13 +136,12 @@ export const CodeRun = (props: RunProps) => {
   return (
     <Button
       variant={props.isDone || props.isRunning ? "outline" : "success"}
-      size="icon"
-      aria-label={props.isRunning ? "Running" : props.isDone ? "Run again" : "Run"}
       disabled={!isHydrated}
       aria-disabled={props.isRunning}
       onClick={() => !props.isRunning && props.onRun()}
     >
       <RunIcon isRunning={props.isRunning} isDone={props.isDone} />
+      {props.isDone ? "Check again" : "Check every order"}
     </Button>
   );
 };

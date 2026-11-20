@@ -6,6 +6,8 @@ export interface RunRequest {
   source: string;
   config: string;
   modules?: Record<string, string>;
+  /** The line of each name in the code on screen, when that is not the source. */
+  lines?: Record<string, number>;
   isSearchShown?: boolean;
 }
 
@@ -18,6 +20,9 @@ export interface LineNote {
 export interface RunResult {
   isPassed: boolean;
   title: string;
+  /** The invariant that a state breaks. */
+  rule: string | undefined;
+  stateCount: number;
   activeLine: number | undefined;
   notes: LineNote[];
   search?: Search;
@@ -62,21 +67,28 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
   });
   const lastStep = result.violation?.trace.at(-1);
   const module = parseModule(source);
+  const getLine = (name: string | undefined, line: number | undefined) =>
+    request.lines ? request.lines[name ?? ""] : line;
   const getDefinitionLine = (name: string | undefined) =>
-    module.definitions.find((definition) => definition.name === name)?.location.line;
-  const variableLine = module.variables.at(0)?.location.line;
+    getLine(name, module.definitions.find((definition) => definition.name === name)?.location.line);
+  const variableLine = getLine(module.variables.at(0)?.name, module.variables.at(0)?.location.line);
   const violatedLine = getDefinitionLine(
     result.status === "deadlock"
       ? (/\bNEXT\s+(\w+)/.exec(config)?.[1] ?? "Next")
       : result.violation?.name,
   );
-  const actionLine = / line (\d+), col/.exec(lastStep?.label ?? "")?.[1];
-  const initLine = getDefinitionLine(/\bINIT\s+(\w+)/.exec(config)?.[1] ?? "Init");
+  const actionLine = request.lines
+    ? getDefinitionLine(/\w+/.exec(lastStep?.label ?? "")?.[0])
+    : Number(/ line (\d+), col/.exec(lastStep?.label ?? "")?.[1]) || undefined;
+  const initLine = request.lines
+    ? variableLine
+    : getDefinitionLine(/\bINIT\s+(\w+)/.exec(config)?.[1] ?? "Init");
   return {
     isPassed: result.status === "success",
     title: getTitle(result),
-    activeLine:
-      lastStep?.label === undefined ? initLine : actionLine ? Number(actionLine) : undefined,
+    rule: result.status === "invariant-violation" ? result.violation?.name : undefined,
+    stateCount: result.distinctStates,
+    activeLine: lastStep?.label === undefined ? initLine : actionLine,
     search:
       graphs.length > 0
         ? getSearch(graphs[0], lastStep && getStateText(lastStep.state), (call) =>
@@ -89,9 +101,7 @@ const getCheckResult = async (request: RunRequest): Promise<RunResult> => {
         : [getNote(variableLine, getStateText(lastStep.state), "neutral")]),
       ...(lastStep === undefined || violatedLine === undefined
         ? []
-        : [
-            getNote(violatedLine, result.status === "deadlock" ? "deadlock" : "violated", "danger"),
-          ]),
+        : [getNote(violatedLine, result.status === "deadlock" ? "deadlock" : "broken", "danger")]),
     ],
   };
 };

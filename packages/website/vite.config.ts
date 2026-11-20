@@ -1,4 +1,4 @@
-import { globSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, globSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
@@ -16,12 +16,13 @@ import type { Benchmark, CompiledExample, ReferenceBlock, ReferenceSection } fro
 const SITE_DATA = "virtual:site-data";
 const README_URL = new URL("../../README.md", import.meta.url);
 const EXAMPLE_PATHS = [
-  "./src/examples/likes.ts",
   "./src/examples/search-box.ts",
+  "./src/examples/likes.ts",
   "../tla-ts/tests/fixtures/typescript/examples/hour-clock/hour-clock.ts",
 ];
+const getFixedPath = (path: string) => path.replace(/\.ts$/, "-fixed.ts");
 const PLAYGROUND_PATHS = [
-  "./src/examples/*.ts",
+  "./src/examples/!(*-fixed).ts",
   "../tla-ts/tests/fixtures/typescript/examples/two-phase/*.ts",
 ];
 const GENERATED_NAMES = new Set(["vars", "Init", "Next", "Spec"]);
@@ -35,6 +36,10 @@ const getExample = (
   const typescript = readFileSync(path, "utf8").trim();
   const fileName = path.slice(path.lastIndexOf("/") + 1);
   const compiled = compile(typescript, fileName);
+  const highlightNames = [...compiled.source.variables, ...compiled.source.definitions]
+    .map((declared) => declared.name)
+    .filter((name) => !GENERATED_NAMES.has(name));
+  const fixedPath = getFixedPath(path);
   return {
     fileName,
     name: compiled.name,
@@ -47,9 +52,16 @@ const getExample = (
     ),
     typescript: highlight(typescript, "typescript"),
     tla: highlight(printModule(compiled.source).trim(), "tlaplus"),
-    highlightNames: [...compiled.source.variables, ...compiled.source.definitions]
-      .map((declared) => declared.name)
-      .filter((name) => !GENERATED_NAMES.has(name)),
+    highlightNames,
+    lines: Object.fromEntries(
+      highlightNames.flatMap((name) => {
+        const index = typescript
+          .split("\n")
+          .findIndex((line) => new RegExp(`\\b(?:const|let|var|function) ${name}\\b`).test(line));
+        return index < 0 ? [] : [[name, index + 1]];
+      }),
+    ),
+    fixed: existsSync(fixedPath) ? getExample(fixedPath, highlight) : undefined,
   };
 };
 
@@ -137,7 +149,11 @@ const siteData = (): Plugin => ({
   async load(id) {
     if (id !== `\0${SITE_DATA}`) return undefined;
     const paths = EXAMPLE_PATHS.map((path) => fileURLToPath(new URL(path, import.meta.url)));
-    for (const path of [...paths, fileURLToPath(README_URL)]) this.addWatchFile(path);
+    for (const path of [
+      ...paths.flatMap((path) => [path, getFixedPath(path)].filter((found) => existsSync(found))),
+      fileURLToPath(README_URL),
+    ])
+      this.addWatchFile(path);
     const highlight = await createHighlighter();
     return [
       `export const examples = ${JSON.stringify(paths.map((path) => getExample(path, highlight)))};`,
