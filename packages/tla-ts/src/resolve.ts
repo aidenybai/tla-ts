@@ -152,11 +152,15 @@ export interface SelectedDefinition {
   params: string[];
 }
 
+export interface SubexpressionRecords {
+  selectedDefinitions: WeakMap<Expression, SelectedDefinition>;
+  instanceReferences: WeakMap<Instance, Instance>;
+}
+
 export const selections = new WeakMap<Expression, Expression>();
 export const selectionErrors = new WeakMap<Expression, SelectionError>();
 export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
-export const instanceReferences = new WeakMap<Instance, Instance>();
 export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
 export const generatedArgumentCounts = new WeakMap<Expression, number>();

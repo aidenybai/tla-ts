@@ -70,7 +70,6 @@ import {
   getRecursiveCount,
   getRecursiveDefinitions,
   getTheoremGoal,
-  instanceReferences,
   isBefore,
   isSameSanyError,
   isTheoremDefinition,
@@ -85,7 +84,7 @@ import {
   type ModuleUnit,
   type NestedRecursion,
   type RecursiveCount,
-  type SelectedDefinition,
+  type SubexpressionRecords,
   type SymbolKind,
   type Symbols,
 } from "./resolve";
@@ -323,7 +322,10 @@ export const createEnvironment = (
   const enabledSubstitutions = new WeakSet<Expression>();
   const goalOperands = new WeakMap<Expression, Expression[]>();
   const goalSelections = new WeakMap<Expression, Expression>();
-  const selectedDefinitions = new WeakMap<Expression, SelectedDefinition>();
+  const subexpressionRecords: SubexpressionRecords = {
+    selectedDefinitions: new WeakMap(),
+    instanceReferences: new WeakMap(),
+  };
   const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
@@ -366,7 +368,8 @@ export const createEnvironment = (
   const checkedNodes = new WeakMap<Expression, boolean>();
   const resolvedSubstitutions = new WeakMap<Instance, Map<string, Expression>>();
   // Each place that resolves an instance's selections, such as a theorem and its ASSUME/PROVE clause, copies the instance.
-  const getInstanceKey = (instance: Instance) => instanceReferences.get(instance) ?? instance;
+  const getInstanceKey = (instance: Instance) =>
+    subexpressionRecords.instanceReferences.get(instance) ?? instance;
   const getInstanceSubstitute = (instance: Instance, name: string): Expression =>
     resolvedSubstitutions.get(getInstanceKey(instance))?.get(name) ??
     instance.substitutions.find((substitution) => substitution.name === name)?.expression ?? {
@@ -431,7 +434,8 @@ export const createEnvironment = (
     },
     {
       getCopy: (definition) => instanceCopies.get(definition),
-      getSelectedDefinition: (expression) => selectedDefinitions.get(expression),
+      getSelectedDefinition: (expression) =>
+        subexpressionRecords.selectedDefinitions.get(expression),
       getLetInstance: (instance) =>
         instance.location.range && letInstances.get(formatRange(instance.location.range)),
       checkInstantiation: (instance, instancer, scope) => {
@@ -748,7 +752,7 @@ export const createEnvironment = (
     const suffix = `#${copyCount++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
     const substitutions = resolveSubstitutions(
-      resolveInstanceSubexpressions(instance, module, selectedDefinitions),
+      resolveInstanceSubexpressions(instance, module, subexpressionRecords),
       declarations,
       resolved,
       module.name,
@@ -1460,7 +1464,7 @@ export const createEnvironment = (
           ],
         };
       },
-      selectedDefinitions,
+      subexpressionRecords,
       (name, location) =>
         bound.has(name) ||
         parsed.instances.some(
