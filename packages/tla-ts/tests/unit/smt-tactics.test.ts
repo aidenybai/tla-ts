@@ -3134,11 +3134,10 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
     ).toEqual(["sat", "(:rlimit 191)", "sat", "(:rlimit 357)"]);
   });
 
-  it("keeps the propagate-values of QF_LIA's pb tactic across the checks", () => {
+  it("keeps the propagate-values of qflia's pb tactic across the checks", () => {
     const names = ["v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"];
     expect(
       run([
-        "(set-logic QF_LIA)",
         ...names.map((name) => `(declare-const ${name} Int)`),
         ...names.map((name) => `(assert (<= 0 ${name} 1))`),
         "(assert (or (= v1 0) (= v1 0) (= v0 0) (= v7 1)))",
@@ -3156,6 +3155,28 @@ describe("tactic2solver, as Z3 5.3.2 keeps its tactic", () => {
       "sat",
       "sat",
       "((v0 1)\n (v1 0)\n (v2 0)\n (v3 0)\n (v4 0)\n (v5 0)\n (v6 0)\n (v7 0)\n (v8 0))",
+    ]);
+  });
+
+  it("keeps the whole strategy of an annotated logic across the checks", () => {
+    expect(
+      run([
+        "(set-logic QF_NIA)",
+        "(declare-const v0 Int)",
+        "(declare-const v1 Int)",
+        "(declare-const v2 Int)",
+        "(declare-const v3 Int)",
+        "(assert (<= 0 v0 2))",
+        "(assert (<= 0 v1 3))",
+        "(assert (<= (+ (* v0 v3) v3) -4))",
+        "(check-sat)",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "(\n  (define-fun v1 () Int\n    0)\n  (define-fun v0 () Int\n    2)\n  (define-fun v3 () Int\n    (- 7))\n  (define-fun v2 () Int\n    0)\n)",
     ]);
   });
 
