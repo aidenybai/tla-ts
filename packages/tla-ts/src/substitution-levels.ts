@@ -38,15 +38,11 @@ export interface KeyedDeclaration extends Declaration {
   key: string;
 }
 
-export interface EnclosingDeclarations {
-  constants: Map<string, number>;
-  variables: string[];
-}
-
 interface ModuleContext {
   constants: KeyedDeclaration[];
   variables: string[];
-  enclosing: EnclosingDeclarations;
+  levelConstants: Map<string, number>;
+  levelVariables: Set<string>;
   getDefinitions: () => Definition[];
   assumptions: Expression[];
   theorems: Theorem[];
@@ -60,12 +56,6 @@ interface ModuleContext {
 interface TopLevel {
   theorems: LevelData[];
   nodes: LevelData[];
-}
-
-interface ModuleAnalyzer {
-  constants: Map<string, number>;
-  variables: Set<string>;
-  analyzer: LevelAnalyzer;
 }
 
 interface Substituted {
@@ -88,34 +78,24 @@ export const createInstanceChecker = (
   recursiveSections: WeakMap<Definition, SectionMember[]>,
   goalSelections: WeakMap<Expression, Expression>,
 ) => {
-  const analyzers = new Map<string, ModuleAnalyzer>();
-  const getModuleAnalyzer = (name: string) => {
+  const analyzers = new Map<string, LevelAnalyzer>();
+  const getAnalyzer = (name: string) => {
     const cached = analyzers.get(name);
     if (cached) return cached;
     const module = getModule(name);
-    const constants = new Map([
-      ...module.enclosing.constants,
-      ...module.constants.map((constant): [string, number] => [constant.key, constant.arity]),
-    ]);
-    const variables = new Set([...module.enclosing.variables, ...module.variables]);
-    const analyzer: ModuleAnalyzer = {
-      constants,
-      variables,
-      analyzer: createLevelAnalyzer({
-        module: name,
-        constants,
-        variables,
-        getDefinition: module.getDefinition,
-        getQualifiedName: module.getQualifiedName,
-        instances,
-        recursiveSections,
-        goalSelections,
-      }),
-    };
+    const analyzer = createLevelAnalyzer({
+      module: name,
+      constants: module.levelConstants,
+      variables: module.levelVariables,
+      getDefinition: module.getDefinition,
+      getQualifiedName: module.getQualifiedName,
+      instances,
+      recursiveSections,
+      goalSelections,
+    });
     analyzers.set(name, analyzer);
     return analyzer;
   };
-  const getAnalyzer = (name: string) => getModuleAnalyzer(name).analyzer;
 
   const getTopLevel = (name: string): TopLevel => {
     const module = getModule(name);
@@ -146,8 +126,7 @@ export const createInstanceChecker = (
     const cached = moduleLevels.get(name);
     if (cached) return cached;
     const module = getModule(name);
-    const moduleAnalyzer = getModuleAnalyzer(name);
-    const analyzer = moduleAnalyzer.analyzer;
+    const analyzer = getAnalyzer(name);
     const definitions = module
       .getDefinitions()
       .map((definition) => analyzer.analyzeDefinition(definition, new Map()));
@@ -156,8 +135,8 @@ export const createInstanceChecker = (
       isConstant:
         module.variables.length === 0 &&
         [...definitions, ...topLevel.theorems].every((data) => data.level === 0),
-      constants: moduleAnalyzer.constants,
-      variables: moduleAnalyzer.variables,
+      constants: module.levelConstants,
+      variables: module.levelVariables,
       constraints: new Map(),
       argConstraints: new Map(),
       argParams: new Set(),

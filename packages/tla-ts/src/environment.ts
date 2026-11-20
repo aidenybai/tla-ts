@@ -109,11 +109,7 @@ import {
   type LetInstance,
   type SectionMember,
 } from "./levels";
-import {
-  createInstanceChecker,
-  type EnclosingDeclarations,
-  type KeyedDeclaration,
-} from "./substitution-levels";
+import { createInstanceChecker, type KeyedDeclaration } from "./substitution-levels";
 import { formatPrompt, isEvalException } from "./tlc/messages";
 import { createDefinitionFacts } from "./dependencies";
 import { createTlcOrder, type TlcOrder } from "./tlc/order";
@@ -196,7 +192,8 @@ export interface LinkedModule {
   module: Module;
   constants: KeyedDeclaration[];
   variables: string[];
-  enclosing: EnclosingDeclarations;
+  levelConstants: Map<string, number>;
+  levelVariables: Set<string>;
   variableLocations: SourceLocation[];
   declarations: KeyedDeclaration[];
   visible: Symbols;
@@ -421,7 +418,8 @@ export const createEnvironment = (
       return {
         constants: linked.constants,
         variables: linked.variables,
-        enclosing: linked.enclosing,
+        levelConstants: linked.levelConstants,
+        levelVariables: linked.levelVariables,
         getDefinitions: () => [
           ...new Set(
             [...linked.visible.values()].flatMap((symbol) =>
@@ -1667,16 +1665,18 @@ export const createEnvironment = (
       module,
       constants,
       variables,
-      enclosing: {
-        constants: new Map(
-          [...scope.symbols.values()].flatMap((symbol): [string, number][] =>
-            symbol.kind === "Constant" ? [[symbol.key, symbol.arity]] : [],
-          ),
+      levelConstants: new Map([
+        ...[...scope.symbols.values()].flatMap((symbol): [string, number][] =>
+          symbol.kind === "Constant" ? [[symbol.key, symbol.arity]] : [],
         ),
-        variables: [...scope.symbols.values()].flatMap((symbol) =>
+        ...constants.map((constant): [string, number] => [constant.key, constant.arity]),
+      ]),
+      levelVariables: new Set([
+        ...[...scope.symbols.values()].flatMap((symbol) =>
           symbol.kind === "Variable" ? [symbol.key] : [],
         ),
-      },
+        ...variables,
+      ]),
       variableLocations,
       declarations: [
         ...declarations
@@ -1702,11 +1702,8 @@ export const createEnvironment = (
         module,
         {
           module: module.name,
-          constants: new Map([
-            ...linked.enclosing.constants,
-            ...constants.map((constant): [string, number] => [constant.key, constant.arity]),
-          ]),
-          variables: new Set([...linked.enclosing.variables, ...variables]),
+          constants: linked.levelConstants,
+          variables: linked.levelVariables,
           getDefinition: (symbol) => getLinkedDefinition(visible.get(symbol)?.key ?? symbol),
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
