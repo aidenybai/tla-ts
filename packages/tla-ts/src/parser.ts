@@ -506,13 +506,12 @@ interface AtStep {
   right: Expression;
 }
 
-// SANY's @-steps: an assertion whose infix expression has a bare @ for its left side, after an assertion with an infix
-// expression, reads the @ as that expression's right side. SUFFICES steps keep the previous assertion.
 export const getAtSteps = (steps: ProofStep[]) => {
   const atSteps = new Map<ProofStep, AtStep>();
   steps.reduce((isPreviousInfix, step) => {
     const body = step.body;
     if (body.kind !== "Assert" || body.statement.kind === "AssumeProve") return false;
+    // SANY keeps the right side of the step before a SUFFICES step for an @ after it.
     if (body.isSuffices) return isPreviousInfix;
     const statement = body.statement;
     const infix = parenthesizedRanges.has(statement)
@@ -881,7 +880,6 @@ const parse = (
         elementArgs.push(parseElement(true));
       }
       const lastArgs = elementArgs[elementArgs.length - 1];
-      // SANY's FairnessExpr applies the subscript to its last arguments when a parenthesized action follows them.
       const isHooked = isFairness && !isTlapm && lastArgs.length > 0 && isAt("(");
       const appliedArgs = isHooked ? elementArgs : [...elementArgs.slice(0, -1), []];
       const argumentCounts = appliedArgs.map((args) => args.length);

@@ -346,7 +346,6 @@ export const createEnvironment = (
   let copyCount = 0;
   const createName = (name: string) => `${name}#${copyCount++}`;
   const instanceChecks: InstanceLevelCheck[] = [];
-  // SANY's Errors object holds every module's errors, so a module's errors don't stop the modules after it.
   const semanticErrors: SanyError[] = [];
   const warnings: SanyError[] = [];
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
@@ -499,7 +498,7 @@ export const createEnvironment = (
         semanticErrors.push(error);
       }
     });
-    // SANY level-checks a module only while no module has errors, and its Errors#addMessage drops a message it already has, such as an instantiated body's.
+    // SANY's Errors#addMessage drops a message it already has, such as an instantiated body's.
     if (semanticErrors.length === 0) {
       semanticErrors.push(
         ...[
@@ -1286,7 +1285,6 @@ export const createEnvironment = (
       symbolsBefore.set(name, symbol);
       boundLocations.set(name, location);
     };
-    // SANY's RECURSIVE declaration binds an OpDefNode that the operator's definition fills in.
     const pendingRecursive = new Set<string>();
     const bindDefinitionBefore = (definition: Definition, location: SourceLocation) => {
       if (!pendingRecursive.delete(definition.name)) {
@@ -1364,7 +1362,6 @@ export const createEnvironment = (
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         isHidden: scope.isHidden,
-        // The inner module defines an operator that is still RECURSIVE-pending as its own, through recursiveCount.
         symbols: new Map([...symbolsBefore].filter((entry) => !pendingRecursive.has(entry[0]))),
         recursiveCount: getRecursiveCount(
           scope.recursiveCount,

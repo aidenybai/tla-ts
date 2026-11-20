@@ -546,7 +546,6 @@ const isHashed = (value: SetValue | FunctionValue) =>
   value.fingerprint !== 0 || (value.hash !== 0 && value.hash !== UNFINGERPRINTABLE_HASH);
 
 // TLC's equals and compareTo walk a value compared with itself, sorting its sets and evaluating its lazy functions; equals stops at an empty set of functions, records or tuples, and compareTo enumerates such a set.
-// Returns whether a second walk would change nothing. A set or function marks that, so comparing it with itself again costs nothing.
 const compareWithItself = (value: Value, isEquality: boolean): boolean => {
   if (typeof value !== "object") return true;
   switch (value.kind) {
