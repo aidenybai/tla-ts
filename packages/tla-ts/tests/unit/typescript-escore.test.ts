@@ -2057,6 +2057,22 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("runs a script of thousands of statements and global vars", () => {
+    const getSource = (expected: number) => `
+      let count = 0;
+      ${Array.from({ length: 3000 }, (_, index) => `var global${index};\ncount += ${index % 3};`).join("\n")}
+      if (count !== ${expected} || global2999 !== undefined) throw new Error(String(count));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(3000), false)).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(2999), false)).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compiles a program whose strings run to a million characters", () => {
     // Escapes in a string's source and characters that a TLA+ string can't hold, so that the
     // program's source text and the code units of a string are each one long definition.

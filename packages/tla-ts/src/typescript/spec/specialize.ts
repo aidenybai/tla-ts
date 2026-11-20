@@ -2618,7 +2618,27 @@ export const specialize = (
   // A statement list's evaluation (§14.2.2): the completion of the last statement that has a
   // value, each statement in its own operator.
   const statementList = (statements: readonly ts.Statement[], scope: Scope): Code => {
+    const list = statementSequence(statements, scope);
+    // A block's, function body's, or module's resources are disposed of once its statements
+    // complete (EvaluateDisposing in ESCore).
+    return hasUsing(statements)
+      ? (state, context) => `DisposeThen(${context}.lex, ${list(state, context)})`
+      : list;
+  };
+
+  // The statements in order, each in an operator of its own. A list of more than 64 runs as its
+  // halves, each a list, so that thousands of statements nest log n deep rather than n.
+  const statementSequence = (statements: readonly ts.Statement[], scope: Scope): Code => {
     if (statements.length === 0) return (state) => `Ok(${state}, Empty)`;
+    if (statements.length > 64) {
+      const middle = Math.ceil(statements.length / 2);
+      const first = statementSequence(statements.slice(0, middle), scope);
+      const rest = statementSequence(statements.slice(middle), scope);
+      return defineCode(
+        "Statements",
+        `LET q == ${first("s", "ctx")} IN IF IsAbrupt(q) THEN q ELSE StatementResult(${rest("q.s", "ctx")}, Val(q))`,
+      );
+    }
     const codes = statements.map((current) => statement(current, scope, []));
     // Each statement's result, its value Empty's where it has none, of the statement before it.
     const results = codes.map(
@@ -2638,11 +2658,7 @@ export const specialize = (
         results[results.length - 1],
       ].join("\n  "),
     );
-    // A block's, function body's, or module's resources are disposed of once its statements
-    // complete (EvaluateDisposing in ESCore).
-    return hasUsing(statements)
-      ? (state, context) => `DisposeThen(${context}.lex, ${name}(${state}, ${context}))`
-      : (state, context) => `${name}(${state}, ${context})`;
+    return (state, context) => `${name}(${state}, ${context})`;
   };
 
   // Blocks (§14.2.2) and BlockDeclarationInstantiation (§14.2.3). A block that declares nothing

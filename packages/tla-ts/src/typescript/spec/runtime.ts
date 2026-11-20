@@ -1555,8 +1555,11 @@ export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => 
 // give it: its strings, then the well-known symbols that ESCore numbers.
 const getHostKeyOrders = (library: Library) => {
   const symbols = [
-    ...(/WellKnownSymbols ==([^>]*)>>/.exec(library.definitions.get("WellKnownSymbols")?.text ?? "")?.[1] ?? "")
-      .matchAll(/"([^"]+)"/g),
+    ...(
+      /WellKnownSymbols ==([^>]*)>>/.exec(
+        library.definitions.get("WellKnownSymbols")?.text ?? "",
+      )?.[1] ?? ""
+    ).matchAll(/"([^"]+)"/g),
   ].map((match) => match[1]);
   const owners = [
     ...new Set([

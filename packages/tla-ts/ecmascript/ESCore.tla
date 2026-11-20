@@ -11845,10 +11845,15 @@ AnyRestrictedGlobal(s, env, names) ==
   IF names = <<>> THEN Ok(s, FALSE)
   ELSE LET r == HasRestrictedGlobalProperty(s, env, Head(names)) IN
        IF IsAbrupt(r) THEN r ELSE IF Val(r) = True THEN Ok(r.s, TRUE) ELSE AnyRestrictedGlobal(r.s, env, Tail(names))
+\* Each of names in order, in halves, so that thousands of names nest log n deep rather than n.
 CheckGlobalNames(s, env, names, isFunction) ==
-  IF names = <<>> THEN Ok(s, Empty)
-  ELSE LET r == IF isFunction THEN CanDeclareGlobalFunction(s, env, Head(names)) ELSE CanDeclareGlobalVar(s, env, Head(names)) IN
-       IF IsAbrupt(r) THEN r ELSE IF Val(r) = False THEN ThrowTypeError(r.s) ELSE CheckGlobalNames(r.s, env, Tail(names), isFunction)
+  CASE names = <<>> -> Ok(s, Empty)
+    [] Len(names) = 1 ->
+         LET r == IF isFunction THEN CanDeclareGlobalFunction(s, env, names[1]) ELSE CanDeclareGlobalVar(s, env, names[1]) IN
+         IF IsAbrupt(r) THEN r ELSE IF Val(r) = False THEN ThrowTypeError(r.s) ELSE Ok(r.s, Empty)
+    [] OTHER ->
+         LET first == CheckGlobalNames(s, env, SubSeq(names, 1, Len(names) \div 2), isFunction) IN
+         IF IsAbrupt(first) THEN first ELSE CheckGlobalNames(first.s, env, SubSeq(names, Len(names) \div 2 + 1, Len(names)), isFunction)
 CreateGlobalLexicals(s, env, decls) ==
   IF decls = <<>> THEN Ok(s, Empty)
   ELSE LET r == CreateGlobalLexicalNames(s, env, BoundNames(Head(decls)), IsConstantDeclaration(Head(decls))) IN
@@ -11864,9 +11869,11 @@ CreateGlobalFunctions(s, ctx, env, fns) ==
            r == CreateGlobalFunctionBinding(fo.s, env, BoundNames(Head(fns))[1], Val(fo), FALSE)
        IN IF IsAbrupt(r) THEN r ELSE CreateGlobalFunctions(r.s, ctx, env, Tail(fns))
 CreateGlobalVars(s, env, names) ==
-  IF names = <<>> THEN Ok(s, Empty)
-  ELSE LET r == CreateGlobalVarBinding(s, env, Head(names), FALSE) IN
-       IF IsAbrupt(r) THEN r ELSE CreateGlobalVars(r.s, env, Tail(names))
+  CASE names = <<>> -> Ok(s, Empty)
+    [] Len(names) = 1 -> CreateGlobalVarBinding(s, env, names[1], FALSE)
+    [] OTHER ->
+         LET first == CreateGlobalVars(s, env, SubSeq(names, 1, Len(names) \div 2)) IN
+         IF IsAbrupt(first) THEN first ELSE CreateGlobalVars(first.s, env, SubSeq(names, Len(names) \div 2 + 1, Len(names)))
 \* Step 12 of GlobalDeclarationInstantiation and step 13 of EvalDeclarationInstantiation (§B.3.2.2,
 \* §B.3.2.3): var bindings for the block functions fns that sloppy code hoists, which eval makes
 \* deletable. A binding between the code's lexical environment lex and its var environment keeps a
