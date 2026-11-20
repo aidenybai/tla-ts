@@ -7,8 +7,7 @@ const POP_BACK = 2;
 const MAX_TRAIL = 16;
 const FACTOR = 2;
 
-// As in Z3's cell, a root keeps its size in index and its values in link, and any other cell keeps
-// the cell it changes there.
+// A root keeps its size in index and its values in link.
 interface Cell {
   refCount: number;
   kind: number;
@@ -25,8 +24,6 @@ const mkRoot = (values: number[]): Cell => ({
   link: values,
 });
 
-// Z3's parray_manager for a goal's formulas, which preserves roots, so a copy that a goal shares
-// keeps the formulas the goal replaces.
 export class ExprParray {
   private cell: Cell | undefined = undefined;
   private updateCounter = 0;
@@ -145,7 +142,6 @@ export class ExprParray {
     this.updateCounter = 0;
   }
 
-  // preserve_roots moves the root to this copy, and the old root keeps the change for the others.
   private moveRoot(cell: Cell, values: number[], kind: number, index: number, elem: number) {
     this.updateCounter++;
     const root = mkRoot(values);

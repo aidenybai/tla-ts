@@ -114,7 +114,6 @@ interface ParamDescrs {
   get(name: string): ParamDescr | undefined;
 }
 
-// cleanup is Z3's tactic::cleanup, which exec runs at the end and the tacticals forward.
 export interface Tactic {
   (goal: Goal): Goal[];
   cleanup?: () => void;
@@ -414,7 +413,6 @@ export const getSmtTacticFailure = (context: Context) =>
 const getSatTacticParams = (environment: TacticEnvironment, params: TacticParams) =>
   new Map([...getSatParams(environment.parameters), ...params]);
 
-// goal2sat hands the atoms to euf when the sat parameters of the tactic set euf.
 const runSat = (environment: TacticEnvironment, params: TacticParams) => (goal: Goal) => {
   const satParams = getSatTacticParams(environment, params);
   return createSatTactic(
@@ -695,7 +693,6 @@ const runNnf = (manager: AstManager, params: TacticParams) => (goal: Goal) => {
   return [goal];
 };
 
-// Every parameter of Z3's sat tactic, so the sat tactic rejects any other.
 const SAT_DESCRS = getDescrs("sat", [
   ["max_memory", PARAM_UINT, UINT_MAX, true],
   ["ite_extra", PARAM_BOOL, true, true],
@@ -1965,7 +1962,6 @@ const runRepeat = (tactic: Tactic, maxDepth: number) => {
   return (goal: Goal) => run(0, goal);
 };
 
-// Its cleanup reaches the branch it didn't take too.
 const runCond = (probe: Probe, onTrue: Tactic, onFalse: Tactic) =>
   withGuardedCleanup(
     (goal) => (probe(goal) === 0 ? onFalse(goal) : onTrue(goal)),
@@ -2503,7 +2499,6 @@ const getTacticCheck = (goal: Goal, goals: Goal[] | string | undefined): TacticC
   };
 };
 
-// Z3's exec cleans the tactic after its run, or after a tactic_exception.
 const exec = (tactic: Tactic, goal: Goal) => {
   try {
     const goals = tactic(goal);

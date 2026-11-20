@@ -843,8 +843,6 @@ export class Rewriter extends RewriterTpl {
     return true;
   }
 
-  // Z3 holds the arguments of the last round and of this one, and the last simplified argument, in
-  // refs that free what each held when it is replaced, and the three at the end.
   private simplifyLocalCtx(initialArgs: number[]) {
     const manager = this.manager;
     const oldArgs = new RefVector(manager);

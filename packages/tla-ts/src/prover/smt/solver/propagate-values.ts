@@ -44,7 +44,6 @@ class SharedOccs {
   }
 }
 
-// Its rewriter, substitution and shared occurrences live from one run until its cleanup.
 export class PropagateValuesTactic {
   private rewriter: Rewriter | undefined;
   private readonly substitution: ObjMap<number>;

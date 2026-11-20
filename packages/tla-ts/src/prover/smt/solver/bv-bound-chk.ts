@@ -471,7 +471,6 @@ class BvBoundChkRewriter extends RewriterTpl {
   }
 }
 
-// The rewriter's cache lives until the tactic's cleanup.
 export class BvBoundChkTactic {
   private rewriter: BvBoundChkRewriter | undefined;
 

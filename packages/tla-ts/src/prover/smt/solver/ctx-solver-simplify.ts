@@ -15,8 +15,7 @@ interface ExprPos {
   expr: number;
 }
 
-// The tactic makes its kernel with the global parameters when it is made, and using_params updates
-// them after the kernel has read some. cleanup_tactical resets the kernel after each run.
+// The first kernel reads some parameters before using_params updates them.
 export const createCtxSolverSimplify = (
   manager: AstManager,
   frontParams: KernelParams,

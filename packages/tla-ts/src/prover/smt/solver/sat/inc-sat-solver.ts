@@ -60,8 +60,7 @@ export class IncSatSolver {
   private readonly satConverter: Sat2GoalConverter;
   private isInternalizedConverted = false;
   private readonly internalized: RefVector;
-  // Z3 frees what the propagate-values of its preprocessing holds only when it resets the
-  // preprocessing, before it preprocesses again and at the start of get-consequences.
+  // Z3 frees what the propagate-values of its preprocessing holds only when it resets the preprocessing.
   private readonly propagator: PropagateValuesTactic;
   private hasUninterpreted = false;
   private subgoals: Goal[] = [];

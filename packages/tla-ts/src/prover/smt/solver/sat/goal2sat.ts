@@ -557,8 +557,6 @@ export class Goal2Sat implements SatInternalizer, EufInternalizer {
   runGoal(goal: Goal, dep2asm: Map<number, number> | ObjMap<number>) {
     const manager = this.manager;
     if (this.mkThSolver !== null) this.ensureEuf();
-    // Z3 holds the last negation and formula, then the clause, in refs that keep each until the next
-    // formula replaces it.
     const held = new RefVector(manager);
     held.resize(2);
     const clause = new RefVector(manager);
