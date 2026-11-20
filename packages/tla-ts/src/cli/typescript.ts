@@ -261,7 +261,7 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
   const lines = code.split(/\r\n|[\n\r\u2028\u2029]/);
   // Node runs a file as an ES module or as CommonJS, as TypeScript and the file's syntax tell, and
   // names it by its URL, but a CommonJS file of JavaScript by its path.
-  const isModule = getModuleFormat(path, source) === "module";
+  const isModule = getModuleFormat(path, text) === "module";
   const url =
     isModule || /\.[cm]?tsx?$/.test(path)
       ? pathToFileURL(realpathSync(path)).href
