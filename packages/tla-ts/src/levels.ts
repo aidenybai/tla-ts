@@ -107,6 +107,7 @@ interface FoundOriginal {
 export interface LetInstance extends InstanceSubstitutes {
   copies: Map<string, InstanceCopy>;
   getArgParams: () => Set<string>;
+  deferredSubstitutes: Definition[];
 }
 
 export interface InstanceLevels {
@@ -139,6 +140,7 @@ export interface InstanceLevelCheck {
   location: SourceLocation;
   check: () => SanyError[];
   substitutes: InstanceSubstitutes;
+  substitutesCheck: "Definition" | "Theorem" | "Instance";
 }
 
 type ScopeEntry =
@@ -1059,7 +1061,10 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         checkRecursiveSection(section.members),
       );
     }
-    const definitions = (
+    const deferred = new Set(
+      entered.instances?.flatMap((instance) => instance.deferredSubstitutes),
+    );
+    const ownDefinitions = (
       entered.instanceUnits?.length
         ? [
             ...expression.definitions.map((definition) => ({
@@ -1071,32 +1076,41 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             .toSorted((left, right) => compareLocations(left.location, right.location))
             .flatMap((unit) => unit.definitions)
         : expression.definitions
-    ).map((definition) => analyzeDefinition(definition, entered.inner));
+    )
+      .filter((definition) => !deferred.has(definition))
+      .map((definition) => analyzeDefinition(definition, entered.inner));
     const body = analyze(expression.body, entered.inner);
     const instancer = context.module;
-    const instanceErrors =
-      instancer === undefined
-        ? []
-        : expression.instances?.flatMap((instance) => {
-            const substitutes = context.instances.getLetInstance(instance)
-              ? undefined
-              : context.instances.getSubstitutes(instance);
-            if (substitutes) getSubstitutes(substitutes, entered.inner);
-            const instantiation = context.instances.checkInstantiation(
-              instance,
-              instancer,
-              entered.inner,
-            );
-            instantiation.forEach((error) => errors.push(error));
-            return instantiation;
-          });
+    const instanceChecks = (expression.instances ?? []).map((instance) => {
+      const letInstance = context.instances.getLetInstance(instance);
+      const substitutes =
+        letInstance?.deferredSubstitutes.map((definition) =>
+          analyzeDefinition(definition, entered.inner),
+        ) ?? [];
+      if (instancer === undefined) return { substitutes, errors: [] };
+      const instanceSubstitutes = letInstance
+        ? undefined
+        : context.instances.getSubstitutes(instance);
+      if (instanceSubstitutes) getSubstitutes(instanceSubstitutes, entered.inner);
+      const instantiation = context.instances.checkInstantiation(
+        instance,
+        instancer,
+        entered.inner,
+      );
+      instantiation.forEach((error) => errors.push(error));
+      return { substitutes, errors: instantiation };
+    });
+    const definitions = [
+      ...ownDefinitions,
+      ...instanceChecks.flatMap((check) => check.substitutes),
+    ];
     const data = {
       level: body.level,
       isCorrect:
         body.isCorrect &&
         // SANY applies a selection's LAMBDA, and an application's level-correctness leaves out its operator's.
         definitions.every((levels) => levels.isCorrect || levels.name === SELECTION_NAME) &&
-        (instanceErrors?.length ?? 0) === 0,
+        instanceChecks.every((check) => check.errors.length === 0),
       params: new Set(body.params),
       constraints: new Map(body.constraints),
       argConstraints: new Map(body.argConstraints),
@@ -2108,6 +2122,14 @@ export const checkModuleLevels = (
       reported.push(...analyzer.errors.splice(0));
     },
   });
+  const getSubstitutesChecks = (substitutesCheck: InstanceLevelCheck["substitutesCheck"]) =>
+    instances
+      .filter((instance) => instance.substitutesCheck === substitutesCheck)
+      .map((instance) =>
+        createCheck(instance.location, () =>
+          analyzer.getSubstitutes(instance.substitutes, new Map()),
+        ),
+      );
   return {
     sections: sections.map((section) =>
       createCheck(section.location, () => analyzer.checkRecursiveSection(section.members)),
@@ -2128,17 +2150,16 @@ export const checkModuleLevels = (
                 analyzer.analyzeDefinition(definition, new Map()),
               ),
             ),
-          ...instances.map((instance) =>
-            createCheck(instance.location, () =>
-              analyzer.getSubstitutes(instance.substitutes, new Map()),
-            ),
-          ),
+          ...getSubstitutesChecks("Definition"),
         ],
-        statements
-          .filter((statement) => statement.name !== undefined)
-          .map((statement) =>
-            createCheck(statement.location, () => getStatementLevel(statement.statement)),
-          ),
+        [
+          ...statements
+            .filter((statement) => statement.name !== undefined)
+            .map((statement) =>
+              createCheck(statement.location, () => getStatementLevel(statement.statement)),
+            ),
+          ...getSubstitutesChecks("Theorem"),
+        ],
         [
           ...module.assumptions.map((assumption) => ({
             location: assumption.location,
@@ -2170,7 +2191,12 @@ export const checkModuleLevels = (
           ),
           ...instances.map((instance) => ({
             location: instance.location,
-            check: (reported: SanyError[]) => reported.push(...instance.check()),
+            check: (reported: SanyError[]) => {
+              if (instance.substitutesCheck === "Instance") {
+                analyzer.getSubstitutes(instance.substitutes, new Map());
+              }
+              reported.push(...analyzer.errors.splice(0), ...instance.check());
+            },
           })),
         ],
       ].flatMap((units) => collectSemanticErrors(units, warnings)),

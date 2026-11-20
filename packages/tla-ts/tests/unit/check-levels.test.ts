@@ -1869,6 +1869,108 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  const assumptionError =
+    "Level error: assumptions must be level 0 (Constant), \nbut this one has level 2.";
+  it.each([
+    [
+      "CONSTANT c\nVARIABLE v",
+      "D == LET D1 == (x')'\n          K == INSTANCE P WITH c <- (x')', v <- x\n          D2 == (x')'\n      IN TRUE",
+      [
+        ["line 9, col 16 to line 9, col 20", primed],
+        ["line 11, col 17 to line 11, col 21", primed],
+        ["line 10, col 37 to line 10, col 41", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v\nLOCAL B == c",
+      "D == LET D1 == (x')'\n          K == INSTANCE P WITH c <- (x')', v <- x\n          D2 == (x')'\n      IN TRUE",
+      [
+        ["line 10, col 16 to line 10, col 20", primed],
+        ["line 12, col 17 to line 12, col 21", primed],
+        ["line 11, col 37 to line 11, col 41", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v",
+      "D == LET D1 == (x')'\n          K == INSTANCE P WITH c <- (x')', v <- x\n          K2 == INSTANCE P WITH c <- (x'')', v <- x\n          D2 == (x')'\n      IN TRUE",
+      [
+        ["line 9, col 16 to line 9, col 20", primed],
+        ["line 12, col 17 to line 12, col 21", primed],
+        ["line 10, col 37 to line 10, col 41", primed],
+        ["line 11, col 39 to line 11, col 41", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v",
+      "D == LET D1 == (x')'\n          K == INSTANCE P WITH c <- x, v <- (x')'\n          D2 == (x')'\n      IN TRUE",
+      [
+        ["line 9, col 16 to line 9, col 20", primed],
+        ["line 11, col 17 to line 11, col 21", primed],
+        ["line 10, col 45 to line 10, col 49", primed],
+        [
+          "line 10, col 11 to line 10, col 49",
+          "Level error in instantiating module 'P':\nThe level of the expression or operator substituted for 'c' \nmust be at most 0.",
+        ],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v",
+      "THEOREM T == LET D1 == (x')'\n          K == INSTANCE P WITH c <- (x')', v <- x\n          D2 == (x')'\n      IN TRUE",
+      [
+        ["line 9, col 24 to line 9, col 28", primed],
+        ["line 11, col 17 to line 11, col 21", primed],
+        ["line 10, col 37 to line 10, col 41", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v",
+      "D1 == (x')'\nK == INSTANCE P WITH c <- (x')', v <- x\nD2 == (x')'",
+      [
+        ["line 9, col 7 to line 9, col 11", primed],
+        ["line 11, col 7 to line 11, col 11", primed],
+        ["line 10, col 27 to line 10, col 31", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v\nTHEOREM B == c = 1",
+      "D1 == (x')'\nTHEOREM T0 == (x')' = 1\nK == INSTANCE P WITH c <- (x')', v <- x\nTHEOREM T1 == (x')' = 1\nD2 == (x')'",
+      [
+        ["line 10, col 7 to line 10, col 11", primed],
+        ["line 14, col 7 to line 14, col 11", primed],
+        ["line 11, col 15 to line 11, col 19", primed],
+        ["line 12, col 27 to line 12, col 31", primed],
+        ["line 13, col 15 to line 13, col 19", primed],
+      ],
+    ],
+    [
+      "CONSTANT c\nVARIABLE v",
+      "D1 == (x')'\nASSUME (x')' = 1\nK == INSTANCE P WITH c <- (x')', v <- x\nASSUME (x')' = 2\nD2 == (x')'",
+      [
+        ["line 9, col 7 to line 9, col 11", primed],
+        ["line 13, col 7 to line 13, col 11", primed],
+        ["line 10, col 8 to line 10, col 12", primed],
+        ["line 10, col 1 to line 10, col 16", assumptionError],
+        ["line 11, col 27 to line 11, col 31", primed],
+        ["line 12, col 8 to line 12, col 12", primed],
+        ["line 12, col 1 to line 12, col 16", assumptionError],
+      ],
+    ],
+  ])(
+    "level-checks an instance's substitutes with the first definition it instances, or else with the instance itself, as SANY does: %s",
+    async (instancee, definitions, errors) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE P ----\n${instancee}\n====\nN == INSTANCE P WITH c <- 1, v <- x\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+        ),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(

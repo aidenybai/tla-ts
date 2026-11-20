@@ -169,6 +169,13 @@ const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
 // TLC evaluates the definitions of these modules that it doesn't override, such as Bags' SubBag.
 const SOURCE_STANDARD_MODULES = new Set(["Bags", "Randomization", "TLCExt"]);
 
+// SANY level-checks an instance's substitutes with the first definition it instances, an operator before a theorem, or else with the instance itself.
+const getSubstitutesCheck = (exported: Symbols) => {
+  const kinds = new Set([...exported.values()].map((symbol) => symbol.kind));
+  if (kinds.has("Definition") || kinds.has("Builtin")) return "Definition";
+  return kinds.has("Theorem") ? "Theorem" : "Instance";
+};
+
 // SANY's SubstInNode and APSubstInNode word the error for a body they can't substitute in apart.
 const SUBSTITUTION_ERRORS = [
   {
@@ -764,6 +771,7 @@ export const createEnvironment = (
           location: instance.location,
         }),
       substitutes,
+      substitutesCheck: getSubstitutesCheck(linked.exported),
     });
     const frame = declarations.length > 0 ? getSubstitutionFrame(instance) : undefined;
     if (frame) {
@@ -1138,6 +1146,8 @@ export const createEnvironment = (
           declarations.map((declaration) => [declaration.key, getReplacement(declaration)]),
         ),
         getArgParams: () => instanceLevels.getArgParams(instance.module),
+        deferredSubstitutes:
+          getSubstitutesCheck(linked.exported) === "Instance" ? substitutionDefinitions : [],
       });
     }
     return [...substitutionDefinitions, ...copies, ...exported];
