@@ -26,6 +26,7 @@ import {
   getBoundNames,
   getPatternNames,
   isBefore,
+  SELECTION_NAME,
   type SelectedDefinition,
 } from "./resolve";
 import { resolveSynonym } from "./tlc/jar-data";
@@ -1093,7 +1094,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       level: body.level,
       isCorrect:
         body.isCorrect &&
-        definitions.every((levels) => levels.isCorrect) &&
+        // SANY applies a selection's LAMBDA, and an application's level-correctness leaves out its operator's.
+        definitions.every((levels) => levels.isCorrect || levels.name === SELECTION_NAME) &&
         (instanceErrors?.length ?? 0) === 0,
       params: new Set(body.params),
       constraints: new Map(body.constraints),

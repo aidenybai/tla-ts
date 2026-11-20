@@ -1783,6 +1783,35 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "D(r) == ((x' = r) /\\ [](x = 1)) \\/ FALSE\nE == (D(1)!1)'",
+      ["line 3, col 10 to line 3, col 30", "line 4, col 6 to line 4, col 14"],
+    ],
+    [
+      "---- MODULE L ----\nVARIABLE v\nD(r) == ((v' = r) /\\ [](v = 1)) \\/ FALSE\n====\nI3 == INSTANCE L WITH v <- x\nE == (I3!D(1)!1)'",
+      ["line 5, col 10 to line 5, col 30", "line 8, col 6 to line 8, col 17"],
+    ],
+  ])(
+    "reports a level error in applying a selection with arguments of an expression with a level error, as SANY does: %s",
+    async (definitions, locations) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${locations[0]} of module M`,
+            message: "\\land has both temporal formula and action as arguments.",
+          },
+          { location: `${locations[1]} of module M`, message: primed },
+        ]),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(
