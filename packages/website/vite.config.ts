@@ -6,8 +6,10 @@ import tailwindcss from "@tailwindcss/vite";
 import typescript from "@typescript/typescript6";
 import react from "@vitejs/plugin-react";
 import { createServer, defineConfig, type Plugin } from "vite-plus";
+import { writeGraph } from "../tla-ts/scripts/write-graph";
 import { printModule } from "../tla-ts/src/printer";
 import { compile } from "../tla-ts/src/typescript/compile";
+import { getPreludeGraph, prepareJavaScriptModule } from "../tla-ts/src/typescript/javascript";
 import { printRegions } from "../tla-ts/src/typescript/regions";
 import { type EscoreRuntime, prepareRuntime } from "../tla-ts/src/typescript/spec/prepare";
 import { getCompilation, type Precompiled } from "./src/compilation";
@@ -228,6 +230,19 @@ const escoreHost = (): Plugin => ({
   },
 });
 
+// The JavaScript module that today's compiler prepares, which a model on ESCore reads, written into
+// the worker's bundles as tla-ts's build writes it into its own, so that the worker reads the
+// module rather than prepares it.
+const preludeGraph = (): Plugin => ({
+  name: "prelude-graph",
+  apply: (_config, env) => IS_ESCORE && env.command === "build",
+  writeBundle(options) {
+    writeGraph([join(options.dir ?? "dist", "assets")], "prelude", () =>
+      getPreludeGraph(prepareJavaScriptModule()),
+    );
+  },
+});
+
 const COMPILATIONS = "virtual:compilations";
 const COMPILATION = "virtual:compilation/";
 const INITIAL_FILE_NAME = "likes.ts";
@@ -368,6 +383,7 @@ export default defineConfig({
     typescriptLibraries(),
     logoFiles(),
     escoreHost(),
+    preludeGraph(),
     pages(),
   ],
   // A build that TLA_TS_ESCORE names gives its page the switch too, as a constant, so that a build
