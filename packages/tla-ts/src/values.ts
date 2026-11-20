@@ -1999,7 +1999,6 @@ const someElementOfStream = (value: ObjectValue, visit: (element: Value) => bool
   if (components?.some(isStreamedApart)) {
     return enumerateSet(value, false, getStreamedElements).some(visit);
   }
-  // TLC's SubsetValue#elements streams the subsets without sizing SUBSET S, where tla-ts builds at most 2^20 of them.
   if (
     value.kind === "Subset" &&
     value.enumerated === undefined &&

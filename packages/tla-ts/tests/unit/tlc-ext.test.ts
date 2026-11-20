@@ -193,7 +193,6 @@ describe("TLCExt matches TLC", () => {
     },
   );
 
-  // Deviation from TLC: it prints [x |-> 4, _ALIASEvalError |-> "…Index 32767 out of bounds for length 1…"] for the last state.
   it("gives the postcondition the alias of the last state, which reads Trace, unlike TLC", async () => {
     const result = await check({
       source:
@@ -205,7 +204,6 @@ describe("TLCExt matches TLC", () => {
     ]);
   });
 
-  // Deviation from TLC: it prints <<0, 1>> as it rebuilds the counterexample, then fails with "Index 32767 out of bounds for length 1" and exits with 1.
   it("reads Trace in the next-state relation as a liveness counterexample rebuilds its steps, unlike TLC", async () => {
     const prints: string[] = [];
     const result = await check({
