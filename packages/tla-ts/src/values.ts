@@ -640,7 +640,10 @@ export const compareValues = (left: Value, right: Value): number => {
       return leftKind === "ModelValue" ? -1 : 1;
     }
     if (left === ANY_SET || right === ANY_SET) return compareAny(left === ANY_SET ? right : left);
-    if (leftKind === "SequenceSet" && rightKind === "SequenceSet") {
+    if (
+      (leftKind === "SequenceSet" && rightKind === "SequenceSet") ||
+      (leftKind === "Subset" && rightKind === "Subset")
+    ) {
       return callTracedMethod(left.base, () => compareLikeTlc(left.base, right.base));
     }
     if (isSetValue(left) && isSetValue(right) && isOverriddenComparison(left, right)) {

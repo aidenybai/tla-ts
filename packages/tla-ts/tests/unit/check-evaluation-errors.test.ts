@@ -4363,6 +4363,52 @@ describe("evaluation errors match TLC", () => {
     },
   );
 
+  const checkComparison = (comparison: string) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ ${comparison}\nInv == TRUE\n====`,
+      config: "INIT Init\nNEXT Next\nINVARIANT Inv",
+    });
+
+  it("orders two SUBSET S by their bases without enumerating them, as TLC's SubsetValue#compareTo does", async () => {
+    const result = await checkComparison("{SUBSET (1..30), SUBSET (1..31)} # {}");
+    expect(result.failure).toBeUndefined();
+  });
+
+  it.each([
+    [
+      '{SUBSET {x}, SUBSET {"a"}} # {}',
+      'Attempted to compare string "a" with non-string:\n0',
+      [
+        "Line 5, column 9 to line 5, column 49 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 49 in M",
+        "Line 5, column 19 to line 5, column 44 in M",
+        "Line 5, column 32 to line 5, column 43 in M",
+        "Line 5, column 39 to line 5, column 43 in M",
+      ],
+    ],
+    [
+      "{SUBSET Nat, SUBSET {1}} # {}",
+      "Attempted to compare the set {1} with the value:\nNat",
+      [
+        "Line 5, column 9 to line 5, column 47 in M",
+        "Line 5, column 9 to line 5, column 14 in M",
+        "Line 5, column 19 to line 5, column 47 in M",
+        "Line 5, column 19 to line 5, column 42 in M",
+        "Line 5, column 32 to line 5, column 41 in M",
+        "Line 5, column 39 to line 5, column 41 in M",
+      ],
+    ],
+  ])(
+    "frames the base two SUBSET S compare, as TLC's SubsetValue#compareTo does: x' = x /\\ %s",
+    async (comparison, reason, callStack) => {
+      const result = await checkComparison(comparison);
+      expect(result.failure?.message).toBe(getRuntimeException(reason));
+      expect(formatCallStackLines(result)).toEqual(callStack);
+      expect(result.failure?.fingerprint?.reason).toBe(reason);
+    },
+  );
+
   const SET_EQUALITY_REASON = "Attempted to check equality of the set {1} with the value:\n1";
 
   it.each([
