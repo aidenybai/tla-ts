@@ -96,12 +96,26 @@ const GATED_GROUPS = [
 
 // String methods that make regular expressions, the methods of collections and arrays that give
 // iterators, whose helpers, such as every and map, a program may call, the methods that give
-// promises, and Date's method that gives a Temporal.Instant.
+// promises, Date's method that gives a Temporal.Instant, the methods that format through Intl,
+// Intl's DurationFormat, which reads a duration as Temporal does, and its DateTimeFormat, which
+// formats a time value through Temporal's patterns and Date's fields.
 const EXTRA_TRIGGERS = new Map([
   ["83-regexp", ["match", "matchAll", "replace", "replaceAll", "search", "split"]],
   ["81-iterator.tla", ["values", "keys", "entries"]],
   ["86-promise.tla", ["waitAsync", "disposeAsync", "asyncDispose"]],
-  ["89", ["toTemporalInstant"]],
+  [
+    "90-intl.tla",
+    [
+      "toLocaleString",
+      "toLocaleDateString",
+      "toLocaleTimeString",
+      "localeCompare",
+      "toLocaleLowerCase",
+      "toLocaleUpperCase",
+    ],
+  ],
+  ["89", ["toTemporalInstant", "DurationFormat", "DateTimeFormat"]],
+  ["82-date.tla", ["DateTimeFormat"]],
 ]);
 
 // The prototypes that every generator's and built-in iterator's prototype chain reaches, whose
@@ -269,6 +283,9 @@ export const HOOKS = new Map([
   ["HostDateFormat", "key"],
   ["HostLocale", "tag"],
   ["HostParseDate", "u"],
+  ["HostCalendarYear", "key"],
+  ["HostCalendarMonthDay", "key"],
+  ["HostIntl", "key"],
   ["ModuleNode", "id"],
   ["ModuleDeclarations", "s, ctx, node"],
 ]);
@@ -330,13 +347,24 @@ export const assembleRuntime = (
   );
 };
 
-// The families whose toLocaleString only calls another method: an element's toLocaleString, or
-// toString.
-const INVOKING_FAMILIES = ["Array", "TypedArray", "Object"];
+// The locale-sensitive methods that ESCore runs as ECMA-402 does, through HostIntl: those that
+// format a Number, a BigInt, or a Date or compare strings, and those that call their elements' or
+// their own.
+const LOCALE_FORMATTING = [
+  ["Number", "toLocaleString"],
+  ["BigInt", "toLocaleString"],
+  ["Array", "toLocaleString"],
+  ["TypedArray", "toLocaleString"],
+  ["Object", "toLocaleString"],
+  ["String", "localeCompare"],
+  ["Date", "toLocaleString"],
+  ["Date", "toLocaleDateString"],
+  ["Date", "toLocaleTimeString"],
+];
 
 // A program's CallBuiltin, which runs the built-ins of the families given and stops at the others
 // and at the methods in stoppedMethods, but for Temporal's, which format through HostDateFormat,
-// and for the invoking families'.
+// and those of LOCALE_FORMATTING.
 export const getCallBuiltin = (
   name: string,
   families: readonly Family[],
@@ -344,14 +372,12 @@ export const getCallBuiltin = (
 ) =>
   [
     `${name}(s, f, id, this, args, nt) ==`,
-    `  IF id[2] \\in {${stoppedMethods.map((method) => `"${method}"`).join(", ")}} /\\ id[1] \\notin {${[
-      ...families.filter((family) => family.group === "89").map((family) => family.name),
-      ...INVOKING_FAMILIES,
-    ]
-      .map((family) => `"${family}"`)
+    `  IF id[2] \\in {${stoppedMethods.map((method) => `"${method}"`).join(", ")}} /\\ id[1] \\notin {${families
+      .filter((family) => family.group === "89")
+      .map((family) => `"${family.name}"`)
       .join(
         ", ",
-      )}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
+      )}} /\\ id \\notin {${LOCALE_FORMATTING.map((pair) => `<<"${pair[0]}", "${pair[1]}">>`).join(", ")}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,
     ...families.map(
       (family, index) =>
         `  ${index === 0 ? "CASE" : "  []"} id[1] = "${family.name}" -> ${family.name}Builtin(s, f, id[2], this, args, nt)`,

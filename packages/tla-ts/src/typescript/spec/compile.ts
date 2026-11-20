@@ -8,6 +8,7 @@ import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
 import type { HostRealm } from "./realm";
 import {
+  getHostCalendars,
   getHostDateFormat,
   getHostLocale,
   getHostTimeZone,
@@ -19,6 +20,7 @@ import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
 import { getNumber, type ProgramFile, specialize } from "./specialize";
 import { stripTypes } from "./strip-types";
+import { getHostIntl } from "./intl";
 import { suspendDefinitions } from "./suspend";
 
 // Node's files and paths, which only a program of files reads, so that a host without them, such as
@@ -558,6 +560,11 @@ export const compileToEscore = (
       : `LET g == DefineHost(s, HostProperties) IN IF IsAbrupt(g) THEN g ELSE SetupHostImport(g.s, ${hostFile})`;
   const runJobs =
     "LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE";
+  // A host whose realm was recorded answers none of Intl's questions, as if the program asked none.
+  const intl = getHostIntl(
+    files.map((file) => file.sourceFile),
+    runtime.realm.getLocale === undefined ? new Set<string>() : program.words,
+  );
   const definitions = compact(
     suspendDefinitions(
       [
@@ -600,12 +607,15 @@ export const compileToEscore = (
             runtime.realm,
           ),
         },
+        ...intl.definitions,
+        ...getHostCalendars(files.map((file) => file.sourceFile.text).join("\n"), program.words),
         {
           name: "HostLocale",
           arity: 1,
           text: getHostLocale(
             files.map((file) => file.sourceFile.text).join("\n"),
             program.words,
+            intl.strings,
             runtime.realm,
           ),
         },

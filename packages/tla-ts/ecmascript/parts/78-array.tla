@@ -399,7 +399,7 @@ ArrayMethod(s, o, len, m, args) ==
     \* Array.prototype.join (§23.1.3.18).
     [] m = "join" ->
          LET sep == IF Arg(args, 1) = Undefined THEN Ok(s, SV(",")) ELSE ToStr(s, Arg(args, 1)) IN
-         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, FALSE, <<>>)
+         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, Empty)
     \* Array.prototype.lastIndexOf (§23.1.3.20).
     [] m = "lastIndexOf" ->
          IF NumIsZero(len) THEN Ok(s, IntV(-1))
@@ -492,9 +492,8 @@ ArrayMethod(s, o, len, m, args) ==
                  [] OTHER -> Ok(al.s, o)
          IN IF IsAbrupt(moved) THEN moved ELSE
             LET w == SetElements(moved.s, o, items, start) IN IF IsAbrupt(w) THEN w ELSE SetLength(w.s, o, newLen, Val(a))
-    \* Array.prototype.toLocaleString (ECMA-402 §19.5.1), with "," as the list separator, which
-    \* passes each element's toLocaleString its locales and options.
-    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, TRUE, <<Arg(args, 1), Arg(args, 2)>>)
+    \* Array.prototype.toLocaleString (§23.1.3.32, ECMA-402 §19.5.1), with "," as the list separator.
+    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, LocaleArguments(args))
     \* Array.prototype.toReversed (§23.1.3.33).
     [] m = "toReversed" ->
          LET a == ArrayCreateLength(s, len) IN IF IsAbrupt(a) THEN a ELSE
@@ -568,17 +567,21 @@ IncludesFrom(s, o, k, len, target) ==
   ELSE IF SameValueZero(target, Val(v)) THEN Ok(v.s, True)
   ELSE IncludesFrom(v.s, o, NumAdd(k, OneNum), len, target)
 
-\* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString when isLocale,
-\* which passes each element's toLocaleString localeArgs.
-JoinFrom(s, o, len, k, sep, acc, isLocale, localeArgs) ==
+\* The arguments that toLocaleString passes each element's: ECMA-402's locales and options where
+\* the host has Intl, else none.
+LocaleArguments(args) == IF HostIntl(<<"none">>).found = "none" THEN <<>> ELSE <<Arg(args, 1), Arg(args, 2)>>
+
+\* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString, which passes each
+\* element's toLocaleString the arguments locale, where they aren't Empty.
+JoinFrom(s, o, len, k, sep, acc, locale) ==
   IF ~NumLess(k, len) THEN Ok(s, Str(acc))
   ELSE LET e == Get(s, o, Index(k)) IN IF IsAbrupt(e) THEN e ELSE
        LET next == IF IsNullish(Val(e)) THEN Ok(e.s, EmptyStr)
-                   ELSE IF ~isLocale THEN ToStr(e.s, Val(e))
-                   ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), localeArgs) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
+                   ELSE IF locale = Empty THEN ToStr(e.s, Val(e))
+                   ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), locale) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
        IN IF IsAbrupt(next) THEN next
           ELSE JoinFrom(next.s, o, len, NumAdd(k, OneNum), sep,
-                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, isLocale, localeArgs)
+                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, locale)
 
 \* FindViaPredicate (§23.1.3.12.1), returning [index, value].
 FindViaPredicate(s, o, len, dir, predicate, thisArg) ==

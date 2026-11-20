@@ -1,8 +1,9 @@
 import { TlaError } from "../../errors";
 import type { GeneratedDefinition, Library } from "./library";
 import type { HostRealm } from "./realm";
+import { CALENDAR_TABLES } from "../calendars";
 import { DATE_FORMATS } from "../date-formats";
-import { TIME_ZONES } from "../time-zones";
+import { REJECTED_TIME_ZONES, TIME_ZONE_DATA, TIME_ZONES } from "../time-zones";
 
 // The ESCore operators that a compiled spec defines its own way, each a port of ESCore's with
 // what the parse node gave as a parameter: a function's code is the record [id, strict, kind,
@@ -1122,7 +1123,8 @@ const getHostPatches = (realm: HostRealm) => [
          IF ~SameValue(this, Intrinsic(s, "RegExp")) THEN Assert(FALSE, "tla-ts can't set RegExp.input on another receiver, as V8 does") ELSE`,
   },
   // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
-  // host does too in its default locale, unless that locale tailors case, and in no locale given.
+  // host does too in its default locale, unless that locale tailors case, and in the locales given
+  // as HostIntl answers.
   {
     name: "StringProperties",
     from: `SV("toLocaleLowerCase"), "String", "toLowerCase", 0),\n     M("StringPrototype", SV("toLocaleUpperCase"), "String", "toUpperCase", 0)`,
@@ -1132,7 +1134,9 @@ const getHostPatches = (realm: HostRealm) => [
     name: "StringMethod",
     from: `    [] m = "toLowerCase" ->`,
     to: `    [] m \\in {"toLocaleLowerCase", "toLocaleUpperCase"} ->
-         IF Arg(args, 1) # Undefined \\/ ${TAILORED_CASING.has(new Intl.Locale(realm.locale).language) ? "TRUE" : "FALSE"} THEN Unsupported(s, <<>>)
+         LET isTailored == ${TAILORED_CASING.has(new Intl.Locale(realm.locale).language) ? "TRUE" : "FALSE"} IN
+         IF Arg(args, 1) # Undefined THEN IntlTransformCase(s, m, units, Arg(args, 1), isTailored)
+         ELSE IF isTailored THEN Unsupported(s, <<>>)
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
   },
@@ -1666,17 +1670,36 @@ const getZoneNames = (text: string) =>
     ...[...match[1].matchAll(/\[!?([^\]=]+)\]/g)].map((annotation) => annotation[1]),
   ]);
 
-// The program's HostTimeZone: the recorded table's entries of the time zones its strings name, and
-// for the other names in them that the host rejects, "rejected". Any other name may be one that the
-// host has and the table leaves out.
+// The program's HostTimeZone: the recorded table's entries of the time zones its strings name, of
+// each zone whose name a string of it starts with where the string ends at a "/", a "-", or a "+",
+// as a name a program joins of parts may, and of every zone where it asks Intl for the zones the host
+// supports, and for the other names in them that the host rejects, and the recorded names of such a
+// prefix and up to three digits that it rejects, "rejected". Any other name may be one that the host
+// has and the table leaves out.
 export const getHostTimeZone = (text: string, realm: HostRealm) => {
-  const keys = [...new Set(getZoneNames(text).map((name) => name.toLowerCase()))].sort();
+  const names = [...new Set(getZoneNames(text).map((name) => name.toLowerCase()))];
+  const prefixes = names.filter((name) => /[/+-]$/.test(name));
+  // A host whose realm was recorded answers none of Intl's questions.
+  const supported =
+    /\bsupportedValuesOf\b/.test(text) && realm.getLocale !== undefined
+      ? Intl.supportedValuesOf("timeZone").map((zone) => zone.toLowerCase())
+      : [];
+  const keys = [
+    ...new Set([
+      ...names,
+      ...supported,
+      ...Object.keys(TIME_ZONES).filter((key) => prefixes.some((prefix) => key.startsWith(prefix))),
+    ]),
+  ].sort();
   const entries = keys.filter((key) => Object.hasOwn(TIME_ZONES, key));
-  const rejected = keys.filter(
-    (key) => !Object.hasOwn(TIME_ZONES, key) && realm.isRejectedZone?.(key) === true,
-  );
+  const rejected = [
+    ...names.filter(
+      (key) => !Object.hasOwn(TIME_ZONES, key) && realm.isRejectedZone?.(key) === true,
+    ),
+    ...REJECTED_TIME_ZONES.filter((name) => prefixes.some((prefix) => name.startsWith(prefix))),
+  ];
   const getEntry = (key: string) => {
-    const table = TIME_ZONES[key];
+    const table = { ...TIME_ZONES[key], ...TIME_ZONE_DATA[TIME_ZONES[key].data] };
     const days = table.times.map((time) => Math.floor(time / 86400));
     return `[found |-> "zone", id |-> ${getUnitsOf(table.id)}, primary |-> ${getUnitsOf(table.primary)}, offsets |-> <<${table.offsets.join(", ")}>>, days |-> <<${days.join(", ")}>>, seconds |-> <<${table.times.map((time, index) => time - days[index] * 86400).join(", ")}>>, isFinal |-> ${table.isFinal ? "TRUE" : "FALSE"}, rule |-> <<${table.rule.join(", ")}>>]`;
   };
@@ -1693,17 +1716,17 @@ export const getHostTimeZone = (text: string, realm: HostRealm) => {
 
 // The program's HostDateFormat: the English patterns of Temporal's toLocaleString that Node 26
 // recorded (date-formats.ts) for the kinds of object the program names, where it formats a Temporal
-// object, and the host's default locale and time zone are the table's, English and UTC. Any other
-// key may be one that the host formats and the table leaves out.
+// object, and of an Intl.DateTimeFormat's format, where it formats with one, and the host's default
+// locale and time zone are the table's, English and UTC. Any other key may be one that the host
+// formats and the table leaves out.
 export const getHostDateFormat = (words: ReadonlySet<string>, realm: HostRealm) => {
+  const isTemporal = words.has("Temporal") && words.has("toLocaleString");
+  const isFormat = words.has("DateTimeFormat") && words.has("format");
   const entries =
-    words.has("Temporal") &&
-    words.has("toLocaleString") &&
-    realm.locale === "en-US" &&
-    realm.timeZone === "UTC"
+    realm.locale === "en-US" && realm.timeZone === "UTC"
       ? Object.entries(DATE_FORMATS).filter(([key]) => {
           const kind = key.slice(0, key.indexOf("|"));
-          return kind !== "DateTimeFormat" && words.has(kind);
+          return kind === "DateTimeFormat" ? isFormat : isTemporal && words.has(kind);
         })
       : [];
   const getEntry = (format: (typeof DATE_FORMATS)[string]) =>
@@ -1715,16 +1738,113 @@ export const getHostDateFormat = (words: ReadonlySet<string>, realm: HostRealm) 
     : `HostDateFormat(key) ==\n  LET table == ${entries.map(([key, format]) => `("${key}" :> ${getEntry(format)})`).join("\n    @@ ")}\n  IN IF key \\in DOMAIN table THEN table[key] ELSE [found |-> "unknown"]`;
 };
 
-// The program's HostLocale: for each string it writes that may be a locale tag, and each one's
-// canonical form, what the host's Intl gives of it, where the program names Intl. Any other tag
-// stops, which the host may hold data of, as does every tag of a host whose realm was recorded.
-export const getHostLocale = (text: string, words: ReadonlySet<string>, realm: HostRealm) => {
-  const getLocale = realm.getLocale;
-  if (!words.has("Intl") || getLocale === undefined)
-    return `HostLocale(tag) == [found |-> "unknown"]`;
-  const tags = new Set(
-    [...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]),
+// The program's HostCalendarYear and HostCalendarMonthDay: the recorded tables (calendars.ts) of
+// the Chinese and Dangi calendars that its text names, where it names Temporal. Each run of
+// consecutive years, and each calendar's month-days, is a definition of its own, which a check
+// reads once. Any other year stops, which the host computes astronomically.
+export const getHostCalendars = (text: string, words: ReadonlySet<string>) => {
+  const names = words.has("Temporal")
+    ? Object.keys(CALENDAR_TABLES).filter((name) => new RegExp(name, "i").test(text))
+    : [];
+  const tables = names.map((name, index) => {
+    const years = [...CALENDAR_TABLES[name].years].sort((left, right) => left[0] - right[0]);
+    const runs = years.reduce<number[][][]>((grouped, year) => {
+      const run = grouped.at(-1);
+      if (run !== undefined && run[run.length - 1][0] === year[0] - 1) run.push(year);
+      else grouped.push([year]);
+      return grouped;
+    }, []);
+    const monthDays = CALENDAR_TABLES[name].monthDays.flatMap((row, code) =>
+      row.map((entry, day) => ({
+        days: entry[0],
+        isKept: entry[1] === (code >> 1) + 1 && entry[2] === code % 2 && entry[3] === day + 1,
+      })),
+    );
+    return {
+      units: getUnitsOf(name),
+      runs: runs.map((run, position) => ({
+        name: `CalendarYears${index + 1}x${position + 1}`,
+        first: run[0][0],
+        last: run[run.length - 1][0],
+        text: `<<${run.map((year) => `[found |-> "year", start |-> ${year[1]}, leap |-> ${year[2]}, long |-> ${year[3]}]`).join(", ")}>>`,
+      })),
+      monthDays: {
+        name: `CalendarMonthDays${index + 1}`,
+        kept: `CalendarMonthDaysKept${index + 1}`,
+        days: `<<${monthDays.map((entry) => entry.days).join(", ")}>>`,
+        isKept: `<<${monthDays.map((entry) => (entry.isKept ? "TRUE" : "FALSE")).join(", ")}>>`,
+      },
+    };
+  });
+  const yearArms = tables.flatMap((table) =>
+    table.runs.map(
+      (run) =>
+        `key[1] = ${table.units} /\\ key[2] >= ${run.first} /\\ key[2] <= ${run.last} -> ${run.name}[key[2] - (${run.first - 1})]`,
+    ),
   );
+  const monthDayArms = tables.map(
+    (table) =>
+      `key[1] = ${table.units} -> [found |-> "monthDay", days |-> ${table.monthDays.name}[index], isKept |-> ${table.monthDays.kept}[index]]`,
+  );
+  return [
+    ...tables.flatMap((table) => [
+      ...table.runs.map((run) => ({
+        name: run.name,
+        arity: 0,
+        text: `${run.name} == ${run.text}`,
+      })),
+      {
+        name: table.monthDays.name,
+        arity: 0,
+        text: `${table.monthDays.name} == ${table.monthDays.days}`,
+      },
+      {
+        name: table.monthDays.kept,
+        arity: 0,
+        text: `${table.monthDays.kept} == ${table.monthDays.isKept}`,
+      },
+    ]),
+    {
+      name: "HostCalendarYear",
+      arity: 1,
+      text:
+        yearArms.length === 0
+          ? `HostCalendarYear(key) == [found |-> "unknown"]`
+          : `HostCalendarYear(key) ==\n  CASE ${yearArms.join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`,
+    },
+    {
+      name: "HostCalendarMonthDay",
+      arity: 1,
+      text:
+        monthDayArms.length === 0
+          ? `HostCalendarMonthDay(key) == [found |-> "unknown"]`
+          : `HostCalendarMonthDay(key) ==\n  LET index == ((key[2] - 1) * 2 + (IF key[3] THEN 1 ELSE 0)) * 30 + key[4] IN\n  CASE ~(key[2] \\in 1..12 /\\ key[4] \\in 1..30) -> [found |-> "unknown"]\n    [] ${monthDayArms.join("\n    [] ")}\n    [] OTHER -> [found |-> "unknown"]`,
+    },
+  ];
+};
+
+// The program's HostLocale: for each string it writes that may be a locale tag, the host's default
+// locale, and each string of the host's Intl answers (answers), which the program may pass back,
+// and each one's canonical form, what the host's Intl gives of it, where the program names Intl or a
+// method that reads it. Any other tag stops, which the host may hold data of, as does every tag of a
+// host whose realm was recorded.
+export const getHostLocale = (
+  text: string,
+  words: ReadonlySet<string>,
+  answers: ReadonlySet<string>,
+  realm: HostRealm,
+) => {
+  const getLocale = realm.getLocale;
+  if (
+    !["Intl", "toLocaleString", "localeCompare"].some((word) => words.has(word)) ||
+    getLocale === undefined
+  )
+    return `HostLocale(tag) == [found |-> "unknown"]`;
+  const tags = new Set([
+    ...[...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]),
+    realm.locale,
+    ...[...answers].filter((answer) => /^[A-Za-z0-9-]{2,60}$/.test(answer)),
+  ]);
   const entries = new Map<string, string>();
   for (const tag of tags) {
     const locale = getLocale(tag);

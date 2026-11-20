@@ -781,7 +781,8 @@ RECURSIVE SetElements(_, _, _, _)
 RECURSIVE ReadThrough(_, _, _, _, _, _)
 RECURSIVE FillFrom(_, _, _, _, _)
 RECURSIVE IncludesFrom(_, _, _, _, _)
-RECURSIVE JoinFrom(_, _, _, _, _, _, _, _)
+RECURSIVE LocaleArguments(_)
+RECURSIVE JoinFrom(_, _, _, _, _, _, _)
 RECURSIVE FindViaPredicate(_, _, _, _, _, _)
 RECURSIVE FindFrom(_, _, _, _, _, _, _)
 RECURSIVE FlattenIntoArray(_, _, _, _, _, _, _, _)
@@ -889,6 +890,9 @@ RECURSIVE RunModuleFrom(_, _, _, _, _)
 RECURSIVE HostTimeZone(_)
 RECURSIVE HostDateFormat(_)
 RECURSIVE HostLocale(_)
+RECURSIVE HostCalendarYear(_)
+RECURSIVE HostCalendarMonthDay(_)
+RECURSIVE HostIntl(_)
 RECURSIVE TestResult(_)
 RECURSIVE HasClass(_, _, _)
 RECURSIVE CanonicalizeKeyedCollectionKey(_)
@@ -1547,12 +1551,18 @@ RECURSIVE HebrewMonthsBefore(_)
 RECURSIVE HebrewElapsed(_)
 RECURSIVE HebrewNewYear(_)
 RECURSIVE HebrewLength(_)
+RECURSIVE LunisolarYear(_, _)
+RECURSIVE LunisolarDays(_, _, _)
+RECURSIVE LunisolarBefore(_, _, _)
+RECURSIVE LunisolarMonthCode(_, _, _)
+RECURSIVE LunisolarOrdinal(_, _, _)
 RECURSIVE ArithmeticLeap(_, _)
 RECURSIVE ArithmeticMonths(_, _)
 RECURSIVE ArithmeticMonthCode(_, _, _)
 RECURSIVE ArithmeticOrdinal(_, _, _)
 RECURSIVE IsValidMonthCodeForCalendar(_, _)
 RECURSIVE YearContainsMonthCode(_, _, _)
+RECURSIVE ConstrainMonthCode(_, _, _)
 RECURSIVE HebrewDays(_, _)
 RECURSIVE ArithmeticDaysInMonth(_, _, _)
 RECURSIVE ArithmeticMostDays(_, _)
@@ -1566,12 +1576,17 @@ RECURSIVE ArithmeticDateOf(_, _)
 RECURSIVE MonthIndex(_, _, _)
 RECURSIVE HebrewYearOfIndex(_, _)
 RECURSIVE OfMonthIndex(_, _)
+RECURSIVE LunisolarMonthsFrom(_, _, _)
+RECURSIVE LunisolarAfter(_, _, _, _)
+RECURSIVE MonthsAfter(_, _, _, _)
+RECURSIVE MonthsBetween(_, _, _)
 RECURSIVE ArithmeticYearWithinLimits(_, _)
 RECURSIVE ArithmeticReferenceYear(_)
 RECURSIVE ArithmeticReference(_, _, _, _)
 RECURSIVE CanonicalizeEraInCalendar(_, _)
 RECURSIVE CalendarDateArithmeticYearForEraYear(_, _, _)
 RECURSIVE CalendarDateEra(_, _, _)
+RECURSIVE CalendarHasEras(_)
 RECURSIVE CalendarParts(_, _)
 RECURSIVE CalendarMonthCode(_, _)
 RECURSIVE MonthCodeOf(_)
@@ -1580,6 +1595,7 @@ RECURSIVE CalendarDateGetter(_, _, _, _)
 RECURSIVE ISODateToFields(_, _, _)
 RECURSIVE NonISOResolveFields(_, _, _, _)
 RECURSIVE CalendarDateToISO(_, _, _, _, _, _, _)
+RECURSIVE LunisolarReference(_, _, _, _, _)
 RECURSIVE NonISOMonthDayToISOReferenceDate(_, _, _, _)
 RECURSIVE NonISODateAdd(_, _, _, _, _)
 RECURSIVE MonthCodeKey(_)
@@ -1702,6 +1718,7 @@ RECURSIVE NamedField(_, _)
 RECURSIVE NumeralField(_, _)
 RECURSIVE LocaleField(_, _, _, _)
 RECURSIVE LocaleText(_, _, _, _)
+RECURSIVE TemporalFormatKey(_, _)
 RECURSIVE TemporalToLocaleString(_, _, _, _, _, _)
 RECURSIVE TPOk(_, _)
 RECURSIVE TPFull(_, _)
@@ -1919,6 +1936,55 @@ RECURSIVE CanonicalizeLocaleList(_, _)
 RECURSIVE CanonicalizeLocalesFrom(_, _, _, _, _)
 RECURSIVE CanonicalizeLocale(_, _, _)
 RECURSIVE FilterLocales(_, _, _, _)
+RECURSIVE GetAnyStringOption(_, _, _)
+RECURSIVE DefaultNumberOption(_, _, _, _, _)
+RECURSIVE GetNumberOption(_, _, _, _, _, _)
+RECURSIVE ASCIIUpper(_)
+RECURSIVE IsWellFormedCurrencyCode(_)
+RECURSIVE IsWellFormedUnitIdentifier(_)
+RECURSIVE NumberFormatUnitOptions(_, _)
+RECURSIVE NumberFormatDigitOptions(_, _, _, _, _)
+RECURSIVE NumberFormatConstruct(_, _, _, _)
+RECURSIVE IntlMathematicalKey(_, _)
+RECURSIVE IntlAnswer(_, _, _, _, _)
+RECURSIVE IntlToLocaleString(_, _, _, _)
+RECURSIVE IntlPartObject(_, _)
+RECURSIVE IntlPartObjects(_, _, _, _)
+RECURSIVE IntlPartsText(_, _)
+RECURSIVE IntlOptionsObject(_, _, _, _)
+RECURSIVE IntlResult(_, _, _)
+RECURSIVE NumberFormatMethod(_, _, _, _, _)
+RECURSIVE PluralRulesConstruct(_, _, _, _)
+RECURSIVE IntlConstructedConfig(_, _, _)
+RECURSIVE StringListFrom(_, _, _)
+RECURSIVE StringListFromIterable(_, _)
+RECURSIVE IntlNumberKey(_)
+RECURSIVE IntlMethodArguments(_, _, _)
+RECURSIVE IntlHostMethod(_, _, _, _)
+RECURSIVE IsAlpha(_)
+RECURSIVE IsLanguageSubtag(_)
+RECURSIVE IsScriptSubtag(_)
+RECURSIVE IsRegionSubtag(_)
+RECURSIVE LocaleConstruct(_, _, _, _)
+RECURSIVE LocaleMethod(_, _, _)
+RECURSIVE DateTimeFormatConfig(_, _)
+RECURSIVE DateTimeFormattableKey(_, _)
+RECURSIVE IntlTimeClip(_)
+RECURSIVE DateTimeFormatRead(_, _)
+RECURSIVE DateTimeFormatPatternText(_, _)
+RECURSIVE DateTimeFormatMethod(_, _, _, _)
+RECURSIVE SegmentsOf(_, _, _)
+RECURSIVE SegmentAt(_, _, _)
+RECURSIVE SegmentDataObject(_, _, _, _, _)
+RECURSIVE SegmenterMethod(_, _, _, _)
+RECURSIVE DurationUnit(_, _, _, _, _)
+RECURSIVE DurationUnitOptionsFrom(_, _, _, _, _, _)
+RECURSIVE DurationFormatConstruct(_, _, _, _)
+RECURSIVE DurationFormatMethod(_, _, _, _)
+RECURSIVE IntlLocaleCompare(_, _, _, _, _)
+RECURSIVE IntlTransformCase(_, _, _, _, _)
+RECURSIVE IntlFallbackSymbol(_)
+RECURSIVE DateToLocaleString(_, _, _, _, _)
 RECURSIVE IntlBuiltin(_, _, _, _, _, _)
 RECURSIVE Unsupported(_, _)
 RECURSIVE CallBuiltin(_, _, _, _, _, _)
@@ -2155,6 +2221,8 @@ IntlIntrinsics ==
      IntrinsicObject("IntlDisplayNamesPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
      IntrinsicFunction("IntlSegmenter", "FunctionPrototype", <<"Intl", "Segmenter">>, 0, N("Segmenter"), TRUE),
      IntrinsicObject("IntlSegmenterPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicObject("IntlSegmentsPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]),
+     IntrinsicObject("IntlSegmentIteratorPrototype", "IteratorPrototype", "ordinary", [none |-> TRUE]),
      IntrinsicFunction("IntlDurationFormat", "FunctionPrototype", <<"Intl", "DurationFormat">>, 0, N("DurationFormat"), TRUE),
      IntrinsicObject("IntlDurationFormatPrototype", "ObjectPrototype", "ordinary", [none |-> TRUE]) >>
 Intrinsics == CoreIntrinsics \o MathNumberIntrinsics \o JSONIntrinsics \o StringIntrinsics \o ArrayIntrinsics \o ProxyIntrinsics \o ReflectIntrinsics \o CollectionIntrinsics \o DisposableIntrinsics \o IteratorHelperIntrinsics \o ShadowRealmIntrinsics \o SymbolErrorIntrinsics \o DateIntrinsics \o RegExpIntrinsics \o AtomicsIntrinsics \o ArrayBufferIntrinsics \o SharedArrayBufferIntrinsics \o DataViewIntrinsics \o TypedArrayIntrinsics \o GeneratorIntrinsics \o PromiseIntrinsics \o ModuleIntrinsics \o TemporalTypesIntrinsics \o TemporalIntrinsics \o IntlIntrinsics
@@ -3244,6 +3312,10 @@ IntlProperties ==
   << M("IntlSegmenter", SV("supportedLocalesOf"), "Intl", "Segmenter.supportedLocalesOf", 1),
      M("IntlSegmenterPrototype", SV("resolvedOptions"), "Intl", "Segmenter.resolvedOptions", 0),
      M("IntlSegmenterPrototype", SV("segment"), "Intl", "Segmenter.segment", 1),
+     M("IntlSegmentsPrototype", SV("containing"), "Intl", "Segments.containing", 1),
+     M("IntlSegmentsPrototype", SymIterator, "Intl", "Segments.iterator", 0),
+     M("IntlSegmentIteratorPrototype", SV("next"), "Intl", "SegmentIterator.next", 0),
+     V("IntlSegmentIteratorPrototype", SymToStringTag, SV("Segmenter String Iterator"), FALSE, FALSE, TRUE),
      V("IntlSegmenterPrototype", SymToStringTag, SV("Intl.Segmenter"), FALSE, FALSE, TRUE) >>
   \o Ctor("IntlDurationFormat", "IntlDurationFormatPrototype") \o
   << M("IntlDurationFormat", SV("supportedLocalesOf"), "Intl", "DurationFormat.supportedLocalesOf", 1),
@@ -5241,7 +5313,9 @@ NoResolution == [kind |-> "null"]
 EraCalendars == {N("gregory"), N("buddhist"), N("roc"), N("japanese")}
 CopticCalendars == {N("coptic"), N("ethiopic"), N("ethioaa")}
 IslamicCalendars == {N("islamic-civil"), N("islamic-tbla"), N("islamic-umalqura")}
-ArithmeticCalendars == CopticCalendars \cup IslamicCalendars \cup {N("indian"), N("persian"), N("hebrew")}
+LunisolarCalendars == {N("chinese"), N("dangi")}
+ArithmeticCalendars ==
+  CopticCalendars \cup IslamicCalendars \cup LunisolarCalendars \cup {N("indian"), N("persian"), N("hebrew")}
 UmalquraMonths ==
   <<
   1365, 683, 2359, 694, 1398, 876, 2901, 2730, 2390, 1182, 2397, 698, 1461, 938, 2891, 2710, 1326,
@@ -5349,6 +5423,10 @@ LongMonthNames ==
   <<N("January"), N("February"), N("March"), N("April"), N("May"), N("June"), N("July"), N("August"),
     N("September"), N("October"), N("November"), N("December")>>
 LongWeekdayNames == <<N("Monday"), N("Tuesday"), N("Wednesday"), N("Thursday"), N("Friday"), N("Saturday"), N("Sunday")>>
+TemporalKinds ==
+  ("temporalDate" :> "PlainDate") @@ ("temporalDateTime" :> "PlainDateTime") @@ ("temporalYearMonth" :> "PlainYearMonth") @@
+  ("temporalMonthDay" :> "PlainMonthDay") @@ ("temporalTime" :> "PlainTime") @@ ("temporalZonedDateTime" :> "ZonedDateTime") @@
+  ("temporalInstant" :> "Instant")
 TPFail == [ok |-> FALSE]
 TPNoOffset == [z |-> FALSE, offset |-> Empty]
 YearMonthGetters == {"era", "eraYear", "year", "month", "monthCode", "daysInYear", "daysInMonth", "monthsInYear", "inLeapYear"}
@@ -5482,6 +5560,52 @@ IntlConstructorOptions ==
        IntlOption(SV("type"), "string", {N("language"), N("region"), N("script"), N("currency"), N("calendar"), N("dateTimeField")}, TRUE),
        IntlOption(SV("fallback"), "string", {N("code"), N("none")}, FALSE),
        IntlOption(SV("languageDisplay"), "string", {N("dialect"), N("standard")}, FALSE)>>]
+SanctionedUnits ==
+  {N("acre"), N("bit"), N("byte"), N("celsius"), N("centimeter"), N("day"), N("degree"), N("fahrenheit"),
+   N("fluid-ounce"), N("foot"), N("gallon"), N("gigabit"), N("gigabyte"), N("gram"), N("hectare"), N("hour"),
+   N("inch"), N("kilobit"), N("kilobyte"), N("kilogram"), N("kilometer"), N("liter"), N("megabit"),
+   N("megabyte"), N("meter"), N("microsecond"), N("mile"), N("mile-scandinavian"), N("milliliter"),
+   N("millimeter"), N("millisecond"), N("minute"), N("month"), N("nanosecond"), N("ounce"), N("percent"),
+   N("petabyte"), N("pound"), N("second"), N("stone"), N("terabit"), N("terabyte"), N("week"), N("yard"),
+   N("year")}
+NumberFormatMethods ==
+  {"NumberFormat.resolvedOptions", "NumberFormat.format", "NumberFormat.formatToParts", "NumberFormat.formatRange",
+   "NumberFormat.formatRangeToParts"}
+IntlHostMethods ==
+  {"Collator.resolvedOptions", "Collator.compare", "ListFormat.format", "ListFormat.formatToParts",
+   "ListFormat.resolvedOptions", "RelativeTimeFormat.format", "RelativeTimeFormat.formatToParts",
+   "RelativeTimeFormat.resolvedOptions", "DisplayNames.of", "DisplayNames.resolvedOptions",
+   "Segmenter.resolvedOptions", "PluralRules.select", "PluralRules.selectRange", "PluralRules.resolvedOptions"}
+LocaleMethods ==
+  {"Locale.baseName", "Locale.calendar", "Locale.caseFirst", "Locale.collation", "Locale.firstDayOfWeek",
+   "Locale.getCalendars", "Locale.getCollations", "Locale.getHourCycles", "Locale.getNumberingSystems",
+   "Locale.getTextInfo", "Locale.getTimeZones", "Locale.getWeekInfo", "Locale.hourCycle", "Locale.language",
+   "Locale.maximize", "Locale.minimize", "Locale.numberingSystem", "Locale.numeric", "Locale.region",
+   "Locale.script", "Locale.toString"}
+DateTimeFormatReadIndex ==
+  [calendar |-> 2, numberingSystem |-> 3, hour12 |-> 4, hourCycle |-> 5, timeZone |-> 6, weekday |-> 7, era |-> 8,
+   year |-> 9, month |-> 10, day |-> 11, dayPeriod |-> 12, hour |-> 13, minute |-> 14, second |-> 15,
+   fractionalSecondDigits |-> 16, timeZoneName |-> 17, formatMatcher |-> 18, dateStyle |-> 19, timeStyle |-> 20]
+DateTimeFormatMethods ==
+  {"DateTimeFormat.resolvedOptions", "DateTimeFormat.format", "DateTimeFormat.formatToParts",
+   "DateTimeFormat.formatRange", "DateTimeFormat.formatRangeToParts"}
+SegmenterClasses ==
+  ("Segmenter.segment" :> "intlSegmenter") @@ ("Segments.containing" :> "intlSegments") @@
+  ("Segments.iterator" :> "intlSegments") @@ ("SegmentIterator.next" :> "intlSegmentIterator")
+DurationDateStyles == {N("long"), N("short"), N("narrow")}
+DurationUnits ==
+  <<DurationUnit("years", SV("years"), SV("yearsDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("months", SV("months"), SV("monthsDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("weeks", SV("weeks"), SV("weeksDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("days", SV("days"), SV("daysDisplay"), DurationDateStyles, N("short")),
+    DurationUnit("hours", SV("hours"), SV("hoursDisplay"), DurationDateStyles \cup {N("numeric"), N("2-digit")}, N("numeric")),
+    DurationUnit("minutes", SV("minutes"), SV("minutesDisplay"), DurationDateStyles \cup {N("numeric"), N("2-digit")}, N("numeric")),
+    DurationUnit("seconds", SV("seconds"), SV("secondsDisplay"), DurationDateStyles \cup {N("numeric"), N("2-digit")}, N("numeric")),
+    DurationUnit("milliseconds", SV("milliseconds"), SV("millisecondsDisplay"), DurationDateStyles \cup {N("numeric")}, N("numeric")),
+    DurationUnit("microseconds", SV("microseconds"), SV("microsecondsDisplay"), DurationDateStyles \cup {N("numeric")}, N("numeric")),
+    DurationUnit("nanoseconds", SV("nanoseconds"), SV("nanosecondsDisplay"), DurationDateStyles \cup {N("numeric")}, N("numeric"))>>
+DurationFormatMethods ==
+  {"DurationFormat.resolvedOptions", "DurationFormat.format", "DurationFormat.formatToParts"}
 
 \* ECMAScript language values (§6.1). A JS string is a sequence of UTF-16 code units, a Number is
 \* the record that ESNumber defines, and an object or symbol is an index into the state.
@@ -9401,6 +9525,10 @@ NumberBuiltin(s, f, m, this, args, nt) ==
                     ~NumLess(MaxSafeInteger, NumAbs(a1.value))))
     \* §21.1.3.7
     [] m = "valueOf" -> ThisNumberValue(s, this)
+    \* ECMA-402 §20.2.1, where the host has Intl.
+    [] m = "toLocaleString" /\ HostIntl(<<"none">>).found # "none" ->
+         LET x == ThisNumberValue(s, this) IN IF IsAbrupt(x) THEN x
+         ELSE IntlToLocaleString(x.s, IntlNumberKey(Val(x).value), Arg(args, 1), Arg(args, 2))
     [] OTHER ->
          LET x == ThisNumberValue(s, this) IN IF IsAbrupt(x) THEN x
          ELSE NumberPrototypeMethod(x.s, Val(x).value, m, IF m = "toLocaleString" THEN <<>> ELSE args)
@@ -10008,6 +10136,10 @@ StringMethod(s, units, m, args) ==
                          [] OTHER -> NumToSmallInt(NumToIntegerOrInfinity(x))
          IN Ok(n.s, IntV(IF maxStart < 0 THEN -1 ELSE StringLastIndexOf(units, Val(search).value, start)))
     [] m = "isWellFormed" -> Ok(s, Bool(IsStringWellFormedUnicode(units, 0)))
+    \* ECMA-402 §19.1.1, where the host has Intl.
+    [] m = "localeCompare" /\ HostIntl(<<"none">>).found # "none" ->
+         LET that == ToStr(s, a1) IN IF IsAbrupt(that) THEN that
+         ELSE IntlLocaleCompare(that.s, units, Val(that).value, Arg(args, 2), Arg(args, 3))
     [] m = "localeCompare" ->
          LET that == ToStr(s, a1) IN IF IsAbrupt(that) THEN that ELSE
          LET x == Normalize(units, "NFC")
@@ -10667,7 +10799,7 @@ ArrayMethod(s, o, len, m, args) ==
     \* Array.prototype.join (§23.1.3.18).
     [] m = "join" ->
          LET sep == IF Arg(args, 1) = Undefined THEN Ok(s, SV(",")) ELSE ToStr(s, Arg(args, 1)) IN
-         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, FALSE, <<>>)
+         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, Empty)
     \* Array.prototype.lastIndexOf (§23.1.3.20).
     [] m = "lastIndexOf" ->
          IF NumIsZero(len) THEN Ok(s, IntV(-1))
@@ -10760,9 +10892,8 @@ ArrayMethod(s, o, len, m, args) ==
                  [] OTHER -> Ok(al.s, o)
          IN IF IsAbrupt(moved) THEN moved ELSE
             LET w == SetElements(moved.s, o, items, start) IN IF IsAbrupt(w) THEN w ELSE SetLength(w.s, o, newLen, Val(a))
-    \* Array.prototype.toLocaleString (ECMA-402 §19.5.1), with "," as the list separator, which
-    \* passes each element's toLocaleString its locales and options.
-    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, TRUE, <<Arg(args, 1), Arg(args, 2)>>)
+    \* Array.prototype.toLocaleString (§23.1.3.32, ECMA-402 §19.5.1), with "," as the list separator.
+    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, LocaleArguments(args))
     \* Array.prototype.toReversed (§23.1.3.33).
     [] m = "toReversed" ->
          LET a == ArrayCreateLength(s, len) IN IF IsAbrupt(a) THEN a ELSE
@@ -10830,17 +10961,20 @@ IncludesFrom(s, o, k, len, target) ==
   ELSE LET v == Get(s, o, Index(k)) IN IF IsAbrupt(v) THEN v
   ELSE IF SameValueZero(target, Val(v)) THEN Ok(v.s, True)
   ELSE IncludesFrom(v.s, o, NumAdd(k, OneNum), len, target)
-\* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString when isLocale,
-\* which passes each element's toLocaleString localeArgs.
-JoinFrom(s, o, len, k, sep, acc, isLocale, localeArgs) ==
+\* The arguments that toLocaleString passes each element's: ECMA-402's locales and options where
+\* the host has Intl, else none.
+LocaleArguments(args) == IF HostIntl(<<"none">>).found = "none" THEN <<>> ELSE <<Arg(args, 1), Arg(args, 2)>>
+\* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString, which passes each
+\* element's toLocaleString the arguments locale, where they aren't Empty.
+JoinFrom(s, o, len, k, sep, acc, locale) ==
   IF ~NumLess(k, len) THEN Ok(s, Str(acc))
   ELSE LET e == Get(s, o, Index(k)) IN IF IsAbrupt(e) THEN e ELSE
        LET next == IF IsNullish(Val(e)) THEN Ok(e.s, EmptyStr)
-                   ELSE IF ~isLocale THEN ToStr(e.s, Val(e))
-                   ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), localeArgs) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
+                   ELSE IF locale = Empty THEN ToStr(e.s, Val(e))
+                   ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), locale) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
        IN IF IsAbrupt(next) THEN next
           ELSE JoinFrom(next.s, o, len, NumAdd(k, OneNum), sep,
-                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, isLocale, localeArgs)
+                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, locale)
 \* FindViaPredicate (§23.1.3.12.1), returning [index, value].
 FindViaPredicate(s, o, len, dir, predicate, thisArg) ==
   IF ~IsCallable(s, predicate) THEN ThrowTypeError(s)
@@ -11951,6 +12085,24 @@ HostDateFormat(key) == [found |-> "none"]
 \* table leaves out, or "invalid", where it isn't a structurally valid language tag. Else found is
 \* "unknown", as engine262 has no locale data.
 HostLocale(tag) == [found |-> "unknown"]
+\* HostCalendarYear(<<cal, year>>): a year of the Chinese or the Dangi calendar, which the host
+\* computes astronomically: found is "year", with the epoch days of its first day, the ordinal of
+\* its leap month or 0, and its months of 30 days as bits from the first month's. Else found is
+\* "unknown", where the host's table leaves the year out, as engine262 has no such calendar.
+HostCalendarYear(key) == [found |-> "unknown"]
+\* HostCalendarMonthDay(<<cal, month, leap, day>>): the month-day of the Chinese or the Dangi
+\* calendar of a month code's month and leap flag and a day from 1 to 30: found is "monthDay", with
+\* the epoch days of its ISO reference date and whether the month code and the day are kept, which
+\* they aren't where no year that the host searches has them. Else found is "unknown".
+HostCalendarMonthDay(key) == [found |-> "unknown"]
+\* HostIntl(<<service, config, method, args>>): what the host's Intl gives for a method of an object
+\* of a service whose requested locales and options config gives, with arguments args. found is
+\* "options", with the pairs of a property's units and its value that resolvedOptions gives, "parts",
+\* with the parts of a formatted value, each a sequence of a property's units and its value's, or
+\* "error", with the name of the error it throws. <<"currencyDigits", code>> gives "digits", with
+\* the digits of a currency. Else found is "unknown", where the host's table leaves the key out,
+\* and "none" where the host has no Intl, as engine262 has none.
+HostIntl(key) == [found |-> "none"]
 \* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
 \* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==
@@ -13055,6 +13207,10 @@ BigIntBuiltin(s, f, m, this, args, nt) ==
          LET a == ToBigInt(bits.s, Arg(args, 2)) IN IF IsAbrupt(a) THEN a ELSE
          BigIntAsN(a.s, m, Val(bits).value, Val(a).value)
     [] m = "valueOf" -> ThisBigIntValue(s, this)
+    \* ECMA-402 §20.3.1, where the host has Intl.
+    [] m = "toLocaleString" /\ HostIntl(<<"none">>).found # "none" ->
+         LET b == ThisBigIntValue(s, this) IN IF IsAbrupt(b) THEN b
+         ELSE IntlToLocaleString(b.s, <<"bigint", BigIntToString(Val(b).value, 10)>>, Arg(args, 1), Arg(args, 2))
     \* toString and, as engine262 has it, toLocaleString.
     [] OTHER ->
          LET b == ThisBigIntValue(s, this) IN IF IsAbrupt(b) THEN b ELSE
@@ -13374,6 +13530,11 @@ DateBuiltin(s, f, m, this, args, nt) ==
     [] m = "setTime" ->
          LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t ELSE
          LET n == ToNumber(t.s, Arg(args, 1)) IN IF IsAbrupt(n) THEN n ELSE SetDateValue(n.s, this, TimeClip(Val(n).value))
+    \* ECMA-402 §20.4.1 to §20.4.3, where the host has Intl.
+    [] m \in {"toLocaleDateString", "toLocaleString", "toLocaleTimeString"} /\ HostIntl(<<"none">>).found # "none" ->
+         LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t
+         ELSE IF NumIsNaN(Val(t).value) THEN Ok(t.s, Str(N("Invalid Date")))
+         ELSE DateToLocaleString(t.s, m, Val(t).value, Arg(args, 1), Arg(args, 2))
     \* Date.prototype.toDateString (§21.4.4.35), toString (§21.4.4.41), toTimeString (§21.4.4.42),
     \* toUTCString (§21.4.4.43), and toLocaleDateString, toLocaleString, and toLocaleTimeString
     \* (§21.4.4.38 to §21.4.4.40), which are toString as engine262 has them.
@@ -15504,16 +15665,15 @@ JoinElements(s, ta, k, len, separator) ==
   ELSE LET e == TypedArrayGetElement(s, ta, NumFromInt(k))
        IN (IF k > 0 THEN separator ELSE <<>>) \o (IF e = Undefined THEN <<>> ELSE PrimitiveToUnits(e)) \o
           JoinElements(s, ta, k + 1, len, separator)
-\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator, which
-\* passes each element's toLocaleString localeArgs (ECMA-402 §19.5.1).
-LocaleJoin(s, ta, k, len, acc, localeArgs) ==
+\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator.
+LocaleJoin(s, ta, k, len, acc, args) ==
   IF k >= len THEN Ok(s, Str(acc))
   ELSE LET prefix == IF k > 0 THEN acc \o N(",") ELSE acc
            e == TypedArrayGetElement(s, ta, NumFromInt(k))
-       IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix, localeArgs)
-          ELSE LET r == Invoke(s, e, SV("toLocaleString"), localeArgs) IN IF IsAbrupt(r) THEN r ELSE
+       IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix, args)
+          ELSE LET r == Invoke(s, e, SV("toLocaleString"), args) IN IF IsAbrupt(r) THEN r ELSE
                LET str == ToStr(r.s, Val(r)) IN IF IsAbrupt(str) THEN str
-               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value, localeArgs)
+               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value, args)
 \* Copies count bytes one at a time upward, as slice does between two TypedArrays of a type. That
 \* copies them all at once unless the target starts within the bytes still to copy.
 CopyBytesUp(s, from, fromIndex, to, toIndex, count) ==
@@ -15652,7 +15812,7 @@ TypedArrayMethod(s, ta, len, m, args) ==
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r ELSE
          LET sorted == SortElements(r.s, TypedArrayElements(r.s, ta, len), a1) IN IF IsAbrupt(sorted) THEN sorted
          ELSE Ok(StoreElements(sorted.s, Val(r), Val(sorted), 0), Val(r))
-    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>, <<a1, a2>>)
+    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>, LocaleArguments(args))
     [] m = "toReversed" ->
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r
          ELSE Ok(StoreElements(r.s, Val(r), [i \in 1..len |-> TypedArrayGetElement(r.s, ta, NumFromInt(len - i))], 0), Val(r))
@@ -17258,15 +17418,16 @@ RunModule(s, specifier) ==
 \* others count days arithmetically, as Node does: the Coptic and the two Ethiopian calendars, of
 \* 13 months each, the tabular Islamic calendars, the Indian national calendar, the Persian
 \* calendar, and the Hebrew calendar, whose leap years add a month. The Umm al-Qura calendar is
-\* the civil Islamic calendar outside the years that Node's table of its months covers. Node's
-\* Chinese and Dangi calendars read astronomical tables, which ESCore doesn't hold.
+\* the civil Islamic calendar outside the years that Node's table of its months covers. Node
+\* computes the Chinese and the Dangi calendars astronomically, so their years and their month-days'
+\* reference dates come from the host's tables (HostCalendarYear, HostCalendarMonthDay), and any
+\* that the tables leave out stops.
 \* CanonicalizeCalendar, with the aliases Node takes.
 CanonicalizeCalendar(s, id) ==
   LET lower == TPLower(id) IN
   CASE lower \in {ISO8601} \cup EraCalendars \cup ArithmeticCalendars -> Ok(s, lower)
     [] lower = N("islamicc") -> Ok(s, N("islamic-civil"))
     [] lower = N("ethiopic-amete-alem") -> Ok(s, N("ethioaa"))
-    [] lower \in {N("chinese"), N("dangi")} -> Unsupported(s, N("Unsupported: the chinese and dangi calendars"))
     [] OTHER -> ThrowError(s, "RangeError")
 \* What a calendar's arithmetic year adds to the ISO year, where its months are ISO 8601's.
 CalendarYearOffset(cal) == CASE cal = N("buddhist") -> 543 [] cal = N("roc") -> -1911 [] OTHER -> 0
@@ -17318,9 +17479,31 @@ HebrewNewYear(year) ==
       after == HebrewElapsed(year + 1)
   IN -1373427 + elapsed + (CASE after - elapsed = 356 -> 2 [] elapsed - before = 382 -> 1 [] OTHER -> 0)
 HebrewLength(year) == HebrewNewYear(year + 1) - HebrewNewYear(year)
+\* A year of the Chinese or the Dangi calendar from the host's table: the epoch days of its first
+\* day, the ordinal of its leap month or 0, and its months of 30 days as bits from the first's.
+LunisolarYear(cal, year) ==
+  LET entry == HostCalendarYear(<<cal, year>>) IN
+  IF entry.found = "year" THEN entry
+  ELSE Assert(FALSE, "tla-ts can't tell the months of a Chinese or Dangi year that the host's table leaves out")
+LunisolarDays(cal, year, month) == IF (LunisolarYear(cal, year).long \div 2 ^ (month - 1)) % 2 = 1 THEN 30 ELSE 29
+LunisolarBefore(cal, year, month) ==
+  IF month = 1 THEN 0 ELSE LunisolarBefore(cal, year, month - 1) + LunisolarDays(cal, year, month - 1)
+\* The month code of a month of a Chinese or Dangi year, whose leap month repeats the month before
+\* it, and the month that a month code the year has is.
+LunisolarMonthCode(cal, year, month) ==
+  LET leap == LunisolarYear(cal, year).leap IN
+  CASE leap = 0 \/ month < leap -> [month |-> month, leap |-> FALSE]
+    [] month = leap -> [month |-> month - 1, leap |-> TRUE]
+    [] OTHER -> [month |-> month - 1, leap |-> FALSE]
+LunisolarOrdinal(cal, year, code) ==
+  LET leap == LunisolarYear(cal, year).leap IN
+  CASE code.leap -> leap
+    [] leap = 0 \/ code.month < leap -> code.month
+    [] OTHER -> code.month + 1
 \* CalendarDateInLeapYear and CalendarMonthsInYear of an arithmetic calendar's year.
 ArithmeticLeap(cal, year) ==
   CASE cal \in CopticCalendars -> CopticYear(cal, year) % 4 = 3
+    [] cal \in LunisolarCalendars -> LunisolarYear(cal, year).leap # 0
     [] IsUmalquraTable(cal, year) -> UmalquraStarts[year - 1298] - UmalquraStarts[year - 1299] = 355
     [] cal \in IslamicCalendars -> (14 + 11 * year) % 30 < 11
     [] cal = N("hebrew") -> (7 * year + 1) % 19 < 7
@@ -17328,24 +17511,34 @@ ArithmeticLeap(cal, year) ==
     [] OTHER -> IsLeapYear(year + 78)
 ArithmeticMonths(cal, year) ==
   CASE cal \in CopticCalendars -> 13
-    [] cal = N("hebrew") -> IF ArithmeticLeap(cal, year) THEN 13 ELSE 12
+    [] cal \in LunisolarCalendars \cup {N("hebrew")} -> IF ArithmeticLeap(cal, year) THEN 13 ELSE 12
     [] OTHER -> 12
 \* The month code of a month of a year, and the month that a month code is in a year that has it.
 \* A Hebrew leap year inserts Adar I, M05L, before Adar, M06.
 ArithmeticMonthCode(cal, year, month) ==
-  CASE cal # N("hebrew") \/ ~ArithmeticLeap(cal, year) \/ month <= 5 -> [month |-> month, leap |-> FALSE]
+  CASE cal \in LunisolarCalendars -> LunisolarMonthCode(cal, year, month)
+    [] cal # N("hebrew") \/ ~ArithmeticLeap(cal, year) \/ month <= 5 -> [month |-> month, leap |-> FALSE]
     [] month = 6 -> [month |-> 5, leap |-> TRUE]
     [] OTHER -> [month |-> month - 1, leap |-> FALSE]
 ArithmeticOrdinal(cal, year, code) ==
-  CASE cal # N("hebrew") \/ ~ArithmeticLeap(cal, year) \/ (code.month <= 5 /\ ~code.leap) -> code.month
+  CASE cal \in LunisolarCalendars -> LunisolarOrdinal(cal, year, code)
+    [] cal # N("hebrew") \/ ~ArithmeticLeap(cal, year) \/ (code.month <= 5 /\ ~code.leap) -> code.month
     [] code.leap -> 6
     [] OTHER -> code.month + 1
-\* IsValidMonthCodeForCalendar, and YearContainsMonthCode of an arithmetic calendar.
+\* IsValidMonthCodeForCalendar, YearContainsMonthCode of an arithmetic calendar, and the month code
+\* that a month code the year lacks is constrained to: a Chinese or Dangi leap month to the month it
+\* would repeat, and the Hebrew Adar I to Adar.
 IsValidMonthCodeForCalendar(cal, code) ==
   CASE cal = N("hebrew") -> (~code.leap /\ code.month <= 12) \/ (code.leap /\ code.month = 5)
     [] cal \in CopticCalendars -> ~code.leap /\ code.month <= 13
+    [] cal \in LunisolarCalendars -> code.month >= 1 /\ code.month <= 12
     [] OTHER -> ~code.leap /\ code.month <= 12
-YearContainsMonthCode(cal, year, code) == ~code.leap \/ ArithmeticLeap(cal, year)
+YearContainsMonthCode(cal, year, code) ==
+  ~code.leap \/ IF cal \in LunisolarCalendars THEN LunisolarYear(cal, year).leap = code.month + 1 ELSE ArithmeticLeap(cal, year)
+ConstrainMonthCode(cal, year, code) ==
+  CASE YearContainsMonthCode(cal, year, code) -> code
+    [] cal \in LunisolarCalendars -> [month |-> code.month, leap |-> FALSE]
+    [] OTHER -> [month |-> 6, leap |-> FALSE]
 \* The days of a month of a Hebrew year, by its code: Heshvan and Kislev give a year its length.
 HebrewDays(year, code) ==
   CASE code.leap -> 30
@@ -17354,6 +17547,7 @@ HebrewDays(year, code) ==
     [] OTHER -> IF code.month % 2 = 1 THEN 30 ELSE 29
 ArithmeticDaysInMonth(cal, year, month) ==
   CASE cal \in CopticCalendars -> IF month = 13 THEN (IF ArithmeticLeap(cal, year) THEN 6 ELSE 5) ELSE 30
+    [] cal \in LunisolarCalendars -> LunisolarDays(cal, year, month)
     [] IsUmalquraTable(cal, year) -> IF UmalquraLong(year, month) THEN 30 ELSE 29
     [] cal \in IslamicCalendars -> IF month % 2 = 1 \/ (month = 12 /\ ArithmeticLeap(cal, year)) THEN 30 ELSE 29
     [] cal = N("hebrew") -> HebrewDays(year, ArithmeticMonthCode(cal, year, month))
@@ -17380,6 +17574,7 @@ ArithmeticRataDie(cal, year, month, day) ==
     [] cal \in IslamicCalendars ->
          IslamicEpoch(cal) + (year - 1) * 354 + (3 + 11 * year) \div 30 + 29 * (month - 1) + month \div 2 + day
     [] cal = N("hebrew") -> HebrewNewYear(year) + HebrewBefore(year, month) + day - 1
+    [] cal \in LunisolarCalendars -> LunisolarYear(cal, year).start + 719163 + LunisolarBefore(cal, year, month) + day - 1
     [] cal = N("persian") ->
          PersianStart(year) + (IF month <= 7 THEN 31 * (month - 1) ELSE 186 + 30 * (month - 7)) + day - 1
     [] OTHER -> IndianStart(year) + IndianBefore(year, month) + day - 1
@@ -17409,13 +17604,15 @@ ArithmeticDateOf(cal, day) ==
                 [] cal = N("islamic-umalqura") -> UmalquraYearAt(day, islamic)
                 [] cal \in IslamicCalendars -> islamic
                 [] cal = N("hebrew") -> HebrewYearAt(day, ((day + 1373427) * 19) \div 6940 + 1)
+                [] cal \in LunisolarCalendars -> IF day < ArithmeticRataDie(cal, gregorian, 1, 1) THEN gregorian - 1 ELSE gregorian
                 [] cal = N("persian") ->
                      PersianYearAt(day, 33 * ((day - 226895) \div 12053) + (33 * ((day - 226895) % 12053)) \div 12053 + 1)
                 [] OTHER -> IF day < IndianStart(gregorian - 78) THEN gregorian - 79 ELSE gregorian - 78
       within == day - ArithmeticRataDie(cal, year, 1, 1)
       first == ArithmeticDaysInMonth(cal, year, 1)
       month == CASE cal \in CopticCalendars -> within \div 30 + 1
-                 [] cal \in {N("hebrew"), N("persian"), N("islamic-umalqura")} -> ArithmeticMonthAt(cal, year, 1, within)
+                 [] cal \in LunisolarCalendars \cup {N("hebrew"), N("persian"), N("islamic-umalqura")} ->
+                      ArithmeticMonthAt(cal, year, 1, within)
                  [] cal \in IslamicCalendars -> (11 * within + 330) \div 325
                  [] within < first -> 1
                  [] within < first + 155 -> 2 + (within - first) \div 31
@@ -17434,6 +17631,25 @@ OfMonthIndex(cal, index) ==
       year == HebrewYearOfIndex(index, (19 * index + 234) \div 235)
   IN IF cal = N("hebrew") THEN [year |-> year, month |-> index - HebrewMonthsBefore(year) + 1]
      ELSE [year |-> index \div count, month |-> (index % count) + 1]
+\* The months of a Chinese or Dangi calendar from an earlier year's first month to a year's, and
+\* the year and the month that a count of months after a year's month reaches, a year at a time.
+LunisolarMonthsFrom(cal, first, year) ==
+  IF year = first THEN 0 ELSE LunisolarMonthsFrom(cal, first, year - 1) + ArithmeticMonths(cal, year - 1)
+LunisolarAfter(cal, year, month, count) ==
+  LET months == ArithmeticMonths(cal, year) IN
+  CASE month + count > months -> LunisolarAfter(cal, year + 1, 1, count - (months - month + 1))
+    [] month + count < 1 -> LunisolarAfter(cal, year - 1, ArithmeticMonths(cal, year - 1), count + month)
+    [] OTHER -> [year |-> year, month |-> month + count]
+\* The year and the month that a count of months after a year's month of an arithmetic calendar
+\* reaches, and the months from one year's month, [year, month], to another's.
+MonthsAfter(cal, year, month, count) ==
+  IF cal \in LunisolarCalendars THEN LunisolarAfter(cal, year, month, count)
+  ELSE OfMonthIndex(cal, MonthIndex(cal, year, month) + count)
+MonthsBetween(cal, one, two) ==
+  LET first == IF one.year < two.year THEN one.year ELSE two.year IN
+  IF cal \in LunisolarCalendars
+  THEN LunisolarMonthsFrom(cal, first, two.year) + two.month - LunisolarMonthsFrom(cal, first, one.year) - one.month
+  ELSE MonthIndex(cal, two.year, two.month) - MonthIndex(cal, one.year, one.month)
 \* Whether a year of an arithmetic calendar has a date within the limits.
 ArithmeticYearWithinLimits(cal, year) ==
   LET months == ArithmeticMonths(cal, year) IN
@@ -17485,6 +17701,8 @@ CalendarDateEra(cal, date, year) ==
          [era |-> started[Len(started)].name, eraYear |-> year - started[Len(started)].first + 1]
     [] year >= 1 -> [era |-> IF cal = N("roc") THEN N("roc") ELSE N("ce"), eraYear |-> year]
     [] OTHER -> [era |-> IF cal = N("roc") THEN N("broc") ELSE N("bce"), eraYear |-> 1 - year]
+\* Whether a calendar has eras, which its dates' era and eraYear give and its fields read.
+CalendarHasEras(cal) == cal \notin {ISO8601} \cup LunisolarCalendars
 \* The calendar date of an ISO date, and its month code.
 CalendarParts(cal, date) ==
   IF cal \in ArithmeticCalendars THEN ArithmeticDateOf(cal, RataDie(date))
@@ -17495,15 +17713,13 @@ CalendarMonthCode(cal, parts) ==
 MonthCodeOf(units) == IF units = Empty THEN Empty ELSE [month |-> TPInt(units, 2, 3), leap |-> Len(units) = 4]
 \* MonthCodeToOrdinal of a month code that the year has, as ConstrainMonthCode constrains it.
 MonthCodeToOrdinal(cal, year, code) ==
-  IF cal \in ArithmeticCalendars
-  THEN ArithmeticOrdinal(cal, year, IF YearContainsMonthCode(cal, year, code) THEN code ELSE [month |-> 6, leap |-> FALSE])
-  ELSE code.month
+  IF cal \in ArithmeticCalendars THEN ArithmeticOrdinal(cal, year, ConstrainMonthCode(cal, year, code)) ELSE code.month
 \* CalendarISOToDate's fields that the getters of PlainDate and kin read.
 CalendarDateGetter(s, cal, date, m) ==
   LET parts == CalendarParts(cal, date)
       isArithmetic == cal \in ArithmeticCalendars
   IN CASE m \in {"era", "eraYear"} ->
-            IF cal = ISO8601 THEN Ok(s, Undefined)
+            IF ~CalendarHasEras(cal) THEN Ok(s, Undefined)
             ELSE LET era == CalendarDateEra(cal, date, parts.year) IN
                  Ok(s, IF m = "era" THEN Str(era.era) ELSE IntV(era.eraYear))
        [] m = "year" -> Ok(s, IntV(parts.year))
@@ -17521,7 +17737,8 @@ CalendarDateGetter(s, cal, date, m) ==
        [] m = "daysInMonth" ->
             Ok(s, IntV(IF isArithmetic THEN ArithmeticDaysInMonth(cal, parts.year, parts.month) ELSE ISODaysInMonth(date.year, date.month)))
        [] m = "daysInYear" ->
-            Ok(s, IntV(CASE isArithmetic -> ArithmeticRataDie(cal, parts.year + 1, 1, 1) - ArithmeticRataDie(cal, parts.year, 1, 1)
+            Ok(s, IntV(CASE cal \in LunisolarCalendars -> LunisolarBefore(cal, parts.year, ArithmeticMonths(cal, parts.year) + 1)
+                         [] isArithmetic -> ArithmeticRataDie(cal, parts.year + 1, 1, 1) - ArithmeticRataDie(cal, parts.year, 1, 1)
                          [] IsLeapYear(date.year) -> 366
                          [] OTHER -> 365))
        [] m = "monthsInYear" -> Ok(s, IntV(IF isArithmetic THEN ArithmeticMonths(cal, parts.year) ELSE 12))
@@ -17569,11 +17786,22 @@ CalendarDateToISO(s, cal, year, month, day, code, overflow) ==
         ((code # Empty /\ ~YearContainsMonthCode(cal, y, code)) \/ BigIntLess(TI(months), month) \/ BigIntLess(TI(days), day))
      THEN ThrowError(s, "RangeError")
      ELSE Ok(s, RataDieToISODate(ArithmeticRataDie(cal, y, m, TIClamp(day, 1, days))))
+\* The reference date of a Chinese or Dangi month code and day from the host's table, which gives
+\* the month-day that they're constrained to where no year near 1972 has them.
+LunisolarReference(s, cal, code, day, overflow) ==
+  LET entry == HostCalendarMonthDay(<<cal, code.month, code.leap, day>>) IN
+  CASE entry.found # "monthDay" ->
+         Assert(FALSE, "tla-ts can't tell the reference date of a Chinese or Dangi month-day that the host's table leaves out")
+    [] overflow = N("reject") /\ ~entry.isKept -> ThrowError(s, "RangeError")
+    [] OTHER -> Ok(s, EpochDaysToISODate(entry.days))
 \* CalendarMonthDayToISOReferenceDate of a calendar other than ISO 8601, of resolved fields, whose
 \* year, where they give one, only decides how long the month is, and must be within the limits.
 \* A calendar whose months are ISO 8601's takes 1972 as the reference year.
 NonISOMonthDayToISOReferenceDate(s, cal, fields, overflow) ==
-  IF cal \notin ArithmeticCalendars THEN
+  IF cal \in LunisolarCalendars /\ fields.year = Empty THEN
+    IF overflow = N("reject") /\ BigIntLess(TI(30), fields.day) THEN ThrowError(s, "RangeError")
+    ELSE LunisolarReference(s, cal, MonthCodeOf(fields.monthCode), TIClamp(fields.day, 1, 30), overflow)
+  ELSE IF cal \notin ArithmeticCalendars THEN
     LET year == IF fields.year = Empty THEN Empty ELSE TISub(fields.year, TI(CalendarYearOffset(cal))) IN
     IF year # Empty /\ (BigIntLess(year, TI(-271821)) \/ BigIntLess(TI(275760), year)) THEN ThrowError(s, "RangeError") ELSE
     LET date == RegulateISODate(s, IF year = Empty THEN 1972 ELSE TIToInt(TIMod(year, TI(400))), fields.month, fields.day, overflow) IN
@@ -17585,14 +17813,14 @@ NonISOMonthDayToISOReferenceDate(s, cal, fields, overflow) ==
       given == MonthCodeOf(fields.monthCode)
       code == CASE fields.year = Empty -> given
                 [] given = Empty -> ArithmeticMonthCode(cal, y, month)
-                [] YearContainsMonthCode(cal, y, given) -> given
-                [] OTHER -> [month |-> 6, leap |-> FALSE]
+                [] OTHER -> ConstrainMonthCode(cal, y, given)
       days == IF fields.year = Empty THEN ArithmeticMostDays(cal, code) ELSE ArithmeticDaysInMonth(cal, y, month)
   IN IF fields.year # Empty /\ ~(TIYearInRange(fields.year) /\ ArithmeticYearWithinLimits(cal, y)) THEN ThrowError(s, "RangeError")
      ELSE IF overflow = N("reject") /\
              ((fields.year # Empty /\ given # Empty /\ ~YearContainsMonthCode(cal, y, given)) \/
               BigIntLess(TI(months), fields.month) \/ BigIntLess(TI(days), fields.day))
      THEN ThrowError(s, "RangeError")
+     ELSE IF cal \in LunisolarCalendars THEN LunisolarReference(s, cal, code, TIClamp(fields.day, 1, days), overflow)
      ELSE Ok(s, ArithmeticReference(cal, ArithmeticReferenceYear(cal), code, TIClamp(fields.day, 1, days)))
 \* NonISODateAdd of an arithmetic calendar, for a date duration, whose fields share a sign. Past
 \* the bounds checked first, every result is out of range.
@@ -17605,7 +17833,7 @@ NonISODateAdd(s, cal, date, duration, overflow) ==
       year == parts.year + TIToInt(duration[1])
   IN IF year < -1000000 \/ year > 1000000 THEN ThrowError(s, "RangeError")
      ELSE IF overflow = N("reject") /\ ~YearContainsMonthCode(cal, year, code) THEN ThrowError(s, "RangeError") ELSE
-  LET to == OfMonthIndex(cal, MonthIndex(cal, year, MonthCodeToOrdinal(cal, year, code)) + TIToInt(duration[2])) IN
+  LET to == MonthsAfter(cal, year, MonthCodeToOrdinal(cal, year, code), TIToInt(duration[2])) IN
   IF to.year < -1000000 \/ to.year > 1000000 THEN ThrowError(s, "RangeError") ELSE
   LET length == ArithmeticDaysInMonth(cal, to.year, to.month) IN
   IF overflow = N("reject") /\ parts.day > length THEN ThrowError(s, "RangeError") ELSE
@@ -17619,7 +17847,7 @@ NonISODateAdd(s, cal, date, duration, overflow) ==
 \* month and then whether it's a leap month.
 MonthCodeKey(code) == code.month * 2 + (IF code.leap THEN 1 ELSE 0)
 NonISOReached(cal, from, code, years, months) ==
-  LET year == from.year + years IN OfMonthIndex(cal, MonthIndex(cal, year, MonthCodeToOrdinal(cal, year, code)) + months)
+  LET year == from.year + years IN MonthsAfter(cal, year, MonthCodeToOrdinal(cal, year, code), months)
 NonISODateSurpasses(cal, sign, from, code, to, years, months) ==
   \/ sign * CompareFieldsFrom(<<from.year + years, MonthCodeKey(code), from.day>>,
                               <<to.year, MonthCodeKey(ArithmeticMonthCode(cal, to.year, to.month)), to.day>>, 1) > 0
@@ -17650,7 +17878,7 @@ NonISODateUntil(cal, one, two, largestUnit) ==
       months == IF largestUnit \in {TUYear, TUMonth}
                 THEN NonISOForeMonths(cal, sign, from, code, to, years,
                                       NonISOBackMonths(cal, sign, from, code, to, years,
-                                                       guess(MonthIndex(cal, to.year, to.month) - MonthIndex(cal, start.year, start.month))))
+                                                       guess(MonthsBetween(cal, start, to))))
                 ELSE 0
       at == NonISOReached(cal, from, code, years, months)
       length == ArithmeticDaysInMonth(cal, at.year, at.month)
@@ -18033,10 +18261,10 @@ PrepareFrom(s, item, order, acc, isAny, required) ==
           ELSE LET c == ConvertCalendarField(v.s, name, Val(v)) IN IF IsAbrupt(c) THEN c
           ELSE PrepareFrom(c.s, item, Tail(order), [acc EXCEPT ![name] = Val(c)], TRUE, required)
 \* PrepareCalendarFields, for the set of field names to read and required "partial",
-\* "time-zone", or "no-required-fields". The fields are read in code unit order. A calendar other
-\* than ISO 8601 reads an era and an era year with a year (CalendarExtraFields).
+\* "time-zone", or "no-required-fields". The fields are read in code unit order. A calendar with
+\* eras reads an era and an era year with a year (CalendarExtraFields).
 PrepareCalendarFields(s, cal, item, names, required) ==
-  LET read == IF cal # ISO8601 /\ "year" \in names THEN names \cup {"era", "eraYear"} ELSE names IN
+  LET read == IF CalendarHasEras(cal) /\ "year" \in names THEN names \cup {"era", "eraYear"} ELSE names IN
   PrepareFrom(s, item, SelectSeq([i \in 1..14 |-> i], LAMBDA i : CalendarFieldNames[i] \in read),
               [n \in Range(CalendarFieldNames) |->
                  IF required # "partial" /\ n \in CalendarTimeFieldNames THEN TI(0) ELSE Empty],
@@ -18351,8 +18579,9 @@ GetTemporalRelativeToOption(s, options) ==
 \* pattern that the host's table holds for the object's kind, its calendar, and the options: an
 \* English pattern of fields, each with its style, where a literal's style is its units. A field's
 \* text is as Node writes it in English, from 1583, before which Node writes the Julian calendar, to
-\* 9999. It stops at a locale other than English, at a calendar or numbering system option, and at
-\* options whose pattern the table leaves out.
+\* 9999. Where HostIntl answers for the object, its requested locales, and the options it read, it
+\* gives that answer instead. Otherwise it stops at a locale other than English, at a calendar or
+\* numbering system option, and at options whose pattern the table leaves out.
 \* The options that CreateDateTimeFormat reads after the time zone, in its order (ECMA-402 Table 16,
 \* then formatMatcher, dateStyle, and timeStyle), with the values each may take.
 \* GetNumberOption of fractionalSecondDigits, from 1 to 3.
@@ -18385,7 +18614,8 @@ DateFormatKey(kind, calendar, hour12, values) ==
         [] values.fractionalSecondDigits = 1 -> "|fractionalSecondDigits=1"
         [] values.fractionalSecondDigits = 2 -> "|fractionalSecondDigits=2"
         [] OTHER -> "|fractionalSecondDigits=3") \o
-     DateFormatEntry(values, "dateStyle") \o DateFormatEntry(values, "timeStyle")
+     DateFormatEntry(values, "dateStyle") \o DateFormatEntry(values, "timeStyle") \o
+     (IF "dayPeriod" \in DOMAIN values THEN DateFormatEntry(values, "dayPeriod") ELSE "")
 \* The text of a field of a pattern for a date [year, month, day] and a time [hour, minute, second,
 \* millisecond], where an hour's style is its cycle and width, as "h12 numeric", and a fraction's
 \* its digits.
@@ -18418,20 +18648,37 @@ LocaleField(field, style, date, time) ==
 LocaleText(format, i, date, time) ==
   IF i > Len(format.fields) THEN <<>>
   ELSE LocaleField(format.fields[i], format.styles[i], date, time) \o LocaleText(format, i + 1, date, time)
+\* The key of HostIntl's entries for a Temporal object of a kind with its slots: its ISO fields, its
+\* epoch nanoseconds' units, and its time zone's identifier and its calendar, as it has them.
+TemporalFormatKey(kind, slots) ==
+  CASE kind \in {"PlainDate", "PlainYearMonth", "PlainMonthDay"} ->
+         <<kind, slots.date.year, slots.date.month, slots.date.day, slots.calendar>>
+    [] kind = "PlainDateTime" ->
+         <<kind, slots.dateTime.date.year, slots.dateTime.date.month, slots.dateTime.date.day>> \o
+         TimeFields(slots.dateTime.time) \o <<slots.calendar>>
+    [] kind = "PlainTime" -> <<kind>> \o TimeFields(slots.time)
+    [] kind = "ZonedDateTime" -> <<kind, TIUnits(slots.epochNs), slots.timeZone.id, slots.calendar>>
+    [] OTHER -> <<kind, TIUnits(slots.epochNs)>>
+\* The kind of a Temporal object by its class.
 \* toLocaleString of a Temporal object of a kind ("PlainDate" and the like) with its slots, where
-\* text is what toString gives.
+\* text is what toString gives: what HostIntl answers for its requested locales and the options it
+\* read, or else the host's recorded English pattern, for an English locale.
 TemporalToLocaleString(s, kind, slots, locales, options, text) ==
   IF HostDateFormat(Empty).found = "none" THEN Ok(s, Str(text))
-  ELSE IF kind = "Duration" THEN Unsupported(s, N("Unsupported: Intl.DurationFormat"))
-  ELSE IF ~(locales = Undefined \/ (IsString(locales) /\ TPLower(locales.value) \in {N("en"), N("en-us")}))
-  THEN Unsupported(s, N("Unsupported: a locale other than English"))
-  ELSE LET o == IF options = Undefined THEN OrdinaryObjectCreate(s, Null) ELSE ToObject(s, options) IN IF IsAbrupt(o) THEN o ELSE
+  \* Temporal.Duration.prototype.toLocaleString: the format of a new Intl.DurationFormat.
+  ELSE IF kind = "Duration" THEN
+    LET df == DurationFormatConstruct(s, Intrinsic(s, "IntlDurationFormat"), locales, options) IN IF IsAbrupt(df) THEN df ELSE
+    LET answer == IntlAnswer(df.s, "DurationFormat", O(df.s, Val(df)).slots.options, "formatToParts",
+                             <<<<"duration", [i \in 1..10 |-> TIUnits(slots.fields[i])]>>>>)
+    IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "format", Val(answer))
+  ELSE LET requested == CanonicalizeLocaleList(s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET o == IF options = Undefined THEN OrdinaryObjectCreate(requested.s, Null) ELSE ToObject(requested.s, options) IN IF IsAbrupt(o) THEN o ELSE
   LET matcher == GetStringOption(o.s, Val(o), SV("localeMatcher"), {N("lookup"), N("best fit")}, Undefined) IN
   IF IsAbrupt(matcher) THEN matcher ELSE
-  LET calendar == Get(matcher.s, Val(o), SV("calendar")) IN IF IsAbrupt(calendar) THEN calendar
-  ELSE IF Val(calendar) # Undefined THEN Unsupported(calendar.s, N("Unsupported: a calendar option"))
-  ELSE LET numbering == Get(calendar.s, Val(o), SV("numberingSystem")) IN IF IsAbrupt(numbering) THEN numbering
-  ELSE IF Val(numbering) # Undefined THEN Unsupported(numbering.s, N("Unsupported: a numberingSystem option")) ELSE
+  LET calendar == GetAnyStringOption(matcher.s, Val(o), SV("calendar")) IN IF IsAbrupt(calendar) THEN calendar
+  ELSE IF Val(calendar) # Empty /\ ~IsTypeSequenceFrom(Val(calendar), 1, 0) THEN ThrowError(calendar.s, "RangeError")
+  ELSE LET numbering == GetAnyStringOption(calendar.s, Val(o), SV("numberingSystem")) IN IF IsAbrupt(numbering) THEN numbering
+  ELSE IF Val(numbering) # Empty /\ ~IsTypeSequenceFrom(Val(numbering), 1, 0) THEN ThrowError(numbering.s, "RangeError") ELSE
   LET hour12 == Get(numbering.s, Val(o), SV("hour12")) IN IF IsAbrupt(hour12) THEN hour12 ELSE
   LET hourCycle == GetStringOption(hour12.s, Val(o), SV("hourCycle"), {N("h11"), N("h12"), N("h23"), N("h24")}, Empty) IN
   IF IsAbrupt(hourCycle) THEN hourCycle ELSE
@@ -18443,6 +18690,19 @@ TemporalToLocaleString(s, kind, slots, locales, options, text) ==
   IF IsAbrupt(tz) THEN tz ELSE
   LET read == ReadDateTimeFormatOptions(tz.s, Val(o), 1, [n \in {DateTimeFormatOptions[i].key : i \in 1..Len(DateTimeFormatOptions)} |-> Empty]) IN
   IF IsAbrupt(read) THEN read ELSE
+  LET hostKey == <<"Temporal",
+                   <<Val(requested),
+                     <<IF Val(matcher) = Undefined THEN Empty ELSE Val(matcher), Val(calendar), Val(numbering),
+                       IF Val(hour12) = Undefined THEN Empty ELSE ToBooleanValue(Val(hour12)), Val(hourCycle),
+                       IF Val(zoneText) = Undefined THEN Empty ELSE Val(zoneText).value>> \o
+                     [i \in 1..Len(DateTimeFormatOptions) |-> Val(read)[DateTimeFormatOptions[i].key]]>>,
+                   "toLocaleString", <<TemporalFormatKey(kind, slots)>>>>
+      answer == HostIntl(hostKey)
+  IN IF answer.found = "value" THEN Ok(read.s, answer.value)
+  ELSE IF answer.found = "error" THEN ThrowError(read.s, answer.error)
+  ELSE IF Val(calendar) # Empty \/ Val(numbering) # Empty THEN Unsupported(read.s, N("Unsupported: a calendar or numberingSystem option"))
+  ELSE IF ~(locales = Undefined \/ (IsString(locales) /\ TPLower(locales.value) \in {N("en"), N("en-us")}))
+  THEN Unsupported(read.s, N("Unsupported: a locale other than English")) ELSE
   LET values == Val(read) @@ [hourCycle |-> Val(hourCycle)]
       key == DateFormatKey(kind, IF kind \in {"PlainTime", "Instant"} \/ slots.calendar = ISO8601 THEN "iso8601" ELSE "gregory",
                            IF Val(hour12) = Undefined THEN Empty ELSE ToBooleanValue(Val(hour12)), values)
@@ -20123,7 +20383,7 @@ DurationBuiltin(s, f, m, this, args, nt) ==
                                                                        LargerOfTwoTemporalUnits(DefaultTemporalLargestUnit(d), TUSecond))
                              IN IF ~IsValidDuration(rounded) THEN ThrowError(time.s, "RangeError")
                                 ELSE Ok(time.s, Str(TemporalDurationToString([i \in 1..10 |-> TIFloat(rounded[i])], precision.precision)))
-              [] m = "toLocaleString" -> TemporalToLocaleString(s, "Duration", Empty, Arg(args, 1), Arg(args, 2), TemporalDurationToString(d, TPrecisionAuto))
+              [] m = "toLocaleString" -> TemporalToLocaleString(s, "Duration", [fields |-> d], Arg(args, 1), Arg(args, 2), TemporalDurationToString(d, TPrecisionAuto))
               [] m = "toJSON" -> Ok(s, Str(TemporalDurationToString(d, TPrecisionAuto)))
               [] m = "valueOf" -> ThrowTypeError(s)
 \* Temporal.Duration.compare after its fields differ (steps 6 to 13).
@@ -20216,9 +20476,11 @@ DurationTotal(s, d, totalOfArg) ==
   IN IF IsAbrupt(total) THEN total ELSE Ok(total.s, Num(Val(total)))
 \* ECMA-402's Intl, which engine262 lacks, without its locale data: the namespace, its constructors
 \* and their prototypes, as the spec lays them out, and what each of their functions does before it
-\* reads locale data, or with what HostLocale gives of it. The constructors of IntlConstructorOptions
-\* read their options and make an object that holds them; the others stop. A method of an Intl
-\* object stops, and on another value throws the TypeError of RequireInternalSlot.
+\* reads locale data, or with what HostLocale gives of it. The constructors of IntlConstructorOptions,
+\* NumberFormat, PluralRules, and Locale read their options and make an object that holds them; the
+\* others stop. A method of an Intl object reads what it formats, compares, or selects, and gives
+\* what HostIntl answers for the object's key and those arguments, and stops where HostIntl has no
+\* answer; on another value it throws the TypeError of RequireInternalSlot.
 \* The constructors that a call without new constructs too (ECMA-402's normative optional
 \* constructor mode), and the methods that UnwrapNumberFormat and UnwrapDateTimeFormat read their
 \* receiver through, by the constructor's intrinsic.
@@ -20283,7 +20545,8 @@ IsDateTimeFormatConflict(read) ==
 \* which would take that many steps to walk.
 CanonicalizeLocaleList(s, locales) ==
   IF locales = Undefined THEN Ok(s, <<>>)
-  ELSE IF IsString(locales) THEN CanonicalizeLocale(s, locales.value, <<>>) ELSE
+  ELSE IF IsString(locales) THEN CanonicalizeLocale(s, locales.value, <<>>)
+  ELSE IF IsObject(locales) /\ O(s, locales).class = "intlLocale" THEN Ok(s, <<O(s, locales).slots.tag>>) ELSE
   LET o == ToObject(s, locales) IN IF IsAbrupt(o) THEN o ELSE
   LET len == LengthOfArrayLike(o.s, Val(o)) IN IF IsAbrupt(len) THEN len
   ELSE IF NumLess(NumFromInt(10000000), Val(len).value) THEN Unsupported(len.s, N("Unsupported: a long list of locales"))
@@ -20295,7 +20558,12 @@ CanonicalizeLocalesFrom(s, o, k, len, seen) ==
   IN IF IsAbrupt(present) THEN present
      ELSE IF Val(present) = False THEN CanonicalizeLocalesFrom(present.s, o, k + 1, len, seen) ELSE
      LET value == Get(present.s, o, key) IN IF IsAbrupt(value) THEN value
-     ELSE IF ~IsString(Val(value)) /\ ~IsObject(Val(value)) THEN ThrowTypeError(value.s) ELSE
+     ELSE IF ~IsString(Val(value)) /\ ~IsObject(Val(value)) THEN ThrowTypeError(value.s)
+     \* A Locale's tag is canonical.
+     ELSE IF IsObject(Val(value)) /\ O(value.s, Val(value)).class = "intlLocale" THEN
+       CanonicalizeLocalesFrom(value.s, o, k + 1, len,
+                               IF O(value.s, Val(value)).slots.tag \in Range(seen) THEN seen ELSE Append(seen, O(value.s, Val(value)).slots.tag))
+     ELSE
      LET tag == ToStr(value.s, Val(value)) IN IF IsAbrupt(tag) THEN tag ELSE
      LET added == CanonicalizeLocale(tag.s, Val(tag).value, seen) IN IF IsAbrupt(added) THEN added
      ELSE CanonicalizeLocalesFrom(added.s, o, k + 1, len, Val(added))
@@ -20318,18 +20586,611 @@ FilterLocales(s, service, requested, options) ==
      THEN Unsupported(matcher.s, N("Unsupported: a locale the host's table leaves out"))
      ELSE CreateArrayFromList(matcher.s, [i \in 1..Len(SelectSeq([j \in DOMAIN requested |-> j], supported)) |->
                                           Str(requested[SelectSeq([j \in DOMAIN requested |-> j], supported)[i]])])
+\* GetOption of a string option that takes any value, as its units, or Empty where it's undefined.
+GetAnyStringOption(s, options, key) ==
+  LET value == Get(s, options, key) IN IF IsAbrupt(value) THEN value
+  ELSE IF Val(value) = Undefined THEN Ok(value.s, Empty)
+  ELSE LET str == ToStr(value.s, Val(value)) IN IF IsAbrupt(str) THEN str ELSE Ok(str.s, Val(str).value)
+\* DefaultNumberOption (§9.2.13) and GetNumberOption (§9.2.14).
+DefaultNumberOption(s, value, minimum, maximum, fallback) ==
+  IF value = Undefined THEN Ok(s, fallback) ELSE
+  LET n == ToNumber(s, value) IN IF IsAbrupt(n) THEN n
+  ELSE IF ~NumIsFinite(Val(n).value) \/ NumLessThan(Val(n).value, NumFromInt(minimum)) \/
+          NumLessThan(NumFromInt(maximum), Val(n).value)
+  THEN ThrowError(n.s, "RangeError") ELSE Ok(n.s, NumToInt(MathFloor(Val(n).value)))
+GetNumberOption(s, options, key, minimum, maximum, fallback) ==
+  LET value == Get(s, options, key) IN IF IsAbrupt(value) THEN value
+  ELSE DefaultNumberOption(value.s, Val(value), minimum, maximum, fallback)
+\* IsWellFormedCurrencyCode (§6.3.1), the ASCII-uppercase of units, and IsWellFormedUnitIdentifier
+\* (§6.6.1) with the single units that Table 2 sanctions.
+ASCIIUpper(u) == [i \in DOMAIN u |-> IF u[i] >= 97 /\ u[i] <= 122 THEN u[i] - 32 ELSE u[i]]
+IsWellFormedCurrencyCode(u) == Len(u) = 3 /\ \A i \in 1..3 : ASCIIUpper(u)[i] >= 65 /\ ASCIIUpper(u)[i] <= 90
+IsWellFormedUnitIdentifier(u) ==
+  \/ u \in SanctionedUnits
+  \/ \E i \in 1..(Len(u) - 4) : SubSeq(u, i, i + 4) = N("-per-") /\ SubSeq(u, 1, i - 1) \in SanctionedUnits /\
+                          SubSeq(u, i + 5, Len(u)) \in SanctionedUnits
+\* SetNumberFormatUnitOptions (§16.1.3): the style, and the currency's and the unit's options, each
+\* Empty where the style doesn't use it.
+NumberFormatUnitOptions(s, options) ==
+  LET style == GetStringOption(s, options, SV("style"), {N("decimal"), N("percent"), N("currency"), N("unit")}, N("decimal")) IN
+  IF IsAbrupt(style) THEN style ELSE
+  LET currency == GetAnyStringOption(style.s, options, SV("currency")) IN IF IsAbrupt(currency) THEN currency
+  ELSE IF Val(currency) = Empty /\ Val(style) = N("currency") THEN ThrowTypeError(currency.s)
+  ELSE IF Val(currency) # Empty /\ ~IsWellFormedCurrencyCode(Val(currency)) THEN ThrowError(currency.s, "RangeError") ELSE
+  LET currencyDisplay == GetStringOption(currency.s, options, SV("currencyDisplay"), {N("code"), N("symbol"), N("narrowSymbol"), N("name")}, N("symbol")) IN
+  IF IsAbrupt(currencyDisplay) THEN currencyDisplay ELSE
+  LET currencySign == GetStringOption(currencyDisplay.s, options, SV("currencySign"), {N("standard"), N("accounting")}, N("standard")) IN
+  IF IsAbrupt(currencySign) THEN currencySign ELSE
+  LET unit == GetAnyStringOption(currencySign.s, options, SV("unit")) IN IF IsAbrupt(unit) THEN unit
+  ELSE IF Val(unit) = Empty /\ Val(style) = N("unit") THEN ThrowTypeError(unit.s)
+  ELSE IF Val(unit) # Empty /\ ~IsWellFormedUnitIdentifier(Val(unit)) THEN ThrowError(unit.s, "RangeError") ELSE
+  LET unitDisplay == GetStringOption(unit.s, options, SV("unitDisplay"), {N("short"), N("narrow"), N("long")}, N("short")) IN
+  IF IsAbrupt(unitDisplay) THEN unitDisplay ELSE
+  LET isCurrency == Val(style) = N("currency")
+      isUnit == Val(style) = N("unit")
+  IN Ok(unitDisplay.s, [style |-> Val(style),
+                        currency |-> IF isCurrency THEN ASCIIUpper(Val(currency)) ELSE Empty,
+                        currencyDisplay |-> IF isCurrency THEN Val(currencyDisplay) ELSE Empty,
+                        currencySign |-> IF isCurrency THEN Val(currencySign) ELSE Empty,
+                        unit |-> IF isUnit THEN Val(unit) ELSE Empty,
+                        unitDisplay |-> IF isUnit THEN Val(unitDisplay) ELSE Empty])
+\* SetNumberFormatDigitOptions (§16.1.2): the digit options, each Empty where it's undefined, with
+\* the rounding priority that resolvedOptions gives.
+NumberFormatDigitOptions(s, options, minDefault, maxDefault, notation) ==
+  LET minInteger == GetNumberOption(s, options, SV("minimumIntegerDigits"), 1, 21, 1) IN IF IsAbrupt(minInteger) THEN minInteger ELSE
+  LET minFD == Get(minInteger.s, options, SV("minimumFractionDigits")) IN IF IsAbrupt(minFD) THEN minFD ELSE
+  LET maxFD == Get(minFD.s, options, SV("maximumFractionDigits")) IN IF IsAbrupt(maxFD) THEN maxFD ELSE
+  LET minSD == Get(maxFD.s, options, SV("minimumSignificantDigits")) IN IF IsAbrupt(minSD) THEN minSD ELSE
+  LET maxSD == Get(minSD.s, options, SV("maximumSignificantDigits")) IN IF IsAbrupt(maxSD) THEN maxSD ELSE
+  LET increment == GetNumberOption(maxSD.s, options, SV("roundingIncrement"), 1, 5000, 1) IN IF IsAbrupt(increment) THEN increment
+  ELSE IF Val(increment) \notin {1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 2500, 5000} THEN ThrowError(increment.s, "RangeError") ELSE
+  LET mode == GetStringOption(increment.s, options, SV("roundingMode"),
+                              {N("ceil"), N("floor"), N("expand"), N("trunc"), N("halfCeil"), N("halfFloor"), N("halfExpand"),
+                               N("halfTrunc"), N("halfEven")}, N("halfExpand")) IN IF IsAbrupt(mode) THEN mode ELSE
+  LET priority == GetStringOption(mode.s, options, SV("roundingPriority"), {N("auto"), N("morePrecision"), N("lessPrecision")}, N("auto")) IN
+  IF IsAbrupt(priority) THEN priority ELSE
+  LET trailing == GetStringOption(priority.s, options, SV("trailingZeroDisplay"), {N("auto"), N("stripIfInteger")}, N("auto")) IN
+  IF IsAbrupt(trailing) THEN trailing ELSE
+  LET maxDefaultFD == IF Val(increment) # 1 THEN minDefault ELSE maxDefault
+      hasSD == Val(minSD) # Undefined \/ Val(maxSD) # Undefined
+      hasFD == Val(minFD) # Undefined \/ Val(maxFD) # Undefined
+      isAuto == Val(priority) = N("auto")
+      needSD == ~isAuto \/ hasSD
+      needFD == ~isAuto \/ (~hasSD /\ (hasFD \/ notation # N("compact")))
+      resolvedMinSD == IF needSD /\ hasSD THEN DefaultNumberOption(trailing.s, Val(minSD), 1, 21, 1) ELSE Ok(trailing.s, 1)
+  IN IF IsAbrupt(resolvedMinSD) THEN resolvedMinSD ELSE
+  LET resolvedMaxSD == IF needSD /\ hasSD THEN DefaultNumberOption(resolvedMinSD.s, Val(maxSD), Val(resolvedMinSD), 21, 21)
+                       ELSE Ok(resolvedMinSD.s, 21) IN
+  IF IsAbrupt(resolvedMaxSD) THEN resolvedMaxSD ELSE
+  LET givenMinFD == IF needFD /\ hasFD THEN DefaultNumberOption(resolvedMaxSD.s, Val(minFD), 0, 100, Empty) ELSE Ok(resolvedMaxSD.s, Empty) IN
+  IF IsAbrupt(givenMinFD) THEN givenMinFD ELSE
+  LET givenMaxFD == IF needFD /\ hasFD THEN DefaultNumberOption(givenMinFD.s, Val(maxFD), 0, 100, Empty) ELSE Ok(givenMinFD.s, Empty) IN
+  IF IsAbrupt(givenMaxFD) THEN givenMaxFD ELSE
+  LET lo == Val(givenMinFD)
+      hi == Val(givenMaxFD)
+      fd == CASE ~hasFD -> <<minDefault, maxDefaultFD>>
+              [] lo = Empty -> <<IF minDefault < hi THEN minDefault ELSE hi, hi>>
+              [] hi = Empty -> <<lo, IF maxDefaultFD > lo THEN maxDefaultFD ELSE lo>>
+              [] OTHER -> <<lo, hi>>
+      neither == ~needSD /\ ~needFD
+      type == CASE neither \/ Val(priority) = N("morePrecision") -> "morePrecision"
+                [] Val(priority) = N("lessPrecision") -> "lessPrecision"
+                [] hasSD -> "significantDigits"
+                [] OTHER -> "fractionDigits"
+      result == [minimumIntegerDigits |-> Val(minInteger),
+                 minimumFractionDigits |-> CASE neither -> 0 [] needFD -> fd[1] [] OTHER -> Empty,
+                 maximumFractionDigits |-> CASE neither -> 0 [] needFD -> fd[2] [] OTHER -> Empty,
+                 minimumSignificantDigits |-> CASE neither -> 1 [] needSD -> Val(resolvedMinSD) [] OTHER -> Empty,
+                 maximumSignificantDigits |-> CASE neither -> 2 [] needSD -> Val(resolvedMaxSD) [] OTHER -> Empty,
+                 roundingIncrement |-> Val(increment), roundingMode |-> Val(mode),
+                 roundingPriority |-> CASE type = "morePrecision" -> N("morePrecision") [] type = "lessPrecision" -> N("lessPrecision") [] OTHER -> N("auto"),
+                 trailingZeroDisplay |-> Val(trailing), isNeither |-> neither]
+  IN CASE needFD /\ hasFD /\ lo # Empty /\ hi # Empty /\ lo > hi -> ThrowError(givenMaxFD.s, "RangeError")
+       [] Val(increment) # 1 /\ type # "fractionDigits" -> ThrowTypeError(givenMaxFD.s)
+       [] Val(increment) # 1 /\ result.maximumFractionDigits # result.minimumFractionDigits -> ThrowError(givenMaxFD.s, "RangeError")
+       [] OTHER -> Ok(givenMaxFD.s, result)
+\* The constructor of Intl.NumberFormat (§16.1.1), whose object holds its requested locales and its
+\* options as resolvedOptions gives them but for the locale and the numbering system, which
+\* ResolveLocale reads from locale data: the key of HostIntl's entries for the object.
+NumberFormatConstruct(s, newTarget, locales, options) ==
+  LET o == OrdinaryCreateFromConstructor(s, newTarget, "IntlNumberFormatPrototype", "intlNumberFormat",
+                                         [locales |-> <<>>, options |-> Empty, boundFormat |-> Undefined]) IN IF IsAbrupt(o) THEN o ELSE
+  LET requested == CanonicalizeLocaleList(o.s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET opts == IF options = Undefined THEN OrdinaryObjectCreate(requested.s, Null) ELSE ToObject(requested.s, options) IN
+  IF IsAbrupt(opts) THEN opts ELSE
+  LET matcher == GetStringOption(opts.s, Val(opts), SV("localeMatcher"), {N("lookup"), N("best fit")}, N("best fit")) IN
+  IF IsAbrupt(matcher) THEN matcher ELSE
+  LET nu == GetAnyStringOption(matcher.s, Val(opts), SV("numberingSystem")) IN IF IsAbrupt(nu) THEN nu
+  ELSE IF Val(nu) # Empty /\ ~IsTypeSequenceFrom(Val(nu), 1, 0) THEN ThrowError(nu.s, "RangeError") ELSE
+  LET units == NumberFormatUnitOptions(nu.s, Val(opts)) IN IF IsAbrupt(units) THEN units ELSE
+  LET notation == GetStringOption(units.s, Val(opts), SV("notation"), {N("standard"), N("scientific"), N("engineering"), N("compact")}, N("standard")) IN
+  IF IsAbrupt(notation) THEN notation ELSE
+  LET style == Val(units).style
+      digits == IF style = N("currency") /\ Val(notation) = N("standard") THEN HostIntl(<<"currencyDigits", Val(units).currency>>) ELSE Empty
+  IN IF digits # Empty /\ digits.found # "digits" THEN Unsupported(notation.s, N("Unsupported: a currency the host's table leaves out")) ELSE
+  LET defaults == CASE digits # Empty -> <<digits.digits, digits.digits>> [] style = N("percent") -> <<0, 0>> [] OTHER -> <<0, 3>>
+      rounding == NumberFormatDigitOptions(notation.s, Val(opts), defaults[1], defaults[2], Val(notation))
+  IN IF IsAbrupt(rounding) THEN rounding ELSE
+  LET compact == GetStringOption(rounding.s, Val(opts), SV("compactDisplay"), {N("short"), N("long")}, N("short")) IN
+  IF IsAbrupt(compact) THEN compact ELSE
+  LET isCompact == Val(notation) = N("compact")
+      groupingDefault == IF isCompact THEN N("min2") ELSE N("auto")
+      grouping == Get(compact.s, Val(opts), SV("useGrouping"))
+  IN IF IsAbrupt(grouping) THEN grouping ELSE
+  LET groupingText == IF Val(grouping) \in {Undefined, True} \/ ~ToBooleanValue(Val(grouping)) THEN Ok(grouping.s, Empty)
+                      ELSE ToStr(grouping.s, Val(grouping)) IN
+  IF IsAbrupt(groupingText) THEN groupingText
+  ELSE IF Val(groupingText) # Empty /\ Val(groupingText).value \notin {N("min2"), N("auto"), N("always"), N("true"), N("false")}
+  THEN ThrowError(groupingText.s, "RangeError") ELSE
+  LET useGrouping == CASE Val(grouping) = Undefined -> groupingDefault
+                       [] Val(grouping) = True -> N("always")
+                       \* false, as units the key tells from the strings that useGrouping may be.
+                       [] ~ToBooleanValue(Val(grouping)) -> N("false")
+                       [] Val(groupingText).value \in {N("true"), N("false")} -> groupingDefault
+                       [] OTHER -> Val(groupingText).value
+      sign == GetStringOption(groupingText.s, Val(opts), SV("signDisplay"), {N("auto"), N("never"), N("always"), N("exceptZero"), N("negative")}, N("auto"))
+  IN IF IsAbrupt(sign) THEN sign ELSE
+  LET u == Val(units)
+      r == Val(rounding)
+      config == <<Val(requested), Val(matcher), Val(nu),
+                  <<u.style, u.currency, u.currencyDisplay, u.currencySign, u.unit, u.unitDisplay, r.minimumIntegerDigits,
+                    r.minimumFractionDigits, r.maximumFractionDigits, r.minimumSignificantDigits, r.maximumSignificantDigits,
+                    useGrouping, Val(notation), IF isCompact THEN Val(compact) ELSE Empty, Val(sign), r.roundingIncrement,
+                    r.roundingMode, r.roundingPriority, r.trailingZeroDisplay>>>>
+  IN Ok(SetSlots(sign.s, Val(o), [locales |-> Val(requested), options |-> config]), Val(o))
+\* ToIntlMathematicalValue (§16.5.16), as the key of the value in HostIntl's entries: a BigInt's
+\* or a string's units, or a Number's, with whether it's -0.
+IntlMathematicalKey(s, value) ==
+  LET p == ToPrimitive(s, value, "number") IN IF IsAbrupt(p) THEN p
+  ELSE IF IsBigInt(Val(p)) THEN LET t == ToStr(p.s, Val(p)) IN IF IsAbrupt(t) THEN t ELSE Ok(t.s, <<"bigint", Val(t).value>>)
+  \* A string that isn't a StringNumericLiteral is NaN, and "Infinity" is infinite, as a Number of them is.
+  ELSE IF IsString(Val(p)) THEN
+    LET n == StringToNumber(Val(p).value) IN
+    Ok(p.s, IF ~NumIsFinite(n) THEN <<"number", NumToString(n), FALSE>> ELSE <<"string", Val(p).value>>)
+  ELSE LET n == ToNumber(p.s, Val(p)) IN IF IsAbrupt(n) THEN n
+  ELSE Ok(n.s, <<"number", NumToString(Val(n).value), Val(n).value.k = "nzero">>)
+\* The answer of HostIntl to a service's method of an object of options config with arguments
+\* args, which stops where the host's table leaves it out.
+IntlAnswer(s, service, config, method, args) ==
+  LET answer == HostIntl(<<service, config, method, args>>) IN
+  CASE answer.found = "error" -> ThrowError(s, answer.error)
+    [] answer.found \in {"options", "parts", "value", "array", "segments"} -> Ok(s, answer)
+    [] OTHER -> Unsupported(s, N("Unsupported: a value the host's Intl table leaves out"))
+\* Number.prototype.toLocaleString and BigInt.prototype.toLocaleString (ECMA-402 §20.2.1, §20.3.1)
+\* of a value's key: the format of a new Intl.NumberFormat.
+IntlToLocaleString(s, key, locales, options) ==
+  LET nf == NumberFormatConstruct(s, Intrinsic(s, "IntlNumberFormat"), locales, options) IN IF IsAbrupt(nf) THEN nf ELSE
+  LET answer == IntlAnswer(nf.s, "NumberFormat", O(nf.s, Val(nf)).slots.options, "formatToParts", <<key>>) IN
+  IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "format", Val(answer))
+\* An object of the parts of a formatted value, each a sequence of a property's units and its
+\* value's, and an array of them.
+IntlPartObject(s, part) ==
+  LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype")) IN
+  Ok(SetO(o.s, Val(o), WithDataProps(O(o.s, Val(o)), [i \in DOMAIN part |-> <<Str(part[i][1]), Str(part[i][2])>>])), Val(o))
+IntlPartObjects(s, parts, i, acc) ==
+  IF i > Len(parts) THEN CreateArrayFromList(s, acc)
+  ELSE LET o == IntlPartObject(s, parts[i]) IN IntlPartObjects(o.s, parts, i + 1, Append(acc, Val(o)))
+IntlPartsText(parts, i) ==
+  IF i > Len(parts) THEN <<>>
+  ELSE LET part == parts[i] IN SelectSeq(part, LAMBDA pair : pair[1] = N("value"))[1][2] \o IntlPartsText(parts, i + 1)
+\* An object of resolved options, whose pairs are each a property's units and its value, or a
+\* record of the elements of an array, which pairs holds.
+IntlOptionsObject(s, pairs, i, acc) ==
+  IF i > Len(pairs) THEN
+    LET o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype")) IN Ok(SetO(o.s, Val(o), WithDataProps(O(o.s, Val(o)), acc)), Val(o))
+  ELSE IF "elements" \in DOMAIN pairs[i][2] THEN
+    LET a == CreateArrayFromList(s, pairs[i][2].elements) IN
+    IntlOptionsObject(a.s, pairs, i + 1, Append(acc, <<Str(pairs[i][1]), Val(a)>>))
+  ELSE IntlOptionsObject(s, pairs, i + 1, Append(acc, <<Str(pairs[i][1]), pairs[i][2]>>))
+\* An answer as the value that the method returns: a formatted string or its parts, or an object
+\* of resolved options, whose pairs are each a property's units and its value.
+IntlResult(s, method, answer) ==
+  CASE answer.found = "value" -> Ok(s, answer.value)
+    [] answer.found = "array" -> CreateArrayFromList(s, answer.elements)
+    [] answer.found = "options" /\ method # "resolvedOptions" -> IntlOptionsObject(s, answer.pairs, 1, <<>>)
+    [] method = "resolvedOptions" -> IntlOptionsObject(s, answer.pairs, 1, <<>>)
+    [] method \in {"formatToParts", "formatRangeToParts"} -> IntlPartObjects(s, answer.parts, 1, <<>>)
+    [] OTHER -> Ok(s, Str(IntlPartsText(answer.parts, 1)))
+\* The methods of an Intl.NumberFormat, nf, whose format is a function bound to it.
+NumberFormatMethod(s, f, m, nf, args) ==
+  LET config == O(s, nf).slots.options IN
+  CASE m = "NumberFormat.resolvedOptions" ->
+         LET answer == IntlAnswer(s, "NumberFormat", config, "resolvedOptions", <<>>) IN
+         IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "resolvedOptions", Val(answer))
+    [] m = "NumberFormat.format" ->
+         IF O(s, nf).slots.boundFormat # Undefined THEN Ok(s, O(s, nf).slots.boundFormat) ELSE
+         LET bound == CreateBuiltinFunction(s, <<"Intl", "NumberFormat.boundFormat">>, 1, <<>>, nf) IN
+         Ok(SetSlots(bound.s, nf, [boundFormat |-> Val(bound)]), Val(bound))
+    [] m \in {"NumberFormat.boundFormat", "NumberFormat.formatToParts"} ->
+         LET x == IntlMathematicalKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
+         LET method == IF m = "NumberFormat.boundFormat" THEN "format" ELSE "formatToParts"
+             answer == IntlAnswer(x.s, "NumberFormat", config, "formatToParts", <<Val(x)>>)
+         IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+    [] OTHER ->
+         IF Arg(args, 1) = Undefined \/ Arg(args, 2) = Undefined THEN ThrowTypeError(s) ELSE
+         LET x == IntlMathematicalKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
+         LET y == IntlMathematicalKey(x.s, Arg(args, 2)) IN IF IsAbrupt(y) THEN y ELSE
+         LET method == IF m = "NumberFormat.formatRange" THEN "formatRange" ELSE "formatRangeToParts"
+             answer == IntlAnswer(y.s, "NumberFormat", config, "formatRangeToParts", <<Val(x), Val(y)>>)
+         IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+\* The constructor of Intl.PluralRules (§17.1.1), whose object holds its requested locales and its
+\* options as a NumberFormat's does, but for the fraction digits of the notation that needs none,
+\* which resolvedOptions leaves out.
+PluralRulesConstruct(s, newTarget, locales, options) ==
+  LET o == OrdinaryCreateFromConstructor(s, newTarget, "IntlPluralRulesPrototype", "intlPluralRules",
+                                         [locales |-> <<>>, options |-> Empty]) IN IF IsAbrupt(o) THEN o ELSE
+  LET requested == CanonicalizeLocaleList(o.s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET opts == IF options = Undefined THEN OrdinaryObjectCreate(requested.s, Null) ELSE ToObject(requested.s, options) IN
+  IF IsAbrupt(opts) THEN opts ELSE
+  LET matcher == GetStringOption(opts.s, Val(opts), SV("localeMatcher"), {N("lookup"), N("best fit")}, N("best fit")) IN
+  IF IsAbrupt(matcher) THEN matcher ELSE
+  LET type == GetStringOption(matcher.s, Val(opts), SV("type"), {N("cardinal"), N("ordinal")}, N("cardinal")) IN
+  IF IsAbrupt(type) THEN type ELSE
+  LET notation == GetStringOption(type.s, Val(opts), SV("notation"), {N("standard"), N("scientific"), N("engineering"), N("compact")}, N("standard")) IN
+  IF IsAbrupt(notation) THEN notation ELSE
+  LET compact == GetStringOption(notation.s, Val(opts), SV("compactDisplay"), {N("short"), N("long")}, N("short")) IN
+  IF IsAbrupt(compact) THEN compact ELSE
+  LET rounding == NumberFormatDigitOptions(compact.s, Val(opts), 0, 3, Val(notation)) IN IF IsAbrupt(rounding) THEN rounding ELSE
+  LET r == Val(rounding)
+      config == <<Val(requested), Val(matcher),
+                  <<Val(type), Val(notation), IF Val(notation) = N("compact") THEN Val(compact) ELSE Empty, r.minimumIntegerDigits,
+                    IF r.isNeither THEN Empty ELSE r.minimumFractionDigits, IF r.isNeither THEN Empty ELSE r.maximumFractionDigits,
+                    r.minimumSignificantDigits, r.maximumSignificantDigits, r.roundingIncrement, r.roundingMode, r.roundingPriority,
+                    r.trailingZeroDisplay>>>>
+  IN Ok(SetSlots(rounding.s, Val(o), [locales |-> Val(requested), options |-> config]), Val(o))
+\* The key of HostIntl's entries for an Intl object that IntlConstruct made: its requested locales
+\* and each of its options, in the order its constructor reads them.
+IntlConstructedConfig(s, o, service) ==
+  LET slots == O(s, o).slots
+      list == IntlConstructorOptions[service]
+  IN <<slots.locales, [i \in 1..Len(list) |-> slots.options[list[i].key]]>>
+\* StringListFromIterable (§14.5.3), the strings of an iterable, which closes its iterator at a
+\* value that isn't one.
+StringListFrom(s, it, acc) ==
+  LET next == IteratorStepValue(s, it) IN IF IsAbrupt(next) THEN next
+  ELSE IF Val(next).done THEN Ok(next.s, acc)
+  ELSE IF ~IsString(Val(next).value) THEN LET e == ThrowTypeError(next.s) IN IteratorClose(e.s, it, e.c)
+  ELSE StringListFrom(next.s, it, Append(acc, Val(next).value.value))
+StringListFromIterable(s, iterable) ==
+  IF iterable = Undefined THEN Ok(s, <<>>) ELSE
+  LET it == GetIterator(s, iterable, "sync") IN IF IsAbrupt(it) THEN it ELSE StringListFrom(it.s, Val(it), <<>>)
+\* A method's arguments as the key of HostIntl's entries, after the conversions it makes of them.
+IntlNumberKey(n) == <<"number", NumToString(n), n.k = "nzero">>
+IntlMethodArguments(s, m, args) ==
+  CASE m \in {"Collator.boundCompare"} ->
+         LET x == ToStr(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
+         LET y == ToStr(x.s, Arg(args, 2)) IN IF IsAbrupt(y) THEN y ELSE Ok(y.s, <<Val(x).value, Val(y).value>>)
+    [] m \in {"ListFormat.format", "ListFormat.formatToParts"} ->
+         LET list == StringListFromIterable(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list ELSE Ok(list.s, <<Val(list)>>)
+    [] m \in {"RelativeTimeFormat.format", "RelativeTimeFormat.formatToParts"} ->
+         LET value == ToNumber(s, Arg(args, 1)) IN IF IsAbrupt(value) THEN value ELSE
+         LET unit == ToStr(value.s, Arg(args, 2)) IN IF IsAbrupt(unit) THEN unit
+         ELSE Ok(unit.s, <<IntlNumberKey(Val(value).value), Val(unit).value>>)
+    [] m = "DisplayNames.of" ->
+         LET code == ToStr(s, Arg(args, 1)) IN IF IsAbrupt(code) THEN code ELSE Ok(code.s, <<Val(code).value>>)
+    [] m = "PluralRules.select" ->
+         LET value == ToNumber(s, Arg(args, 1)) IN IF IsAbrupt(value) THEN value ELSE Ok(value.s, <<IntlNumberKey(Val(value).value)>>)
+    [] m = "PluralRules.selectRange" ->
+         IF Arg(args, 1) = Undefined \/ Arg(args, 2) = Undefined THEN ThrowTypeError(s) ELSE
+         LET x == ToNumber(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
+         LET y == ToNumber(x.s, Arg(args, 2)) IN IF IsAbrupt(y) THEN y
+         ELSE Ok(y.s, <<IntlNumberKey(Val(x).value), IntlNumberKey(Val(y).value)>>)
+    [] OTHER -> Ok(s, <<>>)
+\* The methods of the Intl objects other than a NumberFormat that HostIntl answers, of o, whose
+\* Collator's compare is a function bound to it.
+IntlHostMethod(s, m, o, args) ==
+  LET service == IF m = "Collator.boundCompare" THEN "Collator" ELSE IntlMethodServices[m]
+      config == IF service = "PluralRules" THEN O(s, o).slots.options ELSE IntlConstructedConfig(s, o, service)
+      method == CASE m \in {"ListFormat.format", "RelativeTimeFormat.format"} -> "format"
+                  [] m \in {"ListFormat.formatToParts", "RelativeTimeFormat.formatToParts"} -> "formatToParts"
+                  [] m = "DisplayNames.of" -> "of"
+                  [] m = "PluralRules.select" -> "select"
+                  [] m = "PluralRules.selectRange" -> "selectRange"
+                  [] m = "Collator.boundCompare" -> "boundCompare"
+                  [] m = "Collator.compare" -> "compare"
+                  [] OTHER -> "resolvedOptions"
+  IN IF m = "Collator.compare" THEN
+       IF "boundCompare" \in DOMAIN O(s, o).slots THEN Ok(s, O(s, o).slots.boundCompare) ELSE
+       LET bound == CreateBuiltinFunction(s, <<"Intl", "Collator.boundCompare">>, 2, <<>>, o) IN
+       Ok(SetSlots(bound.s, o, [boundCompare |-> Val(bound)]), Val(bound))
+     ELSE
+     LET key == IntlMethodArguments(s, m, args) IN IF IsAbrupt(key) THEN key ELSE
+     LET asked == CASE method \in {"format", "formatToParts"} /\ service # "PluralRules" -> "formatToParts"
+                    [] method = "boundCompare" -> "compare"
+                    [] OTHER -> method
+         answer == IntlAnswer(key.s, service, config, asked, Val(key))
+     IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+\* Whether units are a language, a script, or a region subtag (unicode_language_subtag and kin).
+IsAlpha(c) == (c >= 65 /\ c <= 90) \/ (c >= 97 /\ c <= 122)
+IsLanguageSubtag(u) == Len(u) \in {2, 3, 5, 6, 7, 8} /\ \A i \in DOMAIN u : IsAlpha(u[i])
+IsScriptSubtag(u) == Len(u) = 4 /\ \A i \in DOMAIN u : IsAlpha(u[i])
+IsRegionSubtag(u) ==
+  \/ Len(u) = 2 /\ \A i \in DOMAIN u : IsAlpha(u[i])
+  \/ Len(u) = 3 /\ \A i \in DOMAIN u : u[i] >= 48 /\ u[i] <= 57
+\* The constructor of Intl.Locale (§15.1.1), as Node runs it: it reads the options in the spec's
+\* order, rejects a language, a script, or a region subtag, an hour cycle, or a case first that
+\* isn't one as it reads it, and the others where HostIntl's answer for the tag and the options
+\* read does. The object holds that key and the tag of the locale.
+LocaleConstruct(s, newTarget, tag, options) ==
+  LET o == OrdinaryCreateFromConstructor(s, newTarget, "IntlLocalePrototype", "intlLocale",
+                                         [locales |-> <<>>, options |-> Empty, tag |-> <<>>]) IN IF IsAbrupt(o) THEN o
+  ELSE IF ~IsString(tag) /\ ~IsObject(tag) THEN ThrowTypeError(o.s) ELSE
+  LET text == IF IsObject(tag) /\ O(o.s, tag).class = "intlLocale" THEN Ok(o.s, Str(O(o.s, tag).slots.tag)) ELSE ToStr(o.s, tag) IN
+  IF IsAbrupt(text) THEN text ELSE
+  LET opts == IF options = Undefined THEN OrdinaryObjectCreate(text.s, Null) ELSE ToObject(text.s, options) IN
+  IF IsAbrupt(opts) THEN opts ELSE
+  \* A Locale's tag is a valid one.
+  LET host == IF IsObject(tag) /\ O(o.s, tag).class = "intlLocale" THEN [found |-> "locale"] ELSE HostLocale(Val(text).value) IN
+  IF host.found = "invalid" THEN ThrowError(opts.s, "RangeError")
+  ELSE IF host.found # "locale" THEN Unsupported(opts.s, N("Unsupported: a locale the host's table leaves out")) ELSE
+  LET language == GetAnyStringOption(opts.s, Val(opts), SV("language")) IN IF IsAbrupt(language) THEN language
+  ELSE IF Val(language) # Empty /\ ~IsLanguageSubtag(Val(language)) THEN ThrowError(language.s, "RangeError") ELSE
+  LET script == GetAnyStringOption(language.s, Val(opts), SV("script")) IN IF IsAbrupt(script) THEN script
+  ELSE IF Val(script) # Empty /\ ~IsScriptSubtag(Val(script)) THEN ThrowError(script.s, "RangeError") ELSE
+  LET region == GetAnyStringOption(script.s, Val(opts), SV("region")) IN IF IsAbrupt(region) THEN region
+  ELSE IF Val(region) # Empty /\ ~IsRegionSubtag(Val(region)) THEN ThrowError(region.s, "RangeError") ELSE
+  LET calendar == GetAnyStringOption(region.s, Val(opts), SV("calendar")) IN IF IsAbrupt(calendar) THEN calendar ELSE
+  LET collation == GetAnyStringOption(calendar.s, Val(opts), SV("collation")) IN IF IsAbrupt(collation) THEN collation ELSE
+  LET week == GetAnyStringOption(collation.s, Val(opts), SV("firstDayOfWeek")) IN IF IsAbrupt(week) THEN week ELSE
+  LET cycle == GetStringOption(week.s, Val(opts), SV("hourCycle"), {N("h11"), N("h12"), N("h23"), N("h24")}, Empty) IN
+  IF IsAbrupt(cycle) THEN cycle ELSE
+  LET first == GetStringOption(cycle.s, Val(opts), SV("caseFirst"), {N("upper"), N("lower"), N("false")}, Empty) IN
+  IF IsAbrupt(first) THEN first ELSE
+  LET numeric == Get(first.s, Val(opts), SV("numeric")) IN IF IsAbrupt(numeric) THEN numeric ELSE
+  LET system == GetAnyStringOption(numeric.s, Val(opts), SV("numberingSystem")) IN IF IsAbrupt(system) THEN system ELSE
+  LET config == <<Val(text).value,
+                  <<Val(language), Val(script), Val(region), Val(calendar), Val(collation), Val(week), Val(cycle), Val(first),
+                    IF Val(numeric) = Undefined THEN Empty ELSE ToBooleanValue(Val(numeric)), Val(system)>>>>
+      answer == IntlAnswer(system.s, "Locale", config, "construct", <<>>)
+  IN IF IsAbrupt(answer) THEN answer
+     ELSE Ok(SetSlots(answer.s, Val(o), [options |-> config, tag |-> Val(answer).value.value]), Val(o))
+\* The methods and accessors of an Intl.Locale, l, which HostIntl answers for its key: a value, an
+\* array or an object of values, or for maximize and minimize, the tag of a new Intl.Locale.
+LocaleMethod(s, m, l) ==
+  LET config == O(s, l).slots.options
+      method == CASE m = "Locale.baseName" -> "baseName" [] m = "Locale.calendar" -> "calendar"
+                  [] m = "Locale.caseFirst" -> "caseFirst" [] m = "Locale.collation" -> "collation"
+                  [] m = "Locale.firstDayOfWeek" -> "firstDayOfWeek" [] m = "Locale.getCalendars" -> "getCalendars"
+                  [] m = "Locale.getCollations" -> "getCollations" [] m = "Locale.getHourCycles" -> "getHourCycles"
+                  [] m = "Locale.getNumberingSystems" -> "getNumberingSystems" [] m = "Locale.getTextInfo" -> "getTextInfo"
+                  [] m = "Locale.getTimeZones" -> "getTimeZones" [] m = "Locale.getWeekInfo" -> "getWeekInfo"
+                  [] m = "Locale.hourCycle" -> "hourCycle" [] m = "Locale.language" -> "language"
+                  [] m = "Locale.maximize" -> "maximize" [] m = "Locale.minimize" -> "minimize"
+                  [] m = "Locale.numberingSystem" -> "numberingSystem" [] m = "Locale.numeric" -> "numeric"
+                  [] m = "Locale.region" -> "region" [] OTHER -> "script"
+  IN IF m = "Locale.toString" THEN Ok(s, Str(O(s, l).slots.tag)) ELSE
+     LET answer == IntlAnswer(s, "Locale", config, method, <<>>) IN IF IsAbrupt(answer) THEN answer
+     ELSE IF method \in {"maximize", "minimize"} THEN
+       \* Construct(%Intl.Locale%, « tag »), whose tag is a valid one and whose options are none.
+       LET o == OrdinaryCreateFromConstructor(answer.s, Intrinsic(answer.s, "IntlLocale"), "IntlLocalePrototype", "intlLocale",
+                                              [locales |-> <<>>, options |-> Empty, tag |-> <<>>])
+           made == <<Val(answer).value.value, [i \in 1..10 |-> Empty]>>
+           tag == IntlAnswer(o.s, "Locale", made, "construct", <<>>)
+       IN IF IsAbrupt(tag) THEN tag ELSE Ok(SetSlots(tag.s, Val(o), [options |-> made, tag |-> Val(tag).value.value]), Val(o))
+     ELSE IntlResult(answer.s, method, Val(answer))
+\* The key of HostIntl's entries for an Intl.DateTimeFormat: IntlConstructedConfig's, with its time
+\* zone's identifier for the time zone it read.
+DateTimeFormatConfig(s, o) ==
+  LET config == IntlConstructedConfig(s, o, "DateTimeFormat")
+      read == config[2]
+  IN <<config[1], [i \in DOMAIN read |-> IF IntlConstructorOptions.DateTimeFormat[i].kind = "timeZone" /\ read[i] # Empty
+                                         THEN read[i].id ELSE read[i]]>>
+\* ToDateTimeFormattable (ECMA-402 §11.5.10) as the key of HostIntl's entries: a Temporal object's,
+\* or the Number of another value. undefined, whose time is now, stops.
+DateTimeFormattableKey(s, value) ==
+  IF value = Undefined THEN Unsupported(s, N("Unsupported: the time now"))
+  ELSE IF IsObject(value) /\ O(s, value).class \in DOMAIN TemporalKinds THEN
+    Ok(s, TemporalFormatKey(TemporalKinds[O(s, value).class], O(s, value).slots))
+  ELSE LET n == ToNumber(s, value) IN IF IsAbrupt(n) THEN n ELSE Ok(n.s, IntlNumberKey(IntlTimeClip(Val(n).value)))
+\* TimeClip (§21.4.1.31), whose -0 is +0, as FormatDateTime reads a Number.
+IntlTimeClip(x) == LET t == TimeClip(x) IN IF NumIsZero(t) THEN NumFromInt(0) ELSE t
+\* The text of a DateTimeFormat's format of a time value, through the host's recorded English
+\* pattern (HostDateFormat) for the options it read, where they are ones the table records:
+\* English, the Gregorian calendar, Latin digits, and UTC, which is ESCore's local time zone, of a
+\* year from 1583 to 9999. Else Empty.
+DateTimeFormatRead(config, name) == config[2][DateTimeFormatReadIndex[name]]
+DateTimeFormatPatternText(config, key) ==
+  LET read(name) == DateTimeFormatRead(config, name)
+      fields == DateFields(StringToNumber(key[2]))
+      names == {"hourCycle", "weekday", "era", "year", "month", "day", "hour", "minute", "second",
+                "fractionalSecondDigits", "dateStyle", "timeStyle", "dayPeriod"}
+      values == [n \in names |-> read(n)]
+      format == HostDateFormat(DateFormatKey("DateTimeFormat", "gregory", read("hour12"), values))
+  IN IF config[1] \notin {<<>>, <<N("en")>>, <<N("en-US")>>} \/ read("calendar") # Empty \/ read("numberingSystem") # Empty \/
+        ~(read("timeZone") \in {Empty, N("UTC")}) \/ read("timeZoneName") # Empty \/ read("formatMatcher") = N("basic") \/
+        key[1] # "number" \/ format.found # "format" \/ fields.year < 1583 \/ fields.year > 9999
+     THEN Empty
+     ELSE LocaleText(format, 1, [year |-> fields.year, month |-> fields.month + 1, day |-> fields.date],
+                     <<fields.hour, fields.minute, fields.second, fields.ms>>)
+\* The methods of an Intl.DateTimeFormat, dtf, whose format is a function bound to it.
+DateTimeFormatMethod(s, m, dtf, args) ==
+  LET config == DateTimeFormatConfig(s, dtf) IN
+  CASE m = "DateTimeFormat.resolvedOptions" ->
+         LET answer == IntlAnswer(s, "DateTimeFormat", config, "resolvedOptions", <<>>) IN
+         IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "resolvedOptions", Val(answer))
+    [] m = "DateTimeFormat.format" ->
+         IF "boundFormat" \in DOMAIN O(s, dtf).slots THEN Ok(s, O(s, dtf).slots.boundFormat) ELSE
+         LET bound == CreateBuiltinFunction(s, <<"Intl", "DateTimeFormat.boundFormat">>, 1, <<>>, dtf) IN
+         Ok(SetSlots(bound.s, dtf, [boundFormat |-> Val(bound)]), Val(bound))
+    [] m \in {"DateTimeFormat.boundFormat", "DateTimeFormat.formatToParts"} ->
+         LET x == DateTimeFormattableKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x
+         \* FormatDateTime's RangeError for a time value that TimeClip makes NaN.
+         ELSE IF Val(x)[1] = "number" /\ Val(x)[2] = N("NaN") THEN ThrowError(x.s, "RangeError") ELSE
+         LET method == IF m = "DateTimeFormat.boundFormat" THEN "format" ELSE "formatToParts"
+             answer == HostIntl(<<"DateTimeFormat", config, "formatToParts", <<Val(x)>>>>)
+             text == IF method = "format" /\ answer.found \notin {"parts", "error"} THEN DateTimeFormatPatternText(config, Val(x)) ELSE Empty
+         IN IF text # Empty THEN Ok(x.s, Str(text)) ELSE
+            LET found == IntlAnswer(x.s, "DateTimeFormat", config, "formatToParts", <<Val(x)>>) IN
+            IF IsAbrupt(found) THEN found ELSE IntlResult(found.s, method, Val(found))
+    [] OTHER ->
+         IF Arg(args, 1) = Undefined \/ Arg(args, 2) = Undefined THEN ThrowTypeError(s) ELSE
+         LET x == DateTimeFormattableKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
+         LET y == DateTimeFormattableKey(x.s, Arg(args, 2)) IN IF IsAbrupt(y) THEN y
+         \* Where both are time values, as a Temporal object and another value of another kind throw a
+         \* TypeError first.
+         ELSE IF Val(x)[1] = "number" /\ Val(y)[1] = "number" /\ N("NaN") \in {Val(x)[2], Val(y)[2]}
+         THEN ThrowError(y.s, "RangeError") ELSE
+         LET method == IF m = "DateTimeFormat.formatRange" THEN "formatRange" ELSE "formatRangeToParts"
+             answer == IntlAnswer(y.s, "DateTimeFormat", config, "formatRangeToParts", <<Val(x), Val(y)>>)
+         IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+\* Intl.Segmenter.prototype.segment (§19.3.3), %Segments% (§19.5), and %SegmentIterator% (§19.6), of
+\* the segments that HostIntl gives for a segmenter's key and a string: the index each starts at and,
+\* for word segments, whether it's like a word.
+SegmentsOf(s, segmenter, string) ==
+  IntlAnswer(s, "Segmenter", IntlConstructedConfig(s, segmenter, "Segmenter"), "segment", <<string>>)
+\* The position of the segment of segments that holds index n of string, from the ith on.
+SegmentAt(segments, n, i) ==
+  IF i < Len(segments.starts) /\ segments.starts[i + 1] <= n THEN SegmentAt(segments, n, i + 1) ELSE i
+\* CreateSegmentDataObject (§19.7.1) of the ith segment of segments of string.
+SegmentDataObject(s, segmenter, segments, string, i) ==
+  LET start == segments.starts[i]
+      end == IF i < Len(segments.starts) THEN segments.starts[i + 1] ELSE Len(string)
+      o == OrdinaryObjectCreate(s, Intrinsic(s, "ObjectPrototype"))
+      pairs == <<<<SV("segment"), Str(SubSeq(string, start + 1, end))>>, <<SV("index"), IntV(start)>>, <<SV("input"), Str(string)>>>>
+  IN Ok(SetO(o.s, Val(o), WithDataProps(O(o.s, Val(o)),
+                                        IF segments.words = <<>> THEN pairs ELSE Append(pairs, <<SV("isWordLike"), Bool(segments.words[i])>>))),
+        Val(o))
+SegmenterMethod(s, m, this, args) ==
+  CASE m = "Segmenter.segment" ->
+         LET string == ToStr(s, Arg(args, 1)) IN IF IsAbrupt(string) THEN string ELSE
+         LET a == Alloc(string.s, MakeObject(Intrinsic(string.s, "IntlSegmentsPrototype"), "intlSegments",
+                                             [segmenter |-> this, string |-> Val(string).value]))
+         IN Ok(a.s, a.v)
+    [] m = "Segments.containing" ->
+         LET slots == O(s, this).slots
+             n == ToIntegerOrInfinity(s, Arg(args, 1))
+         IN IF IsAbrupt(n) THEN n
+            ELSE IF NumLess(Val(n).value, NumFromInt(0)) \/ ~NumLess(Val(n).value, NumFromInt(Len(slots.string))) THEN Ok(n.s, Undefined) ELSE
+            LET segments == SegmentsOf(n.s, slots.segmenter, slots.string) IN IF IsAbrupt(segments) THEN segments
+            ELSE SegmentDataObject(segments.s, slots.segmenter, Val(segments), slots.string,
+                                   SegmentAt(Val(segments), NumToInt(Val(n).value), 1))
+    [] m = "Segments.iterator" ->
+         LET slots == O(s, this).slots
+             a == Alloc(s, MakeObject(Intrinsic(s, "IntlSegmentIteratorPrototype"), "intlSegmentIterator",
+                                      [segmenter |-> slots.segmenter, string |-> slots.string, position |-> 0]))
+         IN Ok(a.s, a.v)
+    [] OTHER ->
+         LET slots == O(s, this).slots IN
+         IF slots.position >= Len(slots.string) THEN CreateIterResultObject(s, Undefined, TRUE) ELSE
+         LET segments == SegmentsOf(s, slots.segmenter, slots.string) IN IF IsAbrupt(segments) THEN segments ELSE
+         LET i == SegmentAt(Val(segments), slots.position, 1)
+             end == IF i < Len(Val(segments).starts) THEN Val(segments).starts[i + 1] ELSE Len(slots.string)
+             data == SegmentDataObject(SetSlots(segments.s, this, [position |-> end]), slots.segmenter, Val(segments), slots.string, i)
+         IN IF IsAbrupt(data) THEN data ELSE CreateIterResultObject(data.s, Val(data), FALSE)
+\* The class of the object that each method of a segmenter, its segments, and their iterator takes.
+\* The units of Intl.DurationFormat (Table 20), each with its option, its display option, the styles
+\* it takes, and its digital default.
+DurationUnit(unit, key, display, styles, digital) == [unit |-> unit, key |-> key, display |-> display, styles |-> styles, digital |-> digital]
+\* GetDurationUnitOptions (§13.5.6) of each unit from the ith on, with the previous unit's style,
+\* appending to acc the style and the display that the options give, or Empty. It leaves out the
+\* two-digit hours of a locale's digital format, which only HostIntl knows.
+DurationUnitOptionsFrom(s, options, base, i, prev, acc) ==
+  IF i > Len(DurationUnits) THEN Ok(s, acc) ELSE
+  LET u == DurationUnits[i]
+      given == GetStringOption(s, options, u.key, u.styles, Empty)
+  IN IF IsAbrupt(given) THEN given ELSE
+  LET g == Val(given)
+      isTime == u.unit \in {"hours", "minutes", "seconds"}
+      isMinuteOrSecond == u.unit \in {"minutes", "seconds"}
+      first == CASE g # Empty -> [style |-> g, display |-> N("always")]
+                 [] base = N("digital") -> [style |-> u.digital, display |-> IF isTime THEN N("always") ELSE N("auto")]
+                 [] prev \in {N("fractional"), N("numeric"), N("2-digit")} ->
+                      [style |-> N("numeric"), display |-> IF isMinuteOrSecond THEN N("always") ELSE N("auto")]
+                 [] OTHER -> [style |-> base, display |-> N("auto")]
+      chosen == IF first.style = N("numeric") /\ u.unit \in {"milliseconds", "microseconds", "nanoseconds"}
+                THEN [style |-> N("fractional"), display |-> N("auto")] ELSE first
+      read == GetStringOption(given.s, options, u.display, {N("auto"), N("always")}, Empty)
+  IN IF IsAbrupt(read) THEN read ELSE
+  LET display == IF Val(read) = Empty THEN chosen.display ELSE Val(read)
+      style == IF isMinuteOrSecond /\ prev \in {N("numeric"), N("2-digit")} THEN N("2-digit") ELSE chosen.style
+  IN CASE display = N("always") /\ chosen.style = N("fractional") -> ThrowError(read.s, "RangeError")
+       [] prev = N("fractional") /\ chosen.style # N("fractional") -> ThrowError(read.s, "RangeError")
+       [] prev \in {N("numeric"), N("2-digit")} /\ chosen.style \notin {N("fractional"), N("numeric"), N("2-digit")} ->
+            ThrowError(read.s, "RangeError")
+       [] OTHER ->
+            DurationUnitOptionsFrom(read.s, options, base, i + 1,
+                                    IF u.unit \in {"hours", "minutes", "seconds", "milliseconds", "microseconds"} THEN style ELSE prev,
+                                    acc \o <<g, Val(read)>>)
+\* The constructor of Intl.DurationFormat (§13.1.1), whose object holds its requested locales and the
+\* options it read, and which constructs where HostIntl's answer for them does.
+DurationFormatConstruct(s, newTarget, locales, options) ==
+  LET o == OrdinaryCreateFromConstructor(s, newTarget, "IntlDurationFormatPrototype", "intlDurationFormat",
+                                         [locales |-> <<>>, options |-> Empty]) IN IF IsAbrupt(o) THEN o ELSE
+  LET requested == CanonicalizeLocaleList(o.s, locales) IN IF IsAbrupt(requested) THEN requested ELSE
+  LET opts == CASE options = Undefined -> OrdinaryObjectCreate(requested.s, Null)
+                [] IsObject(options) -> Ok(requested.s, options)
+                [] OTHER -> ThrowTypeError(requested.s)
+  IN IF IsAbrupt(opts) THEN opts ELSE
+  LET matcher == GetStringOption(opts.s, Val(opts), SV("localeMatcher"), {N("lookup"), N("best fit")}, N("best fit")) IN
+  IF IsAbrupt(matcher) THEN matcher ELSE
+  LET nu == GetAnyStringOption(matcher.s, Val(opts), SV("numberingSystem")) IN IF IsAbrupt(nu) THEN nu
+  ELSE IF Val(nu) # Empty /\ ~IsTypeSequenceFrom(Val(nu), 1, 0) THEN ThrowError(nu.s, "RangeError") ELSE
+  LET style == GetStringOption(nu.s, Val(opts), SV("style"), {N("long"), N("short"), N("narrow"), N("digital")}, N("short")) IN
+  IF IsAbrupt(style) THEN style ELSE
+  LET units == DurationUnitOptionsFrom(style.s, Val(opts), Val(style), 1, <<>>, <<>>) IN IF IsAbrupt(units) THEN units ELSE
+  LET digits == GetNumberOption(units.s, Val(opts), SV("fractionalDigits"), 0, 9, Empty) IN IF IsAbrupt(digits) THEN digits ELSE
+  LET config == <<Val(requested), Val(matcher), Val(nu), Val(style), Val(units), Val(digits)>>
+      answer == IntlAnswer(digits.s, "DurationFormat", config, "construct", <<>>)
+  IN IF IsAbrupt(answer) THEN answer ELSE Ok(SetSlots(answer.s, Val(o), [locales |-> Val(requested), options |-> config]), Val(o))
+\* The methods of an Intl.DurationFormat, df: ToDurationRecord, as Temporal reads a duration, whose
+\* fields' units key HostIntl's entries.
+DurationFormatMethod(s, m, df, args) ==
+  LET config == O(s, df).slots.options IN
+  IF m = "DurationFormat.resolvedOptions" THEN
+    LET answer == IntlAnswer(s, "DurationFormat", config, "resolvedOptions", <<>>) IN
+    IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "resolvedOptions", Val(answer))
+  ELSE IF ~IsObject(Arg(args, 1)) /\ ~IsString(Arg(args, 1)) THEN ThrowTypeError(s) ELSE
+  LET f == ToTemporalDurationFields(s, Arg(args, 1)) IN IF IsAbrupt(f) THEN f ELSE
+  LET method == IF m = "DurationFormat.format" THEN "format" ELSE "formatToParts"
+      answer == IntlAnswer(f.s, "DurationFormat", config, "formatToParts", <<<<"duration", [i \in 1..10 |-> TIUnits(Val(f)[i])]>>>>)
+  IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+\* String.prototype.localeCompare (ECMA-402 §19.1.1): the compare of a new Intl.Collator.
+IntlLocaleCompare(s, x, y, locales, options) ==
+  LET c == IntlConstruct(s, "Collator", Intrinsic(s, "IntlCollator"), locales, options) IN IF IsAbrupt(c) THEN c ELSE
+  LET answer == IntlAnswer(c.s, "Collator", IntlConstructedConfig(c.s, Val(c), "Collator"), "compare", <<x, y>>) IN
+  IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "compare", Val(answer))
+\* TransformCase (ECMA-402 §19.1.2) of a string's units in the locales given: as ESCore's case
+\* mapping in the host's default locale, where it isn't one that tailors case, and else what
+\* HostIntl answers.
+IntlTransformCase(s, m, units, locales, isTailored) ==
+  LET requested == CanonicalizeLocaleList(s, locales) IN IF IsAbrupt(requested) THEN requested
+  ELSE IF Val(requested) = <<>> THEN
+    IF isTailored THEN Unsupported(requested.s, N("Unsupported: a locale whose case mappings the host tailors"))
+    ELSE Ok(requested.s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
+  ELSE LET answer == IntlAnswer(requested.s, "String", <<Val(requested)>>, m, <<units>>) IN
+       IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, m, Val(answer))
+\* %Intl%.[[FallbackSymbol]], which the realm makes the first time Intl reads it.
+IntlFallbackSymbol(s) ==
+  LET intl == Intrinsic(s, "Intl") IN
+  IF "fallback" \in DOMAIN O(s, intl).slots THEN [s |-> s, v |-> O(s, intl).slots.fallback]
+  ELSE LET made == NewSymbol(s, Str(N("IntlLegacyConstructedSymbol"))) IN
+       [s |-> SetSlots(made.s, intl, [fallback |-> made.v]), v |-> made.v]
+\* Date.prototype.toLocaleString, toLocaleDateString, and toLocaleTimeString (ECMA-402 §20.4) of a
+\* time value that isn't NaN: CreateDateTimeFormat of the locales and the options, which reads them
+\* as Intl.DateTimeFormat does, and the format that HostIntl answers for it.
+DateToLocaleString(s, m, t, locales, options) ==
+  LET d == IntlConstruct(s, "DateTimeFormat", Intrinsic(s, "IntlDateTimeFormat"), locales, options) IN IF IsAbrupt(d) THEN d ELSE
+  LET answer == IntlAnswer(d.s, "Date", DateTimeFormatConfig(d.s, Val(d)), m, <<IntlNumberKey(IntlTimeClip(t))>>) IN
+  IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, m, Val(answer))
 \* Intl's functions. Where a method unwraps its receiver first, an object that inherits from the
 \* constructor's prototype, through which it would read %Intl%.[[FallbackSymbol]], stops.
 IntlBuiltin(s, f, m, this, args, nt) ==
   CASE m \in IntlConstructors ->
          IF nt = Undefined /\ m \notin IntlCallableConstructors THEN ThrowTypeError(s)
-         ELSE IF m \in DOMAIN IntlConstructorOptions THEN
-           LET o == IntlConstruct(s, m, IF nt = Undefined THEN f ELSE nt, Arg(args, 1), Arg(args, 2)) IN
+         ELSE IF m = "Locale" THEN LocaleConstruct(s, nt, Arg(args, 1), Arg(args, 2))
+         ELSE IF m = "DurationFormat" THEN DurationFormatConstruct(s, nt, Arg(args, 1), Arg(args, 2))
+         ELSE IF m \in DOMAIN IntlConstructorOptions \cup {"NumberFormat", "PluralRules"} THEN
+           LET o == IF m = "NumberFormat" THEN NumberFormatConstruct(s, IF nt = Undefined THEN f ELSE nt, Arg(args, 1), Arg(args, 2))
+                    ELSE IF m = "PluralRules" THEN PluralRulesConstruct(s, nt, Arg(args, 1), Arg(args, 2))
+                    ELSE IntlConstruct(s, m, IF nt = Undefined THEN f ELSE nt, Arg(args, 1), Arg(args, 2)) IN
            IF IsAbrupt(o) \/ nt # Undefined \/ m \notin {"DateTimeFormat", "NumberFormat"} THEN o ELSE
            \* ChainDateTimeFormat and ChainNumberFormat, which define %Intl%.[[FallbackSymbol]] on an
            \* instance that a call without new receives.
            LET inherits == OrdinaryHasInstance(o.s, f, this) IN IF IsAbrupt(inherits) THEN inherits
-           ELSE IF Val(inherits) = True THEN Unsupported(inherits.s, N("Unsupported: Intl's legacy constructed symbol"))
+           ELSE IF Val(inherits) = True THEN
+             LET symbol == IntlFallbackSymbol(inherits.s)
+                 defined == DefinePropertyOrThrow(symbol.s, this, symbol.v, DataDesc(Val(o), FALSE, FALSE, FALSE))
+             IN IF IsAbrupt(defined) THEN defined ELSE Ok(defined.s, this)
            ELSE Ok(inherits.s, Val(o))
          ELSE Unsupported(s, N("Unsupported: an Intl constructor, which reads locale data"))
     [] m = "getCanonicalLocales" ->
@@ -20339,15 +21200,33 @@ IntlBuiltin(s, f, m, this, args, nt) ==
          LET key == ToStr(s, Arg(args, 1)) IN IF IsAbrupt(key) THEN key
          ELSE IF Val(key).value \notin {N("calendar"), N("collation"), N("currency"), N("numberingSystem"), N("timeZone"), N("unit")}
          THEN ThrowError(key.s, "RangeError")
-         ELSE Unsupported(key.s, N("Unsupported: the values that the host supports"))
+         ELSE LET answer == IntlAnswer(key.s, "Intl", <<>>, "supportedValuesOf", <<Val(key).value>>) IN
+              IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, "supportedValuesOf", Val(answer))
     [] m \in IntlSupportedLocalesOf ->
          LET list == CanonicalizeLocaleList(s, Arg(args, 1)) IN IF IsAbrupt(list) THEN list
          ELSE FilterLocales(list.s, IntlServiceOf(m), Val(list), Arg(args, 2))
+    [] m = "NumberFormat.boundFormat" -> NumberFormatMethod(s, f, m, O(s, f).slots.data, args)
+    [] m = "Collator.boundCompare" -> IntlHostMethod(s, m, O(s, f).slots.data, args)
+    [] m \in DOMAIN SegmenterClasses ->
+         IF IsObject(this) /\ O(s, this).class = SegmenterClasses[m] THEN SegmenterMethod(s, m, this, args) ELSE ThrowTypeError(s)
+    [] m = "DateTimeFormat.boundFormat" -> DateTimeFormatMethod(s, m, O(s, f).slots.data, args)
+    [] m \in DurationFormatMethods /\ IsObject(this) /\ O(s, this).class = "intlDurationFormat" -> DurationFormatMethod(s, m, this, args)
+    [] m \in DateTimeFormatMethods /\ IsObject(this) /\ O(s, this).class = "intlDateTimeFormat" -> DateTimeFormatMethod(s, m, this, args)
+    [] m \in LocaleMethods /\ IsObject(this) /\ O(s, this).class = "intlLocale" -> LocaleMethod(s, m, this)
+    [] m \in IntlHostMethods /\ IsObject(this) /\ O(s, this).class = "intl" \o IntlMethodServices[m] -> IntlHostMethod(s, m, this, args)
+    [] m \in NumberFormatMethods /\ IsObject(this) /\ O(s, this).class = "intlNumberFormat" -> NumberFormatMethod(s, f, m, this, args)
     [] m \in DOMAIN IntlUnwrappingMethods ->
          IF ~IsObject(this) THEN ThrowTypeError(s) ELSE
          LET inherits == OrdinaryHasInstance(s, Intrinsic(s, IntlUnwrappingMethods[m]), this) IN IF IsAbrupt(inherits) THEN inherits
-         ELSE IF Val(inherits) = True THEN Unsupported(inherits.s, N("Unsupported: an object that Intl unwraps"))
-         ELSE ThrowTypeError(inherits.s)
+         ELSE IF Val(inherits) = False THEN ThrowTypeError(inherits.s) ELSE
+         \* UnwrapNumberFormat and UnwrapDateTimeFormat, through %Intl%.[[FallbackSymbol]].
+         LET symbol == IntlFallbackSymbol(inherits.s)
+             unwrapped == Get(symbol.s, this, symbol.v)
+             class == IF IntlUnwrappingMethods[m] = "IntlNumberFormat" THEN "intlNumberFormat" ELSE "intlDateTimeFormat"
+         IN IF IsAbrupt(unwrapped) THEN unwrapped
+            ELSE IF ~IsObject(Val(unwrapped)) \/ O(unwrapped.s, Val(unwrapped)).class # class THEN ThrowTypeError(unwrapped.s)
+            ELSE IF class = "intlNumberFormat" THEN NumberFormatMethod(unwrapped.s, f, m, Val(unwrapped), args)
+            ELSE DateTimeFormatMethod(unwrapped.s, m, Val(unwrapped), args)
     [] IsObject(this) /\ O(s, this).class = "intl" \o IntlMethodServices[m] ->
          Unsupported(s, N("Unsupported: an Intl object's method, which reads locale data"))
     [] OTHER -> ThrowTypeError(s)

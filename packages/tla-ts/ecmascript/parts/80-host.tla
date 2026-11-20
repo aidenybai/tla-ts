@@ -150,6 +150,27 @@ HostDateFormat(key) == [found |-> "none"]
 \* "unknown", as engine262 has no locale data.
 HostLocale(tag) == [found |-> "unknown"]
 
+\* HostCalendarYear(<<cal, year>>): a year of the Chinese or the Dangi calendar, which the host
+\* computes astronomically: found is "year", with the epoch days of its first day, the ordinal of
+\* its leap month or 0, and its months of 30 days as bits from the first month's. Else found is
+\* "unknown", where the host's table leaves the year out, as engine262 has no such calendar.
+HostCalendarYear(key) == [found |-> "unknown"]
+
+\* HostCalendarMonthDay(<<cal, month, leap, day>>): the month-day of the Chinese or the Dangi
+\* calendar of a month code's month and leap flag and a day from 1 to 30: found is "monthDay", with
+\* the epoch days of its ISO reference date and whether the month code and the day are kept, which
+\* they aren't where no year that the host searches has them. Else found is "unknown".
+HostCalendarMonthDay(key) == [found |-> "unknown"]
+
+\* HostIntl(<<service, config, method, args>>): what the host's Intl gives for a method of an object
+\* of a service whose requested locales and options config gives, with arguments args. found is
+\* "options", with the pairs of a property's units and its value that resolvedOptions gives, "parts",
+\* with the parts of a formatted value, each a sequence of a property's units and its value's, or
+\* "error", with the name of the error it throws. <<"currencyDigits", code>> gives "digits", with
+\* the digits of a currency. Else found is "unknown", where the host's table leaves the key out,
+\* and "none" where the host has no Intl, as engine262 has none.
+HostIntl(key) == [found |-> "none"]
+
 \* A run whose jobs leave a promise rejected that nothing handles fails with the promise's reason, as
 \* Node fails such a script (HostPromiseRejectionTracker, §27.2.1.9).
 TestResult(r) ==

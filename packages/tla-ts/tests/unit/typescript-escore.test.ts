@@ -727,7 +727,9 @@ describe("compiles scripts by specializing ESCore", () => {
     });
 
     it("stops at a locale-sensitive method and at a computed date string outside ECMA-262's formats", async () => {
-      expect((await checkScript("(1234.5).toLocaleString();")).message).toContain("tla-ts can't");
+      expect(
+        (await checkScript('new Date("abcd".length * 1000).toLocaleString("de-DE");')).message,
+      ).toContain("tla-ts can't");
       expect((await checkScript('Date.parse("Thu Jan 01 " + 1970);')).message).toContain(
         "tla-ts can't",
       );
@@ -794,8 +796,24 @@ describe("compiles scripts by specializing ESCore", () => {
       ).toContain(THREW);
     });
 
-    it("stops at an element whose toLocaleString reads the host's locale", async () => {
-      expect((await checkScript("[1234.5].toLocaleString();")).message).toContain("tla-ts can't");
+    it("formats an element whose toLocaleString reads the host's locale as the host does", async () => {
+      expect(
+        (
+          await checkScript(
+            'if ([1234.5].toLocaleString() !== "1,234.5") throw new Error("other");',
+          )
+        ).message,
+      ).toBeUndefined();
+      expect(
+        (await checkScript('if ([1234.5].toLocaleString() !== "1234.5") throw new Error("other");'))
+          .message,
+      ).toContain(THREW);
+    });
+
+    it("stops at an element whose toLocaleString formats a value the program computes", async () => {
+      expect(
+        (await checkScript('[new Date("abcd".length * 1000)].toLocaleString("de-DE");')).message,
+      ).toContain("tla-ts can't");
     });
   });
 
@@ -1326,9 +1344,55 @@ describe("compiles scripts by specializing ESCore", () => {
           "2024-03-10[u-ca=hebrew]|6|13|M06|P2Y9M26D|heisei|31|1445-9-1|30|6|2024-09-06[u-ca=coptic]|1972-03-20[u-ca=persian]|RangeError";
         expect((await checkScript(getSource(expected))).message).toContain(THREW);
       });
+    },
+  );
 
-      it("stops at the Chinese calendar, whose tables ESCore doesn't hold", async () => {
-        const source = 'Temporal.PlainDate.from("2024-03-11[u-ca=chinese]");';
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "runs the Chinese and Dangi calendars from the years that the host's table records",
+    () => {
+      const getSource = (expected: string) => `
+      const date = Temporal.PlainDate.from({ year: 2023, monthCode: "M02L", day: 29, calendar: "chinese" });
+      const dangi = Temporal.PlainDate.from("2023-03-22[u-ca=dangi]");
+      const monthDay = Temporal.PlainMonthDay.from({ monthCode: "M09L", day: 30, calendar: "chinese" });
+      let rejected = "none";
+      try {
+        Temporal.PlainMonthDay.from({ monthCode: "M01L", day: 1, calendar: "chinese" }, { overflow: "reject" });
+      } catch (error) {
+        rejected = (error as Error).name;
+      }
+      const result = [
+        date.toString(),
+        date.month,
+        date.monthsInYear,
+        date.daysInYear,
+        date.era,
+        date.add({ years: 1 }).monthCode,
+        date.add({ months: 13 }).toString(),
+        date.until("2025-06-01[u-ca=chinese]", { largestUnit: "years" }).toString(),
+        dangi.monthCode,
+        dangi.day,
+        monthDay.toString(),
+        monthDay.monthCode,
+        rejected,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected =
+          "2023-04-19[u-ca=chinese]|3|13|384||M02|2024-05-07[u-ca=chinese]|P2Y2M6D|M02L|1|1972-11-05[u-ca=chinese]|M09|RangeError";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected =
+          "2023-04-19[u-ca=chinese]|3|13|384||M02|2024-05-07[u-ca=chinese]|P2Y2M6D|M02L|1|1972-11-05[u-ca=chinese]|M09L|RangeError";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a year that the host's table leaves out", async () => {
+        const source =
+          'Temporal.PlainDate.from({ year: 3000, month: 1, day: 1, calendar: "chinese" });';
         expect((await checkScript(source)).message).toContain("tla-ts can't");
       });
     },
@@ -1387,8 +1451,93 @@ describe("compiles scripts by specializing ESCore", () => {
         expect((await checkScript(getSource(expected))).message).toContain(THREW);
       });
 
-      it("stops at a locale other than English", async () => {
-        const source = 'new Temporal.PlainDate(2024, 12, 26).toLocaleString("de");';
+      it("stops at a locale other than English for an object that the host's Intl doesn't format", async () => {
+        const source = 'new Temporal.PlainDate(2024, 12, [26].length).toLocaleString("de");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "formats the Temporal objects that a program's literals make through the host's Intl",
+    () => {
+      const getSource = (expected: string) => `
+      const date = new Temporal.PlainDate(2021, 8, 4);
+      let error = "none";
+      try {
+        new Intl.DateTimeFormat("en-US", { timeStyle: "short" }).format(date);
+      } catch (caught) {
+        error = (caught as Error).name;
+      }
+      try {
+        new Intl.DurationFormat("en", { hours: "numeric", minutes: "long" });
+      } catch (caught) {
+        error += (caught as Error).name;
+      }
+      const result = [
+        date.toLocaleString("de-AT", { dateStyle: "long" }),
+        new Intl.DateTimeFormat("en-US", { dateStyle: "short" }).format(date),
+        Temporal.Instant.fromEpochMilliseconds(0).toLocaleString("en-US", { timeZone: "UTC", timeStyle: "short" }),
+        new Intl.DurationFormat("en", { style: "long" }).format({ hours: 1, minutes: 2 }),
+        Temporal.Duration.from({ hours: 1 }).toLocaleString("en"),
+        Intl.supportedValuesOf("calendar").includes("chinese"),
+        error,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected =
+          "4. August 2021|8/4/21|12:00 AM|1 hour, 2 minutes|1 hr|true|TypeErrorRangeError";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected =
+          "4. August 2021|8/4/21|12:00 AM|1 hour, 2 minute|1 hr|true|TypeErrorRangeError";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a Temporal object that the program's literals don't make", async () => {
+        const source =
+          'new Temporal.PlainDate(2021, 8, 4).add({ days: [1].length }).toLocaleString("de-AT");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "reads the time zones that Node takes, by their links and names joined of parts",
+    () => {
+      const getSource = (expected: string) => `
+      const zone = new Temporal.ZonedDateTime(0n, "Asia/Calcutta");
+      let rejected = "none";
+      try {
+        new Temporal.ZonedDateTime(0n, "Etc/GMT-" + "0" + 1);
+      } catch (error) {
+        rejected = (error as Error).name;
+      }
+      const result = [
+        zone.timeZoneId,
+        zone.equals(new Temporal.ZonedDateTime(0n, "asia/kolkata")),
+        new Temporal.ZonedDateTime(0n, "Etc/GMT-" + 14).timeZoneId,
+        rejected,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected = "Asia/Calcutta|true|Etc/GMT-14|RangeError";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = "Asia/Calcutta|false|Etc/GMT-14|RangeError";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a joined name that the host's table leaves out", async () => {
+        const source = 'new Temporal.ZonedDateTime(0n, "Etc/GMT-" + "1x");';
         expect((await checkScript(source)).message).toContain("tla-ts can't");
       });
     },
@@ -1440,12 +1589,13 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource(expected))).message).toContain(THREW);
     });
 
-    it("stops at a constructor whose options it leaves out", async () => {
-      expect((await checkScript("new Intl.NumberFormat();")).message).toContain("tla-ts can't");
+    it("stops at a constructor whose options the host's table leaves out", async () => {
+      const source = 'new Intl.DurationFormat("en", { numberingSystem: ["ar", "ab"].join("") });';
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
 
     it("stops at a locale that the program doesn't write", async () => {
-      const source = 'Intl.getCanonicalLocales(["en", "US"].join("-"));';
+      const source = 'Intl.getCanonicalLocales(["de", "AT"].join("-"));';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });
@@ -1500,7 +1650,7 @@ describe("compiles scripts by specializing ESCore", () => {
     });
 
     it("stops at a method, which reads locale data", async () => {
-      const source = "new Intl.Collator().resolvedOptions();";
+      const source = 'new Intl.Collator().compare(String.fromCharCode(120), "b");';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });
@@ -1553,11 +1703,270 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource(expected))).message).toContain(THREW);
     });
 
-    it("stops where a call without new chains an instance, as Intl's legacy symbol does", async () => {
-      const source = "Intl.DateTimeFormat.call(new Intl.DateTimeFormat());";
+    it("stops at a format of a date that the host's table leaves out", async () => {
+      const source =
+        'new Intl.DateTimeFormat("de", { timeZone: "UTC" }).format(Date.UTC([2024].length));';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });
+
+  describe("answers Intl's methods from the host's Intl for the literals a program writes", () => {
+    const getSource = (expected: string) => `
+      const format = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
+      const parts = format.formatToParts(-1234.5).map((part) => part.type).join(",");
+      const list = new Intl.ListFormat("en-US", { type: "disjunction" });
+      const time = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
+      const locale = new Intl.Locale("en", { region: "GB" });
+      const dates = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
+      const words = [...new Intl.Segmenter("en-US", { granularity: "word" }).segment("Hi there")];
+      let errors = "";
+      for (const run of [
+        () => new Intl.NumberFormat("en-US", { style: "currency" }),
+        () => new Intl.NumberFormat("en-US", { maximumFractionDigits: 101 }),
+        () => new Intl.ListFormat("en-US").format(["a", 1 as unknown as string]),
+        () => time.format(1, "fortnight" as "day"),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [
+        format.format(-1234.5),
+        parts,
+        (12345.678).toLocaleString("en-US"),
+        format.resolvedOptions().minimumFractionDigits,
+        list.format(["a", "b", "c"]),
+        time.format(-1, "day"),
+        new Intl.Collator("en-US").compare("a", "B"),
+        locale.toString(),
+        locale.maximize().toString(),
+        dates.format(0),
+        words.filter((word) => word.isWordLike).map((word) => word.segment).join("+"),
+        errors,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      const expected =
+        "-1.234,50\\u00a0€|minusSign,integer,group,integer,decimal,fraction,literal,currency|12,345.678|2|a, b, or c|yesterday|-1|en-GB|en-Latn-GB|Jan 1, 1970|Hi+there|TypeError;RangeError;TypeError;RangeError;";
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      const expected =
+        "-1.234,50\\u00a0€|minusSign,integer,group,integer,decimal,fraction,literal,currency|12,345.678|2|a, b, or c|tomorrow|-1|en-GB|en-Latn-GB|Jan 1, 1970|Hi+there|TypeError;RangeError;TypeError;RangeError;";
+      expect((await checkScript(getSource(expected))).message).toContain(THREW);
+    });
+
+    it("stops at a value that the program doesn't write", async () => {
+      const source = 'new Intl.NumberFormat("en-US").format(Math.PI);';
+      expect((await checkScript(source)).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "formats dates that a program computes and chains legacy Intl objects",
+    () => {
+      const getSource = (expected: string) => `
+      const format = new Intl.DateTimeFormat("en", { hour: "numeric", dayPeriod: "long" });
+      const hours: string[] = [];
+      for (let hour = 9; hour < 24; hour += 6) hours.push(format.format(Date.UTC(2017, 11, 12, hour)));
+      const chained = Intl.NumberFormat.call(Object.create(Intl.NumberFormat.prototype));
+      const symbol = Object.getOwnPropertySymbols(chained)[0];
+      const result = [
+        hours.join(","),
+        symbol.description,
+        Intl.NumberFormat.prototype.resolvedOptions.call(chained).locale,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected =
+          "9 in the morning,3 in the afternoon,9 at night|IntlLegacyConstructedSymbol|en-US";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected =
+          "9 in the morning,3 in the afternoon,9 in the evening|IntlLegacyConstructedSymbol|en-US";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a format of the time now", async () => {
+        expect((await checkScript("new Intl.DateTimeFormat().format();")).message).toContain(
+          "tla-ts can't",
+        );
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "runs the locale-sensitive methods of arrays and strings as ECMA-402 does",
+    () => {
+      const getSource = (expected: string) => `
+      const lengths = [{ toLocaleString: (...args: unknown[]) => String(args.length) }].toLocaleString();
+      const result = [
+        [1234.5, 6].toLocaleString("de-DE"),
+        new Int8Array([7]).toLocaleString("en"),
+        lengths,
+        "a".localeCompare("B", "en"),
+        "i".toLocaleUpperCase("tr"),
+        "I".toLocaleLowerCase("en"),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect((await checkScript(getSource("1.234,5,6|7|2|-1|İ|i"))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("1.234,5,6|7|0|-1|İ|i"))).message).toContain(THREW);
+      });
+
+      it("stops at a case mapping of a string that the program doesn't write", async () => {
+        const source = 'String.fromCharCode(105).toLocaleUpperCase("tr");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "records the Intl objects of subclasses, computed option names, and locales the host gives back",
+    () => {
+      const getSource = (expected: string) => `
+      const key = "style";
+      class Formatter extends Intl.NumberFormat {}
+      const result = [
+        new Formatter("de-DE").format(1234.5),
+        new Intl.NumberFormat("en", { [key]: "percent" }).format(0.5),
+        new Intl.NumberFormat("en").format("abc"),
+        Intl.getCanonicalLocales(new Intl.NumberFormat().resolvedOptions().locale).join(),
+        new Intl.NumberFormat("en", { style: "currency", currency: "USD", currencySign: "accounting", signDisplay: "never" }).format(-5),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkScript(getSource("1.234,5|50%|NaN|en-US|$5.00"))).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("1.234,5|50%|NaN|en-US|($5.00)"))).message).toContain(
+          THREW,
+        );
+      });
+
+      it("stops at a locale that the program joins of parts", async () => {
+        const source = 'new Intl.NumberFormat(["d", "e"].join("")).format(1);';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "gives Date's locale strings through Intl.DateTimeFormat",
+    () => {
+      const getSource = (expected: string) => `
+      const date = new Date(0);
+      const result = [
+        date.toLocaleString("en-US", { timeZone: "UTC" }),
+        date.toLocaleDateString("en-US", { month: "long" }),
+        date.toLocaleTimeString("en-US", { hour: "numeric" }),
+        new Date(Number.NaN).toLocaleString("en-US"),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkScript(getSource("1/1/1970, 12:00:00 AM|January|12 AM|Invalid Date")))
+            .message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect(
+          (await checkScript(getSource("1/1/1970, 12:00:00 PM|January|12 AM|Invalid Date")))
+            .message,
+        ).toContain(THREW);
+      });
+
+      it("stops at a time value that the program doesn't write", async () => {
+        const source = 'new Date("abcd".length * 1000).toLocaleString("en-US");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "records the values that a program's arithmetic of literals makes",
+    () => {
+      const getSource = (expected: string) => `
+      const result = [
+        new Intl.NumberFormat("en").format(2 ** 10),
+        new Intl.DurationFormat("en").format({ years: 2 ** 32 - 1 }),
+        new Intl.NumberFormat("en").format(Number.MAX_SAFE_INTEGER),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected = "1,024|4,294,967,295 yrs|9,007,199,254,740,991";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = "1,024|4,294,967,295 yrs|9,007,199,254,740,990";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a value that arithmetic of a computed value makes", async () => {
+        const source = 'new Intl.NumberFormat("en").format("abc".length ** 10);';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "throws a range's TypeError for a Temporal object and a time value before its RangeError",
+    () => {
+      const getSource = (expected: string) => `
+      const format = new Intl.DateTimeFormat("en");
+      let errors = "";
+      for (const run of [
+        () => format.formatRange({ valueOf: () => Number.NaN }, new Temporal.PlainDate(1970, 1, 1)),
+        () => format.formatRange(Number.NaN, 0),
+      ]) {
+        try {
+          run();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      if (errors !== "${expected}") throw new Error(errors);
+    `;
+
+      it("agrees with Node", async () => {
+        expect((await checkScript(getSource("TypeError;RangeError;"))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("RangeError;RangeError;"))).message).toContain(THREW);
+      });
+
+      it("stops at a range of time values that the program doesn't write", async () => {
+        const source = 'new Intl.DateTimeFormat("de").formatRange(0, "abcd".length * 1000);';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
 
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `

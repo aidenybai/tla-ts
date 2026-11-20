@@ -185,4 +185,46 @@ describe("prepare ESCore's runtime from a recorded host as from Node's realm", (
       expect((await getRecorded(getSource(0), "locale.ts")).message).toContain("tla-ts can't");
     });
   });
+
+  // Nor does it answer what the host's Intl formats of the program's literals, or how its
+  // Date.parse reads a date string outside ECMA-262's formats.
+  describe("stop where the program formats through the host's Intl", () => {
+    const getSource = (expected: string) =>
+      `const formatted = new Intl.NumberFormat("en-US").format(1234.5);\nif (formatted !== "${expected}") throw new Error(formatted);\n`;
+
+    it("agrees with Node", async () => {
+      expect(runNode(getSource("1,234.5"), "intl.ts").status).toBe(0);
+      expect((await live.getOutcome(getSource("1,234.5"), "intl.ts")).status).toBe("success");
+      expect((await getRecorded(getSource("1,234.5"), "intl.ts")).message).toContain(
+        "tla-ts can't",
+      );
+    });
+
+    it("rejects another result", async () => {
+      expect(runNode(getSource("1234.5"), "intl.ts").stderr).toContain("Error: 1,234.5");
+      expect((await live.getOutcome(getSource("1234.5"), "intl.ts")).message).toContain(
+        "the script threw an exception",
+      );
+      expect((await getRecorded(getSource("1234.5"), "intl.ts")).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("stop where the program parses a date string as the host does", () => {
+    const getSource = (expected: number) =>
+      `const parsed = Date.parse("1970/01/01 00:00:01");\nif (parsed !== ${expected}) throw new Error(String(parsed));\n`;
+
+    it("agrees with Node", async () => {
+      expect(runNode(getSource(1000), "date.ts").status).toBe(0);
+      expect((await live.getOutcome(getSource(1000), "date.ts")).status).toBe("success");
+      expect((await getRecorded(getSource(1000), "date.ts")).message).toContain("tla-ts can't");
+    });
+
+    it("rejects another result", async () => {
+      expect(runNode(getSource(0), "date.ts").stderr).toContain("Error: 1000");
+      expect((await live.getOutcome(getSource(0), "date.ts")).message).toContain(
+        "the script threw an exception",
+      );
+      expect((await getRecorded(getSource(0), "date.ts")).message).toContain("tla-ts can't");
+    });
+  });
 });
