@@ -1068,9 +1068,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       ),
     );
     const analyzeSubstitutes = (instance: LetInstance) =>
-      instance.getSubstitutionNames().flatMap((name) => {
+      instance.getSubstitutionNames().map((name) => {
         const definition = expression.definitions.find((item) => item.name === name);
-        return definition ? [analyzeDefinition(definition, entered.inner)] : [];
+        if (!definition)
+          throw new TlaSyntaxError(`Cannot find the LET instance's substitute ${name}`);
+        return analyzeDefinition(definition, entered.inner);
       });
     const checked = new Set<LetInstance>();
     const ownDefinitions = (
