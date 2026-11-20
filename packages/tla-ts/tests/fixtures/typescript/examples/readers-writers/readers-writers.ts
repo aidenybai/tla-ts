@@ -8,6 +8,11 @@ let readers = new Set<Actor>();
 let writers = new Set<Actor>();
 let waiting: [Access, Actor][] = [];
 
+// A Set keeps its elements in the order they were added, which TLA+'s sets don't have, so each set
+// keeps its actors sorted.
+const getSorted = (values: Iterable<Actor>) =>
+  new Set([...values].sort((left, right) => left - right));
+
 const getWaiting = (access: Access) =>
   new Set(waiting.filter((request) => request[0] === access).map((request) => request[1]));
 
@@ -29,8 +34,8 @@ export const readOrWrite = () => {
   const request = waiting[0];
   if (request[0] === "write" && readers.size !== 0) return;
   waiting.shift();
-  if (request[0] === "read") readers.add(request[1]);
-  else writers.add(request[1]);
+  if (request[0] === "read") readers = getSorted([...readers, request[1]]);
+  else writers = getSorted([...writers, request[1]]);
 };
 
 /** @fair */
