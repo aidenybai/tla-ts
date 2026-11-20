@@ -69,6 +69,7 @@ export interface InstanceLevels {
   getLetInstance: (instance: Instance) => LetInstance | undefined;
   getInstanced: (copy: InstanceCopy) => InstancedDefinition;
   checkInstantiation: (instance: Instance, instancer: string, scope: Scope) => SanyError[];
+  getInstanceDefinitions: (instance: Instance) => Definition[];
 }
 
 interface LevelContext {
@@ -354,6 +355,11 @@ const toOperatorLevels = (
   });
   return levels;
 };
+
+const addInstanceDefinitions = (instances: InstanceLevels, instance: Instance, scope: Scope) =>
+  instances
+    .getInstanceDefinitions(instance)
+    .forEach((definition) => scope.set(definition.name, { kind: "Let", definition, scope }));
 
 const createLetScope = (expression: LetExpression, scope: Scope) => {
   const inner: Scope = new Map(scope);
@@ -927,6 +933,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }),
     );
     const inner = createLetScope(expression, scope);
+    // tla-ts expands only the LET instances outside proofs and ASSUME/PROVEs into definitions.
+    expression.instances?.forEach((instance) => {
+      if (!context.instances.getLetInstance(instance)) {
+        addInstanceDefinitions(context.instances, instance, inner);
+      }
+    });
     if (expression.recursive) {
       getRecursiveSections(scope, expression).forEach((section) =>
         checkRecursiveSection(section.members),
@@ -1627,10 +1639,12 @@ export const checkModuleLevels = (
     const errors = proof.steps.flatMap((step) => {
       const body = step.body;
       if (body.kind === "Use" || body.kind === "Hide") checkFacts(body.facts, inner);
+      if (body.kind === "Instance") addInstanceDefinitions(context.instances, body, inner);
       if (body.kind === "Define") {
         body.definitions.forEach((definition) => {
           if (definition.kind === "Instance") {
             definedInstances.push(definition);
+            addInstanceDefinitions(context.instances, definition, inner);
             return;
           }
           inner.set(definition.name, { kind: "Let", definition, scope: inner });

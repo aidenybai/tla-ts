@@ -269,6 +269,14 @@ const getSubstitutions = (instances: Instance[]) =>
     instance.substitutions.map((substitution) => substitution.expression),
   );
 
+// SANY substitutes each declaration an INSTANCE leaves out with the symbol of the same name.
+const getSubstitute = (instance: Instance, name: string): Expression =>
+  instance.substitutions.find((substitution) => substitution.name === name)?.expression ?? {
+    kind: "Identifier",
+    name,
+    location: instance.location,
+  };
+
 const getProofInstances = (proof: Proof | undefined): Instance[] =>
   proof?.kind === "Steps"
     ? proof.steps.flatMap((step) => [
@@ -384,27 +392,43 @@ export const createEnvironment = (
         // A standard module, which declares nothing, is never linked.
         const linked = checkedModules.get(instance.module);
         if (!linked) return [];
-        const substitutions = new Map(
-          instance.substitutions.map((substitution) => [
-            substitution.name,
-            substitution.expression,
-          ]),
-        );
         return instanceLevels.checkInstance({
           module: instance.module,
           instancer,
           scope,
           substitutions: new Map(
-            linked.declarations.map((declaration): [string, Expression] => [
+            linked.declarations.map((declaration) => [
               declaration.name,
-              substitutions.get(declaration.name) ?? {
-                kind: "Identifier",
-                name: declaration.name,
-                location: instance.location,
-              },
+              getSubstitute(instance, declaration.name),
             ]),
           ),
           location: instance.location,
+        });
+      },
+      getInstanceDefinitions: (instance) => {
+        const linked = checkedModules.get(instance.module);
+        if (!linked) return [];
+        const substitutes = {
+          params: instance.params,
+          substitutions: new Map(
+            linked.declarations.map((declaration) => [
+              declaration.key,
+              getSubstitute(instance, declaration.name),
+            ]),
+          ),
+        };
+        return [...linked.exported].flatMap((entry) => {
+          const copy =
+            entry[1].kind === "Definition"
+              ? createInstanceCopy(entry[1].key, instance.module, substitutes)
+              : undefined;
+          if (!copy) return [];
+          const definition = {
+            ...withInstanceParams(copy.source, instance.params),
+            name: instance.name === undefined ? entry[0] : `${instance.name}!${entry[0]}`,
+          };
+          instanceCopies.set(definition, copy);
+          return [definition];
         });
       },
     },

@@ -975,6 +975,29 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("gives the definitions that a proof or a LET in a proof instantiates their levels, as SANY does", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\n---- MODULE Inner ----\nCONSTANT c\nVARIABLE z\nIZ == z'\nIC(a) == <<c, a>>\n====\nI0 == INSTANCE Inner WITH c <- 1, z <- x\nTHEOREM ASSUME NEW CONSTANT y PROVE TRUE\n<1> N == INSTANCE Inner WITH c <- y, z <- x\n<1>1. (N!IZ)' = 1\n  OBVIOUS\n<1>2. N!IC(x')' = 1\n  OBVIOUS\n<1> INSTANCE Inner WITH c <- 1, z <- x\n<1>3. (IZ)' = 1\n  OBVIOUS\n<1>4. LET K == INSTANCE Inner WITH c <- y, z <- x IN (K!IZ)' = 1\n  OBVIOUS\n<1> QED\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          "line 12, col 7 to line 12, col 13",
+          "line 14, col 7 to line 14, col 15",
+          "line 17, col 7 to line 17, col 11",
+          "line 19, col 54 to line 19, col 60",
+        ].map((location) => ({
+          location: `${location} of module M`,
+          message:
+            "Level error in applying operator ':\nThe level of argument 1 exceeds the maximum level allowed by the operator.",
+        })),
+      ),
+    );
+  });
+
   it("reports an error in instantiating a module before a constant the configuration leaves out, like TLC", async () => {
     await expect(
       check({
