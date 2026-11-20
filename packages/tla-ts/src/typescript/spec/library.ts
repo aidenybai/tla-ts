@@ -1,6 +1,3 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-
 // ESCore, split into its definitions, of which a compiled spec's runtime is made. The directory
 // holds ESCore.tla, the modules it extends, and parts, whose tables list the realm's properties.
 
@@ -104,15 +101,32 @@ const EXTRA_TRIGGERS = new Map([
   ["81-iterator.tla", ["values", "keys", "entries"]],
 ]);
 
-export const createLibrary = (directory: string): Library => {
-  const core = readFileSync(join(directory, "ESCore.tla"), "utf8");
+// ESCore's texts: ESCore.tla, its parts by file name, and the modules it extends by name, which a
+// host without ESCore's directory, such as a browser, is given.
+export interface EscoreFiles {
+  core: string;
+  parts: [name: string, text: string][];
+  modules: [name: string, text: string][];
+}
+
+export const readEscoreFiles = (directory: string): EscoreFiles => {
+  const files = process.getBuiltinModule("node:fs");
+  const path = process.getBuiltinModule("node:path");
+  const read = (...names: string[]) => files.readFileSync(path.join(directory, ...names), "utf8");
+  return {
+    core: read("ESCore.tla"),
+    parts: files
+      .readdirSync(path.join(directory, "parts"))
+      .filter((name) => name.endsWith(".tla"))
+      .map((name) => [name, read("parts", name)]),
+    modules: ["ESNumber", "ESBigNat"].map((name) => [name, read(`${name}.tla`)]),
+  };
+};
+
+export const createLibrary = (files: EscoreFiles): Library => {
+  const core = files.core;
   const body = core.slice(core.lastIndexOf("\nRECURSIVE "), core.lastIndexOf("\n===="));
-  const parts = readdirSync(join(directory, "parts"))
-    .filter((name) => name.endsWith(".tla"))
-    .map((name) => ({
-      group: getGroup(name),
-      text: readFileSync(join(directory, "parts", name), "utf8"),
-    }));
+  const parts = files.parts.map((part) => ({ group: getGroup(part[0]), text: part[1] }));
   const groupOf = new Map(
     parts.flatMap((part) =>
       splitDefinitions(part.text).flatMap((definition) => {
@@ -158,12 +172,7 @@ export const createLibrary = (directory: string): Library => {
     });
     order.push(match[1]);
   }
-  const modules = new Map(
-    ["ESNumber", "ESBigNat"].map((name) => [
-      name,
-      readFileSync(join(directory, `${name}.tla`), "utf8"),
-    ]),
-  );
+  const modules = new Map(files.modules);
   const properties = parts.flatMap((part) => [
     ...[...part.text.matchAll(/\b(?:M|G|V|L)\("([A-Za-z0-9_]+)", SV\("([^"]+)"\)/g)].map(
       (match) => ({

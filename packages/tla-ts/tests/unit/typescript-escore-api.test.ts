@@ -18,7 +18,8 @@ interface Outcome {
 }
 
 // ESCore's evaluation nests deeper than a test's stack, so the API runs on a worker with the stack
-// that test262-engine262 gives ESCore. A request compiles with the public compile.
+// that test262-engine262 gives ESCore. A request compiles with the public compile, or on ESCore
+// from a realm that Node recorded and that went through JSON, as a browser reads it.
 const worker = new Worker(
   `const { register } = require("node:module");
   const { parentPort, workerData } = require("node:worker_threads");
@@ -30,12 +31,29 @@ const worker = new Worker(
     import(workerData.source + "/parallel.ts"),
     import(workerData.source + "/values.ts"),
     import(workerData.source + "/errors.ts"),
+    import(workerData.source + "/typescript/spec/api.ts"),
+    import(workerData.source + "/typescript/spec/library.ts"),
+    import(workerData.source + "/typescript/spec/prepare.ts"),
+    import(workerData.source + "/typescript/spec/realm.ts"),
   ]);
+  let recorded;
+  const getRecorded = (modules) => {
+    const [, , , , , library, prepare, realm] = modules;
+    if (recorded === undefined) {
+      const files = library.readEscoreFiles(workerData.directory);
+      const host = { files, realm: realm.recordHostRealm(library.createLibrary(files)) };
+      recorded = prepare.prepareHostRuntime(JSON.parse(JSON.stringify(host)));
+    }
+    return recorded;
+  };
   parentPort.on("message", async (request) => {
-    const [compile, parallel, values, errors] = await loading;
+    const modules = await loading;
+    const [compile, parallel, values, errors, api] = modules;
     const options = { source: request.source, fileName: request.fileName };
     try {
-      const spec = await compile.compile(options);
+      const spec = request.isRecorded
+        ? api.compileEscore(options, getRecorded(modules))
+        : await compile.compile(options);
       const result = await parallel.check({ ...spec, onPrint: () => {} });
       parentPort.postMessage({
         id: request.id,
@@ -73,14 +91,17 @@ worker.on("message", (response: { id: number; outcome: Outcome }) =>
   pending[response.id](response.outcome),
 );
 
-const getOutcome = (source: string, fileName: string) =>
+const getOutcome = (source: string, fileName: string, isRecorded = false) =>
   new Promise<Outcome>((resolve) => {
-    worker.postMessage({ id: pending.length, source, fileName });
+    worker.postMessage({ id: pending.length, source, fileName, isRecorded });
     pending.push(resolve);
   });
 
 // The worker prepares ESCore's runtime before the first check, which takes longer than a check.
-beforeAll(() => getOutcome("", "empty.ts"), 120_000);
+beforeAll(
+  () => Promise.all([getOutcome("", "empty.ts"), getOutcome("", "empty.ts", true)]),
+  120_000,
+);
 
 // The message of a run that fails: a check's failure, or the error that its check throws as the
 // spec starts, as a spec without variables fails.
@@ -225,5 +246,53 @@ describe("compile and check a model whose actions Node runs", () => {
       true,
       true,
     ]);
+  });
+});
+
+// A browser prepares ESCore's runtime from a realm that Node recorded, which holds no functions of
+// the host, so the spec is Node's but where the program asks the host about a locale tag.
+describe("compile on ESCore from a recorded realm as from Node's", () => {
+  describe("give the spec and the result that Node's realm gives", () => {
+    const getSource = (expected: string) =>
+      `const entries = Object.entries({ b: 2, a: 1 }).map(([key, value]) => key + value);\nconst text = JSON.stringify(entries);\nif (text !== '${expected}') throw new Error(text);\n`;
+
+    it("agrees with Node", async () => {
+      const source = getSource('["b2","a1"]');
+      expect(runNode({ "entries.ts": source }, "entries.ts").status).toBe(0);
+      const recorded = await getOutcome(source, "entries.ts", true);
+      expect(recorded).toEqual(await getOutcome(source, "entries.ts"));
+      expect(recorded).toMatchObject({ status: "success" });
+    });
+
+    it("rejects another result", async () => {
+      const source = getSource('["a1","b2"]');
+      expect(runNode({ "entries.ts": source }, "entries.ts").stderr).toContain(
+        'Error: ["b2","a1"]',
+      );
+      const recorded = await getOutcome(source, "entries.ts", true);
+      expect(recorded).toEqual(await getOutcome(source, "entries.ts"));
+      expect(getFailure(recorded)).toContain('[\\"b2\\",\\"a1\\"]');
+    });
+  });
+
+  describe("stop where the program asks the host about a locale tag", () => {
+    const getSource = (expected: number) =>
+      `const supported = Intl.Collator.supportedLocalesOf(["en-US"]);\nif (supported.length !== ${expected}) throw new Error(String(supported));\n`;
+
+    it("agrees with Node", async () => {
+      expect(runNode({ "locale.ts": getSource(1) }, "locale.ts").status).toBe(0);
+      expect(await getOutcome(getSource(1), "locale.ts")).toMatchObject({ status: "success" });
+      expect(getFailure(await getOutcome(getSource(1), "locale.ts", true))).toContain(
+        "tla-ts can't",
+      );
+    });
+
+    it("rejects another result", async () => {
+      expect(runNode({ "locale.ts": getSource(0) }, "locale.ts").stderr).toContain("Error: en-US");
+      expect(getFailure(await getOutcome(getSource(0), "locale.ts"))).toContain('"en-US"');
+      expect(getFailure(await getOutcome(getSource(0), "locale.ts", true))).toContain(
+        "tla-ts can't",
+      );
+    });
   });
 });

@@ -1,6 +1,6 @@
-import { runInNewContext } from "node:vm";
 import { TlaError } from "../../errors";
 import type { GeneratedDefinition, Library } from "./library";
+import type { HostRealm } from "./realm";
 import { DATE_FORMATS } from "../date-formats";
 import { TIME_ZONES } from "../time-zones";
 
@@ -952,8 +952,7 @@ const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 // The host's local time is UTC's where its default time zone is UTC, whose name V8 writes after a
 // date's offset in the host's default locale. In another time zone a compiled spec stops at local
 // time, which ESCore keeps as UTC's.
-const isUtcHost = new Intl.DateTimeFormat().resolvedOptions().timeZone === "UTC";
-const HOST_ZONE_NAME = / \(.*\)$/.exec(new Date(0).toString())?.[0] ?? "";
+const isUtcHost = (realm: HostRealm) => realm.timeZone === "UTC";
 const LOCAL_TIME_STOP = `Assert(FALSE, "tla-ts can't tell the host's local time, whose time zone isn't UTC")`;
 const CLOCK_STOP = `Assert(FALSE, "tla-ts can't read the host's clock, whose time each run reads anew")`;
 // What Date.now gives, and the time value of a Date that new Date() makes: a Number without a
@@ -984,27 +983,30 @@ const HOST_TIME_READERS = [
   ["BigIntBuiltin", "args"],
 ];
 
-const HOST_PATCHES = [
+// The patches that the runtime makes of ESCore for a host's realm.
+const getHostPatches = (realm: HostRealm) => [
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
   {
     name: "LocalTime",
     from: "LocalTime(t) == t",
-    to: `LocalTime(t) == ${isUtcHost ? "t" : LOCAL_TIME_STOP}`,
+    to: `LocalTime(t) == ${isUtcHost(realm) ? "t" : LOCAL_TIME_STOP}`,
   },
   {
     name: "UTC",
     from: "UTC(t) == IF NumIsFinite(t) THEN t ELSE NaN",
-    to: isUtcHost ? "UTC(t) == IF NumIsFinite(t) THEN t ELSE NaN" : `UTC(t) == ${LOCAL_TIME_STOP}`,
+    to: isUtcHost(realm)
+      ? "UTC(t) == IF NumIsFinite(t) THEN t ELSE NaN"
+      : `UTC(t) == ${LOCAL_TIME_STOP}`,
   },
   {
     name: "TimeZoneString",
     from: `N("+0000")`,
-    to: `N("+0000") \\o <<${Array.from(HOST_ZONE_NAME, (character) => character.charCodeAt(0)).join(", ")}>>`,
+    to: `N("+0000") \\o <<${Array.from(realm.zoneName, (character) => character.charCodeAt(0)).join(", ")}>>`,
   },
   {
     name: "TemporalNowBuiltin",
     from: `CASE m = "timeZoneId" -> Ok(s, Str(UTCTimeZone.id))`,
-    to: `CASE m = "timeZoneId" -> ${isUtcHost ? "Ok(s, Str(UTCTimeZone.id))" : LOCAL_TIME_STOP}`,
+    to: `CASE m = "timeZoneId" -> ${isUtcHost(realm) ? "Ok(s, Str(UTCTimeZone.id))" : LOCAL_TIME_STOP}`,
   },
   // What the host picks at random or reads from its clock differs from run to run, so a compiled
   // spec stops where a program reads it: Math.random, the time that Date.now gives and a Date that
@@ -1088,7 +1090,7 @@ const HOST_PATCHES = [
     name: "StringMethod",
     from: `    [] m = "toLowerCase" ->`,
     to: `    [] m \\in {"toLocaleLowerCase", "toLocaleUpperCase"} ->
-         IF Arg(args, 1) # Undefined \\/ ${TAILORED_CASING.has(new Intl.Locale(new Intl.DateTimeFormat().resolvedOptions().locale).language) ? "TRUE" : "FALSE"} THEN Unsupported(s, <<>>)
+         IF Arg(args, 1) # Undefined \\/ ${TAILORED_CASING.has(new Intl.Locale(realm.locale).language) ? "TRUE" : "FALSE"} THEN Unsupported(s, <<>>)
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
   },
@@ -1430,7 +1432,7 @@ const HOST_PATCHES = [
   },
 ];
 
-export const getHostDefinitions = (library: Library): GeneratedDefinition[] =>
+export const getHostDefinitions = (library: Library, realm: HostRealm): GeneratedDefinition[] =>
   [
     `HostTime == [type |-> "number", host |-> "clock"]`,
     `HostTimeIn(values) == \\E i \\in DOMAIN values : values[i] = HostTime`,
@@ -1451,7 +1453,7 @@ export const getHostDefinitions = (library: Library): GeneratedDefinition[] =>
       };
     })
     .concat([
-      ...HOST_PATCHES.map((patch) => {
+      ...getHostPatches(realm).map((patch) => {
         const definition = library.definitions.get(patch.name);
         if (definition === undefined || !definition.text.includes(patch.from)) {
           throw new TlaError(
@@ -1472,84 +1474,6 @@ export const getHostDefinitions = (library: Library): GeneratedDefinition[] =>
   IF t = NaN THEN Assert(FALSE, "tla-ts can't tell whether the host reads this date string") ELSE t`,
       },
     ]);
-
-// The host whose behavior a compiled spec models is the one that compiles it, running a script in
-// a new context of its virtual machine, as the reference a program runs on: the global object of
-// such a context, which has ECMAScript's globals and the host's own, such as Intl and console, and
-// not Node's module globals, such as process and global.
-const HOST_GLOBAL: object = runInNewContext("globalThis");
-
-// The host's timers, which a host adds to a script's context to run its jobs later.
-const HOST_TIMERS = ["setInterval", "setImmediate", "queueMicrotask"];
-
-// The object an intrinsic of ESCore's names in the host, if it has one.
-const getHostObject = (owner: string): object | undefined => {
-  if (owner === "GlobalObject") return HOST_GLOBAL;
-  const isPrototype = owner.endsWith("Prototype");
-  const base = isPrototype ? owner.slice(0, -"Prototype".length) : owner;
-  // An intrinsic of a namespace, such as TemporalPlainDate or IntlCollator, is the namespace's.
-  const namespace = ["Temporal", "Intl"].find((name) => base.startsWith(name) && base !== name);
-  const holder: unknown =
-    namespace === undefined ? HOST_GLOBAL : Reflect.get(HOST_GLOBAL, namespace);
-  const found: unknown =
-    base === "TypedArray"
-      ? Object.getPrototypeOf(Reflect.get(HOST_GLOBAL, "Int8Array"))
-      : typeof holder === "object" && holder !== null
-        ? Reflect.get(holder, namespace === undefined ? base : base.slice(namespace.length))
-        : undefined;
-  if ((typeof found !== "object" && typeof found !== "function") || found === null)
-    return undefined;
-  const object: unknown = isPrototype ? Reflect.get(found, "prototype") : found;
-  return (typeof object === "object" || typeof object === "function") && object !== null
-    ? object
-    : undefined;
-};
-
-// The realm's properties that the host lacks, such as proposals engine262 has and Node doesn't,
-// which the spec's realm leaves out, so that a program that tests for one takes the host's path.
-const getMissingProperties = (library: Library) =>
-  library.properties.filter((property) => {
-    const object = getHostObject(property.owner);
-    return object !== undefined && !(property.key in object);
-  });
-
-// The host's globals that ESCore's realm lacks, such as Intl, at whose names a compile stops: a
-// script's, of a new context, and a module's, which the host runs in its own context, whose
-// global object has the host's globals too, such as process.
-export const getHostOnlyGlobals = (library: Library, host: object = HOST_GLOBAL) => {
-  const realm = new Set([
-    ...library.properties
-      .filter((property) => property.owner === "GlobalObject")
-      .map((property) => property.key),
-    "setTimeout",
-    // The parameters of the function that Node wraps a CommonJS module's code in, which the process
-    // that compiles may hold as globals.
-    "exports",
-    "require",
-    "module",
-    "__filename",
-    "__dirname",
-  ]);
-  return [...Object.getOwnPropertyNames(host), ...HOST_TIMERS].filter((name) => !realm.has(name));
-};
-
-// The properties of the host's built-ins whose keys ESCore's realm has nowhere, such as V8's
-// Error.captureStackTrace, by the intrinsic that holds each, with the host's descriptor of it.
-export const getHostOnlyProperties = (library: Library) => {
-  const known = new Set(
-    [...library.definitions.values()].flatMap((definition) =>
-      [...definition.text.matchAll(/\bSV\("([^"]+)"\)/g)].map((match) => match[1]),
-    ),
-  );
-  return [...new Set(library.properties.map((property) => property.owner))].flatMap((owner) => {
-    const object = owner === "GlobalObject" ? undefined : getHostObject(owner);
-    return object === undefined
-      ? []
-      : Object.getOwnPropertyNames(object)
-          .filter((key) => !known.has(key))
-          .map((key) => ({ owner, key, descriptor: Object.getOwnPropertyDescriptor(object, key) }));
-  });
-};
 
 // ESCore's operators that a compiled function's frame changes (see locals.ts): those on Reference
 // Records, which take a reference whose base is a local, the slot of the frame that holds a binding
@@ -1655,11 +1579,11 @@ export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => 
   },
 ];
 
-export const getRealmDefinitions = (library: Library): GeneratedDefinition[] => {
+export const getRealmDefinitions = (library: Library, realm: HostRealm): GeneratedDefinition[] => {
   const all = library.definitions.get("RealmProperties")?.text ?? "";
   // Node has no Error.prototype.stack: each error has its own stack accessor, whose functions the
   // realm makes in its place (InstallStack).
-  const missing = getMissingProperties(library)
+  const missing = realm.missingProperties
     .filter((property) => property.owner !== "ErrorPrototype" || property.key !== "stack")
     .map((property) => `<<"${property.owner}", Str(${getUnitsOf(property.key)})>>`);
   return [
@@ -1684,27 +1608,15 @@ const getZoneNames = (text: string) =>
     ...[...match[1].matchAll(/\[!?([^\]=]+)\]/g)].map((annotation) => annotation[1]),
   ]);
 
-// Whether the host has no time zone of a name, which only a host with Temporal can tell.
-const isRejectedZone = (name: string) => {
-  const temporal: unknown = Reflect.get(HOST_GLOBAL, "Temporal");
-  if (typeof temporal !== "object" || temporal === null) return false;
-  const zoned: unknown = Reflect.get(temporal, "ZonedDateTime");
-  if (typeof zoned !== "function") return false;
-  try {
-    Reflect.construct(zoned, [0n, name]);
-    return false;
-  } catch {
-    return true;
-  }
-};
-
 // The program's HostTimeZone: the recorded table's entries of the time zones its strings name, and
 // for the other names in them that the host rejects, "rejected". Any other name may be one that the
 // host has and the table leaves out.
-export const getHostTimeZone = (text: string) => {
+export const getHostTimeZone = (text: string, realm: HostRealm) => {
   const keys = [...new Set(getZoneNames(text).map((name) => name.toLowerCase()))].sort();
   const entries = keys.filter((key) => Object.hasOwn(TIME_ZONES, key));
-  const rejected = keys.filter((key) => !Object.hasOwn(TIME_ZONES, key) && isRejectedZone(key));
+  const rejected = keys.filter(
+    (key) => !Object.hasOwn(TIME_ZONES, key) && realm.isRejectedZone?.(key) === true,
+  );
   const getEntry = (key: string) => {
     const table = TIME_ZONES[key];
     const days = table.times.map((time) => Math.floor(time / 86400));
@@ -1725,13 +1637,12 @@ export const getHostTimeZone = (text: string) => {
 // recorded (date-formats.ts) for the kinds of object the program names, where it formats a Temporal
 // object, and the host's default locale and time zone are the table's, English and UTC. Any other
 // key may be one that the host formats and the table leaves out.
-export const getHostDateFormat = (words: ReadonlySet<string>) => {
-  const defaults = new Intl.DateTimeFormat().resolvedOptions();
+export const getHostDateFormat = (words: ReadonlySet<string>, realm: HostRealm) => {
   const entries =
     words.has("Temporal") &&
     words.has("toLocaleString") &&
-    defaults.locale === "en-US" &&
-    defaults.timeZone === "UTC"
+    realm.locale === "en-US" &&
+    realm.timeZone === "UTC"
       ? Object.entries(DATE_FORMATS).filter(([key]) => {
           const kind = key.slice(0, key.indexOf("|"));
           return kind !== "DateTimeFormat" && words.has(kind);
@@ -1746,58 +1657,16 @@ export const getHostDateFormat = (words: ReadonlySet<string>) => {
     : `HostDateFormat(key) ==\n  LET table == ${entries.map(([key, format]) => `("${key}" :> ${getEntry(format)})`).join("\n    @@ ")}\n  IN IF key \\in DOMAIN table THEN table[key] ELSE [found |-> "unknown"]`;
 };
 
-// The services of Intl whose supportedLocalesOf HostLocale answers for.
-const LOCALE_SERVICES = [
-  "Collator",
-  "DateTimeFormat",
-  "DisplayNames",
-  "DurationFormat",
-  "ListFormat",
-  "NumberFormat",
-  "PluralRules",
-  "RelativeTimeFormat",
-  "Segmenter",
-];
-
-// What the host's Intl gives of a tag: its canonical form and the services that support it with
-// each locale matcher, or undefined where it isn't a structurally valid language tag.
-const getLocale = (tag: string) => {
-  const canonical = (() => {
-    try {
-      return Intl.getCanonicalLocales(tag)[0];
-    } catch {
-      return undefined;
-    }
-  })();
-  if (canonical === undefined) return undefined;
-  const getSupported = (localeMatcher: string) =>
-    LOCALE_SERVICES.filter((service) => {
-      const supported: unknown = Reflect.apply(
-        Reflect.get(Reflect.get(Intl, service), "supportedLocalesOf"),
-        undefined,
-        [canonical, { localeMatcher }],
-      );
-      return Array.isArray(supported) && supported.length > 0;
-    });
-  const lookup = getSupported("lookup");
-  const bestFit = getSupported("best fit");
-  return {
-    canonical,
-    lookup,
-    bestFit,
-    differs: LOCALE_SERVICES.filter(
-      (service) => lookup.includes(service) !== bestFit.includes(service),
-    ),
-  };
-};
-
 // The program's HostLocale: for each string it writes that may be a locale tag, and each one's
 // canonical form, what the host's Intl gives of it, where the program names Intl. Any other tag
-// stops, which the host may hold data of.
-export const getHostLocale = (text: string, words: ReadonlySet<string>) => {
-  const tags = words.has("Intl")
-    ? [...new Set([...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]))]
-    : [];
+// stops, which the host may hold data of, as does every tag of a host whose realm was recorded.
+export const getHostLocale = (text: string, words: ReadonlySet<string>, realm: HostRealm) => {
+  const getLocale = realm.getLocale;
+  if (!words.has("Intl") || getLocale === undefined)
+    return `HostLocale(tag) == [found |-> "unknown"]`;
+  const tags = new Set(
+    [...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]),
+  );
   const entries = new Map<string, string>();
   for (const tag of tags) {
     const locale = getLocale(tag);

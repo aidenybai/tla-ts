@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import ts from "@typescript/typescript6";
 import { TlaTypeScriptError } from "../../errors";
 import { createJavaScriptFile, isCommonJsFile } from "../common-js";
@@ -19,9 +16,16 @@ import {
 } from "./runtime";
 import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
-import { getNumber, type ProgramFile, specialize } from "./specialize";
+import { type ProgramFile, specialize } from "./specialize";
 import { stripTypes } from "./strip-types";
 import { suspendDefinitions } from "./suspend";
+
+// Node's files and paths, which only a program of files reads, so that a host without them, such as
+// a browser, compiles a script without loading them.
+const readFileSync = (path: string, encoding: "utf8") =>
+  process.getBuiltinModule("node:fs").readFileSync(path, encoding);
+const resolve = (path: string) => process.getBuiltinModule("node:path").resolve(path);
+const pathToFileURL = (path: string) => process.getBuiltinModule("node:url").pathToFileURL(path);
 
 export interface EscoreSpec {
   name: string;
@@ -394,74 +398,6 @@ const loadFiles = (source: string, fileName: string, isModule: boolean): Program
     : withFacades;
 };
 
-// A property of the host's global object or of one of its built-ins, as the record that DefineHost
-// defines it by: its kind, as typeof gives its value, or value for a primitive, or console, which
-// the runtime has part of, or accessor for a built-in's accessor, and its attributes. A global's
-// getter gives its value, and a property whose value is a symbol or a BigInt is left out.
-const getHostProperty = (
-  owner: string,
-  name: string,
-  descriptor: PropertyDescriptor | undefined,
-  host: object | undefined,
-) => {
-  if (descriptor === undefined) return [];
-  const isAccessor = !("value" in descriptor);
-  const value: unknown = !isAccessor
-    ? descriptor.value
-    : host === undefined
-      ? undefined
-      : Reflect.get(host, name);
-  const primitive =
-    value === undefined
-      ? "Undefined"
-      : value === null
-        ? "Null"
-        : typeof value === "boolean"
-          ? value
-            ? "True"
-            : "False"
-          : typeof value === "number"
-            ? `Num(${getNumber(value)})`
-            : typeof value === "string"
-              ? `Str(N(${JSON.stringify(value)}))`
-              : undefined;
-  const kind =
-    (name === "console" || name === "process") && host !== undefined
-      ? name
-      : isAccessor && host === undefined
-        ? "accessor"
-        : typeof value === "function" || (typeof value === "object" && value !== null)
-          ? typeof value
-          : value === undefined && isAccessor
-            ? "undefined"
-            : primitive !== undefined
-              ? "value"
-              : undefined;
-  return kind === undefined
-    ? []
-    : [
-        `[owner |-> "${owner}", name |-> N("${name}"), kind |-> "${kind}", value |-> ${primitive ?? "Undefined"}, isConstructor |-> ${getBoolean(isConstructor(value))}, isQuiet |-> ${getBoolean(owner === "GlobalObject" && QUIET_CONSTRUCTORS.has(name))}, isAccessor |-> ${getBoolean(isAccessor)}, writable |-> ${getBoolean(descriptor.writable === true)}, enumerable |-> ${getBoolean(descriptor.enumerable === true)}, configurable |-> ${getBoolean(descriptor.configurable === true)}]`,
-      ];
-};
-
-// The host's constructors that make an object quietly, running nothing that a program sees but
-// what QuietConstruct converts of their arguments until it uses the object.
-const QUIET_CONSTRUCTORS = new Set(["TextEncoder", "TextDecoder"]);
-
-// Whether a value of the host is a constructor, which Reflect.construct tells by throwing where
-// it isn't one, without running it.
-const isConstructor = (value: unknown) => {
-  if (typeof value !== "function") return false;
-  try {
-    Reflect.construct(String, [], value);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const getBoolean = (value: boolean) => (value ? "TRUE" : "FALSE");
-
 // The frames of Node 26 below the top level of the ES module it runs as its entry, where V8's stack
 // trace ends: the module job that evaluates the module, and the async frames of the loader that
 // awaits it.
@@ -524,8 +460,8 @@ export const compileToEscore = (
   // its code reaches them, and a script's, where its code names them.
   const hostOnly = isModule
     ? undefined
-    : (runtime.hostOnlyGlobals.find((name) => program.identifiers.has(name)) ??
-      runtime.hostOnlyProperties.find((property) => program.words.has(property.key))?.key);
+    : (runtime.realm.scriptGlobals.find((name) => program.identifiers.has(name)) ??
+      runtime.realm.builtInProperties.find((property) => program.words.has(property.key))?.key);
   if (hostOnly !== undefined) {
     throw new TlaTypeScriptError(
       `tla-ts can't run the host's ${hostOnly}, which ESCore leaves out`,
@@ -571,27 +507,15 @@ export const compileToEscore = (
           arity: 0,
           text: `HostProperties == <<${(isModule
             ? [
-                ...runtime.hostOnlyModuleGlobals
-                  .filter((name) => program.words.has(name))
-                  .flatMap((name) =>
-                    getHostProperty(
-                      "GlobalObject",
-                      name,
-                      Object.getOwnPropertyDescriptor(globalThis, name),
-                      globalThis,
-                    ),
-                  ),
-                ...runtime.hostOnlyProperties
+                ...runtime.realm.moduleGlobals.filter((global) => program.words.has(global.name)),
+                ...runtime.realm.builtInProperties
                   // Error.stackTraceLimit, which an error's stack reads, is always the host's.
                   .filter(
                     (property) =>
                       program.words.has(property.key) ||
                       (property.owner === "Error" && property.key === "stackTraceLimit"),
-                  )
-                  .flatMap((property) =>
-                    getHostProperty(property.owner, property.key, property.descriptor, undefined),
                   ),
-              ]
+              ].flatMap((property) => property.record ?? [])
             : []
           ).join(", ")}>>`,
         },
@@ -599,18 +523,22 @@ export const compileToEscore = (
           name: "HostTimeZone",
           arity: 1,
           text: program.words.has("Temporal")
-            ? getHostTimeZone(files.map((file) => file.sourceFile.text).join("\n"))
+            ? getHostTimeZone(files.map((file) => file.sourceFile.text).join("\n"), runtime.realm)
             : `HostTimeZone(key) == [found |-> "unknown"]`,
         },
         {
           name: "HostDateFormat",
           arity: 1,
-          text: getHostDateFormat(program.words),
+          text: getHostDateFormat(program.words, runtime.realm),
         },
         {
           name: "HostLocale",
           arity: 1,
-          text: getHostLocale(files.map((file) => file.sourceFile.text).join("\n"), program.words),
+          text: getHostLocale(
+            files.map((file) => file.sourceFile.text).join("\n"),
+            program.words,
+            runtime.realm,
+          ),
         },
         {
           name: "HostFileLocation",

@@ -15,15 +15,16 @@ import { createModuleView } from "../../module-view";
 import {
   assembleRuntime,
   createLibrary,
+  type EscoreFiles,
   type Family,
   getDependencies,
   HOOKS,
   type Library,
+  readEscoreFiles,
 } from "./library";
+import { type HostRealm, recordHostRealm } from "./realm";
 import {
   getHostDefinitions,
-  getHostOnlyGlobals,
-  getHostOnlyProperties,
   getLocalDefinitions,
   getRealmDefinitions,
   INTERPRETER,
@@ -58,10 +59,16 @@ export interface EscoreRuntime {
   // The runtime's steps that take a result as their last parameter and, where it suspends, pass it
   // on with a frame that ResumeFrame resumes.
   resumableSteps: ReadonlySet<string>;
-  // The host's globals and built-in keys that ESCore's realm lacks, at whose names a compile stops.
-  hostOnlyGlobals: string[];
-  hostOnlyModuleGlobals: string[];
-  hostOnlyProperties: { owner: string; key: string; descriptor: PropertyDescriptor | undefined }[];
+  // What a program's spec reads of the host whose behavior it models.
+  realm: HostRealm;
+}
+
+// What a host prepares ESCore's runtime from: ESCore's texts, the realm of the host that the
+// runtime models, and the graph of the runtime that a build prepared from them, if one did.
+export interface EscoreHost {
+  files: EscoreFiles;
+  realm: HostRealm;
+  graph?: EncodedGraph;
 }
 
 // Every compiled spec's root module. It extends each module of the runtime before the program's,
@@ -131,11 +138,11 @@ const prepare = (name: string, text: string): PreparedModule => {
 const files = { readFile: undefined, writeFile: undefined, makeDirectory: undefined };
 
 // The definitions that the runtime puts in place of ESCore's, as a compiled spec runs them.
-const getOverrides = (library: Library) => [
+const getOverrides = (library: Library, realm: HostRealm) => [
   ...RUNTIME_DEFINITIONS,
-  ...getHostDefinitions(library),
+  ...getHostDefinitions(library, realm),
   ...getLocalDefinitions(library),
-  ...getRealmDefinitions(library),
+  ...getRealmDefinitions(library, realm),
   // The realm's first objects, which the runtime evaluates once, as it starts, rather than
   // deep in the realm's properties, where building them would take a deeper stack.
   {
@@ -166,9 +173,9 @@ const getOverrides = (library: Library) => [
 ];
 
 // The names and texts of the modules of the runtime: those that ESCore extends, then the runtime.
-const getModuleTexts = (library: Library) => [
+const getModuleTexts = (library: Library, realm: HostRealm) => [
   ...library.modules,
-  ["ESRuntime", assembleRuntime(library, getOverrides(library), INTERPRETER)] as const,
+  ["ESRuntime", assembleRuntime(library, getOverrides(library, realm), INTERPRETER)] as const,
 ];
 
 // The modules of the texts, read, checked by SANY's checks, and started: each one's levels, the
@@ -253,10 +260,10 @@ interface PreparedGraph {
   modules: (Omit<PreparedModule, "values"> & { values: Map<Definition, unknown> })[];
 }
 
-// The graph of the modules of the runtime of ESCore's directory, prepared, which a build writes
-// into a bundle so that a process reads the modules rather than prepares them.
-export const getRuntimeGraph = (directory: string) => {
-  const texts = getModuleTexts(createLibrary(directory));
+// The graph of the modules of the runtime of ESCore's texts for a realm, prepared, which a build
+// writes into a bundle so that a process reads the modules rather than prepares them.
+const getGraph = (library: Library, realm: HostRealm) => {
+  const texts = getModuleTexts(library, realm);
   const modules = prepareModules(texts);
   const entries = modules.map((prepared) => [...(prepared.values ?? [])]);
   const plain = getPlainValues(entries.flat().map((entry) => entry[1]));
@@ -271,19 +278,42 @@ export const getRuntimeGraph = (directory: string) => {
   return encodeGraph(graph);
 };
 
+// The graph of the runtime of ESCore's directory for the realm of the host that runs this process.
+export const getRuntimeGraph = (directory: string) => {
+  const library = createLibrary(readEscoreFiles(directory));
+  return getGraph(library, recordHostRealm(library));
+};
+
+// The host that a browser prepares ESCore's runtime from, as this process records it: ESCore's
+// texts, the realm of the host that runs this process as plain data, and the runtime's graph, for
+// a page to fetch as JSON.
+export const recordEscoreHost = (directory: string): EscoreHost => {
+  const files = readEscoreFiles(directory);
+  const library = createLibrary(files);
+  const realm = recordHostRealm(library);
+  return { files, realm, graph: getGraph(library, realm) };
+};
+
 // The build writes the graph of the prepared runtime in place of these strings, its tables as JSON
 // and its stream as it is. Unbuilt, the tables are JSON for a string.
 const RUNTIME_TABLES = '"tla-ts:escore-tables"';
 const RUNTIME_STREAM = "tla-ts:escore-stream";
 
-// The modules that the build prepared, where it prepared them from the same texts.
-const readPreparedModules = (texts: readonly string[]): PreparedModule[] | undefined => {
+// The graph that the build wrote into this bundle, if it wrote one.
+const getBundledGraph = (): EncodedGraph | undefined => {
   const tables: unknown = JSON.parse(RUNTIME_TABLES);
-  if (!Array.isArray(tables)) return undefined;
-  const graph = decodeGraph({
-    tables: tables as EncodedGraph["tables"],
-    stream: RUNTIME_STREAM,
-  }) as PreparedGraph;
+  return Array.isArray(tables)
+    ? { tables: tables as EncodedGraph["tables"], stream: RUNTIME_STREAM }
+    : undefined;
+};
+
+// The modules that a build prepared in an encoded graph, where it prepared them from the same texts.
+const readPreparedModules = (
+  texts: readonly string[],
+  encoded: EncodedGraph | undefined,
+): PreparedModule[] | undefined => {
+  if (encoded === undefined) return undefined;
+  const graph = decodeGraph(encoded) as PreparedGraph;
   if (graph.texts.length !== texts.length || graph.texts.some((text, i) => text !== texts[i])) {
     return undefined;
   }
@@ -296,15 +326,23 @@ const readPreparedModules = (texts: readonly string[]): PreparedModule[] | undef
   }));
 };
 
-// ESCore's runtime, read, checked by SANY's checks, and started once for every program a process
-// compiles, or read as the build prepared it: its modules, the levels of their definitions, and
-// what their definitions without parameters evaluate to, among them the realm.
-export const prepareRuntime = (directory: string): EscoreRuntime => {
-  const library = createLibrary(directory);
-  const texts = getModuleTexts(library);
-  const modules = readPreparedModules(texts.map((entry) => entry[1])) ?? prepareModules(texts);
+// ESCore's runtime of a library for a realm, read, checked by SANY's checks, and started once for
+// every program a process compiles, or read as a build prepared it in a graph: its modules, the
+// levels of their definitions, and what their definitions without parameters evaluate to, among
+// them the realm.
+const prepareLibraryRuntime = (
+  library: Library,
+  hostRealm: HostRealm,
+  graph: EncodedGraph | undefined,
+): EscoreRuntime => {
+  const texts = getModuleTexts(library, hostRealm);
+  const modules =
+    readPreparedModules(
+      texts.map((entry) => entry[1]),
+      graph,
+    ) ?? prepareModules(texts);
   const runtime = modules[modules.length - 1];
-  const overridden = new Set(getOverrides(library).map((override) => override.name));
+  const overridden = new Set(getOverrides(library, hostRealm).map((override) => override.name));
   const getView = createModuleView(runtime);
   const realm = new Set(
     getView(REALM_ROOTS).module.definitions.map((definition) => definition.name),
@@ -354,8 +392,17 @@ export const prepareRuntime = (directory: string): EscoreRuntime => {
         .map((stub) => ({ name: stub.name, arity: stub.arity })),
       reached: getReachedStubs(entry[0]),
     })),
-    hostOnlyGlobals: getHostOnlyGlobals(library),
-    hostOnlyModuleGlobals: getHostOnlyGlobals(library, globalThis),
-    hostOnlyProperties: getHostOnlyProperties(library),
+    realm: hostRealm,
   };
+};
+
+// ESCore's runtime for a host that a build recorded, such as a browser.
+export const prepareHostRuntime = (host: EscoreHost) =>
+  prepareLibraryRuntime(createLibrary(host.files), host.realm, host.graph);
+
+// ESCore's runtime of its directory for the host that runs this process, read as the build
+// prepared it where the build wrote its graph into this bundle.
+export const prepareRuntime = (directory: string) => {
+  const library = createLibrary(readEscoreFiles(directory));
+  return prepareLibraryRuntime(library, recordHostRealm(library), getBundledGraph());
 };
