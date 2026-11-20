@@ -1633,6 +1633,21 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("stops at a static method named constructor, which TypeScript parses as a constructor", () => {
+    it("stops rather than make the static method the class's constructor", async () => {
+      const source = `
+        const C = class {
+          static constructor() {}
+          constructor() {}
+        };
+        if (C.prototype.constructor !== C) throw new Error("constructor");
+      `;
+      expect((await checkScript(source)).message).toContain(
+        "tla-ts can't compile a static method named constructor",
+      );
+    });
+  });
+
   describe("keeps private names in each class's private environment", () => {
     const getSource = (expected: string) => `
       class Counter {

@@ -2352,6 +2352,16 @@ export const specialize = (
     const heritage = node.heritageClauses?.find(
       (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
     )?.types[0]?.expression;
+    // TypeScript parses a static method named constructor as a constructor.
+    const staticConstructor = node.members.find(
+      (member) => ts.isConstructorDeclaration(member) && hasModifier(member, ts.SyntaxKind.StaticKeyword),
+    );
+    if (staticConstructor !== undefined) {
+      throw new TlaTypeScriptError(
+        "tla-ts can't compile a static method named constructor, which TypeScript parses as a constructor",
+        staticConstructor,
+      );
+    }
     const constructor = node.members.find(ts.isConstructorDeclaration);
     const elements = node.members.filter(
       (member) => !ts.isConstructorDeclaration(member) && !ts.isSemicolonClassElement(member),
