@@ -2522,6 +2522,7 @@ interface InstancedModule {
   symbols: Symbols;
   instancer: string;
   getSubstitutionErrors: (substitutionCount: number) => SanyError[];
+  setSubstitutions: (substitutions: Map<string, Expression>) => void;
 }
 
 export interface ModuleReport {
@@ -2817,6 +2818,7 @@ const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit:
     bindParams(scope, instance.params, unit),
     unit,
   );
+  instanced.setSubstitutions(substitutions);
   unit.errors.push(...instanced.getSubstitutionErrors(substitutions.size));
   return [...instanced.symbols].reduce(
     (parent, entry) => bindName(parent, entry[0], entry[1], unit),

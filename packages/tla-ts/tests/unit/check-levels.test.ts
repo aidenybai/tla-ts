@@ -366,6 +366,29 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    ["a LOCAL INSTANCE", "LOCAL INSTANCE L0", 11],
+    ["a parameterized INSTANCE", "N(p) == INSTANCE L0", 11],
+    ["a proof's INSTANCE", "THEOREM TRUE\n<1> INSTANCE L0\n<1> QED", 13],
+    ["a proof's DEFINE", "THEOREM TRUE\n<1> DEFINE N == INSTANCE L0\n<1> QED", 13],
+  ])(
+    "constrains a module through the implicit substitutes of %s, as SANY does",
+    async (_, body, line) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE L0 ----\nCONSTANT k\nTHEOREM k' = k\n====\n---- MODULE L ----\nCONSTANT k\n${body}\n====\nI1 == INSTANCE L WITH k <- x\nI2 == INSTANCE L WITH k <- x'\nI3 == INSTANCE L WITH k <- [](x = 1)\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          getInstanceError(line, 28, 0),
+          getInstanceError(line + 1, 29, 0),
+          getInstanceError(line + 2, 36, 0),
+        ]),
+      );
+    },
+  );
+
   it("constrains a module by a named assumption but keeps it constant, as SANY does", async () => {
     await expect(
       check({

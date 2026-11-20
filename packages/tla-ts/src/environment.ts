@@ -269,13 +269,6 @@ const getSubstitutions = (instances: Instance[]) =>
     instance.substitutions.map((substitution) => substitution.expression),
   );
 
-const getSubstitute = (instance: Instance, name: string): Expression =>
-  instance.substitutions.find((substitution) => substitution.name === name)?.expression ?? {
-    kind: "Identifier",
-    name,
-    location: instance.location,
-  };
-
 const getProofInstances = (proof: Proof | undefined): Instance[] =>
   proof?.kind === "Steps"
     ? proof.steps.flatMap((step) => [
@@ -359,6 +352,20 @@ export const createEnvironment = (
   const letInstances = new Map<string, LetInstance>();
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
   const checkedLabels = new WeakSet<Expression>();
+  const resolvedSubstitutions = new Map<string, Map<string, Expression>>();
+  const setSubstitutions = (instance: Instance, substitutions: Map<string, Expression>) => {
+    if (instance.location.range) {
+      resolvedSubstitutions.set(formatRange(instance.location.range), substitutions);
+    }
+  };
+  const getInstanceSubstitute = (instance: Instance, name: string): Expression =>
+    instance.substitutions.find((substitution) => substitution.name === name)?.expression ??
+    (instance.location.range &&
+      resolvedSubstitutions.get(formatRange(instance.location.range))?.get(name)) ?? {
+      kind: "Identifier",
+      name,
+      location: instance.location,
+    };
   const createInstanceCopy = (
     sourceKey: string,
     module: string,
@@ -375,7 +382,7 @@ export const createEnvironment = (
         substitutions: new Map(
           linked.declarations.map((declaration) => [
             declaration.key,
-            getSubstitute(instance, declaration.name),
+            getInstanceSubstitute(instance, declaration.name),
           ]),
         ),
       }
@@ -417,7 +424,7 @@ export const createEnvironment = (
           substitutions: new Map(
             linked.declarations.map((declaration) => [
               declaration.name,
-              getSubstitute(instance, declaration.name),
+              getInstanceSubstitute(instance, declaration.name),
             ]),
           ),
           location: instance.location,
@@ -726,6 +733,7 @@ export const createEnvironment = (
       module.name,
       unit,
     );
+    setSubstitutions(instance, substitutions);
     unit.reports.push({
       location: instance.location,
       errors: getSubstitutionErrors(instance, linked, substitutions.size),
@@ -1316,6 +1324,7 @@ export const createEnvironment = (
             symbols: getStandardInstanceSymbols(instance, standardSymbols, (symbol) => symbol.key),
             instancer: parsed.name,
             getSubstitutionErrors: () => [],
+            setSubstitutions: () => {},
           };
         }
         const linked = nested ?? getLinkedModule(instance.module, parsed.name);
@@ -1330,6 +1339,7 @@ export const createEnvironment = (
           instancer: parsed.name,
           getSubstitutionErrors: (substitutionCount) =>
             getSubstitutionErrors(instance, linked, substitutionCount),
+          setSubstitutions: (substitutions) => setSubstitutions(instance, substitutions),
         };
       },
       bound,
