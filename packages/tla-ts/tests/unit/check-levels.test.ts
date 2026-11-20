@@ -256,7 +256,7 @@ describe("level checking matches SANY", () => {
     },
   );
 
-  const getInstanceError =(line: number, end: number, maximum: number) => ({
+  const getInstanceError = (line: number, end: number, maximum: number) => ({
     location: `line ${line}, col 1 to line ${line}, col ${end} of module M`,
     message: `Level error in instantiating module 'L':\nThe level of the expression or operator substituted for 'k' \nmust be at most ${maximum}.`,
   });
@@ -469,13 +469,21 @@ describe("level checking matches SANY", () => {
     [
       "with a definition",
       "B == c\n",
-      ["line 10, col 17 to line 10, col 21", "line 11, col 45 to line 11, col 49", "line 12, col 17 to line 12, col 21"],
+      [
+        "line 10, col 17 to line 10, col 21",
+        "line 11, col 45 to line 11, col 49",
+        "line 12, col 17 to line 12, col 21",
+      ],
       "line 11, col 11 to line 11, col 49",
     ],
     [
       "without definitions",
       "",
-      ["line 9, col 17 to line 9, col 21", "line 11, col 17 to line 11, col 21", "line 10, col 45 to line 10, col 49"],
+      [
+        "line 9, col 17 to line 9, col 21",
+        "line 11, col 17 to line 11, col 21",
+        "line 10, col 45 to line 10, col 49",
+      ],
       "line 10, col 11 to line 10, col 49",
     ],
   ])(
