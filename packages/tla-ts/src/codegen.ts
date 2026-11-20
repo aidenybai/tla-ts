@@ -149,6 +149,8 @@ let generatedHelpers: ReturnType<typeof createGeneratedHelpers> | undefined;
 let isCodeGenerationAllowed: boolean | undefined;
 
 // Hosts such as Cloudflare Workers, or a page whose CSP lacks 'unsafe-eval', throw an EvalError.
+const MAX_PARAMETERS = 65_534;
+
 const getIsCodeGenerationAllowed = () => {
   try {
     return Boolean(new Function(""));
@@ -548,9 +550,14 @@ export const generateEvaluator = (
     locals: new Map(),
   };
   const body = generateExpression(generator, expression, frame);
+  generatedHelpers ??= createGeneratedHelpers();
+  // A function takes at most 65,534 parameters, which an expression with more values than that,
+  // such as a tuple of a long string's code units, would need; the interpreter evaluates it.
+  if (Object.keys(generatedHelpers).length + generator.references.length > MAX_PARAMETERS) {
+    return undefined;
+  }
   const referenceNames = generator.references.map((_reference, index) => `reference${index}`);
   const source = `${generator.helpers.join("\n")}\nreturn (context) => { const state = context.state; const next = context.next; let primed; let applied; return ${body}; };`;
-  generatedHelpers ??= createGeneratedHelpers();
   const factory = new Function(...Object.keys(generatedHelpers), ...referenceNames, source);
   return factory(...Object.values(generatedHelpers), ...generator.references);
 };
