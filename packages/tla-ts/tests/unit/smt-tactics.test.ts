@@ -3113,6 +3113,53 @@ describe("the goals of a tactic free what Z3 5.3.2 frees", () => {
       ].join("\n"),
     ]);
   });
+
+  it("frees the negated condition of each step of cofactor-term-ite as the step ends", () => {
+    expect(
+      run([
+        "(declare-const x2 Int)",
+        "(declare-const x3 Int)",
+        "(declare-const x4 Int)",
+        "(declare-const x5 Int)",
+        "(declare-const x6 Int)",
+        "(declare-const x7 Int)",
+        "(declare-const q Bool)",
+        "(assert q)",
+        "(assert (= 3 x6))",
+        "(assert (< (= x5 2) (ite q x2 x7)))",
+        "(assert (or true true))",
+        "(assert (< 0 (- x4 (ite (<= x7 x3) x4 x7))))",
+        "(assert (<= x3 (- x4 x6)))",
+        "(assert (<= true x5))",
+        "(assert (<= true x7))",
+        "(assert (or (or (<= true x3) (< (- x4 x2) x2)) (< (+ x4 x2) x5)))",
+        "(assert q)",
+        "(assert q)",
+        "(assert (and (>= x2 x2) (< x6 x3)))",
+        "(assert (>= true 0))",
+        "(assert (< x2 true))",
+        "(apply (or-else (then cofactor-term-ite fail) simplify))",
+      ]),
+    ).toEqual([
+      [
+        "(goals",
+        "(goal",
+        "  q",
+        "  (= 3 x6)",
+        "  (not (<= (ite q x2 x7) (ite (= x5 2) 1 0)))",
+        "  (let ((a!1 (+ x4 (* (- 1) (ite (<= x7 x3) x4 x7)))))",
+        "    (not (<= a!1 0)))",
+        "  (<= x3 (+ x4 (* (- 1) x6)))",
+        "  (<= 1 x5)",
+        "  (<= 1 x7)",
+        "  (or (not (<= x5 (+ x4 x2))) (not (<= (* 2 x2) x4)) (<= 1 x3))",
+        "  (not (<= x3 x6))",
+        "  (not (<= 1 x2))",
+        "  :precision precise :depth 1)",
+        ")",
+      ].join("\n"),
+    ]);
+  });
 });
 
 describe("ctx-solver-simplify, as Z3 5.3.2 keeps its kernel", () => {
