@@ -298,13 +298,13 @@ class Queue {
   private newEntries: QueueEntry[] = [];
   private delayedEntries: QueueEntry[] = [];
   private subst: VarSubst;
-  private eagerCostThreshold: number;
+  private readonly eagerCostThreshold: number;
 
   // queue::setup reads the eager threshold once, and lazy_propagate reads the lazy one each time.
   constructor(
     private ematch: Ematch,
     private ctx: EufSolver,
-    private parameters: ReadonlyMap<string, string>,
+    private readonly parameters: ReadonlyMap<string, string>,
   ) {
     this.subst = new VarSubst(ctx.manager, true);
     this.eagerCostThreshold = getDoubleParameter(parameters, "smt.qi.eager_threshold") ?? 10;

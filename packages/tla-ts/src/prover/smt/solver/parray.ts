@@ -67,7 +67,7 @@ export class ExprParray {
       link = cell.link;
     }
     const values = link.slice(0, cell.index);
-    for (const value of values) manager.incRef(value);
+    for (let index = 0; index < values.length; index++) manager.incRef(values[index]);
     for (let index = cells.length - 1; index >= 0; index--) {
       const diff = cells[index];
       if (diff.kind === SET) {

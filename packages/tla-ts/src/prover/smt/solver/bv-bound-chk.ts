@@ -475,8 +475,8 @@ export class BvBoundChkTactic {
   private rewriter: BvBoundChkRewriter | undefined;
 
   constructor(
-    private manager: AstManager,
-    private limit: number,
+    private readonly manager: AstManager,
+    private readonly limit: number,
   ) {}
 
   run(goal: Goal) {
