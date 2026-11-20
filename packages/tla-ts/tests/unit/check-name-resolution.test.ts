@@ -4737,6 +4737,45 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each([
+    [
+      "THEOREM TRUE BY DEF LET N == INSTANCE Leaf IN N!LA, A",
+      ["line 4, col 25 to line 4, col 42", "line 4, col 21 to line 4, col 50"],
+      [],
+    ],
+    [
+      "USE DEF LET N == INSTANCE Leaf IN N!LA",
+      ["line 4, col 13 to line 4, col 30", "line 4, col 9 to line 4, col 38"],
+      [["line 4, col 1 to line 4, col 38", "Empty USE or HIDE statement."]],
+    ],
+    [
+      "THEOREM TRUE BY DEF LET Q == I!LA IN Q",
+      ["line 4, col 25 to line 4, col 33", "line 4, col 21 to line 4, col 38"],
+      [["line 4, col 14 to line 4, col 38", "Empty BY"]],
+    ],
+  ])(
+    "reports the DEF clause entry in %j, a LET with a selection, like SANY",
+    async (unit, ranges, rest) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nA == 1\nI == INSTANCE Leaf\n${unit}\n====`,
+          config: "",
+          loadModule: (name) =>
+            name === "Leaf" ? "---- MODULE Leaf ----\nLA == TRUE\n====" : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          [
+            [ranges[0], "Unexpected token found."],
+            [ranges[0], "Need name or step number here, not `N_LetDefinitions'."],
+            [ranges[1], "DEF clause entry should describe a defined operator."],
+            ...rest,
+          ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+        ),
+      );
+    },
+  );
+
   it("reports DEF clause entries of bracketed, quantified and infix shapes like SANY", async () => {
     await expect(
       check({
