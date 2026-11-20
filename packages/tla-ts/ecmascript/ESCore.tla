@@ -20398,7 +20398,10 @@ NumberFormatConstruct(s, newTarget, locales, options) ==
 IntlMathematicalKey(s, value) ==
   LET p == ToPrimitive(s, value, "number") IN IF IsAbrupt(p) THEN p
   ELSE IF IsBigInt(Val(p)) THEN LET t == ToStr(p.s, Val(p)) IN IF IsAbrupt(t) THEN t ELSE Ok(t.s, <<"bigint", Val(t).value>>)
-  ELSE IF IsString(Val(p)) THEN Ok(p.s, <<"string", Val(p).value>>)
+  \* A string that isn't a StringNumericLiteral is NaN, and "Infinity" is infinite, as a Number of them is.
+  ELSE IF IsString(Val(p)) THEN
+    LET n == StringToNumber(Val(p).value) IN
+    Ok(p.s, IF ~NumIsFinite(n) THEN <<"number", NumToString(n), FALSE>> ELSE <<"string", Val(p).value>>)
   ELSE LET n == ToNumber(p.s, Val(p)) IN IF IsAbrupt(n) THEN n
   ELSE Ok(n.s, <<"number", NumToString(Val(n).value), Val(n).value.k = "nzero">>)
 \* The answer of HostIntl to a service's method of an object of options config with arguments

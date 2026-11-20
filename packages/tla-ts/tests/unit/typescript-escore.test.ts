@@ -1167,7 +1167,7 @@ describe("compiles scripts by specializing ESCore", () => {
     });
 
     it("stops at a locale that the program doesn't write", async () => {
-      const source = 'Intl.getCanonicalLocales(["en", "US"].join("-"));';
+      const source = 'Intl.getCanonicalLocales(["de", "AT"].join("-"));';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });
@@ -1402,6 +1402,41 @@ describe("compiles scripts by specializing ESCore", () => {
 
       it("stops at a case mapping of a string that the program doesn't write", async () => {
         const source = 'String.fromCharCode(105).toLocaleUpperCase("tr");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "records the Intl objects of subclasses, computed option names, and locales the host gives back",
+    () => {
+      const getSource = (expected: string) => `
+      const key = "style";
+      class Formatter extends Intl.NumberFormat {}
+      const result = [
+        new Formatter("de-DE").format(1234.5),
+        new Intl.NumberFormat("en", { [key]: "percent" }).format(0.5),
+        new Intl.NumberFormat("en").format("abc"),
+        Intl.getCanonicalLocales(new Intl.NumberFormat().resolvedOptions().locale).join(),
+        new Intl.NumberFormat("en", { style: "currency", currency: "USD", currencySign: "accounting", signDisplay: "never" }).format(-5),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkScript(getSource("1.234,5|50%|NaN|en-US|$5.00"))).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("1.234,5|50%|NaN|en-US|($5.00)"))).message).toContain(
+          THREW,
+        );
+      });
+
+      it("stops at a locale that the program joins of parts", async () => {
+        const source = 'new Intl.NumberFormat(["d", "e"].join("")).format(1);';
         expect((await checkScript(source)).message).toContain("tla-ts can't");
       });
     },

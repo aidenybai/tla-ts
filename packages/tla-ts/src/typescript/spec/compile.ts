@@ -559,6 +559,10 @@ export const compileToEscore = (
       : `LET g == DefineHost(s, HostProperties) IN IF IsAbrupt(g) THEN g ELSE SetupHostImport(g.s, ${hostFile})`;
   const runJobs =
     "LET j == RunJobs(p.s) IN IF IsAbrupt(j) THEN j ELSE LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE";
+  const intl = getHostIntl(
+    files.map((file) => file.sourceFile),
+    program.words,
+  );
   const definitions = compact(
     suspendDefinitions(
       [
@@ -604,15 +608,16 @@ export const compileToEscore = (
           arity: 1,
           text: getHostDateFormat(program.words),
         },
-        ...getHostIntl(
-          files.map((file) => file.sourceFile),
-          program.words,
-        ),
+        ...intl.definitions,
         ...getHostCalendars(files.map((file) => file.sourceFile.text).join("\n"), program.words),
         {
           name: "HostLocale",
           arity: 1,
-          text: getHostLocale(files.map((file) => file.sourceFile.text).join("\n"), program.words),
+          text: getHostLocale(
+            files.map((file) => file.sourceFile.text).join("\n"),
+            program.words,
+            intl.strings,
+          ),
         },
         {
           name: "HostFileLocation",

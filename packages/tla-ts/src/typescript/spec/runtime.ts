@@ -1749,12 +1749,24 @@ const getLocale = (tag: string) => {
   };
 };
 
-// The program's HostLocale: for each string it writes that may be a locale tag, and each one's
-// canonical form, what the host's Intl gives of it, where the program names Intl or a method that
-// reads it. Any other tag stops, which the host may hold data of.
-export const getHostLocale = (text: string, words: ReadonlySet<string>) => {
-  const tags = ["Intl", "toLocaleString", "localeCompare"].some((word) => words.has(word))
-    ? [...new Set([...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]))]
+// The program's HostLocale: for each string it writes that may be a locale tag, the host's default
+// locale, and each string of the host's Intl answers (answers), which the program may pass back,
+// and each one's canonical form, what the host's Intl gives of it, where the program names Intl or a
+// method that reads it. Any other tag stops, which the host may hold data of.
+export const getHostLocale = (
+  text: string,
+  words: ReadonlySet<string>,
+  answers: ReadonlySet<string>,
+) => {
+  const isNamed = ["Intl", "toLocaleString", "localeCompare"].some((word) => words.has(word));
+  const tags = isNamed
+    ? [
+        ...new Set([
+          ...[...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]),
+          new Intl.DateTimeFormat().resolvedOptions().locale,
+          ...[...answers].filter((answer) => /^[A-Za-z0-9-]{2,60}$/.test(answer)),
+        ]),
+      ]
     : [];
   const entries = new Map<string, string>();
   for (const tag of tags) {

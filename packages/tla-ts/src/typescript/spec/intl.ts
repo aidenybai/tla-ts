@@ -273,7 +273,14 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
     locales: new Map(),
     openLocales: new Set(),
   };
+  const subclasses = new Map<string, string>();
   const visit = (node: ts.Node) => {
+    if ((ts.isClassDeclaration(node) || ts.isClassExpression(node)) && node.name !== undefined) {
+      const base = node.heritageClauses?.[0]?.types[0]?.expression;
+      if (base !== undefined && ts.isPropertyAccessExpression(base)) {
+        subclasses.set(node.name.text, base.name.text);
+      }
+    }
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
       literals.strings.add(node.text);
       const duration = getDurationKey(node.text);
@@ -344,6 +351,14 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
     ts.forEachChild(node, visit);
   };
   for (const sourceFile of sourceFiles) visit(sourceFile);
+  // A subclass's calls name the locales of the service it extends.
+  for (const [name, service] of subclasses) {
+    literals.locales.set(service, [
+      ...(literals.locales.get(service) ?? [undefined]),
+      ...(literals.locales.get(name) ?? []),
+    ]);
+    if (literals.openLocales.has(name)) literals.openLocales.add(service);
+  }
   return literals;
 };
 
@@ -351,26 +366,39 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
 // gives, with each property that isn't a literal taking each literal that its option takes.
 const getBags = (service: Service, literals: Literals) => {
   const candidates = [...literals.strings, ...literals.numbers.values(), true, false];
-  const bags: Record<string, unknown>[] = [{}];
-  for (const object of literals.objects) {
-    let made: Record<string, unknown>[] = [{}];
-    for (const property of object.properties) {
-      const name =
-        property.name !== undefined &&
-        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
-          ? property.name.text
+  // The options that a property may name: its name, or for a name a program computes, each option
+  // that a string of it names.
+  const getNames = (name: ts.PropertyName | undefined) =>
+    name !== undefined && (ts.isIdentifier(name) || ts.isStringLiteral(name))
+      ? [name.text]
+      : name !== undefined &&
+          ts.isComputedPropertyName(name) &&
+          getLiteralValue(name.expression) === undefined
+        ? Object.keys(service.options).filter((option) => literals.strings.has(option))
+        : [];
+  const getObjectBags = (object: ts.ObjectLiteralExpression) =>
+    object.properties.reduce<Record<string, unknown>[] | undefined>(
+      (made, property) => {
+        const names = getNames(property.name).filter((name) =>
+          Object.hasOwn(service.options, name),
+        );
+        if (made === undefined || names.length === 0) return made;
+        const literal = ts.isPropertyAssignment(property)
+          ? getLiteralValue(property.initializer)
           : undefined;
-      if (name === undefined || !Object.hasOwn(service.options, name)) continue;
-      const literal = ts.isPropertyAssignment(property)
-        ? getLiteralValue(property.initializer)
-        : undefined;
-      const values =
-        literal === undefined ? candidates.filter(service.options[name]) : [literal.value];
-      made = made.flatMap((bag) => values.map((value) => ({ ...bag, [name]: value })));
-      if (made.length > MOST_BAGS_PER_LITERAL) break;
-    }
-    if (made.length <= MOST_BAGS_PER_LITERAL) bags.push(...made);
-  }
+        const next = made.flatMap((bag) =>
+          names.flatMap((name) =>
+            (literal === undefined
+              ? candidates.filter(service.options[name])
+              : [literal.value]
+            ).map((value) => ({ ...bag, [name]: value })),
+          ),
+        );
+        return next.length > MOST_BAGS_PER_LITERAL ? undefined : next;
+      },
+      [{}],
+    ) ?? [];
+  const bags = [{}, ...literals.objects.flatMap(getObjectBags)];
   return [...new Map(bags.map((bag) => [JSON.stringify(bag), bag])).values()];
 };
 
@@ -378,7 +406,7 @@ const getLocaleCandidates = (service: Service, literals: Literals) => {
   const names = [service.name, ...service.callers];
   const named = names.flatMap((name) => literals.locales.get(name) ?? []);
   const open = names.some((name) => literals.openLocales.has(name))
-    ? [...literals.strings].filter((text) => /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(text))
+    ? [...literals.strings].filter((text) => /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(text))
     : [];
   return [undefined, ...named, ...open];
 };
@@ -545,7 +573,15 @@ const SERVICES: Service[] = [
       signDisplay: isOneOf("auto", "never", "always", "exceptZero", "negative"),
     },
     getConfig: (bag, resolved) =>
-      `${getTlaValue(String(bag.localeMatcher ?? "best fit"))}, ${getTlaValue(bag.numberingSystem === undefined ? undefined : String(bag.numberingSystem))}, ${getSlots(NUMBER_FORMAT_SLOTS, resolved)}`,
+      `${getTlaValue(String(bag.localeMatcher ?? "best fit"))}, ${getTlaValue(bag.numberingSystem === undefined ? undefined : String(bag.numberingSystem))}, ${getSlots(
+        NUMBER_FORMAT_SLOTS,
+        {
+          ...resolved,
+          // resolvedOptions gives "standard" where signDisplay is "never", but the slot keeps it.
+          currencySign:
+            resolved.style === "currency" ? String(bag.currencySign ?? "standard") : undefined,
+        },
+      )}`,
     getMethods: (format: Intl.NumberFormat, literals, words) => {
       const values = [
         ...getNumbers(literals).map((value) => ({ value, key: getNumberArgument(value) })),
@@ -1055,7 +1091,7 @@ const getLocaleEntries = (literals: Literals) => {
 // key an object by its resolved options; IntlConstruct's key it by the options it read.
 const RESOLVING = new Set(["NumberFormat", "PluralRules", "DurationFormat"]);
 
-// The program's HostIntl: what the host's Intl gives for the currencies and the Intl objects that
+// The program's HostIntl, and the strings of its answers: what the host's Intl gives for the currencies and the Intl objects that
 // the program's literals make, keyed as ESCore keys them, and for each argument its literals may be
 // of the methods it names. Any other key stops, which the host may hold data of.
 export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: ReadonlySet<string>) => {
@@ -1187,7 +1223,15 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
     name: `IntlTable${index + 1}`,
     entries: [...entries].slice(index * TABLE_SIZE, (index + 1) * TABLE_SIZE),
   }));
-  return [
+  // The strings of the host's answers, which a program may pass back as locales.
+  const strings = new Set(
+    [...entries.values()].flatMap((answer) =>
+      [...answer.matchAll(/Str\(<<([\d, ]*)>>\)/g)].map((match) =>
+        String.fromCharCode(...(match[1].match(/\d+/g) ?? []).map(Number)),
+      ),
+    ),
+  );
+  const definitions = [
     ...tables.map((table) => ({
       name: table.name,
       arity: 0,
@@ -1202,4 +1246,5 @@ export const getHostIntl = (sourceFiles: readonly ts.SourceFile[], words: Readon
           : `HostIntl(key) ==\n  CASE ${[...tables.map((table) => `key \\in DOMAIN ${table.name} -> ${table.name}[key]`), `OTHER -> [found |-> "unknown"]`].join("\n    [] ")}`,
     },
   ];
+  return { definitions, strings };
 };
