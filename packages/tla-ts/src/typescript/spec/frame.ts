@@ -254,9 +254,30 @@ const isTypeReference = (type: ts.Type): type is ts.TypeReference =>
 
 const getTypeName = (type: ts.Type) => type.getSymbol()?.getName() ?? "";
 
-const isSetType = (type: ts.Type) => ["Set", "ReadonlySet"].includes(getTypeName(type));
+// The collection's type of a class that extends one and adds only static members, whose instances
+// are the collection's, or the type itself.
+const getCollectionType = (type: ts.Type) => {
+  const declaration = type.getSymbol()?.valueDeclaration;
+  const base =
+    declaration !== undefined &&
+    ts.isClassLike(declaration) &&
+    declaration.members.every(
+      (member) =>
+        ts.canHaveModifiers(member) &&
+        (ts.getModifiers(member) ?? []).some(
+          (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
+        ),
+    )
+      ? type.getBaseTypes()?.at(0)
+      : undefined;
+  return base !== undefined && ["Set", "Map"].includes(getTypeName(base)) ? base : type;
+};
 
-const isMapType = (type: ts.Type) => ["Map", "ReadonlyMap"].includes(getTypeName(type));
+const isSetType = (type: ts.Type) =>
+  ["Set", "ReadonlySet"].includes(getTypeName(getCollectionType(type)));
+
+const isMapType = (type: ts.Type) =>
+  ["Map", "ReadonlyMap"].includes(getTypeName(getCollectionType(type)));
 
 // The frame of a model that tla-ts checks on ESCore, which TypeScript's types give: the state
 // variables, the set of values that each state variable without an initializer starts at and
@@ -620,7 +641,11 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
     if (literal !== undefined) return `{${literal}}`;
     if (type.flags & ts.TypeFlags.Number) return "-3..3";
     if (type.flags & ts.TypeFlags.String) return '{"", "a", "b"}';
-    if (isSetType(type) || isMapType(type) || checker.isTupleType(type)) {
+    // A subclass's instances are objects, which no domain lists.
+    if (
+      ((isSetType(type) || isMapType(type)) && getCollectionType(type) === type) ||
+      checker.isTupleType(type)
+    ) {
       const elements = findDomains(
         isTypeReference(type) ? checker.getTypeArguments(type) : [],
         path,
