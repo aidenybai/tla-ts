@@ -19,3 +19,9 @@ export const HeroTitle = (props: PartProps) => (
 export const HeroBody = (props: PartProps) => (
   <div className="flex flex-col gap-3 text-pretty">{props.children}</div>
 );
+
+export const Hero = {
+  Root: HeroRoot,
+  Title: HeroTitle,
+  Body: HeroBody,
+};

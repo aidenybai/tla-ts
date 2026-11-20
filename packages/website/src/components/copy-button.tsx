@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useCopy } from "../use-copy";
+import { useCopy } from "@/hooks/use-copy";
 import { CopyIcon } from "./copy-icon";
-import { Button } from "./ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface CopyButtonProps {
   text: string;

@@ -1,6 +1,6 @@
-import { compile } from "../../tla-ts/src/typescript/compile";
-import type { Library } from "../../tla-ts/src/typescript/program";
-import { printRegions } from "../../tla-ts/src/typescript/regions";
+import { compile } from "../../../tla-ts/src/typescript/compile";
+import type { Library } from "../../../tla-ts/src/typescript/program";
+import { printRegions } from "../../../tla-ts/src/typescript/regions";
 import type { Mark, Source, Token } from "./site-data";
 
 export interface Compilation {

@@ -1,15 +1,15 @@
 import { CaretDown, GearSix } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { cn } from "cn";
-import { PLAYGROUND_EXAMPLES } from "../playground-examples";
-import { usePlaygroundView } from "../playground-view";
-import { useIsHydrated } from "../use-is-hydrated";
-import { Logo } from "./logo";
+import { PLAYGROUND_EXAMPLES } from "@/lib/playground-examples";
+import { usePlaygroundView } from "@/lib/playground-view";
+import { useIsHydrated } from "@/hooks/use-is-hydrated";
+import { Logo } from "@/components/logo";
 import { usePlayground } from "./playground";
-import { RunIcon } from "./run-icon";
-import { useTheme } from "./theme-switcher";
-import { Button } from "./ui/button";
-import { buttonVariants } from "./ui/button-variants";
+import { RunIcon } from "@/components/run-icon";
+import { useTheme } from "@/components/theme-switcher";
+import { Button } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button-variants";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,7 +20,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
+} from "@/components/ui/dropdown-menu";
 
 const APPLE_PLATFORM = /Mac|iPhone|iPad/;
 
