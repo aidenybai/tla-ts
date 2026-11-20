@@ -101,15 +101,38 @@ const live = createChecker("(prepare) => prepare.prepareRuntime(workerData.direc
 // The recorded host, read from JSON on a worker with the stack of a browser's worker, half a
 // megabyte, which only the graph's started realm fits in.
 let recorded: ReturnType<typeof createChecker> | undefined;
+// The same host in New York's time zone and a German locale, whose runtime the graph still gives.
+let zoned: ReturnType<typeof createChecker> | undefined;
 beforeAll(async () => {
+  const host = await recordHost();
   recorded = createChecker(
     "(prepare) => prepare.prepareHostRuntime(JSON.parse(workerData.host))",
     0.5,
-    await recordHost(),
+    host,
+  );
+  const parsed = JSON.parse(host);
+  zoned = createChecker(
+    "(prepare) => prepare.prepareHostRuntime(JSON.parse(workerData.host))",
+    0.5,
+    JSON.stringify({
+      ...parsed,
+      realm: {
+        ...parsed.realm,
+        locale: "de-DE",
+        timeZone: "America/New_York",
+        zoneName: " (Nordamerikanische Ostküsten-Normalzeit)",
+      },
+    }),
   );
   await Promise.all([live.getOutcome("", "empty.ts"), recorded.getOutcome("", "empty.ts")]);
 }, 300_000);
-afterAll(() => Promise.all([live.checker.terminate(), recorded?.checker.terminate()]));
+afterAll(() =>
+  Promise.all([
+    live.checker.terminate(),
+    recorded?.checker.terminate(),
+    zoned?.checker.terminate(),
+  ]),
+);
 
 const getRecorded = (text: string, fileName: string, isModel = false) =>
   recorded?.getOutcome(text, fileName, isModel) ?? Promise.reject(new Error("no recorded host"));
@@ -183,6 +206,34 @@ describe("prepare ESCore's runtime from a recorded host as from Node's realm", (
         "the script threw an exception",
       );
       expect((await getRecorded(getSource(0), "locale.ts")).message).toContain("tla-ts can't");
+    });
+  });
+
+  // The runtime reads the host's time zone and locale from each program's code, so the graph that
+  // a build prepared starts the realm on a small stack wherever the host's time zone or locale
+  // differs from the build's.
+  describe("start the realm that the graph gives in another time zone and locale", () => {
+    const getSource = (expected: number) =>
+      `const total = [1, 2].length;\nif (total !== ${expected}) throw new Error("total " + total);\n`;
+    const getZoned = (text: string, fileName: string) =>
+      zoned?.getOutcome(text, fileName) ?? Promise.reject(new Error("no zoned host"));
+
+    it("agrees with Node", async () => {
+      expect(runNode(getSource(2), "total.ts").status).toBe(0);
+      expect((await getZoned(getSource(2), "total.ts")).status).toBe("success");
+    });
+
+    it("rejects another result", async () => {
+      expect(runNode(getSource(3), "total.ts").stderr).toContain("Error: total 2");
+      expect((await getZoned(getSource(3), "total.ts")).message).toContain(
+        "the script threw an exception",
+      );
+    });
+
+    it("stops where the program reads the local time, as the time zone isn't UTC", async () => {
+      expect(
+        (await getZoned("const hours = new Date(0).getHours();\n", "hours.ts")).message,
+      ).toContain("tla-ts can't tell the host's local time, whose time zone isn't UTC");
     });
   });
 });

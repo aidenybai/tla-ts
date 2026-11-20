@@ -251,6 +251,7 @@ export const HOOKS = new Map([
   ["HostDefaultStackTraceLimit", "file"],
   ["HostDateFormat", "key"],
   ["HostLocale", "tag"],
+  ["HostRealmFact", "name"],
   ["ModuleNode", "id"],
   ["ModuleDeclarations", "s, ctx, node"],
 ]);

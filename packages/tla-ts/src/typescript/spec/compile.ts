@@ -9,6 +9,7 @@ import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
 import {
   getHostDateFormat,
   getHostLocale,
+  getHostRealmFacts,
   getHostTimeZone,
   getTlaString,
   getUnitsOf,
@@ -587,6 +588,11 @@ export const compileToEscore = (
           name: "HostDateFormat",
           arity: 1,
           text: getHostDateFormat(program.words, runtime.realm),
+        },
+        {
+          name: "HostRealmFact",
+          arity: 1,
+          text: getHostRealmFacts(runtime.realm),
         },
         {
           name: "HostLocale",

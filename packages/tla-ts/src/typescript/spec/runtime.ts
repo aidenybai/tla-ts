@@ -982,9 +982,15 @@ const TAILORED_CASING = new Set(["az", "el", "hy", "lt", "tr"]);
 
 // The host's local time is UTC's where its default time zone is UTC, whose name V8 writes after a
 // date's offset in the host's default locale. In another time zone a compiled spec stops at local
-// time, which ESCore keeps as UTC's.
-const isUtcHost = (realm: HostRealm) => realm.timeZone === "UTC";
+// time, which ESCore keeps as UTC's. The runtime reads these facts of the host's realm through
+// HostRealmFact, which each program's code defines, so that the runtime, and the graph that a build
+// prepares of it, is the same in every time zone and locale.
 const LOCAL_TIME_STOP = `Assert(FALSE, "tla-ts can't tell the host's local time, whose time zone isn't UTC")`;
+export const getHostRealmFacts = (realm: HostRealm) =>
+  `HostRealmFact(name) ==
+  CASE name = "isUtc" -> ${realm.timeZone === "UTC" ? "TRUE" : "FALSE"}
+    [] name = "zoneName" -> <<${Array.from(realm.zoneName, (character) => character.charCodeAt(0)).join(", ")}>>
+    [] name = "tailorsCase" -> ${TAILORED_CASING.has(new Intl.Locale(realm.locale).language) ? "TRUE" : "FALSE"}`;
 const CLOCK_STOP = `Assert(FALSE, "tla-ts can't read the host's clock, whose time each run reads anew")`;
 // What Date.now gives, and the time value of a Date that new Date() makes: a Number without a
 // value, HostTime, which a program may store, pass, and return, as its outcome is then the same at
@@ -1015,29 +1021,27 @@ const HOST_TIME_READERS = [
 ];
 
 // The patches that the runtime makes of ESCore for a host's realm.
-const getHostPatches = (realm: HostRealm) => [
+const HOST_PATCHES = [
   { name: "ParseDate", from: "ParseDate(u) ==", to: "ParseSpecDate(u) ==" },
   {
     name: "LocalTime",
     from: "LocalTime(t) == t",
-    to: `LocalTime(t) == ${isUtcHost(realm) ? "t" : LOCAL_TIME_STOP}`,
+    to: `LocalTime(t) == IF HostRealmFact("isUtc") THEN t ELSE ${LOCAL_TIME_STOP}`,
   },
   {
     name: "UTC",
     from: "UTC(t) == IF NumIsFinite(t) THEN t ELSE NaN",
-    to: isUtcHost(realm)
-      ? "UTC(t) == IF NumIsFinite(t) THEN t ELSE NaN"
-      : `UTC(t) == ${LOCAL_TIME_STOP}`,
+    to: `UTC(t) == IF ~HostRealmFact("isUtc") THEN ${LOCAL_TIME_STOP} ELSE IF NumIsFinite(t) THEN t ELSE NaN`,
   },
   {
     name: "TimeZoneString",
     from: `N("+0000")`,
-    to: `N("+0000") \\o <<${Array.from(realm.zoneName, (character) => character.charCodeAt(0)).join(", ")}>>`,
+    to: `N("+0000") \\o HostRealmFact("zoneName")`,
   },
   {
     name: "TemporalNowBuiltin",
     from: `CASE m = "timeZoneId" -> Ok(s, Str(UTCTimeZone.id))`,
-    to: `CASE m = "timeZoneId" -> ${isUtcHost(realm) ? "Ok(s, Str(UTCTimeZone.id))" : LOCAL_TIME_STOP}`,
+    to: `CASE m = "timeZoneId" -> IF HostRealmFact("isUtc") THEN Ok(s, Str(UTCTimeZone.id)) ELSE ${LOCAL_TIME_STOP}`,
   },
   // What the host picks at random or reads from its clock differs from run to run, so a compiled
   // spec stops where a program reads it: Math.random, the time that Date.now gives and a Date that
@@ -1121,7 +1125,7 @@ const getHostPatches = (realm: HostRealm) => [
     name: "StringMethod",
     from: `    [] m = "toLowerCase" ->`,
     to: `    [] m \\in {"toLocaleLowerCase", "toLocaleUpperCase"} ->
-         IF Arg(args, 1) # Undefined \\/ ${TAILORED_CASING.has(new Intl.Locale(realm.locale).language) ? "TRUE" : "FALSE"} THEN Unsupported(s, <<>>)
+         IF Arg(args, 1) # Undefined \\/ HostRealmFact("tailorsCase") THEN Unsupported(s, <<>>)
          ELSE Ok(s, Str(IF m = "toLocaleLowerCase" THEN ToLowercase(units) ELSE ToUppercase(units)))
     [] m = "toLowerCase" ->`,
   },
@@ -1463,7 +1467,7 @@ const getHostPatches = (realm: HostRealm) => [
   },
 ];
 
-export const getHostDefinitions = (library: Library, realm: HostRealm): GeneratedDefinition[] =>
+export const getHostDefinitions = (library: Library): GeneratedDefinition[] =>
   [
     `HostTime == [type |-> "number", host |-> "clock"]`,
     `HostTimeIn(values) == \\E i \\in DOMAIN values : values[i] = HostTime`,
@@ -1484,7 +1488,7 @@ export const getHostDefinitions = (library: Library, realm: HostRealm): Generate
       };
     })
     .concat([
-      ...getHostPatches(realm).map((patch) => {
+      ...HOST_PATCHES.map((patch) => {
         const definition = library.definitions.get(patch.name);
         if (definition === undefined || !definition.text.includes(patch.from)) {
           throw new TlaError(

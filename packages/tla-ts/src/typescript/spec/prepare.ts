@@ -142,7 +142,7 @@ const files = { readFile: undefined, writeFile: undefined, makeDirectory: undefi
 // The definitions that the runtime puts in place of ESCore's, as a compiled spec runs them.
 const getOverrides = (library: Library, realm: HostRealm) => [
   ...RUNTIME_DEFINITIONS,
-  ...getHostDefinitions(library, realm),
+  ...getHostDefinitions(library),
   ...getLocalDefinitions(library),
   ...getRealmDefinitions(library, realm),
   // The realm's first objects, which the runtime evaluates once, as it starts, rather than
