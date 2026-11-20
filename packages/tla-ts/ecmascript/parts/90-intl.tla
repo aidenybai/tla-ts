@@ -652,28 +652,55 @@ DateTimeFormattableKey(s, value) ==
 \* TimeClip (§21.4.1.31), whose -0 is +0, as FormatDateTime reads a Number.
 IntlTimeClip(x) == LET t == TimeClip(x) IN IF NumIsZero(t) THEN NumFromInt(0) ELSE t
 
-\* The text of a DateTimeFormat's format of a time value, through the host's recorded English
-\* pattern (HostDateFormat) for the options it read, where they are ones the table records:
-\* English, the Gregorian calendar, Latin digits, and UTC, which is ESCore's local time zone, of a
-\* year from 1583 to 9999. Else Empty.
+\* The text of a DateTimeFormat's format of a time value or a Temporal object, through the host's
+\* recorded English pattern (HostDateFormat) for the options it read, where they are ones the table
+\* records: English, no calendar or numbering system, and UTC, which is ESCore's local time zone, of
+\* a year from 1583 to 9999, or the error that the table records it throws. Else found is "none".
 DateTimeFormatReadIndex ==
   [calendar |-> 2, numberingSystem |-> 3, hour12 |-> 4, hourCycle |-> 5, timeZone |-> 6, weekday |-> 7, era |-> 8,
    year |-> 9, month |-> 10, day |-> 11, dayPeriod |-> 12, hour |-> 13, minute |-> 14, second |-> 15,
    fractionalSecondDigits |-> 16, timeZoneName |-> 17, formatMatcher |-> 18, dateStyle |-> 19, timeStyle |-> 20]
 DateTimeFormatRead(config, name) == config[2][DateTimeFormatReadIndex[name]]
+\* A key of a time value, or of a Temporal object of a kind but an instant's or a zoned one's in the ISO
+\* 8601 or the Gregorian calendar, as the kind its pattern is the host's table's under, its
+\* calendar, and its date and time.
+DateTimeFormatTarget(key) ==
+  LET kind == key[1]
+      hasDate == kind \in {"PlainDate", "PlainDateTime", "PlainYearMonth", "PlainMonthDay"}
+      calendar == key[Len(key)]
+      time == CASE kind = "PlainTime" -> SubSeq(key, 2, 5)
+                [] kind = "PlainDateTime" -> SubSeq(key, 5, 8)
+                [] OTHER -> <<0, 0, 0, 0>>
+  IN CASE kind = "number" ->
+            LET fields == DateFields(StringToNumber(key[2])) IN
+            [found |-> TRUE, kind |-> "DateTimeFormat", calendar |-> "gregory",
+             date |-> [year |-> fields.year, month |-> fields.month + 1, day |-> fields.date],
+             time |-> <<fields.hour, fields.minute, fields.second, fields.ms>>]
+       [] (hasDate /\ calendar \in {N("iso8601"), N("gregory")}) \/ kind = "PlainTime" ->
+            [found |-> TRUE,
+             kind |-> CASE kind = "PlainDate" -> "DateTimeFormat.PlainDate"
+                        [] kind = "PlainDateTime" -> "DateTimeFormat.PlainDateTime"
+                        [] kind = "PlainYearMonth" -> "DateTimeFormat.PlainYearMonth"
+                        [] kind = "PlainMonthDay" -> "DateTimeFormat.PlainMonthDay"
+                        [] OTHER -> "DateTimeFormat.PlainTime",
+             calendar |-> IF hasDate /\ calendar = N("gregory") THEN "gregory" ELSE "iso8601",
+             date |-> IF hasDate THEN [year |-> key[2], month |-> key[3], day |-> key[4]] ELSE [year |-> 1970, month |-> 1, day |-> 1],
+             time |-> time]
+       [] OTHER -> [found |-> FALSE]
 DateTimeFormatPatternText(config, key) ==
   LET read(name) == DateTimeFormatRead(config, name)
-      fields == DateFields(StringToNumber(key[2]))
+      target == DateTimeFormatTarget(key)
       names == {"hourCycle", "weekday", "era", "year", "month", "day", "hour", "minute", "second",
                 "fractionalSecondDigits", "dateStyle", "timeStyle", "dayPeriod"}
       values == [n \in names |-> read(n)]
-      format == HostDateFormat(DateFormatKey("DateTimeFormat", "gregory", read("hour12"), values))
+      format == HostDateFormat(DateFormatKey(target.kind, target.calendar, read("hour12"), values))
   IN IF config[1] \notin {<<>>, <<N("en")>>, <<N("en-US")>>} \/ read("calendar") # Empty \/ read("numberingSystem") # Empty \/
         ~(read("timeZone") \in {Empty, N("UTC")}) \/ read("timeZoneName") # Empty \/ read("formatMatcher") = N("basic") \/
-        key[1] # "number" \/ format.found # "format" \/ fields.year < 1583 \/ fields.year > 9999
-     THEN Empty
-     ELSE LocaleText(format, 1, [year |-> fields.year, month |-> fields.month + 1, day |-> fields.date],
-                     <<fields.hour, fields.minute, fields.second, fields.ms>>)
+        ~target.found \/ format.found \notin {"format", "error"} \/
+        (target.kind # "DateTimeFormat.PlainTime" /\ (target.date.year < 1583 \/ target.date.year > 9999))
+     THEN [found |-> "none"]
+     ELSE IF format.found = "error" THEN format
+     ELSE [found |-> "text", text |-> LocaleText(format, 1, target.date, target.time)]
 
 \* The methods of an Intl.DateTimeFormat, dtf, whose format is a function bound to it.
 DateTimeFormatMethods ==
@@ -694,8 +721,10 @@ DateTimeFormatMethod(s, m, dtf, args) ==
          ELSE IF Val(x)[1] = "number" /\ Val(x)[2] = N("NaN") THEN ThrowError(x.s, "RangeError") ELSE
          LET method == IF m = "DateTimeFormat.boundFormat" THEN "format" ELSE "formatToParts"
              answer == HostIntl(<<"DateTimeFormat", config, "formatToParts", <<Val(x)>>>>)
-             text == IF method = "format" /\ answer.found \notin {"parts", "error"} THEN DateTimeFormatPatternText(config, Val(x)) ELSE Empty
-         IN IF text # Empty THEN Ok(x.s, Str(text)) ELSE
+             pattern == IF method = "format" /\ answer.found \notin {"parts", "error"}
+                        THEN DateTimeFormatPatternText(config, Val(x)) ELSE [found |-> "none"]
+         IN IF pattern.found = "text" THEN Ok(x.s, Str(pattern.text))
+            ELSE IF pattern.found = "error" THEN ThrowError(x.s, pattern.error) ELSE
             LET found == IntlAnswer(x.s, "DateTimeFormat", config, "formatToParts", <<Val(x)>>) IN
             IF IsAbrupt(found) THEN found ELSE IntlResult(found.s, method, Val(found))
     [] OTHER ->

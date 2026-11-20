@@ -2058,7 +2058,9 @@ export const getHostDateFormat = (words: ReadonlySet<string>, realm: HostRealm) 
     realm.locale === "en-US" && realm.timeZone === "UTC"
       ? Object.entries(DATE_FORMATS).filter(([key]) => {
           const kind = key.slice(0, key.indexOf("|"));
-          return kind === "DateTimeFormat" ? isFormat : isTemporal && words.has(kind);
+          return kind.startsWith("DateTimeFormat")
+            ? isFormat && (kind === "DateTimeFormat" || words.has("Temporal"))
+            : isTemporal && words.has(kind);
         })
       : [];
   const getEntry = (format: (typeof DATE_FORMATS)[string]) =>

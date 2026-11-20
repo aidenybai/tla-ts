@@ -2049,6 +2049,85 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "formats the Temporal objects that a program computes through the host's recorded English patterns",
+    () => {
+      const getSource = (expected: string) => `
+      const date = new Temporal.PlainDate(2000, 5, [2].length);
+      let error = "none";
+      try {
+        new Intl.DateTimeFormat("en", { month: "long" }).format(date.toPlainYearMonth());
+      } catch (caught) {
+        error = (caught as Error).name;
+      }
+      const result = [
+        new Intl.DateTimeFormat("en").format(date),
+        new Intl.DateTimeFormat("en", { month: "long" }).format(date.withCalendar("gregory").toPlainYearMonth()),
+        new Intl.DateTimeFormat("en", { hour: "numeric" }).format(new Temporal.PlainTime([3].length)),
+        error,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        expect(
+          (await checkScript(getSource("5/1/2000|May|1 AM|RangeError"))).message,
+        ).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        expect((await checkScript(getSource("5/1/2000|May|1 PM|RangeError"))).message).toContain(
+          THREW,
+        );
+      });
+
+      it("stops at a locale whose patterns the table leaves out", async () => {
+        const source =
+          'new Intl.DateTimeFormat("de").format(new Temporal.PlainDate(2000, 5, [2].length));';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "throws a RangeError where a Temporal object's calendar isn't its English formatter's",
+    () => {
+      const getSource = (expected: string) => `
+      const calendar = ["greg", "ory"].join("");
+      let errors = "";
+      for (const make of [
+        () => new Temporal.PlainDate(2000, 5, 2, "hebrew").toLocaleString(),
+        () => new Temporal.PlainDate(2000, 5, 2, "hebrew").toPlainYearMonth().toLocaleString("en"),
+        () => new Temporal.PlainDate(2000, 5, 2, "hebrew").toLocaleString("en", { timeStyle: "short" }),
+      ]) {
+        try {
+          make();
+        } catch (error) {
+          errors += (error as Error).name + ";";
+        }
+      }
+      const result = [new Temporal.PlainDate(2000, 5, 2, calendar).toLocaleString(), errors].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected = "5/2/2000|RangeError;RangeError;TypeError;";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = "5/2/2000|RangeError;RangeError;RangeError;";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a calendar option", async () => {
+        const source =
+          'new Temporal.PlainDate(2000, 5, [2].length).toLocaleString("en", { calendar: "hebrew" });';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `
       const error = new Error("m");
