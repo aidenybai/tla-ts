@@ -17,7 +17,12 @@ const steps = [
     "--outdir",
     OUT_DIRECTORY,
   ],
-  ["node", "--stack-size=4000", join(OUT_DIRECTORY, "escore-graph.js"), join(PACKAGE_DIRECTORY, "dist")],
+  [
+    "node",
+    "--stack-size=4000",
+    join(OUT_DIRECTORY, "escore-graph.js"),
+    join(PACKAGE_DIRECTORY, "dist"),
+  ],
 ];
 for (const step of steps) {
   const run = spawnSync(step[0], step.slice(1), {

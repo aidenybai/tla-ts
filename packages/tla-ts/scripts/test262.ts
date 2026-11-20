@@ -368,7 +368,6 @@ ${source}`;
   return { id, outcome: "untranslatable", reason: "tla-ts can't tell this SyntaxError" };
 };
 
-
 // The numbers of an array literal of numeric literals, or undefined for another expression.
 const getNumbers = (node: ts.Expression | undefined) =>
   node !== undefined &&
@@ -633,7 +632,6 @@ const checkProgram = async (
     return { id, outcome: "untranslatable", reason: getFirstLine(error.message) };
   }
 };
-
 
 const runTest = async (path: string): Promise<TestRun> => {
   const id = relative(TEST262_DIRECTORY, path);

@@ -118,13 +118,13 @@ const getExample = async (
 // The shape of the TLA+ a file compiles to: its tokens, split by tabs, with their letters, digits,
 // and symbols masked. The playground draws it while its compiler loads, so the real text lands
 // where the outline was.
-const getOutline = async (
-  path: string,
-  highlight: Awaited<ReturnType<typeof createHighlighter>>,
-) =>
+const getOutline = async (path: string, highlight: Awaited<ReturnType<typeof createHighlighter>>) =>
   highlight(
     (
-      await compileOnEscore(readFileSync(path, "utf8").trim(), path.slice(path.lastIndexOf("/") + 1))
+      await compileOnEscore(
+        readFileSync(path, "utf8").trim(),
+        path.slice(path.lastIndexOf("/") + 1),
+      )
     ).code.trimEnd(),
     "tlaplus",
   )

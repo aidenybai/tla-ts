@@ -344,8 +344,8 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
         ts.isArrayLiteralExpression(initializer) ||
         (constructed !== undefined &&
           ["Map", "Set", "Array"].includes(constructed.name) &&
-          (constructed.declarations ?? []).every((inner) =>
-            inner.getSourceFile().isDeclarationFile,
+          (constructed.declarations ?? []).every(
+            (inner) => inner.getSourceFile().isDeclarationFile,
           )))
     );
   };
@@ -485,7 +485,8 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
     }, []);
   const getLiteral = (type: ts.Type): string | undefined => {
     if (type.isStringLiteral()) return formatString(type.value);
-    if (type.isNumberLiteral()) return Number.isInteger(type.value) ? String(type.value) : undefined;
+    if (type.isNumberLiteral())
+      return Number.isInteger(type.value) ? String(type.value) : undefined;
     if (type.flags & ts.TypeFlags.BooleanLiteral) {
       return checker.typeToString(type) === "true" ? "TRUE" : "FALSE";
     }
@@ -613,7 +614,10 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
     if (type.flags & ts.TypeFlags.Number) return "-3..3";
     if (type.flags & ts.TypeFlags.String) return '{"", "a", "b"}';
     if (isSetType(type) || isMapType(type) || checker.isTupleType(type)) {
-      const elements = findDomains(isTypeReference(type) ? checker.getTypeArguments(type) : [], path);
+      const elements = findDomains(
+        isTypeReference(type) ? checker.getTypeArguments(type) : [],
+        path,
+      );
       if (!Array.isArray(elements)) return elements;
       if (isSetType(type)) return `SUBSET (${elements[0]})`;
       if (isMapType(type)) {
@@ -949,7 +953,8 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
       // An assumption that reads the state holds in the initial states instead, before the search
       // goes on.
       list(
-        section === "ASSUME" && readsState(definition.declaration, new Set([definition.declaration]))
+        section === "ASSUME" &&
+          readsState(definition.declaration, new Set([definition.declaration]))
           ? "INVARIANTS"
           : section,
         definition.name,
@@ -1016,7 +1021,9 @@ export const frameModel = (source: string, fileName: string, library?: Library) 
   const config = [
     "SPECIFICATION Spec",
     ...[...sections].flatMap((entry) =>
-      entry[0] === "ASSUME" || entry[1].length === 0 ? [] : [entry[0], ...entry[1].map((name) => `  ${name}`)],
+      entry[0] === "ASSUME" || entry[1].length === 0
+        ? []
+        : [entry[0], ...entry[1].map((name) => `  ${name}`)],
     ),
     ...([...tags.values()].some((statementTags) => statementTags.has("noDeadlock"))
       ? ["CHECK_DEADLOCK FALSE"]

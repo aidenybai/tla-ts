@@ -284,7 +284,13 @@ export const createProgram = (source: string, path: string, library: Library = D
     readFile: (fileName) => (fileName === path ? source : host.readFile(fileName)),
     resolveModuleNameLiterals:
       libraries === undefined
-        ? (literals, containingFile, redirectedReference, resolutionOptions, containingSourceFile) =>
+        ? (
+            literals,
+            containingFile,
+            redirectedReference,
+            resolutionOptions,
+            containingSourceFile,
+          ) =>
             literals.map(
               (literal) =>
                 resolveLiteral(
