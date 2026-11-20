@@ -210,6 +210,31 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     });
   });
 
+  describe("runs a step that reads a binding of the module's declarations", () => {
+    const getSource = (declaration: string) => `
+      ${declaration}
+      let seen = new Set<number>();
+      export const take = () => {
+        if (seen.size > 0) return;
+        pending.add(1);
+        seen = new Set(pending);
+      };
+    `;
+
+    it("throws where a declare binds nothing, as Node does", async () => {
+      const result = await checkModel(getSource("declare const pending: Set<number>;"));
+      expect([result.status, result.distinct]).toEqual(["error", 1]);
+      expect(result.message).toContain(
+        "tla-ts can't read the message that Node writes for an error it throws",
+      );
+    });
+
+    it("takes the step where the module binds it", async () => {
+      const result = await checkModel(getSource("const pending = new Set<number>();"));
+      expect([result.status, result.distinct]).toEqual(["deadlock", 2]);
+    });
+  });
+
   describe("keeps one state for errors that differ only in the calls that made them", () => {
     const getSource = (message: string, isRead = false) => `
       let last: Error | undefined = undefined;
