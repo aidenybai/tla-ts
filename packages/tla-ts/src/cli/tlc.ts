@@ -24,6 +24,7 @@ import {
   TlaSanyFatalError,
 } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
+import { trimJava } from "../java-string";
 import { check } from "../parallel";
 import { extractModule, getMonolithSection, parseModule } from "../parser";
 import { simulate } from "../simulate";
@@ -35,7 +36,6 @@ import {
   SANY_STANDARD_MODULES,
 } from "../sany/modules";
 import { getSanyReport, type SanyModuleOrigin } from "../sany/report";
-import { trimJava } from "../sany/xml";
 import { getTlcFingerprint } from "../tlc/fingerprint";
 import type { TlcVersion } from "../tlc/version";
 import {

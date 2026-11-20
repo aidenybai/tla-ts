@@ -1,5 +1,6 @@
 import { TlaJavaException, TlaUnsupportedError } from "../errors";
 import { setExitCode } from "../exit-codes";
+import { trimJava } from "../java-string";
 import type { TlcVersion } from "../tlc/version";
 import type { SanySpecification } from "./generator";
 import {
@@ -321,8 +322,6 @@ const splitLines = (text: string) => {
   while (lines.at(-1) === "") lines.pop();
   return lines;
 };
-
-export const trimJava = (text: string) => text.replace(/^[\0-\x20]+|[\0-\x20]+$/g, "");
 
 const TRAILING_WHITESPACE =
   // eslint-disable-next-line no-control-regex
