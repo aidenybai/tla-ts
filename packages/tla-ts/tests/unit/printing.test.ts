@@ -129,6 +129,32 @@ describe("printing matches TLC", () => {
     ]);
   });
 
+  it.each([
+    ["\\cap", "FALSE"],
+    ["\\", "TRUE"],
+  ])(
+    "tests each element of S %s T in T as it streams S, as TLC's enumerator does",
+    async (operator, isEmpty) => {
+      expect(
+        (
+          await checkPrinting(
+            `ASSUME PrintT(({s \\in SUBSET {1, 2} : PrintT(<<"f", s>>)} ${operator} {s \\in SUBSET {1, 2} : PrintT(<<"g", s>>)}) = {})`,
+          )
+        ).printed,
+      ).toEqual([
+        '<<"f", {}>>',
+        '<<"g", {}>>',
+        '<<"f", {1}>>',
+        '<<"g", {1}>>',
+        '<<"f", {2}>>',
+        '<<"g", {2}>>',
+        '<<"f", {1, 2}>>',
+        '<<"g", {1, 2}>>',
+        isEmpty,
+      ]);
+    },
+  );
+
   it("streams SUBSET S into a filter without sizing SUBSET S, as TLC's SubsetValue#elements does", async () => {
     expect(
       (await checkPrinting("ASSUME PrintT([{1} -> {s \\in SUBSET (1..40) : TRUE}] = [{2} -> {}])"))
