@@ -443,7 +443,6 @@ interface AssumeProveLabel {
 export interface AssumeProve {
   kind: "AssumeProve";
   label?: AssumeProveLabel;
-  // Set for SANY's []ASSUME and []PROVE, which need not match.
   isBoxed?: boolean;
   isProveBoxed?: boolean;
   assumptions: (Expression | NewSymbol | AssumeProve)[];

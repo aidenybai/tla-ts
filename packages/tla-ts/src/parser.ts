@@ -1203,7 +1203,7 @@ const parse = (
         }
         cursor = checkpoint;
       }
-      // Deviation from SANY: TLAplusParser#matchFcnConst reads an identifier list or a tuple before \in as a bound, so SANY rejects {a, e \in S} and {<<1, 2>> \in S} and reports <<a, e>> in {<<a, e>> \in S} as an N_IdentifierTuple; tla-ts reads each as a set enumeration, as the grammar does.
+      // Deviation from SANY: TLAplusParser#matchFcnConst reads the a, e in {a, e \in S} or the <<1, 2>> in {<<1, 2>> \in S} as a bound, a bug its comment names; tla-ts reads a set enumeration, as the grammar does.
       const first =
         peek().kind === "Identifier" && isAt("\\in", 1) ? parseSetMembership() : parseExpression();
       if (accept(":")) {
@@ -2024,7 +2024,7 @@ const parse = (
     }
     const name = expectIdentifier();
     if (accept("[")) {
-      // Deviation from SANY: TLAplusParser#belchDEF marks the definition before the next == ahead, which in f[v \in LET N == 1 IN {N}] == v is the LET's, so SANY rejects a function definition whose bounds hold a LET; tla-ts reads it as the grammar does.
+      // Deviation from SANY: TLAplusParser#belchDEF takes the LET's == in f[v \in LET N == 1 IN {N}] == v for the definition's and rejects it; tla-ts reads it as the grammar does.
       const bounds = withBracketLayout(() => parseBounds());
       expect("]");
       expect("==");

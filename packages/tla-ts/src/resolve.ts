@@ -2221,7 +2221,6 @@ const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit:
   );
 };
 
-// SANY's Generator#generateAssumeProve declares S_InAssume in the scope of an ordinary ASSUME's assumptions, as for NEW.
 const IN_ASSUME = "$$InAssume";
 
 const resolveAssumeProve = (

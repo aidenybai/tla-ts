@@ -91,7 +91,6 @@ interface UnresolvedName {
 const getKindName = (symbol: SymbolNode) =>
   symbol.kind === "OpDef" || symbol.kind === "FormalParam" ? "definition" : "declaration";
 
-// SANY's ParseUnit#getInstances walks every unit of every module for INSTANCEs, including those in substitutions and proofs.
 const getInstances = (instance: Instance): Instance[] => [
   instance,
   ...instance.substitutions.flatMap((substitution) => getLetInstances(substitution.expression)),
