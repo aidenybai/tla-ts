@@ -147,7 +147,7 @@ interface SelectionArgument {
   range: SourceRange | undefined;
 }
 
-interface SelectedDefinition {
+export interface SelectedDefinition {
   definition: Definition;
   params: string[];
 }
@@ -158,7 +158,6 @@ export const operatorSelectionErrors = new WeakMap<Expression, SanyError>();
 export const factReferences = new WeakMap<Fact[], Fact[]>();
 export const selectionArguments = new WeakMap<Expression, SelectionArgument>();
 export const nullSelections = new WeakMap<Expression, NullSelection[]>();
-export const selectedDefinitions = new WeakMap<Expression, SelectedDefinition>();
 export const generatedArgumentCounts = new WeakMap<Expression, number>();
 export const operandApplications = new WeakMap<Expression, ApplyExpression[]>();
 const unresolvedExpressions = new WeakSet<Expression>();

@@ -26,7 +26,7 @@ import {
   getBoundNames,
   getPatternNames,
   isBefore,
-  selectedDefinitions,
+  type SelectedDefinition,
 } from "./resolve";
 import { resolveSynonym } from "./tlc/jar-data";
 import { STANDARD_LEVELS } from "./standard-definitions";
@@ -110,6 +110,7 @@ export interface LetInstance extends InstanceSubstitutes {
 
 export interface InstanceLevels {
   getCopy: (definition: Definition) => InstanceCopy | undefined;
+  getSelectedDefinition: (expression: Expression) => SelectedDefinition | undefined;
   getLetInstance: (instance: Instance) => LetInstance | undefined;
   getInstanced: (copy: InstanceCopy) => InstancedDefinition;
   getOriginal: (copy: InstanceCopy, target: Expression) => LevelData;
@@ -1629,7 +1630,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   };
 
   const getSelectedInstance = (substituted: Expression): Instanced => {
-    const selected = selectedDefinitions.get(substituted);
+    const selected = context.instances.getSelectedDefinition(substituted);
     const definition = selected?.definition;
     const copy = definition && (letCopies.get(definition) ?? context.instances.getCopy(definition));
     if (!selected || !definition || !copy) throw getMissingOriginalError(substituted);

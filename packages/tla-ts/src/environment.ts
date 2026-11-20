@@ -84,6 +84,7 @@ import {
   type ModuleUnit,
   type NestedRecursion,
   type RecursiveCount,
+  type SelectedDefinition,
   type SymbolKind,
   type Symbols,
 } from "./resolve";
@@ -314,6 +315,7 @@ export const createEnvironment = (
   const enabledSubstitutions = new WeakSet<Expression>();
   const goalOperands = new WeakMap<Expression, Expression[]>();
   const goalSelections = new WeakMap<Expression, Expression>();
+  const selectedDefinitions = new WeakMap<Expression, SelectedDefinition>();
   const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
@@ -408,6 +410,7 @@ export const createEnvironment = (
     },
     {
       getCopy: (definition) => instanceCopies.get(definition),
+      getSelectedDefinition: (expression) => selectedDefinitions.get(expression),
       getLetInstance: (instance) =>
         instance.location.range && letInstances.get(formatRange(instance.location.range)),
       checkInstantiation: (instance, instancer, scope) => {
@@ -724,7 +727,7 @@ export const createEnvironment = (
     const suffix = `#${copyCount++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
     const substitutions = resolveSubstitutions(
-      resolveInstanceSubexpressions(instance, module),
+      resolveInstanceSubexpressions(instance, module, selectedDefinitions),
       declarations,
       resolved,
       module.name,
@@ -1426,6 +1429,7 @@ export const createEnvironment = (
           ],
         };
       },
+      selectedDefinitions,
       (name, location) =>
         bound.has(name) ||
         parsed.instances.some(
