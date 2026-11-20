@@ -84,6 +84,7 @@ import {
   type ModuleUnit,
   type NestedRecursion,
   type RecursiveCount,
+  type SubexpressionRecords,
   type SymbolKind,
   type Symbols,
 } from "./resolve";
@@ -167,6 +168,13 @@ const ANNOTATED_OVERRIDE_MODULES = new Set(["IOUtils", "Json", "TLCExt"]);
 
 // TLC evaluates the definitions of these modules that it doesn't override, such as Bags' SubBag.
 const SOURCE_STANDARD_MODULES = new Set(["Bags", "Randomization", "TLCExt"]);
+
+// SANY level-checks an instance's substitutes with the first definition it instances, an operator before a theorem, or else with the instance itself.
+const getSubstitutesCheck = (exported: Symbols) => {
+  const kinds = new Set([...exported.values()].map((symbol) => symbol.kind));
+  if (kinds.has("Definition") || kinds.has("Builtin")) return "Definition";
+  return kinds.has("Theorem") ? "Theorem" : "Instance";
+};
 
 // SANY's SubstInNode and APSubstInNode word the error for a body they can't substitute in apart.
 const SUBSTITUTION_ERRORS = [
@@ -313,6 +321,11 @@ export const createEnvironment = (
   const substitutedDefinitions = new Set<Definition>();
   const enabledSubstitutions = new WeakSet<Expression>();
   const goalOperands = new WeakMap<Expression, Expression[]>();
+  const goalSelections = new WeakMap<Expression, Expression>();
+  const subexpressionRecords: SubexpressionRecords = {
+    selectedDefinitions: new WeakMap(),
+    instanceReferences: new WeakMap(),
+  };
   const instanceParams = new Set<OperatorParam>();
   const builtins = new Map<string, Builtin>(
     CORE_OPERATORS.map((operator) => [operator.name, operator]),
@@ -345,21 +358,36 @@ export const createEnvironment = (
     });
   let copyCount = 0;
   const createName = (name: string) => `${name}#${copyCount++}`;
+  const originalNames = new Map<string, string>();
   const instanceChecks: InstanceLevelCheck[] = [];
   const semanticErrors: SanyError[] = [];
   const warnings: SanyError[] = [];
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
-  const checkedLabels = new WeakSet<Expression>();
+  const checkedNodes = new WeakMap<Expression, boolean>();
   const resolvedSubstitutions = new WeakMap<Instance, Map<string, Expression>>();
+  // Each place that resolves an instance's selections, such as a theorem and its ASSUME/PROVE clause, copies the instance.
+  const getInstanceKey = (instance: Instance) =>
+    subexpressionRecords.instanceReferences.get(instance) ?? instance;
   const getInstanceSubstitute = (instance: Instance, name: string): Expression =>
-    resolvedSubstitutions.get(instance)?.get(name) ??
+    resolvedSubstitutions.get(getInstanceKey(instance))?.get(name) ??
     instance.substitutions.find((substitution) => substitution.name === name)?.expression ?? {
       kind: "Identifier",
       name,
       location: instance.location,
     };
+  const getSubstitutedDeclarations = <Item extends Declaration>(
+    instance: Instance,
+    declarations: Item[],
+  ) => {
+    const names = [...(resolvedSubstitutions.get(getInstanceKey(instance))?.keys() ?? [])];
+    const getOrder = (declaration: Item) => {
+      const index = names.indexOf(declaration.name);
+      return index === -1 ? names.length : index;
+    };
+    return declarations.toSorted((left, right) => getOrder(left) - getOrder(right));
+  };
   const createInstanceCopy = (
     sourceKey: string,
     module: string,
@@ -374,7 +402,7 @@ export const createEnvironment = (
       linked && {
         params: instance.params,
         substitutions: new Map(
-          linked.declarations.map((declaration) => [
+          getSubstitutedDeclarations(instance, linked.declarations).map((declaration) => [
             declaration.key,
             getInstanceSubstitute(instance, declaration.name),
           ]),
@@ -406,6 +434,9 @@ export const createEnvironment = (
     },
     {
       getCopy: (definition) => instanceCopies.get(definition),
+      getSelectedDefinition: (expression) =>
+        subexpressionRecords.selectedDefinitions.get(expression),
+      getOriginalName: (name) => originalNames.get(name),
       getLetInstance: (instance) =>
         instance.location.range && letInstances.get(formatRange(instance.location.range)),
       checkInstantiation: (instance, instancer, scope) => {
@@ -416,7 +447,7 @@ export const createEnvironment = (
           instancer,
           scope,
           substitutions: new Map(
-            linked.declarations.map((declaration) => [
+            getSubstitutedDeclarations(instance, linked.declarations).map((declaration) => [
               declaration.name,
               getInstanceSubstitute(instance, declaration.name),
             ]),
@@ -721,13 +752,13 @@ export const createEnvironment = (
     const suffix = `#${copyCount++}`;
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
     const substitutions = resolveSubstitutions(
-      resolveInstanceSubexpressions(instance, module),
+      resolveInstanceSubexpressions(instance, module, subexpressionRecords),
       declarations,
       resolved,
       module.name,
       unit,
     );
-    resolvedSubstitutions.set(instance, substitutions);
+    resolvedSubstitutions.set(getInstanceKey(instance), substitutions);
     unit.reports.push({
       location: instance.location,
       errors: getSubstitutionErrors(instance, linked, substitutions.size),
@@ -741,10 +772,12 @@ export const createEnvironment = (
     const substitutes = {
       params,
       substitutions: new Map(
-        declarations.flatMap((declaration): [string, Expression][] => {
-          const replacement = replacements.get(declaration.name);
-          return replacement ? [[declaration.key, replacement]] : [];
-        }),
+        getSubstitutedDeclarations(instance, declarations).flatMap(
+          (declaration): [string, Expression][] => {
+            const replacement = replacements.get(declaration.name);
+            return replacement ? [[declaration.key, replacement]] : [];
+          },
+        ),
       ),
     };
     instanceChecks.push({
@@ -758,6 +791,7 @@ export const createEnvironment = (
           location: instance.location,
         }),
       substitutes,
+      substitutesCheck: getSubstitutesCheck(linked.exported),
     });
     const frame = declarations.length > 0 ? getSubstitutionFrame(instance) : undefined;
     if (frame) {
@@ -804,6 +838,7 @@ export const createEnvironment = (
         return key;
       },
       createName,
+      originalNames,
       frame,
     });
     const setInstanceNames = (copy: string, name: string) => {
@@ -1085,6 +1120,7 @@ export const createEnvironment = (
         return key;
       },
       createName,
+      originalNames,
       isLocal: true,
     });
     if (frame) {
@@ -1130,6 +1166,12 @@ export const createEnvironment = (
           declarations.map((declaration) => [declaration.key, getReplacement(declaration)]),
         ),
         getArgParams: () => instanceLevels.getArgParams(instance.module),
+        // Names resolve after the expansion, and with them the order of the substitutions.
+        getSubstitutionNames: () =>
+          getSubstitutedDeclarations(instance, declarations).map(
+            (declaration) => `${declaration.name}${suffix}`,
+          ),
+        substitutesCheck: getSubstitutesCheck(linked.exported),
       });
     }
     return [...substitutionDefinitions, ...copies, ...exported];
@@ -1188,9 +1230,11 @@ export const createEnvironment = (
     const extended: LinkedModule[] = [];
     const getKey = (item: { name: string }) => `${item.name}${KEY_SEPARATOR}${scope.id}`;
     const extendedConstants: KeyedDeclaration[] = [];
+    // SANY's nested module doesn't declare a name its enclosing module already binds.
     const declaredVariables = parsed.variables.filter(
       (variable, index) =>
-        parsed.variables.findIndex((other) => other.name === variable.name) === index,
+        parsed.variables.findIndex((other) => other.name === variable.name) === index &&
+        !scope.symbols.has(variable.name),
     );
     const variables = declaredVariables.map((variable) => variable.name);
     const variableLocations = declaredVariables.map((variable) => variable.location);
@@ -1224,8 +1268,10 @@ export const createEnvironment = (
     });
     const constants = [
       ...parsed.constants
-        .filter((constant) =>
-          extendedConstants.every((existing) => existing.name !== constant.name),
+        .filter(
+          (constant) =>
+            extendedConstants.every((existing) => existing.name !== constant.name) &&
+            !scope.symbols.has(constant.name),
         )
         .map((constant) => ({ ...constant, key: getKey(constant) })),
       ...extendedConstants,
@@ -1333,7 +1379,8 @@ export const createEnvironment = (
           instancer: parsed.name,
           getSubstitutionErrors: (substitutionCount) =>
             getSubstitutionErrors(instance, linked, substitutionCount),
-          setSubstitutions: (substitutions) => resolvedSubstitutions.set(instance, substitutions),
+          setSubstitutions: (substitutions) =>
+            resolvedSubstitutions.set(getInstanceKey(instance), substitutions),
         };
       },
       bound,
@@ -1356,6 +1403,7 @@ export const createEnvironment = (
       reports,
       warnings: scope.warnings,
       goalOperands,
+      goalSelections,
       recursiveCount: scope.recursiveCount,
       nestedRecursion: [...nestedRecursion.values()],
     });
@@ -1389,7 +1437,11 @@ export const createEnvironment = (
         const symbol = visible.get(name);
         const definition =
           symbol && !builtinAliases.has(symbol.key) ? getLinkedDefinition(symbol.key) : undefined;
-        return definition ? { ...definition, name } : scope.getDefinition(name);
+        if (!definition) return scope.getDefinition(name);
+        const named = { ...definition, name };
+        const copy = instanceCopies.get(definition);
+        if (copy) instanceCopies.set(named, copy);
+        return named;
       },
       (name) => {
         const symbol = visible.get(name);
@@ -1412,6 +1464,7 @@ export const createEnvironment = (
           ],
         };
       },
+      subexpressionRecords,
       (name, location) =>
         bound.has(name) ||
         parsed.instances.some(
@@ -1637,7 +1690,8 @@ export const createEnvironment = (
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
           recursiveSections,
-          checkedLabels,
+          checkedNodes,
+          goalSelections,
         },
         instanceChecks.splice(firstCheck),
         warnings,

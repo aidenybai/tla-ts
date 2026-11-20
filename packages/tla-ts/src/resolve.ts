@@ -101,6 +101,7 @@ interface Unit {
   labels: Set<string>;
   isGenerated: boolean;
   goalOperands: WeakMap<Expression, Expression[]>;
+  goalSelections: WeakMap<Expression, Expression>;
 }
 
 export interface SelectionArguments {
@@ -144,6 +145,16 @@ interface SelectionArgument {
   operator: string;
   index: number;
   range: SourceRange | undefined;
+}
+
+export interface SelectedDefinition {
+  definition: Definition;
+  params: string[];
+}
+
+export interface SubexpressionRecords {
+  selectedDefinitions: WeakMap<Expression, SelectedDefinition>;
+  instanceReferences: WeakMap<Instance, Instance>;
 }
 
 export const selections = new WeakMap<Expression, Expression>();
@@ -628,6 +639,7 @@ const checkSelection = (
   goal: Goal,
   unit: Unit,
   use: SelectionUse,
+  formals: string[],
 ) => {
   const report = (index: number | undefined, message: string) => {
     const range =
@@ -692,6 +704,7 @@ const checkSelection = (
       if (selector.args.length !== (found.label.kind === "Label" ? found.label.params.length : 0)) {
         return report(index, `Label \`${selector.name}' used with wrong number of arguments.`);
       }
+      if (found.label.kind === "Label") formals.push(...found.label.params);
       state.node = found.label;
       state.isGoal = false;
       state.isSufficesOpen = false;
@@ -764,6 +777,7 @@ const checkSelection = (
           );
         }
         params += binder.names.length;
+        formals.push(...binder.names);
         args += count;
         state.node = binder.body;
         state.isGoal = false;
@@ -904,12 +918,19 @@ const checkReference = (
     name = nameLength === 1 ? selector.name : `${name}!${selector.name}`;
     const goal = lookupLocal(scope, name)?.goal ?? getGoal(name, unit);
     if (goal) {
-      const node = checkSelection(expression, selectors, nameLength, goal, unit, use);
+      const formals: string[] = [];
+      const node = checkSelection(expression, selectors, nameLength, goal, unit, use, formals);
       if (!node) emptyExpressions.add(expression);
       if (node && node.kind !== "NewSymbol" && node.kind !== "AssumeProve") {
         const args = selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
         // SANY applies a LAMBDA to a selection's arguments, or wraps a selection without them in $Nop.
         unit.goalOperands.set(expression, args.length > 0 ? args : [node]);
+        unit.goalSelections.set(
+          expression,
+          args.length > 0
+            ? { kind: "Lambda", params: formals, body: node, location: expression.location }
+            : node,
+        );
       }
       return { node };
     }
@@ -2542,6 +2563,7 @@ export interface ModuleUnit {
   reports: ModuleReport[];
   warnings: SanyError[];
   goalOperands: WeakMap<Expression, Expression[]>;
+  goalSelections: WeakMap<Expression, Expression>;
   recursiveCount: RecursiveCount;
   nestedRecursion: NestedRecursion[];
 }
@@ -2805,7 +2827,13 @@ const checkSubstitutions = (
         });
       }
     });
-  return substitutions;
+  const getOrder = (name: string) => {
+    const index = implicit.findIndex((item) => item.declaration.name === name);
+    return index === -1 ? implicit.length : index;
+  };
+  return new Map(
+    [...substitutions].toSorted((left, right) => getOrder(left[0]) - getOrder(right[0])),
+  );
 };
 
 const resolveInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
@@ -2877,6 +2905,7 @@ export const resolveSubstitutions = (
       labels: new Set(),
       isGenerated: false,
       goalOperands: unit.goalOperands,
+      goalSelections: unit.goalSelections,
     },
   );
 };
@@ -2974,6 +3003,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
         labels: new Set(),
         isGenerated: false,
         goalOperands: unit.goalOperands,
+        goalSelections: unit.goalSelections,
       }),
   });
   const isDefinitionBody = (statement: Expression | AssumeProve) =>

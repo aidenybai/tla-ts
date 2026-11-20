@@ -4658,6 +4658,22 @@ describe("initial predicate and next-state relation match TLC", () => {
     },
   );
 
+  it.each(["y", "z"])(
+    "rejects an invariant that selects through an instance with a primed argument for the bound %s",
+    async (bound) => {
+      await expect(
+        checkBody(
+          `---- MODULE L ----\nCONSTANT c\nDef == \\A ${bound} \\in {1} : <<${bound}, c>> = <<1, 1>>\n====\nVARIABLE y\nI3 == INSTANCE L WITH c <- y\nInv == I3!Def!(y')!1\nInit == y = 0\nNext == y' = y`,
+          "INIT Init\nNEXT Next\nINVARIANT Inv",
+        ),
+      ).rejects.toThrow(
+        new TlaConfigError(
+          "The invariant Inv is not a state predicate (one with no primes or temporal operators).\nNote that a bug can cause TLC to incorrectly report this error.\nIf you believe your TLA+ or PlusCal specification to be correct,\nplease check if this bug described in LevelNode.java starting at line 590ff affects you.",
+        ),
+      );
+    },
+  );
+
   it("binds a variable once for each time a lazy UNION streams an element", async () => {
     const set = "UNION {SUBSET {1}, {{}}}";
     const result = await checkBody(
