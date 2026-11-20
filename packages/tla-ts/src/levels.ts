@@ -129,8 +129,8 @@ interface LevelContext {
   getQualifiedName?: (name: string) => string | undefined;
   instances: InstanceLevels;
   recursiveSections: WeakMap<Definition, SectionMember[]>;
-  // SANY's LabelNode#levelCheck is true for a label it level-checked before, in this module or one it sees.
-  checkedLabels?: WeakSet<Expression>;
+  // SANY keeps each node's first level check, though a label checked again, here or in a module it sees, is level-correct.
+  checkedNodes?: WeakMap<Expression, boolean>;
   goalSelections?: WeakMap<Expression, Expression>;
   // An instance's copy renames a bound name that a substitute mentions, and a selection binds it under that name.
   originalNames?: Map<string, string>;
@@ -636,7 +636,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   // SANY level-checks a LAMBDA once, so a recursive section's second pass keeps its first levels.
   const lambdaLevels = new Map<Expression, OperatorLevels>();
   const selectionLevels = new Map<Expression, LevelData>();
-  const checkedLabels = context.checkedLabels ?? new WeakSet<Expression>();
+  const checkedNodes = context.checkedNodes ?? new WeakMap<Expression, boolean>();
+  let labelChecks = 0;
   const errors: CodedSanyError[] = [];
   const messages: LevelMessage[] = [];
 
@@ -1130,7 +1131,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const analyze = (expression: Expression, scope: Scope) => {
     const start = messages.length;
-    return reportSince(start, expression.location.range, analyzeNode(expression, scope));
+    const labels = labelChecks;
+    const data = reportSince(start, expression.location.range, analyzeNode(expression, scope));
+    if (labelChecks === labels || expression.kind === "Label") return data;
+    const isCorrect = checkedNodes.get(expression);
+    if (isCorrect === undefined) checkedNodes.set(expression, data.isCorrect);
+    return isCorrect === undefined || isCorrect === data.isCorrect ? data : { ...data, isCorrect };
   };
 
   const analyzeNode = (expression: Expression, scope: Scope): LevelData => {
@@ -1349,15 +1355,20 @@ export const createLevelAnalyzer = (context: LevelContext) => {
           scope,
         );
       case "Label": {
+        labelChecks++;
         const data = analyze(expression.body, scope);
-        if (checkedLabels.has(expression)) return { ...data, isCorrect: true };
-        checkedLabels.add(expression);
+        if (checkedNodes.has(expression)) return { ...data, isCorrect: true };
+        checkedNodes.set(expression, true);
         return data;
       }
       case "Selection": {
         const selected = expression.expression;
         const known = selectionLevels.get(selected);
-        if (known) return checkedLabels.has(selected) ? { ...known, isCorrect: true } : known;
+        if (known) {
+          return selected.kind === "Label" && checkedNodes.has(selected)
+            ? { ...known, isCorrect: true }
+            : known;
+        }
         const substituted = getSubstituted(selected);
         const data = substituted
           ? analyzeSubstituted(substituted, getSelectedInstance(substituted), scope)
@@ -1642,6 +1653,8 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   // SANY selects into the instanced module itself and wraps the original it selects in a SubstInNode.
   const analyzeSubstituted = (target: Expression, instanced: Instanced, scope: Scope) => {
     const copy = instanced.copy;
+    // SANY level-checks the instanced module before the selection, so the original keeps that check.
+    const instancedLevels = context.instances.getModuleLevels(copy.module);
     const original = context.instances.getOriginal(copy, target);
     const renamed = new Map(
       instanced.params.flatMap((param): [string, string][] => {
@@ -1670,7 +1683,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
         argParams: [...original.argParams].map((key) => renameArgumentParam(key, rename)),
       },
       getSubstitutes(copy, scope),
-      context.instances.getModuleLevels(copy.module),
+      instancedLevels,
     );
   };
 
@@ -1733,10 +1746,9 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       if (!original) throw getMissingOriginalError(target);
       return analyzeOriginal(definition, original);
     }
-    if (found.instanced) return analyzeSubstituted(found.expression, found.instanced, found.scope);
-    const data = analyze(found.expression, found.scope);
-    // SANY's LabelNode#levelCheck is true for a label that the instanced module's own check level-checked.
-    return found.expression.kind === "Label" ? { ...data, isCorrect: true } : data;
+    return found.instanced
+      ? analyzeSubstituted(found.expression, found.instanced, found.scope)
+      : analyze(found.expression, found.scope);
   };
 
   const staleDefinitions = new Set<Definition>();

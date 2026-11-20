@@ -355,7 +355,7 @@ export const createEnvironment = (
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
-  const checkedLabels = new WeakSet<Expression>();
+  const checkedNodes = new WeakMap<Expression, boolean>();
   const resolvedSubstitutions = new WeakMap<Instance, Map<string, Expression>>();
   const getInstanceSubstitute = (instance: Instance, name: string): Expression =>
     resolvedSubstitutions.get(instance)?.get(name) ??
@@ -1655,7 +1655,7 @@ export const createEnvironment = (
           getQualifiedName: (symbol) => qualifiedNames.get(visible.get(symbol)?.key ?? symbol),
           instances: instanceLevels.instances,
           recursiveSections,
-          checkedLabels,
+          checkedNodes,
           goalSelections,
           originalNames,
         },

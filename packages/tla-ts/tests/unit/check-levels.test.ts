@@ -1812,6 +1812,38 @@ describe("level checking matches SANY", () => {
     },
   );
 
+  it.each([
+    [
+      "D == ((lab :: ((x' = 1) /\\ [](x = 1))) /\\ TRUE) \\/ FALSE\nE == (D!1)'",
+      "line 3, col 16 to line 3, col 36",
+    ],
+    [
+      "---- MODULE L ----\nVARIABLE v\nD == ((lab :: ((v' = 1) /\\ [](v = 1))) /\\ TRUE) \\/ FALSE\n====\nI3 == INSTANCE L WITH v <- x\nE0 == I3!D!1!1\nE == (I3!D!1)'",
+      "line 5, col 16 to line 5, col 36",
+    ],
+    [
+      "THEOREM T == ASSUME NEW CONSTANT q, ((lab :: ((x' = q) /\\ [](x = 1))) /\\ TRUE) PROVE TRUE\n<1>1. (T!2)' \\/ TRUE\n  OBVIOUS\n<1> QED",
+      "line 3, col 47 to line 3, col 67",
+    ],
+  ])(
+    "keeps the first level check of an expression around a label, which a selection checks again, as SANY does: %s",
+    async (definitions, location) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n${definitions}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: `${location} of module M`,
+            message: "\\land has both temporal formula and action as arguments.",
+          },
+        ]),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(
