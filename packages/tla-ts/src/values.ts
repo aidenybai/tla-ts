@@ -2509,11 +2509,11 @@ export const toFiniteFunction = (value: Value): FunctionValue => {
   if (typeof value === "object" && value.kind === "LazyFunction") {
     if (value.enumerated) return value.enumerated;
     if (isSortingLiteral) throw new TlaEvaluationError("The set literal holds a lazy function");
-    if (!isEnumerable(value.domain)) getCardinality(value.domain);
+    // TLC's FcnLambdaValue#toFcnRcd sizes its domain, which enumerates a filter under -maxSetSize, and then streams it.
+    getCardinality(value.domain);
     if (!isSetValue(value.domain)) {
       throw new TlaEvaluationError("The domains of formal parameters must be enumerable.");
     }
-    // TLC's FcnLambdaValue#toFcnRcd streams its domain, which -maxSetSize doesn't bound.
     const domain = getFunctionDomain(value.domain, false);
     value.enumerated = createSortedFunction(
       domain,

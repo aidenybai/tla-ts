@@ -3137,6 +3137,11 @@ describe("evaluation errors match TLC", () => {
   it.each([
     ["x' \\in [a : {f \\in [1..2 -> 1..4] : TRUE}]", 273, 17],
     ["x' = [f \\in [1..2 -> 1..4] |-> 1]", 3, 2],
+    [
+      "x' = LET F[r \\in [a : 1..4, b : 1..4]] == IF r.a = 1 THEN 1 ELSE F[[a |-> 1, b |-> r.b]] IN F",
+      3,
+      2,
+    ],
   ])(
     "streams the sets TLC's elements() enumerates past -maxSetSize: %s",
     async (next, generated, distinct) => {
@@ -3148,4 +3153,24 @@ describe("evaluation errors match TLC", () => {
       ]);
     },
   );
+
+  it("sizes the domain of a recursive function as TLC's FcnLambdaValue#toFcnRcd does, which bounds a filter by -maxSetSize", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, FiniteSets\nVARIABLE x\nF[r \\in {s \\in [a : 1..4, b : 1..4] : TRUE}] == IF r.a = 1 THEN 1 ELSE F[[a |-> 1, b |-> r.b]]\nInit == x = 0\nNext == x' = F\n====",
+      config: "INIT Init\nNEXT Next",
+      maxSetSize: 10,
+    });
+    expect([
+      result.failure?.message,
+      formatCallStackLines(result),
+      result.failure?.fingerprint,
+      [result.generatedStates, result.distinctStates],
+    ]).toEqual([
+      "TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a util.WrongInvocationException\n: Attempted to construct a set with too many elements (>10).",
+      [],
+      undefined,
+      [2, 1],
+    ]);
+  });
 });
