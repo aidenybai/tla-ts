@@ -689,6 +689,8 @@ export class Rewriter extends RewriterTpl {
   mkNot(arg: number): number {
     const manager = this.manager;
     if (manager.isNot(arg)) return manager.getArg(arg, 0);
+    if (manager.isTrue(arg)) return manager.falseExpr;
+    if (manager.isFalse(arg)) return manager.trueExpr;
     if (manager.getOp(arg) !== OP_EQ || manager.sorts[manager.getArg(arg, 0)] !== SORT_BOOL)
       return manager.mkNot(arg);
     if (!manager.isHoldingTemporaries)

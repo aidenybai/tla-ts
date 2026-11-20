@@ -1227,6 +1227,22 @@ describe("der, as Z3 5.3.2 eliminates a variable", () => {
   });
 });
 
+describe("occf, as Z3 5.3.2 negates a constraint", () => {
+  it("keeps the negation of true, since ast_manager::mk_not folds nothing", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(assert (or (> a 0) (not true) (> b 0)))",
+        "(assert (or (> a 1) true (> b 1)))",
+        "(apply occf)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (or (not k!0) k!1 (> a 0))\n  (or k!0 k!2 (> a 1))\n  (or k!0 (not true))\n  (or (not k!1) (> b 0))\n  (or (not k!0) true)\n  (or (not k!2) (> b 1))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});
+
 describe("elim-term-ite, as Z3 5.3.2 names the term if-then-elses", () => {
   it("defines a numbered name for each and hides the names from the model", () => {
     expect(

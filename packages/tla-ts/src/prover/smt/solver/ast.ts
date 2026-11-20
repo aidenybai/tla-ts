@@ -2647,8 +2647,6 @@ export class AstManager {
   }
 
   mkNot(expr: number) {
-    if (expr === this.trueExpr) return this.falseExpr;
-    if (expr === this.falseExpr) return this.trueExpr;
     return this.mkApp(OP_NOT, [expr], SORT_BOOL);
   }
 
