@@ -97,7 +97,7 @@ export interface SmtConfig {
   // comes after them all.
   theories: number[];
   // A setup that leaves it keeps the relevancy the context was made with.
-  relevancyLevel: 0 | 2 | undefined;
+  relevancyLevel: number | undefined;
   phaseSelection: number;
   restartStrategy: number;
   restartFactor: number;

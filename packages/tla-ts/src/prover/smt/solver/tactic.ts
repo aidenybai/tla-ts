@@ -338,12 +338,16 @@ const SMT_DESCRS = getDescrs("smt", [
   ["qi.cost", PARAM_STRING, "(+ weight generation)", true],
   ["qi.eager_threshold", PARAM_NUMERAL, "10", true],
   ["qi.lazy_threshold", PARAM_NUMERAL, "20", true],
+  ["relevancy", PARAM_UINT, 2, true],
 ]);
 
 const getSmtDouble = (environment: TacticEnvironment, params: TacticParams, name: string) =>
   params.has(name)
     ? getNumeral(params, name, "0").toDouble()
     : getDoubleParameter(environment.parameters, `smt.${name}`);
+
+const getRelevancyLevel = (environment: TacticEnvironment, params: TacticParams) =>
+  getUint(params, "relevancy", Number(getParameter(environment, "smt.relevancy", "2")));
 
 // The dependencies are assertion names, which are Boolean constants, so each one is its own
 // assumption.
@@ -364,6 +368,7 @@ const getKernelParams = (environment: TacticEnvironment, params: TacticParams, g
     isMbqi: getBool(params, "mbqi", environment.isMbqi) || isMbqiByFeatures(setup, hasQuantifiers),
     mbqiMaxIterations: getUint(params, "mbqi.max_iterations", environment.mbqiMaxIterations),
     isFindingMacros: environment.isFindingMacros,
+    relevancyLevel: getRelevancyLevel(environment, params),
     setup,
     randomSeed: getUint(
       params,
@@ -937,6 +942,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
             environment.mbqiMaxIterations,
           ),
           isFindingMacros: environment.isFindingMacros,
+          relevancyLevel: getRelevancyLevel(environment, tacticParams),
           qiCost: tacticParams.has("qi.cost")
             ? String(tacticParams.get("qi.cost"))
             : environment.parameters.get("smt.qi.cost"),

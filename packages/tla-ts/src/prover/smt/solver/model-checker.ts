@@ -29,6 +29,7 @@ class AuxContext {
     this.context = new Context(parent.manager, {
       ...parent.params,
       relevancyLevel: 0,
+      isDelayingNewCaseSplits: false,
       isArrayFakeSupport: true,
     });
     this.context.config = { ...parent.config, relevancyLevel: 0 };

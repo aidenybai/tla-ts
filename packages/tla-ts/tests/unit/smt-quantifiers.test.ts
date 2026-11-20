@@ -492,6 +492,64 @@ describe("the instantiation thresholds, as Z3 5.3.2 reads them", () => {
   });
 });
 
+const BOUNDED_BELOW = [
+  "(declare-fun f (Int) Int)",
+  "(declare-fun g (Int) Int)",
+  "(assert (forall ((x Int)) (! (> (f x) (g x)) :pattern ((f x)))))",
+  "(assert (forall ((x Int)) (! (> (g x) x) :pattern ((g x)))))",
+];
+
+const getBoundCheck = (argument: number) => [
+  "(push)",
+  `(assert (< (f ${argument}) 2))`,
+  "(check-sat)",
+  "(get-info :rlimit)",
+  "(pop)",
+];
+
+describe("relevancy, as Z3 5.3.2 reads smt.relevancy", () => {
+  it("matches each new term when relevancy is off", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi false)",
+        "(set-option :smt.relevancy 0)",
+        ...BOUNDED_BELOW,
+        "(assert (< (f 3) 2))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 546)"]);
+  });
+
+  it("reads relevancy as a parameter of the smt tactic", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        ...BOUNDED_BELOW,
+        "(assert (< (f 3) 2))",
+        "(check-sat-using (using-params smt :relevancy 1))",
+        "(get-info :rlimit)",
+      ]),
+    ).toEqual(["unsat", "(:rlimit 412)"]);
+  });
+
+  it("keeps the lowest level a check has used", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi false)",
+        ...BOUNDED_BELOW,
+        ...getBoundCheck(3),
+        "(set-option :smt.relevancy 0)",
+        ...getBoundCheck(5),
+        "(set-option :smt.relevancy 2)",
+        ...getBoundCheck(7),
+      ]),
+    ).toEqual(["unsat", "(:rlimit 394)", "unsat", "(:rlimit 548)", "unsat", "(:rlimit 707)"]);
+  });
+});
+
 describe("the model checker, as Z3 5.3.2 counts its steps", () => {
   it("pushes its context as the kernel does", () => {
     expect(

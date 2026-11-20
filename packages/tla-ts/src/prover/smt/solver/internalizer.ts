@@ -184,7 +184,8 @@ export abstract class Internalizer {
 
   constructor(
     readonly manager: AstManager,
-    isRelevancyEnabled: boolean,
+    protected relevancyLevel: number,
+    isDelayingNewCaseSplits: boolean,
   ) {
     this.rewriter = new Rewriter(manager, KERNEL_REWRITER_OPTIONS);
     this.relevancy = new RelevancyPropagator(
@@ -194,7 +195,7 @@ export abstract class Internalizer {
         findEnode: (expr) => this.exprToEnode[expr],
         relevantEh: (expr) => this.relevantEh(expr),
       },
-      isRelevancyEnabled,
+      relevancyLevel > 0,
     );
     this.caseSplitQueue = new CaseSplitQueue(
       {
@@ -204,7 +205,7 @@ export abstract class Internalizer {
         getNumBoolVars: () => this.numBoolVars,
         isUnassigned: (boolVar) => this.assignment[mkLiteral(boolVar)] === L_UNDEF,
       },
-      isRelevancyEnabled,
+      isDelayingNewCaseSplits,
     );
     this.mkBoolVar(manager.trueExpr);
     this.assignment[0] = L_TRUE;
@@ -1262,7 +1263,7 @@ export abstract class Internalizer {
   }
 
   private isUsingBinaryClauseOpt(first: Literal, second: Literal, isLemma: boolean) {
-    if (isLemma && this.relevancy.isEnabled) return false;
+    if (isLemma && this.relevancyLevel >= 2) return false;
     if (this.baseLevel > 0) return false;
     if (!isLemma && this.scopeLevel > 0) return false;
     return this.getInternLevel(getVar(first)) === 0 && this.getInternLevel(getVar(second)) === 0;
