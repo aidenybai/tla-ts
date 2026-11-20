@@ -101,13 +101,25 @@ const getValues = (domain: Expression): unknown[] => {
         return Array.from({ length: high - low + 1 }, (_, offset) => low + offset);
       }
       if (domain.operator === "\\cup") return args.flatMap(getValues);
+      // TLC enumerates SUBSET S in its normalized order: the smaller subsets first, and subsets
+      // of one size by their elements in S's order. That order is numeric for numbers, and for
+      // strings the order TLC first meets them in, which the search takes as the order S lists them.
       if (domain.operator === "SUBSET") {
-        return getValues(args[0])
-          .reduce<unknown[][]>(
-            (subsets, value) => [...subsets, ...subsets.map((subset) => [...subset, value])],
+        const listed = getValues(args[0]);
+        const elements = listed.every((value) => typeof value === "number")
+          ? listed.toSorted((left, right) => Number(left) - Number(right))
+          : listed;
+        return elements
+          .reduce<number[][]>(
+            (subsets, _, index) => [...subsets, ...subsets.map((subset) => [...subset, index])],
             [[]],
           )
-          .map((subset) => new Set(subset));
+          .sort((left, right) => {
+            if (left.length !== right.length) return left.length - right.length;
+            const position = left.findIndex((index, inner) => index !== right[inner]);
+            return position === -1 ? 0 : left[position] - right[position];
+          })
+          .map((subset) => new Set(subset.map((index) => elements[index])));
       }
       if (domain.operator === "UNION" && args[0].kind === "SetMap") {
         const set = args[0].expression;
