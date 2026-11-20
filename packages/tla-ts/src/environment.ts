@@ -1209,9 +1209,7 @@ export const createEnvironment = (
         functionArity: getFunctionArity(definition),
       };
     };
-    const getRecursiveSymbol = (
-      declaration: (typeof recursiveDeclarations)[number],
-    ): ModuleSymbol => ({
+    const getRecursiveSymbol = (declaration: Declaration): ModuleSymbol => ({
       key: getKey(declaration),
       arity: declaration.arity,
       params: Array(declaration.arity).fill(0),
@@ -1290,24 +1288,16 @@ export const createEnvironment = (
     };
     // SANY's RECURSIVE declaration binds an OpDefNode that the operator's definition fills in.
     const pendingRecursive = new Set<string>();
-    const definingLocations = new Map<string, SourceLocation>();
     const bindDefinitionBefore = (definition: Definition, location: SourceLocation) => {
       if (!pendingRecursive.delete(definition.name)) {
         bindBefore(definition.name, getDefinitionSymbol(definition), location);
         return;
       }
       symbolsBefore.set(definition.name, getDefinitionSymbol(definition));
-      definingLocations.set(definition.name, definition.location);
     };
     const isBoundBefore = (name: string, location: SourceLocation) => {
       const boundLocation = boundLocations.get(name);
-      const definingLocation = definingLocations.get(name);
-      return (
-        bound.has(name) ||
-        (boundLocation !== undefined &&
-          isBefore(boundLocation, location) &&
-          (definingLocation === undefined || compareLocations(definingLocation, location) !== 0))
-      );
+      return bound.has(name) || (boundLocation !== undefined && isBefore(boundLocation, location));
     };
     const subexpressions = createModuleSubexpressions(
       parsed,
