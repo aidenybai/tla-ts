@@ -165,24 +165,45 @@ describe("prepare ESCore's runtime from a recorded host as from Node's realm", (
     });
   });
 
-  // A recorded realm holds no functions of the host, so a program that asks the host about a
-  // locale tag stops where Node's realm answers.
-  describe("stop where the program asks the host about a locale tag", () => {
-    const getSource = (expected: number) =>
-      `const supported = Intl.Collator.supportedLocalesOf(["en-US"]);\nif (supported.length !== ${expected}) throw new Error(String(supported));\n`;
+  // A recorded realm holds no functions of the host, but the answers of the tags it recorded
+  // (RECORDED_LOCALE_TAGS), so a program that asks the host about another tag stops where Node's
+  // realm answers.
+  const getLocaleSource = (tag: string, expected: number) =>
+    `const supported = Intl.Collator.supportedLocalesOf(["${tag}"]);\nif (supported.length !== ${expected}) throw new Error(String(supported));\n`;
 
+  describe("answer a locale tag that the realm recorded", () => {
     it("agrees with Node", async () => {
-      expect(runNode(getSource(1), "locale.ts").status).toBe(0);
-      expect((await live.getOutcome(getSource(1), "locale.ts")).status).toBe("success");
-      expect((await getRecorded(getSource(1), "locale.ts")).message).toContain("tla-ts can't");
+      const text = getLocaleSource("en-US", 1);
+      expect(runNode(text, "locale.ts").status).toBe(0);
+      const outcome = await getRecorded(text, "locale.ts");
+      expect(outcome).toEqual(await live.getOutcome(text, "locale.ts"));
+      expect(outcome.status).toBe("success");
     });
 
     it("rejects another result", async () => {
-      expect(runNode(getSource(0), "locale.ts").stderr).toContain("Error: en-US");
-      expect((await live.getOutcome(getSource(0), "locale.ts")).message).toContain(
+      const text = getLocaleSource("en-US", 0);
+      expect(runNode(text, "locale.ts").stderr).toContain("Error: en-US");
+      const outcome = await getRecorded(text, "locale.ts");
+      expect(outcome).toEqual(await live.getOutcome(text, "locale.ts"));
+      expect(outcome.message).toContain("the script threw an exception");
+    });
+  });
+
+  describe("stop at a locale tag that the realm didn't record", () => {
+    it("agrees with Node", async () => {
+      const text = getLocaleSource("fy-NL", 1);
+      expect(runNode(text, "locale.ts").status).toBe(0);
+      expect((await live.getOutcome(text, "locale.ts")).status).toBe("success");
+      expect((await getRecorded(text, "locale.ts")).message).toContain("tla-ts can't");
+    });
+
+    it("rejects another result", async () => {
+      const text = getLocaleSource("fy-NL", 0);
+      expect(runNode(text, "locale.ts").stderr).toContain("Error: fy-NL");
+      expect((await live.getOutcome(text, "locale.ts")).message).toContain(
         "the script threw an exception",
       );
-      expect((await getRecorded(getSource(0), "locale.ts")).message).toContain("tla-ts can't");
+      expect((await getRecorded(text, "locale.ts")).message).toContain("tla-ts can't");
     });
   });
 });

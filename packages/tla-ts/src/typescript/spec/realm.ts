@@ -36,7 +36,39 @@ export interface HostRealm {
   isRejectedZone?: (name: string) => boolean;
   // What the host's Intl gives of a tag, or undefined where it isn't a structurally valid tag.
   getLocale?: (tag: string) => HostLocale | undefined;
+  // What it gives of the tags of RECORDED_LOCALE_TAGS, which a realm without getLocale answers.
+  recordedLocales: { tag: string; locale?: HostLocale }[];
 }
+
+// The locale tags whose answers a realm records for a browser, which answers no other: en-US, the
+// default of the Node that records them, and the locales that programs commonly name. The
+// playground's examples name none.
+export const RECORDED_LOCALE_TAGS = [
+  "en-US",
+  "en",
+  "en-GB",
+  "ar",
+  "de",
+  "de-DE",
+  "es",
+  "es-ES",
+  "fr",
+  "fr-FR",
+  "hi",
+  "it",
+  "ja",
+  "ja-JP",
+  "ko",
+  "nl",
+  "pt",
+  "pt-BR",
+  "ru",
+  "sv",
+  "tr",
+  "zh",
+  "zh-CN",
+  "zh-TW",
+];
 
 // The host's timers, which a host adds to a script's context to run its jobs later.
 const HOST_TIMERS = ["setInterval", "setImmediate", "queueMicrotask"];
@@ -168,6 +200,36 @@ export const recordHostRealm = (library: Library): HostRealm => {
       [...definition.text.matchAll(/\bSV\("([^"]+)"\)/g)].map((match) => match[1]),
     ),
   );
+  // What the host's Intl gives of a tag, or undefined where it isn't a structurally valid tag.
+  const getLocale = (tag: string): HostLocale | undefined => {
+    const canonical = (() => {
+      try {
+        return Intl.getCanonicalLocales(tag)[0];
+      } catch {
+        return undefined;
+      }
+    })();
+    if (canonical === undefined) return undefined;
+    const getSupported = (localeMatcher: string) =>
+      LOCALE_SERVICES.filter((service) => {
+        const supported: unknown = Reflect.apply(
+          Reflect.get(Reflect.get(Intl, service), "supportedLocalesOf"),
+          undefined,
+          [canonical, { localeMatcher }],
+        );
+        return Array.isArray(supported) && supported.length > 0;
+      });
+    const lookup = getSupported("lookup");
+    const bestFit = getSupported("best fit");
+    return {
+      canonical,
+      lookup,
+      bestFit,
+      differs: LOCALE_SERVICES.filter(
+        (service) => lookup.includes(service) !== bestFit.includes(service),
+      ),
+    };
+  };
   const defaults = new Intl.DateTimeFormat().resolvedOptions();
   return {
     scriptGlobals: getHostOnlyGlobals(scriptGlobal),
@@ -220,34 +282,7 @@ export const recordHostRealm = (library: Library): HostRealm => {
         return true;
       }
     },
-    getLocale: (tag) => {
-      const canonical = (() => {
-        try {
-          return Intl.getCanonicalLocales(tag)[0];
-        } catch {
-          return undefined;
-        }
-      })();
-      if (canonical === undefined) return undefined;
-      const getSupported = (localeMatcher: string) =>
-        LOCALE_SERVICES.filter((service) => {
-          const supported: unknown = Reflect.apply(
-            Reflect.get(Reflect.get(Intl, service), "supportedLocalesOf"),
-            undefined,
-            [canonical, { localeMatcher }],
-          );
-          return Array.isArray(supported) && supported.length > 0;
-        });
-      const lookup = getSupported("lookup");
-      const bestFit = getSupported("best fit");
-      return {
-        canonical,
-        lookup,
-        bestFit,
-        differs: LOCALE_SERVICES.filter(
-          (service) => lookup.includes(service) !== bestFit.includes(service),
-        ),
-      };
-    },
+    getLocale,
+    recordedLocales: RECORDED_LOCALE_TAGS.map((tag) => ({ tag, locale: getLocale(tag) })),
   };
 };

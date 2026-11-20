@@ -1658,18 +1658,18 @@ export const getHostDateFormat = (words: ReadonlySet<string>, realm: HostRealm) 
 };
 
 // The program's HostLocale: for each string it writes that may be a locale tag, and each one's
-// canonical form, what the host's Intl gives of it, where the program names Intl. Any other tag
-// stops, which the host may hold data of, as does every tag of a host whose realm was recorded.
+// canonical form, what the host's Intl gives of it, where the program names Intl, as the host
+// answers it, or a recorded realm recorded it for its tags. Any other tag stops, which the host
+// may hold data of.
 export const getHostLocale = (text: string, words: ReadonlySet<string>, realm: HostRealm) => {
-  const getLocale = realm.getLocale;
-  if (!words.has("Intl") || getLocale === undefined)
-    return `HostLocale(tag) == [found |-> "unknown"]`;
-  const tags = new Set(
-    [...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1]),
-  );
+  if (!words.has("Intl")) return `HostLocale(tag) == [found |-> "unknown"]`;
+  const recorded = new Map(realm.recordedLocales.map((entry) => [entry.tag, entry]));
+  const tags = [
+    ...new Set([...text.matchAll(/["'`]([A-Za-z0-9_-]{1,60})["'`]/g)].map((match) => match[1])),
+  ].filter((tag) => realm.getLocale !== undefined || recorded.has(tag));
   const entries = new Map<string, string>();
   for (const tag of tags) {
-    const locale = getLocale(tag);
+    const locale = realm.getLocale === undefined ? recorded.get(tag)?.locale : realm.getLocale(tag);
     if (locale === undefined) {
       entries.set(tag, `[found |-> "invalid"]`);
       continue;
