@@ -204,28 +204,24 @@ const collectLocalFacts = (
       name !== undefined && isLocallyResolved(node) ? substitutes.get(name) : undefined;
     if (substitute) visit(substitute, isInnerLevelCounted, isOperatorArgument, substitutes);
     // TLC's SubstInNode binds a LET instance's substitute lazily, so its level counts only where the instanced definition reads it.
-    const letSubstitutes = kind === "Let" ? node.definitions.filter(isSubstitutionDefinition) : [];
-    const innerSubstitutes =
-      letSubstitutes.length === 0
-        ? substitutes
-        : new Map([
-            ...substitutes,
-            ...letSubstitutes.map((definition): [string, Expression] => [
-              definition.name,
-              definition.body,
-            ]),
-          ]);
-    const children =
-      kind === "Let" && letSubstitutes.length > 0
-        ? [
-            ...node.definitions
-              .filter((definition) => !letSubstitutes.includes(definition))
-              .flatMap(getDefinitionExpressions),
-            node.body,
-          ]
-        : getChildren(node);
-    children.forEach((child) =>
-      visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda", innerSubstitutes),
+    if (kind === "Let" && node.definitions.some(isSubstitutionDefinition)) {
+      const innerSubstitutes = new Map(substitutes);
+      node.definitions.forEach((definition) => {
+        if (isSubstitutionDefinition(definition)) {
+          innerSubstitutes.set(definition.name, definition.body);
+        }
+      });
+      node.definitions.forEach((definition) => {
+        if (isSubstitutionDefinition(definition)) return;
+        getDefinitionExpressions(definition).forEach((child) =>
+          visit(child, isInnerLevelCounted, isOperatorArgument, innerSubstitutes),
+        );
+      });
+      visit(node.body, isInnerLevelCounted, isOperatorArgument, innerSubstitutes);
+      return;
+    }
+    getChildren(node).forEach((child) =>
+      visit(child, isInnerLevelCounted, isOperatorArgument || kind === "Lambda", substitutes),
     );
   };
   expressions.forEach((expression) => visit(expression, true, false, new Map()));
