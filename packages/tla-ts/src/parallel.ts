@@ -78,7 +78,7 @@ export const check = async (options: CheckOptions): Promise<CheckResult> => {
   // from the root's text, so a parsed root with them is checked from its text, as the CLI does.
   if (
     typeof options.source !== "string" &&
-    options.preparedModules?.some((prepared) => prepared.values !== undefined)
+    options.preparedModules?.some((prepared) => (prepared.values?.size ?? 0) > 0)
   ) {
     return check({ ...options, source: printModule(options.source) });
   }
