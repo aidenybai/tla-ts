@@ -499,6 +499,28 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("substitutes a replacement's captures, and stops at one longer than tla-ts holds", () => {
+    const getSource = (expected: string) => `
+      const x = "ab".repeat(1 << 15);
+      const result = [x.replace(/(.+)/, "$1-$1-$1").length, "abc".replace(/(b)/, "[$1$&$\`$']")].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("196610,a[bbac]c"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("196610,a[bbac]"))).message).toContain(THREW);
+    }, 600_000);
+
+    it("stops at a replacement of millions of code units", async () => {
+      expect(
+        (await checkScript('"ab".repeat(1 << 15).replace(/(.+)/, "$1".repeat(65));')).message,
+      ).toContain("tla-ts can't");
+    }, 600_000);
+  });
+
   describe("reads RegExp's legacy static properties after a match, and stops where V8 differs", () => {
     const getSource = (expected: string) => `
       /(b)(c)?/.exec("abd");

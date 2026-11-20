@@ -3295,6 +3295,7 @@ URIUnescaped == Range(N("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz012
 URIReserved == Range(N(";/?:@&=+$,#"))
 EscapeUnescaped == Range(N("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_@*+-./"))
 JSONFail == [ok |-> FALSE]
+SubstitutionUnitsLimit == 2 ^ 22
 UnicodeCombiningClasses ==
   <<
     <<768, 788, 230>>, <<789, 789, 232>>, <<790, 793, 220>>, <<794, 794, 232>>, <<795, 795, 216>>, <<796, 800, 220>>, <<801, 802, 202>>, <<803, 806, 220>>,
@@ -10211,12 +10212,17 @@ ReplaceAt(s, units, search, positions, replaceValue, endOfLastMatch, acc) ==
        IN IF IsAbrupt(replacement) THEN replacement
           ELSE ReplaceAt(replacement.s, units, search, Tail(positions), replaceValue, p + Len(search),
                          acc \o SubSeq(units, endOfLastMatch + 1, p) \o Val(replacement).value)
+\* The most code units of a string that a replacement builds, past which tla-ts can't hold the
+\* string in the default heap, well short of V8's limit of 2^29 - 24, past which Node throws a
+\* RangeError: a template of n captures makes n copies of a long capture at once.
 \* GetSubstitution (§22.1.3.19.1) over the rest of the template, appending to acc. captures holds
 \* String values or Undefined, and namedCaptures is an object or Undefined.
 GetSubstitution(s, matched, str, position, captures, namedCaptures, rest, acc) ==
   IF rest = <<>> THEN Ok(s, Str(acc))
   ELSE LET Next(n, replacement) ==
-             GetSubstitution(s, matched, str, position, captures, namedCaptures, SubSeq(rest, n + 1, Len(rest)), acc \o replacement)
+             IF Len(acc) + Len(replacement) > SubstitutionUnitsLimit
+             THEN Unsupported(s, N("Unsupported: a replacement longer than tla-ts holds"))
+             ELSE GetSubstitution(s, matched, str, position, captures, namedCaptures, SubSeq(rest, n + 1, Len(rest)), acc \o replacement)
            c == IF Len(rest) >= 2 /\ rest[1] = 36 THEN rest[2] ELSE 0
        IN CASE c = 36 -> Next(2, <<36>>)
             [] c = 96 -> Next(2, SubSeq(str, 1, position))
