@@ -2136,6 +2136,107 @@ describe("level checking matches SANY", () => {
 
   it.each([
     [
+      "c, d",
+      "c",
+      "c, d",
+      "K == INSTANCE P WITH v <- x",
+      [{ line: 10, end: 27, names: ["d", "c"] }],
+    ],
+    [
+      "ba, ab",
+      "ab",
+      "ab, ba",
+      "K == INSTANCE P WITH v <- x",
+      [{ line: 10, end: 27, names: ["ab", "ba"] }],
+    ],
+    [
+      "zeta, a",
+      "a",
+      "zeta, a",
+      "K == INSTANCE P WITH v <- x",
+      [{ line: 10, end: 27, names: ["a", "zeta"] }],
+    ],
+    [
+      "q, r, s, t",
+      "q",
+      "t, s, r, q",
+      "K == INSTANCE P WITH v <- x",
+      [{ line: 10, end: 27, names: ["t", "s", "r", "q"] }],
+    ],
+    [
+      "Foo, Bar, Baz",
+      "Foo",
+      "Foo, Bar, Baz",
+      "K == INSTANCE P WITH v <- x",
+      [{ line: 10, end: 27, names: ["Bar", "Baz", "Foo"] }],
+    ],
+    [
+      "c, d",
+      "c",
+      "c, d",
+      "K == INSTANCE P WITH v <- x, d <- x'",
+      [{ line: 10, end: 36, names: ["d", "c"] }],
+    ],
+    [
+      "c, d",
+      "c",
+      "c, d",
+      "K == INSTANCE P WITH v <- x\nL == INSTANCE P WITH v <- x, d <- x', c <- x'",
+      [
+        { line: 10, end: 27, names: ["d", "c"] },
+        { line: 11, end: 45, names: ["d", "c"] },
+      ],
+    ],
+  ])(
+    "level-checks the substitutes for CONSTANT %s (B == %s, VARIABLE %s) in %j in the order of the instanced module's symbol table, as SANY does",
+    async (constants, selected, variables, instances, expected) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\n---- MODULE P ----\nCONSTANT ${constants}\nVARIABLE v\nB == ${selected}\n====\nVARIABLE ${variables}\n${instances}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          expected.flatMap((instance) =>
+            instance.names.map((name) => ({
+              location: `line ${instance.line}, col 1 to line ${instance.line}, col ${instance.end} of module M`,
+              message: getInstantiationError(name, 0),
+            })),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.each([
+    ["D == LET K == INSTANCE P WITH v <- x IN TRUE", "line 5, col 10 to line 5, col 36"],
+    ["THEOREM TRUE\n<1> K == INSTANCE P WITH v <- x\n<1> QED", "line 6, col 5 to line 6, col 31"],
+    ["THEOREM TRUE\n<1> INSTANCE P WITH v <- x\n<1> QED", "line 6, col 5 to line 6, col 26"],
+  ])(
+    "level-checks the substitutes of the instance in %j in the order of the instanced module's symbol table, as SANY does",
+    async (lines, range) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nVARIABLE c, d\n${lines}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "P"
+              ? "---- MODULE P ----\nCONSTANT c, d\nVARIABLE v\nB == c\n===="
+              : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          ["d", "c"].map((name) => ({
+            location: `${range} of module M`,
+            message: getInstantiationError(name, 0),
+          })),
+        ),
+      );
+    },
+  );
+
+  it.each([
+    [
       "CONSTANT c\nVARIABLE v",
       "E == TRUE /\\ TRUE\nD == LET D1 == (x')'\n          K == INSTANCE P WITH v <- (x')', c <- (x'')'\n          D2 == E!1\n      IN TRUE",
       [

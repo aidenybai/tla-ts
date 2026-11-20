@@ -36,6 +36,7 @@ interface ParsedModule {
   tokens: Token[];
   start: number;
   end: number;
+  isNested: boolean;
   getModule: () => Module;
 }
 
@@ -306,6 +307,7 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
     const file = {
       tokens,
       ...range,
+      isNested: false,
       getModule:
         name === undefined || text === undefined
           ? moduleText.getModule
@@ -317,6 +319,7 @@ const createModuleSet = (source: string, loadModule: ModuleLoader) => {
       nestedModules.set(nestedName, {
         tokens,
         ...nestedRange,
+        isNested: true,
         getModule: () => findModule(file.getModule().modules, nestedName) ?? file.getModule(),
       });
     });
@@ -449,10 +452,13 @@ const createContexts = (getParsed: ModuleSet) => {
     if (cached) return cached;
     const table = createSymbolTable();
     contexts.set(name ?? "", table);
-    SANY_BUILTINS.toReversed().forEach((builtin) =>
-      table.put(createEntry(builtin, "builtin", false)),
-    );
     const unit = getParsed(name);
+    // SANY's SymbolTable copies the builtins into a file module's context, while an inner module's context starts empty.
+    if (!unit.isNested) {
+      SANY_BUILTINS.toReversed().forEach((builtin) =>
+        table.put(createEntry(builtin, "builtin", false)),
+      );
+    }
     unit.getModule().extends.forEach((extended) =>
       getContext(extended).inserted.forEach((entry) => {
         if (!entry.isLocal) table.put(entry);

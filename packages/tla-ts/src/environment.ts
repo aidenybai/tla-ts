@@ -681,6 +681,14 @@ export const createEnvironment = (
     return linked;
   };
 
+  // SANY's Generator#processSubst substitutes for, arity-checks and reports missing the instanced module's declarations in its symbol table's order.
+  const getSymbolTableOrdered = (module: string, declarations: KeyedDeclaration[]) => {
+    const names = order.getInstanceDeclarations(module);
+    return declarations.toSorted(
+      (left, right) => names.indexOf(left.name) - names.indexOf(right.name),
+    );
+  };
+
   // SANY infers a substitution for each declaration the instancing module resolves, in the order of the instanced module's symbol table, and appends the others.
   const setFrameSubstitutions = (
     frame: Expression,
@@ -758,7 +766,7 @@ export const createEnvironment = (
     const renamed = new Map(instance.params.map((param) => [param.name, `${param.name}${suffix}`]));
     const substitutions = resolveSubstitutions(
       resolveInstanceSubexpressions(instance, module, subexpressionRecords),
-      declarations,
+      getSymbolTableOrdered(instance.module, declarations),
       resolved,
       module.name,
       unit,
@@ -1375,7 +1383,7 @@ export const createEnvironment = (
         }
         const linked = nested ?? getLinkedModule(instance.module, parsed.name);
         return {
-          declarations: linked.declarations,
+          declarations: getSymbolTableOrdered(instance.module, linked.declarations),
           symbols: getInstanceSymbols(
             instance,
             linked.exported,

@@ -520,6 +520,27 @@ describe("check matches TLC", () => {
   });
 
   it.each([
+    ["no EXTENDS", "", ["A1", "Baz", "Cc", "Quux", "Bar", "Qux", "Foo", "dd", "B2", "Zeta"]],
+    [
+      "EXTENDS TLC",
+      "EXTENDS TLC\n",
+      ["B2", "A1", "Foo", "dd", "Baz", "Bar", "Cc", "Quux", "Qux", "Zeta"],
+    ],
+  ])(
+    "computes the definitions an INSTANCE of an inner module with %s adds in the order of its symbol table, which SANY starts without the builtins",
+    async (_label, extendsLine, expected) => {
+      const names = ["Foo", "Bar", "Baz", "Qux", "Quux", "A1", "B2", "Cc", "dd", "Zeta"];
+      const prints: string[] = [];
+      await check({
+        source: `---- MODULE M ----\nEXTENDS TLC\nVARIABLE x\n---- MODULE P ----\n${extendsLine}VARIABLE v\n${names.map((name) => `${name} == PrintT("${name}")`).join("\n")}\n====\nI == INSTANCE P WITH v <- x\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        onPrint: (text) => prints.push(text),
+      });
+      expect(prints).toEqual(expected.map((name) => `"${name}"`));
+    },
+  );
+
+  it.each([
     ["Naturals", "{} >= 0", ">", "{}"],
     ["Integers", "{} >= 0", ">=", "{}"],
     ["Naturals, TLCExt", "{} >= 0", ">=", "{}"],
