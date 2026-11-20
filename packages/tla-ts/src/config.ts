@@ -82,7 +82,6 @@ const KEYWORDS = new Set([
 const TYPE_KEYWORDS = ["TYPE", "TYPE_CONSTRAINT"];
 const KEYWORDS_174 = new Set([...SHARED_KEYWORDS, ...TYPE_KEYWORDS]);
 
-// TLC reads the file with SANY's token manager, in the state for a module's body.
 const tokenizeConfig = (source: string) => {
   // TLC appends a line break, so a \* comment can end the file.
   const readToken = createSanyLexer(`${source}\n`, "SPEC");

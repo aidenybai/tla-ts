@@ -145,7 +145,6 @@ const createMissingError = (name: string) =>
     `In the configuration file, the identifier ${name} does not appear in the specification.`,
   );
 
-// SANY finishes a module after the modules it extends, and SpecProcessor#processConstantDefns follows that order.
 const getModuleOrder = (module: LinkedModule, visited: Set<LinkedModule>): LinkedModule[] => {
   if (visited.has(module)) return [];
   visited.add(module);
@@ -168,8 +167,6 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     const key = getRootKey(name);
     return linked.definitions.has(key) || linked.builtins.has(key) || declaredConstants.has(name);
   };
-  // SpecProcessor#processConstants reads the value of a root name only for a constant or a definition.
-  // Deviation from TLC: a [Mod] value becomes the tool object of the definition's body, which a lookup of the name returns, but a <- or a name of the configuration evaluates the body, which keeps it only in the slot where TLC caches a literal's value. tla-ts gives the value to every evaluation of the body.
   const getScopedKeys = (item: ConfigName) =>
     item.module === undefined && !isDefined(item.name) ? [] : getSubstitutedKeys(item);
   const getKeyArity = (key: string) => {
@@ -199,7 +196,6 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       tables.set(tableKey, table);
     });
   addRows(true);
-  // SpecProcessor#processConstants looks for an unassigned constant after the root module's tables and before the other modules' tables and every <-.
   const assignedNames = new Set(
     [...config.constants, ...config.substitutions]
       .filter((item) => item.module === undefined)
@@ -221,7 +217,6 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     );
   }
   addRows(false);
-  // ModelConfig keeps the last <- of a name for each module.
   const lastSubstitutions = [
     ...new Map(
       config.substitutions.map((substitution) => [
@@ -263,7 +258,6 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
         .map((substitution) => [substitution.name, substitution.target]),
     );
   const overrides = getOverrides(undefined);
-  // SpecProcessor#processConstants checks the root module's <- for its constants in SANY's order of constant declarations, then for its definitions in definition order, then the names left in the order of ModelConfig's Hashtable, then each other module's.
   linked.order.getDeclarationOrder("constant").forEach((name) => {
     const target = overrides.get(name);
     if (target !== undefined) checkTarget(name, target, overrides, undefined);
@@ -330,7 +324,7 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
     keys.forEach((key) => {
       const arity = getKeyArity(key);
       const definition = linked.definitions.get(key);
-      // TLC gives a [Mod] value to the definition's body, so defns keeps the name as a definition.
+      // Deviation from TLC: TLC applies a [Mod] value to a <- or a config name only when the body is a literal.
       if (
         item.module === linked.root.module.name &&
         definition?.kind === "Operator" &&
@@ -360,13 +354,11 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       setOperator(key, createOperatorTable(table.name, getKeyArity(key), rows)),
     );
   };
-  // ModelConfig keeps the last value of a name for each module.
   const values = new Map(
     config.constants
       .filter((assignment) => assignment.args === undefined)
       .map((assignment) => [`${assignment.module ?? ""}!${assignment.name}`, assignment]),
   );
-  // SpecProcessor#processConstantDefns then normalizes the value of each constant and checks the arity of a definition substituted for one, module by module.
   constantOrder.forEach((name) => {
     const target = overrides.get(name);
     if (target === undefined) {
@@ -376,7 +368,6 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       if (table) setTable(table);
       return;
     }
-    // Defns holds the value or table the configuration assigns a definition, and a constant substituted with that definition gets it and normalizes it here.
     const forwarded = values.get(`!${target}`);
     if (forwarded) setValue({ name }, forwarded.value, [getRootKey(name)]);
     tables
@@ -394,7 +385,6 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
   tables.forEach((table) => {
     if (!isConstant(table)) setTable(table);
   });
-  // A definition substituted with such a definition gets its value as written.
   lastSubstitutions.forEach((substitution) => {
     const assignment = values.get(`!${substitution.target}`);
     if (assignment && !isConstant(substitution)) {
@@ -408,7 +398,6 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
       const targetKey = getRootKey(substitution.target);
       const builtin = linked.builtins.get(targetKey);
       getSubstitutedKeys(substitution).forEach((key) => {
-        // TLC applies the Java override that a <- gives a name of no arguments to none where it evaluates the name.
         if (builtin !== undefined && builtin.arity > 0 && getKeyArity(key) === 0) {
           setOperator(key, { ...builtin, arity: 0, isLazy: true });
         } else substitutions.set(key, targetKey);

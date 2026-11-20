@@ -109,7 +109,7 @@ export const getSymmetryGroup = (
   substitutions: Substitution[],
 ): Images[] | undefined => {
   const key = getRootKey(name, environment);
-  // Deviation from TLC: Tool#getSymmetryPerms evaluates the body of a definition that a [Mod] <- substitutes as is, so it casts the OpDefNode the <- gives the body to a Value and throws. tla-ts evaluates the substitute, as elsewhere.
+  // Deviation from TLC: TLC ignores a [Mod] <- of the symmetry, or throws a ClassCastException for a literal body.
   const definition = getDefinition(key, environment);
   if (
     definition === undefined &&
@@ -129,7 +129,6 @@ export const getSymmetryGroup = (
     try {
       return withUnexpectedException(() => evaluateConstant(definition.body));
     } catch (error) {
-      // TLC exits with the status of the message's code, so an undefined parameter of the symmetry exits as a configuration error.
       const coded =
         error instanceof TlaEvaluationError ? getCodedMessage(error.message) : undefined;
       throw setExitCode(error, coded ? getMessageExitStatus(coded.code) : EXIT_STATUS.error);

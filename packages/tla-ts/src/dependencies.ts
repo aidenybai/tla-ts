@@ -20,7 +20,6 @@ interface DefinitionNames extends Pick<
   | "variables"
 > {}
 
-// TLC's getLevelBound looks up the [Mod] value of a definition's body, so the definition reads nothing.
 const getFactExpressions = (definition: Definition, environment: DefinitionNames) =>
   environment.bodyValues.has(definition.body) ? [] : getDefinitionExpressions(definition);
 

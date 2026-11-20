@@ -231,7 +231,6 @@ const getConfigOperator = (kind: string, name: string, environment: Environment)
   return definition;
 };
 
-// SpecProcessor#processConstantDefns leaves in defns a definition whose body has a tool object: a literal's value or a [Mod] value.
 const hasBodyValue = (definition: Definition, environment: Environment) =>
   definition.body.kind === "Number" ||
   definition.body.kind === "String" ||
@@ -244,7 +243,6 @@ const getConstantValue = (key: string, definition: Definition, environment: Envi
     : getStartupValue(definition, environment);
 };
 
-// SpecProcessor reads a name of the configuration in defns, which holds TRUE, FALSE and BOOLEAN as values and a Java override as a MethodValue.
 const getValueBuiltin = (key: string, environment: Environment) =>
   environment.constants.has(key) ? undefined : getBuiltin(key, environment);
 
@@ -1244,7 +1242,7 @@ export const createSearch = (
   const invariantPredicates = [
     ...new Map(invariants.map((invariant) => [invariant.predicate, invariant])).values(),
   ];
-  // Deviation from TLC: SpecProcessor#processModelConstraints replaces the tool object of a constraint's body with its OpDefNode, so a constraint whose literal body has a [Mod] value throws a ClassCastException. tla-ts evaluates the body to the value, as for an invariant.
+  // Deviation from TLC: a constraint whose literal body has a [Mod] value throws a ClassCastException.
   const namedConstraints = getNamedExpressions(
     "constraint",
     [...config.constraints, ...getModuleOperators("constraint").map((operator) => operator.name)],

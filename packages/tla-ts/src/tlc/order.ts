@@ -587,7 +587,6 @@ const getStringOrder = (
   return [...order];
 };
 
-// The order in which a java.util.Hashtable that the names were put into enumerates its keys.
 export const getHashtableOrder = (names: string[]) => {
   const table = createSymbolTable();
   names.forEach((name) => table.put(createEntry(name, "definition", false)));
@@ -623,7 +622,6 @@ export const createTlcOrder = (source: string, loadModule: ModuleLoader): TlcOrd
         .filter((entry) => entry.kind === kind)
         .map((entry) => entry.name)
         .reverse(),
-    // ModuleNode#getOpDefs lists a module's definitions in the order its Context added them.
     getDefinitionOrder: (module) =>
       getContexts()
         .getContext(module)

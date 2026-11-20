@@ -539,7 +539,6 @@ const compareAny = (other: Value): never => {
 
 let hasMixedSet = false;
 
-// TLC compares a value with itself as with any other, so it normalizes each set in it.
 const normalizeMixedSets = (value: Value): void => {
   if (typeof value !== "object") return;
   switch (value.kind) {
