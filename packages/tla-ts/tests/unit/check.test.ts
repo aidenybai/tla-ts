@@ -1107,6 +1107,42 @@ ASSUME TLCFP(a) = -887695703
     },
   );
 
+  const checkLazyTuple = async (expression: string) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC, Json\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ x' = 1 /\\ PrintT(${expression})\n====`,
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    return { result, printed };
+  };
+
+  it.each([
+    ["Len([n \\in UNION {1..1, {3}} |-> PrintT(n)])", ["1", "1", "3"]],
+    [
+      "LET F == [n \\in UNION {1..1, {2}} |-> PrintT(n)] IN Len(F) + Len(F)",
+      ["1", "2", "1", "2", "4"],
+    ],
+    [
+      'JsonSerialize("f.json", [n \\in UNION {1..1, {2}} |-> PrintT(n)])',
+      ["1", "2", "1", "2", "TRUE"],
+    ],
+  ])(
+    "applies a lazy function at 1, 2, ... to convert it to a tuple, and keeps none of it, as TLC's FcnLambdaValue#toTuple does, in %s",
+    async (expression, printed) => {
+      expect((await checkLazyTuple(expression)).printed).toEqual(printed);
+    },
+  );
+
+  it("converts a lazy function over sets to a tuple without applying it, as TLC's FcnLambdaValue#toTuple does", async () => {
+    expect(
+      (await checkLazyTuple('ndJsonSerialize("n.json", [s \\in SUBSET {1} |-> 1 \\div x])')).result
+        .failure?.message,
+    ).toBe(
+      "The second argument of ndJsonSerialize should be a sequence, but instead it is:\n[s \\in {{}, {1}} |-> <expression line 5, col 83 to line 5, col 90 of module M>]",
+    );
+  });
+
   it("implements the TLCExt operators", async () => {
     const results = await Promise.all(
       ["Extensions", "ExtensionsShort"].map((name) => checkFixture("runtime", "Extensions", name)),

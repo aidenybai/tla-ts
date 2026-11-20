@@ -2332,20 +2332,36 @@ export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
   return copy;
 };
 
-export const getSequenceElements = (value: Value): Value[] | undefined => {
-  if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
-  if (
-    value.kind === "LazyFunction" &&
-    (!isSetValue(value.domain) || isOverriddenSet(value.domain))
-  ) {
+const getFunctionSequenceElements = (functionValue: FunctionValue) =>
+  functionValue.domain.every((key, index) => key === index + 1) ? functionValue.range : undefined;
+
+// TLC's FcnLambdaValue#toTuple applies the function at 1, 2, ... until a key of its domain breaks the run, and keeps
+// none of what it applied.
+const getLazySequenceElements = (value: LazyFunctionValue) => {
+  if (value.boundTupleLengths !== undefined) return undefined;
+  if (!isSetValue(value.domain) || isOverriddenSet(value.domain)) {
     throw new TlaEvaluationError(
       "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
     );
   }
-  const functionValue = toFiniteFunction(value);
-  return functionValue.domain.every((key, index) => key === index + 1)
-    ? functionValue.range
-    : undefined;
+  if (value.enumerated) return getFunctionSequenceElements(value.enumerated);
+  const keys = getUnboundedElements(value.domain);
+  const elements: Value[] = [];
+  for (let index = 0; index < keys.length; index++) {
+    if (keys[index] !== index + 1) return undefined;
+    elements.push(value.apply(keys[index]));
+  }
+  if (isCountedLazyFunction(value)) {
+    value.costModel.secondary[value.costModel.node] += keys.length;
+  }
+  return elements;
+};
+
+export const getSequenceElements = (value: Value): Value[] | undefined => {
+  if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
+  return value.kind === "LazyFunction"
+    ? getLazySequenceElements(value)
+    : getFunctionSequenceElements(value);
 };
 
 const describeNonSetMembership = (element: Value, value: Value) => {
