@@ -97,7 +97,7 @@ import { translateSourceTexts } from "./source-text";
 import { classifySharedHelpers } from "./shared-calls";
 import { TlaTypeScriptError } from "../errors";
 import { getUnlistedParameter, translateStep } from "./steps";
-import { TIME_ZONES } from "./time-zones";
+import { TIME_ZONE_DATA, TIME_ZONES } from "./time-zones";
 import { findMadeKeys } from "./made-keys";
 import { DATE_FORMATS } from "./date-formats";
 import {
@@ -1464,7 +1464,7 @@ export const compile = (
         [],
         tuple(
           timeZones.map((key) => {
-            const table = TIME_ZONES[key];
+            const table = { ...TIME_ZONES[key], ...TIME_ZONE_DATA[TIME_ZONES[key].data] };
             const days = table.times.map((time) => Math.floor(time / 86400));
             return record("Record", [
               { name: "key", value: string(key) },

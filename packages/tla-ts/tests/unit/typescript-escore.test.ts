@@ -1078,6 +1078,43 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "reads the time zones that Node takes, by their links and names joined of parts",
+    () => {
+      const getSource = (expected: string) => `
+      const zone = new Temporal.ZonedDateTime(0n, "Asia/Calcutta");
+      let rejected = "none";
+      try {
+        new Temporal.ZonedDateTime(0n, "Etc/GMT-" + "0" + 1);
+      } catch (error) {
+        rejected = (error as Error).name;
+      }
+      const result = [
+        zone.timeZoneId,
+        zone.equals(new Temporal.ZonedDateTime(0n, "asia/kolkata")),
+        new Temporal.ZonedDateTime(0n, "Etc/GMT-" + 14).timeZoneId,
+        rejected,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected = "Asia/Calcutta|true|Etc/GMT-14|RangeError";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = "Asia/Calcutta|false|Etc/GMT-14|RangeError";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a joined name that the host's table leaves out", async () => {
+        const source = 'new Temporal.ZonedDateTime(0n, "Etc/GMT-" + "1x");';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
   describe("lays Intl out as ECMA-402 does, without its locale data", () => {
     const getSource = (expected: string) => `
       let errors = "";

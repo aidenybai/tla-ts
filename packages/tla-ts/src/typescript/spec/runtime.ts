@@ -3,7 +3,7 @@ import { TlaError } from "../../errors";
 import type { GeneratedDefinition, Library } from "./library";
 import { CALENDAR_TABLES } from "../calendars";
 import { DATE_FORMATS } from "../date-formats";
-import { TIME_ZONES } from "../time-zones";
+import { REJECTED_TIME_ZONES, TIME_ZONE_DATA, TIME_ZONES } from "../time-zones";
 
 // The ESCore operators that a compiled spec defines its own way, each a port of ESCore's with
 // what the parse node gave as a parameter: a function's code is the record [id, strict, kind,
@@ -1551,15 +1551,32 @@ const isRejectedZone = (name: string) => {
   }
 };
 
-// The program's HostTimeZone: the recorded table's entries of the time zones its strings name, and
-// for the other names in them that the host rejects, "rejected". Any other name may be one that the
-// host has and the table leaves out.
+// The program's HostTimeZone: the recorded table's entries of the time zones its strings name, of
+// each zone whose name a string of it starts with where the string ends at a "/", a "-", or a "+",
+// as a name a program joins of parts may, and of every zone where it asks Intl for the zones the host
+// supports, and for the other names in them that the host rejects, and the recorded names of such a
+// prefix and up to three digits that it rejects, "rejected". Any other name may be one that the host
+// has and the table leaves out.
 export const getHostTimeZone = (text: string) => {
-  const keys = [...new Set(getZoneNames(text).map((name) => name.toLowerCase()))].sort();
+  const names = [...new Set(getZoneNames(text).map((name) => name.toLowerCase()))];
+  const prefixes = names.filter((name) => /[/+-]$/.test(name));
+  const supported = /\bsupportedValuesOf\b/.test(text)
+    ? Intl.supportedValuesOf("timeZone").map((zone) => zone.toLowerCase())
+    : [];
+  const keys = [
+    ...new Set([
+      ...names,
+      ...supported,
+      ...Object.keys(TIME_ZONES).filter((key) => prefixes.some((prefix) => key.startsWith(prefix))),
+    ]),
+  ].sort();
   const entries = keys.filter((key) => Object.hasOwn(TIME_ZONES, key));
-  const rejected = keys.filter((key) => !Object.hasOwn(TIME_ZONES, key) && isRejectedZone(key));
+  const rejected = [
+    ...names.filter((key) => !Object.hasOwn(TIME_ZONES, key) && isRejectedZone(key)),
+    ...REJECTED_TIME_ZONES.filter((name) => prefixes.some((prefix) => name.startsWith(prefix))),
+  ];
   const getEntry = (key: string) => {
-    const table = TIME_ZONES[key];
+    const table = { ...TIME_ZONES[key], ...TIME_ZONE_DATA[TIME_ZONES[key].data] };
     const days = table.times.map((time) => Math.floor(time / 86400));
     return `[found |-> "zone", id |-> ${getUnitsOf(table.id)}, primary |-> ${getUnitsOf(table.primary)}, offsets |-> <<${table.offsets.join(", ")}>>, days |-> <<${days.join(", ")}>>, seconds |-> <<${table.times.map((time, index) => time - days[index] * 86400).join(", ")}>>, isFinal |-> ${table.isFinal ? "TRUE" : "FALSE"}, rule |-> <<${table.rule.join(", ")}>>]`;
   };
