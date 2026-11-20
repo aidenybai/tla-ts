@@ -124,6 +124,8 @@ interface SelectionState {
 
 type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" };
 
+type SelectionUse = "Expression" | "Fact" | "Definition";
+
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
 const SELF_RESOLUTION = { kind: "Local", isSelf: true } as const;
@@ -615,7 +617,7 @@ const checkSelection = (
   nameLength: number,
   goal: Goal,
   unit: Unit,
-  isFact: boolean,
+  use: SelectionUse,
 ) => {
   const report = (index: number | undefined, message: string) => {
     const range =
@@ -792,7 +794,7 @@ const checkSelection = (
     }
   }
   if (state.node.kind === "AssumeProve") {
-    return isFact
+    return use === "Fact" || (use === "Definition" && state.node.label !== undefined)
       ? state.node
       : report(
           undefined,
@@ -802,7 +804,7 @@ const checkSelection = (
         );
   }
   if (state.node.kind === "NewSymbol") {
-    return isFact
+    return use === "Fact"
       ? state.node
       : report(undefined, "Selected a NEW declaration as an expression or operator.");
   }
@@ -880,7 +882,7 @@ const checkReference = (
   expression: Expression,
   scope: LocalName | undefined,
   unit: Unit,
-  isFact: boolean,
+  use: SelectionUse,
 ) => {
   if (!isReference(expression)) return false;
   const selectors = getSelectors(expression);
@@ -892,7 +894,7 @@ const checkReference = (
     const goal =
       (nameLength === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
     if (goal) {
-      const node = checkSelection(expression, selectors, nameLength, goal, unit, isFact);
+      const node = checkSelection(expression, selectors, nameLength, goal, unit, use);
       if (!node) emptyExpressions.add(expression);
       if (node && node.kind !== "NewSymbol" && node.kind !== "AssumeProve") {
         const args = selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
@@ -942,7 +944,7 @@ const getSymbolArity = (
     });
     return undefined;
   }
-  if (checkReference(expression, scope, unit, false) || (isStepName(name) && local)) {
+  if (checkReference(expression, scope, unit, "Expression") || (isStepName(name) && local)) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
   if (isInstanceName(name, scope, unit)) {
@@ -1962,7 +1964,7 @@ const isSubexpressionReported = (
   expression.selectors
     .flatMap((selector) => ("args" in selector ? selector.args : []))
     .forEach((arg) => resolveArgument(arg, scope, unit));
-  const selected = checkReference(expression, scope, unit, false);
+  const selected = checkReference(expression, scope, unit, "Expression");
   return selected ? selected.node === undefined : false;
 };
 
@@ -1996,7 +1998,7 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
     return hidden;
   }
   if (isInstanceArityReported(fact, scope, unit)) return hidden;
-  const selected = checkReference(fact, scope, unit, true);
+  const selected = checkReference(fact, scope, unit, "Fact");
   if (selected) {
     const kind = selected.node?.kind;
     if (kind === undefined) return BUILTIN_LOCATION;
@@ -2114,7 +2116,7 @@ const isDefinitionSelected = (
       return false;
     }
     if (argumentError) return report(argumentError.range, argumentError.message);
-    if (checkReference(reference, scope, unit, false)) return false;
+    if (checkReference(reference, scope, unit, "Definition")) return false;
     const first = ranges?.[0];
     const last = ranges?.[selectors.findLastIndex((selector) => selector.kind === "Name")];
     const names = selectors.flatMap((selector) =>

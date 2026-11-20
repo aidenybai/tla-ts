@@ -399,6 +399,21 @@ describe("name resolution matches SANY", () => {
         ],
       ],
     ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nUSE DEF T!a`,
+      [
+        ["line 3, col 9 to line 3, col 11", "DEF clause entry should describe a defined operator."],
+        ["line 3, col 1 to line 3, col 11", "Empty USE or HIDE statement."],
+      ],
+    ],
+    [
+      "THEOREM T == ASSUME ASSUME TRUE PROVE TRUE PROVE TRUE\nUSE DEF T!1",
+      [
+        ["line 3, col 9 to line 3, col 11", "Selected ASSUME/PROVE instead of expression."],
+        ["line 3, col 9 to line 3, col 11", "DEF clause entry should describe a defined operator."],
+        ["line 3, col 1 to line 3, col 11", "Empty USE or HIDE statement."],
+      ],
+    ],
   ])("checks the labeled nested ASSUME/PROVE in %j like SANY", async (source, errors) => {
     await expect(
       check({ source: `---- MODULE M ----\n${source}\n====`, config: "" }),
