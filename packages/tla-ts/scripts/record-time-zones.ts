@@ -183,7 +183,8 @@ const rejected = numbered.flatMap((prefix) =>
     .map((digits) => prefix + digits)
     .filter((name) => {
       try {
-        return new Temporal.ZonedDateTime(0n, name) === undefined;
+        Reflect.construct(Temporal.ZonedDateTime, [0n, name]);
+        return false;
       } catch {
         return true;
       }
