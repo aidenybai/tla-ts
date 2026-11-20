@@ -735,6 +735,14 @@ const checkSelection = (
           "Subexpression selection failed, probably due to an error in the selected expression.",
         );
       }
+      if (expression.kind === "Let") {
+        if (selector.kind !== "Operand" || getPosition(1) !== 0) {
+          return report(index, "A LET/IN expression has only one operand.");
+        }
+        state.node = expression.body;
+        state.isGoal = false;
+        continue;
+      }
       if (["Number", "Decimal", "String"].includes(expression.kind)) {
         return report(index, "Selecting subexpression of expression that has none.");
       }
