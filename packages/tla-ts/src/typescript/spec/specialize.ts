@@ -930,6 +930,15 @@ export const specialize = (
 
   // A node's source text, as its file's number and the range of the file's text it spans, which
   // SourceUnits makes code units of when a program reads it.
+  // The call or new of a callee that V8 names by its source text where the callee isn't callable,
+  // as a name or a chain of property names, and otherwise the call that ESCore's message leaves
+  // to the host.
+  const getNamedCall = (callee: ts.Expression, call: string, args: string) =>
+    /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(callee.getText()) &&
+    !/\?\.|^super\b/.test(callee.getText())
+      ? `${call === "CallArgumentsAt" ? "CallNamedAt" : "NewNamedAt"}(${args}, ${getUnits(callee.getText())})`
+      : `${call}(${args})`;
+
   // A function's or a class's source text, which starts at async where the code says it, after
   // the modifiers that ECMAScript's syntax leaves out of it, such as static and export, and the
   // ones whose text Node strips, such as private.
@@ -1222,7 +1231,7 @@ export const specialize = (
           : `IF IsNullish(Val(c)) THEN Abrupt(c.s, Completion("nullish", Undefined, Empty)) ELSE `;
       return defineCode(
         "Call",
-        `LET c == ${fn("s", "ctx")} IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsAt(${getCallSite(node)}, Val(c), Undefined, ${args("c.s", "ctx")})`,
+        `LET c == ${fn("s", "ctx")} IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}${getNamedCall(node.expression, "CallArgumentsAt", `${getCallSite(node)}, Val(c), Undefined, ${args("c.s", "ctx")}`)}`,
       );
     }
     const base = reference(node.expression, scope);
@@ -1232,7 +1241,7 @@ export const specialize = (
         : `IF IsNullish(Val(c).f) THEN Abrupt(c.s, Completion("nullish", Undefined, Empty)) ELSE `;
     return defineCode(
       "Call",
-      `LET c == CalleeThen(${base("s", "ctx")}) IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsAt(${getCallSite(node)}, Val(c).f, Val(c).this, ${args("c.s", "ctx")})`,
+      `LET c == CalleeThen(${base("s", "ctx")}) IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}${getNamedCall(node.expression, "CallArgumentsAt", `${getCallSite(node)}, Val(c).f, Val(c).this, ${args("c.s", "ctx")}`)}`,
     );
   };
 
@@ -1522,7 +1531,7 @@ export const specialize = (
       return slot === undefined
         ? (state, context) =>
             `IdentifierValue(${state}, ${getLex(context)}, ${getUnits(node.text)}, ${getBool(scope.isStrict)})`
-        : (state) => `LocalValue(${state}, ${slot})`;
+        : (state) => `LocalValue(${state}, ${slot}, ${getUnits(node.text)})`;
     }
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const ref = reference(node, scope);
@@ -1549,7 +1558,7 @@ export const specialize = (
       const args = argumentList(node.arguments ?? [], scope);
       return defineCode(
         "New",
-        `LET r == ${callee("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE NewArgumentsAt(${getCallSite(node)}, Val(r), ${args("r.s", "ctx")})`,
+        `LET r == ${callee("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE ${getNamedCall(node.expression, "NewArgumentsAt", `${getCallSite(node)}, Val(r), ${args("r.s", "ctx")}`)}`,
       );
     }
     if (ts.isMetaProperty(node)) {

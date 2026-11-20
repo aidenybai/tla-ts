@@ -1339,7 +1339,7 @@ describe("compiles scripts by specializing ESCore", () => {
         "JSON.stringify(error)",
       ];
       for (const read of reads) {
-        const source = `try { (null as unknown as { x: number }).x; } catch (error) { ${read}; }`;
+        const source = `try { (null as unknown as Record<string, number>)[{} as unknown as string]; } catch (error) { ${read}; }`;
         expect((await checkScript(source)).message).toContain(
           "tla-ts can't read the message that Node writes for an error it throws",
         );
@@ -1608,6 +1608,81 @@ describe("compiles scripts by specializing ESCore", () => {
             .message,
         ).toContain(THREW);
       });
+    });
+  });
+
+  describe("throws V8's message for an error that ESCore throws itself", () => {
+    const getSource = (expected: string) => `
+declare const undeclared: number;
+const read = (run: () => unknown) => {
+  try {
+    run();
+    return "none";
+  } catch (error) {
+    return \`\${(error as Error).constructor.name}: \${(error as Error).message}\`;
+  }
+};
+const nothing = null as unknown as { x: number };
+const result = [
+  read(() => undeclared),
+  read(() => nothing.x),
+  read(() => (nothing as unknown as Record<symbol, number>)[Symbol("d")]),
+  read(() => { (undefined as unknown as { x: number }).x = 1; }),
+  read(() => { late; let late = 1; }),
+  read(() => { const fixed = 1; (fixed as number) = 2; }),
+  read(() => "a".repeat(-1.5)),
+  read(() => String.fromCodePoint(65.5)),
+  read(() => [].reduce((a: number) => a)),
+  read(() => (1n as unknown as number) + 1),
+  read(() => 1n / 0n),
+  read(() => \`\${Symbol("q")}\`),
+  read(() => String.prototype.trim.call(null)),
+  read(() => Object.keys(null as unknown as object)),
+  read(() => Object.setPrototypeOf(null, {})),
+].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected =
+      "ReferenceError: undeclared is not defined|TypeError: Cannot read properties of null (reading 'x')|TypeError: Cannot read properties of null (reading 'Symbol(d)')|TypeError: Cannot set properties of undefined (setting 'x')|ReferenceError: Cannot access 'late' before initialization|TypeError: Assignment to constant variable.|RangeError: Invalid count value: -1.5|RangeError: Invalid code point 65.5|TypeError: Reduce of empty array with no initial value|TypeError: Cannot mix BigInt and other types, use explicit conversions|RangeError: Division by zero|TypeError: Cannot convert a Symbol value to a string|TypeError: String.prototype.trim called on null or undefined|TypeError: Cannot convert undefined or null to object|TypeError: Object.setPrototypeOf called on null or undefined";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("(reading 'x')", "(reading x)")))).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("names a callee that isn't callable by its text, as V8 does", () => {
+    const getSource = (expected: string) => `
+const read = (run: () => unknown) => {
+  try {
+    run();
+    return "none";
+  } catch (error) {
+    return (error as Error).message;
+  }
+};
+const box = { f: 1, inner: { g: "x" } } as unknown as { f: () => void; inner: { g: () => void } };
+const value = 5 as unknown as () => void;
+const Made = 1 as unknown as new () => object;
+const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value()), read(() => new Made()), read(() => box.f?.())].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected =
+      "box.f is not a function|box.inner.g is not a function|value is not a function|Made is not a constructor|box.f is not a function";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("value is", "value() is")))).message,
+      ).toContain(THREW);
     });
   });
 
