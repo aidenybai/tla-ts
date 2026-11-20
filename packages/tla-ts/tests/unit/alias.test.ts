@@ -131,6 +131,35 @@ describe("ALIAS matches TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "a lasso",
+      "Next == x' = (x + 1) % 3 /\\ y' = y /\\ TLCSet(1, TLCGet(1) + 1)\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nProp == <>[](x = 0)",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+      ["13", "14", "14"],
+    ],
+    [
+      "an invariant under a VIEW",
+      "Next == x < 3 /\\ x' = x + 1 /\\ y' = 1 - y /\\ TLCSet(1, TLCGet(1) + 1)\nInv == x < 3\nView == x",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View\nCHECK_DEADLOCK FALSE",
+      ["4", "4", "5", "6"],
+    ],
+  ])(
+    "rebuilds each state of %s once for the registers its ALIAS reads, as TLC does",
+    async (_name, definitions, config, registers) => {
+      const getRegisters = async (maxSetSize: number | undefined) =>
+        (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nASSUME TLCSet(1, 0)\nInit == x = 0 /\\ y = 0\n${definitions}\nAlias == [x |-> x, register |-> TLCGet(1)]\n====`,
+            config: `${config}\nALIAS Alias`,
+            maxSetSize,
+          })
+        ).violation?.trace.map((step) => formatValue(step.state.register));
+      expect(await getRegisters(undefined)).toEqual(registers);
+      expect(await getRegisters(1_000_000)).toEqual(registers);
+    },
+  );
+
   it("adds _ALIASEvalError to the state when the alias fails", async () => {
     const next = "Next == x < 1 /\\ x' = x + 1\nArgument(n) == [n |-> n]\nConstant == [c |-> 1]";
     expect(
