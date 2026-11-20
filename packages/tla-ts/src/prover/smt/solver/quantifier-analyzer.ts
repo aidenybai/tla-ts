@@ -4,6 +4,7 @@ import {
   KIND_VAR,
   OP_ADD,
   OP_AND,
+  OP_AS_ARRAY,
   OP_EQ,
   OP_GE,
   OP_IMPLIES,
@@ -11,12 +12,14 @@ import {
   OP_LE,
   OP_NOT,
   OP_OR,
+  OP_SELECT,
   OP_XOR,
   FAMILY_BASIC,
   FAMILY_USER,
   type AstManager,
 } from "./ast";
 import type { Context } from "./context";
+import type { Enode } from "./enode";
 import { assign, release } from "./expr-ref";
 import { collectMacroCandidates, releaseCondMacros } from "./model-macro-solver";
 import { pullQuant } from "./pull-quant";
@@ -28,13 +31,26 @@ type QInfo =
   | { kind: "f_var"; decl: number; argIndex: number; varIndex: number }
   | { kind: "f_var_plus_offset"; decl: number; argIndex: number; varIndex: number; offset: number }
   | { kind: "x_eq_y" | "x_neq_y" | "x_leq_y"; first: number; second: number }
-  | { kind: "x_eq_t" | "x_neq_t" | "x_gle_t"; varIndex: number; term: number };
+  | { kind: "x_eq_t" | "x_neq_t" | "x_gle_t"; varIndex: number; term: number }
+  | { kind: "select_var"; select: number; argIndex: number; varIndex: number };
 
 const isSameQInfo = (first: QInfo, second: QInfo) =>
   JSON.stringify(first) === JSON.stringify(second);
 
 const getQInfoExpr = (info: QInfo) =>
   "term" in info ? info.term : "offset" in info ? info.offset : -1;
+
+// The selects of every array sort share one declaration here, where Z3 has one per sort.
+const isSameSelect = (manager: AstManager, first: number, second: number) =>
+  manager.decls[first] === manager.decls[second] &&
+  manager.sorts[manager.getArg(first, 0)] === manager.sorts[manager.getArg(second, 0)];
+
+const getArrayFuncDecl = (manager: AstManager, solver: AufSolver, array: number) => {
+  const value = solver.eval(array, false);
+  return value !== null && manager.getOp(value) === OP_AS_ARRAY
+    ? manager.funcDecls[manager.decls[value]].parameters[0]
+    : undefined;
+};
 
 const mkVarPair = (kind: "x_eq_y" | "x_neq_y" | "x_leq_y", first: number, second: number): QInfo =>
   first > second ? { kind, first: second, second: first } : { kind, first, second };
@@ -121,8 +137,33 @@ export class QuantifierInfo {
         case "x_gle_t":
           solver.getUvar(flatQ, info.varIndex).setMonoProj();
           break;
+        case "select_var": {
+          const arrays = this.getAufArrays(this.manager.getArg(info.select, 0));
+          const node = solver.getUvar(flatQ, info.varIndex);
+          for (const array of arrays) {
+            const decl = getArrayFuncDecl(this.manager, solver, array.owner);
+            if (decl !== undefined) node.merge(solver.getAFI(decl, info.argIndex - 1));
+          }
+          break;
+        }
       }
     }
+  }
+
+  // Z3's get_auf_arrays: the relevant enodes that the array of a select can stand for.
+  private getAufArrays(array: number): Enode[] {
+    const manager = this.manager;
+    const context = this.context;
+    if (manager.isGroundApp(array)) {
+      const enode = context.isEInternalized(array) ? context.getEnode(array) : undefined;
+      return enode !== undefined && context.isRelevant(enode.owner) ? [enode] : [];
+    }
+    if (manager.kinds[array] !== KIND_APP) return [];
+    return this.getAufArrays(manager.getArg(array, 0)).flatMap((nested) =>
+      nested.parents.filter(
+        (parent) => context.isRelevant(parent.owner) && isSameSelect(manager, parent.owner, array),
+      ),
+    );
   }
 
   private populateFVar(node: Node, decl: number, argIndex: number) {
@@ -175,6 +216,21 @@ export class QuantifierInfo {
         case "x_neq_t":
         case "x_gle_t":
           solver.getUvar(flatQ, info.varIndex).insert(manager, info.term, 0);
+          break;
+        case "select_var":
+          for (const array of this.getAufArrays(manager.getArg(info.select, 0))) {
+            const decl = getArrayFuncDecl(manager, solver, array.owner);
+            if (decl === undefined) continue;
+            const aFI = solver.getAFI(decl, info.argIndex - 1);
+            for (const parent of array.parents)
+              if (
+                context.isRelevant(parent.owner) &&
+                isSameSelect(manager, parent.owner, info.select)
+              ) {
+                const arg = parent.getArg(info.argIndex);
+                aFI.insert(manager, arg.owner, context.getGeneration(arg));
+              }
+          }
           break;
         default:
           break;
@@ -407,14 +463,42 @@ export class QuantifierAnalyzer {
     }
   }
 
+  // Z3's is_auf_select checks every argument, the array too, so a select of a select over a
+  // variable never passes.
+  private isAufSelect(expr: number): boolean {
+    const manager = this.manager;
+    if (manager.getOp(expr) !== OP_SELECT) return false;
+    const array = manager.getArg(expr, 0);
+    if (!manager.isGroundApp(array) && !this.isAufSelect(array)) return false;
+    return manager.everyArg(expr, (arg) => manager.isGroundApp(arg) || this.isVar(arg));
+  }
+
+  private processIApp(expr: number) {
+    const manager = this.manager;
+    if (!this.isAufSelect(expr)) {
+      for (let index = 0; index < manager.getNumArgs(expr); index++)
+        this.visitTerm(manager.getArg(expr, index));
+      return;
+    }
+    this.visitTerm(manager.getArg(expr, 0));
+    for (let index = 1; index < manager.getNumArgs(expr); index++) {
+      const arg = manager.getArg(expr, index);
+      if (this.isVar(arg))
+        this.info.insertQInfo({
+          kind: "select_var",
+          select: expr,
+          argIndex: index,
+          varIndex: manager.values[arg],
+        });
+    }
+  }
+
   private processApp(expr: number) {
     const manager = this.manager;
     const decl = manager.decls[expr];
     if (manager.funcDecls[decl].family !== FAMILY_BASIC) this.info.ngDecls.add(decl);
     if (manager.funcDecls[decl].family === FAMILY_USER) this.processUApp(expr);
-    else
-      for (let index = 0; index < manager.getNumArgs(expr); index++)
-        this.visitTerm(manager.getArg(expr, index));
+    else this.processIApp(expr);
   }
 
   private processTermsOnStack() {

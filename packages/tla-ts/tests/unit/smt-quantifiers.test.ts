@@ -230,6 +230,32 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
       ]),
     ).toEqual(["sat", "(:rlimit 588)"]);
   });
+
+  it("instantiates a variable that indexes an array with the indices of the array's selects", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(assert (forall ((x Int)) (or (p x) (> (select A x) 0))))",
+        "(assert (not (p 2)))",
+        "(assert (< (select A 5) 0))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 686)",
+      "(",
+      "  (define-fun A () (Array Int Int)",
+      "    (store ((as const (Array Int Int)) (- 1)) 2 1))",
+      "  (define-fun p ((x!0 Int)) Bool",
+      "    (not (= x!0 2)))",
+      ")",
+    ]);
+  });
 });
 
 describe("e-matching, as Z3 5.3.2 counts its steps", () => {
