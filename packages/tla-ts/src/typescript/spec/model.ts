@@ -913,7 +913,7 @@ export const compileModelToEscore = (
   // lowered.ts), whose variable model holds them, and otherwise the variable heap holds ESCore's
   // state. A step's or a check's ESCore state is what the variable's value gives.
   const lowered =
-    isStateless || isAsync || !isLowerable
+    isAsync || !isLowerable
       ? undefined
       : getLoweredBindings(file, new Set(choices.map((choice) => choice.name)));
   const variable = lowered === undefined ? "heap" : "model";
@@ -1055,7 +1055,10 @@ export const compileModelToEscore = (
         expression.body.kind === "Apply" &&
         expression.body.operator === "=" &&
         expression.definitions.some((definition) => definition.name === "result");
-  const current = isStateless ? "ApplyTo(StartState, InitialState)" : variable;
+  // The state the module's top level leaves, lowered where the module lets it, in which a model
+  // without state checks its functions, and any model its assumptions.
+  const started = lowered === undefined ? "ApplyTo(StartState, InitialState)" : "ModelInitial";
+  const current = isStateless ? started : variable;
   const defined = new Set<string>();
   const defineInvariant = (name: string) => {
     if (defined.has(name)) return;
@@ -1081,9 +1084,7 @@ export const compileModelToEscore = (
       const bounds = getBounds(name, body);
       const check = defineCheck(name, isCallCheck(body) ? "ReturnsOf" : "HoldsOf", bounds);
       defined.add(name);
-      steps.push(
-        `${name} == ${quantify(bounds, check("ApplyTo(StartState, InitialState)", boundNames(bounds)))}`,
-      );
+      steps.push(`${name} == ${quantify(bounds, check(started, boundNames(bounds)))}`);
     }
   });
   // The temporal properties, from the tags of the functions that today's properties name.
