@@ -432,6 +432,36 @@ describe("INSTANCE matches TLC", () => {
     },
   );
 
+  // TLC checks [](x \in {0, 1}), [](x = 0) and x = 1 written without the instance this way.
+  it.each([
+    ["[](x \\in {0, 1})", "success", undefined],
+    ["[](x = 0)", "invariant-violation", "I!D"],
+    ["(x = 1)", "liveness-violation", "I!D"],
+  ])(
+    "checks a property that is the constant c <- %s of an instance, which TLC rejects as 'The operator c ... cannot be used as a property'",
+    async (substitute, status, name) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nI == INSTANCE L WITH c <- ${substitute}\nProp == I!D\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+        loadModule: (module) =>
+          module === "L" ? "---- MODULE L ----\nCONSTANT c\nD == c\n====" : undefined,
+      });
+      expect([result.status, result.violation?.name]).toEqual([status, name]);
+    },
+  );
+
+  // TLC checks Init /\ [][Next]_x /\ WF_x(Next) written without the instance this way.
+  it("takes fairness that is the constant c <- WF_x(Next) of an instance, which TLC rejects as 'The operator c ... cannot be used as a spec'", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nI == INSTANCE L WITH c <- WF_x(Next)\nSpec == Init /\\ [][Next]_x /\\ I!D\nLive == <>(x = 1)\n====",
+      config: "SPECIFICATION Spec\nPROPERTY Live",
+      loadModule: (module) =>
+        module === "L" ? "---- MODULE L ----\nCONSTANT c\nD == c\n====" : undefined,
+    });
+    expect(result.status).toBe("success");
+  });
+
   it.each([
     ["F == FALSE", "I!F", "The spec is trivially false because I!F is false."],
     ["G == 3", "I!G", "The operator I!G, which equals 3,\ncannot be used as a spec"],

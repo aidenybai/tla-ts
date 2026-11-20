@@ -452,6 +452,7 @@ const getSpecification = (
       );
     });
     if (!isInitial && isConstantTrue(item, environment, "spec")) return;
+    // Deviation from TLC: SpecProcessor#processConfigSpec looks a conjunct's operator up without the substitutions it collected, so it rejects a conjunct that is an instance's constant, such as WF_x(Next) passed for one, as "The operator c, which equals <c's declaration>, cannot be used as a spec". tla-ts takes the substitute, as TLC takes the same formula written without the instance.
     const variableIndex =
       conjunct.kind === "Identifier" && !isLocallyResolved(conjunct)
         ? environment.variableIndex.get(conjunct.name)
@@ -590,6 +591,7 @@ const getProperties = (
     expandTemporal(definition.body, undefined, environment, isProperty).forEach((item) => {
       const conjunct = item.expression;
       if (isConstantTrue(item, environment, "property")) return;
+      // Deviation from TLC: SpecProcessor#processConfigProps looks a conjunct's operator up without the substitutions it collected, so it rejects a conjunct that is an instance's constant, such as I!D with D == c, as "The operator c, which equals <c's declaration>, cannot be used as a property". tla-ts checks the substitute, as TLC checks the same formula written without the instance.
       const partName = item.name ?? name;
       const withFrames = (check: Expression) =>
         withSubstitutionFrames(
