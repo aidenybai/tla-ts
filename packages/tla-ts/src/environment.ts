@@ -1086,6 +1086,7 @@ export const createEnvironment = (
         isLocal: true,
         isRecursive: false,
         location,
+        isLetSubstitute: true,
       };
     });
     const copies: Definition[] = [];

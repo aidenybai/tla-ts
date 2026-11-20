@@ -7,7 +7,6 @@ import {
   type Expression,
 } from "./ast";
 import type { Environment } from "./evaluate";
-import { isSubstitutionDefinition } from "./instances";
 import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 
 interface DefinitionNames extends Pick<
@@ -21,6 +20,8 @@ interface DefinitionNames extends Pick<
   | "builtins"
   | "variables"
 > {}
+
+const isLetSubstitute = (definition: Definition) => "isLetSubstitute" in definition;
 
 const getFactExpressions = (definition: Definition, environment: DefinitionNames) =>
   environment.bodyValues.has(definition.body) ? [] : getDefinitionExpressions(definition);
@@ -204,15 +205,13 @@ const collectLocalFacts = (
       name !== undefined && isLocallyResolved(node) ? substitutes.get(name) : undefined;
     if (substitute) visit(substitute, isInnerLevelCounted, isOperatorArgument, substitutes);
     // TLC's SubstInNode binds a LET instance's substitute lazily, so its level counts only where the instanced definition reads it.
-    if (kind === "Let" && node.definitions.some(isSubstitutionDefinition)) {
+    if (kind === "Let" && node.definitions.some(isLetSubstitute)) {
       const innerSubstitutes = new Map(substitutes);
       node.definitions.forEach((definition) => {
-        if (isSubstitutionDefinition(definition)) {
-          innerSubstitutes.set(definition.name, definition.body);
-        }
+        if (isLetSubstitute(definition)) innerSubstitutes.set(definition.name, definition.body);
       });
       node.definitions.forEach((definition) => {
-        if (isSubstitutionDefinition(definition)) return;
+        if (isLetSubstitute(definition)) return;
         getDefinitionExpressions(definition).forEach((child) =>
           visit(child, isInnerLevelCounted, isOperatorArgument, innerSubstitutes),
         );
