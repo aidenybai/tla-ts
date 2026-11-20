@@ -2196,6 +2196,27 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
       throw new TlaEvaluationError(
         `Attempted to compute the number of elements in the overridden value ${prettyPrint(formatValue(value))}.`,
       );
+    case "Subset":
+    case "FunctionSet":
+    case "RecordSet":
+    case "ProductSet": {
+      const sets = setTrace.sets;
+      sets?.push(value);
+      const size = getCombinedCardinality(value, version);
+      sets?.pop();
+      return size;
+    }
+    default:
+      cacheSet(value);
+      return toFiniteSet(value).elements.length;
+  }
+};
+
+const getCombinedCardinality = (
+  value: SubsetValue | FunctionSetValue | RecordSetValue | ProductSetValue,
+  version: TlcVersion | undefined,
+) => {
+  switch (value.kind) {
     case "Subset": {
       const size = getCardinality(value.base, version);
       if (size >= 31) throw new TlaEvaluationError(describeOverflow(value));
@@ -2228,9 +2249,6 @@ export const getCardinality = (value: Value, version?: TlcVersion): number => {
         () =>
           `Overflow when computing the number of elements in ${prettyPrint(formatValue(value))}`,
       );
-    default:
-      cacheSet(value);
-      return toFiniteSet(value).elements.length;
   }
 };
 
