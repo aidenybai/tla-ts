@@ -171,6 +171,12 @@ interface TacticBuilder {
   build: (params: TacticParams) => Tactic;
 }
 
+// frames: the buffers of the combinators being read. unported: a tactic the port lacks.
+interface CompileState {
+  frames: TacticBuilder[][];
+  unported: SmtUnsupportedError | undefined;
+}
+
 interface NamedTactic {
   descrs: ParamDescrs;
   isRejectingUnknown?: boolean;
@@ -2040,8 +2046,9 @@ const compile = (
   environment: TacticEnvironment,
   sexpr: SExpr,
   isInternal: boolean,
-  made: NamedTactic[] = [],
+  state: CompileState = { frames: [], unported: undefined },
 ): TacticBuilder => {
+  const frames = state.frames;
   if (sexpr.kind !== "list") {
     if (!isSymbol(sexpr)) throw new SmtParseError("invalid tactic, unexpected input", sexpr);
     // mk_smt_tactic makes the sat tactic under sat.euf, with its parameters.
@@ -2049,7 +2056,6 @@ const compile = (
       sexpr.text === "smt" && environment.parameters.get("sat.euf") === "true" ? "sat" : sexpr.text,
     );
     if (named !== undefined) {
-      made.push(named);
       return {
         descrs: named.descrs,
         isRejectingUnknown: named.isRejectingUnknown ?? true,
@@ -2067,18 +2073,16 @@ const compile = (
     }
     const strategy = LOGIC_TACTICS.get(sexpr.text);
     if (strategy !== undefined)
-      return compile(environment, createCommandReader(strategy).read() as SmtList, true, made);
+      return compile(environment, createCommandReader(strategy).read() as SmtList, true, state);
     if (UNPORTED_TACTICS.has(sexpr.text)) {
       const error = new SmtUnsupportedError(`the tactic ${sexpr.text}`);
+      if (!isInternal) state.unported ??= error;
       return {
         descrs: new Map(),
         isRejectingUnknown: false,
         isTrackingDependencies: false,
-        build: () => {
-          if (!isInternal) throw error;
-          return () => {
-            throw error;
-          };
+        build: () => () => {
+          throw error;
         },
       };
     }
@@ -2089,7 +2093,15 @@ const compile = (
   if (!isSymbol(head)) throw new SmtParseError("invalid tactic, symbol expected", sexpr.end);
   const compileChildren = (combinator: string) => {
     checkHasArgument(sexpr, combinator);
-    return sexpr.items.slice(1).map((child) => compile(environment, child, isInternal, made));
+    return compileFrame(sexpr.items.slice(1));
+  };
+  // A tactic_ref_buffer holds the children read so far.
+  const compileFrame = (children: SExpr[]) => {
+    const frame: TacticBuilder[] = [];
+    frames.push(frame);
+    for (const child of children) frame.push(compile(environment, child, isInternal, state));
+    frames.pop();
+    return frame;
   };
   switch (head.text) {
     case "then":
@@ -2145,7 +2157,7 @@ const compile = (
           "invalid try-for combinator, second argument must be an unsigned integer",
           sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], isInternal, made);
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       return {
         ...child,
         build: (params) => {
@@ -2175,7 +2187,7 @@ const compile = (
           "invalid fail-if-branching combinator, second argument must be an unsigned integer",
           sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], isInternal, made);
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       const threshold = bound === undefined ? 1 : Number(bound.text);
       return {
         ...mergeDescrs([child]),
@@ -2197,7 +2209,7 @@ const compile = (
           `invalid ${head.text} combinator, one argument expected`,
           sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], isInternal, made);
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       const isSkipping = (goal: Goal) =>
         head.text === "if-no-models"
           ? goal.isModelsEnabled
@@ -2224,7 +2236,7 @@ const compile = (
           "invalid repeat combinator, second argument must be an unsigned integer",
           sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], isInternal, made);
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       const maxDepth = bound === undefined ? UINT_MAX : Number(bound.text);
       return {
         ...mergeDescrs([child]),
@@ -2235,9 +2247,11 @@ const compile = (
     case "using-params":
     case "with": {
       checkHasArgument(sexpr, "using-params");
-      const child = compile(environment, sexpr.items[1], isInternal, made);
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       if (sexpr.items.length === 2) return child;
+      frames.push([child]);
       const own = getParams(child, sexpr.items, isInternal);
+      frames.pop();
       return {
         ...mergeDescrs([child]),
         build: (params) => {
@@ -2254,7 +2268,7 @@ const compile = (
           "invalid skip-if-failed combinator, one argument expected",
           sexpr.end,
         );
-      const child = compile(environment, sexpr.items[1], isInternal, made);
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       return {
         ...mergeDescrs([child]),
         build: (params) => runOrElse([child.build(params), (goal) => [goal]]),
@@ -2264,7 +2278,7 @@ const compile = (
     case "annotate": {
       if (!isInternal)
         throw new SmtParseError(`invalid tactic, unknown tactic combinator annotate`, sexpr.end);
-      const child = compile(environment, sexpr.items[1], isInternal, made);
+      const child = compile(environment, sexpr.items[1], isInternal, state);
       return {
         ...mergeDescrs([child]),
         build: (params) => {
@@ -2307,9 +2321,7 @@ const compile = (
           sexpr.end,
         );
       const probe = compileProbe(sexpr.items[1], isInternal);
-      const children = sexpr.items
-        .slice(2)
-        .map((child) => compile(environment, child, isInternal, made));
+      const children = compileFrame(sexpr.items.slice(2));
       return {
         ...mergeDescrs(children),
         build: (params) => runCond(probe, children[0].build(params), children[1].build(params)),
@@ -2319,7 +2331,7 @@ const compile = (
       if (sexpr.items.length !== 3)
         throw new SmtParseError("invalid when combinator, two arguments expected", sexpr.end);
       const probe = compileProbe(sexpr.items[1], isInternal);
-      const child = compile(environment, sexpr.items[2], isInternal, made);
+      const child = compile(environment, sexpr.items[2], isInternal, state);
       return {
         ...mergeDescrs([child]),
         build: (params) => runCond(probe, child.build(params), (goal) => [goal]),
@@ -2415,17 +2427,29 @@ export const mkIncSatPreprocess = (
     ),
   ].reduceRight((second, first) => runAndThen(first, second));
 
-// sexpr2tactic makes each tactic as it reads it, so a parse error makes and frees those before it.
+// sexpr2tactic makes each tactic as it reads it, so a parse error makes those before it, then
+// frees the buffers from the innermost out, each from its first tactic to its last. Making a
+// tactic the port lacks changes nothing in Z3, so only a tactic that parses needs them all.
 export const compileTactic = (environment: TacticEnvironment, sexpr: SExpr) => {
-  const made: NamedTactic[] = [];
-  try {
-    return compile(environment, sexpr, false, made);
-  } catch (error) {
-    const start = environment.destructors.length;
-    for (const named of made) named.build(environment, new Map());
-    destroyTactics(environment.destructors.splice(start));
-    throw error;
-  }
+  const state: CompileState = { frames: [], unported: undefined };
+  const builder = (() => {
+    try {
+      return compile(environment, sexpr, false, state);
+    } catch (error) {
+      const destructors = environment.destructors;
+      const built = state.frames.map((frame) =>
+        frame.map((child) => {
+          const start = destructors.length;
+          child.build(new Map());
+          return destructors.splice(start);
+        }),
+      );
+      for (const frame of built.reverse()) for (const tactic of frame) destroyTactics(tactic);
+      throw error;
+    }
+  })();
+  if (state.unported !== undefined) throw state.unported;
+  return builder;
 };
 
 export const compileInternalTactic = (environment: TacticEnvironment, text: string) =>

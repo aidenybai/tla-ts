@@ -3274,6 +3274,50 @@ describe("ctx-solver-simplify, as Z3 5.3.2 keeps its kernel", () => {
     ]);
   });
 
+  it("frees the tactics read before a parse error from the innermost combinator out", () => {
+    const check = [
+      "(declare-fun g (Int) Int)",
+      "(declare-fun h (Int) Int)",
+      "(declare-fun c () Int)",
+      "(declare-fun d () Int)",
+      "(assert (= (g c) (h d)))",
+      "(assert (= (g d) (h c)))",
+      "(assert (distinct (g c) (g d)))",
+      "(assert (forall ((x Int)) (>= (g x) (h x))))",
+      "(check-sat)",
+      "(get-info :rlimit)",
+    ];
+    expect(
+      run(["(declare-const a Int)", "(apply (then ctx-solver-simplify qfbv foo))", ...check]),
+    ).toEqual([
+      '(error "line 2 column 38: invalid tactic, unknown tactic foo")',
+      "unsat",
+      "(:rlimit 710)",
+    ]);
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(apply (then ctx-solver-simplify (then qfbv foo)))",
+        ...check,
+      ]),
+    ).toEqual([
+      '(error "line 2 column 44: invalid tactic, unknown tactic foo")',
+      "unsat",
+      "(:rlimit 686)",
+    ]);
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(apply (then (or-else ctx-solver-simplify qfbv) foo))",
+        ...check,
+      ]),
+    ).toEqual([
+      '(error "line 2 column 48: invalid tactic, unknown tactic foo")',
+      "unsat",
+      "(:rlimit 710)",
+    ]);
+  });
+
   it("makes a new kernel after each run", () => {
     expect(
       run([
