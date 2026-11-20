@@ -70,6 +70,7 @@ export const ToggleGroupItem = (props: ToggleGroupItemProps) => {
       {group.value === props.value && (
         <m.span
           layoutId={group.indicatorId}
+          layoutDependency={group.value}
           transition={{ type: "spring", duration: 0.3, bounce: 0 }}
           className="absolute inset-0 rounded-[inherit] bg-raised shadow-raised"
         />
