@@ -96,6 +96,25 @@ const attempt = <T>(run: () => T) => {
   }
 };
 
+const OPERATORS: Record<number, (left: number, right: number) => number | string> = {
+  [ts.SyntaxKind.PlusToken]: (left, right) => left + right,
+  [ts.SyntaxKind.MinusToken]: (left, right) => left - right,
+  [ts.SyntaxKind.AsteriskToken]: (left, right) => left * right,
+  [ts.SyntaxKind.SlashToken]: (left, right) => left / right,
+  [ts.SyntaxKind.PercentToken]: (left, right) => left % right,
+  [ts.SyntaxKind.AsteriskAsteriskToken]: (left, right) => left ** right,
+};
+const NUMBER_CONSTANTS = new Set([
+  "MAX_SAFE_INTEGER",
+  "MIN_SAFE_INTEGER",
+  "MAX_VALUE",
+  "MIN_VALUE",
+  "EPSILON",
+  "POSITIVE_INFINITY",
+  "NEGATIVE_INFINITY",
+  "NaN",
+]);
+
 // A numeric literal's value, whose separators Number doesn't read.
 const getNumber = (text: string) => Number(text.replaceAll("_", ""));
 
@@ -106,17 +125,42 @@ const getLiteralValue = (node: ts.Expression): { value: unknown } | undefined =>
   if (ts.isNumericLiteral(node)) return { value: getNumber(node.text) };
   if (ts.isBigIntLiteral(node))
     return { value: BigInt(node.text.slice(0, -1).replaceAll("_", "")) };
-  if (
-    ts.isPrefixUnaryExpression(node) &&
-    node.operator === ts.SyntaxKind.MinusToken &&
-    (ts.isNumericLiteral(node.operand) || ts.isBigIntLiteral(node.operand))
-  ) {
+  if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.MinusToken) {
     const operand = getLiteralValue(node.operand)?.value;
-    return { value: typeof operand === "bigint" ? -operand : -Number(operand) };
+    return typeof operand === "bigint" || typeof operand === "number"
+      ? { value: typeof operand === "bigint" ? -operand : -operand }
+      : undefined;
+  }
+  if (ts.isParenthesizedExpression(node)) return getLiteralValue(node.expression);
+  // Arithmetic of numbers and joins of strings that are literals, as the host computes them.
+  if (ts.isBinaryExpression(node) && Object.hasOwn(OPERATORS, node.operatorToken.kind)) {
+    const left = getLiteralValue(node.left)?.value;
+    const right = getLiteralValue(node.right)?.value;
+    const isNumbers = typeof left === "number" && typeof right === "number";
+    const isJoin =
+      node.operatorToken.kind === ts.SyntaxKind.PlusToken &&
+      (typeof left === "string" || typeof left === "number") &&
+      (typeof right === "string" || typeof right === "number");
+    return isNumbers || isJoin
+      ? { value: OPERATORS[node.operatorToken.kind](left as never, right as never) }
+      : undefined;
+  }
+  if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression)) {
+    return node.expression.text === "Number" && NUMBER_CONSTANTS.has(node.name.text)
+      ? { value: Reflect.get(Number, node.name.text) }
+      : undefined;
   }
   if (node.kind === ts.SyntaxKind.TrueKeyword) return { value: true };
   if (node.kind === ts.SyntaxKind.FalseKeyword) return { value: false };
-  if (ts.isIdentifier(node) && node.text === "undefined") return { value: undefined };
+  if (ts.isIdentifier(node)) {
+    return node.text === "undefined"
+      ? { value: undefined }
+      : node.text === "Infinity"
+        ? { value: Infinity }
+        : node.text === "NaN"
+          ? { value: Number.NaN }
+          : undefined;
+  }
   return undefined;
 };
 
@@ -293,8 +337,16 @@ const getLiterals = (sourceFiles: readonly ts.SourceFile[]) => {
       ) {
         literals.arguments.add(node.text);
       }
-    } else if (ts.isNumericLiteral(node)) {
-      for (const value of [getNumber(node.text), -getNumber(node.text)]) {
+    } else if (
+      ts.isNumericLiteral(node) ||
+      ts.isBinaryExpression(node) ||
+      ts.isPropertyAccessExpression(node)
+    ) {
+      const folded = ts.isNumericLiteral(node)
+        ? getNumber(node.text)
+        : getLiteralValue(node)?.value;
+      if (typeof folded === "string") literals.strings.add(folded);
+      for (const value of typeof folded === "number" ? [folded, -folded] : []) {
         literals.numbers.set(getNumberKey(value), value);
       }
     } else if (ts.isBigIntLiteral(node)) {

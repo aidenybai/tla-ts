@@ -1477,6 +1477,35 @@ describe("compiles scripts by specializing ESCore", () => {
     },
   );
 
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "records the values that a program's arithmetic of literals makes",
+    () => {
+      const getSource = (expected: string) => `
+      const result = [
+        new Intl.NumberFormat("en").format(2 ** 10),
+        new Intl.DurationFormat("en").format({ years: 2 ** 32 - 1 }),
+        new Intl.NumberFormat("en").format(Number.MAX_SAFE_INTEGER),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected = "1,024|4,294,967,295 yrs|9,007,199,254,740,991";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected = "1,024|4,294,967,295 yrs|9,007,199,254,740,990";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a value that arithmetic of a computed value makes", async () => {
+        const source = 'new Intl.NumberFormat("en").format("abc".length ** 10);';
+        expect((await checkScript(source)).message).toContain("tla-ts can't");
+      });
+    },
+  );
+
   describe("gives each error V8's own stack accessor", () => {
     const getSource = (expected: string) => `
       const error = new Error("m");
