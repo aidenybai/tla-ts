@@ -295,7 +295,9 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     it("calls none of the functions whose parameters take values it can't list", async () => {
       expect(
         getCounts(
-          await check("export const isSame = (get: () => 0 | 1) => flip(get()) === get();\n"),
+          await check(
+            "export const isSame = (get: () => 0 | 1) => flip(get()) === get();\nexport const isFlipped = () => flip(0) === 1;\n",
+          ),
         ),
       ).toEqual(["success", 1, 1]);
     });
