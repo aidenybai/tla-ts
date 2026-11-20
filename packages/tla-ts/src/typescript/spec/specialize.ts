@@ -930,8 +930,19 @@ export const specialize = (
 
   // A node's source text, as its file's number and the range of the file's text it spans, which
   // SourceUnits makes code units of when a program reads it.
-  const getSourceText = (node: ts.Node) =>
-    `<<${fileNumbers.get(node.getSourceFile())}, ${node.getStart() + 1}, ${node.getEnd()}>>`;
+  // A function's or a class's source text, which starts at async where the code says it, after
+  // the modifiers that ECMAScript's syntax leaves out of it, such as static and export, and the
+  // ones whose text Node strips, such as private.
+  const getSourceText = (node: ts.Node) => {
+    const modifiers = ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []) : [];
+    const async = modifiers.find((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+    const start =
+      async?.getStart() ??
+      (modifiers.length === 0
+        ? node.getStart()
+        : ts.skipTrivia(node.getSourceFile().text, modifiers[modifiers.length - 1].end));
+    return `<<${fileNumbers.get(node.getSourceFile())}, ${start + 1}, ${node.getEnd()}>>`;
+  };
 
   // A function's code record, which the module evaluates once, as it has no parameters.
   // A bare code runs without the environment that a call makes for it (OrdinaryCallRun).

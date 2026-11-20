@@ -1497,6 +1497,36 @@ describe("compiles scripts by specializing ESCore", () => {
 
   // Node runs a .ts file with its types stripped to whitespace, as its stripTypeScriptTypes gives,
   // and rejects the syntax that only a transform could remove.
+  describe("starts a static method's source text after static, as V8 does", () => {
+    const getSource = (expected: string) => `
+      class Point {
+        static make(n: number): number { return n; }
+        public static async load(): Promise<void> {}
+        static *keys() {}
+        static get origin(): number { return 0; }
+      }
+      const origin = Object.getOwnPropertyDescriptor(Point, "origin")!.get!;
+      const result = JSON.stringify([Point.make, Point.load, Point.keys, origin].map(String));
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected = JSON.stringify([
+      "make(n        )         { return n; }",
+      "async load()                {}",
+      "*keys() {}",
+      "get origin()         { return 0; }",
+    ]);
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("make(", "static make(")))).message,
+      ).toContain(THREW);
+    });
+  });
+
   describe("gives each function the source text that Node strips its types from", () => {
     const program = [
       "const arrow = <T,>(value: T, rest?: number): T => value;",
