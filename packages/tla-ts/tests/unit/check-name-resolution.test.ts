@@ -4142,6 +4142,74 @@ describe("name resolution matches SANY", () => {
     });
   });
 
+  describe("an instance that substitutes a RECURSIVE operator before its definition", () => {
+    const MODULES = new Map([
+      ["A", "CONSTANT C\nD == C"],
+      ["B", "RECURSIVE F\nCONSTANT F\nF == 1\nG == F"],
+      ["H", "EXTENDS Naturals\nCONSTANT K(_)\nE == K(2)"],
+    ]);
+    const checkRecursive = (source: string) =>
+      check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\n${source}\nVARIABLE x\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        loadModule: (name) => {
+          const module = MODULES.get(name);
+          return module && `---- MODULE ${name} ----\n${module}\n====`;
+        },
+      });
+
+    it.each([
+      ["explicitly", "RECURSIVE F\nI == INSTANCE A WITH C <- F\nF == 1\nASSUME I!D = 1"],
+      ["implicitly", "RECURSIVE C\nI == INSTANCE A\nC == 1\nASSUME I!D = 1"],
+      [
+        "for an operator constant",
+        "RECURSIVE F(_)\nI == INSTANCE H WITH K <- F\nF(n) == n + 1\nASSUME I!E = 3",
+      ],
+      ["in an unnamed instance", "RECURSIVE F\nINSTANCE A WITH C <- F\nF == 1\nASSUME D = 1"],
+      [
+        "in an instance with parameters",
+        "RECURSIVE F(_)\nI(n) == INSTANCE A WITH C <- F(n)\nF(n) == n\nASSUME I(1)!D = 1",
+      ],
+    ])("substitutes the operator %s like SANY", async (_title, source) => {
+      expect((await checkRecursive(source)).status).toBe("success");
+    });
+
+    it.each<[string, string, [string, string][]]>([
+      [
+        "an operator nothing defines",
+        "RECURSIVE F\nI == INSTANCE A WITH C <- F",
+        [
+          [
+            "line 5, col 1 to line 5, col 10 of module M",
+            "A VARIABLE declaration may not appear within a recursive definition section.",
+          ],
+          [
+            "line 3, col 11 to line 3, col 11 of module M",
+            "Symbol F declared in RECURSIVE statement but not defined.",
+          ],
+        ],
+      ],
+      [
+        "a module that declares a constant named like the operator",
+        "N == INSTANCE B\nZ == N!G",
+        [
+          [
+            "line 3, col 1 to line 3, col 10 of module B",
+            "A declaration may not appear within a recursive definition section.",
+          ],
+          [
+            "line 3, col 10 to line 3, col 10 of module B",
+            "Multiply-defined symbol 'F': this definition or declaration conflicts \nwith the one at line 2, col 11 to line 2, col 11 of module B.",
+          ],
+        ],
+      ],
+    ])("reports only SANY's errors for %s", async (_title, source, errors) => {
+      await expect(checkRecursive(source)).rejects.toMatchObject({
+        sany: { errors: errors.map((error) => ({ location: error[0], message: error[1] })) },
+      });
+    });
+  });
+
   it("reports a USE or HIDE with only its keyword twice, like SANY", async () => {
     await expect(
       check({

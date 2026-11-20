@@ -1208,6 +1208,15 @@ export const createEnvironment = (
         functionArity: getFunctionArity(definition),
       };
     };
+    const getRecursiveSymbol = (
+      declaration: (typeof recursiveDeclarations)[number],
+    ): ModuleSymbol => ({
+      key: getKey(declaration),
+      arity: declaration.arity,
+      params: Array(declaration.arity).fill(0),
+      kind: "Definition",
+      range: declaration.location.range,
+    });
     const getInstanceSymbol = (instance: Instance, name: string): ModuleSymbol => ({
       key: `${name}${KEY_SEPARATOR}${scope.id}`,
       arity: instance.params.length,
@@ -1280,9 +1289,26 @@ export const createEnvironment = (
       symbolsBefore.set(name, symbol);
       boundLocations.set(name, location);
     };
+    // SANY's RECURSIVE declaration binds an OpDefNode that the operator's definition fills in.
+    const pendingRecursive = new Set<string>();
+    const definingLocations = new Map<string, SourceLocation>();
+    const bindDefinitionBefore = (definition: Definition, location: SourceLocation) => {
+      if (!pendingRecursive.delete(definition.name)) {
+        bindBefore(definition.name, getDefinitionSymbol(definition), location);
+        return;
+      }
+      symbolsBefore.set(definition.name, getDefinitionSymbol(definition));
+      definingLocations.set(definition.name, definition.location);
+    };
     const isBoundBefore = (name: string, location: SourceLocation) => {
       const boundLocation = boundLocations.get(name);
-      return bound.has(name) || (boundLocation !== undefined && isBefore(boundLocation, location));
+      const definingLocation = definingLocations.get(name);
+      return (
+        bound.has(name) ||
+        (boundLocation !== undefined &&
+          isBefore(boundLocation, location) &&
+          (definingLocation === undefined || compareLocations(definingLocation, location) !== 0))
+      );
     };
     const subexpressions = createModuleSubexpressions(
       parsed,
@@ -1349,7 +1375,8 @@ export const createEnvironment = (
       const linked = linkModule(nested, {
         id: `${scope.id}/${nested.name}`,
         isHidden: scope.isHidden,
-        symbols: symbolsBefore,
+        // The inner module defines an operator that is still RECURSIVE-pending as its own, through recursiveCount.
+        symbols: new Map([...symbolsBefore].filter((entry) => !pendingRecursive.has(entry[0]))),
         recursiveCount: getRecursiveCount(
           scope.recursiveCount,
           counted,
@@ -1372,7 +1399,7 @@ export const createEnvironment = (
           ...(recursiveDefinitions.get(definition.name) ?? []),
           definition,
         ]);
-        bindBefore(definition.name, getDefinitionSymbol(definition), nested.location);
+        bindDefinitionBefore(definition, nested.location);
       });
     };
     const instancingUnit = getUnit(parsed);
@@ -1382,10 +1409,16 @@ export const createEnvironment = (
         link: () =>
           bindBefore(declaration.name, getDeclarationSymbol(declaration), declaration.location),
       })),
+      ...recursiveDeclarations.map((declaration) => ({
+        location: declaration.location,
+        link: () => {
+          if (!symbolsBefore.has(declaration.name)) pendingRecursive.add(declaration.name);
+          bindBefore(declaration.name, getRecursiveSymbol(declaration), declaration.location);
+        },
+      })),
       ...parsed.definitions.filter(isDefining).map((definition) => ({
         location: definition.location,
-        link: () =>
-          bindBefore(definition.name, getDefinitionSymbol(definition), definition.location),
+        link: () => bindDefinitionBefore(definition, definition.location),
       })),
       ...parsed.theorems.map((theorem) => ({
         location: theorem.location,
@@ -1471,13 +1504,7 @@ export const createEnvironment = (
       if (!definition.isLocal) exported.set(definition.name, symbol);
     });
     resolved.boundRecursive.forEach((declaration) => {
-      const symbol: ModuleSymbol = {
-        key: getKey(declaration),
-        arity: declaration.arity,
-        params: Array(declaration.arity).fill(0),
-        kind: "Definition",
-        range: declaration.location.range,
-      };
+      const symbol = getRecursiveSymbol(declaration);
       parameterized.set(symbol.key, !isParameterFree);
       unresolvedBodyKeys.add(symbol.key);
       visible.set(declaration.name, symbol);
