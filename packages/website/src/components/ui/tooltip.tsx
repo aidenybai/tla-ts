@@ -1,12 +1,14 @@
 import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import { cn } from "cn";
 
+const DELAY_MS = 500;
+
 export const Tooltip = (props: TooltipPrimitive.Root.Props) => (
   <TooltipPrimitive.Root data-slot="tooltip" {...props} />
 );
 
 export const TooltipTrigger = (props: TooltipPrimitive.Trigger.Props) => (
-  <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />
+  <TooltipPrimitive.Trigger data-slot="tooltip-trigger" delay={DELAY_MS} {...props} />
 );
 
 interface ContentProps extends Omit<TooltipPrimitive.Popup.Props, "className"> {
