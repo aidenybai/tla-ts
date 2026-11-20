@@ -1559,6 +1559,8 @@ export const checkModuleLevels = (
     facts.forEach((fact) => {
       if (fact.kind !== "ModuleFact") analyzer.analyze(fact, scope);
     });
+  // Deviation from SANY: TheoremNode#levelCheck reads the level field of its assertion, which LabelNode never sets, so
+  // SANY skips these checks for a labeled temporal theorem or step; tla-ts checks them.
   const checkTemporalGoal = (proof: Proof | undefined): SanyError[] =>
     proof?.kind !== "Steps"
       ? []

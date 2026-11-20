@@ -871,6 +871,34 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it("checks the proof of a labeled temporal theorem or step, which SANY skips", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nVARIABLE x\nTHEOREM T == t :: [](x = 0)\n<1>1. HAVE x = 1\n<1>2. CASE x = 1\n  <2>1. TAKE y \\in {x}\n  <2> QED\n<1>3. s :: [](x = 0)\n  <2>1. WITNESS x \\in {1}\n  <2> QED\n<1> QED\nInit == x = 0\nNext == x' = x\n====",
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError(
+        [
+          [
+            "line 9, col 9 to line 9, col 25",
+            "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+          ],
+          [
+            "line 4, col 7 to line 4, col 16",
+            "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+          ],
+          ["line 5, col 7 to line 5, col 16", "Non-constant CASE for temporal goal."],
+          [
+            "line 6, col 9 to line 6, col 22",
+            "Non-constant TAKE, WITNESS, or HAVE for temporal goal.",
+          ],
+        ].map(([location, message]) => ({ location: `${location} of module M`, message })),
+      ),
+    );
+  });
+
   it("reports an error in instantiating a module before a constant the configuration leaves out, like TLC", async () => {
     await expect(
       check({

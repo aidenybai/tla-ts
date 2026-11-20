@@ -792,6 +792,8 @@ const checkSubnodes = (
   return node.levelCorrect;
 };
 
+// Deviation from SANY: TheoremNode#levelCheck reads the level field of its assertion, which LabelNode never sets, so
+// SANY skips this check for a labeled temporal theorem or step; tla-ts checks it.
 const checkTemporalProof = (proof: ProofNode | undefined, check: LevelCheck) => {
   if (proof?.kind !== "NonLeafProof") return;
   proof.steps.forEach((step) => {
