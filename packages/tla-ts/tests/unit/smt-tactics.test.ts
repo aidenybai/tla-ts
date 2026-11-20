@@ -1210,6 +1210,23 @@ describe("tseitin-cnf, as Z3 5.3.2 composes it", () => {
   });
 });
 
+describe("der, as Z3 5.3.2 eliminates a variable", () => {
+  it("negates the other side of an equivalence with mk_not, which drops a double negation", () => {
+    expect(
+      run([
+        "(declare-const p Bool)",
+        "(declare-fun f (Bool) Bool)",
+        "(assert (forall ((x Bool)) (or (= x (not p)) (f x))))",
+        "(assert (forall ((x Bool)) (or (= x true) (f x))))",
+        "(assert (forall ((x Bool)) (or (= (not p) x) (f x) p)))",
+        "(apply der)",
+      ]),
+    ).toEqual([
+      "(goals\n(goal\n  (f p)\n  (f false)\n  (or p (f p))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});
+
 describe("elim-term-ite, as Z3 5.3.2 names the term if-then-elses", () => {
   it("defines a numbered name for each and hides the names from the model", () => {
     expect(
