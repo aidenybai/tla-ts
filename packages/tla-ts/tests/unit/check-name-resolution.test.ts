@@ -131,6 +131,21 @@ describe("name resolution matches SANY", () => {
         ["line 3, col 6 to line 3, col 10 of module M", "Unknown operator: `Nope3'."],
       ],
     ],
+    ...[
+      ["EXTENDS Naturals", "Naturals", 36],
+      ["EXTENDS Sequences", "Sequences", 66],
+      ["INSTANCE Naturals", "Naturals", 36],
+    ].map((entry): [string, string, Record<string, string>, [string, string][]] => [
+      `an inner module named like a standard module after ${entry[0]}`,
+      `${entry[0]}\n---- MODULE ${entry[1]} ----\n====`,
+      {},
+      [
+        [
+          "line 3, col 1 to line 4, col 4 of module M",
+          `Multiply-defined module '${entry[1]}': this definition or declaration conflicts \nwith the one at line 1, col 1 to line ${entry[2]}, col 77 of module ${entry[1]}.`,
+        ],
+      ],
+    ]),
   ])("reports %s like SANY", async (_title, source, modules, errors) => {
     await expect(
       check({
