@@ -1054,27 +1054,25 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const analyzeLet = (expression: LetExpression, scope: Scope) => {
     const entered = enterLet(expression, scope);
-    const inner = entered.inner;
-    const instanceUnits = entered.instanceUnits;
     if (expression.recursive) {
       getRecursiveSections(scope, expression).forEach((section) =>
         checkRecursiveSection(section.members),
       );
     }
     const definitions = (
-      instanceUnits?.length
+      entered.instanceUnits?.length
         ? [
             ...expression.definitions.map((definition) => ({
               location: definition.location,
               definitions: [definition],
             })),
-            ...instanceUnits,
+            ...entered.instanceUnits,
           ]
             .toSorted((left, right) => compareLocations(left.location, right.location))
             .flatMap((unit) => unit.definitions)
         : expression.definitions
-    ).map((definition) => analyzeDefinition(definition, inner));
-    const body = analyze(expression.body, inner);
+    ).map((definition) => analyzeDefinition(definition, entered.inner));
+    const body = analyze(expression.body, entered.inner);
     const instancer = context.module;
     const instanceErrors =
       instancer === undefined
@@ -1083,8 +1081,12 @@ export const createLevelAnalyzer = (context: LevelContext) => {
             const substitutes = context.instances.getLetInstance(instance)
               ? undefined
               : context.instances.getSubstitutes(instance);
-            if (substitutes) getSubstitutes(substitutes, inner);
-            const instantiation = context.instances.checkInstantiation(instance, instancer, inner);
+            if (substitutes) getSubstitutes(substitutes, entered.inner);
+            const instantiation = context.instances.checkInstantiation(
+              instance,
+              instancer,
+              entered.inner,
+            );
             instantiation.forEach((error) => errors.push(error));
             return instantiation;
           });
@@ -1101,7 +1103,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       argParams: new Set(body.argParams),
     };
     entered.instances?.forEach((instance) =>
-      getInstanceArgParams(instance, inner).forEach((key) => data.argParams.add(key)),
+      getInstanceArgParams(instance, entered.inner).forEach((key) => data.argParams.add(key)),
     );
     definitions.forEach((levels) => mergeConstraints(data, levels));
     return data;
@@ -1640,10 +1642,11 @@ export const createLevelAnalyzer = (context: LevelContext) => {
 
   const getSelectedInstance = (substituted: Expression): Instanced => {
     const selected = context.instances.getSelectedDefinition(substituted);
-    const definition = selected?.definition;
-    const copy = definition && (letCopies.get(definition) ?? context.instances.getCopy(definition));
-    if (!selected || !definition || !copy) throw getMissingOriginalError(substituted);
-    return { definition, copy, params: selected.params };
+    const copy =
+      selected &&
+      (letCopies.get(selected.definition) ?? context.instances.getCopy(selected.definition));
+    if (!selected || !copy) throw getMissingOriginalError(substituted);
+    return { definition: selected.definition, copy, params: selected.params };
   };
 
   const analyzeSubstituted = (target: Expression, instanced: Instanced, scope: Scope) => {
@@ -1697,16 +1700,14 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     }
     if (expression.kind === "Let") {
       const entered = enterLet(expression, scope);
-      return (
-        [
-          ...expression.definitions,
-          ...(entered.instanceUnits?.flatMap((unit) => unit.definitions) ?? []),
-        ].reduce<FoundOriginal | undefined>(
-          (found, definition) =>
-            found ?? findInDefinition(definition, target, entered.inner, instanced),
-          undefined,
-        ) ?? findOriginal(expression.body, target, entered.inner, instanced)
-      );
+      for (const definition of [
+        ...expression.definitions,
+        ...(entered.instanceUnits?.flatMap((unit) => unit.definitions) ?? []),
+      ]) {
+        const found = findInDefinition(definition, target, entered.inner, instanced);
+        if (found) return found;
+      }
+      return findOriginal(expression.body, target, entered.inner, instanced);
     }
     let found: FoundOriginal | undefined;
     forEachChild(expression, (child, bound) => {
