@@ -91,64 +91,86 @@ interface UnresolvedName {
 const getKindName = (symbol: SymbolNode) =>
   symbol.kind === "OpDef" || symbol.kind === "FormalParam" ? "definition" : "declaration";
 
-const getInstances = (instance: Instance): Instance[] => [
-  instance,
-  ...instance.substitutions.flatMap((substitution) => getLetInstances(substitution.expression)),
-];
-
-const getLetInstances = (expression: Expression): Instance[] => [
-  ...(expression.kind === "Let" ? (expression.instances ?? []).flatMap(getInstances) : []),
-  ...getChildren(expression).flatMap(getLetInstances),
-];
-
-const getDefinitionInstances = (definition: Definition | Instance) =>
-  definition.kind === "Instance"
-    ? getInstances(definition)
-    : getDefinitionExpressions(definition).flatMap(getLetInstances);
-
-const getFactInstances = (use: { facts: Fact[]; defs: Fact[] }) =>
-  [...use.facts, ...use.defs].flatMap((fact) =>
-    fact.kind === "ModuleFact" ? [] : getLetInstances(fact),
+const addInstances = (instances: Instance[], instance: Instance) => {
+  instances.push(instance);
+  instance.substitutions.forEach((substitution) =>
+    addLetInstances(instances, substitution.expression),
   );
-
-const getStatementInstances = (statement: Expression | AssumeProve | NewSymbol): Instance[] => {
-  if (statement.kind === "NewSymbol") return statement.set ? getLetInstances(statement.set) : [];
-  if (statement.kind !== "AssumeProve") return getLetInstances(statement);
-  return [...statement.assumptions, statement.conclusion].flatMap(getStatementInstances);
 };
 
-const getStepInstances = (body: StepBody): Instance[] => {
-  switch (body.kind) {
-    case "Use":
-    case "Hide":
-      return getFactInstances(body);
-    case "Instance":
-      return getInstances(body);
-    case "Define":
-      return body.definitions.flatMap(getDefinitionInstances);
-    case "Have":
-    case "Case":
-      return getLetInstances(body.expression);
-    case "Witness":
-      return body.expressions.flatMap(getLetInstances);
-    case "Take":
-      return body.bounds.flatMap((bound) => getLetInstances(bound.set));
-    case "Pick":
-      return [...body.bounds.map((bound) => bound.set), body.body].flatMap(getLetInstances);
-    case "Assert":
-      return getStatementInstances(body.statement);
-    case "Qed":
-      return [];
+const addLetInstances = (instances: Instance[], expression: Expression) => {
+  if (expression.kind === "Let") {
+    expression.instances?.forEach((instance) => addInstances(instances, instance));
+  }
+  const children = getChildren(expression);
+  for (let index = 0; index < children.length; index++) {
+    addLetInstances(instances, children[index]);
   }
 };
 
-const getProofInstances = (proof: Proof | undefined): Instance[] => {
-  if (proof?.kind === "By") return getFactInstances(proof);
-  if (proof?.kind !== "Steps") return [];
-  return proof.steps.flatMap((step) => [
-    ...getStepInstances(step.body),
-    ...getProofInstances(step.proof),
-  ]);
+const addDefinitionInstances = (instances: Instance[], definition: Definition | Instance) => {
+  if (definition.kind === "Instance") return addInstances(instances, definition);
+  getDefinitionExpressions(definition).forEach((expression) =>
+    addLetInstances(instances, expression),
+  );
+};
+
+const addFactInstances = (instances: Instance[], use: { facts: Fact[]; defs: Fact[] }) => {
+  const addFact = (fact: Fact) => {
+    if (fact.kind !== "ModuleFact") addLetInstances(instances, fact);
+  };
+  use.facts.forEach(addFact);
+  use.defs.forEach(addFact);
+};
+
+const addStatementInstances = (
+  instances: Instance[],
+  statement: Expression | AssumeProve | NewSymbol,
+) => {
+  if (statement.kind === "NewSymbol") {
+    if (statement.set) addLetInstances(instances, statement.set);
+    return;
+  }
+  if (statement.kind !== "AssumeProve") return addLetInstances(instances, statement);
+  statement.assumptions.forEach((assumption) => addStatementInstances(instances, assumption));
+  addStatementInstances(instances, statement.conclusion);
+};
+
+const addStepInstances = (instances: Instance[], body: StepBody) => {
+  switch (body.kind) {
+    case "Use":
+    case "Hide":
+      return addFactInstances(instances, body);
+    case "Instance":
+      return addInstances(instances, body);
+    case "Define":
+      return body.definitions.forEach((definition) =>
+        addDefinitionInstances(instances, definition),
+      );
+    case "Have":
+    case "Case":
+      return addLetInstances(instances, body.expression);
+    case "Witness":
+      return body.expressions.forEach((expression) => addLetInstances(instances, expression));
+    case "Take":
+      return body.bounds.forEach((bound) => addLetInstances(instances, bound.set));
+    case "Pick":
+      body.bounds.forEach((bound) => addLetInstances(instances, bound.set));
+      return addLetInstances(instances, body.body);
+    case "Assert":
+      return addStatementInstances(instances, body.statement);
+    case "Qed":
+      return;
+  }
+};
+
+const addProofInstances = (instances: Instance[], proof: Proof | undefined) => {
+  if (proof?.kind === "By") return addFactInstances(instances, proof);
+  if (proof?.kind !== "Steps") return;
+  proof.steps.forEach((step) => {
+    addStepInstances(instances, step.body);
+    addProofInstances(instances, step.proof);
+  });
 };
 
 const isInternalInstance = (module: Module, instance: Instance) => {
@@ -177,18 +199,16 @@ const getDependencies = (module: Module) => {
       });
     const isExternal = (name: string) => !context.has(name);
     addImports(current.extends.filter(isExternal), extendees);
-    const instances = current.units.flatMap((unit) => {
-      if (unit.kind === "Instance") return getInstances(unit.instance);
-      if (unit.kind === "Definition") return getDefinitionInstances(unit.definition);
+    const instances: Instance[] = [];
+    current.units.forEach((unit) => {
+      if (unit.kind === "Instance") return addInstances(instances, unit.instance);
+      if (unit.kind === "Definition") return addDefinitionInstances(instances, unit.definition);
       if (unit.kind === "Theorem") {
-        return [
-          ...getStatementInstances(unit.theorem.statement),
-          ...getProofInstances(unit.theorem.proof),
-        ];
+        addStatementInstances(instances, unit.theorem.statement);
+        return addProofInstances(instances, unit.theorem.proof);
       }
-      if (unit.kind === "Assumption") return getLetInstances(unit.assumption.expression);
-      if (unit.kind === "Use") return getFactInstances(unit.use);
-      return [];
+      if (unit.kind === "Assumption") return addLetInstances(instances, unit.assumption.expression);
+      if (unit.kind === "Use") addFactInstances(instances, unit.use);
     });
     addImports(
       instances
