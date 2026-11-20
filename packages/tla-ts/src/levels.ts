@@ -966,7 +966,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
       }),
     );
     const inner = createLetScope(expression, scope);
-    // tla-ts expands only the LET instances outside proofs and ASSUME/PROVEs into definitions.
     const instanceDefinitions =
       expression.instances?.flatMap((instance) =>
         context.instances.getLetInstance(instance)
@@ -1362,7 +1361,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return operands;
   };
 
-  // SANY's Subst.getSubLCSet, getSubALCSet and getSubALPSet: the constraints of a body read through substitutes.
   const addSubstitutedLevels = (
     data: LevelData,
     source: SubstitutedSource,
@@ -1420,7 +1418,6 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     });
   };
 
-  // SANY's InstanceNode#levelCheck: an instance constrains its instancer by the instanced module's constraints.
   const analyzeInstance = (
     substitutes: InstanceSubstitutes,
     instanced: ModuleLevels,
@@ -1625,7 +1622,6 @@ const mergeLevels = (data: LevelData, part: LevelData) => {
   mergeConstraints(data, part);
 };
 
-// SANY limits the constants an assumption or an ASSUME/PROVE mentions to action level.
 const constrainConstants = (data: LevelData, analyzer: LevelAnalyzer) =>
   data.params.forEach((param) => {
     if (analyzer.constants.has(param)) putConstraint(data.constraints, param, ACTION_LEVEL);
@@ -1697,7 +1693,6 @@ export const createProofChecker = (
     if (body.kind === "Have" || body.kind === "Case") return getData([body.expression], scope);
     if (body.kind === "Witness") {
       const data = getData(body.expressions, scope);
-      // SANY's $Witness takes arguments of at most action level.
       data.params.forEach((param) => putConstraint(data.constraints, param, ACTION_LEVEL));
       return data;
     }

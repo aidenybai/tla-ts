@@ -1099,7 +1099,6 @@ export const createModuleSubexpressions = (
         return { ...proof, facts: resolveFacts(proof.facts), defs: resolveDefs(proof.defs) };
       }
       if (proof?.kind !== "Steps") return proof;
-      // SANY selects into the statement of an earlier step, or of the step whose proof this is, as into a definition.
       const statements = new Map<string, Definition>();
       let resolver = createProofResolver((name) => statements.get(name) ?? lookup(name));
       return {

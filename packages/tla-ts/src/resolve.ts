@@ -611,7 +611,6 @@ const findClauseLabel = (
 const getLabelBody = (expression: Expression): Expression =>
   expression.kind === "Label" ? getLabelBody(expression.body) : expression;
 
-// A selection subexpressions.ts resolved sits in LETs with no source range, which SANY doesn't have.
 const getSelectedBody = (expression: Expression): Expression =>
   expression.kind === "Let" && !expression.location.range
     ? getSelectedBody(expression.body)
