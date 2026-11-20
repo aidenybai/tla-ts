@@ -377,6 +377,7 @@ export const createTlcExtOperators = (runtime: CheckerRuntime): Builtin[] => {
       if (error) throw error;
       return Number(BigInt.asIntN(32, getTlcFingerprint([value])));
     }),
+    // Deviation from TLC: TLCExt#tlcDefByName lacks a minLevel, so TLC evaluates a constant definition with it as it starts, running the argument before a null getSpecProcessor() fails.
     defineLazyOperator("TLCEvalDefinition", 1, (args, context) => {
       const name = getThunk(args, 0, "TLCEvalDefinition")();
       if (typeof name !== "string") {

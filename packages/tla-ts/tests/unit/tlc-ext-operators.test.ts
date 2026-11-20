@@ -156,4 +156,15 @@ describe("TLCExt operators match TLC", () => {
     );
     expect(result.status).toBe("success");
   });
+
+  it("evaluates a constant definition with TLCEvalDefinition at each use, not as it starts", async () => {
+    const printed: string[] = [];
+    await check({
+      source:
+        '---- MODULE M ----\nEXTENDS Naturals, TLC, TLCExt\nVARIABLE x\nD == PrintT("d")\nC == TLCEvalDefinition(IF PrintT("arg") THEN "D" ELSE "D")\nInit == x = 0\nNext == x < 2 /\\ C /\\ x\' = x + 1\n====',
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(['"d"', '"arg"', '"d"', '"arg"', '"d"']);
+  });
 });
