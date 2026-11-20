@@ -52,7 +52,7 @@ export const getDependencies = (text: string) => [
     text
       .slice(text.indexOf("=="))
       .replace(/\\\*.*$/gm, "")
-      .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+      .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, '""')
       .match(/\b[A-Z][A-Za-z0-9_]*\b/g) ?? [],
   ),
 ];
@@ -94,12 +94,19 @@ const GATED_GROUPS = [
   "90-intl.tla",
 ];
 
-// String methods that make regular expressions, and the methods of collections and arrays that
-// give iterators, whose helpers, such as every and map, a program may call.
+// String methods that make regular expressions, the methods of collections and arrays that give
+// iterators, whose helpers, such as every and map, a program may call, the methods that give
+// promises, and Date's method that gives a Temporal.Instant.
 const EXTRA_TRIGGERS = new Map([
   ["83-regexp", ["match", "matchAll", "replace", "replaceAll", "search", "split"]],
   ["81-iterator.tla", ["values", "keys", "entries"]],
+  ["86-promise.tla", ["waitAsync", "disposeAsync", "asyncDispose"]],
+  ["89", ["toTemporalInstant"]],
 ]);
+
+// The prototypes that every generator's and built-in iterator's prototype chain reaches, whose
+// methods a program calls without naming any global.
+const ITERATOR_PROTOTYPES = new Set(["IteratorPrototype", "AsyncIteratorPrototype"]);
 
 // ESCore's texts: ESCore.tla, its parts by file name, and the modules it extends by name, which a
 // host without ESCore's directory, such as a browser, is given.
@@ -154,6 +161,17 @@ export const createLibrary = (files: EscoreFiles): Library => {
     )) {
       if (!match[1].endsWith("Prototype")) {
         triggers.get(groupOf.get(`${match[3]}Builtin`) ?? "")?.add(match[2]);
+      }
+    }
+    // The iterator prototypes' methods and accessors, such as map, Symbol.dispose and
+    // Symbol.toStringTag, by the word that names each.
+    for (const match of part.text.matchAll(
+      /\b(?:M|G)\("([A-Za-z]+)", (?:SV\("([^"]+)"\)|Sym([A-Za-z]+)), "([A-Za-z0-9]+)"/g,
+    )) {
+      if (ITERATOR_PROTOTYPES.has(match[1])) {
+        triggers
+          .get(groupOf.get(`${match[4]}Builtin`) ?? "")
+          ?.add(match[2] ?? `${match[3].charAt(0).toLowerCase()}${match[3].slice(1)}`);
       }
     }
   }
@@ -250,6 +268,7 @@ export const HOOKS = new Map([
   ["HostDefaultStackTraceLimit", "file"],
   ["HostDateFormat", "key"],
   ["HostLocale", "tag"],
+  ["HostParseDate", "u"],
   ["ModuleNode", "id"],
   ["ModuleDeclarations", "s, ctx, node"],
 ]);
@@ -311,8 +330,13 @@ export const assembleRuntime = (
   );
 };
 
+// The families whose toLocaleString only calls another method: an element's toLocaleString, or
+// toString.
+const INVOKING_FAMILIES = ["Array", "TypedArray", "Object"];
+
 // A program's CallBuiltin, which runs the built-ins of the families given and stops at the others
-// and at the methods in stoppedMethods, but for Temporal's, which format through HostDateFormat.
+// and at the methods in stoppedMethods, but for Temporal's, which format through HostDateFormat,
+// and for the invoking families'.
 export const getCallBuiltin = (
   name: string,
   families: readonly Family[],
@@ -320,9 +344,11 @@ export const getCallBuiltin = (
 ) =>
   [
     `${name}(s, f, id, this, args, nt) ==`,
-    `  IF id[2] \\in {${stoppedMethods.map((method) => `"${method}"`).join(", ")}} /\\ id[1] \\notin {${families
-      .filter((family) => family.group === "89")
-      .map((family) => `"${family.name}"`)
+    `  IF id[2] \\in {${stoppedMethods.map((method) => `"${method}"`).join(", ")}} /\\ id[1] \\notin {${[
+      ...families.filter((family) => family.group === "89").map((family) => family.name),
+      ...INVOKING_FAMILIES,
+    ]
+      .map((family) => `"${family}"`)
       .join(
         ", ",
       )}} THEN Assert(FALSE, "tla-ts can't run a built-in whose result depends on the host's locale") ELSE`,

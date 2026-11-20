@@ -364,6 +364,177 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("holds a long string of runs of consecutive code points as the runs", () => {
+    const literal = `${[
+      ...Array.from({ length: 5000 }, (_, index) => 0x4e00 + index),
+      ...Array.from({ length: 3000 }, (_, index) => 0x1f000 + index),
+    ]
+      .map((codePoint) => `\\u{${codePoint.toString(16)}}`)
+      .join("")}\\uD800\\uDBFF`;
+    const getSource = (expected: string) => `
+      const literal = "${literal}";
+      let built = "";
+      for (let code = 0x4e00; code < 0x4e00 + 5000; code++) built += String.fromCharCode(code);
+      const result = [
+        literal.length,
+        literal.charCodeAt(4999),
+        literal.charCodeAt(5000),
+        literal.charCodeAt(5001),
+        literal.codePointAt(5000 + 2 * 2999),
+        literal.charCodeAt(literal.length - 1),
+        literal.slice(0, 5000) === built,
+        /^\\p{Script=Han}+/u.exec(literal)?.[0].length,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("11002,24967,55356,56320,129975,56319,true,5000"))).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("11002,24967,55356,56320,129975,56320,true,5000"))).message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("repeats a character class and searches a long string as RepeatMatcher does", () => {
+    const getSource = (expected: string) => `
+      const run = "a".repeat(30000);
+      const result = [
+        /^\\p{L}+$/u.test(run),
+        /^\\P{L}+$/u.test(run),
+        /a+b/.test(run.slice(0, 200)),
+        /a+?a$/.exec(run)?.[0].length,
+        /(?<=a{3})b/.exec(run + "b")?.index,
+        /a{2,5}?/.exec(run)?.[0].length,
+        /[^a]/u.exec(run + "😀")?.index,
+        /b|a$/u.exec(run)?.index,
+        /^a*a{199}$/.test(run.slice(0, 200)),
+        "aab".replace(/a*?b/, "-"),
+        /(?<!a+)b/.test("ab"),
+        /x*/.exec("y")?.[0].length,
+        /\\p{Lu}{2,}/u.exec("aBCd")?.[0],
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource("true,false,false,30000,30000,2,30000,29999,true,-,false,0,BC"),
+          )
+        ).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource("true,false,false,30000,30000,2,30000,29999,true,-,false,0,B"),
+          )
+        ).message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("reads RegExp's legacy static properties after a match, and stops where V8 differs", () => {
+    const getSource = (expected: string) => `
+      /(b)(c)?/.exec("abd");
+      const legacy = RegExp as unknown as Record<string, string>;
+      const result = ["$1", "$2", "lastMatch", "leftContext", "rightContext", "input", "lastParen"]
+        .map((key) => legacy[key])
+        .join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("b||b|a|d|abd|"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("b||b|a|d|abd|c"))).message).toContain(THREW);
+    });
+
+    it("stops where V8 reads an empty string before any match", async () => {
+      expect(
+        (await checkScript("const first = (RegExp as unknown as Record<string, string>).$1;"))
+          .message,
+      ).toContain("tla-ts can't read a legacy static property of RegExp");
+    });
+  });
+
+  describe("calls a sort comparator on the pairs that V8's TimSort compares, in its order", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const sortLogged = (items: number[]) =>
+        items
+          .slice()
+          .sort((a, b) => {
+            log.push(\`\${a}\${b}\`);
+            return a - b;
+          })
+          .join("");
+      const holey = [2, undefined, 1, , 3];
+      const result = [
+        sortLogged([5, 4, 3, 1, 2, 3]),
+        log.splice(0).join(" "),
+        sortLogged([3, 1, 4, 1, 5, 9, 2, 6]),
+        log.splice(0).join(" "),
+        holey
+          .sort((a, b) => {
+            log.push(\`\${a}\${b}\`);
+            return (b as number) - (a as number);
+          })
+          .join(),
+        log.splice(0).join(" "),
+        Array.from({ length: 70 }, (_, index) => 70 - index).sort((a, b) => {
+          log.push("");
+          return a - b;
+        })[0],
+        log.splice(0).length,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+    const expected =
+      "123345|45 35 34 14 13 24 23 21 33 35 34|11234569|13 41 43 13 11 53 54 93 95 24 21 23 63 65 69|3,2,1,,|12 31 32|1|69";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(expected.replace("45 35", "45 34")))).message).toContain(
+        THREW,
+      );
+    });
+
+    const getMerged = (expected: string) => `
+      let calls = 0;
+      let hash = 0;
+      const sorted = Array.from({ length: 150 }, (_, index) => (index * 37) % 101).sort((a, b) => {
+        calls += 1;
+        hash = (hash * 31 + a * 1009 + b) % 1000000007;
+        return a - b;
+      });
+      const result = calls + ":" + hash + ":" + sorted.slice(0, 5).join(",");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node where TimSort merges runs", async () => {
+      expect((await checkScript(getMerged("889:821657304:0,0,1,2,2"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result where TimSort merges runs", async () => {
+      expect((await checkScript(getMerged("888:821657304:0,0,1,2,2"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("compares values of different types as unequal", () => {
     const getSource = (expected: string) => `
       const values: unknown[] = [null, true, "", 0];
@@ -398,6 +569,49 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("rejects another result", async () => {
       expect((await checkScript(getSource("true,false,0:5 1:6"))).message).toContain(THREW);
+    });
+  });
+
+  describe("runs the built-ins that a generator's helpers and an async disposal reach", () => {
+    const getSource = (expected: string) => `
+      function* numbers() {
+        yield 1;
+        yield 2;
+        yield 3;
+      }
+      const helped = numbers()
+        .filter((value) => value !== 2)
+        .map((value) => value * 10)
+        .toArray();
+      const stack = new AsyncDisposableStack();
+      stack.disposeAsync();
+      const result = [helped.join(), stack.disposed].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("10,30,true"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("10,20,30,true"))).message).toContain(THREW);
+    });
+  });
+
+  describe("reads the tag that every built-in iterator inherits", () => {
+    const getSource = (expected: string) => `
+      const iterator = ""[Symbol.iterator]();
+      delete Object.getPrototypeOf(iterator)[Symbol.toStringTag];
+      const result = Object.prototype.toString.call(iterator);
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("[object Iterator]"))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("[object Object]"))).message).toContain(THREW);
     });
   });
 
@@ -512,12 +726,76 @@ describe("compiles scripts by specializing ESCore", () => {
       );
     });
 
-    it("stops at a locale-sensitive method and at a date string outside ECMA-262's formats", async () => {
+    it("stops at a locale-sensitive method and at a computed date string outside ECMA-262's formats", async () => {
       expect((await checkScript("(1234.5).toLocaleString();")).message).toContain("tla-ts can't");
-      expect((await checkScript('Date.parse("Thu Jan 01 1970");')).message).toContain(
+      expect((await checkScript('Date.parse("Thu Jan 01 " + 1970);')).message).toContain(
         "tla-ts can't",
       );
       expect((await checkScript('"I".toLocaleLowerCase("tr");')).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("reads a date string outside ECMA-262's formats that the program writes as the host does", () => {
+    const getSource = (expected: string) => `
+      const result = [
+        new Date("10/31/2010 08:00").getTime(),
+        Date.parse("-000000-03-31T00:45Z"),
+        new Date({}).getTime(),
+        Date.parse("Thu, 01 Jan 1970 00:00:00 GMT+0100"),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource(`${Date.parse("10/31/2010 08:00")},NaN,NaN,-3600000`)))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(`${Date.parse("10/31/2010 08:00")},NaN,NaN,NaN`))).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("joins the elements' toLocaleString with their locales and options, as ECMA-402 does", () => {
+    const getSource = (expected: string) => `
+      const seen: string[] = [];
+      const element = {
+        toLocaleString(...args: unknown[]) {
+          seen.push(args.length + ":" + String(args[0]));
+          return "e";
+        },
+      };
+      const result = [
+        [undefined, element, null, element].toLocaleString("zh", {}),
+        Array.prototype.toLocaleString.call({ length: 2, 0: element, 1: element }),
+        new Uint8Array(2).subarray(0, 0).toLocaleString(),
+        ({ toString: () => "plain" }).toLocaleString(),
+        [true, "x"].toLocaleString(),
+        seen.join(" "),
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource(",e,,e|e,e||plain|true,x|2:zh 2:zh 2:undefined 2:undefined")))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(",e,,e|e,e||plain|true,x|1:zh 1:zh 0:undefined 0:undefined")))
+          .message,
+      ).toContain(THREW);
+    });
+
+    it("stops at an element whose toLocaleString reads the host's locale", async () => {
+      expect((await checkScript("[1234.5].toLocaleString();")).message).toContain("tla-ts can't");
     });
   });
 
@@ -706,6 +984,137 @@ describe("compiles scripts by specializing ESCore", () => {
 
     it("rejects another result", async () => {
       expect((await checkScript(getSource("1,2,a,b,c,after"))).message).toContain(THREW);
+    });
+  });
+
+  describe("disposes a using declaration's resources once its scope completes", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const resource = (name: string) => ({
+        [Symbol.dispose]() {
+          log.push("dispose " + name);
+        },
+      });
+      {
+        using first = resource("a"),
+          second = resource("b");
+        using none = null;
+        log.push("body");
+      }
+      function returning() {
+        using held = resource("c");
+        return "ret";
+      }
+      log.push(returning());
+      for (using each of [resource("d1"), resource("d2")]) log.push("iter");
+      for (using head = resource("e"), unused = null; !log.includes("for"); ) log.push("for");
+      try {
+        using throwing = {
+          [Symbol.dispose]() {
+            throw new Error("g");
+          },
+        };
+        throw new Error("body");
+      } catch (error) {
+        log.push(error.constructor.name + ":" + error.error.message + "/" + error.suppressed.message);
+      }
+      try {
+        using bad = 1 as unknown as Disposable;
+      } catch (error) {
+        log.push(error.constructor.name);
+      }
+      const result = log.join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "body,dispose b,dispose a,dispose c,ret,iter,dispose d1,iter,dispose d2,for,dispose e,SuppressedError:g/body,TypeError",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "body,dispose a,dispose b,dispose c,ret,iter,dispose d1,iter,dispose d2,for,dispose e,SuppressedError:g/body,TypeError",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("awaits the disposal of an await using declaration's resources", () => {
+    const getSource = (expected: string) => `
+      const log: string[] = [];
+      const resource = (name: string) => ({
+        async [Symbol.asyncDispose]() {
+          await null;
+          log.push("dispose " + name);
+        },
+      });
+      const syncOnly = {
+        [Symbol.dispose]() {
+          log.push("sync");
+        },
+      };
+      async function run() {
+        {
+          await using first = resource("a"),
+            second = syncOnly;
+          await using none = undefined;
+          log.push("body");
+        }
+        for (await using each of [resource("c")]) log.push("iter");
+        for await (await using each of [resource("d")]) log.push("iter2");
+        log.push("end");
+      }
+      run().then(() => {
+        if (log.join() !== "${expected}") throw new Error(log.join());
+      });
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("body,sync,dispose a,iter,dispose c,iter2,dispose d,end")))
+          .message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("body,dispose a,sync,iter,dispose c,iter2,dispose d,end")))
+          .message,
+      ).toContain(THREW);
+    });
+
+    const getModule = (expected: string) => `
+      const log: string[] = [];
+      {
+        await using held = {
+          async [Symbol.asyncDispose]() {
+            log.push("disposed");
+          },
+        };
+        log.push("body");
+      }
+      if (log.join() !== "${expected}") throw new Error(log.join());
+    `;
+
+    it("agrees with Node where a module's code awaits the disposal", async () => {
+      expect((await checkModule(getModule("body,disposed"))).message).toBeUndefined();
+    });
+
+    it("rejects another result where a module's code awaits the disposal", async () => {
+      expect((await checkModule(getModule("body"))).message).toContain(THREW);
     });
   });
 
@@ -1362,6 +1771,21 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("stops at a static method named constructor, which TypeScript parses as a constructor", () => {
+    it("stops rather than make the static method the class's constructor", async () => {
+      const source = `
+        const C = class {
+          static constructor() {}
+          constructor() {}
+        };
+        if (C.prototype.constructor !== C) throw new Error("constructor");
+      `;
+      expect((await checkScript(source)).message).toContain(
+        "tla-ts can't compile a static method named constructor",
+      );
+    });
+  });
+
   describe("keeps private names in each class's private environment", () => {
     const getSource = (expected: string) => `
       class Counter {
@@ -1435,6 +1859,70 @@ describe("compiles scripts by specializing ESCore", () => {
         { function arguments() {} }
       })();`;
       expect((await checkScript(source, false)).message).toContain("tla-ts can't");
+    });
+  });
+
+  describe("scopes an if clause's function declaration to a block of its own outside strict mode", () => {
+    const getSource = (expected: string) => `
+      const result = (function () {
+        let shadowed = 1;
+        if (true) function shadowed() {}
+        if (false);
+        else function shadowed() {}
+        return String(shadowed);
+      })();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("1"), false)).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("function shadowed() {}"), false)).message).toContain(
+        THREW,
+      );
+    });
+  });
+
+  describe("assigns each key of a for-in statement to the identifier let outside strict mode", () => {
+    const getSource = (expected: string) => `
+      var let;
+      for (let in { key: 1 });
+      const inner = (function () {
+        var let;
+        for (let in { first: 1, last: 2 });
+        return let;
+      })();
+      const result = [let, inner].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("key,last"), false)).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("key,first"), false)).message).toContain(THREW);
+    });
+  });
+
+  describe("runs a var's initializer in a for-in head before its expression, as Annex B does", () => {
+    const getSource = (expected: string) => `
+      let effects = 0;
+      let stored;
+      for (var key = (++effects, -1) in ((stored = key), { first: 0, last: 1 }));
+      for (var named = function () {} in {});
+      const result = [stored, effects, key, named.name].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("-1,1,last,named"), false)).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(",1,last,named"), false)).message).toContain(THREW);
     });
   });
 
@@ -1816,6 +2304,72 @@ describe("compiles scripts by specializing ESCore", () => {
           .message,
       ).toContain("tla-ts can't call a function that its script names nowhere else");
     });
+  });
+
+  describe("runs a script of thousands of statements and global vars", () => {
+    const getSource = (expected: number) => `
+      let count = 0;
+      ${Array.from({ length: 3000 }, (_, index) => `var global${index};\ncount += ${index % 3};`).join("\n")}
+      if (count !== ${expected} || global2999 !== undefined) throw new Error(String(count));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(3000), false)).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(2999), false)).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("compiles a program whose strings run to a million characters", () => {
+    // Escapes in a string's source and characters that a TLA+ string can't hold, so that the
+    // program's source text and the code units of a string are each one long definition.
+    const getSource = (escapes: number, wides: number, expected: number) => `
+      const escaped = "${'ab\\n\\"'.repeat(escapes)}";
+      const wide = "${"é".repeat(wides)}";
+      if (escaped.length + wide.length !== ${expected}) throw new Error(String(escaped.length));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(300_000, 20_000, 1_220_000))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(300_000, 20_000, 1_220_001))).message).toContain(THREW);
+    }, 600_000);
+
+    it("compiles it on the stack that test262's runner gives Node", async () => {
+      const compiler = new Worker(
+        `const { register } = require("node:module");
+        const { parentPort, workerData } = require("node:worker_threads");
+        register("data:text/javascript," + encodeURIComponent(\`export const resolve = (specifier, context, next) =>
+          next(specifier, context).catch((error) => (specifier.startsWith(".") ? next(specifier + ".ts", context) : Promise.reject(error)));\`));
+        Promise.all([
+          import(workerData.source + "/typescript/spec/compile.ts"),
+          import(workerData.source + "/typescript/spec/prepare.ts"),
+        ]).then(([compile, prepare]) => {
+          try {
+            compile.compileToEscore(workerData.program, "spec.ts", prepare.prepareRuntime(workerData.directory), false);
+            parentPort.postMessage("compiled");
+          } catch (error) {
+            parentPort.postMessage(error.message);
+          }
+        });`,
+        {
+          eval: true,
+          workerData: {
+            source: pathToFileURL(join(import.meta.dirname, "../../src")).href,
+            directory: join(import.meta.dirname, "../../ecmascript"),
+            program: `"use strict";\n${getSource(300_000, 200_000, 1_400_000)}`,
+          },
+          resourceLimits: { stackSizeMb: 4 },
+        },
+      );
+      const message = await new Promise((resolve) => compiler.once("message", resolve));
+      await compiler.terminate();
+      expect(message).toBe("compiled");
+    }, 600_000);
   });
 
   describe("checks the names and levels of a program's code", () => {

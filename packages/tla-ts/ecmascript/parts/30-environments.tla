@@ -251,14 +251,6 @@ GetValue(s, v) ==
          IF IsAbrupt(k) THEN k ELSE GetV(k.s, Val(base), Val(k), GetThisValue(v))
   ELSE GetBindingValue(s, v.base.env, v.name.value, v.strict)
 
-\* Step 3.c of GetValue, which stores the property key it converts in the reference, for an
-\* operator that puts a value to the reference after getting it. A nullish base throws first.
-ToKeyedReference(s, v) ==
-  IF v.type # "reference" \/ ~IsPropertyReference(v) \/ IsNullish(v.base) \/ v.name.type = "private" \/
-     IsPropertyKey(v.name)
-  THEN Ok(s, v)
-  ELSE LET k == ToPropertyKey(s, v.name) IN IF IsAbrupt(k) THEN k ELSE Ok(k.s, [v EXCEPT !.name = Val(k)])
-
 PutValue(s, v, w) ==
   IF v.type # "reference" THEN ThrowError(s, "ReferenceError")
   ELSE IF IsUnresolvableReference(v) THEN

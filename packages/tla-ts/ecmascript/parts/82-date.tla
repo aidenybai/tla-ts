@@ -264,10 +264,15 @@ ParseUTCStringDate(u) ==
 
 \* The time value of a date string, or NaN when it has none of the formats above or a value out of
 \* range. 24:00 is the end of the day, so only with zero minutes, seconds, and milliseconds.
+\* V8 reads a string of toString's or toUTCString's format with its legacy parser, which reads the
+\* years 0 to 49 as 2000 to 2049, 50 to 99 as 1950 to 1999, and no negative year.
 ParseDate(u) ==
   LET iso == ParseISODate(u)
       toString == ParseToStringDate(u)
-      p == CASE iso.ok -> iso [] toString.ok -> toString [] OTHER -> ParseUTCStringDate(u)
+      written == CASE toString.ok -> toString [] OTHER -> ParseUTCStringDate(u)
+      p == CASE iso.ok -> iso
+             [] written.y < 0 -> [written EXCEPT !.ok = FALSE]
+             [] OTHER -> [written EXCEPT !.y = IF @ < 50 THEN @ + 2000 ELSE IF @ < 100 THEN @ + 1900 ELSE @]
       leap == IF IsLeapYear(p.y) THEN 1 ELSE 0
   IN IF ~p.ok \/ p.mo < 1 \/ p.mo > 12 \/ p.d < 1 \/ p.d > MonthStart(p.mo, leap) - MonthStart(p.mo - 1, leap) \/
         p.mi > 59 \/ p.sec > 59 \/ p.h > 24 \/ (p.h = 24 /\ (p.mi > 0 \/ p.sec > 0 \/ p.ms > 0))
@@ -300,10 +305,15 @@ DateUTCSetters ==
 \* A setter converts its first argument and the others present, and then returns NaN for a NaN
 \* time value, except setFullYear and setUTCFullYear, which start from +0. The new time keeps the
 \* fields no argument replaces: MakeDay of the old year, month, and date is Day(t), and MakeTime of
-\* the old hours to milliseconds is TimeWithinDay(t), as the spec's steps use.
+\* the old hours to milliseconds is TimeWithinDay(t), as the spec's steps use. V8 reads the time
+\* value of setFullYear and setUTCFullYear after it converts the year, where the spec reads it first.
 DateSet(s, this, fields, args, isUTC) ==
-  LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t ELSE
-  LET n == DateToNumbers(t.s, DateArgs(args, Len(fields)), <<>>) IN IF IsAbrupt(n) THEN n ELSE
+  LET first == ThisTimeValue(s, this) IN IF IsAbrupt(first) THEN first ELSE
+  LET year == IF fields[1] = "year" THEN DateToNumbers(first.s, DateArgs(args, 1), <<>>) ELSE Ok(first.s, <<>>) IN
+  IF IsAbrupt(year) THEN year ELSE
+  LET t == IF fields[1] = "year" THEN ThisTimeValue(year.s, this) ELSE first
+      n == DateToNumbers(year.s, SubSeq(DateArgs(args, Len(fields)), Len(Val(year)) + 1, Len(DateArgs(args, Len(fields)))), Val(year))
+  IN IF IsAbrupt(n) THEN n ELSE
   LET tv == Val(t).value IN
   IF NumIsNaN(tv) /\ fields[1] # "year" THEN Ok(n.s, Num(NaN))
   ELSE

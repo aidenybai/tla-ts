@@ -6,6 +6,7 @@ import { createFileResolver } from "../program";
 import type { PreparedModule } from "../../tlc/order";
 import { foldNames, getCallBuiltin, HOOKS } from "./library";
 import { CONFIG, type EscoreRuntime, ROOT, SCRIPT_STEPS } from "./prepare";
+import type { HostRealm } from "./realm";
 import {
   getHostDateFormat,
   getHostLocale,
@@ -16,7 +17,7 @@ import {
 } from "./runtime";
 import { parseCommonJs } from "./cjs-lexer";
 import { NODE_IMPORT } from "./node-import";
-import { type ProgramFile, specialize } from "./specialize";
+import { getNumber, type ProgramFile, specialize } from "./specialize";
 import { stripTypes } from "./strip-types";
 import { suspendDefinitions } from "./suspend";
 
@@ -54,8 +55,41 @@ interface CodeDefinition {
 // so that a check reads each one once. A sequence of the code units of characters that a TLA+
 // string can hold is that string's units.
 const getStringUnits = (sequence: string) => {
-  const text = getTlaString(String.fromCharCode(...(sequence.match(/\d+/g) ?? []).map(Number)));
+  const text = getTlaString(
+    (sequence.match(/\d+/g) ?? []).map((unit) => String.fromCharCode(Number(unit))).join(""),
+  );
   return text === undefined ? undefined : `StringUnits(${text})`;
+};
+
+// A long sequence of code units as runs of consecutive code points, the first of each and the code
+// unit where each ends, which CodeUnitsOfRuns makes the units of as a function: a few numbers that
+// TLA+ reads in place of a tuple of millions, as a string of every character of a Unicode property
+// holds. Each run's code points are all below 65536 or all from there, so that each takes one code
+// unit or two; a surrogate pair is one code point and a lone surrogate one code unit, which the
+// runs encode back to the units they came from.
+const getUnitRuns = (sequence: string) => {
+  const units = (sequence.match(/\d+/g) ?? []).map(Number);
+  if (units.length < 4096 || units.some((unit) => unit > 0xffff)) return undefined;
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let index = 0;
+  let previous = -2;
+  while (index < units.length) {
+    const unit = units[index];
+    const next = units[index + 1];
+    const isPair = unit >= 0xd800 && unit <= 0xdbff && next >= 0xdc00 && next <= 0xdfff;
+    const codePoint = isPair ? (unit - 0xd800) * 1024 + (next - 0xdc00) + 0x10000 : unit;
+    index += isPair ? 2 : 1;
+    if (codePoint === previous + 1 && codePoint !== 0x10000) ends[ends.length - 1] = index;
+    else {
+      starts.push(codePoint);
+      ends.push(index);
+    }
+    previous = codePoint;
+  }
+  return starts.length * 16 > units.length
+    ? undefined
+    : `CodeUnitsOfRuns(<<${starts.join(", ")}>>, <<${ends.join(", ")}>>)`;
 };
 
 const compact = (definitions: readonly CodeDefinition[]) => {
@@ -77,7 +111,17 @@ const compact = (definitions: readonly CodeDefinition[]) => {
       ...definition,
       text: /^SourceText\d+$/.test(definition.name)
         ? definition.text
-        : rename(definition.text).replace(/<<\d+(?:, \d+)*>>/g, (sequence) => {
+        : // The parts of a long sequence are split rather than matched by a repeated group,
+          // whose backtracking runs out of stack.
+          rename(definition.text).replace(/<<[\d, ]+>>/g, (sequence) => {
+            if (
+              !sequence
+                .slice(2, -2)
+                .split(", ")
+                .every((part) => /^\d+$/.test(part))
+            ) {
+              return sequence;
+            }
             const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;
             sequences.set(sequence, name);
             return name;
@@ -87,7 +131,7 @@ const compact = (definitions: readonly CodeDefinition[]) => {
     ...[...sequences].map((entry) => ({
       name: entry[1],
       arity: 0,
-      text: `${entry[1]} == ${getStringUnits(entry[0]) ?? entry[0]}`,
+      text: `${entry[1]} == ${getStringUnits(entry[0]) ?? getUnitRuns(entry[0]) ?? entry[0]}`,
     })),
     ...kept,
   ];
@@ -106,7 +150,7 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
     // A name inside a string, such as SourceText's, is text rather than a read.
     for (const name of definition.text
       .slice(definition.text.indexOf("=="))
-      .replace(/"(?:[^"\\]|\\.)*"/g, "")
+      .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, "")
       .match(/\b[A-Z]\w*/g) ?? []) {
       const read = byName.get(name);
       if (read === undefined) continue;
@@ -418,6 +462,20 @@ const getHostFileLocation = (file: ProgramFile) =>
           : pathToFileURL(resolve(file.path)).href,
       );
 
+// The program's HostParseDate, where it names Date: the time value that the host's Date.parse
+// gives each string that the program writes between quotes, and an ordinary object's string, for
+// those outside ECMA-262's formats, whose reading is the host's own. A host whose realm was
+// recorded reads none of them.
+const getHostParseDate = (text: string, words: ReadonlySet<string>, realm: HostRealm) => {
+  const parseDate = realm.parseDate;
+  if (!words.has("Date") || parseDate === undefined) return "HostParseDate(u) == [found |-> FALSE]";
+  const strings = new Set([
+    ...[...text.matchAll(/(["'`])((?:(?!\1)[^\\\n]){1,100})\1/g)].map((match) => match[2]),
+    "[object Object]",
+  ]);
+  return `HostParseDate(u) ==\n  CASE ${[...strings].map((string) => `u = ${getUnitsOf(string)} -> [found |-> TRUE, time |-> ${getNumber(parseDate(string))}]`).join("\n    [] ")}\n    [] OTHER -> [found |-> FALSE]`;
+};
+
 // The groups of ESCore's parts that a module runs on: its loading, linking, and evaluation, the
 // promise of its evaluation, and the proxies that stand for what of the host ESCore lacks.
 const MODULE_GROUPS = new Set(["79-proxy.tla", "86-promise.tla", "88-modules.tla"]);
@@ -435,7 +493,9 @@ export const compileToEscore = (
   isModule = false,
   model: EscoreSteps = { steps: SCRIPT_STEPS, entries: [] },
 ): EscoreSpec => {
-  const files = loadFiles(source, fileName, isModule);
+  // Node reads a program's file as UTF-8, where a lone surrogate, which a string in memory may
+  // hold, is U+FFFD.
+  const files = loadFiles(source.toWellFormed(), fileName, isModule);
   const program = specialize(files, new Set([...runtime.internalKeys, ...model.entries]));
   // The runtime's setTimeout gives a script undefined where Node gives a Timeout, so a script may
   // only call it as a statement.
@@ -530,6 +590,15 @@ export const compileToEscore = (
           name: "HostDateFormat",
           arity: 1,
           text: getHostDateFormat(program.words, runtime.realm),
+        },
+        {
+          name: "HostParseDate",
+          arity: 1,
+          text: getHostParseDate(
+            files.map((file) => file.sourceFile.text).join("\n"),
+            program.words,
+            runtime.realm,
+          ),
         },
         {
           name: "HostLocale",

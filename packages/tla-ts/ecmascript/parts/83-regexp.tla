@@ -158,12 +158,25 @@ UpdateLegacyRegExpStatics(s, R, units, start, end, captures) ==
                               parens |-> [i \in 1..9 |-> Capture(i)]]])
 
 \* The first index at or after lastIndex where the pattern matches, with its MatchState, or None.
+\* After lastIndex, AdvanceStringIndex steps to each next character of the input in turn.
 RxExecFrom(o, units, input, fullUnicode, sticky, lastIndex) ==
   IF lastIndex > Len(units) THEN None ELSE
-  LET r == RxRun(o.matcher, input.chars, RxInputIndex(units, fullUnicode, lastIndex), Len(o.groups)) IN
-  CASE r # MatchFailure -> [index |-> lastIndex, r |-> r]
-    [] sticky -> None
-    [] OTHER -> RxExecFrom(o, units, input, fullUnicode, sticky, RxAdvanceIndex(units, lastIndex, fullUnicode))
+  LET first == RxInputIndex(units, fullUnicode, lastIndex)
+      r == RxRun(o.matcher, input.chars, first, Len(o.groups))
+  IN CASE r # MatchFailure -> [index |-> lastIndex, r |-> r]
+       [] sticky -> None
+       [] OTHER -> RxExecFirst(o, units, input, fullUnicode, first + 1, Len(input.chars))
+\* The first character from lo to hi where the pattern matches, searched in halves so that the
+\* depth of the search grows with the logarithm of the input's length.
+RxExecFirst(o, units, input, fullUnicode, lo, hi) ==
+  CASE lo > hi -> None
+    [] lo = hi ->
+         LET r == RxRun(o.matcher, input.chars, lo, Len(o.groups)) IN
+         IF r = MatchFailure THEN None ELSE [index |-> GetStringIndex(units, input, fullUnicode, lo), r |-> r]
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             left == RxExecFirst(o, units, input, fullUnicode, lo, mid)
+         IN IF left # None THEN left ELSE RxExecFirst(o, units, input, fullUnicode, mid + 1, hi)
 
 \* The match array of RegExpBuiltinExec from the Match Records of the match and of each capture.
 RxMatchResult(s, o, S, match, captures) ==

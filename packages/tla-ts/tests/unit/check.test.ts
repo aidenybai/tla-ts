@@ -905,6 +905,48 @@ ASSUME TLCFP(a) = -887695703
     expect([result.generatedStates, result.distinctStates]).toEqual([1, 1]);
   });
 
+  describe("evaluates a tuple of more values than a function takes parameters", () => {
+    // Each read of a definition's value is a value that the generated function takes.
+    const tuple = `<<${Array.from({ length: 70_000 }, () => "One").join(", ")}, "last">>`;
+
+    it("agrees with TLC", async () => {
+      const result = await checkModule(
+        `One == 1\nInv == LET t == ${tuple} IN Len(t) = 70001 + x /\\ t[70001 + x] = "last"`,
+        "INVARIANT Inv",
+      );
+      expect(result.status).toBe("success");
+    });
+
+    it("rejects another value", async () => {
+      const result = await checkModule(
+        `One == 1\nInv == LET t == ${tuple} IN t[70001 + x] = "first"`,
+        "INVARIANT Inv",
+      );
+      expect(result.status).toBe("invariant-violation");
+    });
+
+    // Under the limit the generated function evaluates the tuple, and over it the interpreter.
+    const getReads = (count: number) =>
+      `<<${Array.from({ length: count }, () => "One").join(", ")}, "last">>`;
+    const definitions = `One == 1\nUnder == ${getReads(9_900)}\nOver == ${getReads(12_000)}`;
+
+    it("gives the value that the generated function gives just under the limit", async () => {
+      const result = await checkModule(
+        `${definitions}\nInv == SubSeq(Over, 2101 + x, 12001) = Under`,
+        "INVARIANT Inv",
+      );
+      expect(result.status).toBe("success");
+    });
+
+    it("rejects another value than the generated function gives", async () => {
+      const result = await checkModule(
+        `${definitions}\nInv == SubSeq(Over, 2100 + x, 12001) = Under`,
+        "INVARIANT Inv",
+      );
+      expect(result.status).toBe("invariant-violation");
+    });
+  });
+
   it("checks liveness on the symmetry-reduced graph", async () => {
     const result = await checkFixture("symmetry", "SymmetricLiveness");
     expect(result.status).toBe("liveness-violation");

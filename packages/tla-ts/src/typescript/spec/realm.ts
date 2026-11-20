@@ -27,11 +27,16 @@ export interface HostRealm {
   builtInProperties: { owner: string; key: string; record: string | undefined }[];
   // The realm's properties that the host lacks, such as proposals engine262 has and Node doesn't.
   missingProperties: { owner: string; key: string }[];
+  // The order of the own keys of each of the realm's built-ins that the host has, as the host gives
+  // them: its strings, and the well-known symbols by the number that ESCore gives each.
+  keyOrders: { owner: string; keys: (string | number)[] }[];
   // The host's default locale and time zone, and the name of the zone that V8 writes after a
   // date's offset in the locale.
   locale: string;
   timeZone: string;
   zoneName: string;
+  // The time value that the host's Date.parse gives a string.
+  parseDate?: (text: string) => number;
   // Whether the host has no time zone of a name.
   isRejectedZone?: (name: string) => boolean;
   // What the host's Intl gives of a tag, or undefined where it isn't a structurally valid tag.
@@ -168,6 +173,13 @@ export const recordHostRealm = (library: Library): HostRealm => {
       [...definition.text.matchAll(/\bSV\("([^"]+)"\)/g)].map((match) => match[1]),
     ),
   );
+  const symbols = [
+    ...(
+      /WellKnownSymbols ==([^>]*)>>/.exec(
+        library.definitions.get("WellKnownSymbols")?.text ?? "",
+      )?.[1] ?? ""
+    ).matchAll(/"([^"]+)"/g),
+  ].map((match) => match[1]);
   const defaults = new Intl.DateTimeFormat().resolvedOptions();
   return {
     scriptGlobals: getHostOnlyGlobals(scriptGlobal),
@@ -205,9 +217,35 @@ export const recordHostRealm = (library: Library): HostRealm => {
         return object !== undefined && !(property.key in object);
       })
       .map((property) => ({ owner: property.owner, key: property.key })),
+    keyOrders: [
+      ...new Set([
+        "GlobalObject",
+        ...library.properties.map((property) => property.owner),
+        ...[...library.definitions.values()].flatMap((definition) =>
+          [...definition.text.matchAll(/\b(?:IntrinsicObject|Ctor)\("([A-Za-z0-9_]+)"/g)].map(
+            (match) => match[1],
+          ),
+        ),
+      ]),
+    ].flatMap((owner) => {
+      const object = getHostObject(owner);
+      return object === undefined
+        ? []
+        : [
+            {
+              owner,
+              keys: Reflect.ownKeys(object).flatMap<string | number>((key) => {
+                if (typeof key === "string") return [key];
+                const index = symbols.indexOf(key.description ?? "");
+                return index === -1 ? [] : [index + 1];
+              }),
+            },
+          ];
+    }),
     locale: defaults.locale,
     timeZone: defaults.timeZone,
     zoneName: / \(.*\)$/.exec(new Date(0).toString())?.[0] ?? "",
+    parseDate: (text) => Date.parse(text),
     isRejectedZone: (name) => {
       const temporal: unknown = Reflect.get(scriptGlobal, "Temporal");
       if (typeof temporal !== "object" || temporal === null) return false;

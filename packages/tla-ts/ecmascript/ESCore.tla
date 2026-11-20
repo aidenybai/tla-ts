@@ -251,7 +251,6 @@ RECURSIVE IsPropertyReference(_)
 RECURSIVE IsUnresolvableReference(_)
 RECURSIVE GetThisValue(_)
 RECURSIVE GetValue(_, _)
-RECURSIVE ToKeyedReference(_, _)
 RECURSIVE PutValue(_, _, _)
 RECURSIVE InitializeReferencedBinding(_, _, _)
 RECURSIVE Context(_, _, _, _)
@@ -764,14 +763,12 @@ RECURSIVE ArrayFrom(_, _, _, _, _)
 RECURSIVE ArrayFromIterator(_, _, _, _, _, _)
 RECURSIVE ArrayFromArrayLike(_, _, _, _, _, _, _)
 RECURSIVE ArrayFromAsync(_, _, _, _, _)
-RECURSIVE FromAsyncReturn(_, _, _)
-RECURSIVE FromAsyncIterator(_, _, _)
-RECURSIVE FromAsyncNextThen(_, _, _)
-RECURSIVE FromAsyncMappedThen(_, _, _)
-RECURSIVE FromAsyncDefineThen(_, _, _)
-RECURSIVE FromAsyncArrayLike(_, _, _)
-RECURSIVE FromAsyncValueThen(_, _, _)
-RECURSIVE FromAsyncStoreThen(_, _, _)
+RECURSIVE FromAsyncStart(_, _, _, _, _, _)
+RECURSIVE FromAsyncBegin(_, _)
+RECURSIVE FromAsyncRun(_, _)
+RECURSIVE FromAsyncAwait(_, _, _, _)
+RECURSIVE FromAsyncClose(_, _)
+RECURSIVE FromAsyncSteps(_, _)
 RECURSIVE ArraySpeciesCreate(_, _, _)
 RECURSIVE ArrayCreateLength(_, _)
 RECURSIVE FillArray(_, _, _)
@@ -784,14 +781,48 @@ RECURSIVE SetElements(_, _, _, _)
 RECURSIVE ReadThrough(_, _, _, _, _, _)
 RECURSIVE FillFrom(_, _, _, _, _)
 RECURSIVE IncludesFrom(_, _, _, _, _)
-RECURSIVE JoinFrom(_, _, _, _, _, _, _)
+RECURSIVE JoinFrom(_, _, _, _, _, _, _, _)
 RECURSIVE FindViaPredicate(_, _, _, _, _, _)
 RECURSIVE FindFrom(_, _, _, _, _, _, _)
 RECURSIVE FlattenIntoArray(_, _, _, _, _, _, _, _)
 RECURSIVE ReverseFrom(_, _, _, _, _)
 RECURSIVE SortIndexedProperties(_, _, _, _, _)
-RECURSIVE MergeSort(_, _, _)
-RECURSIVE MergeSorted(_, _, _, _, _)
+RECURSIVE SortItems(_, _, _)
+RECURSIVE TsLess(_, _, _, _)
+RECURSIVE TsSet(_, _, _)
+RECURSIVE TsCopy(_, _, _, _, _)
+RECURSIVE TsMinRun(_, _)
+RECURSIVE TsInsertionSort(_, _, _, _, _, _)
+RECURSIVE TsInsertionPlace(_, _, _, _, _, _)
+RECURSIVE TsCountRun(_, _, _, _, _)
+RECURSIVE TsRunFrom(_, _, _, _, _, _, _)
+RECURSIVE TsRunMade(_, _, _, _)
+RECURSIVE TsCompareAt(_, _, _, _, _, _)
+RECURSIVE TsGallop(_, _, _, _, _, _, _, _)
+RECURSIVE TsGallopOut(_, _, _, _, _, _, _, _, _, _, _)
+RECURSIVE TsGallopLow(_, _, _, _)
+RECURSIVE TsGallopHigh(_, _, _, _)
+RECURSIVE TsGallopIn(_, _, _, _, _, _, _, _)
+RECURSIVE TsMergeAt(_, _, _, _)
+RECURSIVE TsMergeLow(_, _, _, _, _, _, _, _)
+RECURSIVE TsLowSucceed(_)
+RECURSIVE TsLowCopyB(_)
+RECURSIVE TsLowFromB(_)
+RECURSIVE TsLowFromA(_)
+RECURSIVE TsLowOne(_, _, _, _, _)
+RECURSIVE TsLowGallop(_, _, _, _, _, _)
+RECURSIVE TsMergeHigh(_, _, _, _, _, _, _, _)
+RECURSIVE TsHighSucceed(_)
+RECURSIVE TsHighCopyA(_)
+RECURSIVE TsHighFromA(_)
+RECURSIVE TsHighFromB(_)
+RECURSIVE TsHighOne(_, _, _, _, _)
+RECURSIVE TsHighGallop(_, _, _, _, _, _)
+RECURSIVE TsRunLength(_, _)
+RECURSIVE TsInvariant(_, _)
+RECURSIVE TsCollapse(_, _, _)
+RECURSIVE TsForceCollapse(_, _, _)
+RECURSIVE TsMain(_, _, _, _, _, _)
 RECURSIVE CompareArrayElements(_, _, _, _)
 RECURSIVE IndexCandidate(_, _, _, _, _, _)
 RECURSIVE IndexInRange(_, _, _)
@@ -808,7 +839,6 @@ RECURSIVE DeleteIndices(_, _, _, _, _)
 RECURSIVE CreateArrayIterator(_, _, _)
 RECURSIVE ArrayIteratorNext(_, _)
 RECURSIVE ArrayIteratorResume(_, _)
-RECURSIVE ArrayIteratorStep(_, _)
 RECURSIVE ArrayIteratorBuiltin(_, _, _, _, _, _)
 RECURSIVE ProxyCreate(_, _, _)
 RECURSIVE ProxyTrap(_, _, _)
@@ -1054,6 +1084,12 @@ RECURSIVE RxContinue(_, _, _)
 RECURSIVE RxSequence(_, _, _, _, _)
 RECURSIVE RxMatchAlternatives(_, _, _, _, _)
 RECURSIVE RxRepeatMatcher(_, _, _, _, _, _, _, _, _)
+RECURSIVE RxRepeatSet(_, _, _, _, _, _, _)
+RECURSIVE RxSetAt(_, _, _, _)
+RECURSIVE RxSetRun(_, _, _, _, _)
+RECURSIVE RxAdvanced(_, _, _)
+RECURSIVE RxContinueDown(_, _, _, _, _, _)
+RECURSIVE RxContinueUp(_, _, _, _, _, _)
 RECURSIVE RxSetFound(_, _, _)
 RECURSIVE RxIsWordChar(_, _, _)
 RECURSIVE RxBackreference(_, _, _, _)
@@ -1148,6 +1184,7 @@ RECURSIVE RegExpBuiltinExec(_, _, _)
 RECURSIVE LegacyRegExpStatic(_, _)
 RECURSIVE UpdateLegacyRegExpStatics(_, _, _, _, _, _)
 RECURSIVE RxExecFrom(_, _, _, _, _, _)
+RECURSIVE RxExecFirst(_, _, _, _, _, _)
 RECURSIVE RxMatchResult(_, _, _, _, _)
 RECURSIVE GetMatchString(_, _)
 RECURSIVE RxGroupsObject(_, _, _, _)
@@ -1292,7 +1329,7 @@ RECURSIVE StoreFrom(_, _, _, _, _)
 RECURSIVE TypedArrayElements(_, _, _)
 RECURSIVE StrictIndexFrom(_, _, _, _, _, _)
 RECURSIVE JoinElements(_, _, _, _, _)
-RECURSIVE LocaleJoin(_, _, _, _, _)
+RECURSIVE LocaleJoin(_, _, _, _, _, _)
 RECURSIVE CopyBytesUp(_, _, _, _, _, _)
 RECURSIVE CompareTypedArrayElements(_, _, _, _)
 RECURSIVE SortElements(_, _, _)
@@ -6246,7 +6283,12 @@ TestIntegrityLevel(s, v, level) ==
   IF IsAbrupt(e) THEN e
   ELSE IF Val(e) = True THEN Ok(e.s, False)
   ELSE LET ks == OwnPropertyKeys(e.s, v) IN
-  IF IsAbrupt(ks) THEN ks ELSE TestIntegrityKeys(ks.s, v, Val(ks), level)
+  IF IsAbrupt(ks) THEN ks
+  \* V8 tests a typed array's properties but its elements, which leave it sealed but not frozen.
+  ELSE IF O(ks.s, v).class = "typedArray" THEN
+    LET named == SelectSeq(Val(ks), LAMBDA k : ~IsTypedArrayKey(k)) IN
+    IF level = "frozen" /\ Len(named) < Len(Val(ks)) THEN Ok(ks.s, False) ELSE TestIntegrityKeys(ks.s, v, named, level)
+  ELSE TestIntegrityKeys(ks.s, v, Val(ks), level)
 TestIntegrityKeys(s, v, ks, level) ==
   IF ks = <<>> THEN Ok(s, True)
   ELSE LET cur == GetOwnProperty(s, v, Head(ks)) IN
@@ -6365,12 +6407,11 @@ ToPropertyDescriptor(s, v) ==
   ELSE LET r == ReadDescriptorFields(s, v, <<"enumerable", "configurable", "value", "writable", "get", "set">>, EmptyDesc) IN
   IF IsAbrupt(r) THEN r
   ELSE LET d == Val(r) IN
-  IF (d.get # Absent /\ d.get # Undefined /\ ~IsCallable(r.s, d.get)) \/
-     (d.set # Absent /\ d.set # Undefined /\ ~IsCallable(r.s, d.set))
-  THEN ThrowTypeError(r.s)
-  ELSE IF (d.get # Absent \/ d.set # Absent) /\ (d.value # Absent \/ d.writable # Absent)
+  IF (d.get # Absent \/ d.set # Absent) /\ (d.value # Absent \/ d.writable # Absent)
   THEN ThrowTypeError(r.s)
   ELSE r
+\* Reads each field that v has, in order, where a getter or setter that isn't callable throws as it's
+\* read, before the fields after it.
 ReadDescriptorFields(s, v, fields, d) ==
   IF fields = <<>> THEN Ok(s, d)
   ELSE LET f == Head(fields)
@@ -6379,6 +6420,7 @@ ReadDescriptorFields(s, v, fields, d) ==
           ELSE IF Val(h) = False THEN ReadDescriptorFields(h.s, v, Tail(fields), d)
           ELSE LET g == Get(h.s, v, DescriptorKey(f)) IN
           IF IsAbrupt(g) THEN g
+          ELSE IF f \in {"get", "set"} /\ Val(g) # Undefined /\ ~IsCallable(g.s, Val(g)) THEN ThrowTypeError(g.s)
           ELSE ReadDescriptorFields(g.s, v, Tail(fields),
                  [d EXCEPT ![f] = IF f \in {"enumerable", "configurable", "writable"}
                                   THEN ToBoolean(Val(g)) ELSE Val(g)])
@@ -6628,13 +6670,6 @@ GetValue(s, v) ==
     ELSE LET k == IF IsPropertyKey(v.name) THEN Ok(base.s, v.name) ELSE ToPropertyKey(base.s, v.name) IN
          IF IsAbrupt(k) THEN k ELSE GetV(k.s, Val(base), Val(k), GetThisValue(v))
   ELSE GetBindingValue(s, v.base.env, v.name.value, v.strict)
-\* Step 3.c of GetValue, which stores the property key it converts in the reference, for an
-\* operator that puts a value to the reference after getting it. A nullish base throws first.
-ToKeyedReference(s, v) ==
-  IF v.type # "reference" \/ ~IsPropertyReference(v) \/ IsNullish(v.base) \/ v.name.type = "private" \/
-     IsPropertyKey(v.name)
-  THEN Ok(s, v)
-  ELSE LET k == ToPropertyKey(s, v.name) IN IF IsAbrupt(k) THEN k ELSE Ok(k.s, [v EXCEPT !.name = Val(k)])
 PutValue(s, v, w) ==
   IF v.type # "reference" THEN ThrowError(s, "ReferenceError")
   ELSE IF IsUnresolvableReference(v) THEN
@@ -7602,9 +7637,7 @@ UpdateThen(n, r) ==
   IF IsSuspended(r) THEN Pass(r, "UpdateThen", <<n>>) ELSE
   IF IsAbrupt(r) THEN r ELSE
   IF Val(r).type # "reference" THEN ThrowError(r.s, "ReferenceError") ELSE
-  LET ref == ToKeyedReference(r.s, Val(r)) IN
-  IF IsAbrupt(ref) THEN ref ELSE
-  LET old == GetValue(ref.s, Val(ref)) IN
+  LET old == GetValue(r.s, Val(r)) IN
   IF IsAbrupt(old) THEN old ELSE
   LET num == ToNumeric(old.s, Val(old)) IN
   IF IsAbrupt(num) THEN num ELSE
@@ -7612,7 +7645,7 @@ UpdateThen(n, r) ==
       new == IF IsNumber(v)
              THEN Num(IF n.operator = "++" THEN NumAdd(v.value, NumFromInt(1)) ELSE NumSub(v.value, NumFromInt(1)))
              ELSE BigInt(IF n.operator = "++" THEN BigIntAdd(v.value, BigIntFromInt(1)) ELSE BigIntSub(v.value, BigIntFromInt(1)))
-      p == PutValue(num.s, Val(ref), new)
+      p == PutValue(num.s, Val(r), new)
   IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, IF Has(n.LeftHandSideExpression) THEN v ELSE new)
 \* Unary operators (§13.5).
 EvaluateUnaryExpression(s, ctx, n) ==
@@ -7791,17 +7824,15 @@ AssignmentTargetThen(ctx, n, target) ==
   IF Val(target).type # "reference" THEN ThrowError(target.s, "ReferenceError") ELSE
   LET op == n.AssignmentOperator IN
   IF op = "=" THEN PutValueThen(Val(target), EvaluateAssigned(target.s, ctx, n)) ELSE
-  LET ref == ToKeyedReference(target.s, Val(target)) IN
-  IF IsAbrupt(ref) THEN ref ELSE
-  LET old == GetValue(ref.s, Val(ref)) IN
+  LET old == GetValue(target.s, Val(target)) IN
   IF IsAbrupt(old) THEN old
   ELSE IF op \in {"&&=", "||=", "??="} THEN
     IF (CASE op = "&&=" -> ~ToBooleanValue(Val(old))
           [] op = "||=" -> ToBooleanValue(Val(old))
           [] op = "??=" -> ~IsNullish(Val(old)))
     THEN old
-    ELSE PutValueThen(Val(ref), EvaluateAssigned(old.s, ctx, n))
-  ELSE CompoundThen(Val(ref), Val(old), SubSeq(op, 1, Len(op) - 1), EvaluateValue(old.s, ctx, n.AssignmentExpression))
+    ELSE PutValueThen(Val(target), EvaluateAssigned(old.s, ctx, n))
+  ELSE CompoundThen(Val(target), Val(old), SubSeq(op, 1, Len(op) - 1), EvaluateValue(old.s, ctx, n.AssignmentExpression))
 \* Assigns the value r gives to the reference, which is the assignment's value.
 PutValueThen(ref, r) ==
   IF IsSuspended(r) THEN Pass(r, "PutValueThen", <<ref>>) ELSE
@@ -10329,12 +10360,13 @@ IsCasedAfter(cps, i) ==
 ArrayBuiltin(s, f, m, this, args, nt) ==
   CASE m = "constructor" -> ArrayConstructor(s, f, args, nt)
     [] m = "from" -> ArrayFrom(s, this, Arg(args, 1), Arg(args, 2), Arg(args, 3))
-    \* Array.fromAsync (§23.1.2.2) is a built-in async function: its closure runs as an async
-    \* function's body would, settling a new promise.
-    [] m = "fromAsync" ->
-         LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise"))
-             settled == AsyncFunctionStep(Val(cap), ArrayFromAsync(cap.s, this, Arg(args, 1), Arg(args, 2), Arg(args, 3)))
-         IN Ok(settled.s, Val(cap).promise)
+    [] m = "fromAsync" -> ArrayFromAsync(s, this, Arg(args, 1), Arg(args, 2), Arg(args, 3))
+    \* The functions that go on with Array.fromAsync's steps where a value that it awaits settles.
+    [] m = "fromAsyncFulfilled" -> FromAsyncRun(SetSlots(s, O(s, f).slots.data, [awaited |-> Arg(args, 1)]), O(s, f).slots.data)
+    [] m = "fromAsyncRejected" ->
+         LET fa == O(s, f).slots.data IN
+         FromAsyncRun(SetSlots(s, fa, [step |-> IF Slots(s, fa).kind = "iterable" THEN "close" ELSE "reject",
+                                       error |-> Arg(args, 1)]), fa)
     [] m = "isArray" -> IsArray(s, Arg(args, 1))
     \* Array.of (§23.1.2.3).
     [] m = "of" ->
@@ -10419,67 +10451,105 @@ ArrayFromArrayLike(s, a, arrayLike, k, len, mapfn, thisArg) ==
        IF IsAbrupt(mapped) THEN mapped ELSE
        LET d == CreateDataPropertyOrThrow(mapped.s, a, Index(k), Val(mapped)) IN
        IF IsAbrupt(d) THEN d ELSE ArrayFromArrayLike(d.s, a, arrayLike, NumAdd(k, OneNum), len, mapfn, thisArg)
-\* The fromAsyncClosure of Array.fromAsync, which returns the array with a return completion.
+\* Array.fromAsync (§23.1.2.2), as V8 runs it (array-from-async.tq): a state machine in a cell,
+\* whose step runs until it awaits a value, through PromiseResolve and the functions that go on
+\* where the value settles, or settles the promise that it gives. Where a step throws or a value it
+\* awaits rejects, an iterator's return runs and its result is awaited before the promise rejects,
+\* even where next threw; where getting or calling return throws, the promise stays pending.
 ArrayFromAsync(s, c, items, mapper, thisArg) ==
+  LET cap == NewPromiseCapability(s, Intrinsic(s, "Promise"))
+      r == FromAsyncStart(cap.s, c, items, mapper, thisArg, Val(cap).promise)
+  IN IF IsAbrupt(r) THEN Ok(RejectPromise(r.s, Val(cap).promise, r.c.value), Val(cap).promise)
+     ELSE Ok(r.s, Val(cap).promise)
+FromAsyncStart(s, c, items, mapper, thisArg, promise) ==
   IF mapper # Undefined /\ ~IsCallable(s, mapper) THEN ThrowTypeError(s)
   ELSE LET usingAsync == GetMethod(s, items, SymAsyncIterator) IN
   IF IsAbrupt(usingAsync) THEN usingAsync
   ELSE LET usingSync == IF Val(usingAsync) # Undefined THEN Ok(usingAsync.s, Undefined) ELSE GetMethod(usingAsync.s, items, SymIterator) IN
   IF IsAbrupt(usingSync) THEN usingSync
-  ELSE IF Val(usingAsync) # Undefined \/ Val(usingSync) # Undefined THEN
+  ELSE LET base == [promise |-> promise, mapper |-> mapper, thisArg |-> thisArg, index |-> PosZero, awaited |-> Undefined,
+                    value |-> Undefined, mapped |-> Undefined, error |-> Undefined] IN
+  IF Val(usingAsync) # Undefined \/ Val(usingSync) # Undefined THEN
     LET it == IF Val(usingAsync) # Undefined THEN GetIteratorFromMethod(usingSync.s, items, Val(usingAsync))
               ELSE LET sync == GetIteratorFromMethod(usingSync.s, items, Val(usingSync)) IN
                    IF IsAbrupt(sync) THEN sync ELSE CreateAsyncFromSyncIterator(sync.s, Val(sync))
     IN IF IsAbrupt(it) THEN it ELSE
     LET a == IF IsConstructor(it.s, c) THEN Construct(it.s, c, <<>>, c) ELSE ArrayCreate(it.s, 0, Intrinsic(it.s, "ArrayPrototype")) IN
     IF IsAbrupt(a) THEN a
-    ELSE FromAsyncIterator(a.s, [a |-> Val(a), it |-> Val(it), mapper |-> mapper, thisArg |-> thisArg], PosZero)
+    ELSE FromAsyncBegin(a.s, base @@
+                             [kind |-> "iterable", step |-> "next", iterator |-> Val(it).iterator, next |-> Val(it).next, a |-> Val(a)])
   ELSE
-    LET arrayLike == ToObject(usingSync.s, items)
-        len == LengthOfArrayLike(arrayLike.s, Val(arrayLike))
-    IN IF IsAbrupt(len) THEN len ELSE
+    LET arrayLike == ToObject(usingSync.s, items) IN IF IsAbrupt(arrayLike) THEN arrayLike ELSE
+    LET len == LengthOfArrayLike(arrayLike.s, Val(arrayLike)) IN IF IsAbrupt(len) THEN len ELSE
     LET a == IF IsConstructor(len.s, c) THEN Construct(len.s, c, <<Val(len)>>, c) ELSE ArrayCreateLength(len.s, Val(len).value) IN
     IF IsAbrupt(a) THEN a
-    ELSE FromAsyncArrayLike(a.s, [a |-> Val(a), arrayLike |-> Val(arrayLike), len |-> Val(len).value, mapper |-> mapper, thisArg |-> thisArg], PosZero)
-FromAsyncReturn(s, a, len) == LET l == SetLength(s, a, len, a) IN IF IsAbrupt(l) THEN l ELSE Abrupt(l.s, Completion("return", a, Empty))
-\* The loop of the fromAsyncClosure over iterator st.it, from index k.
-FromAsyncIterator(s, st, k) ==
-  IF ~NumLess(k, MaxSafeInteger) THEN LET e == ThrowTypeError(s) IN AsyncIteratorClose(e.s, st.it, e.c)
-  ELSE LET next == Call(s, st.it.next, st.it.iterator, <<>>) IN
-       FromAsyncNextThen(st, k, IF IsAbrupt(next) THEN next ELSE Await(next.s, Val(next)))
-FromAsyncNextThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncNextThen", <<st, k>>) ELSE
-  IF IsAbrupt(r) THEN r
-  ELSE IF ~IsObject(Val(r)) THEN ThrowTypeError(r.s)
-  ELSE LET done == IteratorComplete(r.s, Val(r)) IN IF IsAbrupt(done) THEN done
-  ELSE IF Val(done) THEN FromAsyncReturn(done.s, st.a, k)
-  ELSE LET v == Get(done.s, Val(r), SV("value")) IN IF IsAbrupt(v) THEN v
-  ELSE IF st.mapper = Undefined THEN FromAsyncDefineThen(st, k, v)
-  ELSE LET mapped == Call(v.s, st.mapper, st.thisArg, <<Val(v), Num(k)>>) IN
-       IF IsAbrupt(mapped) THEN AsyncIteratorClose(mapped.s, st.it, mapped.c)
-       ELSE FromAsyncMappedThen(st, k, Await(mapped.s, Val(mapped)))
-FromAsyncMappedThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncMappedThen", <<st, k>>) ELSE IF IsAbrupt(r) THEN AsyncIteratorClose(r.s, st.it, r.c) ELSE FromAsyncDefineThen(st, k, r)
-FromAsyncDefineThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncDefineThen", <<st, k>>) ELSE
-  LET d == CreateDataPropertyOrThrow(r.s, st.a, Index(k), Val(r)) IN
-  IF IsAbrupt(d) THEN AsyncIteratorClose(d.s, st.it, d.c) ELSE FromAsyncIterator(d.s, st, NumAdd(k, OneNum))
-\* The loop of the fromAsyncClosure over the array-like st.arrayLike, from index k.
-FromAsyncArrayLike(s, st, k) ==
-  IF ~NumLess(k, st.len) THEN FromAsyncReturn(s, st.a, st.len)
-  ELSE LET v == Get(s, st.arrayLike, Index(k)) IN
-       FromAsyncValueThen(st, k, IF IsAbrupt(v) THEN v ELSE Await(v.s, Val(v)))
-FromAsyncValueThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncValueThen", <<st, k>>) ELSE
-  IF IsAbrupt(r) THEN r
-  ELSE IF st.mapper = Undefined THEN FromAsyncStoreThen(st, k, r)
-  ELSE LET mapped == Call(r.s, st.mapper, st.thisArg, <<Val(r), Num(k)>>) IN
-       FromAsyncStoreThen(st, k, IF IsAbrupt(mapped) THEN mapped ELSE Await(mapped.s, Val(mapped)))
-FromAsyncStoreThen(st, k, r) ==
-  IF IsSuspended(r) THEN Pass(r, "FromAsyncStoreThen", <<st, k>>) ELSE
-  IF IsAbrupt(r) THEN r
-  ELSE LET d == CreateDataPropertyOrThrow(r.s, st.a, Index(k), Val(r)) IN
-       IF IsAbrupt(d) THEN d ELSE FromAsyncArrayLike(d.s, st, NumAdd(k, OneNum))
+    ELSE FromAsyncBegin(a.s, base @@ [kind |-> "arrayLike", step |-> "get", arrayLike |-> Val(arrayLike),
+                                       len |-> Val(len).value, a |-> Val(a)])
+FromAsyncBegin(s, slots) ==
+  LET cell == AllocCell(s, slots)
+      fulfilled == CreateBuiltinFunction(cell.s, <<"Array", "fromAsyncFulfilled">>, 1, <<>>, cell.v)
+      rejected == CreateBuiltinFunction(fulfilled.s, <<"Array", "fromAsyncRejected">>, 1, <<>>, cell.v)
+  IN FromAsyncRun(SetSlots(rejected.s, cell.v, [onFulfilled |-> Val(fulfilled), onRejected |-> Val(rejected)]), cell.v)
+\* Runs the steps of the machine fa from its step, where a throw closes its iterator.
+FromAsyncRun(s, fa) ==
+  LET r == FromAsyncSteps(s, fa) IN
+  IF ~IsAbrupt(r) THEN r
+  ELSE LET s1 == SetSlots(r.s, fa, [error |-> r.c.value]) IN
+       IF Slots(s1, fa).kind = "arrayLike" THEN Ok(RejectPromise(s1, Slots(s1, fa).promise, r.c.value), Undefined)
+       ELSE LET closed == FromAsyncClose(s1, fa) IN
+            IF closed.reject THEN Ok(RejectPromise(closed.s, Slots(closed.s, fa).promise, r.c.value), Undefined)
+            ELSE Ok(closed.s, Undefined)
+\* Awaits value: the machine goes on at step where it settles.
+FromAsyncAwait(s, fa, step, value) ==
+  LET s1 == SetSlots(s, fa, [step |-> step])
+      p == PromiseResolve(s1, Intrinsic(s1, "Promise"), value)
+  IN IF IsAbrupt(p) THEN p
+     ELSE LET t == AddPromiseReactions(p.s, Val(p), Slots(p.s, fa).onFulfilled, Slots(p.s, fa).onRejected, Empty) IN
+          Ok(t.s, Undefined)
+\* The iterator's return, whose result the machine awaits with step "reject": reject is whether the
+\* promise rejects now, as where the iterator has none. A throw is swallowed.
+FromAsyncClose(s, fa) ==
+  LET it == Slots(s, fa).iterator
+      method == Get(s, it, SV("return"))
+  IN IF IsAbrupt(method) THEN [s |-> method.s, reject |-> FALSE]
+     ELSE IF Val(method) \in {Undefined, Null} THEN [s |-> method.s, reject |-> TRUE]
+     ELSE LET inner == Call(method.s, Val(method), it, <<>>) IN
+          IF IsAbrupt(inner) THEN [s |-> inner.s, reject |-> FALSE]
+          ELSE [s |-> FromAsyncAwait(inner.s, fa, "reject", Val(inner)).s, reject |-> FALSE]
+FromAsyncSteps(s, fa) ==
+  LET st == Slots(s, fa) IN
+  CASE st.step = "next" ->
+         LET next == Call(s, st.next, st.iterator, <<>>) IN
+         IF IsAbrupt(next) THEN next ELSE FromAsyncAwait(next.s, fa, "check", Val(next))
+    [] st.step = "check" ->
+         IF ~IsObject(st.awaited) THEN ThrowTypeError(s) ELSE
+         LET done == IteratorComplete(s, st.awaited) IN IF IsAbrupt(done) THEN done
+         ELSE IF Val(done) THEN FromAsyncSteps(SetSlots(done.s, fa, [step |-> "done"]), fa)
+         ELSE LET v == Get(done.s, st.awaited, SV("value")) IN IF IsAbrupt(v) THEN v
+         ELSE IF st.mapper # Undefined THEN FromAsyncSteps(SetSlots(v.s, fa, [step |-> "map", value |-> Val(v)]), fa)
+         ELSE FromAsyncSteps(SetSlots(v.s, fa, [step |-> "add", mapped |-> Val(v)]), fa)
+    [] st.step = "map" ->
+         LET r == Call(s, st.mapper, st.thisArg, <<st.value, Num(st.index)>>) IN
+         IF IsAbrupt(r) THEN r ELSE FromAsyncAwait(r.s, fa, "mapped", Val(r))
+    [] st.step = "mapped" -> FromAsyncSteps(SetSlots(s, fa, [step |-> "add", mapped |-> st.awaited]), fa)
+    [] st.step = "add" ->
+         LET d == CreateDataPropertyOrThrow(s, st.a, Index(st.index), st.mapped) IN IF IsAbrupt(d) THEN d
+         ELSE FromAsyncSteps(SetSlots(d.s, fa, [step |-> IF st.kind = "iterable" THEN "next" ELSE "get",
+                                                index |-> NumAdd(st.index, OneNum)]), fa)
+    [] st.step = "get" ->
+         IF ~NumLess(st.index, st.len) THEN FromAsyncSteps(SetSlots(s, fa, [step |-> "done"]), fa)
+         ELSE LET v == Get(s, st.arrayLike, Index(st.index)) IN IF IsAbrupt(v) THEN v ELSE FromAsyncAwait(v.s, fa, "value", Val(v))
+    [] st.step = "value" ->
+         IF st.mapper = Undefined THEN FromAsyncSteps(SetSlots(s, fa, [step |-> "add", mapped |-> st.awaited]), fa)
+         ELSE LET r == Call(s, st.mapper, st.thisArg, <<st.awaited, Num(st.index)>>) IN
+              IF IsAbrupt(r) THEN r ELSE FromAsyncAwait(r.s, fa, "mapped", Val(r))
+    [] st.step = "done" ->
+         LET l == Set(s, st.a, SV("length"), Num(st.index), TRUE) IN IF IsAbrupt(l) THEN l
+         ELSE ResolvePromiseWith(l.s, st.promise, st.a)
+    [] st.step = "close" ->
+         LET closed == FromAsyncClose(SetSlots(s, fa, [step |-> "reject"]), fa) IN
+         IF closed.reject THEN FromAsyncSteps(closed.s, fa) ELSE Ok(closed.s, Undefined)
+    [] st.step = "reject" -> Ok(RejectPromise(s, st.promise, st.error), Undefined)
 \* ArraySpeciesCreate (§10.4.2.3). This port has one realm, so step 5's realm check never applies.
 ArraySpeciesCreate(s, o, length) ==
   LET len == NumAdd(length, PosZero)
@@ -10597,7 +10667,7 @@ ArrayMethod(s, o, len, m, args) ==
     \* Array.prototype.join (§23.1.3.18).
     [] m = "join" ->
          LET sep == IF Arg(args, 1) = Undefined THEN Ok(s, SV(",")) ELSE ToStr(s, Arg(args, 1)) IN
-         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, FALSE)
+         IF IsAbrupt(sep) THEN sep ELSE JoinFrom(sep.s, o, len, PosZero, Val(sep).value, <<>>, FALSE, <<>>)
     \* Array.prototype.lastIndexOf (§23.1.3.20).
     [] m = "lastIndexOf" ->
          IF NumIsZero(len) THEN Ok(s, IntV(-1))
@@ -10690,8 +10760,9 @@ ArrayMethod(s, o, len, m, args) ==
                  [] OTHER -> Ok(al.s, o)
          IN IF IsAbrupt(moved) THEN moved ELSE
             LET w == SetElements(moved.s, o, items, start) IN IF IsAbrupt(w) THEN w ELSE SetLength(w.s, o, newLen, Val(a))
-    \* Array.prototype.toLocaleString (§23.1.3.32), with "," as the list separator.
-    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, TRUE)
+    \* Array.prototype.toLocaleString (ECMA-402 §19.5.1), with "," as the list separator, which
+    \* passes each element's toLocaleString its locales and options.
+    [] m = "toLocaleString" -> JoinFrom(s, o, len, PosZero, N(","), <<>>, TRUE, <<Arg(args, 1), Arg(args, 2)>>)
     \* Array.prototype.toReversed (§23.1.3.33).
     [] m = "toReversed" ->
          LET a == ArrayCreateLength(s, len) IN IF IsAbrupt(a) THEN a ELSE
@@ -10759,16 +10830,17 @@ IncludesFrom(s, o, k, len, target) ==
   ELSE LET v == Get(s, o, Index(k)) IN IF IsAbrupt(v) THEN v
   ELSE IF SameValueZero(target, Val(v)) THEN Ok(v.s, True)
   ELSE IncludesFrom(v.s, o, NumAdd(k, OneNum), len, target)
-\* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString when isLocale.
-JoinFrom(s, o, len, k, sep, acc, isLocale) ==
+\* JoinIndexedProperties: the loop of Array.prototype.join, or of toLocaleString when isLocale,
+\* which passes each element's toLocaleString localeArgs.
+JoinFrom(s, o, len, k, sep, acc, isLocale, localeArgs) ==
   IF ~NumLess(k, len) THEN Ok(s, Str(acc))
   ELSE LET e == Get(s, o, Index(k)) IN IF IsAbrupt(e) THEN e ELSE
        LET next == IF IsNullish(Val(e)) THEN Ok(e.s, EmptyStr)
                    ELSE IF ~isLocale THEN ToStr(e.s, Val(e))
-                   ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), <<>>) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
+                   ELSE LET r == Invoke(e.s, Val(e), SV("toLocaleString"), localeArgs) IN IF IsAbrupt(r) THEN r ELSE ToStr(r.s, Val(r))
        IN IF IsAbrupt(next) THEN next
           ELSE JoinFrom(next.s, o, len, NumAdd(k, OneNum), sep,
-                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, isLocale)
+                        (IF NumIsZero(k) THEN acc ELSE acc \o sep) \o Val(next).value, isLocale, localeArgs)
 \* FindViaPredicate (§23.1.3.12.1), returning [index, value].
 FindViaPredicate(s, o, len, dir, predicate, thisArg) ==
   IF ~IsCallable(s, predicate) THEN ThrowTypeError(s)
@@ -10819,22 +10891,221 @@ SortIndexedProperties(s, o, len, comparefn, skipHoles) ==
   LET items == IF ~skipHoles THEN ReadThrough(s, o, PosZero, len, 1, <<>>)
                ELSE LET r == VisitPresent(s, o, PosZero, len, 1, "collect", [items |-> <<>>]) IN
                     IF IsAbrupt(r) THEN r ELSE Ok(r.s, Val(r).st.items)
-  IN IF IsAbrupt(items) THEN items ELSE MergeSort(items.s, Val(items), comparefn)
-\* The sort itself is implementation-defined; this one is a stable merge sort.
-MergeSort(s, items, comparefn) ==
-  IF Len(items) <= 1 THEN Ok(s, items)
-  ELSE LET half == Len(items) \div 2
-           left == MergeSort(s, SubSeq(items, 1, half), comparefn)
-       IN IF IsAbrupt(left) THEN left ELSE
-          LET right == MergeSort(left.s, SubSeq(items, half + 1, Len(items)), comparefn) IN
-          IF IsAbrupt(right) THEN right ELSE MergeSorted(right.s, Val(left), Val(right), comparefn, <<>>)
-MergeSorted(s, xs, ys, comparefn, acc) ==
-  IF xs = <<>> THEN Ok(s, acc \o ys)
-  ELSE IF ys = <<>> THEN Ok(s, acc \o xs)
-  ELSE LET c == CompareArrayElements(s, Head(ys), Head(xs), comparefn) IN
+  IN IF IsAbrupt(items) THEN items ELSE SortItems(items.s, Val(items), comparefn)
+\* The sort itself is implementation-defined; this one is V8's (array-sort.tq, after CPython's
+\* listsort), as Node 26 calls a comparator: it sorts the values other than undefined, and puts
+\* undefined after them. Fewer than 8 values it inserts each after the first by binary search; more
+\* it sorts by TimSort.
+SortItems(s, items, comparefn) ==
+  LET defined == SelectSeq(items, LAMBDA v : v # Undefined)
+      undefineds == [i \in 1..(Len(items) - Len(defined)) |-> Undefined]
+      sorted == CASE Len(defined) < 2 -> Ok(s, defined)
+                  [] Len(defined) < 8 -> TsInsertionSort(s, defined, comparefn, 0, 1, Len(defined))
+                  [] OTHER -> TsMain(s, comparefn, [w |-> defined, runs |-> <<>>, mg |-> 7], 0, Len(defined),
+                                     TsMinRun(Len(defined), 0))
+  IN IF IsAbrupt(sorted) THEN sorted ELSE Ok(sorted.s, Val(sorted) \o undefineds)
+\* TimSort's steps, on a work array w that they index from 0 as V8 does, with the pending runs, each
+\* [base, length], and minGallop, mg. TsLess is whether the comparator orders x before y.
+TsLess(s, x, y, f) ==
+  LET c == CompareArrayElements(s, x, y, f) IN IF IsAbrupt(c) THEN c ELSE Ok(c.s, NumLess(Val(c).value, PosZero))
+TsSet(w, i, v) == [w EXCEPT ![i + 1] = v]
+\* Copies count values of src from srcPos to dst at dstPos, as memmove does within one array.
+TsCopy(src, srcPos, dst, dstPos, count) ==
+  [j \in DOMAIN dst |-> IF j - 1 >= dstPos /\ j - 1 < dstPos + count THEN src[j - dstPos + srcPos] ELSE dst[j]]
+\* ComputeMinRunLength.
+TsMinRun(n, r) == IF n >= 64 THEN TsMinRun(n \div 2, IF n % 2 = 1 THEN 1 ELSE r) ELSE n + r
+\* BinaryInsertionSort of w from low to before high, whose values from low to before start are sorted.
+TsInsertionSort(s, w, f, low, start, high) ==
+  IF start >= high THEN Ok(s, w)
+  ELSE LET pivot == w[start + 1]
+           left == TsInsertionPlace(s, w, f, pivot, low, start)
+       IN IF IsAbrupt(left) THEN left
+          ELSE TsInsertionSort(left.s,
+                 [j \in DOMAIN w |-> IF j - 1 = Val(left) THEN pivot
+                                     ELSE IF j - 1 > Val(left) /\ j - 1 <= start THEN w[j - 1] ELSE w[j]],
+                 f, low, start + 1, high)
+TsInsertionPlace(s, w, f, pivot, left, right) ==
+  IF left >= right THEN Ok(s, left)
+  ELSE LET mid == left + (right - left) \div 2
+           c == TsLess(s, pivot, w[mid + 1], f)
+       IN IF IsAbrupt(c) THEN c
+          ELSE IF Val(c) THEN TsInsertionPlace(c.s, w, f, pivot, left, mid)
+          ELSE TsInsertionPlace(c.s, w, f, pivot, mid + 1, right)
+\* CountAndMakeRun from low to before high: [w, length], the run made ascending.
+TsCountRun(s, w, f, low, high) ==
+  IF low + 1 = high THEN Ok(s, [w |-> w, length |-> 1])
+  ELSE LET c == TsLess(s, w[low + 2], w[low + 1], f) IN
+       IF IsAbrupt(c) THEN c ELSE TsRunFrom(c.s, w, f, low, high, Val(c), low + 2)
+TsRunFrom(s, w, f, low, high, isDescending, idx) ==
+  IF idx >= high THEN Ok(s, TsRunMade(w, low, idx - low, isDescending))
+  ELSE LET c == TsLess(s, w[idx + 1], w[idx], f) IN
        IF IsAbrupt(c) THEN c
-       ELSE IF NumLess(Val(c).value, PosZero) THEN MergeSorted(c.s, xs, Tail(ys), comparefn, Append(acc, Head(ys)))
-       ELSE MergeSorted(c.s, Tail(xs), ys, comparefn, Append(acc, Head(xs)))
+       ELSE IF Val(c) = isDescending THEN TsRunFrom(c.s, w, f, low, high, isDescending, idx + 1)
+       ELSE Ok(c.s, TsRunMade(w, low, idx - low, isDescending))
+TsRunMade(w, low, length, isDescending) ==
+  [w |-> IF ~isDescending THEN w
+         ELSE [j \in DOMAIN w |-> IF j - 1 >= low /\ j - 1 < low + length THEN w[low + length - (j - 1 - low)] ELSE w[j]],
+   length |-> length]
+\* GallopLeft (~isRight) and GallopRight (isRight) of key in a from base, of length values, from hint.
+TsCompareAt(s, f, a, key, i, isRight) == IF isRight THEN TsLess(s, key, a[i + 1], f) ELSE TsLess(s, a[i + 1], key, f)
+TsGallop(s, f, a, key, base, length, hint, isRight) ==
+  LET first == TsCompareAt(s, f, a, key, base + hint, isRight) IN
+  IF IsAbrupt(first) THEN first
+  ELSE TsGallopOut(first.s, f, a, key, base, length, hint, isRight, Val(first) = isRight, 0, 1)
+\* The exponential search away from hint, toward lower offsets where goesLeft.
+TsGallopOut(s, f, a, key, base, length, hint, isRight, goesLeft, lastOfs, offset) ==
+  LET maxOfs == IF goesLeft THEN hint + 1 ELSE length - hint IN
+  IF offset >= maxOfs THEN TsGallopIn(s, f, a, key, base, isRight, TsGallopLow(hint, goesLeft, lastOfs, maxOfs),
+                                      TsGallopHigh(hint, goesLeft, lastOfs, maxOfs))
+  ELSE LET c == TsCompareAt(s, f, a, key, IF goesLeft THEN base + hint - offset ELSE base + hint + offset, isRight) IN
+       IF IsAbrupt(c) THEN c
+       ELSE IF (IF isRight THEN Val(c) # goesLeft ELSE Val(c) = goesLeft)
+       THEN TsGallopIn(c.s, f, a, key, base, isRight, TsGallopLow(hint, goesLeft, lastOfs, offset),
+                       TsGallopHigh(hint, goesLeft, lastOfs, offset))
+       ELSE TsGallopOut(c.s, f, a, key, base, length, hint, isRight, goesLeft, offset, 2 * offset + 1)
+TsGallopLow(hint, goesLeft, lastOfs, offset) == (IF goesLeft THEN hint - offset ELSE lastOfs + hint) + 1
+TsGallopHigh(hint, goesLeft, lastOfs, offset) == IF goesLeft THEN hint - lastOfs ELSE offset + hint
+\* The binary search between lo and hi.
+TsGallopIn(s, f, a, key, base, isRight, lo, hi) ==
+  IF lo >= hi THEN Ok(s, hi)
+  ELSE LET m == lo + (hi - lo) \div 2
+           c == TsCompareAt(s, f, a, key, base + m, isRight)
+       IN IF IsAbrupt(c) THEN c
+          ELSE IF Val(c) = isRight THEN TsGallopIn(c.s, f, a, key, base, isRight, lo, m)
+          ELSE TsGallopIn(c.s, f, a, key, base, isRight, m + 1, hi)
+\* MergeAt of the pending runs i and i + 1, from 0.
+TsMergeAt(s, f, st, i) ==
+  LET baseA0 == st.runs[i + 1].base
+      lengthA0 == st.runs[i + 1].length
+      baseB == st.runs[i + 2].base
+      lengthB0 == st.runs[i + 2].length
+      runs == SubSeq(st.runs, 1, i) \o <<[base |-> baseA0, length |-> lengthA0 + lengthB0]>> \o SubSeq(st.runs, i + 3, Len(st.runs))
+      k == TsGallop(s, f, st.w, st.w[baseB + 1], baseA0, lengthA0, 0, TRUE)
+  IN IF IsAbrupt(k) THEN k ELSE
+     LET baseA == baseA0 + Val(k)
+         lengthA == lengthA0 - Val(k)
+     IN IF lengthA = 0 THEN Ok(k.s, [st EXCEPT !.runs = runs]) ELSE
+     LET lengthB == TsGallop(k.s, f, st.w, st.w[baseA + lengthA], baseB, lengthB0, lengthB0 - 1, FALSE) IN
+     IF IsAbrupt(lengthB) THEN lengthB
+     ELSE IF Val(lengthB) = 0 THEN Ok(lengthB.s, [st EXCEPT !.runs = runs]) ELSE
+     LET merged == IF lengthA <= Val(lengthB) THEN TsMergeLow(lengthB.s, f, st.w, st.mg, baseA, lengthA, baseB, Val(lengthB))
+                   ELSE TsMergeHigh(lengthB.s, f, st.w, st.mg, baseA, lengthA, baseB, Val(lengthB))
+     IN IF IsAbrupt(merged) THEN merged ELSE Ok(merged.s, [w |-> Val(merged).w, runs |-> runs, mg |-> Val(merged).mg])
+\* MergeLow: a merge state of w, the copy temp of run A, the cursors dest, ct into temp, and cb, the
+\* lengths la and lb left, the minGallop that the sort state holds, mg, and the merge's own, lmg.
+TsMergeLow(s, f, w, mg, baseA, lengthA, baseB, lengthB) ==
+  LET m == [w |-> TsSet(w, baseA, w[baseB + 1]), temp |-> SubSeq(w, baseA + 1, baseA + lengthA), dest |-> baseA + 1,
+            ct |-> 0, cb |-> baseB + 1, la |-> lengthA, lb |-> lengthB - 1, mg |-> mg, lmg |-> mg]
+  IN IF m.lb = 0 THEN Ok(s, TsLowSucceed(m)) ELSE IF m.la = 1 THEN Ok(s, TsLowCopyB(m)) ELSE TsLowOne(s, f, m, 0, 0)
+TsLowSucceed(m) == [w |-> IF m.la > 0 THEN TsCopy(m.temp, m.ct, m.w, m.dest, m.la) ELSE m.w, mg |-> m.mg]
+TsLowCopyB(m) == [w |-> TsSet(TsCopy(m.w, m.cb, m.w, m.dest, m.lb), m.dest + m.lb, m.temp[m.ct + 1]), mg |-> m.mg]
+TsLowFromB(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.w[m.cb + 1]), !.dest = @ + 1, !.cb = @ + 1, !.lb = @ - 1]
+TsLowFromA(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.temp[m.ct + 1]), !.dest = @ + 1, !.ct = @ + 1, !.la = @ - 1]
+\* One pair at a time, until one run wins lmg times in a row.
+TsLowOne(s, f, m, winsA, winsB) ==
+  LET c == TsLess(s, m.w[m.cb + 1], m.temp[m.ct + 1], f) IN
+  IF IsAbrupt(c) THEN c
+  ELSE IF Val(c) THEN
+    LET n == TsLowFromB(m) IN
+    IF n.lb = 0 THEN Ok(c.s, TsLowSucceed(n))
+    ELSE IF winsB + 1 >= n.lmg THEN TsLowGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], 0, winsB + 1, TRUE)
+    ELSE TsLowOne(c.s, f, n, 0, winsB + 1)
+  ELSE
+    LET n == TsLowFromA(m) IN
+    IF n.la = 1 THEN Ok(c.s, TsLowCopyB(n))
+    ELSE IF winsA + 1 >= n.lmg THEN TsLowGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], winsA + 1, 0, TRUE)
+    ELSE TsLowOne(c.s, f, n, winsA + 1, 0)
+\* Galloping, while either run wins at least kMinGallopWins (7) at once.
+TsLowGallop(s, f, m, winsA, winsB, isFirst) ==
+  IF ~(winsA >= 7 \/ winsB >= 7 \/ isFirst) THEN TsLowOne(s, f, [m EXCEPT !.lmg = @ + 1, !.mg = m.lmg + 1], 0, 0) ELSE
+  LET m1 == [m EXCEPT !.lmg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1, !.mg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1]
+      ka == TsGallop(s, f, m1.temp, m1.w[m1.cb + 1], m1.ct, m1.la, 0, TRUE)
+  IN IF IsAbrupt(ka) THEN ka ELSE
+  LET a == Val(ka)
+      m2 == IF a > 0 THEN [m1 EXCEPT !.w = TsCopy(m1.temp, m1.ct, m1.w, m1.dest, a), !.dest = @ + a, !.ct = @ + a, !.la = @ - a] ELSE m1
+  IN IF a > 0 /\ m2.la = 1 THEN Ok(ka.s, TsLowCopyB(m2))
+     ELSE IF a > 0 /\ m2.la = 0 THEN Ok(ka.s, TsLowSucceed(m2)) ELSE
+     LET m3 == TsLowFromB(m2) IN
+     IF m3.lb = 0 THEN Ok(ka.s, TsLowSucceed(m3)) ELSE
+     LET kb == TsGallop(ka.s, f, m3.w, m3.temp[m3.ct + 1], m3.cb, m3.lb, 0, FALSE) IN
+     IF IsAbrupt(kb) THEN kb ELSE
+     LET b == Val(kb)
+         m4 == IF b > 0 THEN [m3 EXCEPT !.w = TsCopy(m3.w, m3.cb, m3.w, m3.dest, b), !.dest = @ + b, !.cb = @ + b, !.lb = @ - b] ELSE m3
+     IN IF b > 0 /\ m4.lb = 0 THEN Ok(kb.s, TsLowSucceed(m4)) ELSE
+     LET m5 == TsLowFromA(m4) IN
+     IF m5.la = 1 THEN Ok(kb.s, TsLowCopyB(m5)) ELSE TsLowGallop(kb.s, f, m5, a, b, FALSE)
+\* MergeHigh, from the ends of the runs: temp is the copy of run B, and ca the cursor into run A.
+TsMergeHigh(s, f, w, mg, baseA, lengthA, baseB, lengthB) ==
+  LET m == [w |-> TsSet(w, baseB + lengthB - 1, w[baseA + lengthA]), temp |-> SubSeq(w, baseB + 1, baseB + lengthB),
+            dest |-> baseB + lengthB - 2, ct |-> lengthB - 1, ca |-> baseA + lengthA - 2, la |-> lengthA - 1,
+            lb |-> lengthB, mg |-> mg, lmg |-> mg, baseA |-> baseA]
+  IN IF m.la = 0 THEN Ok(s, TsHighSucceed(m)) ELSE IF m.lb = 1 THEN Ok(s, TsHighCopyA(m)) ELSE TsHighOne(s, f, m, 0, 0)
+TsHighSucceed(m) == [w |-> IF m.lb > 0 THEN TsCopy(m.temp, 0, m.w, m.dest - (m.lb - 1), m.lb) ELSE m.w, mg |-> m.mg]
+TsHighCopyA(m) ==
+  [w |-> TsSet(TsCopy(m.w, m.ca - m.la + 1, m.w, m.dest - m.la + 1, m.la), m.dest - m.la, m.temp[m.ct + 1]), mg |-> m.mg]
+TsHighFromA(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.w[m.ca + 1]), !.dest = @ - 1, !.ca = @ - 1, !.la = @ - 1]
+TsHighFromB(m) == [m EXCEPT !.w = TsSet(m.w, m.dest, m.temp[m.ct + 1]), !.dest = @ - 1, !.ct = @ - 1, !.lb = @ - 1]
+TsHighOne(s, f, m, winsA, winsB) ==
+  LET c == TsLess(s, m.temp[m.ct + 1], m.w[m.ca + 1], f) IN
+  IF IsAbrupt(c) THEN c
+  ELSE IF Val(c) THEN
+    LET n == TsHighFromA(m) IN
+    IF n.la = 0 THEN Ok(c.s, TsHighSucceed(n))
+    ELSE IF winsA + 1 >= n.lmg THEN TsHighGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], winsA + 1, 0, TRUE)
+    ELSE TsHighOne(c.s, f, n, winsA + 1, 0)
+  ELSE
+    LET n == TsHighFromB(m) IN
+    IF n.lb = 1 THEN Ok(c.s, TsHighCopyA(n))
+    ELSE IF winsB + 1 >= n.lmg THEN TsHighGallop(c.s, f, [n EXCEPT !.lmg = @ + 1], 0, winsB + 1, TRUE)
+    ELSE TsHighOne(c.s, f, n, 0, winsB + 1)
+TsHighGallop(s, f, m, winsA, winsB, isFirst) ==
+  IF ~(winsA >= 7 \/ winsB >= 7 \/ isFirst) THEN TsHighOne(s, f, [m EXCEPT !.lmg = @ + 1, !.mg = m.lmg + 1], 0, 0) ELSE
+  LET m1 == [m EXCEPT !.lmg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1, !.mg = IF m.lmg - 1 < 1 THEN 1 ELSE m.lmg - 1]
+      kr == TsGallop(s, f, m1.w, m1.temp[m1.ct + 1], m1.baseA, m1.la, m1.la - 1, TRUE)
+  IN IF IsAbrupt(kr) THEN kr ELSE
+  LET a == m1.la - Val(kr)
+      m2 == IF a > 0 THEN [m1 EXCEPT !.w = TsCopy(m1.w, m1.ca - a + 1, m1.w, m1.dest - a + 1, a), !.dest = @ - a,
+                                     !.ca = @ - a, !.la = @ - a] ELSE m1
+  IN IF a > 0 /\ m2.la = 0 THEN Ok(kr.s, TsHighSucceed(m2)) ELSE
+     LET m3 == TsHighFromB(m2) IN
+     IF m3.lb = 1 THEN Ok(kr.s, TsHighCopyA(m3)) ELSE
+     LET kl == TsGallop(kr.s, f, m3.temp, m3.w[m3.ca + 1], 0, m3.lb, m3.lb - 1, FALSE) IN
+     IF IsAbrupt(kl) THEN kl ELSE
+     LET b == m3.lb - Val(kl)
+         m4 == IF b > 0 THEN [m3 EXCEPT !.w = TsCopy(m3.temp, m3.ct - b + 1, m3.w, m3.dest - b + 1, b), !.dest = @ - b,
+                                        !.ct = @ - b, !.lb = @ - b] ELSE m3
+     IN IF b > 0 /\ m4.lb = 1 THEN Ok(kl.s, TsHighCopyA(m4))
+        ELSE IF b > 0 /\ m4.lb = 0 THEN Ok(kl.s, TsHighSucceed(m4)) ELSE
+        LET m5 == TsHighFromA(m4) IN
+        IF m5.la = 0 THEN Ok(kl.s, TsHighSucceed(m5)) ELSE TsHighGallop(kl.s, f, m5, a, b, FALSE)
+\* MergeCollapse and MergeForceCollapse.
+TsRunLength(runs, i) == runs[i + 1].length
+TsInvariant(runs, n) == n < 2 \/ TsRunLength(runs, n - 2) > TsRunLength(runs, n - 1) + TsRunLength(runs, n)
+TsCollapse(s, f, st) ==
+  IF Len(st.runs) <= 1 THEN Ok(s, st) ELSE
+  LET n == Len(st.runs) - 2 IN
+  IF ~TsInvariant(st.runs, n + 1) \/ ~TsInvariant(st.runs, n) THEN
+    LET r == TsMergeAt(s, f, st, IF TsRunLength(st.runs, n - 1) < TsRunLength(st.runs, n + 1) THEN n - 1 ELSE n) IN
+    IF IsAbrupt(r) THEN r ELSE TsCollapse(r.s, f, Val(r))
+  ELSE IF TsRunLength(st.runs, n) <= TsRunLength(st.runs, n + 1) THEN
+    LET r == TsMergeAt(s, f, st, n) IN IF IsAbrupt(r) THEN r ELSE TsCollapse(r.s, f, Val(r))
+  ELSE Ok(s, st)
+TsForceCollapse(s, f, st) ==
+  IF Len(st.runs) <= 1 THEN Ok(s, st.w) ELSE
+  LET n == Len(st.runs) - 2
+      r == TsMergeAt(s, f, st, IF n > 0 /\ TsRunLength(st.runs, n - 1) < TsRunLength(st.runs, n + 1) THEN n - 1 ELSE n)
+  IN IF IsAbrupt(r) THEN r ELSE TsForceCollapse(r.s, f, Val(r))
+\* ArrayTimSortImpl from low, with remaining values left.
+TsMain(s, f, st, low, remaining, minRun) ==
+  IF remaining = 0 THEN TsForceCollapse(s, f, st) ELSE
+  LET run == TsCountRun(s, st.w, f, low, low + remaining) IN
+  IF IsAbrupt(run) THEN run ELSE
+  LET runLength == IF Val(run).length >= minRun THEN Val(run).length ELSE IF minRun < remaining THEN minRun ELSE remaining
+      extended == TsInsertionSort(run.s, Val(run).w, f, low, low + Val(run).length, low + runLength)
+  IN IF IsAbrupt(extended) THEN extended ELSE
+  LET collapsed == TsCollapse(extended.s, f, [st EXCEPT !.w = Val(extended), !.runs = Append(@, [base |-> low, length |-> runLength])]) IN
+  IF IsAbrupt(collapsed) THEN collapsed
+  ELSE TsMain(collapsed.s, f, Val(collapsed), low + runLength, remaining - runLength, minRun)
 \* CompareArrayElements (§23.1.3.30.2).
 CompareArrayElements(s, x, y, comparefn) ==
   CASE x = Undefined /\ y = Undefined -> Ok(s, IntV(0))
@@ -10978,8 +11249,9 @@ DeleteIndices(s, o, k, bound, dir) ==
   IF ~NumEqual(i, k) THEN DeleteIndices(s, o, i, bound, dir)
   ELSE LET d == DeletePropertyOrThrow(s, o, Index(k)) IN
        IF IsAbrupt(d) THEN d ELSE DeleteIndices(d.s, o, NumAdd(k, NumFromInt(dir)), bound, dir)
-\* CreateArrayIterator (§23.1.5.1). The closure's state lives in the slots: the object iterated,
-\* the next index, the kind, and the generator state "suspended", "executing", or "completed".
+\* CreateArrayIterator (§23.1.5.1). The iterator's state lives in the slots: the object iterated,
+\* the next index, the kind, and whether it's done, as V8 keeps it (ArrayIteratorPrototypeNext),
+\* where the spec runs a generator's closure.
 CreateArrayIterator(s, array, kind) ==
   LET a == Alloc(s, MakeObject(Intrinsic(s, "ArrayIteratorPrototype"), "arrayIterator",
                                [iterated |-> array, next |-> PosZero, kind |-> kind, state |-> "suspended"]))
@@ -10988,30 +11260,26 @@ CreateArrayIterator(s, array, kind) ==
 ArrayIteratorNext(s, this) ==
   LET r == ArrayIteratorResume(s, this) IN
   IF IsAbrupt(r) THEN r ELSE CreateIterResultObject(r.s, Val(r).value, Val(r).done)
-\* GeneratorResume of the closure, which completes when it returns or throws, as [done, value]
-\* rather than the iterator result object, which IteratorStepValue need not allocate.
+\* A step of the iterator, as [done, value] rather than the iterator result object, which
+\* IteratorStepValue need not allocate. As V8's, it moves the next index on before it reads the
+\* value, and a throw leaves it as it was, where the spec's closure completes: as a typed array's
+\* bounds or an object's length throw, which a later step may read again.
 ArrayIteratorResume(s, this) ==
   IF ~IsObject(this) \/ O(s, this).class # "arrayIterator" THEN ThrowTypeError(s)
   ELSE LET slots == O(s, this).slots IN
-  IF slots.state = "executing" THEN ThrowTypeError(s)
-  ELSE IF slots.state = "completed" THEN Ok(s, [done |-> TRUE, value |-> Undefined])
-  ELSE LET r == ArrayIteratorStep(SetO(s, this, [O(s, this) EXCEPT !.slots.state = "executing"]), slots)
-           isDone == IsAbrupt(r) \/ Val(r) = Empty
-           s1 == SetO(r.s, this, [O(r.s, this) EXCEPT !.slots.state = IF isDone THEN "completed" ELSE "suspended",
-                                                     !.slots.next = IF isDone THEN @ ELSE NumAdd(@, OneNum)])
-       IN IF IsAbrupt(r) THEN Abrupt(s1, r.c)
-          ELSE Ok(s1, [done |-> isDone, value |-> IF isDone THEN Undefined ELSE Val(r)])
-\* One run of the closure of CreateArrayIterator: the value it yields, or Empty when it returns.
-ArrayIteratorStep(s, slots) ==
-  LET len == IF ~IsTypedArray(s, slots.iterated) THEN LengthOfArrayLike(s, slots.iterated)
-             ELSE LET bounds == ValidateTypedArrayBounds(s, slots.iterated) IN
-                  IF IsAbrupt(bounds) THEN bounds ELSE Ok(bounds.s, IntV(Val(bounds)))
+  IF slots.state = "completed" THEN Ok(s, [done |-> TRUE, value |-> Undefined])
+  ELSE LET len == IF ~IsTypedArray(s, slots.iterated) THEN LengthOfArrayLike(s, slots.iterated)
+                  ELSE LET bounds == ValidateTypedArrayBounds(s, slots.iterated) IN
+                       IF IsAbrupt(bounds) THEN bounds ELSE Ok(bounds.s, IntV(Val(bounds)))
   IN IF IsAbrupt(len) THEN len
-  ELSE IF ~NumLess(slots.next, Val(len).value) THEN Ok(len.s, Empty)
-  ELSE IF slots.kind = "key" THEN Ok(len.s, Num(slots.next))
-  ELSE LET v == Get(len.s, slots.iterated, Index(slots.next)) IN IF IsAbrupt(v) THEN v
-  ELSE IF slots.kind = "value" THEN v
-  ELSE CreateArrayFromList(v.s, <<Num(slots.next), Val(v)>>)
+  ELSE IF ~NumLess(slots.next, Val(len).value)
+  THEN Ok(SetO(len.s, this, [O(len.s, this) EXCEPT !.slots.state = "completed"]), [done |-> TRUE, value |-> Undefined])
+  ELSE LET moved == SetO(len.s, this, [O(len.s, this) EXCEPT !.slots.next = NumAdd(@, OneNum)]) IN
+  IF slots.kind = "key" THEN Ok(moved, [done |-> FALSE, value |-> Num(slots.next)])
+  ELSE LET v == Get(moved, slots.iterated, Index(slots.next)) IN
+  IF IsAbrupt(v) THEN v
+  ELSE IF slots.kind = "value" THEN Ok(v.s, [done |-> FALSE, value |-> Val(v)])
+  ELSE LET entry == CreateArrayFromList(v.s, <<Num(slots.next), Val(v)>>) IN Ok(entry.s, [done |-> FALSE, value |-> Val(entry)])
 ArrayIteratorBuiltin(s, f, m, this, args, nt) == ArrayIteratorNext(s, this)
 \* Proxy exotic objects (§10.5). A Proxy object has class "proxy" and slots:
 \*   target, handler  [[ProxyTarget]] and [[ProxyHandler]], both Null once revoked
@@ -11577,10 +11845,15 @@ AnyRestrictedGlobal(s, env, names) ==
   IF names = <<>> THEN Ok(s, FALSE)
   ELSE LET r == HasRestrictedGlobalProperty(s, env, Head(names)) IN
        IF IsAbrupt(r) THEN r ELSE IF Val(r) = True THEN Ok(r.s, TRUE) ELSE AnyRestrictedGlobal(r.s, env, Tail(names))
+\* Each of names in order, in halves, so that thousands of names nest log n deep rather than n.
 CheckGlobalNames(s, env, names, isFunction) ==
-  IF names = <<>> THEN Ok(s, Empty)
-  ELSE LET r == IF isFunction THEN CanDeclareGlobalFunction(s, env, Head(names)) ELSE CanDeclareGlobalVar(s, env, Head(names)) IN
-       IF IsAbrupt(r) THEN r ELSE IF Val(r) = False THEN ThrowTypeError(r.s) ELSE CheckGlobalNames(r.s, env, Tail(names), isFunction)
+  CASE names = <<>> -> Ok(s, Empty)
+    [] Len(names) = 1 ->
+         LET r == IF isFunction THEN CanDeclareGlobalFunction(s, env, names[1]) ELSE CanDeclareGlobalVar(s, env, names[1]) IN
+         IF IsAbrupt(r) THEN r ELSE IF Val(r) = False THEN ThrowTypeError(r.s) ELSE Ok(r.s, Empty)
+    [] OTHER ->
+         LET first == CheckGlobalNames(s, env, SubSeq(names, 1, Len(names) \div 2), isFunction) IN
+         IF IsAbrupt(first) THEN first ELSE CheckGlobalNames(first.s, env, SubSeq(names, Len(names) \div 2 + 1, Len(names)), isFunction)
 CreateGlobalLexicals(s, env, decls) ==
   IF decls = <<>> THEN Ok(s, Empty)
   ELSE LET r == CreateGlobalLexicalNames(s, env, BoundNames(Head(decls)), IsConstantDeclaration(Head(decls))) IN
@@ -11596,9 +11869,11 @@ CreateGlobalFunctions(s, ctx, env, fns) ==
            r == CreateGlobalFunctionBinding(fo.s, env, BoundNames(Head(fns))[1], Val(fo), FALSE)
        IN IF IsAbrupt(r) THEN r ELSE CreateGlobalFunctions(r.s, ctx, env, Tail(fns))
 CreateGlobalVars(s, env, names) ==
-  IF names = <<>> THEN Ok(s, Empty)
-  ELSE LET r == CreateGlobalVarBinding(s, env, Head(names), FALSE) IN
-       IF IsAbrupt(r) THEN r ELSE CreateGlobalVars(r.s, env, Tail(names))
+  CASE names = <<>> -> Ok(s, Empty)
+    [] Len(names) = 1 -> CreateGlobalVarBinding(s, env, names[1], FALSE)
+    [] OTHER ->
+         LET first == CreateGlobalVars(s, env, SubSeq(names, 1, Len(names) \div 2)) IN
+         IF IsAbrupt(first) THEN first ELSE CreateGlobalVars(first.s, env, SubSeq(names, Len(names) \div 2 + 1, Len(names)))
 \* Step 12 of GlobalDeclarationInstantiation and step 13 of EvalDeclarationInstantiation (§B.3.2.2,
 \* §B.3.2.3): var bindings for the block functions fns that sloppy code hoists, which eval makes
 \* deletable. A binding between the code's lexical environment lex and its var environment keeps a
@@ -13012,10 +13287,15 @@ ParseUTCStringDate(u) ==
             UnitAt(u, 12) = 32]
 \* The time value of a date string, or NaN when it has none of the formats above or a value out of
 \* range. 24:00 is the end of the day, so only with zero minutes, seconds, and milliseconds.
+\* V8 reads a string of toString's or toUTCString's format with its legacy parser, which reads the
+\* years 0 to 49 as 2000 to 2049, 50 to 99 as 1950 to 1999, and no negative year.
 ParseDate(u) ==
   LET iso == ParseISODate(u)
       toString == ParseToStringDate(u)
-      p == CASE iso.ok -> iso [] toString.ok -> toString [] OTHER -> ParseUTCStringDate(u)
+      written == CASE toString.ok -> toString [] OTHER -> ParseUTCStringDate(u)
+      p == CASE iso.ok -> iso
+             [] written.y < 0 -> [written EXCEPT !.ok = FALSE]
+             [] OTHER -> [written EXCEPT !.y = IF @ < 50 THEN @ + 2000 ELSE IF @ < 100 THEN @ + 1900 ELSE @]
       leap == IF IsLeapYear(p.y) THEN 1 ELSE 0
   IN IF ~p.ok \/ p.mo < 1 \/ p.mo > 12 \/ p.d < 1 \/ p.d > MonthStart(p.mo, leap) - MonthStart(p.mo - 1, leap) \/
         p.mi > 59 \/ p.sec > 59 \/ p.h > 24 \/ (p.h = 24 /\ (p.mi > 0 \/ p.sec > 0 \/ p.ms > 0))
@@ -13031,10 +13311,15 @@ ParseDate(u) ==
 \* A setter converts its first argument and the others present, and then returns NaN for a NaN
 \* time value, except setFullYear and setUTCFullYear, which start from +0. The new time keeps the
 \* fields no argument replaces: MakeDay of the old year, month, and date is Day(t), and MakeTime of
-\* the old hours to milliseconds is TimeWithinDay(t), as the spec's steps use.
+\* the old hours to milliseconds is TimeWithinDay(t), as the spec's steps use. V8 reads the time
+\* value of setFullYear and setUTCFullYear after it converts the year, where the spec reads it first.
 DateSet(s, this, fields, args, isUTC) ==
-  LET t == ThisTimeValue(s, this) IN IF IsAbrupt(t) THEN t ELSE
-  LET n == DateToNumbers(t.s, DateArgs(args, Len(fields)), <<>>) IN IF IsAbrupt(n) THEN n ELSE
+  LET first == ThisTimeValue(s, this) IN IF IsAbrupt(first) THEN first ELSE
+  LET year == IF fields[1] = "year" THEN DateToNumbers(first.s, DateArgs(args, 1), <<>>) ELSE Ok(first.s, <<>>) IN
+  IF IsAbrupt(year) THEN year ELSE
+  LET t == IF fields[1] = "year" THEN ThisTimeValue(year.s, this) ELSE first
+      n == DateToNumbers(year.s, SubSeq(DateArgs(args, Len(fields)), Len(Val(year)) + 1, Len(DateArgs(args, Len(fields)))), Val(year))
+  IN IF IsAbrupt(n) THEN n ELSE
   LET tv == Val(t).value IN
   IF NumIsNaN(tv) /\ fields[1] # "year" THEN Ok(n.s, Num(NaN))
   ELSE
@@ -13355,9 +13640,51 @@ RxRepeatMatcher(env, m, min, max, greedy, x, k, parenIndex, parenCount) ==
       xr == IF parenCount = 0 THEN x
             ELSE [x EXCEPT !.cap = [i \in DOMAIN @ |-> IF i > parenIndex /\ i <= parenIndex + parenCount THEN None ELSE @[i]]]
   IN CASE max = 0 -> RxContinue(env, k, x)
+       [] m.t = "set" -> RxRepeatSet(env, m, min, max, greedy, x, k)
        [] min # 0 -> RxMatch(env, m, xr, d)
        [] ~greedy -> LET z == RxContinue(env, k, x) IN IF z # MatchFailure THEN z ELSE RxMatch(env, m, xr, d)
        [] OTHER -> LET z == RxMatch(env, m, xr, d) IN IF z # MatchFailure THEN z ELSE RxContinue(env, k, x)
+\* RepeatMatcher of a CharacterSetMatcher, which matches one character or none and holds no
+\* groups, so that its iterations match the run of characters it matches from x, as far as max.
+\* Each count of them from the run's length down to min, or up from min when not greedy, is then a
+\* state the continuation runs from, as RepeatMatcher's backtracking tries them. The run and the
+\* counts are searched in halves, so that the depth of the search grows with the logarithm of
+\* the input's length rather than with the length itself.
+RxRepeatSet(env, m, min, max, greedy, x, k) ==
+  LET available == IF m.dir THEN env.len - x.e ELSE x.e
+      limit == IF max = RxInfinity \/ max > available THEN available ELSE max
+      run == RxSetRun(env, m, x.e, 0, limit)
+  IN IF run < min THEN MatchFailure
+     ELSE IF greedy THEN RxContinueDown(env, k, x, m.dir, min, run) ELSE RxContinueUp(env, k, x, m.dir, min, run)
+\* Whether the set matcher m matches the character j after e, or before it when matching backward.
+RxSetAt(env, m, e, j) ==
+  RxSetFound(m.cs, m.cm, env.in[IF m.dir THEN e + j + 1 ELSE e - j]) # m.invert
+\* How many of the characters lo to hi - 1 after e m matches, from lo up to the first it doesn't.
+RxSetRun(env, m, e, lo, hi) ==
+  CASE lo >= hi -> 0
+    [] hi - lo = 1 -> IF RxSetAt(env, m, e, lo) THEN 1 ELSE 0
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             left == RxSetRun(env, m, e, lo, mid)
+         IN IF left < mid - lo THEN left ELSE left + RxSetRun(env, m, e, mid, hi)
+\* The state j characters on from x.
+RxAdvanced(x, dir, j) == [x EXCEPT !.e = IF dir THEN @ + j ELSE @ - j]
+\* The continuation's result from the first of the counts hi down to lo that it matches from.
+RxContinueDown(env, k, x, dir, lo, hi) ==
+  CASE lo > hi -> MatchFailure
+    [] lo = hi -> RxContinue(env, k, RxAdvanced(x, dir, lo))
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             upper == RxContinueDown(env, k, x, dir, mid + 1, hi)
+         IN IF upper # MatchFailure THEN upper ELSE RxContinueDown(env, k, x, dir, lo, mid)
+\* The continuation's result from the first of the counts lo up to hi that it matches from.
+RxContinueUp(env, k, x, dir, lo, hi) ==
+  CASE lo > hi -> MatchFailure
+    [] lo = hi -> RxContinue(env, k, RxAdvanced(x, dir, lo))
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             lower == RxContinueUp(env, k, x, dir, lo, mid)
+         IN IF lower # MatchFailure THEN lower ELSE RxContinueUp(env, k, x, dir, mid + 1, hi)
 \* Whether CharacterSetMatcher finds a member of A that canonicalizes to the character c does.
 RxSetFound(cs, cm, c) == IF ~cm.ic THEN RxIn(cs, c) ELSE \E a \in RxPreimage(cm, RxCanonicalize(cm, c)) : RxIn(cs, a)
 \* IsWordChar (§22.2.2.9.2).
@@ -13968,12 +14295,25 @@ UpdateLegacyRegExpStatics(s, R, units, start, end, captures) ==
                               leftContext |-> SubSeq(units, 1, start), rightContext |-> SubSeq(units, end + 1, Len(units)),
                               parens |-> [i \in 1..9 |-> Capture(i)]]])
 \* The first index at or after lastIndex where the pattern matches, with its MatchState, or None.
+\* After lastIndex, AdvanceStringIndex steps to each next character of the input in turn.
 RxExecFrom(o, units, input, fullUnicode, sticky, lastIndex) ==
   IF lastIndex > Len(units) THEN None ELSE
-  LET r == RxRun(o.matcher, input.chars, RxInputIndex(units, fullUnicode, lastIndex), Len(o.groups)) IN
-  CASE r # MatchFailure -> [index |-> lastIndex, r |-> r]
-    [] sticky -> None
-    [] OTHER -> RxExecFrom(o, units, input, fullUnicode, sticky, RxAdvanceIndex(units, lastIndex, fullUnicode))
+  LET first == RxInputIndex(units, fullUnicode, lastIndex)
+      r == RxRun(o.matcher, input.chars, first, Len(o.groups))
+  IN CASE r # MatchFailure -> [index |-> lastIndex, r |-> r]
+       [] sticky -> None
+       [] OTHER -> RxExecFirst(o, units, input, fullUnicode, first + 1, Len(input.chars))
+\* The first character from lo to hi where the pattern matches, searched in halves so that the
+\* depth of the search grows with the logarithm of the input's length.
+RxExecFirst(o, units, input, fullUnicode, lo, hi) ==
+  CASE lo > hi -> None
+    [] lo = hi ->
+         LET r == RxRun(o.matcher, input.chars, lo, Len(o.groups)) IN
+         IF r = MatchFailure THEN None ELSE [index |-> GetStringIndex(units, input, fullUnicode, lo), r |-> r]
+    [] OTHER ->
+         LET mid == (lo + hi) \div 2
+             left == RxExecFirst(o, units, input, fullUnicode, lo, mid)
+         IN IF left # None THEN left ELSE RxExecFirst(o, units, input, fullUnicode, mid + 1, hi)
 \* The match array of RegExpBuiltinExec from the Match Records of the match and of each capture.
 RxMatchResult(s, o, S, match, captures) ==
   LET values == [i \in DOMAIN captures |-> GetMatchString(S, captures[i])]
@@ -14420,7 +14760,8 @@ AtomicsBuiltin(s, f, m, this, args, nt) ==
   CASE m = "isLockFree" ->
          LET n == ToIntegerOrInfinity(s, a1) IN IF IsAbrupt(n) THEN n
          ELSE Ok(n.s, Bool(\E size \in {1, 2, 4, 8} : Val(n).value = NumFromInt(size)))
-    [] m = "pause" -> Ok(s, Undefined)
+    \* Atomics.pause (§25.4.11), which throws at an N that is neither undefined nor integral.
+    [] m = "pause" -> IF a1 # Undefined /\ ~(IsNumber(a1) /\ NumIsIntegral(a1.value)) THEN ThrowTypeError(s) ELSE Ok(s, Undefined)
     [] m = "compareExchange" ->
          LET byteIndex == ValidateAtomicAccessOnIntegerTypedArray(s, a1, a2, TRUE) IN IF IsAbrupt(byteIndex) THEN byteIndex ELSE
          LET expected == AtomicValue(byteIndex.s, a1, a3) IN IF IsAbrupt(expected) THEN expected ELSE
@@ -15163,15 +15504,16 @@ JoinElements(s, ta, k, len, separator) ==
   ELSE LET e == TypedArrayGetElement(s, ta, NumFromInt(k))
        IN (IF k > 0 THEN separator ELSE <<>>) \o (IF e = Undefined THEN <<>> ELSE PrimitiveToUnits(e)) \o
           JoinElements(s, ta, k + 1, len, separator)
-\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator.
-LocaleJoin(s, ta, k, len, acc) ==
+\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator, which
+\* passes each element's toLocaleString localeArgs (ECMA-402 §19.5.1).
+LocaleJoin(s, ta, k, len, acc, localeArgs) ==
   IF k >= len THEN Ok(s, Str(acc))
   ELSE LET prefix == IF k > 0 THEN acc \o N(",") ELSE acc
            e == TypedArrayGetElement(s, ta, NumFromInt(k))
-       IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix)
-          ELSE LET r == Invoke(s, e, SV("toLocaleString"), <<>>) IN IF IsAbrupt(r) THEN r ELSE
+       IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix, localeArgs)
+          ELSE LET r == Invoke(s, e, SV("toLocaleString"), localeArgs) IN IF IsAbrupt(r) THEN r ELSE
                LET str == ToStr(r.s, Val(r)) IN IF IsAbrupt(str) THEN str
-               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value)
+               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value, localeArgs)
 \* Copies count bytes one at a time upward, as slice does between two TypedArrays of a type. That
 \* copies them all at once unless the target starts within the bytes still to copy.
 CopyBytesUp(s, from, fromIndex, to, toIndex, count) ==
@@ -15310,7 +15652,7 @@ TypedArrayMethod(s, ta, len, m, args) ==
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r ELSE
          LET sorted == SortElements(r.s, TypedArrayElements(r.s, ta, len), a1) IN IF IsAbrupt(sorted) THEN sorted
          ELSE Ok(StoreElements(sorted.s, Val(r), Val(sorted), 0), Val(r))
-    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>)
+    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>, <<a1, a2>>)
     [] m = "toReversed" ->
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r
          ELSE Ok(StoreElements(r.s, Val(r), [i \in 1..len |-> TypedArrayGetElement(r.s, ta, NumFromInt(len - i))], 0), Val(r))
@@ -20186,11 +20528,6 @@ ResumeFrame(frame, r) ==
     [] frame.step = "DefineElementThen" -> DefineElementThen(frame.args[1], r)
     [] frame.step = "ClassBindingThen" -> ClassBindingThen(frame.args[1], frame.args[2], r)
     [] frame.step = "SuperCallThen" -> SuperCallThen(frame.args[1], frame.args[2], frame.args[3], r)
-    [] frame.step = "FromAsyncNextThen" -> FromAsyncNextThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncMappedThen" -> FromAsyncMappedThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncDefineThen" -> FromAsyncDefineThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncValueThen" -> FromAsyncValueThen(frame.args[1], frame.args[2], r)
-    [] frame.step = "FromAsyncStoreThen" -> FromAsyncStoreThen(frame.args[1], frame.args[2], r)
     [] frame.step = "DisposeThen" -> DisposeThen(frame.args[1], r)
     [] frame.step = "DisposedThen" -> DisposedThen(frame.args[1], r)
     [] frame.step = "DisposeAwaitedThen" -> DisposeAwaitedThen(frame.args[1], frame.args[2], frame.args[3], frame.args[4], r)

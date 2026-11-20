@@ -398,15 +398,16 @@ JoinElements(s, ta, k, len, separator) ==
        IN (IF k > 0 THEN separator ELSE <<>>) \o (IF e = Undefined THEN <<>> ELSE PrimitiveToUnits(e)) \o
           JoinElements(s, ta, k + 1, len, separator)
 
-\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator.
-LocaleJoin(s, ta, k, len, acc) ==
+\* JoinIndexedProperties with the method "toLocaleString", and "," as the list separator, which
+\* passes each element's toLocaleString localeArgs (ECMA-402 §19.5.1).
+LocaleJoin(s, ta, k, len, acc, localeArgs) ==
   IF k >= len THEN Ok(s, Str(acc))
   ELSE LET prefix == IF k > 0 THEN acc \o N(",") ELSE acc
            e == TypedArrayGetElement(s, ta, NumFromInt(k))
-       IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix)
-          ELSE LET r == Invoke(s, e, SV("toLocaleString"), <<>>) IN IF IsAbrupt(r) THEN r ELSE
+       IN IF e = Undefined THEN LocaleJoin(s, ta, k + 1, len, prefix, localeArgs)
+          ELSE LET r == Invoke(s, e, SV("toLocaleString"), localeArgs) IN IF IsAbrupt(r) THEN r ELSE
                LET str == ToStr(r.s, Val(r)) IN IF IsAbrupt(str) THEN str
-               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value)
+               ELSE LocaleJoin(str.s, ta, k + 1, len, prefix \o Val(str).value, localeArgs)
 
 \* Copies count bytes one at a time upward, as slice does between two TypedArrays of a type. That
 \* copies them all at once unless the target starts within the bytes still to copy.
@@ -549,7 +550,7 @@ TypedArrayMethod(s, ta, len, m, args) ==
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r ELSE
          LET sorted == SortElements(r.s, TypedArrayElements(r.s, ta, len), a1) IN IF IsAbrupt(sorted) THEN sorted
          ELSE Ok(StoreElements(sorted.s, Val(r), Val(sorted), 0), Val(r))
-    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>)
+    [] m = "toLocaleString" -> LocaleJoin(s, ta, 0, len, <<>>, <<a1, a2>>)
     [] m = "toReversed" ->
          LET r == TypedArrayCreateSameType(s, ta, len) IN IF IsAbrupt(r) THEN r
          ELSE Ok(StoreElements(r.s, Val(r), [i \in 1..len |-> TypedArrayGetElement(r.s, ta, NumFromInt(len - i))], 0), Val(r))

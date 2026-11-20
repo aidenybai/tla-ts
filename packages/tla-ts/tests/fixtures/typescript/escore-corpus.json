@@ -6616,14 +6616,12 @@
         },
         {
           "name": "disposes what a for-of's using declaration holds at the end of each iteration (1)",
-          "source": "\n      const order: string[] = [];\n      const make = (name: string) => ({\n        name,\n        [Symbol.dispose]() {\n          order.push(this.name);\n        },\n      });\n      const resources = [make(\"a\"), make(\"b\"), make(\"c\")];\n      for (using held of resources) {\n        order.push(\"body\");\n        if (held.name === \"b\") continue;\n        if (held.name === \"c\") break;\n      }\n      if (order.join() !== \"body,a,body,b,body,c\") throw new Error(order.join());\n    ",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "source": "\n      const order: string[] = [];\n      const make = (name: string) => ({\n        name,\n        [Symbol.dispose]() {\n          order.push(this.name);\n        },\n      });\n      const resources = [make(\"a\"), make(\"b\"), make(\"c\")];\n      for (using held of resources) {\n        order.push(\"body\");\n        if (held.name === \"b\") continue;\n        if (held.name === \"c\") break;\n      }\n      if (order.join() !== \"body,a,body,b,body,c\") throw new Error(order.join());\n    "
         },
         {
           "name": "disposes what a for-of's using declaration holds at the end of each iteration (2)",
           "source": "\n      const order: string[] = [];\n      const make = (name: string) => ({\n        name,\n        [Symbol.dispose]() {\n          order.push(this.name);\n        },\n      });\n      const resources = [make(\"a\"), make(\"b\"), make(\"c\")];\n      for (using held of resources) {\n        order.push(\"body\");\n        if (held.name === \"b\") continue;\n        if (held.name === \"c\") break;\n      }\n      if (order.join() !== \"body,body,a,b,body,c\") throw new Error(order.join());\n    ",
-          "thrown": "body,a,body,b,body,c",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "thrown": "body,a,body,b,body,c"
         },
         {
           "name": "reads the properties of DisposableStack and AsyncDisposableStack (1)",
@@ -6787,14 +6785,12 @@
         {
           "name": "runs Array.fromAsync of a generator, which it closes where a value rejects",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let log = \"\";\n      const first = (function* () {\n        log += \"a\";\n        yield 1;\n        log += \"b\";\n        yield 2;\n        log += \"c\";\n      })();\n      Array.fromAsync(first, (value: number, k: number) => value * 10 + k).then((values) => {\n        log += \"[\" + values.join(\",\") + \"]\";\n      });\n      const second = (function* () {\n        log += \"d\";\n        throw \"t\";\n      })();\n      Array.fromAsync(second).catch((error) => {\n        log += \"<\" + String(error) + \">\";\n      });\n      const third = (function* () {\n        log += \"e\";\n        yield Promise.reject(\"r\");\n        log += \"f\";\n      })();\n      Array.fromAsync(third).catch((error) => {\n        log += \"(\" + String(error) + \")\";\n      });\n      const fourth = (function* () {\n        yield 1;\n        log += \"x\";\n      })();\n      Array.fromAsync(fourth, () => {\n        throw \"m\";\n      }).catch((error) => {\n        log += \"{\" + String(error) + \"}\";\n      });\n      Promise.resolve()\n        .then(() => { log += \"0\"; })\n        .then(() => { log += \"1\"; })\n        .then(() => { log += \"2\"; })\n        .then(() => { log += \"3\"; })\n        .then(() => { log += \"4\"; })\n        .then(() => { log += \"5\"; })\n        .then(() => { log += \"6\"; })\n        .then(() => { log += \"7\"; })\n        .then(() => { log += \"8\"; });\n      setTimeout(() => {\n        if (log !== \"ade0<t>1b(r)23{m}4c567[10,21]8\") throw new Error(log);\n      });\n    ",
-          "thrown": "ade01b2<t>3(r){m}4c567[10,21]8",
-          "wrong": "conformance: Array.fromAsync closes or awaits its iterator in another order than Node"
+          "thrown": "ade01b2<t>3(r){m}4c567[10,21]8"
         },
         {
           "name": "runs Array.fromAsync of an async generator, which it closes where a mapping throws",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let log = \"\";\n      const first = (async function* () {\n        log += \"a\";\n        yield 1;\n        log += \"b\";\n        yield Promise.resolve(2);\n        log += \"c\";\n      })();\n      Array.fromAsync(first, (value: number, k: number) => value * 10 + k).then((values) => {\n        log += \"[\" + values.join(\",\") + \"]\";\n      });\n      const second = (async function* () {\n        log += \"d\";\n        throw \"t\";\n      })();\n      Array.fromAsync(second).catch((error) => {\n        log += \"<\" + String(error) + \">\";\n      });\n      const third = (async function* () {\n        yield 1;\n        log += \"x\";\n      })();\n      Array.fromAsync(third, () => {\n        throw \"m\";\n      }).catch((error) => {\n        log += \"{\" + String(error) + \"}\";\n      });\n      async function* fourth() {\n        yield \"p\";\n        yield \"q\";\n      }\n      Array.fromAsync({ [Symbol.asyncIterator]: fourth }, async (value: string) => value + \"!\").then(\n        (values) => {\n          log += \"(\" + values.join(\",\") + \")\";\n        },\n      );\n      Promise.resolve()\n        .then(() => { log += \"0\"; })\n        .then(() => { log += \"1\"; })\n        .then(() => { log += \"2\"; })\n        .then(() => { log += \"3\"; })\n        .then(() => { log += \"4\"; })\n        .then(() => { log += \"5\"; })\n        .then(() => { log += \"6\"; })\n        .then(() => { log += \"7\"; })\n        .then(() => { log += \"8\"; })\n        .then(() => { log += \"9\"; });\n      setTimeout(() => {\n        if (log !== \"ad0<t>1b23{m}4c56[10,21](p!,q!)789\") throw new Error(log);\n      });\n    ",
-          "thrown": "ad01b2<t>3{m}4c56[10,21](p!,q!)789",
-          "wrong": "conformance: Array.fromAsync closes or awaits its iterator in another order than Node"
+          "thrown": "ad01b2<t>3{m}4c56[10,21](p!,q!)789"
         },
         {
           "name": "throws from a generator's pattern default to the code that resumes the generator",
@@ -7073,8 +7069,7 @@
         },
         {
           "name": "runs the getters of a descriptor's fields in the order defineProperty reads them",
-          "source": "\n      const log = { text: \"\" };\n      const target: { [key: string]: unknown } = {};\n      const attributes: { [key: string]: unknown } = {};\n      Object.defineProperty(attributes, \"enumerable\", {\n        get: function () {\n          log.text += \"e\";\n          return true;\n        },\n      });\n      Object.defineProperty(attributes, \"value\", {\n        get: function () {\n          log.text += \"v\";\n          return 1;\n        },\n      });\n      Object.defineProperty(target, \"property\", attributes);\n      const read = log.text;\n      if (read !== \"ev\" || target.property !== 1) throw new Error(read);\n      const invalid: { [key: string]: unknown } = {};\n      Object.defineProperty(invalid, \"get\", {\n        get: function () {\n          log.text += \"g\";\n          return 5;\n        },\n      });\n      Object.defineProperty(invalid, \"set\", {\n        get: function () {\n          log.text += \"s\";\n          return undefined;\n        },\n      });\n      let caught = false;\n      try {\n        Object.defineProperty(target, \"other\", invalid);\n      } catch (error) {\n        caught = error instanceof TypeError;\n      }\n      if (!caught || log.text !== \"evg\") throw new Error(log.text);\n    ",
-          "wrong": "conformance: defineProperty reads a descriptor's fields in another order"
+          "source": "\n      const log = { text: \"\" };\n      const target: { [key: string]: unknown } = {};\n      const attributes: { [key: string]: unknown } = {};\n      Object.defineProperty(attributes, \"enumerable\", {\n        get: function () {\n          log.text += \"e\";\n          return true;\n        },\n      });\n      Object.defineProperty(attributes, \"value\", {\n        get: function () {\n          log.text += \"v\";\n          return 1;\n        },\n      });\n      Object.defineProperty(target, \"property\", attributes);\n      const read = log.text;\n      if (read !== \"ev\" || target.property !== 1) throw new Error(read);\n      const invalid: { [key: string]: unknown } = {};\n      Object.defineProperty(invalid, \"get\", {\n        get: function () {\n          log.text += \"g\";\n          return 5;\n        },\n      });\n      Object.defineProperty(invalid, \"set\", {\n        get: function () {\n          log.text += \"s\";\n          return undefined;\n        },\n      });\n      let caught = false;\n      try {\n        Object.defineProperty(target, \"other\", invalid);\n      } catch (error) {\n        caught = error instanceof TypeError;\n      }\n      if (!caught || log.text !== \"evg\") throw new Error(log.text);\n    "
         },
         {
           "name": "sets an object's prototype, and throws a TypeError where the chain would loop",
@@ -7192,8 +7187,7 @@
         {
           "name": "changes the case of a code point that a surrogate pair makes",
           "source": "\n      const high = \"\ud801\";\n      const low = \"\udc28\";\n      if ((high + low + \"x\").toUpperCase() !== \"\\u{10400}X\" || high.toUpperCase() !== high) {\n        throw new Error(\"pair\");\n      }\n    ",
-          "thrown": "pair",
-          "wrong": "conformance: case mapping or code point iteration outside ASCII"
+          "thrown": "pair"
         },
         {
           "name": "pads a string at its start or end",
@@ -7206,8 +7200,7 @@
         {
           "name": "reads a string's code units outside ASCII and iterates its code points",
           "source": "\n      const text = \"é😀\ude00a\";\n      if (text.length !== 5 || text.charCodeAt(0) !== 233 || text.charCodeAt(2) !== 0xde00) {\n        throw new Error(\"units\");\n      }\n      if (text.codePointAt(1) !== 0x1f600 || text.codePointAt(3) !== 0xde00) {\n        throw new Error(\"points\");\n      }\n      const points = [...text];\n      const visited: string[] = [];\n      for (const point of text) visited.push(point);\n      if (points.length !== 4 || points[1] !== \"😀\" || visited.join(\"|\") !== \"é|😀|\ude00|a\") {\n        throw new Error(\"iterate\");\n      }\n      if (text.split(\"\").length !== 5 || String.fromCodePoint(0x1f600, 233) !== \"😀é\") {\n        throw new Error(\"split\");\n      }\n      if (!(\"z\" < \"é\") || !(\"😀\" < \"￿\") || \"é\" < \"e\") throw new Error(\"order\");\n    ",
-          "thrown": "points",
-          "wrong": "conformance: case mapping or code point iteration outside ASCII"
+          "thrown": "points"
         },
         {
           "name": "encodes and escapes characters outside ASCII",
@@ -8374,14 +8367,12 @@
         },
         {
           "name": "disposes what a for-of's using declaration holds where its body returns (1)",
-          "source": "\n      const order: string[] = [];\n      const resources = [{ [Symbol.dispose]() { order.push(\"disposed\"); } }];\n      const run = () => {\n        for (using held of resources) {\n          order.push(\"run\");\n          return 1;\n        }\n        return 2;\n      };\n      if (run() !== 1) throw new Error(\"run\");\n      if (order.join() !== \"run,disposed\") throw new Error(order.join());\n    ",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "source": "\n      const order: string[] = [];\n      const resources = [{ [Symbol.dispose]() { order.push(\"disposed\"); } }];\n      const run = () => {\n        for (using held of resources) {\n          order.push(\"run\");\n          return 1;\n        }\n        return 2;\n      };\n      if (run() !== 1) throw new Error(\"run\");\n      if (order.join() !== \"run,disposed\") throw new Error(order.join());\n    "
         },
         {
           "name": "disposes what a for-of's using declaration holds where its body returns (2)",
           "source": "\n      const order: string[] = [];\n      const resources = [{ [Symbol.dispose]() { order.push(\"disposed\"); } }];\n      const run = () => {\n        for (using held of resources) {\n          order.push(\"run\");\n          return 1;\n        }\n        return 2;\n      };\n      if (run() !== 1) throw new Error(\"run\");\n      if (order.join() !== \"disposed,run\") throw new Error(order.join());\n    ",
-          "thrown": "run,disposed",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "thrown": "run,disposed"
         },
         {
           "name": "suppresses the errors that disposing a DisposableStack throws, and ignores re-entry (1)",
@@ -10231,14 +10222,12 @@
         {
           "name": "runs Array.fromAsync of the values() of an array written in place",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let log = \"\";\n      const input = [1, 2, 3].values();\n      Array.fromAsync(input, (value: number, k: number) => value * 10 + k).then((values) => {\n        log += \"[\" + values.join(\",\") + \"]\";\n      });\n      const thenable = {\n        then(resolve: (value: number) => void, reject: (reason: unknown) => void) {\n          log += \"t\";\n          reject(\"r\");\n        },\n      };\n      const rejecting = [thenable].values();\n      Array.fromAsync(rejecting as Iterable<unknown>).catch((error) => {\n        log += \"<\" + String(error) + \">\";\n      });\n      Promise.resolve()\n        .then(() => { log += \"0\"; })\n        .then(() => { log += \"1\"; })\n        .then(() => { log += \"2\"; })\n        .then(() => { log += \"3\"; })\n        .then(() => { log += \"4\"; })\n        .then(() => { log += \"5\"; })\n        .then(() => { log += \"6\"; })\n        .then(() => { log += \"7\"; })\n        .then(() => { log += \"8\"; });\n      setTimeout(() => {\n        if (log !== \"t012<r>345678[10,21,32]\") throw new Error(log);\n      });\n    ",
-          "thrown": "t0123<r>45678[10,21,32]",
-          "wrong": "conformance: Array.fromAsync closes or awaits its iterator in another order than Node"
+          "thrown": "t0123<r>45678[10,21,32]"
         },
         {
           "name": "rejects Array.fromAsync with an element's reason or a mapping function's throw",
           "source": "\n      declare function setTimeout(callback: () => void): void;\n      let log = \"\";\n      Array.fromAsync([1, Promise.reject(\"r\"), 3]).catch((error) => {\n        log += \"<\" + String(error) + \">\";\n      });\n      Array.fromAsync([1], () => {\n        throw \"t\";\n      }).catch((error) => {\n        log += \"(\" + String(error) + \")\";\n      });\n      Promise.resolve()\n        .then(() => {\n          log += \"0\";\n        })\n        .then(() => {\n          log += \"1\";\n        })\n        .then(() => {\n          log += \"2\";\n        })\n        .then(() => {\n          log += \"3\";\n        })\n        .then(() => {\n          log += \"4\";\n        })\n        .then(() => {\n          log += \"5\";\n        })\n        .then(() => {\n          log += \"6\";\n        })\n        .then(() => {\n          log += \"7\";\n        });\n      setTimeout(() => {\n        if (log !== \"012(t)3<r>4567\") throw new Error(log);\n      });\n    ",
-          "thrown": "012(t)34<r>567",
-          "wrong": "conformance: Array.fromAsync closes or awaits its iterator in another order than Node"
+          "thrown": "012(t)34<r>567"
         },
         {
           "name": "runs a script's constructor with the executor of a promise capability",
@@ -12300,14 +12289,12 @@
       "source": "\n      let calls = 0;\n      let isThrown = false;\n      try {\n        [1, 2, 3].toSorted((a, b) => {\n          calls += 1;\n          if (a === 3 && b === 1) throw new Error(\"compared 3 with 1\");\n          if (a === 3 && b === 2) throw new Error(\"compared 3 with 2\");\n          return a - b;\n        });\n      } catch {\n        isThrown = true;\n      }\n      const sorted = [1, 2, 3].sort((a, b) => {\n        if (a === 3 && b === 1) throw new Error(\"compared 3 with 1\");\n        return a - b;\n      });\n      if (!isThrown || calls !== 2 || sorted.join() !== \"1,2,3\") {\n        throw new Error(\"calls \" + calls);\n      }\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects wrong expectation 1",
           "replace": ["!== 2", "!== 3"],
-          "thrown": "calls 2",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "thrown": "calls 2"
         }
       ]
     },
@@ -12339,8 +12326,7 @@
       "source": "\n      let calls = 0;\n      const items = [64, 63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];\n      items.sort((a, b) => { calls += 1; return a - b; });\n      if (items[0] !== 1 || calls !== 63) throw new Error(\"calls \" + calls);\n    ",
       "runs": [
         {
-          "name": "stops at 64 elements (1)",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "name": "stops at 64 elements (1)"
         },
         {
           "name": "stops at 64 elements (2)",
@@ -12351,14 +12337,12 @@
         },
         {
           "name": "agrees with Node",
-          "source": "\n      let calls = 0;\n      const items = [63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];\n      items.sort((a, b) => { calls += 1; return a - b; });\n      if (items[0] !== 1 || calls !== 62) throw new Error(\"calls \" + calls);\n    ",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "source": "\n      let calls = 0;\n      const items = [63, 62, 61, 60, 59, 58, 57, 56, 55, 54, 53, 52, 51, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1];\n      items.sort((a, b) => { calls += 1; return a - b; });\n      if (items[0] !== 1 || calls !== 62) throw new Error(\"calls \" + calls);\n    "
         },
         {
           "name": "rejects wrong expectation 1",
           "replace": ["4, 6", ""],
-          "thrown": "calls 62",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "thrown": "calls 62"
         }
       ]
     },
@@ -12727,7 +12711,7 @@
         {
           "name": "agrees with Node on run,0,1,loop,loop,for where a function returns and loops leave",
           "thrown": "Expected ';', got 'ident'",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
         },
         {
           "name": "agrees with Node on body,c,b,a",
@@ -12738,7 +12722,7 @@
           "name": "rejects the expectation run,0,1,for,loop,loop",
           "replace": ["loop,loop,for", "for,loop,loop"],
           "thrown": "Expected ';', got 'ident'",
-          "stop": "tla-ts can't compile a using declaration to ESCore yet"
+          "wrong": "realcode: Node's type stripping rejects this syntax in a .ts file, where ESCore's runs it"
         },
         {
           "name": "rejects the expectation body,a,b,c",
@@ -12844,14 +12828,12 @@
       "source": "\n      declare function setTimeout(callback: () => void): void;\n      const resource = {\n        disposed: false,\n        [Symbol.dispose]() {\n          this.disposed = true;\n        },\n      };\n      let seen = \"\";\n      function* make() {\n        seen += resource.disposed + \",\";\n        yield resource;\n        seen += resource.disposed + \",\";\n      }\n      const run = async () => {\n        for (await using _ of make()) {\n          seen += resource.disposed + \",\";\n        }\n      };\n      run();\n      setTimeout(() => {\n        if (seen !== \"false,false,true,\") throw new Error(\"seen \" + seen);\n      });\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects a disposal after the loop",
           "replace": [",tru", ",fals"],
-          "thrown": "seen false,false,true,",
-          "wrong": "conformance: a for-of's using or await using disposes in another order than Node"
+          "thrown": "seen false,false,true,"
         }
       ]
     },
@@ -14588,8 +14570,7 @@
         },
         {
           "name": "stops where a script asks whether an inextensible typed array with elements is sealed",
-          "source": "if (!Object.isSealed(Object.preventExtensions(new Int8Array(2)))) throw new Error(\"sealed\");",
-          "wrong": "conformance: Object.isSealed of an inextensible typed array with elements"
+          "source": "if (!Object.isSealed(Object.preventExtensions(new Int8Array(2)))) throw new Error(\"sealed\");"
         }
       ]
     },
@@ -15323,14 +15304,12 @@
       "source": "\n      const rab = new ArrayBuffer(3, { maxByteLength: 4 });\n      const fixed = new Uint8Array(rab, 0, 3);\n      fixed[0] = 9;\n      const values = fixed.values();\n      let log = \"\";\n      rab.resize(2);\n      try {\n        Array.from(values);\n      } catch (error) {\n        log += error instanceof TypeError ? \"a\" : \"other\";\n      }\n      try {\n        Array.from(values);\n      } catch (error) {\n        log += error instanceof TypeError ? \"b\" : \"other\";\n      }\n      rab.resize(3);\n      const listed = Array.from(values);\n      const again = Array.from(values);\n      log += listed.join(\"\") + again.length;\n      if (log !== \"ab9000\") throw new Error(log);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects an iterator that its first steps leave done",
           "replace": ["900", ""],
-          "thrown": "ab9000",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "thrown": "ab9000"
         }
       ]
     },
@@ -16819,8 +16798,7 @@
       "runs": [
         {
           "name": "rejects the members that Node 24 has",
-          "thrown": "seen true,length name prototype from concat,true,false,16",
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          "thrown": "seen true,length name prototype from concat,true,false,16"
         },
         {
           "name": "stops at the value of a member that tla-ts doesn't model",
@@ -16831,8 +16809,7 @@
           "replace": [
             "false,length name prototype from,false,true,3",
             "true,length name prototype from concat,true,false,1"
-          ],
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          ]
         }
       ]
     },
@@ -16843,13 +16820,11 @@
       "runs": [
         {
           "name": "rejects the time value that the conversions leave, as Node 24 reads it",
-          "thrown": "seen NaN,259200000,60000,60000,-62130240000000,-62130240000000",
-          "wrong": "conformance: a Date setter converts its arguments in another order than V8"
+          "thrown": "seen NaN,259200000,60000,60000,-62130240000000,-62130240000000"
         },
         {
           "name": "agrees with Node",
-          "replace": ["262920000,262920000,NaN,NaN", "NaN,259200000,60000,60000"],
-          "wrong": "conformance: a Date setter converts its arguments in another order than V8"
+          "replace": ["262920000,262920000,NaN,NaN", "NaN,259200000,60000,60000"]
         }
       ]
     },
@@ -17587,8 +17562,7 @@
         },
         {
           "name": "stops at a string that V8 reads with its legacy parser",
-          "source": "\n        const holder: { [key: string]: unknown } = {};\n        if (Date.parse(\"Thu, 01 Jan 0099 00:00:00 GMT\") !== 915148800000) throw new Error(\"year\");\n      ",
-          "wrong": "conformance: Date.parse reads a string that V8's legacy parser reads otherwise"
+          "source": "\n        const holder: { [key: string]: unknown } = {};\n        if (Date.parse(\"Thu, 01 Jan 0099 00:00:00 GMT\") !== 915148800000) throw new Error(\"year\");\n      "
         }
       ]
     },
@@ -19223,25 +19197,21 @@
       "source": "\n      \"use strict\";\n      var log = \"\";\n      var bump = 1;\n      var key = { toString: function () { log += \"k|\"; bump += 1; return \"a\"; } };\n      var frozen = Object.freeze({ a: 1 });\n      var thrown = \"none\";\n      try {\n        frozen[key] += bump;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var open = { a: 1 };\n      open[key] += bump;\n      var result = [thrown, frozen.a, open.a, log].join();\n      if (result !== \"TypeError,1,5,k|k|k|k|\") throw new Error(\"result \" + result);\n    ",
       "runs": [
         {
-          "name": "reads its value after the first conversion and throws where it can't write (1)",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "name": "reads its value after the first conversion and throws where it can't write (1)"
         },
         {
           "name": "reads its value after the first conversion and throws where it can't write (2)",
           "replace": ["5", "4"],
-          "thrown": "result TypeError,1,5,k|k|k|k|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result TypeError,1,5,k|k|k|k|"
         },
         {
           "name": "agrees with Node",
-          "source": "\n      var log = \"\";\n      var n = 0;\n      var key = { toString: function () { n += 1; log += \"key\" + n + \"|\"; return n === 1 ? \"a\" : \"b\"; } };\n      var obj = { a: 1, b: 10 };\n      var rhs = 5;\n      obj[key] += rhs;\n      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + \"|\"; return \"c\"; } };\n      obj.c = 2;\n      obj[other] *= 3;\n      var bad = { toString: function () { throw new RangeError(\"x\"); } };\n      var thrown = \"none\";\n      try {\n        obj[bad] -= 1;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join(\"|\"), thrown, log].join();\n      if (result !== \"1,6,6,a|b|c,RangeError,key1|key2|string|string|\") throw new Error(\"result \" + result);\n    ",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "source": "\n      var log = \"\";\n      var n = 0;\n      var key = { toString: function () { n += 1; log += \"key\" + n + \"|\"; return n === 1 ? \"a\" : \"b\"; } };\n      var obj = { a: 1, b: 10 };\n      var rhs = 5;\n      obj[key] += rhs;\n      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + \"|\"; return \"c\"; } };\n      obj.c = 2;\n      obj[other] *= 3;\n      var bad = { toString: function () { throw new RangeError(\"x\"); } };\n      var thrown = \"none\";\n      try {\n        obj[bad] -= 1;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join(\"|\"), thrown, log].join();\n      if (result !== \"1,6,6,a|b|c,RangeError,key1|key2|string|string|\") throw new Error(\"result \" + result);\n    "
         },
         {
           "name": "rejects another result",
           "source": "\n      var log = \"\";\n      var n = 0;\n      var key = { toString: function () { n += 1; log += \"key\" + n + \"|\"; return n === 1 ? \"a\" : \"b\"; } };\n      var obj = { a: 1, b: 10 };\n      var rhs = 5;\n      obj[key] += rhs;\n      var other = { [Symbol.toPrimitive]: function (hint) { log += hint + \"|\"; return \"c\"; } };\n      obj.c = 2;\n      obj[other] *= 3;\n      var bad = { toString: function () { throw new RangeError(\"x\"); } };\n      var thrown = \"none\";\n      try {\n        obj[bad] -= 1;\n      } catch (error) {\n        thrown = error.constructor.name;\n      }\n      var result = [obj.a, obj.b, obj.c, Object.keys(obj).join(\"|\"), thrown, log].join();\n      if (result !== \"1,15,6,a|b|c,RangeError,key1|key2|string|string|\") throw new Error(\"result \" + result);\n    ",
-          "thrown": "result 1,6,6,a|b|c,RangeError,key1|key2|string|string|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result 1,6,6,a|b|c,RangeError,key1|key2|string|string|"
         }
       ]
     },
@@ -19267,13 +19237,11 @@
       "runs": [
         {
           "name": "rejects another result",
-          "thrown": "result 6,RangeError,SyntaxError,key1|rhs|key2|key3|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result 6,RangeError,SyntaxError,key1|rhs|key2|key3|"
         },
         {
           "name": "agrees with Node",
-          "replace": ["105", "6"],
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "replace": ["105", "6"]
         }
       ]
     },
@@ -20408,14 +20376,12 @@
       "runs": [
         {
           "name": "agrees with Node",
-          "thrown": "log 45,35,34,14,13,24,23,21,33,35,34",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "thrown": "log 45,35,34,14,13,24,23,21,33,35,34"
         },
         {
           "name": "rejects wrong expectation 1",
           "replace": ["35,34", "34,35"],
-          "thrown": "log 45,35,34,14,13,24,23,21,33,35,34",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "thrown": "log 45,35,34,14,13,24,23,21,33,35,34"
         }
       ]
     },
@@ -21086,14 +21052,12 @@
       "source": "\n      const rab = new ArrayBuffer(3, { maxByteLength: 4 });\n      const fixed = new Uint8Array(rab, 0, 3);\n      fixed[1] = 7;\n      let log = \"\";\n      const keys = Array.prototype.keys.call(fixed);\n      const values = Array.prototype.values.call(fixed);\n      const entries = fixed.entries();\n      const first = values.next();\n      log += first.value;\n      rab.resize(2);\n      try {\n        Array.from(keys);\n      } catch (error) {\n        log += error instanceof TypeError ? \"k\" : \"other\";\n      }\n      try {\n        values.next();\n      } catch (error) {\n        log += error instanceof TypeError ? \"v\" : \"other\";\n      }\n      try {\n        entries.next();\n      } catch (error) {\n        log += error instanceof TypeError ? \"e\" : \"other\";\n      }\n      rab.resize(3);\n      const second = values.next();\n      const third = entries.next();\n      log += second.value;\n      log += JSON.stringify(third.value);\n      if (log !== \"0kve7[0,0]\") throw new Error(log);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects an iterator that a throw moves on",
           "replace": ["e7", "e0"],
-          "thrown": "0kve7[0,0]",
-          "wrong": "conformance: an array iterator over a typed array out of bounds"
+          "thrown": "0kve7[0,0]"
         }
       ]
     },
@@ -21628,14 +21592,12 @@
       "source": "\n      const seen = [\n        typeof Temporal,\n        Temporal.Duration.length,\n        Temporal.PlainDate.name,\n        Temporal.Duration.prototype[Symbol.toStringTag],\n        Object.getOwnPropertyNames(Temporal).join(\"|\"),\n        typeof Object.getOwnPropertyDescriptor(Temporal.Duration.prototype, \"years\")!.get,\n        Object.getOwnPropertyNames(Date.prototype).includes(\"toTemporalInstant\"),\n      ].join();\n      if (seen !== \"object,0,PlainDate,Temporal.Duration,Now|PlainDate|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects a Temporal without its PlainDate",
           "replace": ["Date|Plain", ""],
-          "thrown": "seen object,0,PlainDate,Temporal.Duration,Now|PlainDate|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true",
-          "wrong": "conformance: the built-ins' own keys come in another order than V8's"
+          "thrown": "seen object,0,PlainDate,Temporal.Duration,Now|PlainDate|PlainTime|PlainDateTime|ZonedDateTime|Duration|Instant|PlainYearMonth|PlainMonthDay,function,true"
         }
       ]
     },
@@ -22644,14 +22606,12 @@
       "source": "\n      var log = \"\";\n      function DummyError() {}\n      var first = \"ok\";\n      var nullBase = null;\n      var throwingProp = function () {\n        log += \"prop|\";\n        throw new DummyError();\n      };\n      var expr = function () {\n        log += \"expr|\";\n        return 1;\n      };\n      try {\n        nullBase[throwingProp()] /= expr();\n      } catch (error) {\n        first = error instanceof DummyError ? \"dummy\" : error.constructor.name;\n      }\n      var second = \"ok\";\n      var undefinedBase = undefined;\n      var keyObject = { toString: function () { log += \"key|\"; return \"p\"; } };\n      try {\n        undefinedBase[keyObject] /= expr();\n      } catch (error) {\n        second = error.constructor.name;\n      }\n      var base = { p: 6 };\n      var makeKey = function () {\n        log += \"call|\";\n        return keyObject;\n      };\n      base[makeKey()] -= 2;\n      var result = [first, second, base.p, log].join();\n      if (result !== \"dummy,TypeError,4,prop|call|key|key|\") throw new Error(\"result \" + result);\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "name": "agrees with Node"
         },
         {
           "name": "rejects another result",
           "replace": [",prop|", ",prop|key|"],
-          "thrown": "result dummy,TypeError,4,prop|call|key|key|",
-          "wrong": "conformance: a compound assignment to an object key converts the key in another order than V8"
+          "thrown": "result dummy,TypeError,4,prop|call|key|key|"
         }
       ]
     },
@@ -22852,8 +22812,7 @@
       "source": "\n      const sorted = [1, 4, 2, 5, 3].sort((a, b) => ((a * 7 + b) % 5) - 2);\n      if (sorted.join() !== \"1,4,2,3,5\") throw new Error(\"sorted \" + sorted.join());\n    ",
       "runs": [
         {
-          "name": "agrees with Node",
-          "wrong": "conformance: Array.prototype.sort calls a comparator in another order than V8's TimSort, which today's compiler modelled"
+          "name": "agrees with Node"
         }
       ]
     },

@@ -27,9 +27,7 @@ const DEFINITIONS = [
   `UpdateValueThen(isIncrement, isPostfix, r) ==
   IF IsAbrupt(r) THEN r ELSE
   IF Val(r).type # "reference" THEN ThrowError(r.s, "ReferenceError") ELSE
-  LET ref == ToKeyedReference(r.s, Val(r)) IN
-  IF IsAbrupt(ref) THEN ref ELSE
-  LET old == GetValue(ref.s, Val(ref)) IN
+  LET old == GetValue(r.s, Val(r)) IN
   IF IsAbrupt(old) THEN old ELSE
   LET num == IF IsNumber(Val(old)) /\\ Val(old) # HostTime THEN old ELSE ToNumeric(old.s, Val(old)) IN
   IF IsAbrupt(num) THEN num ELSE
@@ -37,7 +35,7 @@ const DEFINITIONS = [
       new == IF IsNumber(v)
              THEN Num(IF isIncrement THEN NumAdd(v.value, NumFromInt(1)) ELSE NumSub(v.value, NumFromInt(1)))
              ELSE BigInt(IF isIncrement THEN BigIntAdd(v.value, BigIntFromInt(1)) ELSE BigIntSub(v.value, BigIntFromInt(1)))
-      p == PutValue(num.s, Val(ref), new)
+      p == PutValue(num.s, Val(r), new)
   IN IF IsAbrupt(p) THEN p ELSE Ok(p.s, IF isPostfix THEN v ELSE new)`,
   // A call's function and this value, from the result r of evaluating its callee.
   `CalleeThen(r) ==
@@ -104,8 +102,19 @@ const DEFINITIONS = [
                               DataDesc(Intrinsic(s, "ArrayProto_values"), TRUE, FALSE, TRUE))
       withCallee == PutProp(withIterator, SV("callee"), DataDesc(f, TRUE, FALSE, TRUE))
   IN Alloc(s, withCallee)`,
-  // The realm's tables, folded in halves so that building the realm nests log n deep, not n.
-  `AddRealmProperties(s, ps) == AddRealmPropertiesIn(s, ps, 1, Len(ps))`,
+  // The realm's tables, folded in halves so that building the realm nests log n deep, not n, and
+  // with each built-in's keys then in the order of the host's.
+  `AddRealmProperties(s, ps) == OrderRealmKeys(AddRealmPropertiesIn(s, ps, 1, Len(ps)), 1)`,
+  // V8 creates the properties of its built-ins in an order of its own, which their own keys give.
+  // Each built-in that HostKeyOrders lists has the keys it lists first, in that order, and then
+  // its others.
+  `OrderRealmKeys(s, i) ==
+  IF i > Len(HostKeyOrders) THEN s
+  ELSE LET order == HostKeyOrders[i].keys
+           v == Intrinsic(s, HostKeyOrders[i].name)
+           keys == O(s, v).keys
+       IN OrderRealmKeys(SetO(s, v, [O(s, v) EXCEPT !.keys = SelectSeq(order, LAMBDA k : k \\in Range(keys)) \\o
+                                                        SelectSeq(keys, LAMBDA k : k \\notin Range(order))]), i + 1)`,
   `AddRealmPropertiesIn(s, ps, lo, hi) ==
   IF lo > hi THEN s
   ELSE IF lo = hi THEN AddRealmProperty(s, ps[lo])
@@ -891,6 +900,20 @@ export const RUNTIME_DEFINITIONS: GeneratedDefinition[] = [
   ...STACK_DEFINITIONS,
   // The code units of a TLA+ string's characters.
   `StringUnits(t) == [i \\in 1..Len(t) |-> CharacterUnits[SubSeq(t, i, i)]]`,
+  // The code units of runs of consecutive code points, the ith from starts[i] to the code unit
+  // ends[i], each code point below 65536 one code unit and each from there a surrogate pair.
+  `CodeUnitsOfRuns(starts, ends) ==
+  [k \\in 1..ends[Len(ends)] |->
+     LET i == RunOfUnit(ends, k, 1, Len(ends))
+         offset == k - 1 - (IF i = 1 THEN 0 ELSE ends[i - 1])
+     IN IF starts[i] < 65536 THEN starts[i] + offset
+        ELSE LET c == starts[i] + (offset \\div 2) - 65536 IN
+             IF (offset % 2) = 0 THEN 55296 + (c \\div 1024) ELSE 56320 + (c % 1024)]`,
+  // The run of ends that holds the code unit k: the first that ends at or after it.
+  `RunOfUnit(ends, k, lo, hi) ==
+  IF lo = hi THEN lo
+  ELSE LET mid == (lo + hi) \\div 2 IN
+       IF ends[mid] >= k THEN RunOfUnit(ends, k, lo, mid) ELSE RunOfUnit(ends, k, mid + 1, hi)`,
   // The code unit of each character that a TLA+ string can hold.
   `CharacterUnits ==
   LET characters == <<${[...CHARACTERS.values()].map((character) => `"${character}"`).join(", ")}>>
@@ -1037,7 +1060,11 @@ const getHostPatches = (realm: HostRealm) => [
     from: `[] m = "now" -> Ok(Tick(s), Num(SystemTime(s)))`,
     to: `[] m = "now" -> Ok(s, HostTime)`,
   },
-  { name: "SystemUTCEpochNanoseconds", from: "TIMul(TI(s.clock), TI(1000000))", to: CLOCK_STOP },
+  {
+    name: "SystemUTCEpochNanoseconds",
+    from: "TIMul(TI(s.clock), TI(1000000))",
+    to: CLOCK_STOP,
+  },
   // JSON.stringify writes a Number that it serializes by its value.
   {
     name: "SerializeJSONProperty",
@@ -1078,6 +1105,21 @@ const getHostPatches = (realm: HostRealm) => [
     to: `  IN IF s.timers # <<>> \\/ O(s, w.capability.promise).slots.fulfillReactions # <<>>
      THEN Assert(FALSE, "tla-ts can't tell whether the host times out this wait, which it may leave as it exits")
      ELSE ResolveWaiters(`,
+  },
+  // V8 keeps RegExp's legacy static properties as strings, empty ones before any match, for any
+  // receiver and after a subclass's match too, where the legacy RegExp features proposal, as
+  // ESCore has it, throws.
+  {
+    name: "RegExpBuiltin",
+    from: `IF ~SameValue(this, Intrinsic(s, "RegExp")) \\/ value = Empty THEN ThrowTypeError(s) ELSE Ok(s, Str(value))`,
+    to: `IF ~SameValue(this, Intrinsic(s, "RegExp")) \\/ value = Empty THEN Assert(FALSE, "tla-ts can't read a legacy static property of RegExp where V8 keeps a value that ESCore leaves out") ELSE Ok(s, Str(value))`,
+  },
+  {
+    name: "RegExpBuiltin",
+    from: `[] m = "legacySetInput" ->
+         IF ~SameValue(this, Intrinsic(s, "RegExp")) THEN ThrowTypeError(s) ELSE`,
+    to: `[] m = "legacySetInput" ->
+         IF ~SameValue(this, Intrinsic(s, "RegExp")) THEN Assert(FALSE, "tla-ts can't set RegExp.input on another receiver, as V8 does") ELSE`,
   },
   // ESCore runs toLocaleLowerCase and toLocaleUpperCase as toLowerCase and toUpperCase, which the
   // host does too in its default locale, unless that locale tailors case, and in no locale given.
@@ -1453,17 +1495,21 @@ export const getHostDefinitions = (library: Library, realm: HostRealm): Generate
       };
     })
     .concat([
-      ...getHostPatches(realm).map((patch) => {
-        const definition = library.definitions.get(patch.name);
-        if (definition === undefined || !definition.text.includes(patch.from)) {
-          throw new TlaError(
-            `ESCore's ${patch.name} no longer reads as the compiled spec patches it`,
-          );
-        }
+      // Each definition with its patches applied in turn.
+      ...[...Map.groupBy(getHostPatches(realm), (patch) => patch.name)].map((entry) => {
+        const definition = library.definitions.get(entry[0]);
+        const text = entry[1].reduce((current, patch) => {
+          if (!current.includes(patch.from)) {
+            throw new TlaError(
+              `ESCore's ${entry[0]} no longer reads as the compiled spec patches it`,
+            );
+          }
+          return current.replace(patch.from, patch.to);
+        }, definition?.text ?? "");
         return {
-          name: patch.name === "ParseDate" ? "ParseSpecDate" : patch.name,
-          arity: definition.arity,
-          text: definition.text.replace(patch.from, patch.to),
+          name: entry[0] === "ParseDate" ? "ParseSpecDate" : entry[0],
+          arity: definition?.arity ?? 0,
+          text,
         };
       }),
       {
@@ -1471,7 +1517,9 @@ export const getHostDefinitions = (library: Library, realm: HostRealm): Generate
         arity: 1,
         text: `ParseDate(u) ==
   LET t == ParseSpecDate(u) IN
-  IF t = NaN THEN Assert(FALSE, "tla-ts can't tell whether the host reads this date string") ELSE t`,
+  IF t # NaN THEN t ELSE
+  LET h == HostParseDate(u) IN
+  IF h.found THEN h.time ELSE Assert(FALSE, "tla-ts can't tell whether the host reads this date string")`,
       },
     ]);
 
@@ -1587,6 +1635,16 @@ export const getRealmDefinitions = (library: Library, realm: HostRealm): Generat
     .filter((property) => property.owner !== "ErrorPrototype" || property.key !== "stack")
     .map((property) => `<<"${property.owner}", Str(${getUnitsOf(property.key)})>>`);
   return [
+    {
+      name: "HostKeyOrders",
+      arity: 0,
+      text: `HostKeyOrders == <<${realm.keyOrders
+        .map(
+          (order) =>
+            `[name |-> "${order.owner}", keys |-> <<${order.keys.map((key) => (typeof key === "string" ? `Str(${getUnitsOf(key)})` : `Sym(${key})`)).join(", ")}>>]`,
+        )
+        .join(",\n  ")}>>`,
+    },
     {
       name: "HostRealmProperties",
       arity: 0,
