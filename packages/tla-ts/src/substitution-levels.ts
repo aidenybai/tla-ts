@@ -86,6 +86,7 @@ export const createInstanceChecker = (
   getModule: (name: string) => ModuleContext,
   copies: Omit<InstanceLevels, "getInstanced" | "getOriginal" | "getModuleLevels">,
   recursiveSections: WeakMap<Definition, SectionMember[]>,
+  goalSelections: WeakMap<Expression, Expression>,
 ) => {
   const analyzers = new Map<string, ModuleAnalyzer>();
   const getModuleAnalyzer = (name: string) => {
@@ -108,6 +109,7 @@ export const createInstanceChecker = (
         getQualifiedName: module.getQualifiedName,
         instances,
         recursiveSections,
+        goalSelections,
       }),
     };
     analyzers.set(name, analyzer);

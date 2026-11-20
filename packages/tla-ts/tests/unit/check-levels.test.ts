@@ -2358,6 +2358,33 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    "ASSUME LET K == INSTANCE P WITH e <- c IN K!PT!1 PROVE TRUE",
+    "ASSUME TRUE PROVE LET K == INSTANCE P WITH e <- c IN K!PT!1",
+    "ASSUME LET K == INSTANCE P WITH e <- c IN K!PT!2 PROVE TRUE",
+  ])(
+    "levels a theorem's clause selection inside an instanced module, as SANY does: %s",
+    async (statement) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT c\nRL == ll :: (c = 1)\nTHEOREM T == ${statement}\n====\nINSTANCE L WITH c <- x\nASSUME T\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+          loadModule: (name) =>
+            name === "P"
+              ? "---- MODULE P ----\nCONSTANT c, e\nTHEOREM PT == ASSUME e = e PROVE c = e\nB == e = e\n===="
+              : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: "line 9, col 1 to line 9, col 8 of module M",
+            message: getAssumptionError(1),
+          },
+        ]),
+      );
+    },
+  );
+
   it("checks a label selected from a step's statement, as SANY does", async () => {
     const exceeds = "The level of argument 1 exceeds the maximum level allowed by the operator.";
     await expect(

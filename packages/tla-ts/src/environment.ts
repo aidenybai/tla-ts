@@ -482,6 +482,7 @@ export const createEnvironment = (
       getSubstitutes: getInstanceSubstitutes,
     },
     recursiveSections,
+    goalSelections,
   );
   const instanceActions = new Map<string, InstanceAction>();
   const instanceNames = new Map<string, string>();
