@@ -17412,13 +17412,12 @@
       "runs": [
         {
           "name": "agrees with Node on entry.cjs",
-          "thrown": "seen ,,,true,string,false,true",
           "stop": "tla-ts can't read the message that Node writes for an error it throws"
         },
         {
           "name": "rejects another outcome of entry.cjs",
           "replace": ["ly,", "ly,late"],
-          "thrown": "seen ,,,true,string,false,true",
+          "thrown": "seen early,,1,true,string,true,true",
           "stop": "tla-ts can't read the message that Node writes for an error it throws"
         }
       ]
@@ -18981,31 +18980,30 @@
       "runs": [
         {
           "name": "stops at a key of a primitive that an element access names and its type lacks",
-          "thrown": "Cannot create property '62' on symbol 'Symbol(66)'",
           "stop": "tla-ts can't read the message that Node writes for an error it throws"
         },
         {
           "name": "rejects \"function\" read otherwise",
           "source": "\n      var box = { seen: \"\" };\n      var loose = 5;\n      undeclared = 7;\n      check(shared === 1, \"shared\");\n      check(this.loose === 5, \"this\");\n      check(globalThis.undeclared === 7, \"implicit\");\n      box.seen = typeof check;\n      if (box.seen !== \"object\") throw new Error(\"seen \" + box.seen);\n    ",
-          "thrown": "undeclared is not defined",
+          "thrown": "check is not defined",
           "stop": "tla-ts can't read the message that Node writes for an error it throws"
         },
         {
           "name": "rejects shared === 1 read otherwise",
           "source": "\n      var box = { seen: \"\" };\n      var loose = 5;\n      undeclared = 7;\n      check(shared === 2, \"shared\");\n      check(this.loose === 5, \"this\");\n      check(globalThis.undeclared === 7, \"implicit\");\n      box.seen = typeof check;\n      if (box.seen !== \"function\") throw new Error(\"seen \" + box.seen);\n    ",
-          "thrown": "undeclared is not defined",
+          "thrown": "check is not defined",
           "stop": "tla-ts can't read the message that Node writes for an error it throws"
         },
         {
           "name": "agrees with Node",
           "source": "\n      var box = { seen: \"\" };\n      var loose = 5;\n      undeclared = 7;\n      check(shared === 1, \"shared\");\n      check(this.loose === 5, \"this\");\n      check(globalThis.undeclared === 7, \"implicit\");\n      box.seen = typeof check;\n      if (box.seen !== \"function\") throw new Error(\"seen \" + box.seen);\n    ",
-          "thrown": "undeclared is not defined",
+          "thrown": "check is not defined",
           "stop": "tla-ts can't read the message that Node writes for an error it throws"
         },
         {
           "name": "rejects this.loose === 5 read otherwise",
           "source": "\n      var box = { seen: \"\" };\n      var loose = 5;\n      undeclared = 7;\n      check(shared === 1, \"shared\");\n      check(this.loose === 6, \"this\");\n      check(globalThis.undeclared === 7, \"implicit\");\n      box.seen = typeof check;\n      if (box.seen !== \"function\") throw new Error(\"seen \" + box.seen);\n    ",
-          "thrown": "undeclared is not defined",
+          "thrown": "check is not defined",
           "stop": "tla-ts can't read the message that Node writes for an error it throws"
         }
       ]
@@ -22875,16 +22873,11 @@
       "isModule": true,
       "source": "declare function setTimeout(callback: () => void): void;\nimport * as ns from \"./selfish\";\nexport let b = 7;\nconst seen: unknown[] = [];\nseen.push(ns.a, Object.keys(ns).join());\n// A var's binding holds undefined until its declaration runs.\n// oxlint-disable-next-line no-var\nexport var a = 1;\nseen.push(ns.a);\na = 2;\nconst read = () => ns.a;\nseen.push(read());\na += 3;\nseen.push(read(), \"a\" in ns, ns.b);\nb = 8;\nconst descriptor = Object.getOwnPropertyDescriptor(ns, \"a\");\nseen.push(ns.b, Object.keys(ns).join(), descriptor?.value);\nPromise.resolve().then(() => {\n  seen.push(ns.a);\n});\na = 9;\nsetTimeout(() => {\n  if (seen.join() !== \",a,b,1,2,5,true,7,8,a,b,5,9\") throw new Error(seen.join());\n});\n",
       "runs": [
-        {
-          "name": "follows the script's own namespace object as its exports change (1)",
-          "thrown": "9,a,b,9,9,9,true,8,8,a,b,9,9",
-          "wrong": "modules: a module's own namespace object as its exports change"
-        },
+        { "name": "follows the script's own namespace object as its exports change (1)" },
         {
           "name": "follows the script's own namespace object as its exports change (2)",
           "replace": [",8", ",7"],
-          "thrown": "9,a,b,9,9,9,true,8,8,a,b,9,9",
-          "wrong": "modules: a module's own namespace object as its exports change"
+          "thrown": ",a,b,1,2,5,true,7,8,a,b,5,9"
         }
       ]
     },
@@ -23014,8 +23007,8 @@
           "name": "counts successors like a spec that writes the negated guard as conjuncts (2)",
           "source": "\n          let isLeft = false;\n          let isRight = false;\n          const isClear = () => !isLeft || !isRight;\n          export const setLeft = () => {\n            if (isClear()) {} else return;\n            isLeft = true;\n          };\n        ",
           "status": "success",
-          "generated": 4,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "generated": 3,
+          "correction": "Today's compiler counted 4 generated states; a search of the module in Node generates 3, as ESCore does: the call from the state where both flags are set writes nothing, so it is no step."
         },
         {
           "name": "stops the check when an action throws",
@@ -23049,8 +23042,8 @@
           "name": "changes a value through a Map lookup",
           "source": "\n      type Key = \"a\" | \"b\";\n      let held = new Map<Key, Set<0 | 1>>([[\"a\", new Set()], [\"b\", new Set()]]);\n      export const take = (key: Key, item: 0 | 1) => {\n        held.get(key)!.add(item);\n      };\n    ",
           "status": "success",
-          "distinct": 16,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "distinct": 25,
+          "correction": "Today's compiler found 16 distinct states, 4 Sets per key; a Set keeps its insertion order, so {0, 1} and {1, 0} differ, and each key holds one of 5 Sets, as ESCore finds."
         }
       ]
     },
@@ -23074,8 +23067,8 @@
           "name": "filters and quantifies over sets",
           "source": "\n      type Digit = 1 | 2 | 3;\n      let seen = new Set<Digit>();\n      export const see = (digit: Digit) => {\n        seen.add(digit);\n      };\n      export const isConsistent = () =>\n        [...seen].filter((digit) => digit > 1).length <= 2 &&\n        seen.values().every((digit) => digit >= 1) &&\n        new Set([...seen].map((digit) => digit * 2)).size === seen.size;\n    ",
           "status": "success",
-          "distinct": 8,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "distinct": 16,
+          "correction": "Today's compiler found 8 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 16, as ESCore does."
         },
         {
           "name": "compiles records with numeric keys to functions",
@@ -23087,8 +23080,8 @@
           "name": "adds and deletes Map entries",
           "source": "\n      type Key = \"a\" | \"b\";\n      let owners = new Map<Key, 0 | 1>();\n      export const own = (key: Key, value: 0 | 1) => {\n        owners.set(key, value);\n      };\n      export const remove = (key: Key) => {\n        if (!owners.has(key)) return;\n        owners.delete(key);\n      };\n      export const isSmall = () => owners.size <= 2;\n    ",
           "status": "success",
-          "distinct": 9,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "distinct": 13,
+          "correction": "Today's compiler found 9 distinct states, as it kept a Map without its insertion order; a search of the module in Node finds 13, as ESCore does."
         },
         {
           "name": "matches JavaScript's remainder, division, and strings",
@@ -23110,8 +23103,8 @@
           "name": "chooses a string from three",
           "source": "\n      let names = new Set<string>();\n      export const add = (name: string) => {\n        names.add(name);\n      };\n      /** @noDeadlock */\n      export const isSmall = () => names.size < 3;\n    ",
           "status": "invariant-violation",
-          "distinct": 8,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "distinct": 11,
+          "correction": "Today's compiler found 8 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 11, as ESCore does."
         },
         {
           "name": "starts an array at every length up to 3",
@@ -23277,8 +23270,8 @@
           "name": "reduces states with a symmetric type (1)",
           "source": "\n          \n          type Proc = \"p1\" | \"p2\";\n          let busy = new Set<Proc>();\n          export const start = (proc: Proc) => {\n            busy.add(proc);\n          };\n        ",
           "status": "success",
-          "distinct": 4,
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "distinct": 5,
+          "correction": "Without @symmetric, today's compiler found 4 distinct states, as it kept a Set without its insertion order; a search of the module in Node finds 5, as ESCore does."
         },
         {
           "name": "reduces states with a symmetric type (2)",
