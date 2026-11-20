@@ -4873,6 +4873,40 @@ describe("initial predicate and next-state relation match TLC", () => {
     ).rejects.toThrow(new TlaConfigError(message));
   });
 
+  const getLetDefinitionSource = (definitions: string) =>
+    `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\n${definitions}\n====`;
+  it.each(["Q == LET A == x' = x IN x \\in {0, 1}\nP == Q", "F(p) == x = 0\nH == F(x')\nP == H"])(
+    "warns that the property in %j is state-level, as SANY levels the definition it names",
+    async (definitions) => {
+      const warned: string[] = [];
+      const result = await check({
+        source: getLetDefinitionSource(definitions),
+        config: "INIT Init\nNEXT Next\nPROPERTY P",
+        onProgress: (progress) => {
+          if (progress.kind === "state-level-property") warned.push(progress.name);
+        },
+      });
+      expect([result.status, warned]).toEqual(["success", ["P"]]);
+    },
+  );
+
+  it.each([
+    ["Q == LET A == x' = x IN x \\in {0, 1}\nSpec == Init /\\ [][Next]_x /\\ []Q", 7, 33],
+    ["F(p) == x = 0\nH == F(x')\nSpec == Init /\\ [][Next]_x /\\ []H", 8, 33],
+    ["MySpec(I) == Init /\\ [][Next]_x /\\ []I\nSpec == MySpec(<>(x = 1))", 6, 38],
+  ])(
+    "rejects the [] in %j, as SANY levels its argument below an action",
+    async (definitions, line, column) => {
+      await expect(
+        check({ source: getLetDefinitionSource(definitions), config: "SPECIFICATION Spec" }),
+      ).rejects.toThrow(
+        new TlaEvaluationError(
+          `TLC cannot handle the temporal formula line ${line}, col ${column} to line ${line}, col ${column} of module M`,
+        ),
+      );
+    },
+  );
+
   it("takes an atom of a temporal property to the level TLC bounds its LET by", async () => {
     await expect(
       check({

@@ -66,17 +66,13 @@ import {
 } from "./evaluate";
 import { EXIT_STATUS, setExitCode } from "./exit-codes";
 import type { JavaOverride } from "./java-overrides";
+import { ACTION_LEVEL, CONSTANT_LEVEL, TEMPORAL_LEVEL, VARIABLE_LEVEL } from "./levels";
 import {
-  ACTION_LEVEL,
-  CONSTANT_LEVEL,
-  createLevelAnalyzer,
-  TEMPORAL_LEVEL,
-  VARIABLE_LEVEL,
-} from "./levels";
-import {
+  createSanyAnalyzer,
   expandTemporal,
   getLevel,
   getLevelBound,
+  getSanyLevel,
   type ScopedExpression,
   type TemporalProperty,
 } from "./liveness";
@@ -328,13 +324,7 @@ export const reportStartup = (
 };
 
 const getInvariants = (names: string[], environment: Environment) => {
-  const analyzer = createLevelAnalyzer({
-    constants: new Map([...environment.constants.keys()].map((key) => [key, 0])),
-    variables: new Set(environment.variables),
-    getDefinition: (name) => environment.definitions.get(name),
-    instances: environment.instances,
-    recursiveSections: environment.recursiveSections,
-  });
+  const analyzer = createSanyAnalyzer(environment);
   return names.flatMap((name) => {
     const definition = getConfigPredicate("invariant", name, environment);
     if (!definition) return [];
@@ -505,7 +495,7 @@ const getSpecification = (
       conjunct.kind === "Always" &&
       conjunct.expression.kind !== "Let" &&
       conjunct.expression.kind !== "Label" &&
-      getLevel(conjunct.expression, item.scope, environment) < ACTION_LEVEL
+      getSanyLevel(conjunct.expression, item.scope, environment) < ACTION_LEVEL
     ) {
       throw setExitCode(
         new TlaEvaluationError(
@@ -584,7 +574,7 @@ const getProperties = (
   config.properties.forEach((name) => {
     const definition = getConfigPredicate("property", name, environment);
     if (!definition) return;
-    if (getLevel(definition.body, undefined, environment) === VARIABLE_LEVEL) {
+    if (getSanyLevel(definition.body, undefined, environment) === VARIABLE_LEVEL) {
       onProgress?.({ kind: "state-level-property", name });
     }
     const isProperty = environment.runtime.version !== "1.7.4";
