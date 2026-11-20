@@ -124,6 +124,8 @@ interface SelectionState {
 
 type Reference = Expression & { kind: "Identifier" | "Apply" | "Subexpression" };
 
+type SelectionUse = "Expression" | "Fact" | "Definition";
+
 export const LOCAL_RESOLUTION = { kind: "Local" } as const;
 
 const SELF_RESOLUTION = { kind: "Local", isSelf: true } as const;
@@ -332,7 +334,8 @@ const getVisibleDefinition = (name: string, unit: Unit) => {
     (definition.isRecursive
       ? binding?.isPending === true || isSameRange(binding?.range, definition.location.range)
       : definition !== unit.self &&
-        isBefore(definition.location, unit.location) &&
+        (isBefore(definition.location, unit.location) ||
+          unit.bindings.get(name)?.position === definition.location) &&
         (binding === undefined || !isBefore(binding.position, definition.location)));
   return isVisible ? definition : undefined;
 };
@@ -578,19 +581,24 @@ const findLabel = (expression: Expression, name: string): LabelExpression | unde
     );
 };
 
+const findAssumeProveLabel = (assumeProve: AssumeProve, name: string) =>
+  [...assumeProve.assumptions, assumeProve.conclusion].reduce<
+    LabelExpression | AssumeProve | undefined
+  >(
+    (found, clause, index) =>
+      found ?? findClauseLabel(clause, name, isInScopeOfDeclaration(assumeProve, index)),
+    undefined,
+  );
+
 const findClauseLabel = (
   clause: Expression | NewSymbol | AssumeProve,
   name: string,
   isForbidden: boolean,
-): LabelExpression | undefined => {
-  if (clause.kind === "AssumeProve") {
-    return [...clause.assumptions, clause.conclusion].reduce<LabelExpression | undefined>(
-      (found, inner, index) =>
-        found ?? findClauseLabel(inner, name, isForbidden || isInScopeOfDeclaration(clause, index)),
-      undefined,
-    );
-  }
+): LabelExpression | AssumeProve | undefined => {
   if (isForbidden) return undefined;
+  if (clause.kind === "AssumeProve" && clause.label)
+    return clause.label.name === name ? clause : undefined;
+  if (clause.kind === "AssumeProve") return findAssumeProveLabel(clause, name);
   if (clause.kind === "NewSymbol") return clause.set && findLabel(clause.set, name);
   return findLabel(clause, name);
 };
@@ -609,7 +617,7 @@ const checkSelection = (
   nameLength: number,
   goal: Goal,
   unit: Unit,
-  isFact: boolean,
+  use: SelectionUse,
 ) => {
   const report = (index: number | undefined, message: string) => {
     const range =
@@ -652,7 +660,12 @@ const checkSelection = (
               .find((item) => item.label !== undefined)
           : {
               position: 0,
-              label: node.kind === "Label" ? findLabel(node.body, selector.name) : undefined,
+              label:
+                node.kind === "Label"
+                  ? findLabel(node.body, selector.name)
+                  : node.kind === "AssumeProve"
+                    ? findAssumeProveLabel(node, selector.name)
+                    : undefined,
             };
       if (!found?.label) return report(index, `Cannot find label \`${selector.name}'.`);
       if (
@@ -666,7 +679,7 @@ const checkSelection = (
           `Accessing subexpression labeled \`${selector.name}' of ASSUME/PROVE clause ${SCOPE_MESSAGE}`,
         );
       }
-      if (selector.args.length !== found.label.params.length) {
+      if (selector.args.length !== (found.label.kind === "Label" ? found.label.params.length : 0)) {
         return report(index, `Label \`${selector.name}' used with wrong number of arguments.`);
       }
       state.node = found.label;
@@ -738,16 +751,9 @@ const checkSelection = (
         state.isGoal = false;
         continue;
       }
-      const sets = binder?.sets;
       const operands =
         unit.goalOperands.get(expression) ??
-        (expression.kind === "Identifier"
-          ? []
-          : sets
-            ? sets.length > 0
-              ? sets
-              : undefined
-            : getOperands(expression));
+        (expression.kind === "Identifier" ? [] : (binder?.sets ?? getOperands(expression)));
       if (!operands) return node;
       const isExcept = expression.kind === "Except";
       const position = getPosition(isExcept ? expression.updates.length + 1 : operands.length);
@@ -781,10 +787,17 @@ const checkSelection = (
     }
   }
   if (state.node.kind === "AssumeProve") {
-    return isFact ? state.node : report(undefined, "Selected ASSUME/PROVE instead of expression.");
+    return use === "Fact" || (use === "Definition" && state.node.label !== undefined)
+      ? state.node
+      : report(
+          undefined,
+          state.node.label
+            ? "ASSUME/PROVE used where an expression is required."
+            : "Selected ASSUME/PROVE instead of expression.",
+        );
   }
   if (state.node.kind === "NewSymbol") {
-    return isFact
+    return use === "Fact"
       ? state.node
       : report(undefined, "Selected a NEW declaration as an expression or operator.");
   }
@@ -792,7 +805,7 @@ const checkSelection = (
   return state.node;
 };
 
-const isLabelReported = (label: LabelExpression, unit: Unit) => {
+const isLabelReported = (location: SourceLocation, unit: Unit) => {
   const message = unit.isGenerated
     ? undefined
     : !unit.hasLabelScope
@@ -802,12 +815,16 @@ const isLabelReported = (label: LabelExpression, unit: Unit) => {
         : unit.isInExcept
           ? "Labels inside EXCEPT clauses are not yet implemented."
           : undefined;
-  if (message === undefined || !label.location.range) return false;
-  unit.errors.push({ location: formatRange(label.location.range), message });
+  if (message === undefined || !location.range) return false;
+  unit.errors.push({ location: formatRange(location.range), message });
   return true;
 };
 
-const checkLabel = (label: LabelExpression, scope: LocalName | undefined, unit: Unit) => {
+const checkLabel = (
+  label: Pick<LabelExpression, "name" | "params" | "paramRanges" | "location">,
+  scope: LocalName | undefined,
+  unit: Unit,
+) => {
   const range = label.location.range;
   if (!range || unit.isGenerated) return;
   const location = formatRange(range);
@@ -858,7 +875,7 @@ const checkReference = (
   expression: Expression,
   scope: LocalName | undefined,
   unit: Unit,
-  isFact: boolean,
+  use: SelectionUse,
 ) => {
   if (!isReference(expression)) return false;
   const selectors = getSelectors(expression);
@@ -870,7 +887,7 @@ const checkReference = (
     const goal =
       (nameLength === 1 ? lookupLocal(scope, name)?.goal : undefined) ?? getGoal(name, unit);
     if (goal) {
-      const node = checkSelection(expression, selectors, nameLength, goal, unit, isFact);
+      const node = checkSelection(expression, selectors, nameLength, goal, unit, use);
       if (!node) emptyExpressions.add(expression);
       if (node && node.kind !== "NewSymbol" && node.kind !== "AssumeProve") {
         const args = selectors.flatMap((selector) => ("args" in selector ? selector.args : []));
@@ -920,7 +937,7 @@ const getSymbolArity = (
     });
     return undefined;
   }
-  if (checkReference(expression, scope, unit, false) || (isStepName(name) && local)) {
+  if (checkReference(expression, scope, unit, "Expression") || (isStepName(name) && local)) {
     return expression.kind === "Apply" ? expression.args.length : 0;
   }
   if (isInstanceName(name, scope, unit)) {
@@ -1806,7 +1823,7 @@ const resolveExpression = (
       resolveAll([expression.subscript, expression.action]);
       return;
     case "Label":
-      if (isLabelReported(expression, unit)) return;
+      if (isLabelReported(expression.location, unit)) return;
       resolveExpression(expression.body, scope, { ...unit, labelParams: [], labels: new Set() });
       checkLabel(expression, scope, unit);
       return;
@@ -1940,7 +1957,7 @@ const isSubexpressionReported = (
   expression.selectors
     .flatMap((selector) => ("args" in selector ? selector.args : []))
     .forEach((arg) => resolveArgument(arg, scope, unit));
-  const selected = checkReference(expression, scope, unit, false);
+  const selected = checkReference(expression, scope, unit, "Expression");
   return selected ? selected.node === undefined : false;
 };
 
@@ -1974,11 +1991,11 @@ const checkFact = (fact: Fact, reference: Fact, scope: LocalName | undefined, un
     return hidden;
   }
   if (isInstanceArityReported(fact, scope, unit)) return hidden;
-  const selected = checkReference(fact, scope, unit, true);
+  const selected = checkReference(fact, scope, unit, "Fact");
   if (selected) {
-    const kind = selected.node?.kind;
-    if (kind === undefined) return BUILTIN_LOCATION;
-    return kind === "AssumeProve" || kind === "NewSymbol"
+    const node = selected.node;
+    if (node === undefined) return BUILTIN_LOCATION;
+    return (node.kind === "AssumeProve" && node.label === undefined) || node.kind === "NewSymbol"
       ? undefined
       : fact.location.range && formatRange(fact.location.range);
   }
@@ -2092,7 +2109,7 @@ const isDefinitionSelected = (
       return false;
     }
     if (argumentError) return report(argumentError.range, argumentError.message);
-    if (checkReference(reference, scope, unit, false)) return false;
+    if (checkReference(reference, scope, unit, "Definition")) return false;
     const first = ranges?.[0];
     const last = ranges?.[selectors.findLastIndex((selector) => selector.kind === "Name")];
     const names = selectors.flatMap((selector) =>
@@ -2204,12 +2221,34 @@ const resolveNewSymbol = (symbol: NewSymbol, scope: LocalName | undefined, unit:
   );
 };
 
+const IN_ASSUME = "$$InAssume";
+
 const resolveAssumeProve = (
   assumeProve: AssumeProve,
   scope: LocalName | undefined,
   unit: Unit,
   isNested = false,
 ): LocalName | undefined => {
+  const isBoxed = assumeProve.isBoxed === true;
+  const range = assumeProve.location.range;
+  const report = (message: string) => {
+    if (!range) return;
+    const end = { ...range.start, column: range.start.column + (isBoxed ? 7 : 5) };
+    unit.errors.push({ location: formatRange({ ...range, end }), message });
+  };
+  if (isBoxed !== (assumeProve.isProveBoxed === true)) {
+    report(
+      isBoxed
+        ? "[]ASSUME matched by PROVE instead of []PROVE"
+        : "ASSUME matched by []PROVE instead of PROVE",
+    );
+  }
+  if (isBoxed && lookupLocal(scope, IN_ASSUME)) {
+    report("[]ASSUME used within the scope of an ordinary ASSUME's assumptions");
+  }
+  const assumeScope: LocalName | undefined = isBoxed
+    ? scope
+    : { name: IN_ASSUME, kind: "Constant", arity: 0, parent: scope };
   const assumed = assumeProve.assumptions.reduce(
     (current, assumption) => {
       if (assumption.kind === "NewSymbol") {
@@ -2218,12 +2257,22 @@ const resolveAssumeProve = (
           unit: isNested ? { ...current.unit, isLabelForbidden: true } : current.unit,
         };
       }
-      if (assumption.kind === "AssumeProve") {
+      if (assumption.kind !== "AssumeProve") {
+        resolveExpression(assumption, current.scope, current.unit);
+      } else if (assumption.label === undefined) {
         resolveAssumeProve(assumption, current.scope, current.unit, true);
-      } else resolveExpression(assumption, current.scope, current.unit);
+      } else if (!isLabelReported(assumption.label.location, current.unit)) {
+        resolveAssumeProve(
+          assumption,
+          current.scope,
+          { ...current.unit, labelParams: [], labels: new Set() },
+          true,
+        );
+        checkLabel({ ...assumption.label, params: [] }, current.scope, current.unit);
+      }
       return current;
     },
-    { scope, unit },
+    { scope: assumeScope, unit },
   );
   resolveExpression(assumeProve.conclusion, assumed.scope, assumed.unit);
   return assumed.scope;

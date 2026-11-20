@@ -728,6 +728,23 @@ const parse = (
     return token.text === text && token.kind !== "String" && token.kind !== "End";
   };
 
+  // SANY's lexer reads a [] right before ASSUME or PROVE as one token, []ASSUME or []PROVE; tlapm has neither.
+  const isBoxAt = (keyword: "ASSUME" | "PROVE", offset = 0) => {
+    const box = peek(offset);
+    const next = peek(offset + 1);
+    return (
+      !isTlapm &&
+      box.kind === "Operator" &&
+      box.text === "[]" &&
+      next.kind === "Keyword" &&
+      next.text === keyword &&
+      next.line === box.line &&
+      next.column === box.endColumn + 1
+    );
+  };
+
+  const isAssumeAt = (offset = 0) => isAt("ASSUME", offset) || isBoxAt("ASSUME", offset);
+
   const advance = () => {
     const token = peek();
     if (token.kind === "End") throw createUnexpected("Unexpected end of expression");
@@ -1186,6 +1203,7 @@ const parse = (
         }
         cursor = checkpoint;
       }
+      // Deviation from SANY: TLAplusParser#matchFcnConst reads the a, e in {a, e \in S} or the <<1, 2>> in {<<1, 2>> \in S} as a bound, a bug its comment names; tla-ts reads a set enumeration, as the grammar does.
       const first =
         peek().kind === "Identifier" && isAt("\\in", 1) ? parseSetMembership() : parseExpression();
       if (accept(":")) {
@@ -1258,7 +1276,7 @@ const parse = (
       const condition = parseExpression();
       expect("->");
       arms.push({ condition, body: parseExpression() });
-    } while (accept("[]"));
+    } while (!isBoxAt("PROVE") && accept("[]"));
     return { kind: "Case", arms, other: undefined, location: getLocation(start) };
   };
 
@@ -2006,6 +2024,7 @@ const parse = (
     }
     const name = expectIdentifier();
     if (accept("[")) {
+      // Deviation from SANY: TLAplusParser#belchDEF takes the LET's == in f[v \in LET N == 1 IN {N}] == v for the definition's and rejects it; tla-ts reads it as the grammar does.
       const bounds = withBracketLayout(() => parseBounds());
       expect("]");
       expect("==");
@@ -2350,11 +2369,16 @@ const parse = (
   };
 
   const parseHypothesis = () => {
-    if (peek().kind === "Identifier" && isAt("::", 1) && isAt("ASSUME", 2)) {
+    if (peek().kind === "Identifier" && isAt("::", 1) && isAssumeAt(2)) {
+      const start = cursor;
+      const name = advance();
       advance();
-      advance();
+      return {
+        ...parseAssumeProve(),
+        label: withRange({ name: name.text, location: getLocation(name) }, start),
+      };
     }
-    if (isAt("ASSUME")) return parseAssumeProve();
+    if (isAssumeAt()) return parseAssumeProve();
     if (peek().kind === "Keyword" && NEW_SYMBOL_STARTS.has(peek().text))
       return isTlapm ? commit(parseNewSymbol) : parseNewSymbol();
     if (!isTlapm) return parseExpression();
@@ -2383,12 +2407,24 @@ const parse = (
 
   const parseAssumeProve = (): AssumeProve => {
     const start = cursor;
-    const location = getLocation(expect("ASSUME"));
+    const location = getLocation(peek());
+    const isBoxed = isBoxAt("ASSUME");
+    if (isBoxed) advance();
+    expect("ASSUME");
     const parseSequent = (): AssumeProve => {
       const assumptions = isTlapm ? parseTlapmHypotheses() : parseSeparated(parseHypothesis);
+      const isProveBoxed = isBoxAt("PROVE");
+      if (isProveBoxed) advance();
       expect("PROVE");
       return withRange(
-        { kind: "AssumeProve", assumptions, conclusion: parseExpression(), location },
+        {
+          kind: "AssumeProve",
+          ...(isBoxed ? { isBoxed } : {}),
+          ...(isProveBoxed ? { isProveBoxed } : {}),
+          assumptions,
+          conclusion: parseExpression(),
+          location,
+        },
         start,
       );
     };
@@ -2445,7 +2481,7 @@ const parse = (
     return {
       kind: "Assert",
       isSuffices: accept("SUFFICES"),
-      statement: isAt("ASSUME") ? parseAssumeProve() : parseExpression(),
+      statement: isAssumeAt() ? parseAssumeProve() : parseExpression(),
     };
   };
 
@@ -2705,7 +2741,7 @@ const parse = (
     const start = cursor;
     const keyword = advance();
     const name = parseFactName();
-    const statement = isAt("ASSUME") ? parseAssumeProve() : parseTheoremExpression();
+    const statement = isAssumeAt() ? parseAssumeProve() : parseTheoremExpression();
     const proof = isTlapm ? parseTlapmProof() : isProofStart(peek()) ? parseProof() : undefined;
     const theorem = withRange({ name, statement, proof, location: getLocation(keyword) }, start);
     module.theorems.push(theorem);

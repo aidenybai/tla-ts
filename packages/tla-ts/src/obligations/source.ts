@@ -179,7 +179,7 @@ export const createModuleConverter = (
     location: Locus,
     argumentCounts?: number[],
   ): Expr => {
-    if (name.startsWith("<")) {
+    if (name.startsWith("<") && !name.includes("!")) {
       const operator = at({ kind: "Opaque", name }, { location });
       return at({ kind: "Bang", expression: operator, selectors: [] }, { location });
     }
@@ -773,9 +773,12 @@ export const createModuleConverter = (
         if (assumption.kind === "NewSymbol") return convertNewSymbol(assumption);
         const expression =
           assumption.kind === "AssumeProve"
-            ? at(
-                { kind: "Sequent", sequent: convertSequent(assumption) },
-                { location: getLocus(assumption.location) },
+            ? getLabeled(
+                at(
+                  { kind: "Sequent", sequent: convertSequent(assumption) },
+                  { location: getLocus(assumption.location) },
+                ),
+                assumption.label,
               )
             : convertFactLabel(assumption);
         return getFact(expression, "Visible", "Now", expression.location);
@@ -784,19 +787,18 @@ export const createModuleConverter = (
     };
   };
 
-  const convertFactLabel = (expression: Expression): Expr => {
-    if (expression.kind !== "Label" || expression.params.length > 0)
-      return convertExpression(expression, false);
-    const location = getLocus(expression.location);
-    return at(
-      {
-        kind: "Parens",
-        expression: convertExpression(expression.body, false),
-        form: { kind: "Xlabel", label: expression.name, indices: [] },
-      },
-      { location },
-    );
-  };
+  const getLabeled = (expression: Expr, label: AssumeProve["label"]): Expr =>
+    label === undefined
+      ? expression
+      : at(
+          { kind: "Parens", expression, form: { kind: "Xlabel", label: label.name, indices: [] } },
+          { location: getLocus(label.location) },
+        );
+
+  const convertFactLabel = (expression: Expression): Expr =>
+    expression.kind !== "Label" || expression.params.length > 0
+      ? convertExpression(expression, false)
+      : getLabeled(convertExpression(expression.body, false), expression);
 
   const convertFact = (fact: Fact): Expr => {
     if (fact.kind === "ModuleFact") {

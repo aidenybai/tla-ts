@@ -941,6 +941,14 @@ describe("substitution levels match SANY", () => {
         "Level error in instantiating module 'Nested':\nThe level of the argument 1 of the operator Q!F \nmust be at least 2.",
       ],
     ],
+    ...["'", "UNCHANGED"].map((operator): [string, string[]] => [
+      `I == INSTANCE Nested WITH c <- 1, Op <- ${operator}, v <- x`,
+      [
+        getLevelError("Nested", "Op", 0),
+        getLeibnizError("Nested"),
+        `Level error in instantiating module 'Nested':\nThe level of the argument 1 of the operator ${operator} \nmust be at least 2.`,
+      ],
+    ]),
     [
       "Foo == LET I == INSTANCE Stateful WITH c <- x, Op <- LAMBDA a : a, v <- x IN I!Use",
       [getLevelError("Stateful", "c", 0)],

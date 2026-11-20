@@ -31,7 +31,7 @@ import {
   substitutionFrames,
   withSubstitutionFrames,
 } from "./instances";
-import { parenthesizedRanges } from "./parser";
+import { defEntryErrors, parenthesizedRanges } from "./parser";
 import { STANDARD_LEVELS } from "./standard-definitions";
 import { resolveSynonym } from "./tlc/jar-data";
 import {
@@ -333,10 +333,11 @@ const selectSubexpression = (
   };
 
   const isLeftToResolver = (selector: Selector | undefined) => {
-    if (!current || !isAssumeProve(current)) return false;
+    const node = current?.kind === "Label" ? current.body : current;
+    if (!node || !isAssumeProve(node)) return false;
     if (selector === undefined) return true;
     if (selector.kind === "Colon") return false;
-    const clauses = getChildren(current);
+    const clauses = getChildren(node);
     const index =
       selector.kind === "Operand" ? getOperandIndex(selector.operand, clauses.length) : -1;
     return isNewDeclaration(clauses.at(-1)) && (index === -1 || index === clauses.length - 1);
@@ -1029,11 +1030,19 @@ export const createModuleSubexpressions = (
       return resolved;
     };
     const resolveDefs = (defs: Fact[]) =>
-      defs.map((def) =>
-        def.kind === "ModuleFact"
-          ? def
-          : resolveSubexpressions(def, lookup, getStandardDefinition, isProofGoal, true),
-      );
+      defs.map((def) => {
+        if (def.kind === "ModuleFact") return def;
+        const resolved = resolveSubexpressions(
+          def,
+          lookup,
+          getStandardDefinition,
+          isProofGoal,
+          true,
+        );
+        const errors = defEntryErrors.get(def);
+        if (errors) defEntryErrors.set(resolved, errors);
+        return resolved;
+      });
     const resolveBounds = (bounds: Bound[]) =>
       bounds.map((bound) => ({ ...bound, set: resolveInProof(bound.set) }));
     const resolveStatement = (statement: Expression | AssumeProve): Expression | AssumeProve =>

@@ -131,6 +131,21 @@ describe("name resolution matches SANY", () => {
         ["line 3, col 6 to line 3, col 10 of module M", "Unknown operator: `Nope3'."],
       ],
     ],
+    ...[
+      ["EXTENDS Naturals", "Naturals", 36],
+      ["EXTENDS Sequences", "Sequences", 66],
+      ["INSTANCE Naturals", "Naturals", 36],
+    ].map((entry): [string, string, Record<string, string>, [string, string][]] => [
+      `an inner module named like a standard module after ${entry[0]}`,
+      `${entry[0]}\n---- MODULE ${entry[1]} ----\n====`,
+      {},
+      [
+        [
+          "line 3, col 1 to line 4, col 4 of module M",
+          `Multiply-defined module '${entry[1]}': this definition or declaration conflicts \nwith the one at line 1, col 1 to line ${entry[2]}, col 77 of module ${entry[1]}.`,
+        ],
+      ],
+    ]),
   ])("reports %s like SANY", async (_title, source, modules, errors) => {
     await expect(
       check({
@@ -291,6 +306,141 @@ describe("name resolution matches SANY", () => {
       });
     },
   );
+
+  it.each([
+    ["a conjunction", "THEOREM T == TRUE\nPROOF BY T /\\ TRUE"],
+    ["an argument", "F(a) == a\nTHEOREM T == TRUE\nPROOF BY F(T)"],
+    ["a step", "F(a) == a\nTHEOREM T == TRUE\n<1>1. F(T)\n  OBVIOUS\n<1> QED BY <1>1"],
+    ["a DEFINE step", "F(a) == a\nTHEOREM T == TRUE\n<1> DEFINE G == F(T)\n<1> QED BY G"],
+    ["a USE step", "F(a) == a\nTHEOREM T == TRUE\n<1> USE F(T)\n<1> QED"],
+    [
+      "an instance a DEFINE step names",
+      "---- MODULE Inner ----\nOp(a) == TRUE\n====\nTHEOREM T == TRUE\n<1> DEFINE h == INSTANCE Inner\n<1> QED BY h!Op(T)",
+    ],
+  ])("reads a theorem's name in %s of its own proof, like SANY", async (_title, source) => {
+    expect((await checkNames(source)).status).toBe("success");
+  });
+
+  it.each([
+    ["T!a!2", "THEOREM T == ASSUME a :: ASSUME 1 = 1 PROVE 2 = 2 PROVE TRUE\nX == T!a!2"],
+    ["T!a!1", "THEOREM T == ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE\nX == T!a!1"],
+    ["T!a!b", "THEOREM T == ASSUME a :: ASSUME TRUE PROVE b :: TRUE PROVE TRUE\nX == T!a!b"],
+    [
+      "T!a as a fact",
+      "THEOREM T == ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+    ],
+    [
+      "T!a as a fact, inside an unlabeled ASSUME/PROVE",
+      "THEOREM T == ASSUME ASSUME a :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+    ],
+  ])("selects %s of a labeled nested ASSUME/PROVE, like SANY", async (_title, source) => {
+    expect((await checkNames(source)).status).toBe("success");
+  });
+
+  const labeled = "a :: ASSUME TRUE PROVE TRUE";
+  it.each([
+    [
+      `THEOREM T == ASSUME a :: TRUE, ${labeled} PROVE TRUE`,
+      [["line 2, col 32 to line 2, col 58", "Duplicate label `a'."]],
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE a :: TRUE`,
+      [["line 2, col 55 to line 2, col 63", "Duplicate label `a'."]],
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!1`,
+      [["line 3, col 6 to line 3, col 8", "ASSUME/PROVE used where an expression is required."]],
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME b :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE\nX == T!a!b",
+      [["line 3, col 6 to line 3, col 10", "ASSUME/PROVE used where an expression is required."]],
+    ],
+    [
+      `THEOREM T == TRUE\n<1>1. ASSUME ${labeled} PROVE TRUE\n  OBVIOUS\n<1>2. <1>1!a\n  OBVIOUS\n<1> QED`,
+      [["line 5, col 7 to line 5, col 12", "ASSUME/PROVE used where an expression is required."]],
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME TRUE PROVE b :: TRUE PROVE TRUE\nX == T!b",
+      [["line 3, col 8 to line 3, col 8", "Cannot find label `b'."]],
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!a!3`,
+      [
+        [
+          "line 3, col 10 to line 3, col 10",
+          "Nonexistent operand specified by `argument selector 3'.",
+        ],
+      ],
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nX == T!a!:`,
+      [
+        [
+          "line 3, col 10 to line 3, col 10",
+          "`!:' can be used only after a name and either at the end after an\noperator name or before an operator name.",
+        ],
+      ],
+    ],
+    [
+      "THEOREM T == ASSUME a :: ASSUME NEW y, b :: ASSUME TRUE PROVE TRUE PROVE TRUE PROVE TRUE",
+      [
+        [
+          "line 2, col 40 to line 2, col 66",
+          "Label not allowed within scope of declaration in nested ASSUME/PROVE.",
+        ],
+      ],
+    ],
+    [
+      "THEOREM T == ASSUME NEW x, a :: ASSUME x = 1 PROVE TRUE PROVE TRUE\nTHEOREM U == TRUE\nPROOF BY T!a",
+      [
+        [
+          "line 4, col 12 to line 4, col 12",
+          "Accessing subexpression labeled `a' of ASSUME/PROVE clause within the scope of a declaration\n from outside that declaration's scope.",
+        ],
+      ],
+    ],
+    [
+      `THEOREM T == ASSUME ${labeled} PROVE TRUE\nUSE DEF T!a`,
+      [
+        ["line 3, col 9 to line 3, col 11", "DEF clause entry should describe a defined operator."],
+        ["line 3, col 1 to line 3, col 11", "Empty USE or HIDE statement."],
+      ],
+    ],
+    [
+      "THEOREM T == ASSUME ASSUME TRUE PROVE TRUE PROVE TRUE\nUSE DEF T!1",
+      [
+        ["line 3, col 9 to line 3, col 11", "Selected ASSUME/PROVE instead of expression."],
+        ["line 3, col 9 to line 3, col 11", "DEF clause entry should describe a defined operator."],
+        ["line 3, col 1 to line 3, col 11", "Empty USE or HIDE statement."],
+      ],
+    ],
+    ...[
+      [`THEOREM T == ASSUME ${labeled} PROVE TRUE\nHIDE T!a`, "line 3, col 6 to line 3, col 8"],
+      [
+        `THEOREM T == TRUE\n<1>1. ASSUME ${labeled} PROVE TRUE\n  OBVIOUS\n<1> HIDE <1>1!a\n<1> QED`,
+        "line 5, col 10 to line 5, col 15",
+      ],
+    ].map((entry): [string, [string, string][]] => [
+      entry[0],
+      [
+        [
+          entry[1],
+          "The only expression allowed as a fact in a HIDE is \nthe name of a theorem, assumption, or step.",
+        ],
+      ],
+    ]),
+  ])("checks the labeled nested ASSUME/PROVE in %j like SANY", async (source, errors) => {
+    await expect(
+      check({ source: `---- MODULE M ----\n${source}\n====`, config: "" }),
+    ).rejects.toMatchObject({
+      sany: {
+        errors: errors.map((error) => ({
+          location: `${error[0]} of module M`,
+          message: error[1],
+        })),
+      },
+    });
+  });
 
   const theorem = (steps: string[]) => `THEOREM T == TRUE\n${steps.join("\n")}\n<1> QED`;
 
@@ -4584,6 +4734,149 @@ describe("name resolution matches SANY", () => {
           ],
         ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
       ),
+    );
+  });
+
+  it.each([
+    [
+      "THEOREM TRUE BY DEF LET N == INSTANCE Leaf IN N!LA, A",
+      ["line 4, col 25 to line 4, col 42", "line 4, col 21 to line 4, col 50"],
+      [],
+    ],
+    [
+      "USE DEF LET N == INSTANCE Leaf IN N!LA",
+      ["line 4, col 13 to line 4, col 30", "line 4, col 9 to line 4, col 38"],
+      [["line 4, col 1 to line 4, col 38", "Empty USE or HIDE statement."]],
+    ],
+    [
+      "THEOREM TRUE BY DEF LET Q == I!LA IN Q",
+      ["line 4, col 25 to line 4, col 33", "line 4, col 21 to line 4, col 38"],
+      [["line 4, col 14 to line 4, col 38", "Empty BY"]],
+    ],
+  ])(
+    "reports the DEF clause entry in %j, a LET with a selection, like SANY",
+    async (unit, ranges, rest) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nA == 1\nI == INSTANCE Leaf\n${unit}\n====`,
+          config: "",
+          loadModule: (name) =>
+            name === "Leaf" ? "---- MODULE Leaf ----\nLA == TRUE\n====" : undefined,
+        }),
+      ).rejects.toThrow(
+        createSanyError(
+          [
+            [ranges[0], "Unexpected token found."],
+            [ranges[0], "Need name or step number here, not `N_LetDefinitions'."],
+            [ranges[1], "DEF clause entry should describe a defined operator."],
+            ...rest,
+          ].map((entry) => ({ location: `${entry[0]} of module M`, message: entry[1] })),
+        ),
+      );
+    },
+  );
+
+  it.each([
+    ["\\E b : k + 1", 1],
+    ["\\AA b : k + 1", 2],
+    ["CHOOSE b : k + 1", 1],
+    ["\\EE b, d : k + 1", 1],
+  ])(
+    "reports an operand of the step %s, which has no bound set, like SANY",
+    async (quantified, operand) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nEXTENDS Naturals\nCONSTANT k\nTHEOREM TRUE\n<1>1. ${quantified}\n  OBVIOUS\n<1>2. <1>1!${operand}\n  OBVIOUS\n<1> QED\n====`,
+          config: "",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          {
+            location: "line 7, col 12 to line 7, col 12 of module M",
+            message: `Nonexistent operand specified by \`argument selector ${operand}'.`,
+          },
+        ]),
+      );
+    },
+  );
+
+  const boxed = "[]ASSUME TRUE []PROVE TRUE";
+  const inAssume = "[]ASSUME used within the scope of an ordinary ASSUME's assumptions";
+
+  it.each([
+    `THEOREM T == ${boxed}\nX == T!1`,
+    "THEOREM []ASSUME NEW VARIABLE v, v = 1 []PROVE v' = 1",
+    `THEOREM T == []ASSUME ${boxed}, ASSUME TRUE PROVE TRUE, ${boxed} []PROVE TRUE`,
+    `THEOREM T == []ASSUME a :: ${boxed} []PROVE TRUE\nX == T!a!1`,
+    `THEOREM TRUE\n<1>1. ${boxed}\n  OBVIOUS\n<1>2. SUFFICES ${boxed}\n  OBVIOUS\n<1> QED`,
+    `THEOREM TRUE\n<1>1. ASSUME TRUE PROVE TRUE\n  OBVIOUS\n<1>2. ${boxed}\n  OBVIOUS\n<1> QED`,
+    `THEOREM TRUE\n<1>1. SUFFICES ASSUME TRUE PROVE TRUE\n  <2>1. ${boxed}\n    OBVIOUS\n  <2> QED\n<1> QED`,
+  ])("reads the []ASSUME and []PROVE in %j like SANY", async (unit) => {
+    const result = await check({ source: `---- MODULE M ----\n${unit}\n====`, config: "" });
+    expect(result.status).toBe("success");
+  });
+
+  it.each([
+    [
+      "THEOREM T == []ASSUME x = 1 PROVE x = 1",
+      [["line 3, col 14 to line 3, col 21", "[]ASSUME matched by PROVE instead of []PROVE"]],
+    ],
+    [
+      "THEOREM T == ASSUME x = 1 []PROVE x = 1",
+      [["line 3, col 14 to line 3, col 19", "ASSUME matched by []PROVE instead of PROVE"]],
+    ],
+    [
+      "THEOREM T == ASSUME x = 1, []ASSUME x = 2 []PROVE x = 2 PROVE x = 1",
+      [["line 3, col 28 to line 3, col 35", inAssume]],
+    ],
+    [
+      "THEOREM T == []ASSUME a :: []ASSUME x = 1 []PROVE x = 1 []PROVE x = 1\nX == T!a",
+      [["line 4, col 6 to line 4, col 8", "ASSUME/PROVE used where an expression is required."]],
+    ],
+    [
+      `THEOREM TRUE\n<1>1. SUFFICES ASSUME TRUE PROVE TRUE\n  OBVIOUS\n<1>2. ${boxed}\n  OBVIOUS\n<1> QED`,
+      [["line 6, col 7 to line 6, col 14", inAssume]],
+    ],
+    [
+      "THEOREM ASSUME NEW c PROVE TRUE\n<1>1. []ASSUME c PROVE c\n  OBVIOUS\n<1> QED",
+      [
+        ["line 4, col 7 to line 4, col 14", "[]ASSUME matched by PROVE instead of []PROVE"],
+        ["line 4, col 7 to line 4, col 14", inAssume],
+      ],
+    ],
+  ])("checks the []ASSUME in %j like SANY", async (unit, errors) => {
+    await expect(
+      check({ source: `---- MODULE M ----\nVARIABLE x\n${unit}\n====`, config: "" }),
+    ).rejects.toThrow(
+      createSanyError(
+        errors.map((error) => ({ location: `${error[0]} of module M`, message: error[1] })),
+      ),
+    );
+  });
+
+  it("ends a CASE at the []PROVE after it like SANY", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nx == 1\nTHEOREM T == []ASSUME CASE x = 1 -> TRUE [] x = 2 -> TRUE []PROVE TRUE\n====",
+      config: "",
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it("reports an ASSUME whose CASE ends at a []PROVE like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nx == 1\nTHEOREM T == ASSUME CASE x = 1 -> TRUE []PROVE TRUE\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 14 to line 3, col 19 of module M",
+          message: "ASSUME matched by []PROVE instead of PROVE",
+        },
+      ]),
     );
   });
 
