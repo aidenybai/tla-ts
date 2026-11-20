@@ -2060,13 +2060,15 @@ const compile = (
       return compile(environment, createCommandReader(strategy).read() as SmtList, true);
     if (UNPORTED_TACTICS.has(sexpr.text)) {
       const error = new SmtUnsupportedError(`the tactic ${sexpr.text}`);
-      if (!isInternal) throw error;
       return {
         descrs: new Map(),
         isRejectingUnknown: false,
         isTrackingDependencies: false,
-        build: () => () => {
-          throw error;
+        build: () => {
+          if (!isInternal) throw error;
+          return () => {
+            throw error;
+          };
         },
       };
     }
