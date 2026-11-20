@@ -1022,9 +1022,11 @@ export const specialize = (
     }
     if (
       (fn.kind === "method" || fn.kind === "get" || fn.kind === "set") &&
-      (ts.isMethodDeclaration(node) || ts.isAccessor(node))
+      (ts.isMethodDeclaration(node) || ts.isAccessor(node) || ts.isConstructorDeclaration(node))
     ) {
-      const key = getKeyName(node.name);
+      const key = ts.isConstructorDeclaration(node)
+        ? { name: "constructor", isComputed: false }
+        : getKeyName(node.name);
       return getNaming(node, "static", {
         name: fn.kind === "method" ? key.name : `${fn.kind} ${key.name ?? ""}`,
         isComputed: key.isComputed,
@@ -1975,13 +1977,20 @@ export const specialize = (
     `ResolvePrivateIdentifier(${state}, ${context}, ${getUnits(name.text.slice(1))})`;
 
   // ClassElementEvaluation (§15.7.13) of a method, getter, or setter: its element record, with
-  // the closure's home object home.
+  // the closure's home object home. TypeScript parses a static method named constructor as a
+  // constructor.
   const classElement = (
-    node: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+    node:
+      | ts.MethodDeclaration
+      | ts.GetAccessorDeclaration
+      | ts.SetAccessorDeclaration
+      | ts.ConstructorDeclaration,
     scope: Scope,
   ) => {
     const flavor = getFlavor(node);
-    const key = propertyKey(node.name, scope);
+    const key: Code = ts.isConstructorDeclaration(node)
+      ? (state) => `Ok(${state}, ${getStr("constructor")})`
+      : propertyKey(node.name, scope);
     const kind = ts.isGetAccessorDeclaration(node)
       ? "get"
       : ts.isSetAccessorDeclaration(node)
@@ -2419,19 +2428,11 @@ export const specialize = (
       (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
     )?.types[0]?.expression;
     // TypeScript parses a static method named constructor as a constructor.
-    const staticConstructor = node.members.find(
-      (member) =>
-        ts.isConstructorDeclaration(member) && hasModifier(member, ts.SyntaxKind.StaticKeyword),
-    );
-    if (staticConstructor !== undefined) {
-      throw new TlaTypeScriptError(
-        "tla-ts can't compile a static method named constructor, which TypeScript parses as a constructor",
-        staticConstructor,
-      );
-    }
-    const constructor = node.members.find(ts.isConstructorDeclaration);
+    const isConstructor = (member: ts.ClassElement): member is ts.ConstructorDeclaration =>
+      ts.isConstructorDeclaration(member) && !hasModifier(member, ts.SyntaxKind.StaticKeyword);
+    const constructor = node.members.find(isConstructor);
     const elements = node.members.filter(
-      (member) => !ts.isConstructorDeclaration(member) && !ts.isSemicolonClassElement(member),
+      (member) => !isConstructor(member) && !ts.isSemicolonClassElement(member),
     );
     for (const element of elements) {
       if (ts.canHaveDecorators(element) && ts.getDecorators(element)?.length)
@@ -2479,7 +2480,8 @@ export const specialize = (
       if (
         ts.isMethodDeclaration(element) ||
         ts.isGetAccessorDeclaration(element) ||
-        ts.isSetAccessorDeclaration(element)
+        ts.isSetAccessorDeclaration(element) ||
+        ts.isConstructorDeclaration(element)
       ) {
         const code = classElement(element, scope);
         return {

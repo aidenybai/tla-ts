@@ -483,18 +483,24 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
-  describe("stops at a ClassString of one code point with a case under the i and v flags", () => {
+  describe("stops where a code point folds to a ClassString of one code point under the i and v flags", () => {
     const getSource = (expected: string) => `
-      const result = [/^[\\q{1|ab}]+$/iv.test("1aB"), /[\\q{a}]/v.test("A")].join();
+      const result = [
+        /^[\\q{1|ab}]+$/iv.test("1aB"),
+        /[\\q{a}]/v.test("A"),
+        /^[\\q{KK|ß}]$/iv.test("Kk"),
+        /[\\q{a}]/iv.test("ab"),
+        /[\\q{ß}]/iv.test("xß"),
+      ].join();
       if (result !== "${expected}") throw new Error(result);
     `;
 
     it("agrees with Node", async () => {
-      expect((await checkScript(getSource("true,false"))).message).toBeUndefined();
+      expect((await checkScript(getSource("true,false,true,true,true"))).message).toBeUndefined();
     });
 
     it("rejects another result", async () => {
-      expect((await checkScript(getSource("true,true"))).message).toContain(THREW);
+      expect((await checkScript(getSource("true,false,true,false,true"))).message).toContain(THREW);
     });
 
     it("stops where V8 matches only the folded code point", async () => {
@@ -2340,18 +2346,52 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
-  describe("stops at a static method named constructor, which TypeScript parses as a constructor", () => {
-    it("stops rather than make the static method the class's constructor", async () => {
-      const source = `
-        const C = class {
-          static constructor() {}
-          constructor() {}
-        };
-        if (C.prototype.constructor !== C) throw new Error("constructor");
-      `;
-      expect((await checkScript(source)).message).toContain(
-        "tla-ts can't compile a static method named constructor",
-      );
+  describe("defines a static method named constructor, which TypeScript parses as a constructor", () => {
+    const getSource = (expected: string) => `
+      const A = class {
+        static constructor() { return 1; }
+        x = 0;
+        constructor() { this.x = 2; }
+      } as unknown as { new (): { x: number }; constructor(): number; prototype: object };
+      const B = class {
+        constructor() {}
+        static constructor(value: number) { return value * 2; }
+      } as unknown as { constructor(value: number): number };
+      const result = [
+        A.constructor(),
+        new A().x,
+        Object.getOwnPropertyNames(A).join(),
+        A.constructor.name,
+        (A.prototype as { constructor: unknown }).constructor === A,
+        B.constructor(4),
+        String(A.constructor),
+        Object.getOwnPropertyDescriptor(A, "constructor")?.enumerable,
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "1,2,length,name,prototype,constructor,constructor,true,8,constructor() { return 1; },false",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "1,2,length,name,prototype,constructor,constructor,false,8,constructor() { return 1; },false",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
     });
   });
 
@@ -3135,6 +3175,96 @@ const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value
           .message,
       ).toContain(THREW);
     }, 600_000);
+  });
+
+  describe("fills an array of thousands of elements", () => {
+    const getSource = (expected: string) => `
+      const list = new Array<number>(5000).fill(3);
+      list.fill(1, 2, 4900);
+      const result = [list.length, list[1], list[2], list[4899], list[4900], list.join("").length, list.join("").slice(-4)].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("5000,3,1,1,3,5000,3333"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("5000,3,1,1,1,5000,3333"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("visits the present elements of an array of thousands", () => {
+    const getSource = (expected: string) => `
+      const list = new Array<number>(5000).fill(2);
+      delete list[10];
+      delete list[4000];
+      const result = [
+        list.reduce((total, item) => total + item, 0),
+        list.reduceRight((total, item) => total + item),
+        list.indexOf(2, 11),
+        list.lastIndexOf(2, 4000),
+        list.map((item) => item * 2).filter((item) => item === 4).length,
+        ([] as number[]).concat(list, list).length,
+        list.some((_, index) => index === 4999),
+        list.every((item) => item === 2),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("9996,9996,11,3999,4998,10000,true,true"))).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("9996,9996,11,4000,4998,10000,true,true"))).message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
+  describe("gives a static method's source text from the token after static", () => {
+    const getSource = (expected: string) => `
+      class A {
+        static m() { return 1; }
+        static async n() {}
+        static /* c */ get g() { return 1; }
+        static *gen() {}
+        m2() {}
+        static async *ag() {}
+        static #p() {}
+        static pm() { return A.#p; }
+      }
+      const getter = Object.getOwnPropertyDescriptor(A, "g")?.get;
+      const result = [A.m, A.n, getter, A.gen, A.prototype.m2, A.ag, A.pm()].map(String).join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "m() { return 1; }|async n() {}|get g() { return 1; }|*gen() {}|m2() {}|async *ag() {}|#p() {}",
+            ),
+          )
+        ).message,
+      ).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource(
+              "static m() { return 1; }|async n() {}|get g() { return 1; }|*gen() {}|m2() {}|async *ag() {}|#p() {}",
+            ),
+          )
+        ).message,
+      ).toContain(THREW);
+    });
   });
 
   describe("runs a script of thousands of statements and global vars", () => {
