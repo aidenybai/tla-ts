@@ -95,8 +95,10 @@ const result = await check(spec);
 | Option      | Description                                                                   |
 | ----------- | ----------------------------------------------------------------------------- |
 | `source`    | The text of the TypeScript file                                               |
-| `fileName`  | The path of the file. Imports resolve from it, and the module takes its name  |
+| `fileName`  | The path of the file. Imports resolve from it                                 |
 | `libraries` | TypeScript's built-in `lib.*.d.ts` files by name. Pass them only in a browser |
+
+`compile` runs in Node only. In a browser it throws a `TlaTypeScriptError`.
 
 ### `check`
 

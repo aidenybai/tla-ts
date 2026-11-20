@@ -223,8 +223,10 @@ export const isWaiting = (proc: Proc) => waiting.has(proc);
 
 ## Errors
 
-tla-ts stops with a `TlaTypeScriptError` at the file, line, and column of the problem. That happens when the file doesn't type check, or when it uses TypeScript that tla-ts can't compile, such as a loop, `/`, or `typeof`.
+tla-ts runs a file as Node runs it: it strips the types and doesn't type check the file, so a file with type errors still runs. It reads the types only for a model's frame, such as the values a parameter takes.
+
+tla-ts stops with a `TlaTypeScriptError` where Node rejects the file, with the `SyntaxError` Node throws, and where it can't run what the file does exactly, with a message that says what tla-ts can't do.
 
 ```
-TlaTypeScriptError: division.ts:4:11 Write division as Math.floor(a / b) or Math.trunc(a / b)
+TlaTypeScriptError: spec.js:2:8 tla-ts can't run eval
 ```
