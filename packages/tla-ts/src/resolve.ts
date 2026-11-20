@@ -2827,7 +2827,7 @@ const checkSubstitutions = (
         });
       }
     });
-  // SANY orders the declarations the instancer resolves first, then the other explicit substitutions as written.
+  // Deviation from SANY: Generator#processSubst orders the declarations the instancer resolves as Context#getByClass enumerates its Hashtable, not as declared; the other explicit substitutions follow as written.
   const getOrder = (name: string) => {
     const index = implicit.findIndex((item) => item.declaration.name === name);
     return index === -1 ? implicit.length : index;
