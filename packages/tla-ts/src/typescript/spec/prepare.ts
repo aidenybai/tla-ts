@@ -364,6 +364,13 @@ const prepareLibraryRuntime = (
       !realm.has(definition.name),
   );
   const stubGroups = new Map(stubs.map((stub) => [stub.name, stub.group]));
+  // The names that each definition reads, read once for every group's walk.
+  const dependencies = new Map(
+    [...library.definitions.values()].map((definition) => [
+      definition.name,
+      getDependencies(definition.text),
+    ]),
+  );
   // The stubs of other groups that a group's operators reach, through any operators between, which
   // a spec with the group keeps.
   const getReachedStubs = (group: string) => {
@@ -371,7 +378,7 @@ const prepareLibraryRuntime = (
     const visit = (name: string): void => {
       if (visited.has(name)) return;
       visited.add(name);
-      getDependencies(library.definitions.get(name)?.text ?? "").forEach(visit);
+      dependencies.get(name)?.forEach(visit);
     };
     [...library.definitions.values()]
       .filter((definition) => definition.group === group)
