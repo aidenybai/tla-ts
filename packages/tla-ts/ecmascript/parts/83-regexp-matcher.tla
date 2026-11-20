@@ -240,6 +240,11 @@ RxRepeatMatcher(env, m, min, max, greedy, x, k, parenIndex, parenCount) ==
             ELSE [x EXCEPT !.cap = [i \in DOMAIN @ |-> IF i > parenIndex /\ i <= parenIndex + parenCount THEN None ELSE @[i]]]
   IN CASE max = 0 -> RxContinue(env, k, x)
        [] m.t = "set" -> RxRepeatSet(env, m, min, max, greedy, x, k)
+       [] m.t = "strings" /\ m.dir /\ ~m.hasEmpty /\ greedy ->
+            LET leaf == RxStringsLeaf(env, m, min, max, x, k) IN
+            IF leaf # MatchFailure THEN leaf
+            ELSE RxStringsDrive(env, m, min, max, x, k,
+                                [stack |-> <<RxStringsFrame(env, m, x.e, 0)>>, seen |-> {}, done |-> FALSE, result |-> MatchFailure], 1)
        [] min # 0 -> RxMatch(env, m, xr, d)
        [] ~greedy -> LET z == RxContinue(env, k, x) IN IF z # MatchFailure THEN z ELSE RxMatch(env, m, xr, d)
        [] OTHER -> LET z == RxMatch(env, m, xr, d) IN IF z # MatchFailure THEN z ELSE RxContinue(env, k, x)
@@ -285,6 +290,70 @@ RxContinueUp(env, k, x, dir, lo, hi) ==
          LET mid == (lo + hi) \div 2
              lower == RxContinueUp(env, k, x, dir, lo, mid)
          IN IF lower # MatchFailure THEN lower ELSE RxContinueUp(env, k, x, dir, mid + 1, hi)
+
+\* The first state that a greedy RepeatMatcher of a matcher of strings reaches, whose backtracking
+\* goes on from there where it fails: each iteration takes the first string that matches, the
+\* longest, as far as max, or to where none does, and the continuation runs from there. The
+\* iterations are searched by doubling, as a table of where the first string that matches at each
+\* character ends, so that the depth of the search grows with the logarithm of the input's length
+\* rather than with the number of iterations.
+RxStringsLeaf(env, m, min, max, x, k) ==
+  LET limit == IF max = RxInfinity THEN env.len - x.e + 1 ELSE max
+      first == [e \in x.e..env.len |-> LET ends == RxStringsEnds(env, m, e, 1) IN IF ends = <<>> THEN -1 ELSE ends[1]]
+      tables == RxStringsTables(first, x.e, env.len, limit, <<first>>)
+      run == RxStringsRun(tables, Len(tables), x.e, 0, limit)
+  IN IF run.count < min THEN MatchFailure ELSE RxContinue(env, k, [x EXCEPT !.e = run.e])
+\* The tables of where 1, 2, 4, ... iterations end, from each character from lo to hi, while the
+\* last is below limit.
+RxStringsTables(table, lo, hi, limit, acc) ==
+  IF 2 ^ Len(acc) > limit THEN acc
+  ELSE LET next == [e \in lo..hi |-> IF table[e] = -1 THEN -1 ELSE table[table[e]]] IN
+       RxStringsTables(next, lo, hi, limit, Append(acc, next))
+\* The iterations from e that the tables from the jth take, as far as limit: [e, count].
+RxStringsRun(tables, j, e, count, limit) ==
+  IF j = 0 THEN [e |-> e, count |-> count]
+  ELSE IF count + 2 ^ (j - 1) <= limit /\ tables[j][e] # -1
+  THEN RxStringsRun(tables, j - 1, tables[j][e], count + 2 ^ (j - 1), limit)
+  ELSE RxStringsRun(tables, j - 1, e, count, limit)
+
+\* The backtracking of a greedy RepeatMatcher of a matcher of strings, where its first state fails,
+\* as a search of the iterations depth first, with the frames of the iterations it's in on a stack:
+\* each frame [e, c, ends, i] is the iteration that starts at e after c of them, where the strings
+\* of m that match there end, longest first, and the next of them to go on from. Once a frame's
+\* iterations have all failed, the continuation runs from its e, as RepeatMatcher does when c is
+\* at least min. m holds no groups, so an iteration's result depends only on where it starts and on
+\* the count, and the search goes on from each of these once. It runs as many steps as n, doubling
+\* n until it's done, each time in halves, so that its depth grows with the logarithm of the
+\* number of steps rather than with the number of iterations.
+RxStringsDrive(env, m, min, max, x, k, search, n) ==
+  LET next == RxStringsSearch(env, m, min, max, x, k, search, n) IN
+  IF next.done THEN next.result ELSE RxStringsDrive(env, m, min, max, x, k, next, 2 * n)
+RxStringsSearch(env, m, min, max, x, k, search, n) ==
+  CASE search.done -> search
+    [] n = 1 -> RxStringsStep(env, m, min, max, x, k, search)
+    [] OTHER ->
+         RxStringsSearch(env, m, min, max, x, k, RxStringsSearch(env, m, min, max, x, k, search, n \div 2), n - n \div 2)
+RxStringsStep(env, m, min, max, x, k, search) ==
+  LET top == Len(search.stack)
+      f == search.stack[top]
+  IN IF f.c < max /\ f.i <= Len(f.ends) THEN
+       LET stack == [search.stack EXCEPT ![top].i = f.i + 1] IN
+       IF RxStringsKey(min, max, f.ends[f.i], f.c + 1) \in search.seen THEN [search EXCEPT !.stack = stack]
+       ELSE [search EXCEPT !.stack = Append(stack, RxStringsFrame(env, m, f.ends[f.i], f.c + 1))]
+     ELSE LET r == IF f.c >= min THEN RxContinue(env, k, [x EXCEPT !.e = f.e]) ELSE MatchFailure IN
+          IF r # MatchFailure \/ top = 1 THEN [search EXCEPT !.done = TRUE, !.result = r]
+          ELSE [search EXCEPT !.stack = SubSeq(@, 1, top - 1), !.seen = @ \cup {RxStringsKey(min, max, f.e, f.c)}]
+RxStringsFrame(env, m, e, c) == [e |-> e, c |-> c, ends |-> RxStringsEnds(env, m, e, 1), i |-> 1]
+\* Where the strings of m from its ith length that match at e end, longest first.
+RxStringsEnds(env, m, e, i) ==
+  IF i > Len(m.byLength) THEN
+    IF e < env.len /\ RxSetFound(m.singles, m.cm, env.in[e + 1]) THEN <<e + 1>> ELSE <<>>
+  ELSE LET length == m.byLength[i][1] IN
+       (IF e + length <= env.len /\ RxCanonicalizeString(m.cm, SubSeq(env.in, e + 1, e + length)) \in m.byLength[i][2]
+        THEN <<e + length>> ELSE <<>>) \o RxStringsEnds(env, m, e, i + 1)
+\* The iterations from e after c of them go on as those after any other count past min do, when
+\* max is infinite.
+RxStringsKey(min, max, e, c) == <<e, IF max = RxInfinity /\ c > min THEN min ELSE c>>
 
 \* Whether CharacterSetMatcher finds a member of A that canonicalizes to the character c does.
 RxSetFound(cs, cm, c) == IF ~cm.ic THEN RxIn(cs, c) ELSE \E a \in RxPreimage(cm, RxCanonicalize(cm, c)) : RxIn(cs, a)

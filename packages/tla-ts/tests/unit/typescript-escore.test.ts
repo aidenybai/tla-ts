@@ -440,6 +440,46 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  describe("repeats a class of strings over a long string as RepeatMatcher does", () => {
+    const getSource = (expected: string) => `
+      const result = [
+        /^[\\q{ab|c}]+$/v.test("ab".repeat(4000) + "c"),
+        /^[\\q{abc|ab|a}]+$/v.exec("abcab")?.[0],
+        /^[\\q{ab|a}]+b$/v.exec("ab")?.[0],
+        /[\\q{ab|a}]{2}/v.exec("aab")?.[0],
+        /[\\q{xy|x}]{2,3}/v.exec("xyxyxyx")?.[0],
+        /^\\p{RGI_Emoji}+$/v.test("😀👍🏽".repeat(1000)),
+        /[\\q{ab|a}]+?/v.exec("abab")?.[0],
+        /^[\\q{aa|1}]+$/iv.test("aA1".repeat(2000)),
+        /^[\\q{ab|c}]+$/v.test("ab".repeat(4000) + "d"),
+        /[\\q{ab|a}]*c/v.exec("abaabc")?.[0],
+        /^[\\q{abc|ab|a}]{2,4}c$/v.exec("abcabcabc")?.[0],
+        /^(?:[\\q{ab|a}]{3})+$/v.test("abaab"),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource("true,abcab,ab,aab,xyxyxy,true,ab,true,false,abaabc,abcabcabc,true"),
+          )
+        ).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (
+          await checkScript(
+            getSource("true,abcab,ab,aab,xyxyxy,true,ab,true,false,abaabc,abcabc,true"),
+          )
+        ).message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("reads RegExp's legacy static properties after a match, and stops where V8 differs", () => {
     const getSource = (expected: string) => `
       /(b)(c)?/.exec("abd");
