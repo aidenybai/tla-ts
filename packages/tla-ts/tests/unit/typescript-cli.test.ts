@@ -471,4 +471,45 @@ describe("the CLI with TypeScript files", () => {
       "tla-ts can't print what Node prints for this uncaught exception",
     );
   });
+
+  // Under Bun, a Node on the path parses each file for its early errors, as V8 does, and TypeScript's
+  // checker never runs, whose inference of a long chain of JSDoc types, as a large program's code
+  // makes, runs out of stack.
+  describe("parses a file under Bun as Node does", () => {
+    const getScript = (expected: number) =>
+      `${Array.from({ length: 3000 }, (_, index) => `/** @typedef {Kind${index + 1} | ${index}} Kind${index} */`).join("\n")}\n/** @typedef {3000} Kind3000 */\n/** @type {Kind0} */\nconst kind = [0].length - 1;\nif (kind !== ${expected}) throw new RangeError("kind " + kind);\n`;
+
+    it("agrees with Node", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "kinds.js"), getScript(0));
+      const result = runCli(directory, ["kinds.js"]);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    });
+
+    it("rejects another result", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "kinds.js"), getScript(1));
+      const result = runCli(directory, ["kinds.js"]);
+      expect(getExit(result)).toEqual(getExit(runNode(directory, "kinds.js")));
+      expect(result.status).toBe(1);
+    });
+
+    it("stops where no Node is on the path to parse the file", () => {
+      const directory = copyFixtures("passing");
+      writeFileSync(join(directory, "kinds.js"), getScript(0));
+      const bun = spawnSync("bun", ["-e", "console.log(process.execPath)"], { encoding: "utf8" });
+      const empty = mkdtempSync(join(tmpdir(), "tla-ts-path-"));
+      copies.push(empty);
+      const result = spawnSync(bun.stdout.trim(), [CLI, "kinds.js"], {
+        cwd: directory,
+        encoding: "utf8",
+        env: { ...process.env, PATH: empty },
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain(
+        "tla-ts can't tell whether Node rejects a file's syntax without a Node to parse it",
+      );
+    });
+  });
 });
