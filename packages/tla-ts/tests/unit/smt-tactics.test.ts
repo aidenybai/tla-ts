@@ -920,6 +920,30 @@ describe("tactics where Z3 5.3.2 fails", () => {
   });
 });
 
+describe("a canceled rewrite, as Z3 5.3.2 reports it", () => {
+  it("fails the apply command unless the tactic catches the rewriter's cancel", () => {
+    expect(
+      run([
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(declare-const p Bool)",
+        "(assert (> (ite p a b) 0))",
+        "(set-option :rlimit 1)",
+        "(apply elim-term-ite)",
+        "(apply der)",
+        "(apply (or-else elim-term-ite skip))",
+        "(set-option :rlimit 0)",
+        "(apply elim-term-ite)",
+      ]),
+    ).toEqual([
+      '(error "line 6 column 20: max. resource limit exceeded")',
+      '(error "tactic failed: max. resource limit exceeded")',
+      "(goals\n(goal\n  (> (ite p a b) 0)\n  :precision precise :depth 0)\n)",
+      "(goals\n(goal\n  (> k!0 0)\n  (or (not p) (= k!0 a))\n  (or p (= k!0 b))\n  :precision precise :depth 1)\n)",
+    ]);
+  });
+});
+
 describe("the logic check names a theory as Z3 does", () => {
   // check_logic prints m.get_family_name(fid), and the label family is a builtin it accepts.
   it("names the recfun family and accepts a label", () => {

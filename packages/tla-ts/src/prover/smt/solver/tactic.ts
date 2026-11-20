@@ -2,6 +2,7 @@ import {
   SmtCanceledError,
   SmtParseError,
   SmtDefaultError,
+  SmtRewriterCanceledError,
   SmtTacticError,
   SmtUnsupportedError,
 } from "../../../errors";
@@ -174,8 +175,20 @@ interface NamedTactic {
   descrs: ParamDescrs;
   isRejectingUnknown?: boolean;
   isTrackingDependencies?: boolean;
+  // The tactic catches rewriter_exception and throws it again as a tactic_exception.
+  isCatchingRewriterCancel?: boolean;
   build: (environment: TacticEnvironment, params: TacticParams) => Tactic;
 }
+
+const catchRewriterCancel = (tactic: Tactic) =>
+  withCleanup((goal) => {
+    try {
+      return tactic(goal);
+    } catch (error) {
+      if (error instanceof SmtRewriterCanceledError) throw new SmtCanceledError();
+      throw error;
+    }
+  }, tactic.cleanup);
 
 const getDescrs = (module: string, entries: [string, number, TacticParam, boolean?][]) =>
   new Map(
@@ -829,6 +842,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "simplify",
     {
+      isCatchingRewriterCancel: true,
       descrs: REWRITER_DESCRS,
       isTrackingDependencies: true,
       build: (environment, params) =>
@@ -840,6 +854,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "elim-and",
     {
+      isCatchingRewriterCancel: true,
       descrs: REWRITER_DESCRS,
       isTrackingDependencies: true,
       build: (environment, params) =>
@@ -854,6 +869,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "propagate-values",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map([
         ...REWRITER_DESCRS,
         ...getDescrs("", [["max_rounds", PARAM_UINT, 4, true]]),
@@ -931,6 +947,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "purify-arith",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map([
         ...REWRITER_DESCRS,
         ...getDescrs("", [
@@ -1005,6 +1022,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "qe-light",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       build: (environment) =>
         inPlace((goal) =>
@@ -1015,6 +1033,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "solve-eqs",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       // Z3 never counts the occurrences that solve_eqs_max_occs bounds, so the bound has no effect.
       descrs: getDescrs("", [
@@ -1074,6 +1093,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "card2bv",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["keep_cardinality_constraints", PARAM_BOOL, false, true],
         ["pb.solver", PARAM_SYMBOL, "solver", true],
@@ -1090,6 +1110,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "normalize-bounds",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["produce_models", PARAM_BOOL, false, true],
         ["norm_int_only", PARAM_BOOL, true, true],
@@ -1110,6 +1131,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "propagate-ineqs",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: getDescrs("", [["bound_max_refinements", PARAM_UINT, 16, true]]),
       build: (environment) => inPlace((goal) => propagateIneqs(environment.manager, goal)),
@@ -1118,6 +1140,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "lia2pb",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map([
         ...REWRITER_DESCRS,
         ...getDescrs("", [
@@ -1230,6 +1253,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "cofactor-term-ite",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [["cofactor_equalities", PARAM_BOOL, true, true]]),
       build: (environment, params) =>
         inPlace((goal) =>
@@ -1266,6 +1290,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "fix-dl-var",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: REWRITER_DESCRS,
       build: (environment, params) =>
@@ -1277,6 +1302,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "factor",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: getDescrs("", [
         ["split_factors", PARAM_BOOL, true, true],
@@ -1293,6 +1319,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "der",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: new Map(),
       build: (environment) => runDer(environment.manager),
@@ -1301,6 +1328,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "blast-term-ite",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: new Map(),
       build: (environment) => inPlace((goal) => blastTermIte(environment.manager, goal)),
@@ -1309,6 +1337,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "distribute-forall",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       isTrackingDependencies: true,
       build: (environment) => inPlace((goal) => distributeForall(environment.manager, goal)),
@@ -1366,6 +1395,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "dom-simplify",
     {
+      isCatchingRewriterCancel: true,
       isTrackingDependencies: true,
       descrs: new Map(),
       build: (environment) => inPlace((goal) => domSimplify(environment.manager, goal)),
@@ -1391,6 +1421,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "fpa2bv",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       isTrackingDependencies: true,
       build: (environment) => runFpa2Bv(environment.manager),
@@ -1435,6 +1466,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "bit-blast",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["max_steps", PARAM_UINT, UINT_MAX],
@@ -1456,6 +1488,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "max-bv-sharing",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       isTrackingDependencies: true,
       build: (environment) => runMaxBvSharing(environment.manager),
@@ -1482,6 +1515,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "bv-divrem-bounds",
     {
+      isCatchingRewriterCancel: true,
       descrs: new Map(),
       isTrackingDependencies: true,
       build: (environment) => runBvDivremBounds(environment.manager),
@@ -1498,6 +1532,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "bv1-blast",
     {
+      isCatchingRewriterCancel: true,
       descrs: getDescrs("", [
         ["max_memory", PARAM_UINT, UINT_MAX, true],
         ["max_steps", PARAM_UINT, UINT_MAX],
@@ -1548,6 +1583,7 @@ const NAMED_TACTICS = new Map<string, NamedTactic>([
   [
     "smt",
     {
+      isCatchingRewriterCancel: true,
       descrs: SMT_DESCRS,
       isRejectingUnknown: false,
       isTrackingDependencies: true,
@@ -2010,7 +2046,8 @@ const compile = (
         isRejectingUnknown: named.isRejectingUnknown ?? true,
         isTrackingDependencies: named.isTrackingDependencies ?? false,
         build: (params) => {
-          const tactic = named.build(environment, params);
+          const built = named.build(environment, params);
+          const tactic = named.isCatchingRewriterCancel ? catchRewriterCancel(built) : built;
           if (!isInternal) return tactic;
           return withCleanup((goal) => {
             checkParams(named.descrs, params);
@@ -2505,7 +2542,11 @@ const exec = (tactic: Tactic, goal: Goal) => {
     tactic.cleanup?.();
     return goals;
   } catch (error) {
-    if (error instanceof SmtTacticError || error instanceof SmtCanceledError) tactic.cleanup?.();
+    if (
+      error instanceof SmtTacticError ||
+      (error instanceof SmtCanceledError && !(error instanceof SmtRewriterCanceledError))
+    )
+      tactic.cleanup?.();
     throw error;
   }
 };
@@ -2535,6 +2576,9 @@ export const applyTactic = (tactic: Tactic, goal: Goal) => {
   try {
     return exec(tactic, goal);
   } catch (error) {
+    // apply_tactic_cmd only catches tactic_exception, so a rewriter_exception fails the command.
+    if (error instanceof SmtRewriterCanceledError)
+      throw new SmtDefaultError(goal.manager.limit.getCancelMessage());
     if (error instanceof SmtCanceledError)
       throw new SmtTacticError(goal.manager.limit.getCancelMessage());
     throw error;

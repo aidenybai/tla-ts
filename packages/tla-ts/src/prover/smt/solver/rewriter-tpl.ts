@@ -1,3 +1,4 @@
+import { SmtRewriterCanceledError } from "../../../errors";
 import { ActCache } from "./act-cache";
 import { KIND_APP, KIND_QUANTIFIER, KIND_VAR, OP_ITE, type AstManager } from "./ast";
 import { grow, shrink } from "./array";
@@ -404,10 +405,10 @@ class RewriterEngine extends SubstCore {
       }
       this.root = expr;
       this.numQvars = 0;
-      manager.limit.checkpoint();
+      if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
       if (!this.visit(expr, Infinity))
         while (this.numFrames > 0) {
-          manager.limit.checkpoint();
+          if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
           if (this.isCheckingSteps) this.config.checkMaxSteps();
           const frame = this.frames[this.numFrames - 1];
           const curr = frame.curr;
@@ -874,10 +875,10 @@ export class BetaReducer extends SubstCore {
       }
       this.root = expr;
       this.numQvars = 0;
-      manager.limit.checkpoint();
+      if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
       if (!this.visit(expr))
         while (this.numFrames > 0) {
-          manager.limit.checkpoint();
+          if (!manager.limit.inc()) throw new SmtRewriterCanceledError();
           const top = this.numFrames - 1;
           const curr = this.frameExprs[top];
           if (

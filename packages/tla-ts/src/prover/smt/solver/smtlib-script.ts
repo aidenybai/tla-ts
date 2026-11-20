@@ -1826,6 +1826,10 @@ export const runSmtlibScript = (
           try {
             return applyTactic(tactic, input);
           } catch (error) {
+            if (error instanceof SmtDefaultError) {
+              input.release();
+              destroyTactics(destructors);
+            }
             if (!(error instanceof SmtTacticError)) throw error;
             print(`(error "tactic failed: ${error.message}")`);
             return undefined;

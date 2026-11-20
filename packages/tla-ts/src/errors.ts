@@ -320,6 +320,14 @@ export class SmtCanceledError extends TlaError {
   }
 }
 
+// Z3's rewriter_exception: only the tactics that catch it fail as a canceled tactic does.
+export class SmtRewriterCanceledError extends SmtCanceledError {
+  constructor() {
+    super();
+    this.name = "SmtRewriterCanceledError";
+  }
+}
+
 export class SmtTacticError extends TlaError {
   constructor(message: string) {
     super(message);
