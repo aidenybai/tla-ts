@@ -53,6 +53,7 @@ import {
   SELECTION_NAME,
   factReferences,
   generatedArgumentCounts,
+  instanceReferences,
   type NullSelection,
   type SelectedDefinition,
   type SelectionArguments,
@@ -947,11 +948,16 @@ const resolveInstance = (
       true,
     ),
   }));
-  return substitutions.every(
-    (substitution, index) => substitution.expression === instance.substitutions[index].expression,
-  )
-    ? instance
-    : { ...instance, substitutions };
+  if (
+    substitutions.every(
+      (substitution, index) => substitution.expression === instance.substitutions[index].expression,
+    )
+  ) {
+    return instance;
+  }
+  const resolved = { ...instance, substitutions };
+  instanceReferences.set(resolved, instanceReferences.get(instance) ?? instance);
+  return resolved;
 };
 
 export const resolveInstanceSubexpressions = (

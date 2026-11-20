@@ -70,6 +70,7 @@ import {
   getRecursiveCount,
   getRecursiveDefinitions,
   getTheoremGoal,
+  instanceReferences,
   isBefore,
   isSameSanyError,
   isTheoremDefinition,
@@ -364,8 +365,10 @@ export const createEnvironment = (
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
   const checkedNodes = new WeakMap<Expression, boolean>();
   const resolvedSubstitutions = new WeakMap<Instance, Map<string, Expression>>();
+  // Each place that resolves an instance's selections, such as a theorem and its ASSUME/PROVE clause, copies the instance.
+  const getInstanceKey = (instance: Instance) => instanceReferences.get(instance) ?? instance;
   const getInstanceSubstitute = (instance: Instance, name: string): Expression =>
-    resolvedSubstitutions.get(instance)?.get(name) ??
+    resolvedSubstitutions.get(getInstanceKey(instance))?.get(name) ??
     instance.substitutions.find((substitution) => substitution.name === name)?.expression ?? {
       kind: "Identifier",
       name,
@@ -375,7 +378,7 @@ export const createEnvironment = (
     instance: Instance,
     declarations: Item[],
   ) => {
-    const names = [...(resolvedSubstitutions.get(instance)?.keys() ?? [])];
+    const names = [...(resolvedSubstitutions.get(getInstanceKey(instance))?.keys() ?? [])];
     const getOrder = (declaration: Item) => {
       const index = names.indexOf(declaration.name);
       return index === -1 ? names.length : index;
@@ -751,7 +754,7 @@ export const createEnvironment = (
       module.name,
       unit,
     );
-    resolvedSubstitutions.set(instance, substitutions);
+    resolvedSubstitutions.set(getInstanceKey(instance), substitutions);
     unit.reports.push({
       location: instance.location,
       errors: getSubstitutionErrors(instance, linked, substitutions.size),
@@ -1372,7 +1375,8 @@ export const createEnvironment = (
           instancer: parsed.name,
           getSubstitutionErrors: (substitutionCount) =>
             getSubstitutionErrors(instance, linked, substitutionCount),
-          setSubstitutions: (substitutions) => resolvedSubstitutions.set(instance, substitutions),
+          setSubstitutions: (substitutions) =>
+            resolvedSubstitutions.set(getInstanceKey(instance), substitutions),
         };
       },
       bound,
