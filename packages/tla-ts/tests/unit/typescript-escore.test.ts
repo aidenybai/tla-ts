@@ -480,18 +480,24 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
-  describe("stops at a ClassString of one code point with a case under the i and v flags", () => {
+  describe("stops where a code point folds to a ClassString of one code point under the i and v flags", () => {
     const getSource = (expected: string) => `
-      const result = [/^[\\q{1|ab}]+$/iv.test("1aB"), /[\\q{a}]/v.test("A")].join();
+      const result = [
+        /^[\\q{1|ab}]+$/iv.test("1aB"),
+        /[\\q{a}]/v.test("A"),
+        /^[\\q{KK|ß}]$/iv.test("Kk"),
+        /[\\q{a}]/iv.test("ab"),
+        /[\\q{ß}]/iv.test("xß"),
+      ].join();
       if (result !== "${expected}") throw new Error(result);
     `;
 
     it("agrees with Node", async () => {
-      expect((await checkScript(getSource("true,false"))).message).toBeUndefined();
+      expect((await checkScript(getSource("true,false,true,true,true"))).message).toBeUndefined();
     });
 
     it("rejects another result", async () => {
-      expect((await checkScript(getSource("true,true"))).message).toContain(THREW);
+      expect((await checkScript(getSource("true,false,true,false,true"))).message).toContain(THREW);
     });
 
     it("stops where V8 matches only the folded code point", async () => {
