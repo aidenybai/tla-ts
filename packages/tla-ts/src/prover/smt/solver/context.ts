@@ -1055,7 +1055,7 @@ export class Context extends Internalizer {
     this.unassignVars(this.scopeAssignedLimits[newLevel]);
     this.popTrail(this.scopeTrailLimits[newLevel]);
     for (const theory of this.theories) theory.popScopeEh(numScopes);
-    for (let index = 0; index < numScopes; index++) this.asserted?.pop();
+    this.asserted?.pop(numScopes);
     this.eqPropagationQueue = [];
     this.thEqQueue = [];
     this.thDiseqQueue = [];

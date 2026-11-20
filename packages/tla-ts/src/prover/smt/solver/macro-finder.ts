@@ -164,9 +164,10 @@ export class MacroManager {
     this.scopes.push({ numDecls: this.decls.length, numForbidden: this.forbiddenTrail.length });
   }
 
-  popScope() {
-    const scope = this.scopes.pop();
-    if (scope === undefined) return;
+  popScope(numScopes: number) {
+    const newLevel = this.scopes.length - numScopes;
+    const scope = this.scopes[newLevel];
+    this.scopes.length = newLevel;
     for (const decl of this.decls.splice(scope.numDecls)) {
       this.deps.delete(decl);
       this.decl2macro.delete(decl);

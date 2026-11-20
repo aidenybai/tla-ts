@@ -1665,6 +1665,52 @@ describe("runSmtlibScript runs its commands as Z3 does", () => {
     ).toEqual(["sat", "sat", "sat"]);
   });
 
+  it("pops the asserted formulas of two scopes at once, as asserted_formulas does", () => {
+    expect(
+      run([
+        "(declare-fun f (Int) Int)",
+        "(declare-const a Int)",
+        "(declare-const b Int)",
+        "(check-sat)",
+        "(push 1)",
+        "(assert (> (f a) (+ a 1)))",
+        "(push 1)",
+        "(assert (> (f b) (+ (* 3 b) 2)))",
+        "(check-sat)",
+        "(pop 2)",
+        "(declare-const c Int)",
+        "(declare-const d Int)",
+        "(declare-const e Int)",
+        "(simplify (+ (* 2 c) (* 5 d) e (f c) (f d) (f e)))",
+        "(simplify (+ (* 3 e) (* 4 d) c (f d) (f c)))",
+        "(assert (> (+ (f c) (f d)) (+ (* 2 c) (f e))))",
+        "(check-sat)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "sat",
+      "(+ (* 2 c) (* 5 d) e (f c) (f d) (f e))",
+      "(+ (* 3 e) (* 4 d) c (f d) (f c))",
+      "sat",
+      "(",
+      "  (define-fun c () Int",
+      "    0)",
+      "  (define-fun d () Int",
+      "    2)",
+      "  (define-fun e () Int",
+      "    3)",
+      "  (define-fun b () Int",
+      "    0)",
+      "  (define-fun a () Int",
+      "    0)",
+      "  (define-fun f ((x!0 Int)) Int",
+      "    (ite (= x!0 2) 1",
+      "      0))",
+      ")",
+    ]);
+  });
+
   it("keeps the conflict that push propagates once its scope is popped", () => {
     expect(
       run([
