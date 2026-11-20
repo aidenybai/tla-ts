@@ -1685,17 +1685,16 @@ const enumerateSetOperation = (value: SetOperationValue, isMembershipFramed: boo
   const other = isLeftEnumerated ? value.right : value.left;
   const sets = setTrace.sets;
   const kept: Value[] = [];
-  forEachElement(
-    typeof enumerated === "object" && enumerated.kind === "Interval"
-      ? enumerated
-      : getStreamedElements(enumerated),
-    (element) => {
-      if (!isMembershipFramed) sets?.pop();
-      const isElement = isElementOf(element, other);
-      if (!isMembershipFramed) sets?.push(value);
-      if (isElement === (value.operator === "\\cap")) addBoundedElement(kept, element);
-    },
-  );
+  const keep = (element: Value) => {
+    if (!isMembershipFramed) sets?.pop();
+    const isElement = isElementOf(element, other);
+    if (!isMembershipFramed) sets?.push(value);
+    if (isElement === (value.operator === "\\cap")) addBoundedElement(kept, element);
+    return false;
+  };
+  if (typeof enumerated === "object" && enumerated.kind === "Interval")
+    forEachElement(enumerated, keep);
+  else someStreamedElement(enumerated, keep);
   return toFiniteSet(createEnumeratedSet(kept)).elements;
 };
 

@@ -146,6 +146,17 @@ describe("evaluation errors match TLC", () => {
     );
   });
 
+  it("reports a negative count of RandomSubset as its argument error, where TLC passes it to new ValueVec", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nEXTENDS Integers, Randomization\nASSUME RandomSubset(-1, {1}) = {}\n====",
+      config: "",
+    });
+    expect(result.violation?.message).toBe(
+      "The first argument of RandomSubset should be a nonnegative integer, but instead it is:\n-1",
+    );
+  });
+
   it("evaluates a record's fields in an invariant in the order they're written, like TLC", async () => {
     const result = await checkSteps(
       "F(s) == s\nInv == [a |-> 1 \\div x, s |-> CASE x -> 2] = 1",
