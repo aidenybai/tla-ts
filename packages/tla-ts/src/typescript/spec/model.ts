@@ -1059,14 +1059,14 @@ export const compileModelToEscore = (
   const boundNames = (bounds: Bound[]) =>
     bounds.map((bound) => (bound.pattern.kind === "Name" ? bound.pattern.name : ""));
   // Invariants, and the checks that only call a function, which today's spec defines as
-  // \A bounds : LET result == ... IN result = result.
+  // \A bounds : LET result == ... IN result = result, or result_2 where the body names result.
   const isCallCheck = (expression: Expression | undefined): boolean =>
     expression?.kind === "Forall"
       ? isCallCheck(expression.body)
       : expression?.kind === "Let" &&
         expression.body.kind === "Apply" &&
         expression.body.operator === "=" &&
-        expression.definitions.some((definition) => definition.name === "result");
+        expression.definitions.some((definition) => /^result(_\d+)?$/.test(definition.name));
   // The state the module's top level leaves, lowered where the module lets it, in which a model
   // without state checks its functions, and any model its assumptions.
   const started = lowered === undefined ? "ApplyTo(StartState, InitialState)" : "ModelInitial";

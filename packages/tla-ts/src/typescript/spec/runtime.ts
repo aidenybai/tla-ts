@@ -66,6 +66,66 @@ const DEFINITIONS = [
   LET r == Call([s EXCEPT !.timers = Tail(@), !.task = [kind |-> "timer"]], Head(s.timers), Undefined, <<>>) IN IF IsAbrupt(r) THEN r ELSE
   LET j == RunJobs(r.s) IN IF IsAbrupt(j) THEN j ELSE
   LET u == UnhandledRejection(j.s) IN IF IsAbrupt(u) THEN u ELSE RunTimers(u.s)`,
+  // An error that ESCore throws with V8's message, which, as V8's, is the error's own property.
+  `ThrowMessage(s, kind, units) ==
+  LET a == Alloc(s, MakeObject(Obj(s.realm[kind \\o "Prototype"]), "error", [data |-> Empty]))
+      m == CreateMethodProperty(InstallStack(a.s, a.v), a.v, SV("message"), Str(units))
+  IN ThrowValue(m.s, a.v)`,
+  // A key as V8 writes it in a message, or Empty for one that V8 writes as its object.
+  `MessageKey(s, k) ==
+  CASE k.type = "symbol" -> SymbolDescriptiveString(s, k).value
+    [] k.type \\in {"string", "number", "boolean", "undefined", "null"} /\\ k # HostTime -> PrimitiveToUnits(k)
+    [] OTHER -> Empty`,
+  // V8's object in a message: an array as [object Array], an object of Object.prototype as
+  // #<Object>, and one of no prototype as [object Object], or Empty for another.
+  `ObjectDisplay(s, o) ==
+  CASE O(s, o).class = "array" /\\ O(s, o).proto = Intrinsic(s, "ArrayPrototype") -> N("[object Array]")
+    [] O(s, o).class = "ordinary" /\\ O(s, o).proto = Intrinsic(s, "ObjectPrototype") -> N("#<Object>")
+    [] O(s, o).class = "ordinary" /\\ O(s, o).proto = Null -> N("[object Object]")
+    [] OTHER -> Empty`,
+  // Whether no object on a prototype chain of plain objects and arrays holds the key k.
+  `NoneOnChain(s, p, k) ==
+  p = Null \\/ (O(s, p).class \\in {"ordinary", "array", "immutableProto"} /\\ OrdinaryGetOwnProperty(O(s, p), k) = Absent /\\ NoneOnChain(s, O(s, p).proto, k))`,
+  // The TypeError of a strict write of k to o that [[Set]] refused, with V8's message where its
+  // cause is the object's own: a read-only property, a getter without a setter, or an object
+  // that takes no new property.
+  `SetFailure(s, o, k) ==
+  IF ~IsObject(o) \\/ O(s, o).class \\notin {"ordinary", "array"} \\/ MessageKey(s, k) = Empty THEN ThrowTypeError(s)
+  ELSE LET own == OrdinaryGetOwnProperty(O(s, o), k)
+           display == ObjectDisplay(s, o)
+       IN CASE own = Absent /\\ ~O(s, o).ext /\\ NoneOnChain(s, O(s, o).proto, k) ->
+                 ThrowMessage(s, "TypeError", N("Cannot add property ") \\o MessageKey(s, k) \\o N(", object is not extensible"))
+            [] own # Absent /\\ own.writable = False /\\ display # Empty ->
+                 ThrowMessage(s, "TypeError", N("Cannot assign to read only property '") \\o MessageKey(s, k) \\o N("' of object '") \\o display \\o N("'"))
+            [] own # Absent /\\ IsAccessorDescriptor(own) /\\ own.set = Undefined /\\ display # Empty ->
+                 ThrowMessage(s, "TypeError", N("Cannot set property ") \\o MessageKey(s, k) \\o N(" of ") \\o display \\o N(" which has only a getter"))
+            [] OTHER -> ThrowTypeError(s)`,
+  // The TypeError of Object.defineProperty that [[DefineOwnProperty]] refused on a plain object.
+  `DefineFailure(s, o, k) ==
+  IF ~IsObject(o) \\/ O(s, o).class # "ordinary" \\/ MessageKey(s, k) = Empty THEN ThrowTypeError(s)
+  ELSE IF OrdinaryGetOwnProperty(O(s, o), k) = Absent
+  THEN IF O(s, o).ext THEN ThrowTypeError(s) ELSE ThrowMessage(s, "TypeError", N("Cannot define property ") \\o MessageKey(s, k) \\o N(", object is not extensible"))
+  ELSE ThrowMessage(s, "TypeError", N("Cannot redefine property: ") \\o MessageKey(s, k))`,
+  // GetIterator of a value that V8 names by its text where it isn't iterable.
+  `GetIteratorNamed(s, v, text) ==
+  IF IsNullish(v) THEN ThrowMessage(s, "TypeError", text \\o N(" is not iterable"))
+  ELSE LET f == GetValueProperty(s, v, SymIterator) IN
+  IF IsAbrupt(f) THEN f
+  ELSE IF ~IsCallable(f.s, Val(f)) THEN ThrowMessage(f.s, "TypeError", text \\o N(" is not iterable"))
+  ELSE LET it == Call(f.s, Val(f), v, <<>>) IN
+  IF IsAbrupt(it) THEN it
+  ELSE IF ~IsObject(Val(it)) THEN ThrowMessage(it.s, "TypeError", N("Result of the Symbol.iterator method is not an object"))
+  ELSE LET next == Get(it.s, Val(it), SV("next")) IN
+       IF IsAbrupt(next) THEN next ELSE Ok(next.s, JsIterator(Val(it), Val(next)))`,
+  // GetIterator of a call's spread argument, where V8 names no text but for a nullish value.
+  `GetIteratorSpread(s, v) ==
+  IF IsNullish(v) THEN GetIterator(s, v, "sync")
+  ELSE LET f == GetValueProperty(s, v, SymIterator) IN
+  IF IsAbrupt(f) THEN f
+  ELSE IF ~IsCallable(f.s, Val(f)) THEN ThrowMessage(f.s, "TypeError", N("Spread syntax requires ...iterable[Symbol.iterator] to be a function"))
+  ELSE GetIteratorFromMethod(f.s, v, Val(f))`,
+  `IsIntegralNumber(v) == v.type = "number" /\\ v # HostTime /\\ NumIsFinite(v.value) /\\ NumIsIntegral(v.value)`,
+  `BeforeInitialization(name) == N("Cannot access '") \\o name \\o N("' before initialization")`,
   // An error's own stack accessor, as V8 gives each error one, of the two functions that the realm
   // keeps in the slots of %Error.prototype%.
   `InstallStack(s, o) ==
@@ -153,13 +213,13 @@ const DEFINITIONS = [
   // environment e: a declarative binding's value, or that of a global environment's declarative
   // part, as GetBindingValue reads it, and any other through the reference.
   `IdentifierValue(s, e, name, strict) ==
-  IF e = 0 THEN ThrowError(s, "ReferenceError") ELSE
+  IF e = 0 THEN NotDefined(s, name) ELSE
   LET env == E(s, e) IN
   IF IsDeclarativeKind(env.kind) /\\ name \\notin DOMAIN env.b THEN IdentifierValue(s, env.outer, name, strict)
   ELSE IF env.kind \\in {"declarative", "catch", "function"} \\/ (env.kind = "module" /\\ env.b[name].value.type # "import") THEN
-    IF env.b[name].init THEN Ok(s, env.b[name].value) ELSE ThrowError(s, "ReferenceError")
+    IF env.b[name].init THEN Ok(s, env.b[name].value) ELSE ThrowMessage(s, "ReferenceError", BeforeInitialization(name))
   ELSE IF env.kind = "global" /\\ name \\in DOMAIN E(s, env.declRec).b THEN
-    IF E(s, env.declRec).b[name].init THEN Ok(s, E(s, env.declRec).b[name].value) ELSE ThrowError(s, "ReferenceError")
+    IF E(s, env.declRec).b[name].init THEN Ok(s, E(s, env.declRec).b[name].value) ELSE ThrowMessage(s, "ReferenceError", BeforeInitialization(name))
   ELSE GetValueThen(GetIdentifierReference(s, e, name, strict))`,
   // A compiled module's code gives the entries and requests that ParseModule (§16.2.1.7.1) reads
   // of the module's parse node, which ModuleNode gives the program's modules as.
@@ -528,7 +588,11 @@ const DEFINITIONS = [
   IF ~IsString(id) \\/ id.value \\notin DOMAIN ModuleNode(referrer).targets
   THEN Assert(FALSE, "tla-ts can't require a module other than a file that a string names")
   ELSE RequireFile(s, ModuleNode(referrer).targets[id.value])`,
-  `Unsupported(s, what) == Assert(FALSE, "tla-ts can't run a part of ECMAScript that ESCore leaves out")`,
+  // A part of ECMAScript that ESCore leaves out, by the reason that ESCore gives after
+  // "Unsupported: ", or none.
+  `Unsupported(s, what) ==
+  Assert(FALSE, IF Len(what) <= 13 THEN "tla-ts can't run a part of ECMAScript that ESCore leaves out"
+                ELSE "tla-ts can't model " \\o UnitsText(SubSeq(what, 14, Len(what))))`,
 ];
 
 // The characters that a TLA+ string can hold, as a string spells each, by code unit.
@@ -577,6 +641,13 @@ const STACK_DEFINITIONS = [
   IF IsAbrupt(r) THEN r
   ELSE IF ~IsCallable(r.s, f) THEN ThrowTypeError(r.s)
   ELSE CallObjectAt(r.s, f, this, Val(r), site)`,
+  // A call or a new whose callee V8 names by its text where it isn't callable or a constructor.
+  `CallNamedAt(site, f, this, r, text) ==
+  IF ~IsAbrupt(r) /\\ ~IsCallable(r.s, f) THEN ThrowMessage(r.s, "TypeError", text \\o N(" is not a function"))
+  ELSE CallArgumentsAt(site, f, this, r)`,
+  `NewNamedAt(site, constructor, r, text) ==
+  IF ~IsAbrupt(r) /\\ ~IsConstructor(r.s, constructor) THEN ThrowMessage(r.s, "TypeError", text \\o N(" is not a constructor"))
+  ELSE NewArgumentsAt(site, constructor, r)`,
   `NewArgumentsAt(site, constructor, r) ==
   IF IsAbrupt(r) THEN r
   ELSE IF ~IsConstructor(r.s, constructor) THEN ThrowTypeError(r.s)
@@ -1527,6 +1598,259 @@ export const getHostDefinitions = (library: Library, realm: HostRealm): Generate
       },
     ]);
 
+// V8's message for an error that ESCore throws itself, where V8's template and what it inserts
+// are exact: each patch puts ThrowMessage, which throws the error with that message as its own
+// property, in place of ESCore's throw, which leaves the message to the host. ESCore's other
+// throws keep the host's message, at whose reading a compiled spec stops.
+const MESSAGE_PATCHES: { name: string; from: string; to: string; isEvery?: boolean }[] = [
+  {
+    name: "GetValue",
+    from: `ELSE IF IsUnresolvableReference(v) THEN ThrowError(s, "ReferenceError")
+  ELSE IF IsPropertyReference(v) THEN`,
+    to: `ELSE IF IsUnresolvableReference(v) THEN NotDefined(s, v.name.value)
+  ELSE IF IsPropertyReference(v) /\\ IsNullish(v.base) /\\ MessageKey(s, v.name) # Empty
+  THEN ThrowMessage(s, "TypeError", N("Cannot read properties of ") \\o PrimitiveToUnits(v.base) \\o N(" (reading '") \\o MessageKey(s, v.name) \\o N("')"))
+  ELSE IF IsPropertyReference(v) THEN`,
+  },
+  {
+    name: "GetValue",
+    from: `ELSE IF v.base.type = "local" THEN LocalValue(s, v.base.slot)`,
+    to: `ELSE IF v.base.type = "local" THEN LocalValue(s, v.base.slot, v.name.value)`,
+  },
+  {
+    name: "PutValue",
+    from: `IF s.frame[v.base.slot] = Empty THEN ThrowError(s, "ReferenceError")
+    ELSE IF v.base.constant THEN ThrowTypeError(s)`,
+    to: `IF s.frame[v.base.slot] = Empty THEN ThrowMessage(s, "ReferenceError", BeforeInitialization(v.name.value))
+    ELSE IF v.base.constant THEN ThrowMessage(s, "TypeError", N("Assignment to constant variable."))`,
+  },
+  {
+    name: "PutValue",
+    from: `IF v.strict THEN ThrowError(s, "ReferenceError")`,
+    to: `IF v.strict THEN NotDefined(s, v.name.value)`,
+  },
+  {
+    name: "PutValue",
+    from: `  ELSE IF IsPropertyReference(v) THEN
+    LET base == ToObject(s, v.base) IN`,
+    to: `  ELSE IF IsPropertyReference(v) /\\ IsNullish(v.base) /\\ MessageKey(s, v.name) # Empty
+  THEN ThrowMessage(s, "TypeError", N("Cannot set properties of ") \\o PrimitiveToUnits(v.base) \\o N(" (setting '") \\o MessageKey(s, v.name) \\o N("')"))
+  ELSE IF IsPropertyReference(v) THEN
+    LET base == ToObject(s, v.base) IN`,
+  },
+  {
+    name: "GetBindingValue",
+    from: `IF ~env.b[name].init THEN ThrowError(s, "ReferenceError")`,
+    to: `IF ~env.b[name].init THEN ThrowMessage(s, "ReferenceError", BeforeInitialization(name))`,
+  },
+  {
+    name: "SetMutableBinding",
+    from: `IF ~bind.init THEN ThrowError(s, "ReferenceError")`,
+    to: `IF ~bind.init THEN ThrowMessage(s, "ReferenceError", BeforeInitialization(name))`,
+  },
+  {
+    name: "SetMutableBinding",
+    from: `ELSE IF strict \\/ bind.strict THEN ThrowTypeError(s)`,
+    to: `ELSE IF strict \\/ bind.strict THEN ThrowMessage(s, "TypeError", N("Assignment to constant variable."))`,
+  },
+  {
+    name: "ToNumber",
+    from: `[] v.type \\in {"symbol", "bigint"} -> ThrowTypeError(s)`,
+    to: `[] v.type \\in {"symbol", "bigint"} -> ThrowMessage(s, "TypeError", IF v.type = "symbol" THEN N("Cannot convert a Symbol value to a number") ELSE N("Cannot convert a BigInt value to a number"))`,
+  },
+  {
+    name: "ToStr",
+    from: `[] v.type = "symbol" -> ThrowTypeError(s)`,
+    to: `[] v.type = "symbol" -> ThrowMessage(s, "TypeError", N("Cannot convert a Symbol value to a string"))`,
+  },
+  {
+    name: "NumericBinary",
+    from: `IN IF a.type # b.type THEN ThrowTypeError(rn.s)`,
+    to: `IN IF a.type # b.type THEN ThrowMessage(rn.s, "TypeError", N("Cannot mix BigInt and other types, use explicit conversions"))`,
+  },
+  {
+    name: "BigIntOperationResult",
+    from: `CASE op \\in {"/", "%"} /\\ BigIntIsZero(b) -> ThrowError(s, "RangeError")
+    [] op = "**" /\\ b.neg -> ThrowError(s, "RangeError")`,
+    to: `CASE op \\in {"/", "%"} /\\ BigIntIsZero(b) -> ThrowMessage(s, "RangeError", N("Division by zero"))
+    [] op = "**" /\\ b.neg -> ThrowMessage(s, "RangeError", N("Exponent must be positive"))`,
+  },
+  {
+    name: "StringBuiltin",
+    from: `    [] OTHER ->
+         LET o == RequireObjectCoercible(s, this) IN`,
+    to: `    [] OTHER ->
+         IF IsNullish(this) THEN ThrowMessage(s, "TypeError", N("String.prototype") \\o (IF m = "iterator" THEN N("[Symbol.iterator]") ELSE N(".") \\o StringUnits(m)) \\o N(" called on null or undefined")) ELSE
+         LET o == RequireObjectCoercible(s, this) IN`,
+  },
+  {
+    name: "StringBuiltin",
+    from: `         LET o == RequireObjectCoercible(s, this) IN IF IsAbrupt(o) THEN o ELSE StringRegExpMethod(o.s, this, m, args)`,
+    to: `         IF IsNullish(this) THEN ThrowMessage(s, "TypeError", N("String.prototype.") \\o StringUnits(m) \\o N(" called on null or undefined"))
+         ELSE LET o == RequireObjectCoercible(s, this) IN IF IsAbrupt(o) THEN o ELSE StringRegExpMethod(o.s, this, m, args)`,
+  },
+  {
+    name: "StringMethod",
+    from: `ELSE IF NumLess(Val(n).value, PosZero) \\/ Val(n).value = PosInf THEN ThrowError(n.s, "RangeError")`,
+    to: `ELSE IF (NumLess(Val(n).value, PosZero) \\/ Val(n).value = PosInf) /\\ a1.type \\in {"number", "string", "boolean", "undefined", "null"} /\\ a1 # HostTime
+         THEN ThrowMessage(n.s, "RangeError", N("Invalid count value: ") \\o NumToString(PrimitiveToNumber(a1).value))
+         ELSE IF NumLess(Val(n).value, PosZero) \\/ Val(n).value = PosInf THEN ThrowError(n.s, "RangeError")`,
+  },
+  {
+    name: "StringFromCodePoint",
+    from: `IF ~NumIsFinite(x) \\/ ~NumIsIntegral(x) THEN ThrowError(n.s, "RangeError")
+       ELSE IF NumLess(x, PosZero) \\/ NumLess(NumFromInt(1114111), x) THEN ThrowError(n.s, "RangeError")`,
+    to: `IF ~NumIsFinite(x) \\/ ~NumIsIntegral(x) \\/ NumLess(x, PosZero) \\/ NumLess(NumFromInt(1114111), x)
+       THEN ThrowMessage(n.s, "RangeError", N("Invalid code point ") \\o NumToString(x))`,
+  },
+  {
+    name: "ArrayMethod",
+    from: `ELSE IF NumIsZero(len) /\\ Len(args) < 2 THEN ThrowTypeError(s)`,
+    to: `ELSE IF NumIsZero(len) /\\ Len(args) < 2 THEN ThrowMessage(s, "TypeError", N("Reduce of empty array with no initial value"))`,
+  },
+  {
+    name: "ArrayMethod",
+    from: `ELSE IF ~Val(init).stop THEN ThrowTypeError(init.s)`,
+    to: `ELSE IF ~Val(init).stop THEN ThrowMessage(init.s, "TypeError", N("Reduce of empty array with no initial value"))`,
+  },
+  {
+    name: "ObjectBuiltin",
+    from: `LET o == ToObject(s, a1) IN IF IsAbrupt(o) THEN o ELSE`,
+    to: `IF IsNullish(a1) THEN ThrowMessage(s, "TypeError", N("Cannot convert undefined or null to object")) ELSE
+         LET o == ToObject(s, a1) IN IF IsAbrupt(o) THEN o ELSE`,
+    isEvery: true,
+  },
+  {
+    name: "ObjectBuiltin",
+    from: `[] m = "setPrototypeOf" ->
+         IF IsNullish(a1) THEN ThrowTypeError(s)`,
+    to: `[] m = "setPrototypeOf" ->
+         IF IsNullish(a1) THEN ThrowMessage(s, "TypeError", N("Object.setPrototypeOf called on null or undefined"))`,
+  },
+  {
+    name: "PutValue",
+    from: `ELSE IF Val(r) = False /\\ v.strict THEN ThrowTypeError(r.s)`,
+    to: `ELSE IF Val(r) = False /\\ v.strict THEN SetFailure(r.s, Val(base), Val(k))`,
+  },
+  {
+    name: "Set",
+    from: `ELSE IF Val(r) = False /\\ throw THEN ThrowTypeError(r.s)`,
+    to: `ELSE IF Val(r) = False /\\ throw THEN SetFailure(r.s, v, k)`,
+  },
+  {
+    name: "ObjectBuiltin",
+    from: `LET r == DefinePropertyOrThrow(d.s, a1, Val(k), Val(d)) IN`,
+    to: `LET r == LET defined == DefineOwnProperty(d.s, a1, Val(k), Val(d)) IN
+                   IF IsAbrupt(defined) \\/ Val(defined) = True THEN defined ELSE DefineFailure(defined.s, a1, Val(k)) IN`,
+  },
+  {
+    name: "ForInOfHeadThen",
+    from: `  ELSE LET it == GetIterator(r.s, Val(r), IF loop.iterationKind = "async-iterate" THEN "async" ELSE "sync") IN`,
+    to: `  ELSE LET it == IF loop.iterationKind = "iterate" /\\ "text" \\in DOMAIN loop /\\ loop.text # Empty
+                 THEN GetIteratorNamed(r.s, Val(r), loop.text)
+                 ELSE GetIterator(r.s, Val(r), IF loop.iterationKind = "async-iterate" THEN "async" ELSE "sync") IN`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `  IN IF IsAbrupt(off) THEN off
+     ELSE IF ~NumIsZero(NumRemainder(Val(off).value, NumFromInt(size))) THEN ThrowError(off.s, "RangeError")`,
+    to: `  IN IF IsAbrupt(off) /\\ IsIntegralNumber(byteOffset) THEN ThrowMessage(s, "RangeError", N("Start offset ") \\o NumToString(byteOffset.value) \\o N(" is outside the bounds of the buffer"))
+     ELSE IF IsAbrupt(off) THEN off
+     ELSE IF ~NumIsZero(NumRemainder(Val(off).value, NumFromInt(size))) THEN ThrowMessage(off.s, "RangeError", N("start offset of ") \\o TypedArrayNameUnits(O(s, ta).slots.name) \\o N(" should be a multiple of ") \\o IntUnits(size))`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `     IF IsAbrupt(newLength) THEN newLength`,
+    to: `     IF IsAbrupt(newLength) /\\ IsIntegralNumber(length) THEN ThrowMessage(off.s, "RangeError", N("Invalid typed array length: ") \\o NumToString(length.value))
+     ELSE IF IsAbrupt(newLength) THEN newLength`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `          IN IF NumLess(NumFromInt(bufferByteLength), offset) THEN ThrowError(t, "RangeError")`,
+    to: `          IN IF NumLess(NumFromInt(bufferByteLength), offset) THEN ThrowMessage(t, "RangeError", N("Start offset ") \\o NumToString(offset) \\o N(" is outside the bounds of the buffer"))`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `               IF bufferByteLength % size # 0 THEN ThrowError(t, "RangeError")`,
+    to: `               IF bufferByteLength % size # 0 THEN ThrowMessage(t, "RangeError", N("byte length of ") \\o TypedArrayNameUnits(O(s, ta).slots.name) \\o N(" should be a multiple of ") \\o IntUnits(size))`,
+  },
+  {
+    name: "InitializeTypedArrayFromArrayBuffer",
+    from: `                     NumToSmallInt(offset) + NumToSmallInt(Val(newLength).value) * size > bufferByteLength
+             THEN ThrowError(t, "RangeError")`,
+    to: `                     NumToSmallInt(offset) + NumToSmallInt(Val(newLength).value) * size > bufferByteLength
+             THEN ThrowMessage(t, "RangeError", N("Invalid typed array length: ") \\o NumToString(Val(newLength).value))`,
+  },
+  {
+    name: "TypedArrayConstruct",
+    from: `  ELSE LET n == ToIndex(s, args[1]) IN IF IsAbrupt(n) THEN n ELSE`,
+    to: `  ELSE LET n == ToIndex(s, args[1]) IN
+       IF IsAbrupt(n) /\\ IsIntegralNumber(args[1]) THEN ThrowMessage(s, "RangeError", N("Invalid typed array length: ") \\o NumToString(args[1].value))
+       ELSE IF IsAbrupt(n) THEN n ELSE`,
+  },
+  {
+    name: "TypedArrayBuiltin",
+    from: `         ELSE IF NumLess(Val(offset).value, PosZero) THEN ThrowError(offset.s, "RangeError")`,
+    to: `         ELSE IF NumLess(Val(offset).value, PosZero) THEN ThrowMessage(offset.s, "RangeError", N("offset is out of bounds"))`,
+  },
+  {
+    name: "SetTypedArrayFromTypedArray",
+    from: `  THEN ThrowError(sourceLength.s, "RangeError")`,
+    to: `  THEN ThrowMessage(sourceLength.s, "RangeError", N("offset is out of bounds"))`,
+  },
+  {
+    name: "SetTypedArrayFromArrayLike",
+    from: `  THEN ThrowError(sourceLength.s, "RangeError")`,
+    to: `  THEN ThrowMessage(sourceLength.s, "RangeError", N("offset is out of bounds"))`,
+  },
+];
+
+// ESCore's definitions with V8's messages in place, each from the text that the runtime's other
+// overrides give it, or else ESCore's.
+export const getMessageDefinitions = (
+  library: Library,
+  overrides: readonly GeneratedDefinition[],
+  realm: HostRealm,
+): GeneratedDefinition[] => {
+  const patched = new Map(overrides.map((definition) => [definition.name, definition]));
+  const changed = new Map<string, GeneratedDefinition>();
+  for (const patch of MESSAGE_PATCHES) {
+    const definition =
+      changed.get(patch.name) ?? patched.get(patch.name) ?? library.definitions.get(patch.name);
+    if (definition === undefined || !definition.text.includes(patch.from)) {
+      throw new TlaError(`ESCore's ${patch.name} no longer reads as the compiled spec patches it`);
+    }
+    changed.set(patch.name, {
+      ...definition,
+      text:
+        patch.isEvery === true
+          ? definition.text.replaceAll(patch.from, patch.to)
+          : definition.text.replace(patch.from, patch.to),
+    });
+  }
+  // A name that Node's own context or a CommonJS module's wrapper binds, which a script's new
+  // context lacks, so that the error of reading it is one that Node's run of the file may not
+  // throw, keeps the host's message.
+  const hostNames = [
+    ...realm.moduleGlobals.map((global) => global.name),
+    "require",
+    "module",
+    "exports",
+    "__filename",
+    "__dirname",
+  ];
+  return [
+    ...changed.values(),
+    {
+      name: "NotDefined",
+      arity: 2,
+      text: `NotDefined(s, name) ==
+  IF name \\in {${hostNames.map(getUnitsOf).join(", ")}} THEN ThrowError(s, "ReferenceError")
+  ELSE ThrowMessage(s, "ReferenceError", name \\o N(" is not defined"))`,
+    },
+  ];
+};
+
 // ESCore's operators that a compiled function's frame changes (see locals.ts): those on Reference
 // Records, which take a reference whose base is a local, the slot of the frame that holds a binding
 // that only its function's own code reaches, and the call of a code that needs no environment. A
@@ -1621,8 +1945,8 @@ export const getLocalDefinitions = (library: Library): GeneratedDefinition[] => 
   },
   {
     name: "LocalValue",
-    arity: 2,
-    text: `LocalValue(s, slot) == IF s.frame[slot] = Empty THEN ThrowError(s, "ReferenceError") ELSE Ok(s, s.frame[slot])`,
+    arity: 3,
+    text: `LocalValue(s, slot, name) == IF s.frame[slot] = Empty THEN ThrowMessage(s, "ReferenceError", BeforeInitialization(name)) ELSE Ok(s, s.frame[slot])`,
   },
   {
     name: "LocalInitialize",

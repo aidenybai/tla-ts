@@ -2157,7 +2157,7 @@ describe("compiles scripts by specializing ESCore", () => {
         "JSON.stringify(error)",
       ];
       for (const read of reads) {
-        const source = `try { (null as unknown as { x: number }).x; } catch (error) { ${read}; }`;
+        const source = `try { (null as unknown as Record<string, number>)[{} as unknown as string]; } catch (error) { ${read}; }`;
         expect((await checkScript(source)).message).toContain(
           "tla-ts can't read the message that Node writes for an error it throws",
         );
@@ -2394,6 +2394,36 @@ describe("compiles scripts by specializing ESCore", () => {
 
   // Node runs a .ts file with its types stripped to whitespace, as its stripTypeScriptTypes gives,
   // and rejects the syntax that only a transform could remove.
+  describe("starts a static method's source text after static, as V8 does", () => {
+    const getSource = (expected: string) => `
+      class Point {
+        static make(n: number): number { return n; }
+        public static async load(): Promise<void> {}
+        static *keys() {}
+        static get origin(): number { return 0; }
+      }
+      const origin = Object.getOwnPropertyDescriptor(Point, "origin")!.get!;
+      const result = JSON.stringify([Point.make, Point.load, Point.keys, origin].map(String));
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected = JSON.stringify([
+      "make(n        )         { return n; }",
+      "async load()                {}",
+      "*keys() {}",
+      "get origin()         { return 0; }",
+    ]);
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("make(", "static make(")))).message,
+      ).toContain(THREW);
+    });
+  });
+
   describe("gives each function the source text that Node strips its types from", () => {
     const program = [
       "const arrow = <T,>(value: T, rest?: number): T => value;",
@@ -2475,6 +2505,137 @@ describe("compiles scripts by specializing ESCore", () => {
             .message,
         ).toContain(THREW);
       });
+    });
+  });
+
+  describe("throws V8's message for an error that ESCore throws itself", () => {
+    const getSource = (expected: string) => `
+declare const undeclared: number;
+const read = (run: () => unknown) => {
+  try {
+    run();
+    return "none";
+  } catch (error) {
+    return \`\${(error as Error).constructor.name}: \${(error as Error).message}\`;
+  }
+};
+const nothing = null as unknown as { x: number };
+const result = [
+  read(() => undeclared),
+  read(() => nothing.x),
+  read(() => (nothing as unknown as Record<symbol, number>)[Symbol("d")]),
+  read(() => { (undefined as unknown as { x: number }).x = 1; }),
+  read(() => { late; let late = 1; }),
+  read(() => { const fixed = 1; (fixed as number) = 2; }),
+  read(() => "a".repeat(-1.5)),
+  read(() => String.fromCodePoint(65.5)),
+  read(() => [].reduce((a: number) => a)),
+  read(() => (1n as unknown as number) + 1),
+  read(() => 1n / 0n),
+  read(() => \`\${Symbol("q")}\`),
+  read(() => String.prototype.trim.call(null)),
+  read(() => Object.keys(null as unknown as object)),
+  read(() => Object.setPrototypeOf(null, {})),
+].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected =
+      "ReferenceError: undeclared is not defined|TypeError: Cannot read properties of null (reading 'x')|TypeError: Cannot read properties of null (reading 'Symbol(d)')|TypeError: Cannot set properties of undefined (setting 'x')|ReferenceError: Cannot access 'late' before initialization|TypeError: Assignment to constant variable.|RangeError: Invalid count value: -1.5|RangeError: Invalid code point 65.5|TypeError: Reduce of empty array with no initial value|TypeError: Cannot mix BigInt and other types, use explicit conversions|RangeError: Division by zero|TypeError: Cannot convert a Symbol value to a string|TypeError: String.prototype.trim called on null or undefined|TypeError: Cannot convert undefined or null to object|TypeError: Object.setPrototypeOf called on null or undefined";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("(reading 'x')", "(reading x)")))).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("throws V8's message for a refused write, an iteration, and a typed array's bounds", () => {
+    const getSource = (expected: string) => `
+const read = (run: () => unknown) => {
+  try {
+    run();
+    return "none";
+  } catch (error) {
+    return (error as Error).message;
+  }
+};
+type Loose = Record<string | symbol, unknown>;
+const frozen = Object.freeze({ a: 1 }) as Loose;
+const closed = Object.preventExtensions({}) as Loose;
+const getter = { get a() { return 1; } } as Loose;
+const number = 5 as unknown as number[];
+const result = [
+  read(() => { frozen.a = 2; }),
+  read(() => { closed.b = 1; }),
+  read(() => { getter.a = 2; }),
+  read(() => { (Object.freeze([]) as number[]).push(1); }),
+  read(() => Object.defineProperty(frozen, "a", { value: 2 })),
+  read(() => [...number]),
+  read(() => { for (const item of number) void item; }),
+  read(() => Math.max(...number)),
+  read(() => new Uint8Array(new ArrayBuffer(4), 8)),
+  read(() => new Int32Array(new ArrayBuffer(4), 2)),
+  read(() => new Uint8Array(4).set([1], -1)),
+  read(() => new Uint8Array(-1)),
+].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected =
+      "Cannot assign to read only property 'a' of object '#<Object>'|Cannot add property b, object is not extensible|Cannot set property a of #<Object> which has only a getter|Cannot add property 0, object is not extensible|Cannot redefine property: a|number is not iterable|number is not iterable|Spread syntax requires ...iterable[Symbol.iterator] to be a function|Start offset 8 is outside the bounds of the buffer|start offset of Int32Array should be a multiple of 4|offset is out of bounds|Invalid typed array length: -1";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("number is", "5 is")))).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("names a callee that isn't callable by its text, as V8 does", () => {
+    const getSource = (expected: string) => `
+const read = (run: () => unknown) => {
+  try {
+    run();
+    return "none";
+  } catch (error) {
+    return (error as Error).message;
+  }
+};
+const box = { f: 1, inner: { g: "x" } } as unknown as { f: () => void; inner: { g: () => void } };
+const value = 5 as unknown as () => void;
+const Made = 1 as unknown as new () => object;
+const result = [read(() => box.f()), read(() => box.inner.g()), read(() => value()), read(() => new Made()), read(() => box.f?.())].join("|");
+      if (result !== ${JSON.stringify(expected)}) throw new Error(result);
+    `;
+    const expected =
+      "box.f is not a function|box.inner.g is not a function|value is not a function|Made is not a constructor|box.f is not a function";
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(expected))).message).toBeUndefined();
+    });
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource(expected.replace("value is", "value() is")))).message,
+      ).toContain(THREW);
+    });
+  });
+
+  describe("names the part of ECMAScript that ESCore leaves out where it stops", () => {
+    it("stops at Atomics.wait with no agent to notify it", async () => {
+      const result = await checkScript(
+        "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);",
+      );
+      expect(result.message).toContain(
+        "tla-ts can't model Atomics.wait with no agent to notify it",
+      );
     });
   });
 

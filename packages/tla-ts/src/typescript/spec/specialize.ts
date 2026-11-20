@@ -945,8 +945,38 @@ export const specialize = (
 
   // A node's source text, as its file's number and the range of the file's text it spans, which
   // SourceUnits makes code units of when a program reads it.
-  const getSourceText = (node: ts.Node) =>
-    `<<${fileNumbers.get(node.getSourceFile())}, ${node.getStart() + 1}, ${node.getEnd()}>>`;
+  // The call or new of a callee that V8 names by its source text where the callee isn't callable,
+  // as a name or a chain of property names, and otherwise the call that ESCore's message leaves
+  // to the host.
+  // The text that V8 prints of an expression in a message, a name or a chain of property names,
+  // or undefined for another.
+  const getPrintedText = (node: ts.Expression) =>
+    /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*$/.test(node.getText()) &&
+    !/^super\b/.test(node.getText())
+      ? node.getText()
+      : undefined;
+  const getNamedCall = (callee: ts.Expression, call: string, args: string) =>
+    getPrintedText(callee) !== undefined
+      ? `${call === "CallArgumentsAt" ? "CallNamedAt" : "NewNamedAt"}(${args}, ${getUnits(callee.getText())})`
+      : `${call}(${args})`;
+
+  // A function's or a class's source text, which starts at async where the code says it, after
+  // the modifiers that ECMAScript's syntax leaves out of it, such as static and export, and the
+  // ones whose text Node strips, such as private.
+  const getSourceText = (node: ts.Node) => {
+    const modifiers = ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []) : [];
+    const async = modifiers.find((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+    const last = modifiers.at(-1);
+    const start =
+      async?.getStart() ??
+      (last === undefined
+        ? node.getStart()
+        : (node
+            .getChildren()
+            .find((child) => child.pos >= last.end)
+            ?.getStart() ?? node.getStart()));
+    return `<<${fileNumbers.get(node.getSourceFile())}, ${start + 1}, ${node.getEnd()}>>`;
+  };
 
   // A function's code record, which the module evaluates once, as it has no parameters.
   // A bare code runs without the environment that a call makes for it (OrdinaryCallRun).
@@ -1158,7 +1188,7 @@ export const specialize = (
       if (ts.isSpreadElement(argument)) {
         steps.push(
           `LET ${name} == ${value(argument.expression, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-          `LET ${name}i == GetIterator(${name}.s, Val(${name}), "sync") IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
+          `LET ${name}i == GetIteratorSpread(${name}.s, Val(${name})) IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
           `LET ${name}l == IteratorToList(${name}i.s, Val(${name}i), <<>>) IN IF IsAbrupt(${name}l) THEN ${name}l ELSE`,
         );
         values.push(`Val(${name}l)`);
@@ -1222,7 +1252,7 @@ export const specialize = (
           : `IF IsNullish(Val(c)) THEN Abrupt(c.s, Completion("nullish", Undefined, Empty)) ELSE `;
       return defineCode(
         "Call",
-        `LET c == ${fn("s", "ctx")} IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsAt(${getCallSite(node)}, Val(c), Undefined, ${args("c.s", "ctx")})`,
+        `LET c == ${fn("s", "ctx")} IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}${getNamedCall(node.expression, "CallArgumentsAt", `${getCallSite(node)}, Val(c), Undefined, ${args("c.s", "ctx")}`)}`,
       );
     }
     const base = reference(node.expression, scope);
@@ -1232,7 +1262,7 @@ export const specialize = (
         : `IF IsNullish(Val(c).f) THEN Abrupt(c.s, Completion("nullish", Undefined, Empty)) ELSE `;
     return defineCode(
       "Call",
-      `LET c == CalleeThen(${base("s", "ctx")}) IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}CallArgumentsAt(${getCallSite(node)}, Val(c).f, Val(c).this, ${args("c.s", "ctx")})`,
+      `LET c == CalleeThen(${base("s", "ctx")}) IN IF IsAbrupt(c) THEN c ELSE ${shortCircuit}${getNamedCall(node.expression, "CallArgumentsAt", `${getCallSite(node)}, Val(c).f, Val(c).this, ${args("c.s", "ctx")}`)}`,
     );
   };
 
@@ -1522,7 +1552,7 @@ export const specialize = (
       return slot === undefined
         ? (state, context) =>
             `IdentifierValue(${state}, ${getLex(context)}, ${getUnits(node.text)}, ${getBool(scope.isStrict)})`
-        : (state) => `LocalValue(${state}, ${slot})`;
+        : (state) => `LocalValue(${state}, ${slot}, ${getUnits(node.text)})`;
     }
     if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
       const ref = reference(node, scope);
@@ -1549,7 +1579,7 @@ export const specialize = (
       const args = argumentList(node.arguments ?? [], scope);
       return defineCode(
         "New",
-        `LET r == ${callee("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE NewArgumentsAt(${getCallSite(node)}, Val(r), ${args("r.s", "ctx")})`,
+        `LET r == ${callee("s", "ctx")} IN IF IsAbrupt(r) THEN r ELSE ${getNamedCall(node.expression, "NewArgumentsAt", `${getCallSite(node)}, Val(r), ${args("r.s", "ctx")}`)}`,
       );
     }
     if (ts.isMetaProperty(node)) {
@@ -1794,7 +1824,7 @@ export const specialize = (
       if (ts.isSpreadElement(element)) {
         steps.push(
           `LET ${name} == ${value(element.expression, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-          `LET ${name}i == GetIterator(${name}.s, Val(${name}), "sync") IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
+          `LET ${name}i == ${getPrintedText(element.expression) === undefined ? `GetIterator(${name}.s, Val(${name}), "sync")` : `GetIteratorNamed(${name}.s, Val(${name}), ${getUnits(getPrintedText(element.expression) ?? "")})`} IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
           `LET ${name}p == SpreadIntoArray(${name}i.s, Val(a), Val(${name}i), ${index}) IN IF IsAbrupt(${name}p) THEN ${name}p ELSE`,
         );
         state = `${name}p.s`;
@@ -2886,7 +2916,7 @@ export const specialize = (
           : `LET env == NewDeclarativeEnvironment(s, ctx.lex) IN ${expression(`BlockBindNames(env.s, env.e, ${getSequence(tdz.map(getUnits))}, FALSE)`, "WithLex(ctx, env.e)")}`;
     return defineCode(
       "ForInOf",
-      `BreakTargetThen(ForInOfHeadThen(ctx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> <<>>, it |-> Empty, iterationKind |-> "${isEnumerate ? "enumerate" : isAwait ? "async-iterate" : "iterate"}", iteratorKind |-> "${isAwait ? "async" : "sync"}"], ${head}))`,
+      `BreakTargetThen(ForInOfHeadThen(ctx, [id |-> ${id}, labels |-> ${labelSet}, lets |-> <<>>, it |-> Empty, iterationKind |-> "${isEnumerate ? "enumerate" : isAwait ? "async-iterate" : "iterate"}", iteratorKind |-> "${isAwait ? "async" : "sync"}", text |-> ${isEnumerate || isAwait || getPrintedText(node.expression) === undefined ? "Empty" : getUnits(getPrintedText(node.expression) ?? "")}], ${head}))`,
     );
   };
 
