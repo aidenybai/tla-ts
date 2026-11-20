@@ -160,6 +160,47 @@ describe("ALIAS matches TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "a lasso",
+      "Next == x' = (x + 1) % 3 /\\ y' = y /\\ Count\nSpec == Init /\\ [][Next]_<<x, y>> /\\ WF_<<x, y>>(Next)\nProp == <>[](x = 0)",
+      "SPECIFICATION Spec\nPROPERTY Prop",
+      [
+        ["13", '"13"'],
+        ["14", '"14"'],
+        ["14", '"14"'],
+      ],
+    ],
+    [
+      "an invariant under a VIEW",
+      "Next == x < 3 /\\ x' = x + 1 /\\ y' = 1 - y /\\ Count\nInv == x < 3\nView == x",
+      "INIT Init\nNEXT Next\nINVARIANT Inv\nVIEW View\nCHECK_DEADLOCK FALSE",
+      [
+        ["4", '"4"'],
+        ["4", '"4"'],
+        ["5", '"5"'],
+        ["6", '"6"'],
+      ],
+    ],
+  ])(
+    "rebuilds each state of %s once for the named registers and -D properties its ALIAS reads, as TLC does",
+    async (_name, definitions, config, values) => {
+      const getValues = async (maxSetSize: number | undefined) =>
+        (
+          await check({
+            source: `---- MODULE M ----\nEXTENDS Naturals, TLC\nVARIABLES x, y\nASSUME TLCSet("s:n", 0) /\\ TLCSet("-Dk", 0)\nCount == TLCSet("s:n", TLCGet("s:n") + 1) /\\ TLCSet("-Dk", 1 + CHOOSE n \\in 0..99 : ToString(n) = TLCGet("-Dk"))\nInit == x = 0 /\\ y = 0\n${definitions}\nAlias == [x |-> x, named |-> TLCGet("s:n"), property |-> TLCGet("-Dk")]\n====`,
+            config: `${config}\nALIAS Alias`,
+            maxSetSize,
+          })
+        ).violation?.trace.map((step) => [
+          formatValue(step.state.named),
+          formatValue(step.state.property),
+        ]);
+      expect(await getValues(undefined)).toEqual(values);
+      expect(await getValues(1_000_000)).toEqual(values);
+    },
+  );
+
   it("adds _ALIASEvalError to the state when the alias fails", async () => {
     const next = "Next == x < 1 /\\ x' = x + 1\nArgument(n) == [n |-> n]\nConstant == [c |-> 1]";
     expect(

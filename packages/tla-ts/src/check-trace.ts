@@ -365,6 +365,8 @@ export const createTraceBuilder = (context: TraceContext) => {
   const getPathStates = (path: number[], nextFailure: string) => {
     // TLC rebuilds each state of a trace once, so finding the states first leaves the registers as they were.
     const registers = new Map(runtime.registers);
+    const namedRegisters = new Map(runtime.namedRegisters);
+    const properties = new Map(runtime.properties);
     const steps = runtime.runWithNewRandom(() => {
       const initial = captureOutput(() =>
         isReducing || isImpure(environment)
@@ -392,6 +394,8 @@ export const createTraceBuilder = (context: TraceContext) => {
       return steps;
     });
     runtime.registers = registers;
+    runtime.namedRegisters = namedRegisters;
+    runtime.properties = properties;
     return steps;
   };
   const getIndexPath = (index: number) => {
