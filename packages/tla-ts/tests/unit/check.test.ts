@@ -5118,6 +5118,24 @@ describe("initial predicate and next-state relation match TLC", () => {
     );
   });
 
+  it("finds the Java override a root theorem shares its name with, as TLC's defns holds no theorem", async () => {
+    await expect(
+      check({
+        source: getTwoStateSource("THEOREM Len == TRUE\nI == INSTANCE Sequences"),
+        config: "INIT Init\nNEXT Next\nINVARIANT Len",
+      }),
+    ).rejects.toThrow(
+      new TlaConfigError(
+        "The invariant of Len is equal to <Java Method: public static tlc2.value.impl.IntValue tlc2.module.Sequences.Len(tlc2.value.impl.Value)>",
+      ),
+    );
+    const substituted = await check({
+      source: getTwoStateSource("CONSTANT c\nTHEOREM Len == TRUE\nI == INSTANCE Sequences"),
+      config: "INIT Init\nNEXT Next\nCONSTANT c <- Len",
+    });
+    expect(substituted.status).toBe("success");
+  });
+
   it("takes a theorem that the ALIAS names for undefined, as TLC does", async () => {
     const result = await check({
       source: getTwoStateSource("THEOREM T == x \\in {0, 1}\nASSUME A == TRUE\nInv == x = 0"),

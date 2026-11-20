@@ -1771,7 +1771,10 @@ export const createEnvironment = (
     const key = linked.visible.get(invariant.name)?.key;
     if (key !== undefined && getLinkedDefinition(key)) rootKeys.set(invariant.name, key);
   });
-  linkedRoot.visible.forEach((symbol, name) => rootKeys.set(name, symbol.key));
+  // TLC's defns holds no theorem, so a name a root theorem shares with a Java override reaches the override.
+  linkedRoot.visible.forEach((symbol, name) => {
+    if (symbol.kind !== "Theorem") rootKeys.set(name, symbol.key);
+  });
   linkedRoot.constants.forEach((constant) => rootKeys.set(constant.name, constant.key));
   moduleOperators.forEach((operator) => {
     if (

@@ -242,7 +242,10 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
   ) => {
     if (others.has(target)) throw createReusedTargetError(target);
     // TLC looks the target up in defns, which holds no theorem or assumption.
-    if (!isDefined(target) || linked.root.visible.get(target)?.kind === "Theorem") {
+    if (
+      !isDefined(target) ||
+      (linked.root.visible.get(target)?.kind === "Theorem" && !linked.builtins.has(target))
+    ) {
       throw new TlaConfigError(
         `The configuration file substitutes for ${name} with the undefined identifier ${target}.`,
       );
