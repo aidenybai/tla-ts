@@ -16,6 +16,12 @@ interface Code {
   (state: string, context: string): string;
 }
 
+// TLA+ text of ArrayAccumulation into an array from an index, in a state and the context ctx,
+// whose result is a record [s, c] with the next index.
+interface ElementsCode {
+  (state: string, array: string, index: string): string;
+}
+
 interface Scope {
   isStrict: boolean;
   // The code ids of the functions that the scope's code is in, outermost first.
@@ -1779,44 +1785,73 @@ export const specialize = (
   };
 
   // Array initializers (§13.2.4).
-  const arrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope): Code => {
-    const steps = [`LET a == ArrayCreate(s, 0, Intrinsic(s, "ArrayPrototype")) IN`];
-    let state = "a.s";
-    let index = "0";
-    let staticIndex: number | undefined = 0;
-    node.elements.forEach((element, position) => {
-      const name = `e${position + 1}`;
-      if (ts.isOmittedExpression(element)) {
+  const arrayLiteral = (node: ts.ArrayLiteralExpression, scope: Scope): Code =>
+    defineCode(
+      "Array",
+      `LET a == ArrayCreate(s, 0, Intrinsic(s, "ArrayPrototype")) IN\n  ArrayLiteralThen(Val(a), ${arrayElements(node.elements, scope, 0)("a.s", "Val(a)", "0")})`,
+    );
+
+  // ArrayAccumulation (§13.2.4.1) of the elements into array from index, whose result is the next
+  // index. start is the index when it's known before the code runs. A list of more than 64 runs as
+  // its halves, each a list, so that thousands of elements nest log n deep rather than n.
+  const arrayElements = (
+    elements: readonly ts.Expression[],
+    scope: Scope,
+    start: number | undefined,
+  ): ElementsCode => {
+    if (elements.length > 64) {
+      const middle = Math.ceil(elements.length / 2);
+      const first = arrayElements(elements.slice(0, middle), scope, start);
+      const rest = arrayElements(
+        elements.slice(middle),
+        scope,
+        start === undefined || elements.slice(0, middle).some(ts.isSpreadElement)
+          ? undefined
+          : start + middle,
+      );
+      const name = define(
+        "Elements",
+        ["s", "ctx", "array", "i"],
+        `LET q == ${first("s", "array", "i")} IN IF IsAbrupt(q) THEN q ELSE ${rest("q.s", "array", "Val(q)")}`,
+      );
+      return (state, array, index) => `${name}(${state}, ctx, ${array}, ${index})`;
+    }
+    return (initialState, array, initialIndex) => {
+      const steps: string[] = [];
+      let state = initialState;
+      let staticIndex = start;
+      let index = start === undefined ? initialIndex : String(start);
+      elements.forEach((element, position) => {
+        const name = `e${position + 1}`;
+        if (ts.isOmittedExpression(element)) {
+          index = staticIndex === undefined ? `${index} + 1` : String(staticIndex + 1);
+          staticIndex = staticIndex === undefined ? undefined : staticIndex + 1;
+          return;
+        }
+        if (ts.isSpreadElement(element)) {
+          steps.push(
+            `LET ${name} == ${value(element.expression, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
+            `LET ${name}i == GetIterator(${name}.s, Val(${name}), "sync") IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
+            `LET ${name}p == SpreadIntoArray(${name}i.s, ${array}, Val(${name}i), ${index}) IN IF IsAbrupt(${name}p) THEN ${name}p ELSE`,
+          );
+          state = `${name}p.s`;
+          index = `Val(${name}p)`;
+          staticIndex = undefined;
+          return;
+        }
+        const key =
+          staticIndex === undefined
+            ? `Str(NumToString(NumFromInt(${index})))`
+            : getStr(String(staticIndex));
+        steps.push(
+          `LET ${name} == ArrayElementResult(${array}, ${key}, ${value(element, scope)(state, "ctx")}) IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
+        );
+        state = `${name}.s`;
         index = staticIndex === undefined ? `${index} + 1` : String(staticIndex + 1);
         staticIndex = staticIndex === undefined ? undefined : staticIndex + 1;
-        return;
-      }
-      if (ts.isSpreadElement(element)) {
-        steps.push(
-          `LET ${name} == ${value(element.expression, scope)(state, "ctx")} IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-          `LET ${name}i == GetIterator(${name}.s, Val(${name}), "sync") IN IF IsAbrupt(${name}i) THEN ${name}i ELSE`,
-          `LET ${name}p == SpreadIntoArray(${name}i.s, Val(a), Val(${name}i), ${index}) IN IF IsAbrupt(${name}p) THEN ${name}p ELSE`,
-        );
-        state = `${name}p.s`;
-        index = `Val(${name}p)`;
-        staticIndex = undefined;
-        return;
-      }
-      const key =
-        staticIndex === undefined
-          ? `Str(NumToString(NumFromInt(${index})))`
-          : getStr(String(staticIndex));
-      steps.push(
-        `LET ${name} == ArrayElementResult(Val(a), ${key}, ${value(element, scope)(state, "ctx")}) IN IF IsAbrupt(${name}) THEN ${name} ELSE`,
-      );
-      state = `${name}.s`;
-      index = staticIndex === undefined ? `${index} + 1` : String(staticIndex + 1);
-      staticIndex = staticIndex === undefined ? undefined : staticIndex + 1;
-    });
-    return defineCode(
-      "Array",
-      `${steps.join("\n  ")}\n  ArrayLiteralThen(Val(a), Ok(${state}, ${index}))`,
-    );
+      });
+      return [...steps, `Ok(${state}, ${index})`].join("\n  ");
+    };
   };
 
   // Object initializers (§13.2.5).

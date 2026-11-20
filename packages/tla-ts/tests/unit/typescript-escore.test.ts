@@ -2057,6 +2057,25 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("runs an array literal of thousands of elements", () => {
+    const elements = Array.from({ length: 5000 }, (_, index) =>
+      index === 2500 ? '...["x", "y"]' : index === 100 ? "" : String(index % 10),
+    ).join(", ");
+    const getSource = (expected: string) => `
+      const list = [${elements}];
+      const result = [list.length, list[99], 100 in list, list[2500], list[2501], list[2502], list[4999]].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource("5001,9,false,x,y,1,8"))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource("5001,9,false,x,y,2,8"))).message).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("runs a script of thousands of statements and global vars", () => {
     const getSource = (expected: number) => `
       let count = 0;
