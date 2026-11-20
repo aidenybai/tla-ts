@@ -2256,6 +2256,37 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  describe("visits the present elements of an array of thousands", () => {
+    const getSource = (expected: string) => `
+      const list = new Array<number>(5000).fill(2);
+      delete list[10];
+      delete list[4000];
+      const result = [
+        list.reduce((total, item) => total + item, 0),
+        list.reduceRight((total, item) => total + item),
+        list.indexOf(2, 11),
+        list.lastIndexOf(2, 4000),
+        list.map((item) => item * 2).filter((item) => item === 4).length,
+        ([] as number[]).concat(list, list).length,
+        list.some((_, index) => index === 4999),
+        list.every((item) => item === 2),
+      ].join();
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource("9996,9996,11,3999,4998,10000,true,true"))).message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource("9996,9996,11,4000,4998,10000,true,true"))).message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("runs a script of thousands of statements and global vars", () => {
     const getSource = (expected: number) => `
       let count = 0;

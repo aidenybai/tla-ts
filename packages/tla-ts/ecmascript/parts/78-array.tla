@@ -944,9 +944,14 @@ NearestIndexUnits(keys, kU, dir, best) ==
 
 \* The loops that read the present indices from k toward bound in direction dir, as HasProperty
 \* and then Get. Each present value goes to the step of method m, which updates the loop's state
-\* st and may stop it. The result is [stop, st].
+\* st and may stop it. The result is [stop, st]. More than 64 indices run in halves, so that
+\* thousands of them nest log n deep rather than n.
 VisitPresent(s, o, k, bound, dir, m, st) ==
   IF ~IndexInRange(k, bound, dir) THEN Ok(s, [stop |-> FALSE, st |-> st])
+  ELSE IF NumFitsInt(k) /\ NumFitsInt(bound) /\ dir * (NumToInt(bound) - NumToInt(k)) > 64 THEN
+       LET middle == NumFromInt((NumToInt(k) + NumToInt(bound)) \div 2)
+           first == VisitPresent(s, o, k, middle, dir, m, st)
+       IN IF IsAbrupt(first) \/ Val(first).stop THEN first ELSE VisitPresent(first.s, o, middle, bound, dir, m, Val(first).st)
   ELSE LET i == IndexCandidate(s, o, k, bound, dir, FALSE) IN
   IF ~NumEqual(i, k) THEN VisitPresent(s, o, i, bound, dir, m, st)
   ELSE LET pk == Index(k)
