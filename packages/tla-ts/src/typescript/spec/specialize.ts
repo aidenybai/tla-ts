@@ -936,11 +936,15 @@ export const specialize = (
   const getSourceText = (node: ts.Node) => {
     const modifiers = ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []) : [];
     const async = modifiers.find((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+    const last = modifiers.at(-1);
     const start =
       async?.getStart() ??
-      (modifiers.length === 0
+      (last === undefined
         ? node.getStart()
-        : ts.skipTrivia(node.getSourceFile().text, modifiers[modifiers.length - 1].end));
+        : (node
+            .getChildren()
+            .find((child) => child.pos >= last.end)
+            ?.getStart() ?? node.getStart()));
     return `<<${fileNumbers.get(node.getSourceFile())}, ${start + 1}, ${node.getEnd()}>>`;
   };
 
