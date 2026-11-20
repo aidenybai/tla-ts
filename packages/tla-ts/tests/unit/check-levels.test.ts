@@ -209,6 +209,28 @@ describe("level checking matches SANY", () => {
     );
   });
 
+  it.each([
+    "INSTANCE Q WITH c <- k, w <- k",
+    "N == INSTANCE Q WITH c <- k, w <- k",
+    "LOCAL INSTANCE Q WITH c <- k, w <- k",
+    "N(p) == INSTANCE Q WITH c <- {k}, w <- p",
+  ])("constrains a module by its instance %s, as SANY does", async (instance) => {
+    await expect(
+      check({
+        source: `---- MODULE M ----\nVARIABLE x\n---- MODULE Q ----\nCONSTANT c\nVARIABLE w\nA == c\n====\n---- MODULE L ----\nCONSTANT k\n${instance}\n====\nI == INSTANCE L WITH k <- x\nInit == x = 0\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 12, col 1 to line 12, col 27 of module M",
+          message:
+            "Level error in instantiating module 'L':\nThe level of the expression or operator substituted for 'k' \nmust be at most 0.",
+        },
+      ]),
+    );
+  });
+
   it("constrains a module by the theorems of a LET instance in an ASSUME/PROVE, as SANY does", async () => {
     await expect(
       check({

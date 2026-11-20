@@ -367,6 +367,20 @@ export const createEnvironment = (
     const source = definitions.get(sourceKey);
     return source && { ...substitutes, source, module };
   };
+  const getInstanceSubstitutes = (instance: Instance): InstanceSubstitutes | undefined => {
+    const linked = checkedModules.get(instance.module);
+    return (
+      linked && {
+        params: instance.params,
+        substitutions: new Map(
+          linked.declarations.map((declaration) => [
+            declaration.key,
+            getSubstitute(instance, declaration.name),
+          ]),
+        ),
+      }
+    );
+  };
   const instanceLevels = createInstanceChecker(
     (name) => {
       const linked = checkedModules.get(name) ?? getLinkedModule(name, name);
@@ -380,6 +394,7 @@ export const createEnvironment = (
         ],
         assumptions: linked.module.assumptions.map((assumption) => assumption.expression),
         theorems: linked.module.theorems,
+        instances: linked.module.instances,
         getDefinition: (symbol) => getLinkedDefinition(linked.visible.get(symbol)?.key ?? symbol),
         getQualifiedName: (symbol) => qualifiedNames.get(linked.visible.get(symbol)?.key ?? symbol),
       };
@@ -406,16 +421,8 @@ export const createEnvironment = (
       },
       getInstanceDefinitions: (instance) => {
         const linked = checkedModules.get(instance.module);
-        if (!linked) return [];
-        const substitutes = {
-          params: instance.params,
-          substitutions: new Map(
-            linked.declarations.map((declaration) => [
-              declaration.key,
-              getSubstitute(instance, declaration.name),
-            ]),
-          ),
-        };
+        const substitutes = getInstanceSubstitutes(instance);
+        if (!linked || !substitutes) return [];
         return [...linked.exported].flatMap((entry) => {
           const copy =
             entry[1].kind === "Definition" || entry[1].kind === "Theorem"
@@ -430,6 +437,7 @@ export const createEnvironment = (
           return [definition];
         });
       },
+      getSubstitutes: getInstanceSubstitutes,
     },
     recursiveSections,
   );

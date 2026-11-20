@@ -52,11 +52,29 @@ export interface InstanceCopy extends InstanceSubstitutes {
   module: string;
 }
 
-export interface InstancedDefinition {
-  source: OperatorLevels;
+export interface ModuleLevels {
+  isConstant: boolean;
   constants: Map<string, number>;
   variables: Set<string>;
-  isConstant: boolean;
+  constraints: Map<string, number>;
+  argConstraints: Map<string, number>;
+  argParams: Set<string>;
+}
+
+interface InstancedDefinition extends ModuleLevels {
+  source: OperatorLevels;
+}
+
+interface ArgumentParam {
+  operator: string;
+  index: number;
+  param: string;
+}
+
+interface SubstitutedSource {
+  constraints: [string, number][];
+  argConstraints: [string, number][];
+  argParams: ArgumentParam[];
 }
 
 export interface LetInstance extends InstanceSubstitutes {
@@ -70,6 +88,7 @@ export interface InstanceLevels {
   getInstanced: (copy: InstanceCopy) => InstancedDefinition;
   checkInstantiation: (instance: Instance, instancer: string, scope: Scope) => SanyError[];
   getInstanceDefinitions: (instance: Instance) => Definition[];
+  getSubstitutes: (instance: Instance) => InstanceSubstitutes | undefined;
 }
 
 interface LevelContext {
@@ -1341,6 +1360,98 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     return operands;
   };
 
+  // SANY's Subst.getSubLCSet, getSubALCSet and getSubALPSet: the constraints of a body read through substitutes.
+  const addSubstitutedLevels = (
+    data: LevelData,
+    source: SubstitutedSource,
+    operands: Map<string, Operand>,
+    instanced: ModuleLevels,
+  ) => {
+    const getParams = (param: string) => operands.get(param)?.data.params ?? [param];
+    source.constraints.forEach((entry) => {
+      const level = instanced.isConstant
+        ? entry[1]
+        : instanced.constants.has(entry[0])
+          ? CONSTANT_LEVEL
+          : instanced.variables.has(entry[0])
+            ? VARIABLE_LEVEL
+            : entry[1];
+      getParams(entry[0]).forEach((name) => putConstraint(data.constraints, name, level));
+    });
+    source.argConstraints.forEach((entry) => {
+      const parameter = parseArgumentParamKey(entry[0]);
+      const operator = operands.get(parameter.operator);
+      if (!operator) putArgConstraint(data.argConstraints, entry[0], entry[1]);
+      else if (operator.kind === "Declared") {
+        putArgConstraint(
+          data.argConstraints,
+          getArgumentKey(operator.declared.name, parameter.index),
+          entry[1],
+        );
+      }
+    });
+    source.argParams.forEach((parameter) => {
+      const operator = operands.get(parameter.operator);
+      if (operator?.kind === "Operator") {
+        getParams(parameter.param).forEach((name) =>
+          putConstraint(data.constraints, name, getMaxLevel(operator.data, parameter.index)),
+        );
+      }
+      const target =
+        operator === undefined
+          ? parameter.operator
+          : operator.kind === "Declared"
+            ? operator.declared.name
+            : undefined;
+      if (target === undefined) return;
+      const value = operands.get(parameter.param);
+      if (value) {
+        putArgConstraint(
+          data.argConstraints,
+          getArgumentKey(target, parameter.index),
+          value.data.level,
+        );
+      }
+      (operator === undefined ? [parameter.param] : getParams(parameter.param)).forEach((name) =>
+        data.argParams.add(getArgumentParamKey(target, parameter.index, name)),
+      );
+    });
+  };
+
+  // SANY's InstanceNode#levelCheck: an instance constrains its instancer by the instanced module's constraints.
+  const analyzeInstance = (
+    substitutes: InstanceSubstitutes,
+    instanced: ModuleLevels,
+    scope: Scope,
+  ) => {
+    const operands = getSubstitutes(substitutes, scope);
+    const substituted = createData();
+    addSubstitutedLevels(
+      substituted,
+      {
+        constraints: [...instanced.constraints],
+        argConstraints: [...instanced.argConstraints],
+        argParams: [...instanced.argParams].map(parseArgumentParamKey),
+      },
+      operands,
+      instanced,
+    );
+    operands.forEach((operand) => mergeConstraints(substituted, operand.data));
+    const isParam = (name: string) => substitutes.params.some((param) => param.name === name);
+    const data = createData();
+    substituted.constraints.forEach((level, name) => {
+      if (!isParam(name)) data.constraints.set(name, level);
+    });
+    substituted.argConstraints.forEach((level, key) => {
+      if (!isParam(parseArgumentParamKey(key).operator)) data.argConstraints.set(key, level);
+    });
+    substituted.argParams.forEach((key) => {
+      const parameter = parseArgumentParamKey(key);
+      if (!isParam(parameter.operator) && !isParam(parameter.param)) data.argParams.add(key);
+    });
+    return data;
+  };
+
   const analyzeInstanced = (definition: Definition, copy: InstanceCopy, scope: Scope) => {
     const instanced = context.instances.getInstanced(copy);
     const source = instanced.source;
@@ -1380,65 +1491,27 @@ export const createLevelAnalyzer = (context: LevelContext) => {
     data.isCorrect =
       source.isCorrect && [...operands.values()].every((operand) => operand.data.isCorrect);
     params.forEach((param) => getParams(param).forEach((name) => data.params.add(name)));
-    [
-      ...source.constraints,
-      ...names.map((name, index): [string, number] => [name, source.maxLevels[index]]),
-    ].forEach((entry) => {
-      const level = instanced.isConstant
-        ? entry[1]
-        : instanced.constants.has(entry[0])
-          ? CONSTANT_LEVEL
-          : instanced.variables.has(entry[0])
-            ? VARIABLE_LEVEL
-            : entry[1];
-      getParams(entry[0]).forEach((name) => putConstraint(data.constraints, name, level));
-    });
-    [
-      ...source.argConstraints,
-      ...names.flatMap((name, index) =>
-        source.minMaxLevels[index].map((level, position): [string, number] => [
-          getArgumentKey(name, position),
-          level,
-        ]),
-      ),
-    ].forEach((entry) => {
-      const parameter = parseArgumentParamKey(entry[0]);
-      const operator = operands.get(parameter.operator);
-      if (!operator) putArgConstraint(data.argConstraints, entry[0], entry[1]);
-      else if (operator.kind === "Declared") {
-        putArgConstraint(
-          data.argConstraints,
-          getArgumentKey(operator.declared.name, parameter.index),
-          entry[1],
-        );
-      }
-    });
-    argParams.forEach((parameter) => {
-      const operator = operands.get(parameter.operator);
-      if (operator?.kind === "Operator") {
-        getParams(parameter.param).forEach((name) =>
-          putConstraint(data.constraints, name, getMaxLevel(operator.data, parameter.index)),
-        );
-      }
-      const target =
-        operator === undefined
-          ? parameter.operator
-          : operator.kind === "Declared"
-            ? operator.declared.name
-            : undefined;
-      if (target === undefined) return;
-      const value = operands.get(parameter.param);
-      if (value) {
-        putArgConstraint(
-          data.argConstraints,
-          getArgumentKey(target, parameter.index),
-          value.data.level,
-        );
-      }
-      (operator === undefined ? [parameter.param] : getParams(parameter.param)).forEach((name) =>
-        data.argParams.add(getArgumentParamKey(target, parameter.index, name)),
-      );
-    });
+    addSubstitutedLevels(
+      data,
+      {
+        constraints: [
+          ...source.constraints,
+          ...names.map((name, index): [string, number] => [name, source.maxLevels[index]]),
+        ],
+        argConstraints: [
+          ...source.argConstraints,
+          ...names.flatMap((name, index) =>
+            source.minMaxLevels[index].map((level, position): [string, number] => [
+              getArgumentKey(name, position),
+              level,
+            ]),
+          ),
+        ],
+        argParams,
+      },
+      operands,
+      instanced,
+    );
     const nonLeibniz = new Set(names.filter((_name, index) => source.nonLeibniz.has(index)));
     if (prefix > 0) {
       const instanceParams = new Set(formals.slice(0, prefix).map((formal) => formal.name));
@@ -1532,6 +1605,7 @@ export const createLevelAnalyzer = (context: LevelContext) => {
   return {
     analyze,
     analyzeDefinition,
+    analyzeInstance,
     checkPrimedArguments,
     checkRecursiveSection,
     getSubstitutes,
