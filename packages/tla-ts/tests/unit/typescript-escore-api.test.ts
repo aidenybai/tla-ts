@@ -18,8 +18,7 @@ interface Outcome {
 }
 
 // ESCore's evaluation nests deeper than a test's stack, so the API runs on a worker with the stack
-// that test262-engine262 gives ESCore. A request compiles with the public compile, on today's
-// compiler or with TLA_TS_ESCORE.
+// that test262-engine262 gives ESCore. A request compiles with the public compile.
 const worker = new Worker(
   `const { register } = require("node:module");
   const { parentPort, workerData } = require("node:worker_threads");
@@ -36,8 +35,6 @@ const worker = new Worker(
     const [compile, parallel, values, errors] = await loading;
     const options = { source: request.source, fileName: request.fileName };
     try {
-      if (request.path === "escore") process.env.TLA_TS_ESCORE = "1";
-      else delete process.env.TLA_TS_ESCORE;
       const spec = await compile.compile(options);
       const result = await parallel.check({ ...spec, onPrint: () => {} });
       parentPort.postMessage({
@@ -76,16 +73,14 @@ worker.on("message", (response: { id: number; outcome: Outcome }) =>
   pending[response.id](response.outcome),
 );
 
-type Path = "today" | "escore";
-
-const getOutcome = (path: Path, source: string, fileName: string) =>
+const getOutcome = (source: string, fileName: string) =>
   new Promise<Outcome>((resolve) => {
-    worker.postMessage({ id: pending.length, path, source, fileName });
+    worker.postMessage({ id: pending.length, source, fileName });
     pending.push(resolve);
   });
 
 // The worker prepares ESCore's runtime before the first check, which takes longer than a check.
-beforeAll(() => getOutcome("escore", "", "empty.ts"), 120_000);
+beforeAll(() => getOutcome("", "empty.ts"), 120_000);
 
 // The message of a run that fails: a check's failure, or the error that its check throws as the
 // spec starts, as a spec without variables fails.
@@ -100,27 +95,23 @@ const runNode = (files: Record<string, string>, entry: string) => {
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 };
 
-// Each test checks a file with the public compile on today's compiler and on ESCore, and asserts
-// both against Node.
-const PATHS = ["today", "escore"] as const;
-
-describe("compile and check a script on ESCore as on today's compiler", () => {
+describe("compile and check a script as Node runs it", () => {
   describe("compute what Node computes", () => {
     const getSource = (expected: string) =>
       `const sorted = [3, 1, 2].sort((left, right) => left - right).map((value) => value * 2);\nif (sorted.join() !== "${expected}") throw new Error(sorted.join());\n`;
 
-    it.each(PATHS)("agrees with Node on %s", async (path) => {
+    it("agrees with Node", async () => {
       expect(runNode({ "sorted.ts": getSource("2,4,6") }, "sorted.ts").status).toBe(0);
-      expect(await getOutcome(path, getSource("2,4,6"), "sorted.ts")).toMatchObject({
+      expect(await getOutcome(getSource("2,4,6"), "sorted.ts")).toMatchObject({
         status: "success",
       });
     });
 
-    it.each(PATHS)("rejects another result on %s", async (path) => {
+    it("rejects another result", async () => {
       expect(runNode({ "sorted.ts": getSource("2,4,7") }, "sorted.ts").stderr).toContain(
         "Error: 2,4,6",
       );
-      const outcome = await getOutcome(path, getSource("2,4,7"), "sorted.ts");
+      const outcome = await getOutcome(getSource("2,4,7"), "sorted.ts");
       expect(outcome.error?.isTlaError).toBe(true);
       expect(getFailure(outcome)).toContain('"2,4,6"');
     });
@@ -129,33 +120,31 @@ describe("compile and check a script on ESCore as on today's compiler", () => {
   describe("fail with the value that a script throws", () => {
     const getSource = (factor: number) => `if (${factor} * 7 === 42) throw 42;\n`;
 
-    it.each(PATHS)("agrees with Node on %s", async (path) => {
+    it("agrees with Node", async () => {
       expect(runNode({ "thrown.ts": getSource(6) }, "thrown.ts").stderr).toContain("42");
-      expect(getFailure(await getOutcome(path, getSource(6), "thrown.ts"))).toContain('"42"');
+      expect(getFailure(await getOutcome(getSource(6), "thrown.ts"))).toContain('"42"');
     });
 
-    it.each(PATHS)("rejects another result on %s", async (path) => {
+    it("rejects another result", async () => {
       expect(runNode({ "thrown.ts": getSource(5) }, "thrown.ts").status).toBe(0);
-      expect(await getOutcome(path, getSource(5), "thrown.ts")).toMatchObject({
+      expect(await getOutcome(getSource(5), "thrown.ts")).toMatchObject({
         status: "success",
       });
     });
   });
 
-  // Today's compiler fails with the text of the thrown expression, here "product", where Node
-  // throws its value.
-  describe("fail with the value that a script computes and throws on ESCore", () => {
+  describe("fail with the value that a script computes and throws", () => {
     const getSource = (factor: number) =>
       `const product = ${factor} * 7;\nif (product === 42) throw product;\n`;
 
     it("agrees with Node", async () => {
       expect(runNode({ "thrown.ts": getSource(6) }, "thrown.ts").stderr).toContain("42");
-      expect(getFailure(await getOutcome("escore", getSource(6), "thrown.ts"))).toContain('"42"');
+      expect(getFailure(await getOutcome(getSource(6), "thrown.ts"))).toContain('"42"');
     });
 
     it("rejects another result", async () => {
       expect(runNode({ "thrown.ts": getSource(5) }, "thrown.ts").status).toBe(0);
-      expect(await getOutcome("escore", getSource(5), "thrown.ts")).toMatchObject({
+      expect(await getOutcome(getSource(5), "thrown.ts")).toMatchObject({
         status: "success",
       });
     });
@@ -165,43 +154,43 @@ describe("compile and check a script on ESCore as on today's compiler", () => {
     const getSource = (expected: number) =>
       `Promise.resolve(1).then((value) => {\n  if (value !== ${expected}) throw new Error("unexpected");\n});\n`;
 
-    it.each(PATHS)("agrees with Node on %s", async (path) => {
+    it("agrees with Node", async () => {
       expect(runNode({ "rejected.ts": getSource(2) }, "rejected.ts").stderr).toContain(
         "Error: unexpected",
       );
-      expect(getFailure(await getOutcome(path, getSource(2), "rejected.ts"))).toContain(
+      expect(getFailure(await getOutcome(getSource(2), "rejected.ts"))).toContain(
         "A promise rejected with no handler",
       );
     });
 
-    it.each(PATHS)("rejects another result on %s", async (path) => {
+    it("rejects another result", async () => {
       expect(runNode({ "rejected.ts": getSource(1) }, "rejected.ts").status).toBe(0);
-      expect(getFailure(await getOutcome(path, getSource(1), "rejected.ts"))).toBeUndefined();
+      expect(getFailure(await getOutcome(getSource(1), "rejected.ts"))).toBeUndefined();
     });
   });
 
   describe("throw TlaTypeScriptError where tla-ts can't run the program", () => {
     const getSource = (call: string) => `const value = ${call};\nif (value !== 2) throw value;\n`;
 
-    it.each(PATHS)("agrees with Node on %s", async (path) => {
+    it("agrees with Node", async () => {
       expect(runNode({ "direct.ts": getSource("1 + 1") }, "direct.ts").status).toBe(0);
-      expect(await getOutcome(path, getSource("1 + 1"), "direct.ts")).toMatchObject({
+      expect(await getOutcome(getSource("1 + 1"), "direct.ts")).toMatchObject({
         status: "success",
       });
     });
 
-    it.each(PATHS)("rejects another result on %s", async (path) => {
+    it("rejects another result", async () => {
       expect(runNode({ "evaluated.ts": getSource('eval("1 + 1")') }, "evaluated.ts").status).toBe(
         0,
       );
-      expect((await getOutcome(path, getSource('eval("1 + 1")'), "evaluated.ts")).error).toEqual(
+      expect((await getOutcome(getSource('eval("1 + 1")'), "evaluated.ts")).error).toEqual(
         expect.objectContaining({ name: "TlaTypeScriptError", isTlaError: true }),
       );
     });
   });
 });
 
-describe("compile and check a model on ESCore as on today's compiler", () => {
+describe("compile and check a model whose actions Node runs", () => {
   const getSource = (limit: number) =>
     `let count = 0;\n\nexport const increment = () => {\n  if (count < ${limit}) count += 1;\n};\n\nexport const reset = () => {\n  count = 0;\n};\n\nexport const bounded = () => count <= 2;\n`;
   // The invariant after each action that Node runs in turn from the module's start.
@@ -216,8 +205,8 @@ describe("compile and check a model on ESCore as on today's compiler", () => {
       ).stdout,
     );
 
-  it.each(PATHS)("agrees with Node on %s", async (path) => {
-    const outcome = await getOutcome(path, getSource(3), "counter.ts");
+  it("agrees with Node", async () => {
+    const outcome = await getOutcome(getSource(3), "counter.ts");
     expect(outcome).toMatchObject({
       status: "invariant-violation",
       name: "bounded",
@@ -226,8 +215,8 @@ describe("compile and check a model on ESCore as on today's compiler", () => {
     expect(replay(getSource(3), outcome.actions ?? [])).toEqual([true, true, true, false]);
   });
 
-  it.each(PATHS)("rejects another result on %s", async (path) => {
-    expect(await getOutcome(path, getSource(2), "counter.ts")).toMatchObject({
+  it("rejects another result", async () => {
+    expect(await getOutcome(getSource(2), "counter.ts")).toMatchObject({
       status: "success",
     });
     expect(replay(getSource(2), ["increment", "increment", "increment"])).toEqual([

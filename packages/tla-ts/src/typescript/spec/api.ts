@@ -35,7 +35,7 @@ Next == FALSE
 Spec == Init /\ [][Next]_vars`);
 
 // What compile gives on ESCore: a script's spec, which runs it as Node does, or a model's, whose
-// steps call its exported functions, which today's compiler reads with TypeScript's declaration
+// steps call its exported functions, whose frame TypeScript's types give with its declaration
 // files, parsed once in library by a host that compiles many models. A host without a file
 // system, such as a browser, runs a file as an ES module only where its own syntax makes it one.
 export const compileEscore = (
