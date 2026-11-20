@@ -1949,6 +1949,55 @@ const compileKeys = (target: Compiled): Compiled | undefined => {
   return map && { type: map.keys, emit: () => `(${target.emit()})[0]` };
 };
 
+// Whether a step assigns a variable, before it assigns any other, from a set that reads the state
+// and that TLC streams, which rejectStreamedBound rejects whatever the variables' types: in the
+// first conjunct of a conjunction, each disjunct, an existential's body, and the actions it names.
+const isStreamedFirst = (
+  expression: Expression,
+  environment: Environment,
+  seen: Set<Definition> = new Set(),
+): boolean => {
+  switch (expression.kind) {
+    case "And":
+      return (
+        expression.operands.length > 0 && isStreamedFirst(expression.operands[0], environment, seen)
+      );
+    case "Or":
+      return expression.operands.some((operand) => isStreamedFirst(operand, environment, seen));
+    case "Exists":
+    case "Label":
+      return isStreamedFirst(expression.body, environment, seen);
+    case "Identifier":
+    case "Apply": {
+      const set =
+        expression.kind === "Apply" && expression.operator === "\\in"
+          ? expression.args[1]
+          : undefined;
+      const target = expression.kind === "Apply" ? expression.args[0] : undefined;
+      if (
+        set !== undefined &&
+        target?.kind === "Prime" &&
+        target.expression.kind === "Identifier" &&
+        environment.variableIndex.has(target.expression.name)
+      ) {
+        const isStateful = (node: Expression): boolean =>
+          (node.kind === "Identifier" && environment.variableIndex.has(node.name)) ||
+          getChildren(node).some(isStateful);
+        return isStateful(set) && isExpressionImpure([set], environment, "streamed");
+      }
+      const name = expression.kind === "Identifier" ? expression.name : expression.operator;
+      if (isLocallyResolved(expression)) return false;
+      const global = findGlobalName(name, environment);
+      if (global?.kind !== "Definition" || global.definition.kind !== "Operator") return false;
+      if (seen.has(global.definition)) return false;
+      seen.add(global.definition);
+      return isStreamedFirst(global.definition.body, environment, seen);
+    }
+    default:
+      return false;
+  }
+};
+
 // TLC binds a variable to each element it streams from a set that UNION or \cup builds, duplicates
 // included, and which of those sets it streams depends on how it built them.
 const rejectStreamedBound = (program: Program, set: Expression, scope: TierScope) => {
@@ -6267,6 +6316,8 @@ const search = (environment: Environment, check: TypedCheck, plains: Plains): Ty
   };
   // Every variable of such a spec is assigned before TLC branches on the next-state relation.
   if (environment.variables.length === 0) return unsupported();
+  // A step that compileSpec rejects whatever the types rejects the spec before its initial states.
+  if (isStreamedFirst(check.next, environment)) return unsupported();
   // The initial states as bytes, so the interpreter's values for them need not stay alive.
   const initialBytes: Bytes = { data: new Uint8Array(1 << 16), size: 0 };
   const initialStarts = { data: new Int32Array(1 << 10), size: 0 };

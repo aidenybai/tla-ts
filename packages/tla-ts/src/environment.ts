@@ -28,6 +28,7 @@ import {
 } from "./errors";
 import {
   bindOperatorArguments,
+  bindValue,
   createBigNumberError,
   createRealNumberError,
   evaluate,
@@ -37,6 +38,7 @@ import {
   type BuiltinArgument,
   type Context,
   type Environment,
+  type Scope,
 } from "./evaluate";
 import {
   createInstantiation,
@@ -267,9 +269,8 @@ export const createEnvironment = (
   const definitions = new Map<string, Definition>();
   // The levels of the definitions of the prepared modules that SANY's checks accepted, by key.
   const preparedLevels = new Map<string, OperatorLevels>();
-  // The texts that the prepared modules whose levels a check links parse, or undefined for one that
-  // doesn't say.
-  const preparedTexts: (readonly string[] | undefined)[] = [];
+  // The texts of the prepared modules whose levels a check links.
+  const preparedTexts: string[] = [];
   const preparedValues: ReadonlyMap<Definition, Value>[] = [];
   const preparedFacts = new Map<Definition, PreparedFacts>();
   // The definitions that hold no wide string nor read a deserializer, as their modules tell.
@@ -457,12 +458,26 @@ export const createEnvironment = (
           ? [arg.expression]
           : [],
       );
-      if (definition?.kind !== "Operator" || !context || expressions.length !== args.length) {
+      if (definition?.kind !== "Operator" || !context || args.length !== definition.params.length) {
         throw new TlaEvaluationError(`No definition of ${operator} to fall back to`);
       }
+      // A lazy builtin falls back with the expressions of its arguments, and any other with the
+      // values and operators it took.
       return evaluate(definition.body, {
         environment: context.environment,
-        scope: bindOperatorArguments(getDefinitionClosure(definition), expressions, context),
+        scope:
+          expressions.length === args.length
+            ? bindOperatorArguments(getDefinitionClosure(definition), expressions, context)
+            : definition.params.reduce<Scope | undefined>((scope, param, index) => {
+                const arg = args[index];
+                return typeof arg === "object" && arg.kind === "Operator"
+                  ? {
+                      name: param.name,
+                      binding: { kind: "Operator", operator: arg },
+                      parent: scope,
+                    }
+                  : bindValue(scope, param.name, arg);
+              }, undefined),
         state: context.state,
         next: context.next,
         isKeepLazy: context.isKeepLazy,
@@ -1016,7 +1031,7 @@ export const createEnvironment = (
     if (!isLinkedAsIs) scope.errors.push(...resolveModule(module, getUnit(module)));
     const accepted = isAccepted ? order.getPreparedModule(parsed.name) : undefined;
     const acceptedLevels = accepted?.levels ?? plainLevels;
-    if (accepted) preparedTexts.push(accepted.texts?.parsed);
+    if (accepted) preparedTexts.push(accepted.text);
     if (accepted?.values) preparedValues.push(accepted.values);
     const acceptedFacts = accepted?.facts;
     if (acceptedFacts) {
@@ -1177,16 +1192,19 @@ export const createEnvironment = (
     preparedFacts,
   );
   const runtimeVariables = RUNTIME_VARIABLES.filter((name) => builtins.has(name));
-  // A prepared module's levels hold here where it reads none of the operators that this analysis
-  // takes as variables.
-  const isPreparedLevelsLinked = preparedTexts.every(
-    (texts) => texts !== undefined && !runtimeVariables.some((name) => texts.includes(name)),
-  );
+  // A prepared module's levels hold here where its text names none of the operators that this
+  // analysis takes as variables. The parsed texts of ESCore's runtime are the strings it ranked,
+  // which name TLC's operators wherever they come.
+  const runtimeVariableName = new RegExp(`\\b(?:${runtimeVariables.join("|")})\\b`);
+  const isPreparedLevelsLinked =
+    runtimeVariables.length === 0 || preparedTexts.every((text) => !runtimeVariableName.test(text));
+  const getPreparedLevels = (name: string) =>
+    isPreparedLevelsLinked ? preparedLevels.get(name) : undefined;
   const analyzer = createLevelAnalyzer({
     constants: new Set(constants.keys()),
     variables: new Set([...variables, ...runtimeVariables]),
     getDefinition: (name) => getDefinition(name, environment),
-    getPreparedLevels: (name) => (isPreparedLevelsLinked ? preparedLevels.get(name) : undefined),
+    getPreparedLevels,
   });
   const environment: Environment = {
     runtime,
@@ -1208,6 +1226,7 @@ export const createEnvironment = (
     initRunners: new WeakMap(),
     nextRunners: new WeakMap(),
     getOperatorLevels: analyzer.getOperatorLevels,
+    getPreparedLevels,
   };
   preparedValues.forEach((values) =>
     values.forEach((value, definition) => {

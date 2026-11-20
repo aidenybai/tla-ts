@@ -6,7 +6,7 @@ import { printDefinition } from "../../printer";
 import type { Library } from "../program";
 import { CANONICAL_MODULE } from "./canonical";
 import { getLoweredBindings, LOWERED_DEFINITIONS } from "./lowered";
-import { getNativeFunctions, NATIVE_DEFINITIONS } from "./native";
+import { getNativeFunctions, isIndexKey, NATIVE_MODULE } from "./native";
 import { compileToEscore, type EscoreSpec } from "./compile";
 import { frameModel, type StateVariable } from "./frame";
 import { foldNames } from "./library";
@@ -218,10 +218,22 @@ interface Application {
   args: string[];
 }
 
+interface Guard {
+  // The function the module gets appended that gives the set a guard chooses a parameter from.
+  name: string;
+  // The parameters of the action that the guard reads, which the function takes in order.
+  parameters: string[];
+  // The native operator that gives the set, if the lowered model has one.
+  native: string | undefined;
+}
+
 interface Converter {
   // The definition of an operator of a state and a TLA+ value of the domain, which gives the state
   // and the JavaScript value that the value stands for.
   name: string;
+  // The definition of an operator of a TLA+ value of the domain, Lower<name>, which gives the
+  // lowered value of the JavaScript value that name makes, where it makes one that lowers.
+  lowered: string | undefined;
 }
 
 // The model of a TypeScript module, checked on ESCore: one variable holds ESCore's state after the
@@ -335,6 +347,15 @@ export const compileModelToEscore = (
       seen.add(name);
       return isStateful(definition.body, seen);
     });
+  // Whether an expression applies a definition of today's with parameters, today's TLA+ of a
+  // function of the module, itself or through definitions it reads.
+  const isComputed = (expression: Expression, seen = new Set<string>()): boolean =>
+    [...getNames(expression)].some((name) => {
+      const definition = definitions.get(name);
+      if (definition?.kind !== "Operator" || seen.has(name)) return false;
+      seen.add(name);
+      return definition.params.length > 0 || isComputed(definition.body, seen);
+    });
   // The converter of the values of a domain: TLA+'s values of today's model as JavaScript's.
   const converters = new Map<string, Converter>();
   // A parameter's type, where today's domain of it is an expression of no shape the converters
@@ -351,9 +372,19 @@ export const compileModelToEscore = (
     );
     const known = converters.get(key);
     if (known !== undefined) return known;
-    const converter = { name: createConverter(domain, type) };
+    const name = createConverter(domain, type);
+    const converter = { name, lowered: lowerings.get(name) };
     converters.set(key, converter);
     return converter;
+  };
+  // The lowered converter of each converter, by name, where the values it makes lower: its
+  // lowered value, which LowerValue gives of the objects that the converter makes, built
+  // directly, as a TLA+ value of its own.
+  const lowerings = new Map<string, string | undefined>();
+  const lowerAs = (name: string, text: string | undefined) => {
+    lowerings.set(name, text === undefined ? undefined : `Lower${name}`);
+    if (text !== undefined) steps.push(`Lower${name}(x) == ${text}`);
+    return name;
   };
   const unsupported = (domain: Expression, type?: ts.TypeNode): string => {
     const primitive = type === undefined ? undefined : PRIMITIVE_TYPES.get(type.kind);
@@ -362,7 +393,10 @@ export const compileModelToEscore = (
         `tla-ts can't pass a value of ${printExpression(domain)} to an ESCore model yet`,
       );
     }
-    return define("Convert", (name) => `${name}(s, x) == [s |-> s, v |-> ${primitive}]`);
+    return lowerAs(
+      define("Convert", (name) => `${name}(s, x) == [s |-> s, v |-> ${primitive}]`),
+      primitive,
+    );
   };
   const getUnion = (expression: Expression): Expression[] =>
     expression.kind === "Apply" && expression.operator === "\\cup"
@@ -407,7 +441,15 @@ export const compileModelToEscore = (
     );
   const createConverter = (domain: Expression, type?: ts.TypeNode): string => {
     const plain = (body: string) =>
-      define("Convert", (name) => `${name}(s, x) == [s |-> s, v |-> ${body}]`);
+      lowerAs(
+        define("Convert", (name) => `${name}(s, x) == [s |-> s, v |-> ${body}]`),
+        body,
+      );
+    // The lowered text of converters whose lowered converters exist, or undefined.
+    const lowered = (parts: Converter[], text: (names: string[]) => string) =>
+      parts.every((part) => part.lowered !== undefined)
+        ? text(parts.map((part) => part.lowered ?? ""))
+        : undefined;
     if (domain.kind === "Identifier" && domain.name === "BOOLEAN") return plain("Bool(x)");
     if (domain.kind === "Apply" && domain.operator === "..") return plain("IntV(x)");
     if (domain.kind === "Identifier") {
@@ -434,10 +476,17 @@ export const compileModelToEscore = (
     }
     if (domain.kind === "Product") {
       const factors = domain.factors.map((factor) => getConverter(factor));
-      return define(
-        "Convert",
-        (name) =>
-          `${name}(s, x) ==\n  LET ${factors.map((factor, index) => `e${index + 1} == ${factor.name}(${index === 0 ? "s" : `e${index}.s`}, x[${index + 1}])`).join("\n      ")}\n  IN NewArray(e${factors.length}.s, <<${factors.map((_, index) => `e${index + 1}.v`).join(", ")}>>)`,
+      return lowerAs(
+        define(
+          "Convert",
+          (name) =>
+            `${name}(s, x) ==\n  LET ${factors.map((factor, index) => `e${index + 1} == ${factor.name}(${index === 0 ? "s" : `e${index}.s`}, x[${index + 1}])`).join("\n      ")}\n  IN NewArray(e${factors.length}.s, <<${factors.map((_, index) => `e${index + 1}.v`).join(", ")}>>)`,
+        ),
+        lowered(
+          factors,
+          (names) =>
+            `[type |-> "larray", elems |-> <<${names.map((name, index) => `${name}(x[${index + 1}])`).join(", ")}>>]`,
+        ),
       );
     }
     if (domain.kind === "RecordSet") {
@@ -445,10 +494,20 @@ export const compileModelToEscore = (
         name: field.name,
         converter: getConverter(field.value),
       }));
-      return define(
-        "Convert",
-        (name) =>
-          `${name}(s, x) ==\n  LET ${fields.map((field, index) => `e${index + 1} == ${field.converter.name}(${index === 0 ? "s" : `e${index}.s`}, x.${field.name})`).join("\n      ")}\n  IN NewRecord(e${fields.length}.s, <<${fields.map((field, index) => `<<Str(${getUnits(field.name)}), e${index + 1}.v>>`).join(", ")}>>)`,
+      // An object's keys come in the order NewRecord adds them, as no field names an index.
+      return lowerAs(
+        define(
+          "Convert",
+          (name) =>
+            `${name}(s, x) ==\n  LET ${fields.map((field, index) => `e${index + 1} == ${field.converter.name}(${index === 0 ? "s" : `e${index}.s`}, x.${field.name})`).join("\n      ")}\n  IN NewRecord(e${fields.length}.s, <<${fields.map((field, index) => `<<Str(${getUnits(field.name)}), e${index + 1}.v>>`).join(", ")}>>)`,
+        ),
+        fields.some((field) => isIndexKey(field.name))
+          ? undefined
+          : lowered(
+              fields.map((field) => field.converter),
+              (names) =>
+                `[type |-> "lobject", keys |-> <<${fields.map((field) => getUnits(field.name)).join(", ")}>>, vals |-> ${fields.length === 0 ? "<<>>" : fields.map((field, index) => `(${getUnits(field.name)} :> ${names[index]}(x.${field.name}))`).join(" @@ ")}]`,
+            ),
       );
     }
     // Arrays up to a length: UNION {[1 .. length -> D] : length \in L}.
@@ -468,10 +527,22 @@ export const compileModelToEscore = (
           ? getConverter(bound.set.args[0])
           : undefined;
       if (!isArray && keys === undefined) return unsupported(domain, type);
-      return define("Convert", (name) =>
+      return lowerAs(
+        define("Convert", (name) =>
+          keys === undefined
+            ? `${name}(s, x) ==\n  LET e == ${defineList(range.name)}(s, x) IN NewArray(e.s, e.args)`
+            : `${name}(s, x) ==\n  LET order == SetToSeq(DOMAIN x)\n      k == ${defineList(keys.name)}(s, order)\n      e == ${defineList(range.name)}(k.s, [i \\in DOMAIN order |-> x[order[i]]])\n  IN NewMap(e.s, [i \\in DOMAIN order |-> [key |-> k.args[i], value |-> e.args[i]]])`,
+        ),
         keys === undefined
-          ? `${name}(s, x) ==\n  LET e == ${defineList(range.name)}(s, x) IN NewArray(e.s, e.args)`
-          : `${name}(s, x) ==\n  LET order == SetToSeq(DOMAIN x)\n      k == ${defineList(keys.name)}(s, order)\n      e == ${defineList(range.name)}(k.s, [i \\in DOMAIN order |-> x[order[i]]])\n  IN NewMap(e.s, [i \\in DOMAIN order |-> [key |-> k.args[i], value |-> e.args[i]]])`,
+          ? lowered(
+              [range],
+              (names) => `[type |-> "larray", elems |-> [i \\in DOMAIN x |-> ${names[0]}(x[i])]]`,
+            )
+          : lowered(
+              [keys, range],
+              (names) =>
+                `LET order == SetToSeq(DOMAIN x) IN [type |-> "lmap", keys |-> [i \\in DOMAIN order |-> ${names[0]}(order[i])], vals |-> [i \\in DOMAIN order |-> ${names[1]}(x[order[i]])]]`,
+            ),
       );
     }
     // Arrays up to a length of one element type, as a union of sets of tuples.
@@ -492,10 +563,16 @@ export const compileModelToEscore = (
             : undefined;
       if (elementDomain !== undefined) {
         const element = getConverter(elementDomain);
-        return define(
-          "Convert",
-          (name) =>
-            `${name}(s, x) ==\n  LET e == ${defineList(element.name)}(s, x) IN NewArray(e.s, e.args)`,
+        return lowerAs(
+          define(
+            "Convert",
+            (name) =>
+              `${name}(s, x) ==\n  LET e == ${defineList(element.name)}(s, x) IN NewArray(e.s, e.args)`,
+          ),
+          lowered(
+            [element],
+            (names) => `[type |-> "larray", elems |-> [i \\in DOMAIN x |-> ${names[0]}(x[i])]]`,
+          ),
         );
       }
     }
@@ -509,18 +586,38 @@ export const compileModelToEscore = (
         set: printExpression(renameModelValues(arg)),
         converter: getConverter(arg),
       }));
-      return define(
-        "Convert",
-        (name) =>
-          `${name}(s, x) ==\n  ${parts.map((part, index) => (index === parts.length - 1 ? `${part.converter.name}(s, x)` : `IF x \\in ${part.set} THEN ${part.converter.name}(s, x) ELSE `)).join("")}`,
+      return lowerAs(
+        define(
+          "Convert",
+          (name) =>
+            `${name}(s, x) ==\n  ${parts.map((part, index) => (index === parts.length - 1 ? `${part.converter.name}(s, x)` : `IF x \\in ${part.set} THEN ${part.converter.name}(s, x) ELSE `)).join("")}`,
+        ),
+        lowered(
+          parts.map((part) => part.converter),
+          (names) =>
+            parts
+              .map((part, index) =>
+                index === parts.length - 1
+                  ? `${names[index]}(x)`
+                  : `IF x \\in ${part.set} THEN ${names[index]}(x) ELSE `,
+              )
+              .join(""),
+        ),
       );
     }
     if (domain.kind === "Apply" && domain.operator === "SUBSET") {
       const element = getConverter(domain.args[0]);
-      return define(
-        "Convert",
-        (name) =>
-          `${name}(s, x) ==\n  LET e == ${defineList(element.name)}(s, SetToSeq(x)) IN NewSet(e.s, e.args)`,
+      return lowerAs(
+        define(
+          "Convert",
+          (name) =>
+            `${name}(s, x) ==\n  LET e == ${defineList(element.name)}(s, SetToSeq(x)) IN NewSet(e.s, e.args)`,
+        ),
+        lowered(
+          [element],
+          (names) =>
+            `LET order == SetToSeq(x) IN [type |-> "lset", elems |-> [i \\in DOMAIN order |-> ${names[0]}(order[i])]]`,
+        ),
       );
     }
     return unsupported(domain, type);
@@ -579,7 +676,27 @@ export const compileModelToEscore = (
     const name = `$tlaTsGuard${appended.length}`;
     appended.push(`const ${name} = (${parameters.join(", ")}) => ${set.getText()};`);
     entries.add(name);
-    return { name, parameters };
+    // A lowered model evaluates the set natively, as the function does, where it can.
+    return { name, parameters, native: native?.getExpressionOperator(set, parameters) };
+  };
+  // The native call of an action's guard in the lowered state model, with the parameters it reads
+  // of the values given, converted and lowered, or undefined.
+  const getNativeGuardCall = (
+    action: string,
+    guard: Guard,
+    model: string,
+    values: (index: number) => string,
+  ) => {
+    const parameters = exported.get(action)?.parameters ?? [];
+    const args = guard.parameters.map((name) => {
+      const index = parameters.indexOf(name);
+      const converter = boundConverters.get(`${action} ${index}`);
+      const lowering = converter === undefined ? undefined : lowerings.get(converter);
+      return lowering === undefined ? undefined : `${lowering}(${values(index)})`;
+    });
+    return guard.native === undefined || args.some((arg) => arg === undefined)
+      ? undefined
+      : `${guard.native}(${[model, "FALSE", ...args].join(", ")})`;
   };
   // An expression of today's spec with the parts that read today's state variables in their
   // place: the set a guard chooses a parameter from, which the module's function gives. The names
@@ -702,11 +819,25 @@ export const compileModelToEscore = (
         ? `e${index + 1} == ${entry.converter}(${previous}, a[${index + 2}])`
         : `c${index + 1} == GuardElements(${previous}, ${getUnits(entry.choice.name)}, <<>>)\n      e${index + 1} == [s |-> c${index + 1}.state, v |-> CHOOSE e \\in c${index + 1}.elements : Shown(c${index + 1}.state, e, 0) = a[${index + 2}]]`;
     };
-    const operator = define(
+    const escore = define(
       "GuardDomain",
       (name) =>
         `${name}(a) ==\n  LET ${read.map(getRead).join("\n      ")}${read.length === 0 ? "" : "\n     "} g == GuardElements(${read.length === 0 ? getState("a[1]") : `e${read.length}.s`}, ${getUnits(guard.name)}, <<${read.map((_, index) => `e${index + 1}.v`).join(", ")}>>)\n  IN {Shown(g.state, e, 0) : e \\in g.elements}`,
     );
+    // A Set of primitives that the guard gives natively shows its elements as ESCore's do, which
+    // no state's objects decide.
+    const nativeGuard = getNativeGuardCall(action, guard, "a[1]", (index) => {
+      const at = guard.parameters.indexOf(exported.get(action)?.parameters[index] ?? "");
+      return `a[${at + 2}]`;
+    });
+    const operator =
+      nativeGuard === undefined
+        ? escore
+        : define(
+            "NativeGuardDomain",
+            (name) =>
+              `${name}(a) ==\n  LET n == ${nativeGuard} IN\n  IF n.type # "bail" /\\ n.v.type = "lset" /\\ LPrimitives(n.v) THEN {Shown(ModelBase, e, 0) : e \\in Range(n.v.elems)} ELSE ${escore}(a)`,
+          );
     guardChoices.set(`${action} ${position}`, guard);
     return {
       kind: "Apply",
@@ -732,14 +863,18 @@ export const compileModelToEscore = (
   // The converter of each action's parameter by "action position", from the domain today's Next
   // chooses it from, and the guards that choose a parameter from a set instead.
   const boundConverters = new Map<string, string>();
-  const guardChoices = new Map<string, { name: string; parameters: string[] }>();
+  const guardChoices = new Map<string, Guard>();
   const rewriteBound = (bound: Bound, application: Application | undefined): Bound => {
     if (bound.pattern.kind !== "Name" || application === undefined) {
       throw new TlaTypeScriptError("tla-ts can't bind these parameters on ESCore yet");
     }
     const name = bound.pattern.name;
     const position = application.args.indexOf(name);
-    if (isStateful(bound.set)) return { ...bound, set: getGuardDomain(application, name) };
+    // A set that today's state or a function of the module gives is the set that the action's
+    // guard gives, as ESCore evaluates the module's code, rather than today's TLA+ of it.
+    if (isStateful(bound.set) || isComputed(bound.set)) {
+      return { ...bound, set: getGuardDomain(application, name) };
+    }
     if (position >= 0) {
       boundConverters.set(
         `${application.name} ${position}`,
@@ -790,7 +925,7 @@ export const compileModelToEscore = (
   // lowered.ts), whose variable model holds them, and otherwise the variable heap holds ESCore's
   // state. A step's or a check's ESCore state is what the variable's value gives.
   const lowered =
-    isStateless || isAsync || !isLowerable
+    isAsync || !isLowerable
       ? undefined
       : getLoweredBindings(file, new Set(choices.map((choice) => choice.name)));
   const variable = lowered === undefined ? "heap" : "model";
@@ -799,15 +934,38 @@ export const compileModelToEscore = (
   const native = lowered === undefined ? undefined : getNativeFunctions(file, lowered);
   // The native call of a function in the lowered state model, with the arguments of the values
   // given, converted and lowered, or undefined where the function runs on ESCore only.
-  const getNativeCall = (name: string, model: string, values: (index: number) => string) => {
+  // A call of one function with another's arguments, as a property's target takes its own.
+  const getNativeCall = (
+    name: string,
+    model: string,
+    values: (index: number) => string,
+    argumentsOf = name,
+  ) => {
     const operator = native?.getOperator(name);
-    const parameters = exported.get(name)?.parameters ?? [];
-    const converters = parameters.map((_, index) =>
-      guardChoices.has(`${name} ${index}`) ? undefined : boundConverters.get(`${name} ${index}`),
-    );
-    return operator === undefined || converters.some((converter) => converter === undefined)
-      ? undefined
-      : `${operator}(${[model, "FALSE", ...converters.map((converter, index) => `LowerConverted(${converter}(ModelBase, ${values(index)}))`)].join(", ")})`;
+    const parameters = exported.get(argumentsOf)?.parameters ?? [];
+    // A parameter that a guard chooses is the element of the guard's native Set that shows as the
+    // value given, and the call bails where the guard bails or no element does.
+    const args = parameters.map((_, index) => {
+      const guard = guardChoices.get(`${argumentsOf} ${index}`);
+      const converter = boundConverters.get(`${argumentsOf} ${index}`);
+      if (guard !== undefined) {
+        const call = getNativeGuardCall(argumentsOf, guard, model, values);
+        return call === undefined
+          ? undefined
+          : `LET g == ${call} IN IF g.type = "bail" \\/ g.v.type # "lset" \\/ ~LPrimitives(g.v) \\/ ~\\E e \\in Range(g.v.elems) : Shown(ModelBase, e, 0) = ${values(index)} THEN LBail ELSE CHOOSE e \\in Range(g.v.elems) : Shown(ModelBase, e, 0) = ${values(index)}`;
+      }
+      return converter === undefined
+        ? undefined
+        : lowerings.get(converter) !== undefined
+          ? `${lowerings.get(converter)}(${values(index)})`
+          : `LowerConverted(${converter}(ModelBase, ${values(index)}))`;
+    });
+    if (operator === undefined || args.some((arg) => arg === undefined)) return undefined;
+    const names = args.map((_, index) => `nva${index + 1}`);
+    const call = `${operator}(${[model, "FALSE", ...names].join(", ")})`;
+    return args.length === 0
+      ? call
+      : `(LET ${args.map((arg, index) => `${names[index]} == ${arg}`).join("\n      ")}\n  IN IF ${names.map((name) => `${name}.type = "bail"`).join(" \\/ ")} THEN LBail ELSE ${call})`;
   };
   // A step's or a check's arguments, converted in turn from a[1], the state, with the
   // parameters' values from a[2] on.
@@ -909,7 +1067,10 @@ export const compileModelToEscore = (
         expression.body.kind === "Apply" &&
         expression.body.operator === "=" &&
         expression.definitions.some((definition) => definition.name === "result");
-  const current = isStateless ? "ApplyTo(StartState, InitialState)" : variable;
+  // The state the module's top level leaves, lowered where the module lets it, in which a model
+  // without state checks its functions, and any model its assumptions.
+  const started = lowered === undefined ? "ApplyTo(StartState, InitialState)" : "ModelInitial";
+  const current = isStateless ? started : variable;
   const defined = new Set<string>();
   const defineInvariant = (name: string) => {
     if (defined.has(name)) return;
@@ -935,9 +1096,7 @@ export const compileModelToEscore = (
       const bounds = getBounds(name, body);
       const check = defineCheck(name, isCallCheck(body) ? "ReturnsOf" : "HoldsOf", bounds);
       defined.add(name);
-      steps.push(
-        `${name} == ${quantify(bounds, check("ApplyTo(StartState, InitialState)", boundNames(bounds)))}`,
-      );
+      steps.push(`${name} == ${quantify(bounds, check(started, boundNames(bounds)))}`);
     }
   });
   // The temporal properties, from the tags of the functions that today's properties name.
@@ -952,15 +1111,16 @@ export const compileModelToEscore = (
       (operatorName) =>
         `${operatorName}(a) ==\n  LET before == ${lowered === undefined ? `BeforeOf(a[2], a[1], <<${shownNames.map(getUnits).join(", ")}>>)` : `MaterializeValue(ModelState(a[2]), LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>))`}\n  IN HoldsOf(before.s, ${getUnits(name)}, <<before.v>>)`,
     );
-    const nativeOperator =
-      exported.get(name)?.parameters.length === 1 ? native?.getOperator(name) : undefined;
+    // A function of no parameters, which ignores the state before, runs on the state after alone.
+    const arity = exported.get(name)?.parameters.length;
+    const nativeOperator = arity === 0 || arity === 1 ? native?.getOperator(name) : undefined;
     const checked =
       nativeOperator === undefined
         ? operator
         : define(
             "NativeStepCheck",
             (operatorName) =>
-              `${operatorName}(a) ==\n  LET n == ${nativeOperator}(a[2], FALSE, LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>)) IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE n.v = True`,
+              `${operatorName}(a) ==\n  LET n == ${nativeOperator}(a[2], FALSE${arity === 0 ? "" : `, LObj(<<${shownNames.map(getUnits).join(", ")}>>, <<${shownNames.map((shownName) => `a[1].${shownName}`).join(", ")}>>)`}) IN\n  IF n.type = "bail" THEN ${operator}(a) ELSE n.v = True`,
           );
     return `ApplyTo(${checked}, <<${variable}, ${variable}'>>)`;
   };
@@ -987,11 +1147,20 @@ export const compileModelToEscore = (
     else if (tags.has("leadsTo")) {
       const target = tags.get("leadsTo")?.split(/\s/)[0] ?? "";
       entries.add(target);
-      const operator = define(
+      const escore = define(
         "Target",
         (operatorName) =>
           `${operatorName}(a) ==\n  LET converted == ${getArguments(name, getState("a[1]"), (index) => `a[${index + 2}]`).replaceAll("\n", "\n      ")}\n  IN HoldsOf(converted.s, ${getUnits(target)}, converted.args)`,
       );
+      const targetCall = getNativeCall(target, "a[1]", (index) => `a[${index + 2}]`, name);
+      const operator =
+        targetCall === undefined
+          ? escore
+          : define(
+              "NativeTarget",
+              (operatorName) =>
+                `${operatorName}(a) ==\n  LET n == ${targetCall} IN\n  IF n.type = "bail" THEN ${escore}(a) ELSE n.v = True`,
+            );
       steps.push(
         `${name} == ${quantify(bounds, `(${predicate}) ~> ApplyTo(${operator}, <<${variable}${names.map((bound) => `, ${bound}`).join("")}>>)`)}`,
       );
@@ -1013,6 +1182,7 @@ export const compileModelToEscore = (
     ...choice,
     bound: `v${index + 1}`,
     converter: getConverter(choice.domain).name,
+    lowered: getConverter(choice.domain).lowered,
     set: printExpression(rewriteGuards(choice.domain)),
   }));
   // As compileToEscore runs a script's jobs and timers, a step runs the ones a call leaves.
@@ -1024,15 +1194,20 @@ export const compileModelToEscore = (
   // the module runs, and which the module deletes as it ends.
   // A lowered model's initial states each convert the choice's values in ModelBase and lower
   // them, with the values that ModelBase's module gave the other bindings.
+  const isChoiceLowered = choose.every((choice) => choice.lowered !== undefined);
+  // The lowered initial states are the set of each choice's lowered state, which TLC and tla-ts make
+  // and sort at once, filtered by the @initially checks.
   const loweredInitialSteps = [
-    `InitialChoice(a) ==\n  LET s0 == ModelBase${choose
-      .map(
-        (choice, index) =>
-          `\n      c${index + 1} == ${choice.converter}(${index === 0 ? "s0" : `c${index}.s`}, a[${index + 2}])\n      l${index + 1} == LowerValue(c${index + 1}.s, c${index + 1}.v, 0)`,
+    `InitialModel(a) ==\n  LET s0 == ModelBase${choose
+      .map((choice, index) =>
+        isChoiceLowered
+          ? `\n      l${index + 1} == [v |-> ${choice.lowered}(a[${index + 2}])]`
+          : `\n      c${index + 1} == ${choice.converter}(${index === 0 ? "s0" : `c${index}.s`}, a[${index + 2}])\n      l${index + 1} == LowerValue(c${index + 1}.s, c${index + 1}.v, 0)`,
       )
       .join(
         "",
-      )}\n      m == ${choose.length === 0 ? "ModelInitial" : `[ModelInitial EXCEPT ${choose.map((choice, index) => `!.${choice.name} = l${index + 1}.v`).join(", ")}]`}\n  IN IF ${
+      )}\n      m == ${choose.length === 0 ? "ModelInitial" : `[ModelInitial EXCEPT ${choose.map((choice, index) => `!.${choice.name} = l${index + 1}.v`).join(", ")}]`}\n  IN m`,
+    `InitialHolds(m) ==\n  ${
       initially.length === 0
         ? "TRUE"
         : initially
@@ -1043,7 +1218,8 @@ export const compileModelToEscore = (
                 : `(LET n == ${call} IN IF n.type = "bail" THEN HoldsOf(ModelState(m), ${getUnits(name)}, <<>>) ELSE n.v = True)`;
             })
             .join(" /\\ ")
-    } THEN {m} ELSE {}`,
+    }`,
+    `InitialStates(s) ==\n  {m \\in {ApplyTo(InitialModel, <<s${choose.map((choice) => `, ${choice.bound}`).join("")}>>) : ${choose.length === 0 ? "x \\in {0}" : choose.map((choice) => `${choice.bound} \\in ${choice.set}`).join(", ")}} : ApplyTo(InitialHolds, m)}`,
   ];
   const initialSteps = [
     `InitialChoice(a) ==\n  LET s0 == a[1]${choose
@@ -1057,7 +1233,9 @@ export const compileModelToEscore = (
         : `\n      list == NewArray(c${choose.length}.s, <<${choose.map((_, index) => `c${index + 1}.v`).join(", ")}>>)\n      g == Completed(CreateDataPropertyOrThrow(list.s, Intrinsic(list.s, "GlobalObject"), Str(${getUnits(INITIAL)}), list.v))\n      s == ModelStart(g.s)`
     }\n  IN IF ${initially.length === 0 ? "TRUE" : initially.map((name) => `HoldsOf(s, ${getUnits(name)}, <<>>)`).join(" /\\ ")} THEN {StepEnd(s)} ELSE {}`,
     `InitialStates(s) ==\n  UNION {ApplyTo(InitialChoice, <<s${choose.map((choice) => `, ${choice.bound}`).join("")}>>) : ${choose.length === 0 ? "x \\in {0}" : choose.map((choice) => `${choice.bound} \\in ${choice.set}`).join(", ")}}`,
-    `Init == ${variable} \\in ApplyTo(InitialStates, InitialState)`,
+    // The initial states are a constant, which TLC and tla-ts evaluate once, as they start.
+    "InitialSet == ApplyTo(InitialStates, InitialState)",
+    `Init == ${variable} \\in InitialSet`,
   ];
   steps.push(
     ...(isStateless
@@ -1068,7 +1246,7 @@ export const compileModelToEscore = (
         ]
       : lowered === undefined
         ? initialSteps
-        : [...loweredInitialSteps, ...initialSteps.slice(1)]),
+        : [...loweredInitialSteps, ...initialSteps.slice(2)]),
   );
   if (rewrittenNext !== undefined) {
     // A @terminating function's state, where Next stutters, which isn't a deadlock.
@@ -1152,7 +1330,12 @@ export const compileModelToEscore = (
           "StepEnd(s) == CanonicalState([s EXCEPT !.written = FALSE, !.writeMark = [objects |-> 0, environments |-> 0]])",
           "StartState(s) == StepEnd(ModelStart(s))",
         ]
-      : [...getLoweredSteps(lowered), NATIVE_DEFINITIONS, ...(native?.definitions ?? [])]),
+      : [
+          ...getLoweredSteps(lowered),
+          // The lowered value of a converter's [s, v], an argument of a native call.
+          "LowerConverted(c) == LowerValue(c.s, c.v, 0).v",
+          ...(native?.definitions ?? []),
+        ]),
     STEP_OF,
     ...steps,
     ...(isStateless ? [] : [`ModelAlias == ApplyTo(${alias}, ${variable})`]),
@@ -1161,7 +1344,7 @@ export const compileModelToEscore = (
   const compiled = compileToEscore(`"use strict";\n${augmented}`, fileName, runtime, false, {
     steps: modelSteps,
     entries: [...entries],
-    reads: CANONICAL_MODULE,
+    reads: lowered === undefined ? CANONICAL_MODULE : `${CANONICAL_MODULE}\n${NATIVE_MODULE}`,
   });
   const configLines = [
     ...compiled.config
@@ -1191,7 +1374,10 @@ export const compileModelToEscore = (
     assumption.expression.kind === "Identifier" ? [`ASSUME ${assumption.expression.name}`] : [],
   );
   const finalCode = (compiled.loadModule("ProgramCode") ?? "")
-    .replace("\nEXTENDS ESRuntime\n", "\nEXTENDS ESRuntime, ESCanonical\n")
+    .replace(
+      "\nEXTENDS ESRuntime\n",
+      `\nEXTENDS ESRuntime, ESCanonical${lowered === undefined ? "" : ", ESNative"}\n`,
+    )
     .replace(
       /\n====\n$/,
       `\n${assumptions.join("\n")}${assumptions.length === 0 ? "" : "\n"}====\n`,
@@ -1200,7 +1386,13 @@ export const compileModelToEscore = (
     ...compiled,
     config: configLines.join("\n"),
     loadModule: (name) =>
-      name === "ProgramCode" ? finalCode : name === "ESCanonical" ? CANONICAL_MODULE : undefined,
+      name === "ProgramCode"
+        ? finalCode
+        : name === "ESCanonical"
+          ? CANONICAL_MODULE
+          : name === "ESNative" && lowered !== undefined
+            ? NATIVE_MODULE
+            : undefined,
     variables: today.variables,
     notes,
   };

@@ -11,9 +11,9 @@ import { getNumber } from "./specialize";
 // existed before it, as SetO and SetE tell ESCore's step, and the value it returns. A composite
 // value that a call stores or passes is one that an object or array literal just made, and LBail
 // otherwise, so that no two places hold one object.
-export const NATIVE_DEFINITIONS = foldNames(String.raw`LBail == [type |-> "bail"]
-\* The lowered value of a converter's [s, v], an argument of a native call.
-LowerConverted(c) == LowerValue(c.s, c.v, 0).v
+export const NATIVE_MODULE = foldNames(String.raw`---- MODULE ESNative ----
+EXTENDS ESRuntime
+LBail == [type |-> "bail"]
 IsLComposite(v) == v.type \in {"lobject", "larray", "lset", "lmap"}
 LIsPrimitive(v) == v.type \in {"undefined", "null", "boolean", "number", "string"}
 \* A value that a call stores or passes, which mustn't be an object the state holds.
@@ -68,6 +68,11 @@ LSpread(o, a) ==
          ELSE LCopyKeys(o, a, a.keys)
     [] OTHER -> LBail
 LArray(list) == IF \E i \in DOMAIN list : list[i].type = "bail" THEN LBail ELSE [type |-> "larray", elems |-> list]
+\* The elements that a spread of an array or a Set gives an array literal, in the order their
+\* iterators give them, which must be primitives, or <<LBail>>.
+LSpreadElems(v) ==
+  IF v.type \in {"larray", "lset"} /\ \A i \in DOMAIN v.elems : ~IsLComposite(v.elems[i]) THEN v.elems
+  ELSE <<LBail>>
 \* PutValue of a property: an ordinary object's own data property or a new one that no prototype
 \* sets, or an array's element within it or just after it.
 LAssign(c, k, v) ==
@@ -81,7 +86,7 @@ LAssign(c, k, v) ==
 \* each LBail where the call bails.
 LMethod(c, m, args) ==
   LET a == IF args = <<>> THEN Undefined ELSE args[1] IN
-  CASE \E i \in DOMAIN args : args[i].type = "bail" \/ IsLComposite(args[i]) -> [c |-> LBail, v |-> LBail]
+  CASE \E i \in DOMAIN args : args[i].type = "bail" \/ (IsLComposite(args[i]) /\ m # "push") -> [c |-> LBail, v |-> LBail]
     [] c.type = "larray" /\ m = "push" -> [c |-> [c EXCEPT !.elems = @ \o args], v |-> IntV(Len(c.elems) + Len(args))]
     [] c.type = "larray" /\ m = "pop" ->
          IF c.elems = <<>> THEN [c |-> c, v |-> Undefined] ELSE [c |-> [c EXCEPT !.elems = SubSeq(@, 1, Len(@) - 1)], v |-> c.elems[Len(c.elems)]]
@@ -155,7 +160,53 @@ LSlice(c, start, end) ==
 LFrom(length, F(_, _)) ==
   IF length.type = "number" /\ length.value.k = "int" /\ length.value.i >= 0 /\ length.value.i <= 65536
   THEN LArray([i \in 1..length.value.i |-> F(Undefined, IntV(i - 1))])
-  ELSE LBail`);
+  ELSE LBail
+\* Array.prototype.find, and an iterator's find, which stops at the first result that passes.
+LFind(c, F(_, _)) ==
+  IF c.type # "larray" THEN LBail ELSE
+  LET rs == LResults(c.elems, F)
+      i == LFirst(rs, LAMBDA r : ~LTruthy(r))
+  IN IF i = 0 THEN Undefined ELSE IF rs[i].type = "bail" THEN LBail ELSE c.elems[i]
+\* The values that a Set's or an array's values() iterator gives, as an array, which only iterator
+\* helpers and new Set read.
+LValues(v) == IF v.type \in {"larray", "lset"} THEN [type |-> "larray", elems |-> v.elems] ELSE LBail
+\* A Math function of one Number, which ToNumber gives back as it is.
+LMath(m, a) == IF LNumber(a) THEN Num(MathOf(m, a.value)) ELSE LBail
+\* Object.values of an ordinary object: its data properties' values in its keys' order.
+LObjectValues(o) == IF o.type = "lobject" THEN LArray([i \in DOMAIN o.keys |-> o.vals[o.keys[i]]]) ELSE LBail
+\* Whether a Set's or an array's elements are all primitives, which SameValueZero compares as they are.
+LPrimitives(v) == \A i \in DOMAIN v.elems : ~IsLComposite(v.elems[i])
+LSet(list) == [type |-> "lset", elems |-> list]
+LHas(list, v) == KeyIndex(list, v) # 0
+\* The elements of a list of primitives that Set.prototype.add keeps: each once, canonicalized, in
+\* order.
+RECURSIVE LDistinct(_, _)
+LDistinct(list, kept) ==
+  IF list = <<>> THEN kept
+  ELSE LDistinct(Tail(list), IF LHas(kept, Head(list)) THEN kept ELSE Append(kept, CanonicalizeKeyedCollectionKey(Head(list))))
+\* new Set(v): of an array's or a Set's primitives in the order their iterators give them, or of
+\* none where v is undefined or null.
+LNewSet(v) ==
+  CASE v.type \in {"undefined", "null"} -> LSet(<<>>)
+    [] v.type \in {"larray", "lset"} /\ LPrimitives(v) -> LSet(LDistinct(v.elems, <<>>))
+    [] OTHER -> LBail
+\* Set.prototype's methods that take another Set (§24.2.4), of primitives: each iterates the
+\* smaller Set where the specification lets the sizes decide, which intersection's order shows.
+LSetMethod(c, m, o) ==
+  IF c.type # "lset" \/ o.type # "lset" \/ ~LPrimitives(c) \/ ~LPrimitives(o) THEN LBail ELSE
+  LET a == c.elems
+      b == o.elems
+  IN CASE m = "union" -> LSet(a \o SelectSeq(b, LAMBDA e : ~LHas(a, e)))
+       [] m = "intersection" ->
+            LSet(IF Len(a) <= Len(b) THEN SelectSeq(a, LAMBDA e : LHas(b, e)) ELSE SelectSeq(b, LAMBDA e : LHas(a, e)))
+       [] m = "difference" -> LSet(SelectSeq(a, LAMBDA e : ~LHas(b, e)))
+       [] m = "symmetricDifference" -> LSet(SelectSeq(a, LAMBDA e : ~LHas(b, e)) \o SelectSeq(b, LAMBDA e : ~LHas(a, e)))
+       [] m = "isSubsetOf" -> Bool(Len(a) <= Len(b) /\ \A i \in DOMAIN a : LHas(b, a[i]))
+       [] m = "isSupersetOf" -> Bool(Len(a) >= Len(b) /\ \A i \in DOMAIN b : LHas(a, b[i]))
+       [] m = "isDisjointFrom" -> Bool(~\E i \in DOMAIN a : LHas(b, a[i]))
+       [] OTHER -> LBail
+====
+`);
 
 // The methods LMethod runs, which change the receiver where they're in MUTATORS. ESCore's step
 // counts a call of a mutator on what existed before it as a write, as ModelCallBuiltin does.
@@ -168,7 +219,27 @@ const CALLBACK_METHODS = new Map([
   ["some", "LSome"],
   ["map", "LMap"],
   ["filter", "LFilter"],
+  ["find", "LFind"],
 ]);
+
+// The methods of a Set that take another Set, and those of them that make a Set.
+const SET_METHODS = new Set([
+  "union",
+  "intersection",
+  "difference",
+  "symmetricDifference",
+  "isSubsetOf",
+  "isSupersetOf",
+  "isDisjointFrom",
+]);
+const SET_MAKERS = new Set(["union", "intersection", "difference", "symmetricDifference"]);
+
+// The functions of Math that MathOf gives of one Number.
+const MATH_FUNCTIONS = new Set(
+  "abs acos acosh asin asinh atan atanh cbrt ceil clz32 cos cosh exp expm1 f16round floor fround log log2 log10 log1p round sign sin sinh sqrt tan tanh trunc".split(
+    " ",
+  ),
+);
 
 const ARITHMETIC = new Map([
   [ts.SyntaxKind.PlusToken, "+"],
@@ -198,7 +269,8 @@ const getUnits = (text: string) =>
   `<<${Array.from({ length: text.length }, (_, index) => text.charCodeAt(index)).join(", ")}>>`;
 
 // Whether a key names an array index, whose place in an object's keys isn't the order it came in.
-const isIndexKey = (text: string) => /^(?:0|[1-9][0-9]*)$/.test(text) && Number(text) < 2 ** 32 - 1;
+export const isIndexKey = (text: string) =>
+  /^(?:0|[1-9][0-9]*)$/.test(text) && Number(text) < 2 ** 32 - 1;
 
 interface Scope {
   // The TLA+ expressions of the lowered state and of whether the call wrote, so far.
@@ -206,6 +278,10 @@ interface Scope {
   w: string;
   // The TLA+ names of the parameters and constants of the function's code, by name.
   locals: ReadonlyMap<string, string>;
+  // The function whose code this is.
+  body: ts.Node;
+  // The TLA+ names of the constants that hold an object or array that nothing else holds.
+  fresh: ReadonlySet<string>;
 }
 
 interface Value {
@@ -229,6 +305,9 @@ export interface NativeFunctions {
   definitions: string[];
   // The operator that runs a module function natively, Native(m, w, p1, ..., pn), if it can.
   getOperator: (name: string) => string | undefined;
+  // The operator that evaluates an expression of the module natively, as a function of the
+  // parameters named would, Native(m, w, p1, ..., pn), if it can.
+  getExpressionOperator: (node: ts.Expression, parameters: string[]) => string | undefined;
 }
 
 // The native operators of a lowered model's module functions, by the module's top-level
@@ -268,6 +347,8 @@ export const getNativeFunctions = (
   const bindings = new Set(lowered);
   const definitions: string[] = [];
   const compiled = new Map<string, Compiled | undefined>();
+  // The functions that compileFunction is compiling, innermost last.
+  const compiling: { name: string; operator: string; isRecursive: boolean }[] = [];
   let count = 0;
   // A name of the generated code's own, which no definition of ESCore's takes.
   const fresh = (prefix: string) => {
@@ -275,6 +356,16 @@ export const getNativeFunctions = (
     return `${prefix === "Native" ? prefix : `nv${prefix}`}${count}`;
   };
   const isBinding = (name: string, scope: Scope) => !scope.locals.has(name) && bindings.has(name);
+  // A literal's value, defined once as a constant of its own, before the code that reads it.
+  const constants = new Map<string, string>();
+  const getConstant = (text: string) => {
+    const known = constants.get(text);
+    if (known !== undefined) return known;
+    const name = fresh("Constant");
+    constants.set(text, name);
+    definitions.push(`${name} == ${text}`);
+    return name;
+  };
 
   // The function of a call's callee, where it names one of the module's functions.
   const getCallee = (node: ts.Expression, scope: Scope) =>
@@ -341,6 +432,41 @@ export const getNativeFunctions = (
       : `LAMBDA ${params.join(", ")} : ${isOwned && !body.isFresh ? `LOwn(${body.text})` : body.text}`;
   };
 
+  // Whether a name is the realm's global, which no local, binding or function of the module takes.
+  const isRealmGlobal = (name: string, scope: Scope) =>
+    !scope.locals.has(name) && !bindings.has(name) && !functions.has(name);
+
+  // The values an iterator gives, as an array, where it's a Set's or an array's values() or an
+  // iterator helper's filter or map of one, which calls its callback on each value and its index in
+  // turn, as the iterator that reads it asks.
+  const compileIterator = (node: ts.Expression, scope: Scope): Value | undefined => {
+    if (
+      !ts.isCallExpression(node) ||
+      node.questionDotToken !== undefined ||
+      !ts.isPropertyAccessExpression(node.expression) ||
+      node.expression.questionDotToken !== undefined ||
+      !ts.isIdentifier(node.expression.name)
+    ) {
+      return undefined;
+    }
+    const method = node.expression.name.text;
+    if (method === "values" && node.arguments.length === 0) {
+      const receiver = compileExpression(node.expression.expression, scope);
+      return receiver === undefined
+        ? undefined
+        : { text: `LValues(${receiver.text})`, isFresh: false };
+    }
+    if ((method !== "filter" && method !== "map") || node.arguments.length !== 1) return undefined;
+    const iterator = compileIterator(node.expression.expression, scope);
+    const callback = compileCallback(node.arguments[0], scope, method === "map");
+    return iterator === undefined || callback === undefined
+      ? undefined
+      : {
+          text: `${method === "map" ? "LMap" : "LFilter"}(${iterator.text}, ${callback})`,
+          isFresh: false,
+        };
+  };
+
   // A call of a module function that writes nothing, whose parameters it's given in order.
   const compileCall = (node: ts.CallExpression, scope: Scope): Value | undefined => {
     const callee = getCallee(node.expression, scope);
@@ -379,12 +505,59 @@ export const getNativeFunctions = (
         ? undefined
         : { text: `LFrom(${length.text}, ${callback})`, isFresh: true };
     }
+    // Math's functions of one Number, where Math is the realm's, which read only their first
+    // argument.
+    if (
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Math" &&
+      isRealmGlobal("Math", scope) &&
+      MATH_FUNCTIONS.has(node.expression.name.text) &&
+      node.arguments.length >= 1
+    ) {
+      const args = compileArguments(node.arguments, scope, false);
+      return args === undefined
+        ? undefined
+        : { text: `LMath("${node.expression.name.text}", ${args[0]})`, isFresh: false };
+    }
+    // Object.values(o), where Object is the realm's.
+    if (
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Object" &&
+      isRealmGlobal("Object", scope) &&
+      node.expression.name.text === "values" &&
+      node.arguments.length === 1
+    ) {
+      const object = compileExpression(node.arguments[0], scope);
+      return object === undefined
+        ? undefined
+        : { text: `LObjectValues(${object.text})`, isFresh: false };
+    }
     if (ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.name)) {
       const method = node.expression.name.text;
+      // A Set's method of another Set, whose Set holds primitives alone, so that nothing else
+      // holds what it holds.
+      if (SET_METHODS.has(method) && node.arguments.length === 1) {
+        const receiver = compileExpression(node.expression.expression, scope);
+        const other = compileExpression(node.arguments[0], scope);
+        return receiver === undefined || other === undefined
+          ? undefined
+          : {
+              text: `LSetMethod(${receiver.text}, "${method}", ${other.text})`,
+              isFresh: SET_MAKERS.has(method),
+            };
+      }
       const iterating = CALLBACK_METHODS.get(method);
       if (iterating !== undefined || method === "slice") {
-        const receiver = compileExpression(node.expression.expression, scope);
-        if (receiver === undefined) return undefined;
+        // An iterator's every, some and find give a value, and its filter and map an iterator,
+        // which only compileIterator reads.
+        const iterator = compileIterator(node.expression.expression, scope);
+        if (iterator !== undefined && (method === "filter" || method === "map")) return undefined;
+        const receiver = iterator ?? compileExpression(node.expression.expression, scope);
+        if (receiver === undefined || (iterator !== undefined && method === "slice")) {
+          return undefined;
+        }
         if (method === "slice") {
           const args = compileArguments(node.arguments, scope, false);
           return args === undefined || args.length > 2
@@ -428,10 +601,11 @@ export const getNativeFunctions = (
     ) {
       return compileExpression(node.expression, scope);
     }
-    if (ts.isNumericLiteral(node))
-      return { text: `Num(${getNumber(Number(node.text))})`, isFresh: false };
+    if (ts.isNumericLiteral(node)) {
+      return { text: getConstant(`Num(${getNumber(Number(node.text))})`), isFresh: false };
+    }
     if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
-      return { text: `Str(${getUnits(node.text)})`, isFresh: false };
+      return { text: getConstant(`Str(${getUnits(node.text)})`), isFresh: false };
     }
     if (node.kind === ts.SyntaxKind.TrueKeyword) return { text: "True", isFresh: false };
     if (node.kind === ts.SyntaxKind.FalseKeyword) return { text: "False", isFresh: false };
@@ -547,20 +721,50 @@ export const getNativeFunctions = (
       return { text, isFresh: true };
     }
     if (ts.isArrayLiteralExpression(node)) {
-      if (
-        node.elements.some(
-          (element) => ts.isSpreadElement(element) || ts.isOmittedExpression(element),
-        )
-      ) {
-        return undefined;
+      if (node.elements.some(ts.isOmittedExpression)) return undefined;
+      // A spread of an array or a Set gives its elements, and each run of other elements
+      // between spreads gives them.
+      const parts: string[] = [];
+      for (const [index, element] of node.elements.entries()) {
+        if (ts.isSpreadElement(element)) {
+          const spread = compileExpression(element.expression, scope);
+          if (spread === undefined) return undefined;
+          parts.push(`LSpreadElems(${spread.text})`);
+        } else if (index === 0 || ts.isSpreadElement(node.elements[index - 1])) {
+          const end = node.elements.findIndex(
+            (other, at) => at > index && ts.isSpreadElement(other),
+          );
+          const owned = compileArguments(
+            node.elements.slice(index, end === -1 ? undefined : end),
+            scope,
+            true,
+          );
+          if (owned === undefined) return undefined;
+          parts.push(`<<${owned.join(", ")}>>`);
+        }
       }
-      const elements = compileArguments(node.elements, scope, true);
-      return elements === undefined
-        ? undefined
-        : { text: `LArray(<<${elements.join(", ")}>>)`, isFresh: true };
+      return {
+        text: `LArray(${parts.length === 0 ? "<<>>" : parts.join(" \\o ")})`,
+        isFresh: true,
+      };
     }
     if (ts.isCallExpression(node) && node.questionDotToken === undefined)
       return compileCall(node, scope);
+    // new Set(iterable), where Set is the realm's, of primitives alone, which nothing else holds.
+    if (
+      ts.isNewExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "Set" &&
+      isRealmGlobal("Set", scope) &&
+      (node.arguments ?? []).length <= 1
+    ) {
+      const source = node.arguments?.[0];
+      const values =
+        source === undefined
+          ? { text: "Undefined", isFresh: false }
+          : (compileIterator(source, scope) ?? compileExpression(source, scope));
+      return values === undefined ? undefined : { text: `LNewSet(${values.text})`, isFresh: true };
+    }
     return undefined;
   };
 
@@ -627,6 +831,104 @@ export const getNativeFunctions = (
       : `LET ${[...reads, `${changed} == ${change(containers.at(-1) ?? "")}`, `${updated} == ${rebuilt}`].join("\n  ")}\n  IN IF ${updated}.type = "bail" THEN LBail ELSE\n  LET ${m} == [${scope.m} EXCEPT !.${path.root} = ${updated}] IN\n  ${next}`;
   };
 
+  // The binding and the depth of the object that an expression's path of properties ends in, or
+  // undefined for a path from anything but a name.
+  const getPathRoot = (node: ts.Expression): { root: string; depth: number } | undefined => {
+    if (
+      ts.isParenthesizedExpression(node) ||
+      ts.isNonNullExpression(node) ||
+      ts.isAsExpression(node)
+    ) {
+      return getPathRoot(node.expression);
+    }
+    if (ts.isIdentifier(node)) return { root: node.text, depth: 0 };
+    if (!ts.isPropertyAccessExpression(node) && !ts.isElementAccessExpression(node))
+      return undefined;
+    const base = getPathRoot(node.expression);
+    return base === undefined ? undefined : { root: base.root, depth: base.depth + 1 };
+  };
+
+  // The object that a node changes in place, as the binding and depth of its path, "any" where it
+  // may change any, or undefined where it changes none.
+  const getChange = (node: ts.Node): { root: string; depth: number } | "any" | undefined => {
+    if (
+      ts.isBinaryExpression(node) &&
+      (node.operatorToken.kind === ts.SyntaxKind.EqualsToken ||
+        COMPOUND.has(node.operatorToken.kind))
+    ) {
+      if (ts.isIdentifier(node.left)) return undefined;
+      const target = getPathRoot(node.left);
+      return target === undefined ? "any" : { root: target.root, depth: target.depth - 1 };
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken ||
+        node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      if (ts.isIdentifier(node.operand)) return undefined;
+      const target = getPathRoot(node.operand);
+      return target === undefined ? "any" : { root: target.root, depth: target.depth - 1 };
+    }
+    if (ts.isDeleteExpression(node)) return "any";
+    if (!ts.isCallExpression(node)) return undefined;
+    if (ts.isIdentifier(node.expression) && functions.has(node.expression.text)) {
+      return compileFunction(node.expression.text)?.isPure === true ? undefined : "any";
+    }
+    if (
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.name) &&
+      MUTATORS.has(node.expression.name.text)
+    ) {
+      return getPathRoot(node.expression.expression) ?? "any";
+    }
+    return undefined;
+  };
+
+  // Whether code after a position in a function may change in place the object at a depth of a
+  // binding's path, or one that it holds: a change of a binding's object holds of no deeper one, as
+  // no object of the state is held twice.
+  const isChangedAfter = (body: ts.Node, position: number, root: string, depth: number) => {
+    const isChanged = (node: ts.Node): boolean => {
+      if (node.getStart() >= position) {
+        const change = getChange(node);
+        if (
+          change === "any" ||
+          (change !== undefined &&
+            (!bindings.has(change.root) || (change.root === root && change.depth >= depth)))
+        ) {
+          return true;
+        }
+      }
+      return ts.forEachChild(node, isChanged) ?? false;
+    };
+    return isChanged(body);
+  };
+
+  // Whether a name is read after a position in a function.
+  const isReadAfter = (body: ts.Node, position: number, name: string) => {
+    const isRead = (node: ts.Node): boolean =>
+      (ts.isIdentifier(node) && node.text === name && node.getStart() >= position) ||
+      (ts.forEachChild(node, isRead) ?? false);
+    return isRead(body);
+  };
+
+  // Whether a function declares a name once, so that each of its reads names that declaration.
+  const isDeclaredOnce = (body: ts.Node, name: string) => {
+    let count = 0;
+    const visit = (node: ts.Node): void => {
+      if (
+        (ts.isVariableDeclaration(node) || ts.isParameter(node) || ts.isBindingElement(node)) &&
+        ts.isIdentifier(node.name) &&
+        node.name.text === name
+      ) {
+        count += 1;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(body);
+    return count === 1;
+  };
+
   const isExiting = (statement: ts.Statement): boolean =>
     ts.isReturnStatement(statement) ||
     (ts.isBlock(statement) && statement.statements.some(isExiting)) ||
@@ -675,18 +977,27 @@ export const getNativeFunctions = (
         return undefined;
       }
       const locals = new Map(scope.locals);
+      const held = new Set(scope.fresh);
       const lines: string[] = [];
       for (const declaration of declarations) {
-        const value = compileExpression(declaration.initializer as ts.Expression, {
-          ...scope,
-          locals,
-        });
+        const initializer = declaration.initializer as ts.Expression;
+        const inner = { ...scope, locals };
+        const value = compileExpression(initializer, inner);
         if (value === undefined) return undefined;
         const name = fresh("l");
-        lines.push(`${name} == LOwn(${value.text})`);
-        locals.set((declaration.name as ts.Identifier).text, name);
+        const text = (declaration.name as ts.Identifier).text;
+        // A constant holds an object that an expression just made, or one that the state holds
+        // where nothing that follows changes it in place, and otherwise no object at all.
+        const path = value.isFresh ? undefined : getPath(initializer, inner);
+        const isHeld =
+          value.isFresh ||
+          (path !== undefined &&
+            !isChangedAfter(scope.body, statement.getEnd(), path.root, path.keys.length));
+        lines.push(`${name} == ${isHeld ? value.text : `LOwn(${value.text})`}`);
+        if (value.isFresh && isDeclaredOnce(scope.body, text)) held.add(name);
+        locals.set(text, name);
       }
-      const body = compileStatements(after, { ...scope, locals }, rest, state);
+      const body = compileStatements(after, { ...scope, locals, fresh: held }, rest, state);
       const names = [...locals.values()].slice(scope.locals.size);
       return body === undefined
         ? undefined
@@ -744,7 +1055,14 @@ export const getNativeFunctions = (
       const value = compileExpression(node.right, scope);
       const target = node.left;
       if (value === undefined) return undefined;
-      const owned = value.isFresh ? value.text : `LOwn(${value.text})`;
+      // A constant that holds what nothing else holds gives it to the state where nothing that
+      // follows reads the constant again.
+      const local = ts.isIdentifier(node.right) ? scope.locals.get(node.right.text) : undefined;
+      const isGiven =
+        local !== undefined &&
+        scope.fresh.has(local) &&
+        !isReadAfter(scope.body, node.getEnd(), (node.right as ts.Identifier).text);
+      const owned = value.isFresh || isGiven ? value.text : `LOwn(${value.text})`;
       if (ts.isIdentifier(target)) {
         if (!isBinding(target.text, scope) || !mutable.has(target.text)) return undefined;
         const name = fresh("v");
@@ -840,9 +1158,17 @@ export const getNativeFunctions = (
   };
 
   // A module function's operator, compiled once, or undefined where its code goes beyond what
-  // runs natively. A function that calls itself runs on ESCore.
+  // runs natively.
   const compileFunction = (name: string): Compiled | undefined => {
     if (compiled.has(name)) return compiled.get(name);
+    // A function that calls itself takes its operator as it compiles, as one that writes nothing,
+    // which it must turn out to be; one that another function it calls calls runs on ESCore.
+    const innermost = compiling.at(-1);
+    if (innermost?.name === name) {
+      innermost.isRecursive = true;
+      return { operator: innermost.operator, isPure: true };
+    }
+    if (compiling.some((entry) => entry.name === name)) return undefined;
     const fn = functions.get(name);
     compiled.set(name, undefined);
     if (
@@ -868,9 +1194,15 @@ export const getNativeFunctions = (
       return undefined;
     }
     const params = fn.parameters.map(() => fresh("p"));
+    const operator = fresh("Native");
+    const entry = { name, operator, isRecursive: false };
+    compiled.delete(name);
+    compiling.push(entry);
     const scope: Scope = {
       m: "m",
       w: "w",
+      body: fn,
+      fresh: new Set(),
       locals: new Map(
         fn.parameters.map((parameter, index) => [
           (parameter.name as ts.Identifier).text,
@@ -892,16 +1224,42 @@ export const getNativeFunctions = (
                 ? undefined
                 : `LET ${v} == ${value.text} IN IF ${v}.type = "bail" THEN LBail ELSE ${result("m", "w", v)}`;
             })();
-    if (text === undefined) return undefined;
-    const operator = fresh("Native");
-    definitions.push(`${operator}(${["m", "w", ...params].join(", ")}) ==\n  ${text}`);
+    compiling.pop();
+    if (text === undefined || (entry.isRecursive && !state.isPure)) {
+      compiled.set(name, undefined);
+      return undefined;
+    }
+    const formals = ["m", "w", ...params];
+    if (entry.isRecursive)
+      definitions.push(`RECURSIVE ${operator}(${formals.map(() => "_").join(", ")})`);
+    definitions.push(`${operator}(${formals.join(", ")}) ==\n  ${text}`);
     const done = { operator, isPure: state.isPure };
     compiled.set(name, done);
     return done;
   };
 
+  const getExpressionOperator = (node: ts.Expression, parameters: string[]) => {
+    const params = parameters.map(() => fresh("p"));
+    const scope: Scope = {
+      m: "m",
+      w: "w",
+      body: node,
+      fresh: new Set(),
+      locals: new Map(parameters.map((parameter, index) => [parameter, params[index]])),
+    };
+    const value = compileExpression(node, scope);
+    if (value === undefined) return undefined;
+    const operator = fresh("Native");
+    const v = fresh("v");
+    definitions.push(
+      `${operator}(${["m", "w", ...params].join(", ")}) ==\n  LET ${v} == ${value.text} IN IF ${v}.type = "bail" THEN LBail ELSE ${result("m", "w", v)}`,
+    );
+    return operator;
+  };
+
   return {
     definitions,
     getOperator: (name) => compileFunction(name)?.operator,
+    getExpressionOperator,
   };
 };

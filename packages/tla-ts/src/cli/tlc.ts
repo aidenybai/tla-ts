@@ -21,8 +21,13 @@ import {
   TlaEvaluationError,
   TlaFeatureUnsupportedError,
   TlaMissingCheckpointError,
+  TlaStackLimitError,
+  TlaStackOverflowError,
   TlaSyntaxError,
+  createStackOverflowError,
   getUnexpectedException,
+  isStackOverflow,
+  STACK_OVERFLOW_MESSAGE,
   TlaSanyFatalError,
 } from "../errors";
 import { EXIT_STATUS } from "../exit-codes";
@@ -30,6 +35,7 @@ import { check } from "../parallel";
 import { extractModule, parseModule } from "../parser";
 import { printModule } from "../printer";
 import { simulate } from "../simulate";
+import { CHECK_STACK_MB } from "../worker";
 import type { StateDump } from "../state-graph";
 import {
   getSanyStandardModules,
@@ -292,7 +298,13 @@ const checkSpec = async (
     printFinished();
     return nodeExit.code;
   };
-  const printFailure = (error: TlaError) => {
+  // A TypeScript program whose check overflows the stack is one that tla-ts can't check, which
+  // isn't TLC's verdict on it.
+  const printFailure = (failure: TlaError) => {
+    const error =
+      compiled !== undefined && failure instanceof TlaStackOverflowError
+        ? new TlaStackLimitError(CHECK_STACK_MB)
+        : failure;
     if (error instanceof TlaSyntaxError) {
       printParsingFailed();
     } else {
@@ -489,6 +501,9 @@ const checkSpec = async (
       return status;
     }
     const result = await check(options);
+    if (compiled !== undefined && result.failure?.message === STACK_OVERFLOW_MESSAGE) {
+      throw new TlaStackLimitError(CHECK_STACK_MB, result.depth);
+    }
     const nodeExit = result.failure && getScriptExit(result.failure.message);
     if (nodeExit !== undefined) return nodeExit;
     printResult(result, printer, timing);
@@ -627,9 +642,15 @@ export const checkSpecs = async (args: string[], java: JavaProperties) => {
               : `Checking ${basename(path)} with ${basename(path, ".tla")}.cfg`,
           );
         }
-        const compiled = isTypeScript ? await compileTypeScriptFile(path) : undefined;
-        compiled?.notes.forEach((note) => console.log(note));
-        return checkSpec(compiled?.specPath ?? path, parsed, dump, java, printer, compiled);
+        // A stack overflow that nothing caught ends the check as one that the check caught does.
+        try {
+          const compiled = isTypeScript ? await compileTypeScriptFile(path) : undefined;
+          compiled?.notes.forEach((note) => console.log(note));
+          return await checkSpec(compiled?.specPath ?? path, parsed, dump, java, printer, compiled);
+        } catch (error) {
+          if (!isStackOverflow(error)) throw error;
+          throw isTypeScript ? new TlaStackLimitError(CHECK_STACK_MB) : createStackOverflowError();
+        }
       }, printer),
     );
   }

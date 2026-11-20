@@ -23056,8 +23056,7 @@
         {
           "name": "matches JavaScript's remainder, division, and strings",
           "source": "\n      let count = 0;\n      export const step = () => {\n        count = 1 - count;\n      };\n      /** @assume */\n      export const isLikeJavaScript = () =>\n        -7 % 3 === -1 &&\n        7 % -3 === 1 &&\n        Math.trunc(-7 / 2) === -3 &&\n        Math.floor(-7 / 2) === -4 &&\n        `${\"a\"}-${1}` === \"a-1\";\n    ",
-          "status": "success",
-          "wrong": "models: ESCore's check of this model gives another status, count, or message than today's compiler's, and which is right is unverified"
+          "status": "success"
         }
       ]
     },

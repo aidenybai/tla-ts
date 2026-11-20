@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vite-plus/test";
@@ -831,5 +832,27 @@ describe("the CLI prints messages for a program to read like TLC", () => {
     ]);
     expect(result.stdout).toContain("The formula Small is a state-level formula");
     expect(result.stdout).toContain("Invariant Small is violated.");
+  });
+});
+
+// Node gives its main thread about 1 MB of stack, which Sum's recursion of 10,000 overflows, so the
+// built CLI, as Node runs it, checks on a thread with a stack of its own.
+describe("the CLI checks on a thread with a deeper stack than Node's main thread", () => {
+  const runBuiltCli = (args: string[]) =>
+    spawnSync(process.execPath, [join(import.meta.dirname, "../../dist/cli.js"), ...args], {
+      cwd: join(FIXTURES, "cli-stack"),
+      encoding: "utf8",
+    });
+
+  it("checks a recursion deeper than Node's main thread holds", () => {
+    const result = runBuiltCli(["Sum.tla"]);
+    expect(result.stdout).toContain("Model checking completed. No error has been found.");
+    expect(result.status).toBe(0);
+  });
+
+  it("reports a recursion deeper than its own stack holds as TLC reports an overflow", () => {
+    const result = runBuiltCli(["Sum.tla", "-config", "Overflow.cfg"]);
+    expect(result.stdout).toContain("Error: This was a Java StackOverflowError.");
+    expect(result.status).toBe(255);
   });
 });
