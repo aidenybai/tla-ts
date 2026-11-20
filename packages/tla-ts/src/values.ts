@@ -1221,8 +1221,19 @@ export const normalizeShallowly = (value: Value): void => {
   }
 };
 
+const isUnenumeratedSet = (value: Value): value is ConvertibleSetValue =>
+  typeof value === "object" && isLazySet(value) && value.enumerated === undefined;
+
+// TLC's equals compares two sets by class with valuesEqual, or enumerates the left set and then the right one as
+// valuesEqual does, except that it enumerates the right side before a set literal. So while valuesEqual leaves a side
+// unenumerated, TLC's equals would fail where it failed, running the same predicates again.
+const isFailingLikeTlc = (left: Value, right: Value) =>
+  isSetValue(left) &&
+  isSetValue(right) &&
+  (isUnenumeratedSet(left) ? left.kind !== "MixedSet" : isUnenumeratedSet(right));
+
 export const isEqualLikeTlc = (left: Value, right: Value) =>
-  computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right);
+  computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
 
 // TLC's ValueVec#sort compares each element with the ones before it, which orders what lazy elements evaluate.
 const isStrictlySorted = (elements: Value[]) => {
@@ -2309,6 +2320,7 @@ export const computeLikeTlcOnFailure = <Left, Right, Result>(
   computeLikeTlc: (left: Left, right: Right, error: TlaEvaluationError) => Result,
   left: Left,
   right: Right,
+  isFailingLikeTlc?: (left: Left, right: Right) => boolean,
 ): Result => {
   const sets = setTrace.sets;
   const callStack = setTrace.callStack;
@@ -2317,7 +2329,7 @@ export const computeLikeTlcOnFailure = <Left, Right, Result>(
   try {
     return compute(left, right);
   } catch (error) {
-    if (!(error instanceof TlaEvaluationError)) throw error;
+    if (!(error instanceof TlaEvaluationError) || isFailingLikeTlc?.(left, right)) throw error;
     if (sets) sets.length = depth;
     if (callStack && trace) {
       callStack.expressions.length = trace.length;

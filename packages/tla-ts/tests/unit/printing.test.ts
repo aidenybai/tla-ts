@@ -155,6 +155,85 @@ describe("printing matches TLC", () => {
     },
   );
 
+  it.each([
+    [
+      "{s \\in SUBSET {1, 2} : PrintT(s)} = 1",
+      ["{}", "{1}", "{2}", "{1, 2}"],
+      "Attempted to check equality of the set {{}, {1}, {2}, {1, 2}} with the value:\n1",
+      undefined,
+    ],
+    [
+      "SUBSET {s \\in SUBSET {1, 2} : PrintT(s) /\\ s # 1} = SUBSET {}",
+      ["{}"],
+      "Attempted to check equality of the set {} with the value:\n1",
+      undefined,
+    ],
+    [
+      "{s \\in SUBSET {1, 2} : PrintT(s) /\\ s # 1} = {}",
+      ["{}"],
+      "Attempted to check equality of the set {} with the value:\n1",
+      undefined,
+    ],
+    [
+      '{1, "a"} = {s \\in SUBSET {1} : PrintT(s)}',
+      ["{}", "{1}"],
+      'Attempted to compare string "a" with non-string:\n1',
+      undefined,
+    ],
+    [
+      "{1} = {s \\in SUBSET {1, 2} : PrintT(s) /\\ s # 1}",
+      ["{}"],
+      "Attempted to check equality of the set {} with the value:\n1",
+      undefined,
+    ],
+    [
+      "<<1>> = {s \\in SUBSET {1} : PrintT(s)}",
+      ["{}", "{1}"],
+      "Attempted to check equality of the function <<1>> with the value:\n{{}, {1}}",
+      undefined,
+    ],
+    [
+      '{1} = {"a"}',
+      [],
+      'Attempted to check equality of integer 1 with non-integer:\n"a"',
+      undefined,
+    ],
+    [
+      "{s \\in SUBSET {1} : PrintT(s)} = {1, 2}",
+      ["{}", "{1}"],
+      "Attempted to check equality of the set {} with the value:\n1",
+      undefined,
+    ],
+    [
+      "(SUBSET (1..5) \\ {s \\in SUBSET (1..5) : Cardinality(s) <= 1 /\\ PrintT(s)}) = {}",
+      ["{}", "{1}", "{2}", "{3}", "{4}", "{5}"],
+      "Attempted to construct a set with too many elements (>10).",
+      10,
+    ],
+  ])(
+    "runs the predicates of %s as TLC's equals does before it fails",
+    async (expression, printed, message, maxSetSize) => {
+      const lines: string[] = [];
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, FiniteSets, TLC\nASSUME ${expression}\n====`,
+        config: "",
+        maxSetSize,
+        onPrint: (text) => lines.push(text),
+      });
+      expect([lines, result.violation?.message]).toEqual([printed, message]);
+    },
+  );
+
+  it("finds Nat unequal to a typed model value, as TLC's UserValue#compareTo does", async () => {
+    const printed: string[] = [];
+    await check({
+      source: "---- MODULE M ----\nEXTENDS Naturals, TLC\nCONSTANT C\nASSUME PrintT(Nat = C)\n====",
+      config: "CONSTANT C = a_b",
+      onPrint: (text) => printed.push(text),
+    });
+    expect(printed).toEqual(["FALSE"]);
+  });
+
   it("streams SUBSET S into a filter without sizing SUBSET S, as TLC's SubsetValue#elements does", async () => {
     expect(
       (await checkPrinting("ASSUME PrintT([{1} -> {s \\in SUBSET (1..40) : TRUE}] = [{2} -> {}])"))
