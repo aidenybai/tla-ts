@@ -179,13 +179,14 @@ export const createModuleConverter = (
     location: Locus,
     argumentCounts?: number[],
   ): Expr => {
-    if (name.startsWith("<")) {
+    const names = name.split("!");
+    // tlapm's E_parser reads a step name without a subexpression reference as a Bang with no selectors.
+    if (names.length === 1 && name.startsWith("<")) {
       const operator = at({ kind: "Opaque", name }, { location });
       return at({ kind: "Bang", expression: operator, selectors: [] }, { location });
     }
     const builtin = BUILTINS.get(name);
     if (builtin && args.length === 0) return at({ kind: "Internal", builtin }, { location });
-    const names = name.split("!");
     if (names.length === 1) {
       const operator = at({ kind: "Opaque", name }, { location });
       return args.length === 0 ? operator : at({ kind: "Apply", operator, args }, { location });
