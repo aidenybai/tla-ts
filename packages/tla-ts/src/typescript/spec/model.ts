@@ -348,6 +348,15 @@ export const compileModelToEscore = (
       seen.add(name);
       return isStateful(definition.body, seen);
     });
+  // Whether an expression applies a definition of today's with parameters, today's TLA+ of a
+  // function of the module, itself or through definitions it reads.
+  const isComputed = (expression: Expression, seen = new Set<string>()): boolean =>
+    [...getNames(expression)].some((name) => {
+      const definition = definitions.get(name);
+      if (definition?.kind !== "Operator" || seen.has(name)) return false;
+      seen.add(name);
+      return definition.params.length > 0 || isComputed(definition.body, seen);
+    });
   // The converter of the values of a domain: TLA+'s values of today's model as JavaScript's.
   const converters = new Map<string, Converter>();
   // A parameter's type, where today's domain of it is an expression of no shape the converters
@@ -849,7 +858,11 @@ export const compileModelToEscore = (
     }
     const name = bound.pattern.name;
     const position = application.args.indexOf(name);
-    if (isStateful(bound.set)) return { ...bound, set: getGuardDomain(application, name) };
+    // A set that today's state or a function of the module gives is the set that the action's
+    // guard gives, as ESCore evaluates the module's code, rather than today's TLA+ of it.
+    if (isStateful(bound.set) || isComputed(bound.set)) {
+      return { ...bound, set: getGuardDomain(application, name) };
+    }
     if (position >= 0) {
       boundConverters.set(
         `${application.name} ${position}`,

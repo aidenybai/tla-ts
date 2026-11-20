@@ -703,6 +703,37 @@ describe("checks a module's exported functions as a model on ESCore", () => {
     }, 120_000);
   });
 
+  describe("takes a parameter's computed domain from its guard, natively, as ESCore does", () => {
+    // Today's domain of step is its TLA+ of choices, which reads its TLA+ of bits; the guard's
+    // Set is the module's own code.
+    const source = `
+      const bits = (x: number, bit: number): number =>
+        x === 0 ? 0 : 2 ** bit * (x % 2) + bits(Math.floor(x / 2), bit + 1);
+      const choices = () => new Set([1, 2, 3].filter((value) => bits(value, 0) === value));
+      let total = 0;
+      export const add = (step: number) => {
+        if (!choices().has(step)) return;
+        if (total >= 4) return;
+        total += step;
+      };
+      export const isSmall = () => total <= 6;
+    `;
+
+    it("gives what ESCore gives in every call and every guard, as TLC counts", async () => {
+      const counts = ["deadlock", 7, 13];
+      expect(getCounts(await checkModel(source, "spec.ts", "native"))).toEqual(counts);
+      expect(getCounts(await checkModel(source, "spec.ts", "compared"))).toEqual(counts);
+    });
+
+    it("tells a floor that gives 0 of an integer", async () => {
+      const result = await checkModel(source, "spec.ts", "native", [
+        "THEN Num(MathOf(m, a.value))",
+        'THEN Num(IF m = "floor" /\\ a.value.k = "int" THEN NumFromInt(0) ELSE MathOf(m, a.value))',
+      ]);
+      expect(result.message).toContain("the native call differs from ESCore's");
+    });
+  });
+
   describe("runs ESNative's operators natively, as their TLA+ runs them", () => {
     // A model that lowers its state, whose module ESNative the checks read.
     const source = `
