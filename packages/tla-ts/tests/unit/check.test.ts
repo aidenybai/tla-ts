@@ -1164,6 +1164,69 @@ ASSUME TLCFP(a) = -887695703
     );
   });
 
+  it.each([
+    ["LET F == [n \\in UNION {1..1, {3}} |-> PrintT(n)] IN <<1, 2>> # F", ["1", "1", "3", "TRUE"]],
+    [
+      "LET F == [n \\in UNION {1..1, {2}} |-> Print(n, n)] IN <<1, 2>> = F /\\ <<1, 2>> = F",
+      ["1  1", "2  2", "1  1", "2  2", "TRUE"],
+    ],
+    [
+      "LET F == [n \\in UNION {1..1, {2}} |-> Print(n, n)] IN <<1, 2>> = F /\\ F = <<1, 2>> /\\ <<1, 2>> = F",
+      ["1  1", "2  2", "1  1", "2  2", "TRUE"],
+    ],
+    [
+      "LET F == [n \\in UNION {1..1, {2}} |-> Print(n, n)] IN <<1, 3>> # F /\\ <<1, 2>> = F",
+      ["1  1", "2  2", "1  1", "2  2", "TRUE"],
+    ],
+  ])(
+    "applies a lazy function again each time a tuple is compared with it, as TLC's TupleValue#equals does, in %s",
+    async (expression, printed) => {
+      expect((await checkLazyTuple(expression)).printed).toEqual(printed);
+    },
+  );
+
+  it("applies a lazy function a tuple is compared with again when TLC replays its error", async () => {
+    const lazyTuple = await checkLazyTuple(
+      "<<1, 2>> # [n \\in UNION {1..1, {3}} |-> PrintT(n) /\\ 1 \\div (n - 3) = 0]",
+    );
+    expect([lazyTuple.printed, lazyTuple.result.failure?.traceOutput]).toEqual([
+      ["1", "1", "3"],
+      ["1", "1", "3"],
+    ]);
+  });
+
+  it.each([
+    [
+      "<<1, 2>> # [n \\in UNION {1..1, {3}} |-> 1 \\div (n - 1)]",
+      "The second argument of \\div is 0.",
+    ],
+    [
+      '<<1, "a">> # [n \\in UNION {1..1, {2}} |-> n]',
+      'TLC threw an unexpected exception.\nThis was probably caused by an error in the spec or model.\nSee the User Output or TLC Console for clues to what happened.\nThe exception was a java.lang.RuntimeException\n: Attempted to check equality of string "a" with non-string:\n2',
+    ],
+  ])(
+    "fails as TLC does when a tuple is compared with a lazy function whose body has no effect, in %s",
+    async (expression, message) => {
+      expect((await checkLazyTuple(expression)).result.failure?.message).toBe(message);
+    },
+  );
+
+  it("counts each application of a recursive function a tuple is compared with, as TLC's TupleValue#equals does", async () => {
+    const lines = await getCoverageLines(
+      "---- MODULE M ----\nEXTENDS Integers, FiniteSets, TLC\nVARIABLE x\nInit == x = 0\nNext == x' = x /\\ LET g[i \\in 1..2] == IF i = 1 THEN 1 ELSE g[i - 1] + 1 IN <<1, 2>> = g /\\ <<1, 2>> = g\nInv == TRUE\n====",
+      "INIT Init\nNEXT Next\nINVARIANT Inv",
+    );
+    expect(lines?.[1]).toEqual([
+      "line 5, col 9 to line 5, col 14 of module M: 1",
+      "line 5, col 23 to line 5, col 72 of module M: 1:4",
+      "|line 5, col 40 to line 5, col 72 of module M: 6",
+      "||line 5, col 43 to line 5, col 47 of module M: 6",
+      "||line 5, col 61 to line 5, col 72 of module M: 2",
+      "|line 5, col 31 to line 5, col 34 of module M: 1",
+      "line 5, col 77 to line 5, col 104 of module M: 1",
+    ]);
+  });
+
   it("implements the TLCExt operators", async () => {
     const results = await Promise.all(
       ["Extensions", "ExtensionsShort"].map((name) => checkFixture("runtime", "Extensions", name)),

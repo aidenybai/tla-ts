@@ -745,6 +745,14 @@ export const getFunctionClass = (value: Value) =>
     ? value.functionClass
     : undefined;
 
+// TLC's TupleValue converts the other side with toTuple, which applies a lazy function again on every comparison.
+const isTupleAgainstObservedLambda = (left: FunctionValue, right: Value) =>
+  left.functionClass === "tuple" &&
+  typeof right === "object" &&
+  right.kind === "LazyFunction" &&
+  right.isApplicationObserved &&
+  right.enumerated === undefined;
+
 export const markLambdaFunction = <FunctionLike extends FunctionValue | LazyFunctionValue>(
   functionValue: FunctionLike,
 ) => setFunctionClass(functionValue, "lambda");
@@ -872,6 +880,9 @@ export const valuesEqual = (left: Value, right: Value): boolean => {
       if (!isOverriddenSet(right)) return compareSets(elements, toFiniteSet(right)) === 0;
     }
     return getValueKey(left) === getValueKey(right);
+  }
+  if (left.kind === "Function" && isTupleAgainstObservedLambda(left, right)) {
+    return compareFunctionLikeTlc(left, right, true) === 0;
   }
   return compareValues(left, right) === 0;
 };
@@ -1246,11 +1257,12 @@ const isUnenumeratedSet = (value: Value): value is ConvertibleSetValue =>
 // TLC's SetEnumValue#equals enumerates the right side before it sorts a set literal on the left.
 const isFailingLikeTlc = (left: Value, right: Value) =>
   typeof left === "object" &&
-  isSetValue(left) &&
-  !isModelValue(right) &&
-  (isComparedByClass(left, right) ||
-    (isSetValue(right) &&
-      (isUnenumeratedSet(left) ? left.kind !== "MixedSet" : isUnenumeratedSet(right))));
+  ((left.kind === "Function" && isTupleAgainstObservedLambda(left, right)) ||
+    (isSetValue(left) &&
+      !isModelValue(right) &&
+      (isComparedByClass(left, right) ||
+        (isSetValue(right) &&
+          (isUnenumeratedSet(left) ? left.kind !== "MixedSet" : isUnenumeratedSet(right))))));
 
 export const isEqualLikeTlc = (left: Value, right: Value) =>
   computeLikeTlcOnFailure(valuesEqual, equalsLikeTlc, left, right, isFailingLikeTlc);
