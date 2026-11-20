@@ -71,6 +71,81 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it.each<[string, string, Record<string, string>, [string, string][]]>([
+    [
+      "every module's semantic errors",
+      "EXTENDS A, B\nZ == Nope3",
+      { A: "X == Nope1", B: "EXTENDS A\nY == Nope2" },
+      [
+        ["line 2, col 6 to line 2, col 10 of module A", "Unknown operator: `Nope1'."],
+        ["line 3, col 6 to line 3, col 10 of module B", "Unknown operator: `Nope2'."],
+        ["line 3, col 6 to line 3, col 10 of module M", "Unknown operator: `Nope3'."],
+      ],
+    ],
+    [
+      "a module's level errors, and no level errors after a module's errors",
+      "EXTENDS A, B\nVARIABLE w\nASSUME w = 1",
+      { A: "VARIABLE v\nASSUME v = 1", B: "Y == Nope2" },
+      [
+        [
+          "line 3, col 1 to line 3, col 12 of module A",
+          "Level error: assumptions must be level 0 (Constant), \nbut this one has level 1.",
+        ],
+        ["line 2, col 6 to line 2, col 10 of module B", "Unknown operator: `Nope2'."],
+      ],
+    ],
+    [
+      "a module redefinition after a module's errors",
+      "CONSTANT F\nINSTANCE A\nI == INSTANCE Inner2\n---- MODULE Inner2 ----\nD == F\n====\nJ == INSTANCE Inner2",
+      { A: "F(a) == a\nH == 1" },
+      [
+        ["line 2, col 6 to line 2, col 6 of module Inner2", "Unknown operator: `F'."],
+        [
+          "line 2, col 1 to line 2, col 9 of module A",
+          "Multiply-defined symbol 'F': this definition or declaration conflicts \nwith the one at line 2, col 10 to line 2, col 10 of module M.",
+        ],
+        [
+          "line 5, col 1 to line 7, col 4 of module M",
+          "Multiply-defined module 'Inner2': this definition or declaration conflicts \nwith the one at line 1, col 1 to line 3, col 4 of module Inner2.",
+        ],
+      ],
+    ],
+    [
+      "an error that two modules make once",
+      "EXTENDS B, C, Naturals\nZ == Nope3",
+      { B: "EXTENDS C, Naturals", C: "CONSTANT Nat" },
+      [
+        [
+          "line 14, col 1 to line 14, col 16 of module Naturals",
+          "The definition of 'Nat' conflicts with \nits declaration at line 2, col 10 to line 2, col 12 of module C.",
+        ],
+        ["line 3, col 6 to line 3, col 10 of module M", "Unknown operator: `Nope3'."],
+      ],
+    ],
+    [
+      "the errors after an instance of a module with an unknown operator",
+      "INSTANCE A WITH G <- {1}\nZ == Nope3",
+      { A: "VARIABLE G\nK == Nope(G(1))" },
+      [
+        ["line 3, col 6 to line 3, col 9 of module A", "Unknown operator: `Nope'."],
+        ["line 3, col 6 to line 3, col 10 of module M", "Unknown operator: `Nope3'."],
+      ],
+    ],
+  ])("reports %s like SANY", async (_title, source, modules, errors) => {
+    await expect(
+      check({
+        source: `---- MODULE M ----\n${source}\n====`,
+        config: "",
+        loadModule: (name) =>
+          modules[name] === undefined
+            ? undefined
+            : `---- MODULE ${name} ----\n${modules[name]}\n====`,
+      }),
+    ).rejects.toMatchObject({
+      sany: { errors: errors.map((error) => ({ location: error[0], message: error[1] })) },
+    });
+  });
+
   it.each([
     ["an operator from a module that is not extended", "EXTENDS Naturals\nf == 1 :> 2"],
     ["an operator that a standard module only instantiates locally", "EXTENDS TLC\nf == 1 + 1"],

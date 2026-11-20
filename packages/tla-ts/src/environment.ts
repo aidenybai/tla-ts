@@ -345,6 +345,8 @@ export const createEnvironment = (
   let copyCount = 0;
   const createName = (name: string) => `${name}#${copyCount++}`;
   const instanceChecks: InstanceLevelCheck[] = [];
+  // SANY's Errors object holds every module's errors, so a module's errors don't stop the modules after it.
+  const semanticErrors: SanyError[] = [];
   const warnings: SanyError[] = [];
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
@@ -487,29 +489,34 @@ export const createEnvironment = (
     });
     loading.pop();
     linking.pop();
-    if (errors.length > 0) throw createSanyError(errors, false, undefined, warnings);
     const duplicate = nested.find((module) => closure.has(module.name));
     const loaded = duplicate && linkedModules.get(duplicate.name);
     const redefinition = loaded && getModuleRedefinition(duplicate, loaded.module);
-    if (redefinition) throw createSanyError([redefinition], false, undefined, warnings);
-    if (duplicate) throw createModuleRedefinedError(duplicate);
-    // SANY's Errors#addMessage drops a message it already has, such as an instantiated body's.
-    const levelErrors = [
-      ...collectSemanticErrors(
-        levelChecks.flatMap((check) => check.sections),
-        warnings,
-      ),
-      ...levelChecks.flatMap((check) => check.check(check !== levelChecks.at(-1))),
-    ].filter(
-      (error, index, all) => all.findIndex((other) => isSameSanyError(other, error)) === index,
-    );
-    if (levelErrors.length > 0) {
-      throw createSanyError(
-        levelErrors.map((error) => ({ location: error.location, message: error.message })),
-        false,
-        undefined,
-        warnings,
+    if (duplicate && !redefinition) throw createModuleRedefinedError(duplicate);
+    [...errors, ...(redefinition ? [redefinition] : [])].forEach((error) => {
+      if (!semanticErrors.some((other) => isSameSanyError(other, error))) {
+        semanticErrors.push(error);
+      }
+    });
+    // SANY level-checks a module only while no module has errors, and its Errors#addMessage drops a message it already has, such as an instantiated body's.
+    if (semanticErrors.length === 0) {
+      semanticErrors.push(
+        ...[
+          ...collectSemanticErrors(
+            levelChecks.flatMap((check) => check.sections),
+            warnings,
+          ),
+          ...levelChecks.flatMap((check) => check.check(check !== levelChecks.at(-1))),
+        ]
+          .filter(
+            (error, index, all) =>
+              all.findIndex((other) => isSameSanyError(other, error)) === index,
+          )
+          .map((error) => ({ location: error.location, message: error.message })),
       );
+    }
+    if (linking.length === 0 && semanticErrors.length > 0) {
+      throw createSanyError(semanticErrors, false, undefined, warnings);
     }
     return { linked, closure };
   };

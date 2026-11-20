@@ -160,6 +160,11 @@ export const isUnresolved = (expression: Expression) => unresolvedExpressions.ha
 const isEmptyExpression = (expression: Expression): boolean =>
   emptyExpressions.has(expression) || findNullError(nullSelections.get(expression)) !== undefined;
 
+export const hasNoOperands = (expression: Expression) =>
+  expression.kind === "Apply" &&
+  generatedArgumentCounts.get(expression) === undefined &&
+  isEmptyExpression(expression);
+
 const findNullSelection = (nulls: NullSelection[] | undefined) =>
   nulls?.find((selection) =>
     selection.isEmpty
@@ -561,13 +566,11 @@ const findLabel = (expression: Expression, name: string): LabelExpression | unde
   if (expression.kind === "Label") return expression.name === name ? expression : undefined;
   if (expression.kind === "Lambda" || expression.kind === "Selection") return undefined;
   if (expression.kind === "Let") return findLabel(expression.body, name);
-  const generated = generatedArgumentCounts.get(expression);
-  if (expression.kind === "Apply" && generated === undefined && isEmptyExpression(expression))
-    return undefined;
+  if (hasNoOperands(expression)) return undefined;
   if (expression.kind === "FunctionApplication" && isEmptyExpression(expression))
     return findLabel(expression.function, name);
   return getChildren(expression)
-    .slice(0, generated)
+    .slice(0, generatedArgumentCounts.get(expression))
     .reduce<LabelExpression | undefined>(
       (found, child) => found ?? findLabel(child, name),
       undefined,
