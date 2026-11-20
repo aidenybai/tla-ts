@@ -1767,9 +1767,12 @@ export const createProofChecker = (
           }
           return step.body.kind === "Qed" ? checkTemporalGoal(step.proof) : [];
         });
-  const checkProof = (proof: Proof | undefined, scope: Scope, data: LevelData): SanyError[] => {
+  const checkProof = (proof: Proof | undefined, scope: Scope, data?: LevelData): SanyError[] => {
+    const merge = (part: LevelData) => {
+      if (data) mergeLevels(data, part);
+    };
     if (proof?.kind === "By") {
-      mergeLevels(data, getFactData(proof.facts, scope));
+      merge(getFactData(proof.facts, scope));
       return analyzer.errors.splice(0);
     }
     if (proof?.kind !== "Steps") return [];
@@ -1782,10 +1785,9 @@ export const createProofChecker = (
         ...analyzer.errors.splice(0),
         ...instances.checkInstantiation(instance, instancer, inner),
       ];
-      const substitutes = instances.getSubstitutes(instance);
+      const substitutes = data && instances.getSubstitutes(instance);
       if (substitutes) {
-        mergeLevels(
-          data,
+        merge(
           analyzer.analyzeInstance(substitutes, instances.getModuleLevels(instance.module), inner),
         );
         analyzer.errors.splice(0);
@@ -1796,9 +1798,7 @@ export const createProofChecker = (
     const definedInstances: Instance[] = [];
     const errors = proof.steps.flatMap((step) => {
       const body = step.body;
-      if (body.kind === "Use" || body.kind === "Hide") {
-        mergeLevels(data, getFactData(body.facts, inner));
-      }
+      if (body.kind === "Use" || body.kind === "Hide") merge(getFactData(body.facts, inner));
       if (body.kind === "Instance") addInstanceDefinitions(instances, body, inner);
       if (body.kind === "Define") {
         body.definitions.forEach((definition) => {
@@ -1808,17 +1808,17 @@ export const createProofChecker = (
             return;
           }
           inner.set(definition.name, { kind: "Let", definition, scope: inner });
-          mergeLevels(data, analyzer.analyzeDefinition(definition, inner));
+          merge(analyzer.analyzeDefinition(definition, inner));
         });
       }
       const stepData = getStepData(step, inner);
-      mergeLevels(data, stepData);
+      merge(stepData);
       stepLevels.set(step, stepData.level);
       const isTemporal = stepData.level === TEMPORAL_LEVEL;
       const pickErrors =
         body.kind === "Pick" && body.bounds.length > 0 && isTemporal
           ? body.bounds
-              .filter((bound) => getData([bound.set], inner).level !== 0)
+              .filter((bound) => analyzer.analyze(bound.set, inner).level !== 0)
               .flatMap((bound) =>
                 bound.set.location.range
                   ? [
@@ -1849,7 +1849,7 @@ export const createProofChecker = (
     });
     return [...errors, ...definedInstances.flatMap(checkInstance)];
   };
-  const checkTheoremProof = (theorem: Theorem, data: LevelData) =>
+  const checkTheoremProof = (theorem: Theorem, data?: LevelData) =>
     checkProof(theorem.proof, addNewSymbols(theorem.statement, new Map()), data);
   return {
     checkTemporalGoal,
@@ -1961,7 +1961,7 @@ export const checkModuleLevels = (
               const level = getStatementLevel(theorem.statement);
               reported.push(
                 ...analyzer.errors.splice(0),
-                ...proofs.checkTheoremProof(theorem, createData()),
+                ...proofs.checkTheoremProof(theorem),
                 ...(level === TEMPORAL_LEVEL ? proofs.checkTemporalGoal(theorem.proof) : []),
               );
             },
