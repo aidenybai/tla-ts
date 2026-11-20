@@ -5546,7 +5546,11 @@ IndexOf(seq, x) ==
   IN IF found = {} THEN 0 ELSE CHOOSE i \in found : \A j \in found : i <= j
 Remove(seq, x) == SelectSeq(seq, LAMBDA y : y # x)
 Concat(seqs) == FoldLeftSeq(seqs)
-FoldLeftSeq(seqs) == IF seqs = <<>> THEN <<>> ELSE Head(seqs) \o FoldLeftSeq(Tail(seqs))
+\* In halves, so that thousands of sequences nest log n deep rather than n.
+FoldLeftSeq(seqs) ==
+  CASE seqs = <<>> -> <<>>
+    [] Len(seqs) = 1 -> seqs[1]
+    [] OTHER -> FoldLeftSeq(SubSeq(seqs, 1, Len(seqs) \div 2)) \o FoldLeftSeq(SubSeq(seqs, Len(seqs) \div 2 + 1, Len(seqs)))
 Repeat(x, n) == [i \in 1..n |-> x]
 \* A heap of records, indexed from 1, in pages of HeapPageSize. Changing a record copies its page and
 \* the list of pages, about n / HeapPageSize + HeapPageSize entries, rather than all n.
@@ -9829,8 +9833,14 @@ JSONStringify(s, value, replacer, space) ==
       state == [replacer |-> IF IsCallable(s, replacer) THEN replacer ELSE Undefined,
                 list |-> Val(list), gap |-> gap, stack |-> <<>>, indent |-> <<>>]
   IN SerializeJSONProperty(c.s, state, EmptyStr, Val(wrapper))
+\* More than 64 of the replacer's elements run in halves, so that thousands of them nest log n deep
+\* rather than n.
 JSONPropertyList(s, replacer, len, k, list) ==
   IF ~NumLess(k, len) THEN Ok(s, list)
+  ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(k) > 64 THEN
+       LET middle == NumFromInt((NumToInt(k) + NumToInt(len)) \div 2)
+           first == JSONPropertyList(s, replacer, middle, k, list)
+       IN IF IsAbrupt(first) THEN first ELSE JSONPropertyList(first.s, replacer, len, middle, Val(first))
   ELSE LET v == Get(s, replacer, Index(k)) IN IF IsAbrupt(v) THEN v ELSE
        LET x == Val(v)
            item == CASE IsString(x) -> Ok(v.s, x)
@@ -9899,8 +9909,13 @@ SerializeJSONObject(s, state, stepback, value) ==
   IF IsAbrupt(keys) THEN keys ELSE
   LET partial == SerializeJSONMembers(keys.s, state, value, Val(keys), <<>>) IN
   IF IsAbrupt(partial) THEN partial ELSE Ok(partial.s, Str(JSONJoin(state, stepback, 123, 125, Val(partial))))
+\* More than 64 keys run in halves, so that thousands of them nest log n deep rather than n.
 SerializeJSONMembers(s, state, value, keys, partial) ==
   IF keys = <<>> THEN Ok(s, partial)
+  ELSE IF Len(keys) > 64 THEN
+       LET first == SerializeJSONMembers(s, state, value, SubSeq(keys, 1, Len(keys) \div 2), partial) IN
+       IF IsAbrupt(first) THEN first
+       ELSE SerializeJSONMembers(first.s, state, value, SubSeq(keys, Len(keys) \div 2 + 1, Len(keys)), Val(first))
   ELSE LET str == SerializeJSONProperty(s, state, Head(keys), value) IN IF IsAbrupt(str) THEN str
        ELSE SerializeJSONMembers(str.s, state, value, Tail(keys),
               IF Val(str) = Undefined THEN partial
@@ -9911,8 +9926,13 @@ SerializeJSONArray(s, state, stepback, value) ==
   LET len == LengthOfArrayLike(s, value) IN IF IsAbrupt(len) THEN len ELSE
   LET partial == SerializeJSONElements(len.s, state, value, Val(len).value, PosZero, <<>>) IN
   IF IsAbrupt(partial) THEN partial ELSE Ok(partial.s, Str(JSONJoin(state, stepback, 91, 93, Val(partial))))
+\* More than 64 elements run in halves, so that thousands of them nest log n deep rather than n.
 SerializeJSONElements(s, state, value, len, i, partial) ==
   IF ~NumLess(i, len) THEN Ok(s, partial)
+  ELSE IF NumFitsInt(len) /\ NumToInt(len) - NumToInt(i) > 64 THEN
+       LET middle == NumFromInt((NumToInt(i) + NumToInt(len)) \div 2)
+           first == SerializeJSONElements(s, state, value, middle, i, partial)
+       IN IF IsAbrupt(first) THEN first ELSE SerializeJSONElements(first.s, state, value, len, middle, Val(first))
   ELSE LET str == SerializeJSONProperty(s, state, Index(i), value) IN IF IsAbrupt(str) THEN str
        ELSE SerializeJSONElements(str.s, state, value, len, NumAdd(i, OneNum),
               Append(partial, IF Val(str) = Undefined THEN N("null") ELSE Val(str).value))

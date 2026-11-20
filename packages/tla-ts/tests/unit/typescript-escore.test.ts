@@ -2183,6 +2183,40 @@ describe("compiles scripts by specializing ESCore", () => {
     }, 600_000);
   });
 
+  describe("serializes thousands of keys, elements, and replacer names to JSON", () => {
+    const getSource = (expected: string) => `
+      const replacer: number[] = [];
+      for (let index = 0; index < 4096; index++) replacer.push(index);
+      const list: (number | undefined)[] = [];
+      for (let index = 0; index < 3000; index++) list.push(index % 3 === 0 ? undefined : index);
+      const wide: Record<string, number> = {};
+      for (let index = 0; index < 3000; index++) wide["k" + index] = index;
+      const result = [
+        JSON.stringify({ foopy: "FAIL", "4093": 17 }, replacer),
+        JSON.stringify(list).length,
+        JSON.stringify(list, null, 1).length,
+        JSON.stringify(wide).length,
+        JSON.stringify(wide).slice(-12),
+        JSON.stringify(list).slice(0, 12),
+      ].join();
+      if (result !== '${expected}') throw new Error(result);
+    `;
+
+    it("agrees with Node", async () => {
+      expect(
+        (await checkScript(getSource('{"4093":17},14263,20264,36781,k2999":2999},[null,1,2,nu')))
+          .message,
+      ).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect(
+        (await checkScript(getSource('{"4093":17},14263,20264,36782,k2999":2999},[null,1,2,nu')))
+          .message,
+      ).toContain(THREW);
+    }, 600_000);
+  });
+
   describe("runs a script of thousands of statements and global vars", () => {
     const getSource = (expected: number) => `
       let count = 0;
