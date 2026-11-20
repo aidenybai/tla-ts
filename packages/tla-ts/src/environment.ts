@@ -352,16 +352,10 @@ export const createEnvironment = (
   const letInstances = new Map<string, LetInstance>();
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
   const checkedLabels = new WeakSet<Expression>();
-  const resolvedSubstitutions = new Map<string, Map<string, Expression>>();
-  const setSubstitutions = (instance: Instance, substitutions: Map<string, Expression>) => {
-    if (instance.location.range) {
-      resolvedSubstitutions.set(formatRange(instance.location.range), substitutions);
-    }
-  };
+  const resolvedSubstitutions = new WeakMap<Instance, Map<string, Expression>>();
   const getInstanceSubstitute = (instance: Instance, name: string): Expression =>
     instance.substitutions.find((substitution) => substitution.name === name)?.expression ??
-    (instance.location.range &&
-      resolvedSubstitutions.get(formatRange(instance.location.range))?.get(name)) ?? {
+    resolvedSubstitutions.get(instance)?.get(name) ?? {
       kind: "Identifier",
       name,
       location: instance.location,
@@ -733,7 +727,7 @@ export const createEnvironment = (
       module.name,
       unit,
     );
-    setSubstitutions(instance, substitutions);
+    resolvedSubstitutions.set(instance, substitutions);
     unit.reports.push({
       location: instance.location,
       errors: getSubstitutionErrors(instance, linked, substitutions.size),
@@ -1339,7 +1333,7 @@ export const createEnvironment = (
           instancer: parsed.name,
           getSubstitutionErrors: (substitutionCount) =>
             getSubstitutionErrors(instance, linked, substitutionCount),
-          setSubstitutions: (substitutions) => setSubstitutions(instance, substitutions),
+          setSubstitutions: (substitutions) => resolvedSubstitutions.set(instance, substitutions),
         };
       },
       bound,
