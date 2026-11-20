@@ -2,8 +2,8 @@ import { usePlaygroundView } from "@/lib/playground-view";
 import { getStateNames, type SearchState } from "@/lib/search";
 import { useSearchPath } from "@/hooks/use-search-path";
 import { usePlayground } from "./playground";
-import { ResultBody, ResultHeader, ResultRoot, ResultSection, ResultSkeleton } from "./result";
-import { StateGraph, StateGraphSkeleton } from "@/components/state-graph";
+import { Result } from "./result";
+import { StateGraph } from "@/components/state-graph";
 import { Verdict } from "@/components/verdict";
 
 // The sidebar a run opens: its verdict, then the states it reached or the steps to the failure.
@@ -30,43 +30,43 @@ export const PlaygroundResult = () => {
     if (!playground.isWide) setIsResultShown(false);
   };
   return (
-    <ResultRoot isOpen={isResultShown && (playground.isRunning || result !== undefined)}>
-      <ResultHeader
+    <Result.Root isOpen={isResultShown && (playground.isRunning || result !== undefined)}>
+      <Result.Header
         onClose={() => {
           setIsResultShown(false);
           playground.runButtonRef.current?.focus({ preventScroll: true });
         }}
       />
-      <ResultBody>
+      <Result.Body>
         {playground.isRunning ? (
-          <ResultSkeleton>
-            <StateGraphSkeleton />
-          </ResultSkeleton>
+          <Result.Skeleton>
+            <StateGraph.Skeleton />
+          </Result.Skeleton>
         ) : (
           result && (
             <>
-              <ResultSection title={result.isPassed ? "Verdict" : "Issue"}>
+              <Result.Section title={result.isPassed ? "Verdict" : "Issue"}>
                 <Verdict result={result} />
-              </ResultSection>
+              </Result.Section>
               {search && search.listedStates.length > 0 && (
-                <ResultSection
+                <Result.Section
                   title={result.isPassed ? "States" : "Steps to the failing state"}
                   count={search.listedStates.length}
                   className="min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)]"
                 >
-                  <StateGraph
+                  <StateGraph.Root
                     search={search}
                     className="-mx-2 px-2 pb-2"
                     path={path}
                     onHover={hoverState}
                     onSelect={reveal}
                   />
-                </ResultSection>
+                </Result.Section>
               )}
             </>
           )
         )}
-      </ResultBody>
-    </ResultRoot>
+      </Result.Body>
+    </Result.Root>
   );
 };

@@ -1,5 +1,5 @@
 import { useSyncExternalStore, type ReactNode } from "react";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { ToggleGroup } from "@/components/ui/toggle-group";
 
 const STORAGE_KEY = "tla-ts-theme";
 const THEME_EVENT = "tla-ts-theme-change";
@@ -37,17 +37,17 @@ export const useTheme = () => ({
   },
 });
 
-export const ThemeSwitcherRoot = (props: RootProps) => {
+const ThemeSwitcherRoot = (props: RootProps) => {
   const theme = useTheme();
   return (
-    <ToggleGroup
+    <ToggleGroup.Root
       label="Theme"
       value={theme.theme}
       onValueChange={theme.setTheme}
       className="rounded-lg"
     >
       {props.children}
-    </ToggleGroup>
+    </ToggleGroup.Root>
   );
 };
 
@@ -57,8 +57,13 @@ interface OptionProps {
   children: ReactNode;
 }
 
-export const ThemeSwitcherOption = (props: OptionProps) => (
-  <ToggleGroupItem value={props.value} label={props.label} className="size-7 rounded-md">
+const ThemeSwitcherOption = (props: OptionProps) => (
+  <ToggleGroup.Item value={props.value} label={props.label} className="size-7 rounded-md">
     {props.children}
-  </ToggleGroupItem>
+  </ToggleGroup.Item>
 );
+
+export const ThemeSwitcher = {
+  Root: ThemeSwitcherRoot,
+  Option: ThemeSwitcherOption,
+};

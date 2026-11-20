@@ -5,7 +5,7 @@ interface RootProps {
   children: ReactNode;
 }
 
-export const SectionRoot = (props: RootProps) => (
+const SectionRoot = (props: RootProps) => (
   <section className="flex flex-col gap-4">{props.children}</section>
 );
 
@@ -13,7 +13,7 @@ interface TitleProps {
   children: string;
 }
 
-export const SectionTitle = (props: TitleProps) => {
+const SectionTitle = (props: TitleProps) => {
   const id = props.children.toLowerCase().replaceAll(" ", "-");
   return (
     <h2 id={id} className="group relative scroll-mt-8 text-[17px] font-medium text-foreground">

@@ -1,16 +1,16 @@
 import { Monitor, Moon, Sun } from "@phosphor-icons/react";
-import { ThemeSwitcherOption, ThemeSwitcherRoot } from "./theme-switcher";
+import { ThemeSwitcher } from "./theme-switcher";
 
 export const ThemeMenu = () => (
-  <ThemeSwitcherRoot>
-    <ThemeSwitcherOption value="system" label="System theme">
+  <ThemeSwitcher.Root>
+    <ThemeSwitcher.Option value="system" label="System theme">
       <Monitor className="size-4" />
-    </ThemeSwitcherOption>
-    <ThemeSwitcherOption value="light" label="Light theme">
+    </ThemeSwitcher.Option>
+    <ThemeSwitcher.Option value="light" label="Light theme">
       <Sun className="size-4" />
-    </ThemeSwitcherOption>
-    <ThemeSwitcherOption value="dark" label="Dark theme">
+    </ThemeSwitcher.Option>
+    <ThemeSwitcher.Option value="dark" label="Dark theme">
       <Moon className="size-4" />
-    </ThemeSwitcherOption>
-  </ThemeSwitcherRoot>
+    </ThemeSwitcher.Option>
+  </ThemeSwitcher.Root>
 );
