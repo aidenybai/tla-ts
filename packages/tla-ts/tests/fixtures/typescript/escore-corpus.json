@@ -4991,7 +4991,7 @@
       "name": "definitions",
       "fileName": "tests/fixtures/typescript/imports/namespace.ts",
       "isModule": true,
-      "source": "import * as first from \"./first\";\n\nif (first.getFirst() !== 1) throw new Error(\"the namespace's getFirst\");\n",
+      "source": "import * as first from \"./first.ts\";\n\nif (first.getFirst() !== 1) throw new Error(\"the namespace's getFirst\");\n",
       "runs": [
         { "name": "reads an export of another file through its namespace (1)" },
         {
@@ -5018,7 +5018,7 @@
       "name": "definitions",
       "fileName": "tests/fixtures/typescript/imports/stepping.ts",
       "isModule": true,
-      "source": "import { Stepper } from \"./stepper\";\n\nconst stepper = new Stepper(1);\nconst first = stepper.step();\nconst second = stepper.step();\nif (first !== 3 || second !== 7) throw new Error(\"stepped\");\n",
+      "source": "import { Stepper } from \"./stepper.ts\";\n\nconst stepper = new Stepper(1);\nconst first = stepper.step();\nconst second = stepper.step();\nif (first !== 3 || second !== 7) throw new Error(\"stepped\");\n",
       "runs": [
         {
           "name": "constructs a class that another file declares (1)",
@@ -5037,7 +5037,7 @@
       "name": "definitions",
       "fileName": "tests/fixtures/typescript/imports/reading.ts",
       "isModule": true,
-      "source": "import { readNumbers } from \"./patterns\";\n\nconst read = readNumbers(\"12x3\")\n  .map((found) => `${found.text}@${found.index}`)\n  .join(\";\");\nif (read !== \"12@0;3@3\") throw new Error(read);\n",
+      "source": "import { readNumbers } from \"./patterns.ts\";\n\nconst read = readNumbers(\"12x3\")\n  .map((found) => `${found.text}@${found.index}`)\n  .join(\";\");\nif (read !== \"12@0;3@3\") throw new Error(read);\n",
       "runs": [
         { "name": "makes once the regexp that another file's constant holds (1)" },
         {
@@ -11952,7 +11952,7 @@
       "name": "errors",
       "fileName": "tests/fixtures/typescript/imports/applying.ts",
       "isModule": true,
-      "source": "import { applyAll, makeLazy } from \"./lazies\";\n\nconst applied = applyAll(makeLazy(10), [1, 2]);\nif (applied.join() !== \"11,12\") throw new Error(\"applied\");\n",
+      "source": "import { applyAll, makeLazy } from \"./lazies.ts\";\n\nconst applied = applyAll(makeLazy(10), [1, 2]);\nif (applied.join() !== \"11,12\") throw new Error(\"applied\");\n",
       "runs": [
         {
           "name": "calls through a value only the functions that an imported file's code names (1)"
@@ -15338,7 +15338,7 @@
       "name": "BigInts",
       "fileName": "tests/fixtures/typescript/imports/namespace.ts",
       "isModule": true,
-      "source": "import * as logged from \"./log\";\nif (logged.log.length !== 0) throw new Error(\"length \" + logged.log.length);",
+      "source": "import * as logged from \"./log.ts\";\nif (logged.log.length !== 0) throw new Error(\"length \" + logged.log.length);",
       "runs": [
         { "name": "reads a variable through a module's namespace object (1)" },
         {
@@ -15801,7 +15801,7 @@
       "name": "BigInts > a module's namespace object",
       "fileName": "tests/fixtures/typescript/imports/namespacing.ts",
       "isModule": true,
-      "source": "// The script checks that the namespace object refuses these writes.\n// oxlint-disable no-import-assign\nimport * as values from \"./exports\";\n\nconst isSet = Reflect.set(values, \"limit\", 4);\nconst isSame = Reflect.defineProperty(values, \"limit\", { value: 3 });\nconst isChanged = Reflect.defineProperty(values, \"limit\", { value: 4 });\nconst isFrozen = Reflect.defineProperty(values, \"limit\", { writable: false });\nconst isDeleted = Reflect.deleteProperty(values, \"limit\");\nconst isOtherDeleted = Reflect.deleteProperty(values, \"other\");\nconst descriptor = Object.getOwnPropertyDescriptor(values, \"local\");\nconst seen = [\n  Object.keys(values).join(),\n  Object.getPrototypeOf(values) === null,\n  Object.isExtensible(values),\n  Object.prototype.toString.call(values),\n  isSet,\n  isSame,\n  isChanged,\n  isFrozen,\n  isDeleted,\n  isOtherDeleted,\n  descriptor?.value,\n  descriptor?.writable,\n  descriptor?.enumerable,\n  descriptor?.configurable,\n];\nconst expected =\n  \"default,limit,local,renamed,true,false,[object Module],false,true,false,false,false,true,Test262,true,true,false\";\nif (seen.join() !== expected) throw new Error(seen.join());\n",
+      "source": "// The script checks that the namespace object refuses these writes.\n// oxlint-disable no-import-assign\nimport * as values from \"./exports.ts\";\n\nconst isSet = Reflect.set(values, \"limit\", 4);\nconst isSame = Reflect.defineProperty(values, \"limit\", { value: 3 });\nconst isChanged = Reflect.defineProperty(values, \"limit\", { value: 4 });\nconst isFrozen = Reflect.defineProperty(values, \"limit\", { writable: false });\nconst isDeleted = Reflect.deleteProperty(values, \"limit\");\nconst isOtherDeleted = Reflect.deleteProperty(values, \"other\");\nconst descriptor = Object.getOwnPropertyDescriptor(values, \"local\");\nconst seen = [\n  Object.keys(values).join(),\n  Object.getPrototypeOf(values) === null,\n  Object.isExtensible(values),\n  Object.prototype.toString.call(values),\n  isSet,\n  isSame,\n  isChanged,\n  isFrozen,\n  isDeleted,\n  isOtherDeleted,\n  descriptor?.value,\n  descriptor?.writable,\n  descriptor?.enumerable,\n  descriptor?.configurable,\n];\nconst expected =\n  \"default,limit,local,renamed,true,false,[object Module],false,true,false,false,false,true,Test262,true,true,false\";\nif (seen.join() !== expected) throw new Error(seen.join());\n",
       "runs": [
         { "name": "agrees with Node" },
         {
@@ -15815,7 +15815,7 @@
       "name": "BigInts > import() of a module",
       "fileName": "tests/fixtures/typescript/imports/importing.ts",
       "isModule": true,
-      "source": "declare function setTimeout(callback: () => void): void;\n\nlet seen = \"\";\nimport(\"./exports\", {}).then((values) => {\n  seen = `${Object.keys(values).join()} ${values.limit} ${values.default}`;\n});\nsetTimeout(() => {\n  if (seen !== \"default,limit,local,renamed 3 42\") throw new Error(seen);\n});\n",
+      "source": "declare function setTimeout(callback: () => void): void;\n\nlet seen = \"\";\nimport(\"./exports.ts\", {}).then((values) => {\n  seen = `${Object.keys(values).join()} ${values.limit} ${values.default}`;\n});\nsetTimeout(() => {\n  if (seen !== \"default,limit,local,renamed 3 42\") throw new Error(seen);\n});\n",
       "runs": [
         { "name": "agrees with Node" },
         {
@@ -15829,7 +15829,7 @@
       "name": "BigInts > import() of a module that throws as it runs",
       "fileName": "tests/fixtures/typescript/imports/rejecting.ts",
       "isModule": true,
-      "source": "declare function setTimeout(callback: () => void): void;\n\nlet seen = \"\";\nimport(\"./throwing\").then(\n  () => {\n    seen = \"fulfilled\";\n  },\n  (error: unknown) => {\n    seen = `${(error as Error).name}: ${(error as Error).message}`;\n  },\n);\nsetTimeout(() => {\n  if (seen !== \"TypeError: thrown as the module runs\") throw new Error(seen);\n});\n",
+      "source": "declare function setTimeout(callback: () => void): void;\n\nlet seen = \"\";\nimport(\"./throwing.ts\").then(\n  () => {\n    seen = \"fulfilled\";\n  },\n  (error: unknown) => {\n    seen = `${(error as Error).name}: ${(error as Error).message}`;\n  },\n);\nsetTimeout(() => {\n  if (seen !== \"TypeError: thrown as the module runs\") throw new Error(seen);\n});\n",
       "runs": [
         { "name": "agrees with Node" },
         {
@@ -17275,7 +17275,7 @@
       "name": "BigInts > reads an export through a cast of a module's namespace object",
       "fileName": "tests/fixtures/typescript/imports/casting.ts",
       "isModule": true,
-      "source": "import { getCast } from \"./casts\";\n\nconst seen = getCast();\nif (seen !== \"3,TC39,3\") throw new Error(\"seen \" + seen);\n",
+      "source": "import { getCast } from \"./casts.ts\";\n\nconst seen = getCast();\nif (seen !== \"3,TC39,3\") throw new Error(\"seen \" + seen);\n",
       "runs": [
         {
           "name": "agrees with Node",
@@ -17310,7 +17310,7 @@
       "name": "BigInts > reads an enum as the object that TypeScript makes of it",
       "fileName": "tests/fixtures/typescript/imports/enumerating.ts",
       "isModule": true,
-      "source": "import { Kind } from \"./kinds\";\n\nenum Color {\n  Red,\n  Green = 5,\n  Blue,\n}\nconst getName = (value: number) => Color[value];\nconst table: Record<string, unknown> = Kind;\nconst seen = [\n  Object.keys(Color).join(),\n  Object.values(Kind).join(),\n  getName(6),\n  Kind[2],\n  table[\"Named\"],\n  Kind.Second,\n  JSON.stringify(Color),\n].join(\";\");\nif (\n  seen !==\n  'Red,Green,Blue;First,Second,Last,1,2,named,10;Blue;Second;named;2;{\"0\":\"Red\",\"5\":\"Green\",\"6\":\"Blue\",\"Red\":0,\"Green\":5,\"Blue\":6}'\n)\n  throw new Error(\"seen \" + seen);\n",
+      "source": "import { Kind } from \"./kinds.ts\";\n\nenum Color {\n  Red,\n  Green = 5,\n  Blue,\n}\nconst getName = (value: number) => Color[value];\nconst table: Record<string, unknown> = Kind;\nconst seen = [\n  Object.keys(Color).join(),\n  Object.values(Kind).join(),\n  getName(6),\n  Kind[2],\n  table[\"Named\"],\n  Kind.Second,\n  JSON.stringify(Color),\n].join(\";\");\nif (\n  seen !==\n  'Red,Green,Blue;First,Second,Last,1,2,named,10;Blue;Second;named;2;{\"0\":\"Red\",\"5\":\"Green\",\"6\":\"Blue\",\"Red\":0,\"Green\":5,\"Blue\":6}'\n)\n  throw new Error(\"seen \" + seen);\n",
       "runs": [
         {
           "name": "rejects an object without the names that its values give",
@@ -17358,7 +17358,7 @@
       "name": "BigInts > calls a function of another module that a value holds",
       "fileName": "tests/fixtures/typescript/imports/namespace.ts",
       "isModule": true,
-      "source": "\n      import { one, two } from \"./pickers\";\n      const box = { size: 0 };\n      const held = box.size === 0 ? { run: one } : { run: two };\n      const seen = [held.run(), (box.size === 1 ? one : two)()].join();\n      if (seen !== \"one,two\") throw new Error(\"seen \" + seen);\n    ",
+      "source": "\n      import { one, two } from \"./pickers.ts\";\n      const box = { size: 0 };\n      const held = box.size === 0 ? { run: one } : { run: two };\n      const seen = [held.run(), (box.size === 1 ? one : two)()].join();\n      if (seen !== \"one,two\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
         { "name": "agrees with Node" },
         {
@@ -17372,7 +17372,7 @@
       "name": "BigInts > calls the function that a module's namespace object holds where a value may hold either of two",
       "fileName": "tests/fixtures/typescript/imports/namespace.ts",
       "isModule": true,
-      "source": "\n      import * as english from \"./english\";\n      import * as latin from \"./latin\";\n      const box = { size: 0 };\n      const pick = (isLatin: boolean) => (isLatin ? latin : english);\n      const seen = [pick(true).greet(), pick(false).greet(), box.size].join();\n      if (seen !== \"hello,hello,0\") throw new Error(\"seen \" + seen);\n    ",
+      "source": "\n      import * as english from \"./english.ts\";\n      import * as latin from \"./latin.ts\";\n      const box = { size: 0 };\n      const pick = (isLatin: boolean) => (isLatin ? latin : english);\n      const seen = [pick(true).greet(), pick(false).greet(), box.size].join();\n      if (seen !== \"hello,hello,0\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
         {
           "name": "rejects the function of the module whose type TypeScript gives the value",
@@ -17898,7 +17898,7 @@
       "name": "BigInts > runs the implementation of an overloaded function",
       "fileName": "tests/fixtures/typescript/imports/registering.ts",
       "isModule": true,
-      "source": "\n        import { names } from \"./registry\";\n        const box = { seen: names.join() };\n        if (box.seen !== \"first\") throw new Error(\"seen \" + box.seen);\n      ",
+      "source": "\n        import { names } from \"./registry.ts\";\n        const box = { seen: names.join() };\n        if (box.seen !== \"first\") throw new Error(\"seen \" + box.seen);\n      ",
       "runs": [
         { "name": "agrees with Node where another module's top level calls it (1)" },
         {
@@ -17942,7 +17942,7 @@
       "name": "BigInts > runs a namespace's body once where its declaration runs",
       "fileName": "tests/fixtures/typescript/imports/countering.ts",
       "isModule": true,
-      "source": "\n        import { Counter, log } from \"./counter-space\";\n        Counter.bump();\n        const seen = [Counter.bump(), log.join()].join();\n        if (seen !== \"2,ran\") throw new Error(\"seen \" + seen);\n      ",
+      "source": "\n        import { Counter, log } from \"./counter-space.ts\";\n        Counter.bump();\n        const seen = [Counter.bump(), log.join()].join();\n        if (seen !== \"2,ran\") throw new Error(\"seen \" + seen);\n      ",
       "runs": [
         {
           "name": "agrees with TypeScript's output run in Node for another file's namespace (1)",
@@ -18618,7 +18618,7 @@
       "name": "BigInts > iterates an object whose Symbol.iterator method another module writes",
       "fileName": "tests/fixtures/typescript/imports/iterated-elsewhere.ts",
       "isModule": true,
-      "source": "// Iterates an object whose Symbol.iterator method another module writes.\nimport { makeIterable } from \"./iterable-maker\";\n\nconst seen: number[] = [];\nfor (const value of makeIterable([1, 2, 3])) seen.push(value * 10);\nconst result = seen.join();\nif (result !== \"10,20\") throw new Error(\"seen \" + result);\n",
+      "source": "// Iterates an object whose Symbol.iterator method another module writes.\nimport { makeIterable } from \"./iterable-maker.ts\";\n\nconst seen: number[] = [];\nfor (const value of makeIterable([1, 2, 3])) seen.push(value * 10);\nconst result = seen.join();\nif (result !== \"10,20\") throw new Error(\"seen \" + result);\n",
       "runs": [
         { "name": "rejects other values", "thrown": "seen 10,20,30" },
         { "name": "agrees with Node", "replace": ["20", "20,30"] }
@@ -18919,7 +18919,7 @@
       "name": "BigInts > leaves a var that a declare global block declares to the host",
       "fileName": "tests/fixtures/typescript/es-modules/ambient-global.ts",
       "isModule": true,
-      "source": "import { makeHook } from \"./ambient-global-hook\";\n\nconst shared = { hook: makeHook() };\nlet caught = \"none\";\nglobalThis.hookX = undefined;\ntry {\n  caught = String(hookX);\n} catch (error) {\n  caught = error instanceof ReferenceError ? \"reference\" : \"other\";\n}\nshared.hook.count = caught.length;\nif (caught !== \"undefined\") throw new Error(\"caught \" + caught);\n",
+      "source": "import { makeHook } from \"./ambient-global-hook.ts\";\n\nconst shared = { hook: makeHook() };\nlet caught = \"none\";\nglobalThis.hookX = undefined;\ntry {\n  caught = String(hookX);\n} catch (error) {\n  caught = error instanceof ReferenceError ? \"reference\" : \"other\";\n}\nshared.hook.count = caught.length;\nif (caught !== \"undefined\") throw new Error(\"caught \" + caught);\n",
       "runs": [
         { "name": "agrees with Node once the global object holds it" },
         {
@@ -18929,7 +18929,7 @@
         },
         {
           "name": "stops at the ReferenceError of reading it before anything writes it",
-          "source": "import { makeHook } from \"./ambient-global-hook\";\n\nconst shared = { hook: makeHook() };\nlet caught = \"none\";\ntry {\n  caught = String(hookX);\n} catch (error) {\n  caught = error instanceof ReferenceError ? \"reference\" : \"other\";\n}\nshared.hook.count = caught.length;\nif (caught !== \"reference\") throw new Error(\"caught \" + caught);\n"
+          "source": "import { makeHook } from \"./ambient-global-hook.ts\";\n\nconst shared = { hook: makeHook() };\nlet caught = \"none\";\ntry {\n  caught = String(hookX);\n} catch (error) {\n  caught = error instanceof ReferenceError ? \"reference\" : \"other\";\n}\nshared.hook.count = caught.length;\nif (caught !== \"reference\") throw new Error(\"caught \" + caught);\n"
         }
       ]
     },
@@ -19049,7 +19049,7 @@
       "name": "BigInts > runs a namespace's function that makes objects as a statement",
       "fileName": "tests/fixtures/typescript/es-modules/namespace-call.ts",
       "isModule": true,
-      "source": "import * as Combiner from \"./namespace-maker\";\n\nconst box = { seen: \"\" };\nconst sum = Combiner.make<number>((self, that) => self + that, 0);\nconst product = Combiner.make<number>((self, that) => self * that, 1);\nconst total = sum.combine(sum.initialValue, 5);\nconst scaled = product.combine(product.initialValue, 7);\nbox.seen = [total, scaled].join();\nif (box.seen !== \"5,8\") throw new Error(\"seen \" + box.seen);\n",
+      "source": "import * as Combiner from \"./namespace-maker.ts\";\n\nconst box = { seen: \"\" };\nconst sum = Combiner.make<number>((self, that) => self + that, 0);\nconst product = Combiner.make<number>((self, that) => self * that, 1);\nconst total = sum.combine(sum.initialValue, 5);\nconst scaled = product.combine(product.initialValue, 7);\nbox.seen = [total, scaled].join();\nif (box.seen !== \"5,8\") throw new Error(\"seen \" + box.seen);\n",
       "runs": [
         { "name": "rejects another outcome", "thrown": "seen 5,7" },
         { "name": "agrees with Node", "replace": ["8", "7"] }
@@ -19343,7 +19343,7 @@
       "name": "BigInts > calls a function that makes objects through a module's namespace object",
       "fileName": "tests/fixtures/typescript/imports/making-through-namespace.ts",
       "isModule": true,
-      "source": "// Calls functions that make objects through a module's namespace object.\nimport * as Makers from \"./makers\";\n\nconst first = Makers.box(1);\nconst second = Makers.box(1);\nfirst.size += 1;\nconst step = Makers.counting(5);\nconst result = [first.size, second.size, typeof step].join();\nif (result !== \"2,1,function\") throw new Error(\"result \" + result);\n",
+      "source": "// Calls functions that make objects through a module's namespace object.\nimport * as Makers from \"./makers.ts\";\n\nconst first = Makers.box(1);\nconst second = Makers.box(1);\nfirst.size += 1;\nconst step = Makers.counting(5);\nconst result = [first.size, second.size, typeof step].join();\nif (result !== \"2,1,function\") throw new Error(\"result \" + result);\n",
       "runs": [
         { "name": "agrees with Node" },
         {
@@ -19379,7 +19379,7 @@
       "name": "BigInts > calls the function that a const another module's function initializes",
       "fileName": "tests/fixtures/typescript/imports/calling-alias.ts",
       "isModule": true,
-      "source": "// Calls a function through a const that another module's function initializes.\nimport * as Effect from \"./alias-effect\";\n\nconst box = { tag: 1 };\nconst results = [Effect.isTagged(box), Effect.isTagged(2)].join();\nif (results !== \"true,false\") throw new Error(\"results \" + results);\n",
+      "source": "// Calls a function through a const that another module's function initializes.\nimport * as Effect from \"./alias-effect.ts\";\n\nconst box = { tag: 1 };\nconst results = [Effect.isTagged(box), Effect.isTagged(2)].join();\nif (results !== \"true,false\") throw new Error(\"results \" + results);\n",
       "runs": [
         { "name": "agrees with Node" },
         {
@@ -20025,7 +20025,7 @@
       "name": "definitions",
       "fileName": "tests/fixtures/typescript/imports/ordered.ts",
       "isModule": true,
-      "source": "import { getSecond } from \"./second\";\nimport { log } from \"./log\";\n\nconst value = getSecond();\nif (value !== 12 || log.join() !== \"first,second\") throw new Error(\"out of order\");\n",
+      "source": "import { getSecond } from \"./second.ts\";\nimport { log } from \"./log.ts\";\n\nconst value = getSecond();\nif (value !== 12 || log.join() !== \"first,second\") throw new Error(\"out of order\");\n",
       "runs": [
         {
           "name": "runs the files a script imports first, in the order they import each other (1)"
@@ -20041,7 +20041,7 @@
       "name": "definitions",
       "fileName": "tests/fixtures/typescript/imports/reasoning.ts",
       "isModule": true,
-      "source": "import { AXIOM, Item } from \"./reasons\";\n\nconst first = new Item(1);\nconst second = new Item(2);\nif (first.why !== AXIOM || second.why !== first.why) throw new Error(\"shared\");\n",
+      "source": "import { AXIOM, Item } from \"./reasons.ts\";\n\nconst first = new Item(1);\nconst second = new Item(2);\nif (first.why !== AXIOM || second.why !== first.why) throw new Error(\"shared\");\n",
       "runs": [
         { "name": "makes once the object that another file's constant holds (1)" },
         {
@@ -20055,7 +20055,7 @@
       "name": "definitions > runs nothing of a file that a file imports only types from",
       "fileName": "tests/fixtures/typescript/imports/leveling.ts",
       "isModule": true,
-      "source": "import type { Level } from \"./levels\";\n\nconst level: Level = { value: 2 };\nif (level.value !== 2) throw new Error(\"leveled\");\n",
+      "source": "import type { Level } from \"./levels.ts\";\n\nconst level: Level = { value: 2 };\nif (level.value !== 2) throw new Error(\"leveled\");\n",
       "runs": [
         { "name": "agrees with Node" },
         { "name": "rejects wrong expectation 1", "replace": ["= 2", "= 3"], "thrown": "leveled" }
@@ -21796,7 +21796,7 @@
       "name": "BigInts > reads a let that a module's function changes through the module's namespace object",
       "fileName": "tests/fixtures/typescript/imports/namespace.ts",
       "isModule": true,
-      "source": "\n      import * as tally from \"./tally\";\n      import { describeTally } from \"./tallying\";\n      const box = { size: 0 };\n      const before = describeTally();\n      tally.bump();\n      box.size = tally.count;\n      const seen = [before, describeTally(), tally.count, tally.total, box.size].join();\n      if (seen !== \"0:10,1:12,1,12,1\") throw new Error(\"seen \" + seen);\n    ",
+      "source": "\n      import * as tally from \"./tally.ts\";\n      import { describeTally } from \"./tallying.ts\";\n      const box = { size: 0 };\n      const before = describeTally();\n      tally.bump();\n      box.size = tally.count;\n      const seen = [before, describeTally(), tally.count, tally.total, box.size].join();\n      if (seen !== \"0:10,1:12,1,12,1\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
         { "name": "agrees with Node" },
         {
@@ -21810,7 +21810,7 @@
       "name": "BigInts > makes the namespace object that a module the script imports reads",
       "fileName": "tests/fixtures/typescript/imports/namespace.ts",
       "isModule": true,
-      "source": "\n      import { latinNames, pickGreeting } from \"./greeting\";\n      const box = { size: 0 };\n      const seen = [pickGreeting(true).greet(), pickGreeting(false).greet(), latinNames, box.size].join();\n      if (seen !== \"salve,hello,greet,label,0\") throw new Error(\"seen \" + seen);\n    ",
+      "source": "\n      import { latinNames, pickGreeting } from \"./greeting.ts\";\n      const box = { size: 0 };\n      const seen = [pickGreeting(true).greet(), pickGreeting(false).greet(), latinNames, box.size].join();\n      if (seen !== \"salve,hello,greet,label,0\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
         { "name": "agrees with Node" },
         {
@@ -21824,7 +21824,7 @@
       "name": "BigInts > reads an export's binding through a module's namespace object before the module runs",
       "fileName": "tests/fixtures/typescript/imports/namespace.ts",
       "isModule": true,
-      "source": "\n      import { checkSelf } from \"./beta\";\n      import { check } from \"./alpha\";\n      import { getBeta } from \"./beta-holder\";\n      const box = { size: 0 };\n      const seen = [checkSelf(), check(\"x\"), Object.keys(getBeta()).join(\"|\"), box.size].join();\n      if (seen !== \"true,false,checkSelf|isBeta,0\") throw new Error(\"seen \" + seen);\n    ",
+      "source": "\n      import { checkSelf } from \"./beta.ts\";\n      import { check } from \"./alpha.ts\";\n      import { getBeta } from \"./beta-holder.ts\";\n      const box = { size: 0 };\n      const seen = [checkSelf(), check(\"x\"), Object.keys(getBeta()).join(\"|\"), box.size].join();\n      if (seen !== \"true,false,checkSelf|isBeta,0\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
         { "name": "agrees with Node" },
         {
@@ -22063,7 +22063,7 @@
       "name": "BigInts > runs where its module does a constant that a call making an object gives",
       "fileName": "tests/fixtures/typescript/imports/limiting.ts",
       "isModule": true,
-      "source": "\n      import { getLimit, setLimit } from \"./limits\";\n      const saved = { limit: getLimit() };\n      setLimit(0);\n      const during = getLimit();\n      setLimit(saved.limit);\n      const seen = [saved.limit, during, getLimit()].join();\n      if (seen !== \"10,0,10\") throw new Error(\"seen \" + seen);\n    ",
+      "source": "\n      import { getLimit, setLimit } from \"./limits.ts\";\n      const saved = { limit: getLimit() };\n      setLimit(0);\n      const during = getLimit();\n      setLimit(saved.limit);\n      const seen = [saved.limit, during, getLimit()].join();\n      if (seen !== \"10,0,10\") throw new Error(\"seen \" + seen);\n    ",
       "runs": [
         { "name": "agrees with Node" },
         {
@@ -22806,7 +22806,7 @@
       "name": "definitions",
       "fileName": "tests/fixtures/typescript/imports/precedence.ts",
       "isModule": true,
-      "source": "import { LOWEST, PRECEDENCES } from \"./precedences\";\n\nconst getPrecedence = (operator: string) => PRECEDENCES.get(operator);\nconst getTotal = (operators: string[]): number =>\n  operators.length === 0\n    ? 0\n    : (getPrecedence(operators[0])?.high ?? 0) + getTotal(operators.slice(1));\nif (getPrecedence(\"=>\") !== LOWEST || getTotal([\"=>\", \"#\"]) !== 6) throw new Error(\"precedence\");\n",
+      "source": "import { LOWEST, PRECEDENCES } from \"./precedences.ts\";\n\nconst getPrecedence = (operator: string) => PRECEDENCES.get(operator);\nconst getTotal = (operators: string[]): number =>\n  operators.length === 0\n    ? 0\n    : (getPrecedence(operators[0])?.high ?? 0) + getTotal(operators.slice(1));\nif (getPrecedence(\"=>\") !== LOWEST || getTotal([\"=>\", \"#\"]) !== 6) throw new Error(\"precedence\");\n",
       "runs": [
         {
           "name": "makes once the objects that another file's constants make through a function (1)"
@@ -22822,7 +22822,7 @@
       "name": "definitions",
       "fileName": "tests/fixtures/typescript/imports/chain-typing.ts",
       "isModule": true,
-      "source": "import type { Chain } from \"./chain\";\n\ninterface Link {\n  items: number[];\n}\nconst link = { items: [1, 2] } as Chain | Link;\nif (link.items.length !== 2) throw new Error(\"linked\");\n",
+      "source": "import type { Chain } from \"./chain.ts\";\n\ninterface Link {\n  items: number[];\n}\nconst link = { items: [1, 2] } as Chain | Link;\nif (link.items.length !== 2) throw new Error(\"linked\");\n",
       "runs": [
         { "name": "skips the code of a class that a file names only as a type (1)" },
         {
@@ -22836,7 +22836,7 @@
       "name": "errors",
       "fileName": "tests/fixtures/typescript/imports/marking.ts",
       "isModule": true,
-      "source": "import { type Branch, mark } from \"./marks\";\n\nconst inner: Branch = { items: [2], marked: false };\nconst tree: Branch = { items: [1, inner], marked: false };\nmark(tree);\nif (!tree.marked || !inner.marked) throw new Error(\"marked\");\n",
+      "source": "import { type Branch, mark } from \"./marks.ts\";\n\nconst inner: Branch = { items: [2], marked: false };\nconst tree: Branch = { items: [1, inner], marked: false };\nmark(tree);\nif (!tree.marked || !inner.marked) throw new Error(\"marked\");\n",
       "runs": [
         { "name": "runs an exported function that a script imports, which calls itself (1)" },
         {
@@ -22861,7 +22861,7 @@
       "name": "BigInts",
       "fileName": "tests/fixtures/typescript/imports/boxing.ts",
       "isModule": true,
-      "source": "import * as boxes from \"./boxes\";\nimport { box } from \"./boxes\";\n\nlet log = \"\";\nlog += boxes.limit;\nlog += boxes.getNext();\nboxes.bump();\nlog += boxes.box.value;\nboxes.box.value = 7;\nlog += box.value;\nconst counter = new boxes.Counter();\ncounter.step();\nlog += counter.count;\nlog += box === boxes.box;\nif (log !== \"34274true\") throw new Error(log);\n",
+      "source": "import * as boxes from \"./boxes.ts\";\nimport { box } from \"./boxes.ts\";\n\nlet log = \"\";\nlog += boxes.limit;\nlog += boxes.getNext();\nboxes.bump();\nlog += boxes.box.value;\nboxes.box.value = 7;\nlog += box.value;\nconst counter = new boxes.Counter();\ncounter.step();\nlog += counter.count;\nlog += box === boxes.box;\nif (log !== \"34274true\") throw new Error(log);\n",
       "runs": [
         {
           "name": "reads a constant, a function, an object, and a class through a module's namespace object (1)"
@@ -22877,7 +22877,7 @@
       "name": "BigInts > a module's namespace object",
       "fileName": "tests/fixtures/typescript/imports/selfish.ts",
       "isModule": true,
-      "source": "declare function setTimeout(callback: () => void): void;\nimport * as ns from \"./selfish\";\nexport let b = 7;\nconst seen: unknown[] = [];\nseen.push(ns.a, Object.keys(ns).join());\n// A var's binding holds undefined until its declaration runs.\n// oxlint-disable-next-line no-var\nexport var a = 1;\nseen.push(ns.a);\na = 2;\nconst read = () => ns.a;\nseen.push(read());\na += 3;\nseen.push(read(), \"a\" in ns, ns.b);\nb = 8;\nconst descriptor = Object.getOwnPropertyDescriptor(ns, \"a\");\nseen.push(ns.b, Object.keys(ns).join(), descriptor?.value);\nPromise.resolve().then(() => {\n  seen.push(ns.a);\n});\na = 9;\nsetTimeout(() => {\n  if (seen.join() !== \",a,b,1,2,5,true,7,8,a,b,5,9\") throw new Error(seen.join());\n});\n",
+      "source": "declare function setTimeout(callback: () => void): void;\nimport * as ns from \"./selfish.ts\";\nexport let b = 7;\nconst seen: unknown[] = [];\nseen.push(ns.a, Object.keys(ns).join());\n// A var's binding holds undefined until its declaration runs.\n// oxlint-disable-next-line no-var\nexport var a = 1;\nseen.push(ns.a);\na = 2;\nconst read = () => ns.a;\nseen.push(read());\na += 3;\nseen.push(read(), \"a\" in ns, ns.b);\nb = 8;\nconst descriptor = Object.getOwnPropertyDescriptor(ns, \"a\");\nseen.push(ns.b, Object.keys(ns).join(), descriptor?.value);\nPromise.resolve().then(() => {\n  seen.push(ns.a);\n});\na = 9;\nsetTimeout(() => {\n  if (seen.join() !== \",a,b,1,2,5,true,7,8,a,b,5,9\") throw new Error(seen.join());\n});\n",
       "runs": [
         {
           "name": "follows the script's own namespace object as its exports change (1)",
@@ -23213,7 +23213,7 @@
     {
       "name": "definitions",
       "fileName": "tests/fixtures/typescript/imports/aliasing.ts",
-      "source": "import { getShared } from \"./aliased\";\n\nlet count = 0;\n\nexport const step = () => {\n  count = getShared();\n};\n\nexport const isShared = () => count !== 1;\n",
+      "source": "import { getShared } from \"./aliased.ts\";\n\nlet count = 0;\n\nexport const step = () => {\n  count = getShared();\n};\n\nexport const isShared = () => count !== 1;\n",
       "runs": [
         {
           "name": "runs a function of another file that shares an object it changes (1)",
@@ -23231,7 +23231,7 @@
     {
       "name": "definitions",
       "fileName": "tests/fixtures/typescript/imports/counter.ts",
-      "source": "import { isWithin, LIMIT, type Step } from \"./shared\";\n\nlet count = 0;\n\nexport const add = (step: Step) => {\n  if (count + step > LIMIT) return;\n  count += step;\n};\n\nexport const isBounded = () => isWithin(count);\n",
+      "source": "import { isWithin, LIMIT, type Step } from \"./shared.ts\";\n\nlet count = 0;\n\nexport const add = (step: Step) => {\n  if (count + step > LIMIT) return;\n  count += step;\n};\n\nexport const isBounded = () => isWithin(count);\n",
       "runs": [
         {
           "name": "compiles constants and functions imported from other files",
@@ -23586,7 +23586,7 @@
     {
       "name": "BigInts > makes a module's namespace object only where code that may run reads it",
       "fileName": "tests/fixtures/typescript/imports/picking.ts",
-      "source": "\n          import { double } from \"./area-picker\";\n          export let count = 0;\n          export const step = () => {\n            if (count < 4) count = double(count + 1);\n          };\n          export const isSmall = () => count !== 6;\n        ",
+      "source": "\n          import { double } from \"./area-picker.ts\";\n          export let count = 0;\n          export const step = () => {\n            if (count < 4) count = double(count + 1);\n          };\n          export const isSmall = () => count !== 6;\n        ",
       "runs": [
         {
           "name": "agrees with Node where only a function that never runs reads it",
@@ -23595,13 +23595,13 @@
         },
         {
           "name": "agrees with Node where code that runs reads it, holding it on the heap (1)",
-          "source": "\n        import { pickAreas } from \"./area-picker\";\n        const keys = Object.keys(pickAreas()).join();\n        export let count = 0;\n        export const step = () => {\n          if (count < 4) count = pickAreas().getArea(count + 1);\n        };\n        export const isSame = (): boolean => keys === \"getArea\" && pickAreas() === pickAreas();\n      ",
+          "source": "\n        import { pickAreas } from \"./area-picker.ts\";\n        const keys = Object.keys(pickAreas()).join();\n        export let count = 0;\n        export const step = () => {\n          if (count < 4) count = pickAreas().getArea(count + 1);\n        };\n        export const isSame = (): boolean => keys === \"getArea\" && pickAreas() === pickAreas();\n      ",
           "status": "deadlock",
           "stop": "tla-ts can't compile a module as a script"
         },
         {
           "name": "agrees with Node where code that runs reads it, holding it on the heap (2)",
-          "source": "\n        import { pickAreas } from \"./area-picker\";\n        const keys = Object.keys(pickAreas()).join();\n        export let count = 0;\n        export const step = () => {\n          if (count < 5) count = pickAreas().getArea(count + 1);\n        };\n        export const isSame = (): boolean => keys === \"getArea\" && pickAreas() === pickAreas();\n      ",
+          "source": "\n        import { pickAreas } from \"./area-picker.ts\";\n        const keys = Object.keys(pickAreas()).join();\n        export let count = 0;\n        export const step = () => {\n          if (count < 5) count = pickAreas().getArea(count + 1);\n        };\n        export const isSame = (): boolean => keys === \"getArea\" && pickAreas() === pickAreas();\n      ",
           "status": "deadlock",
           "stop": "tla-ts can't compile a module as a script"
         }
@@ -23765,7 +23765,7 @@
     {
       "name": "BigInts > checks an exported const that another module's function initializes as that function",
       "fileName": "tests/fixtures/typescript/imports/reexporting-alias.ts",
-      "source": "// Exports another module's function through a const that its namespace object's export initializes.\nimport * as signs from \"./signs\";\n\nexport const isPositive: (value: 1 | 2) => boolean = signs.isPositive;\nexport let count = 0;\nexport const step = () => {\n  if (count < 2) count += 1;\n};\n",
+      "source": "// Exports another module's function through a const that its namespace object's export initializes.\nimport * as signs from \"./signs.ts\";\n\nexport const isPositive: (value: 1 | 2) => boolean = signs.isPositive;\nexport let count = 0;\nexport const step = () => {\n  if (count < 2) count += 1;\n};\n",
       "runs": [
         {
           "name": "agrees with Node, checking the function for each argument",
@@ -23827,7 +23827,7 @@
     {
       "name": "BigInts > a module's namespace object",
       "fileName": "tests/fixtures/typescript/imports/namespacing.ts",
-      "source": "import * as first from \"./first\";\nlet count = 0;\nexport const step = () => {\n  if (count < 3) count += Object.keys(first).length + 1;\n};\nexport const isUnder = () => count < 4;",
+      "source": "import * as first from \"./first.ts\";\nlet count = 0;\nexport const step = () => {\n  if (count < 3) count += Object.keys(first).length + 1;\n};\nexport const isUnder = () => count < 4;",
       "runs": [
         {
           "name": "makes a namespace object outside a script, which the heap holds",
@@ -23921,7 +23921,7 @@
     {
       "name": "definitions",
       "fileName": "tests/fixtures/typescript/imports/totaling.ts",
-      "source": "import { add, getTotal } from \"./total\";\n\nexport const step = () => {\n  if (getTotal() < 3) add(1);\n};\n\nexport const isSmall = () => getTotal() <= 3;\n",
+      "source": "import { add, getTotal } from \"./total.ts\";\n\nexport const step = () => {\n  if (getTotal() < 3) add(1);\n};\n\nexport const isSmall = () => getTotal() <= 3;\n",
       "runs": [
         {
           "name": "changes the state of another file (1)",

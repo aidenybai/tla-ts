@@ -1,6 +1,6 @@
 // The script checks that the namespace object refuses these writes.
 // oxlint-disable no-import-assign
-import * as values from "./exports";
+import * as values from "./exports.ts";
 
 const isSet = Reflect.set(values, "limit", 4);
 const isSame = Reflect.defineProperty(values, "limit", { value: 3 });

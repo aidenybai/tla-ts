@@ -1,4 +1,4 @@
-import made from "./defaulting";
+import made from "./defaulting.ts";
 
 export let seen = "";
 const read = () => {

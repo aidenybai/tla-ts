@@ -1,7 +1,7 @@
 declare function setTimeout(callback: () => void): void;
 
 let seen = "";
-import("./exports", {}).then((values) => {
+import("./exports.ts", {}).then((values) => {
   seen = `${Object.keys(values).join()} ${values.limit} ${values.default}`;
 });
 setTimeout(() => {

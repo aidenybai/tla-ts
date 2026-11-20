@@ -1,7 +1,7 @@
 declare function setTimeout(callback: () => void): void;
 
 let seen = "";
-import("./throwing").then(
+import("./throwing.ts").then(
   () => {
     seen = "fulfilled";
   },

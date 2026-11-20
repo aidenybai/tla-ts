@@ -1,4 +1,4 @@
-import * as Areas from "./areas";
+import * as Areas from "./areas.ts";
 
 export const pickAreas = () => Areas;
 

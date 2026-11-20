@@ -1,5 +1,5 @@
 declare function setTimeout(callback: () => void): void;
-import * as ns from "./selfish";
+import * as ns from "./selfish.ts";
 export let b = 7;
 const seen: unknown[] = [];
 seen.push(ns.a, Object.keys(ns).join());

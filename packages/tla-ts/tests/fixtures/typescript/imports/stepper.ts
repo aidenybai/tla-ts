@@ -1,4 +1,4 @@
-import { StepError } from "./step-error";
+import { StepError } from "./step-error.ts";
 
 export class Stepper {
   constructor(private value: number) {}

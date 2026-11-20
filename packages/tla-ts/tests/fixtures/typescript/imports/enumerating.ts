@@ -1,4 +1,4 @@
-import { Kind } from "./kinds";
+import { Kind } from "./kinds.ts";
 
 enum Color {
   Red,

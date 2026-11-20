@@ -1,3 +1,3 @@
-import { seen } from "./defaulting";
+import { seen } from "./defaulting.ts";
 
 if (seen !== "reference") throw new Error(seen);

@@ -1,4 +1,4 @@
-import { Stepper } from "./stepper";
+import { Stepper } from "./stepper.ts";
 
 const stepper = new Stepper(1);
 const first = stepper.step();
