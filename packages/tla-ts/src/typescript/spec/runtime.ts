@@ -1656,7 +1656,11 @@ export const getMessageDefinitions = (
   // throw, keeps the host's message.
   const hostNames = [
     ...realm.moduleGlobals.map((global) => global.name),
-    ...["require", "module", "exports", "__filename", "__dirname"],
+    "require",
+    "module",
+    "exports",
+    "__filename",
+    "__dirname",
   ];
   return [
     ...changed.values(),
