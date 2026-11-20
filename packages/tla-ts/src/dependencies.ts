@@ -85,9 +85,6 @@ const STREAMED_BUILTINS = new Set(["UNION", "\\cup"]);
 
 const RANDOM_BUILTINS = new Set(["RandomSubset", "RandomSetOfSubsets", "RandomSubsetSet"]);
 
-const isImpureBuiltin = (name: string, environment: DefinitionNames) =>
-  IMPURE_BUILTINS.has(name) || environment.builtins.get(name)?.isStateLevel === true;
-
 interface Edge {
   callee: Definition;
   isOverridden: boolean;
@@ -174,14 +171,14 @@ const collectLocalFacts = (
               definition.params.length > 0),
         });
       } else {
-        if (isImpureBuiltin(target, environment)) {
-          row[0] |= IMPURE | (target === "Assert" ? 0 : REPEATED_EFFECT);
-        }
         const builtin = environment.builtins.get(target);
+        const builtinName = builtin?.name ?? target;
+        const isImpure = IMPURE_BUILTINS.has(builtinName) || builtin?.isStateLevel === true;
+        if (isImpure) row[0] |= IMPURE | (builtinName === "Assert" ? 0 : REPEATED_EFFECT);
         if (STREAMED_BUILTINS.has(target)) row[0] |= STREAMED;
         if (builtin && RANDOM_BUILTINS.has(builtin.name)) row[0] |= RANDOM;
         if (target === "TLCEval") row[0] |= TLC_EVAL;
-        if (!isOverridden && isImpureBuiltin(target, environment)) row[0] |= READS_IMPURE;
+        if (!isOverridden && isImpure) row[0] |= READS_IMPURE;
         if (
           isInnerLevelCounted &&
           !isOverridden &&

@@ -136,6 +136,8 @@ export interface LazyFunctionValue {
   domain: Value;
   apply: (argument: Value) => Value;
   boundTupleLengths?: (number | undefined)[];
+  // Set when an application has an effect or is counted under -coverage, so converting to a tuple applies again as TLC does.
+  isApplicationObserved: boolean;
   source?: LazyFunctionSource;
   functionClass?: FunctionClass;
   enumerated?: FunctionValue;
@@ -2332,20 +2334,43 @@ export const createUnsortedCopy = (set: SetValue, added: Value[]): SetValue => {
   return copy;
 };
 
+const isSequenceDomain = (keys: Value[]) => keys.every((key, index) => key === index + 1);
+
+// TLC's FcnLambdaValue#toTuple applies the function at 1, 2, ... until a key breaks the run, and caches nothing.
+const getAppliedSequenceElements = (value: LazyFunctionValue) => {
+  const keys = getUnboundedElements(value.domain);
+  const elements: Value[] = [];
+  for (let index = 0; index < keys.length; index++) {
+    if (keys[index] !== index + 1) return undefined;
+    elements.push(value.apply(keys[index]));
+  }
+  if (isCountedLazyFunction(value)) {
+    value.costModel.secondary[value.costModel.node] += keys.length;
+  }
+  return elements;
+};
+
+const hasSequenceDomain = (value: LazyFunctionValue) =>
+  typeof value.domain === "object" && value.domain.kind === "Interval"
+    ? value.domain.low === 1 || value.domain.high < value.domain.low
+    : isSequenceDomain(getUnboundedElements(value.domain));
+
 export const getSequenceElements = (value: Value): Value[] | undefined => {
   if (typeof value !== "object" || !isFunctionValue(value)) return undefined;
-  if (
-    value.kind === "LazyFunction" &&
-    (!isSetValue(value.domain) || isOverriddenSet(value.domain))
-  ) {
-    throw new TlaEvaluationError(
-      "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
-    );
+  if (value.kind === "LazyFunction") {
+    if (value.boundTupleLengths !== undefined) return undefined;
+    if (!isSetValue(value.domain) || isOverriddenSet(value.domain)) {
+      throw new TlaEvaluationError(
+        "To convert a function of form [x \\in S |-> f(x)] to a tuple, the set S must be enumerable.",
+      );
+    }
+    // Applying once and keeping the values is the same as TLC's toTuple when nothing observes an application.
+    if (!value.enumerated && (value.isApplicationObserved || !hasSequenceDomain(value))) {
+      return getAppliedSequenceElements(value);
+    }
   }
   const functionValue = toFiniteFunction(value);
-  return functionValue.domain.every((key, index) => key === index + 1)
-    ? functionValue.range
-    : undefined;
+  return isSequenceDomain(functionValue.domain) ? functionValue.range : undefined;
 };
 
 const describeNonSetMembership = (element: Value, value: Value) => {
@@ -2908,6 +2933,7 @@ export const updateFunction = (
         apply: (key) => (isEqualLikeTlc(argument, key) ? updated : apply(key)),
         source: functionValue.source,
         boundTupleLengths: functionValue.boundTupleLengths,
+        isApplicationObserved: functionValue.isApplicationObserved,
         original: functionValue,
         replacedKey: argument,
         replacement: updated,

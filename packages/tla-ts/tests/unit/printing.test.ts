@@ -72,6 +72,25 @@ describe("printing matches TLC", () => {
     expect(formatValue(result.violation?.trace[0].state.b ?? false)).toBe(text);
   });
 
+  it("evaluates a body that prints at each application of a function over a domain TLC can't reduce, as TLC's FcnLambdaValue does", async () => {
+    expect(
+      (
+        await checkPrinting(
+          'VARIABLE x\nF == [s \\in SUBSET {1} |-> PrintT(<<"g", s>>)]\nInit == x = 0\nNext == x = 0 /\\ x\' = 1 /\\ PrintT(DOMAIN F) /\\ PrintT(F[{1}] /\\ F[{1}]) /\\ LET G == [s \\in SUBSET {x} |-> PrintT(<<"l", s>>)] IN PrintT(G[{}] /\\ G[{}])',
+          "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+        )
+      ).printed,
+    ).toEqual([
+      "{{}, {1}}",
+      '<<"g", {1}>>',
+      '<<"g", {1}>>',
+      "TRUE",
+      '<<"l", {}>>',
+      '<<"l", {}>>',
+      "TRUE",
+    ]);
+  });
+
   it.each([
     [
       "(Print(0, [x \\in {0, 2} |-> -x]))[6] = 0",

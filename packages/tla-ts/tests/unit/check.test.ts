@@ -13,7 +13,7 @@ import {
   TlaEvaluationError,
   TlaSyntaxError,
 } from "../../src";
-import type { OutputLine } from "../../src/check";
+import type { CheckResult, OutputLine } from "../../src/check";
 import { UNEXPECTED_EVAL_EXCEPTION, UNEXPECTED_EXCEPTION } from "../../src/errors";
 import type { TlcVersion } from "../../src/tlc/version";
 import { formatState } from "../../src/values";
@@ -959,6 +959,128 @@ ASSUME TLCFP(a) = -887695703
     expect(printed).toEqual(['"w"', "TRUE", "TRUE"]);
   });
 
+  it.each([
+    [
+      "VARIABLES x, y\nInit == x = 0 /\\ y = 0\nNext == y < 3 /\\ y' = y + 1 /\\ x' = x\nInv == $S",
+      "INVARIANT Inv",
+      "abcdefghij\n0\n0\n0\n0\n",
+    ],
+    [
+      "VARIABLE x\nInit == x = 0 /\\ $S\nNext == x < 2 /\\ x' = x + 1 /\\ $S",
+      "",
+      "abcdefghij\n0\n0\n1\n",
+    ],
+  ])(
+    "appends with IOUtils' Serialize at each evaluation, as TLC does: %s",
+    async (definitions, config, content) => {
+      const files = new Map([["old.json", "abcdefghij\n"]]);
+      await check({
+        source: `---- MODULE M ----\nEXTENDS Integers, IOUtils\n${definitions.replaceAll("$S", 'Serialize(<<x>>, "old.json", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<"APPEND">>])')}\n====`,
+        config: `INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE\n${config}`,
+        loadModule: (name) =>
+          name === "IOUtils"
+            ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+            : undefined,
+        readFile: (path) => files.get(path),
+        writeFile: (path, content) => files.set(path, String(content)),
+      });
+      expect(files.get("old.json")).toBe(content);
+    },
+  );
+
+  const checkSerialize = (
+    payload: string,
+    path: string,
+    openOptions: string,
+    files: Map<string, string>,
+    maxSetSize?: number,
+  ) =>
+    check({
+      source: `---- MODULE M ----\nEXTENDS Integers, TLC, IOUtils\nVARIABLE x\nInit == x = 0 /\\ Serialize(<<${payload}>>, "${path}", [format |-> "NDJSON", charset |-> "UTF-8", openOptions |-> <<${openOptions}>>])\nNext == x' = x\n====`,
+      config: "INIT Init\nNEXT Next",
+      isTool: true,
+      maxSetSize,
+      loadModule: (name) =>
+        name === "IOUtils"
+          ? "---- MODULE IOUtils ----\nLOCAL INSTANCE Integers\nSerialize(value, dest, options) ==\n  CHOOSE r \\in [exitValue : Int, stdout : STRING, stderr : STRING] : TRUE\n===="
+          : undefined,
+      readFile: (path) => files.get(path),
+      writeFile: (path, content) => files.set(path, String(content)),
+    });
+
+  const getSerializeError = (result: CheckResult) => {
+    const text = result.failure?.toolMessage ?? "";
+    const marker = "but it produced the following error:\n";
+    return text.slice(text.indexOf(marker) + marker.length);
+  };
+
+  it.each([
+    [
+      "1, {<<>>, 0}",
+      '"CREATE"',
+      "util.Assert$TLCRuntimeException: Attempted to compare integer 0 with non-integer:\n<<>>",
+    ],
+    [
+      "Nat",
+      '"CREATE"',
+      "java.io.IOException: Cannot convert value: unsupported value type tlc2.value.impl.UserValue",
+    ],
+    [
+      "[s \\in SUBSET {1} |-> 1 \\div 0]",
+      '"CREATE"',
+      "tlc2.tool.EvalException: @!@!@STARTMSG 2179:0 @!@!@\nThe second argument of \\div is 0.\n@!@!@ENDMSG 2179 @!@!@",
+    ],
+    [
+      "[s \\in SUBSET {1} |-> CHOOSE m \\in {} : TRUE]",
+      '"CREATE"',
+      "util.Assert$TLCDetailedRuntimeException: Attempted to compute the value of an expression of form\nCHOOSE x \\in S: P, but no element of S satisfied P.\nline 4, col 52 to line 4, col 73 of module M",
+    ],
+    [
+      '[s \\in SUBSET {1} |-> 1 .. "a"]',
+      '"CREATE"',
+      "util.Assert$TLCRuntimeException: @!@!@STARTMSG 2154:0 @!@!@\nAttempted to apply the operator overridden by the Java method\npublic static tlc2.value.impl.IntervalValue tlc2.module.Integers.DotDot(tlc2.value.impl.IntValue,tlc2.value.impl.IntValue),\nbut it produced the following error:\nCannot cast tlc2.value.impl.StringValue to tlc2.value.impl.IntValue\n@!@!@ENDMSG 2154 @!@!@",
+    ],
+    [
+      "{<<>>, 0}",
+      '"BOGUS"',
+      "java.lang.IllegalArgumentException: No enum constant java.nio.file.StandardOpenOption.BOGUS",
+    ],
+    ["{<<>>, 0}", '"WRITE"', "java.nio.file.NoSuchFileException: s.json"],
+  ])(
+    "opens the file before it converts <<%s>> with <<%s>>, and names the class of what fails, as TLC's textSerialize does",
+    async (payload, openOptions, error) => {
+      const result = await checkSerialize(payload, "s.json", openOptions, new Map());
+      expect(getSerializeError(result)).toBe(`${error}\n@!@!@ENDMSG 2154 @!@!@`);
+    },
+  );
+
+  it("names the WrongInvocationException of a set past -maxSetSize, as TLC's textSerialize does", async () => {
+    const result = await checkSerialize(
+      "[{1, 2, 3, 4} -> {1, 2, 3}]",
+      "s.json",
+      '"CREATE"',
+      new Map(),
+      10,
+    );
+    expect(getSerializeError(result)).toBe(
+      "util.WrongInvocationException: Attempted to construct a set with too many elements (>10).\n@!@!@ENDMSG 2154 @!@!@",
+    );
+  });
+
+  it.each([
+    ["s.json", '"CREATE"', "1\n"],
+    ["old.json", '"WRITE"', "1\ncdefghij\n"],
+    ["old.json", '"WRITE", "TRUNCATE_EXISTING"', "1\n"],
+    ["old.json", '"APPEND"', "abcdefghij\n1\n1\n"],
+  ])(
+    "keeps the lines converted before a failure in %s with <<%s>>, as TLC's textSerialize does",
+    async (path, openOptions, content) => {
+      const files = new Map([["old.json", "abcdefghij\n"]]);
+      await checkSerialize("1, {<<>>, 0}", path, openOptions, files);
+      expect(files.get(path)).toBe(content);
+    },
+  );
+
   it("reads and writes a file again at each reference to a LET definition, as TLC does", async () => {
     const printed: string[] = [];
     const files = new Map<string, string>();
@@ -985,6 +1107,61 @@ ASSUME TLCFP(a) = -887695703
       writeFile: (path, content) => files.set(path, String(content)),
     });
     expect(printed).toEqual(["<<0>>", "<<10>>", "<<0>>", "<<11>>"]);
+  });
+
+  it.each([
+    ['JsonSerialize("old.json", <<[s \\in SUBSET {1} |-> 1 \\div 0]>>)', "old.json", ""],
+    ['ndJsonSerialize("old.json", <<1, [s \\in SUBSET {1} |-> 1 \\div 0], 2>>)', "old.json", "1\n"],
+    ['JsonSerialize("s.json", [a |-> Nat])', "s.json", ""],
+    ['ndJsonSerialize("s.json", <<[a |-> 1], {<<>>, 0}>>)', "s.json", '{"a":1}\n'],
+  ])(
+    "opens the file before %s converts the value, and keeps the lines it converted, as TLC does",
+    async (expression, path, contents) => {
+      const files = new Map([["old.json", "abcdefghij\n"]]);
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals, TLC, Json\nVARIABLE x\nInit == x = 0 /\\ ${expression}\nNext == x' = x\n====`,
+        config: "INIT Init\nNEXT Next",
+        readFile: (path) => files.get(path),
+        writeFile: (path, content) => files.set(path, String(content)),
+      });
+      expect([result.status, files.get(path)]).toEqual(["error", contents]);
+    },
+  );
+
+  const checkLazyTuple = async (expression: string) => {
+    const printed: string[] = [];
+    const result = await check({
+      source: `---- MODULE M ----\nEXTENDS Integers, Sequences, TLC, Json\nVARIABLE x\nInit == x = 0\nNext == x = 0 /\\ x' = 1 /\\ PrintT(${expression})\n====`,
+      config: "INIT Init\nNEXT Next\nCHECK_DEADLOCK FALSE",
+      onPrint: (text) => printed.push(text),
+    });
+    return { result, printed };
+  };
+
+  it.each([
+    ["Len([n \\in UNION {1..1, {3}} |-> PrintT(n)])", ["1", "1", "3"]],
+    [
+      "LET F == [n \\in UNION {1..1, {2}} |-> PrintT(n)] IN Len(F) + Len(F)",
+      ["1", "2", "1", "2", "4"],
+    ],
+    [
+      'JsonSerialize("f.json", [n \\in UNION {1..1, {2}} |-> PrintT(n)])',
+      ["1", "2", "1", "2", "TRUE"],
+    ],
+  ])(
+    "applies a lazy function at 1, 2, ... to convert it to a tuple, and keeps none of it, as TLC's FcnLambdaValue#toTuple does, in %s",
+    async (expression, printed) => {
+      expect((await checkLazyTuple(expression)).printed).toEqual(printed);
+    },
+  );
+
+  it("converts a lazy function over sets to a tuple without applying it, as TLC's FcnLambdaValue#toTuple does", async () => {
+    expect(
+      (await checkLazyTuple('ndJsonSerialize("n.json", [s \\in SUBSET {1} |-> 1 \\div x])')).result
+        .failure?.message,
+    ).toBe(
+      "The second argument of ndJsonSerialize should be a sequence, but instead it is:\n[s \\in {{}, {1}} |-> <expression line 5, col 83 to line 5, col 90 of module M>]",
+    );
   });
 
   it("implements the TLCExt operators", async () => {
