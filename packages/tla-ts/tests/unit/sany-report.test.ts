@@ -1849,6 +1849,26 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  it("reads an @ that starts a conjunction or disjunction step as the previous step's right side, like SANY", () => {
+    const report = getReport({
+      At: "---- MODULE At ----\nTHEOREM T == TRUE\n<1>1. 1 = 1 OBVIOUS\n<1>2. @ /\\ TRUE OBVIOUS\n<1>3. @ \\/ TRUE OBVIOUS\n<1>4. (@) = 1 OBVIOUS\n<1> QED\n====\n",
+    });
+    expect(report).toEqual({
+      text: joinLines([
+        "Semantic errors:",
+        "",
+        "*** Errors: 1",
+        "",
+        "line 6, col 8 to line 6, col 8 of module At",
+        "",
+        "@ used where its meaning is not defined.",
+        "",
+        "",
+      ]),
+      isFailed: true,
+    });
+  });
+
   it("reports a substitution above the level the instantiated module allows", () => {
     const report = getReport({
       Outer: "---- MODULE Outer ----\nVARIABLE x\nI == INSTANCE Inner WITH C <- [](x = 0)\n====\n",

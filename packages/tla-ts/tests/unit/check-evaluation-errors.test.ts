@@ -1834,6 +1834,74 @@ describe("evaluation errors match TLC", () => {
     ]);
   });
 
+  it("stops at an empty set of functions, records or tuples TLC compares with itself", async () => {
+    const statuses = await Promise.all(
+      [
+        'ASSUME LET F == [{} -> {1, "a"}] IN F = F',
+        'ASSUME LET F == [{1, "a"} -> {}] IN F = F',
+        'ASSUME LET F == [a : {}, b : {1, "a"}] IN F = F',
+        'ASSUME LET F == [b : {1, "a"}, a : {}] IN F = F',
+        'ASSUME LET F == {} \\X {1, "a"} IN F = F',
+        'ASSUME LET F == {1, "a"} \\X {} IN F = F',
+        'ASSUME LET F == <<[{} -> {1, "a"}]>> IN F = F',
+        'ASSUME LET F == [{1, "a"} -> {}] IN {F} = {F}',
+        'ASSUME LET F == [{} -> {1, "a"}] IN F \\in {F}',
+        'ASSUME LET F == [{} -> {1, "a"}] IN F # F => FALSE',
+        'ASSUME LET F == [{} -> {1, "a"}] IN Cardinality({F, F}) = 1',
+        'ASSUME LET F == [{1, "a"} -> {}] IN Cardinality({F, F}) = 1',
+      ].map(
+        async (assumption) => (await checkModule(`ASSUME 1 \\in {1, "a"}\n${assumption}`)).status,
+      ),
+    );
+    expect(statuses).toEqual(Array(12).fill("success"));
+  });
+
+  it("evaluates a function over Nat in a value TLC compares with itself", async () => {
+    const messages = await Promise.all(
+      [
+        "ASSUME LET D == <<[n \\in Nat |-> n]>> IN D = D",
+        "ASSUME LET D == <<1, [n \\in Nat |-> n]>> IN D = D",
+        "ASSUME LET D == {[n \\in Nat |-> n]} IN D = D",
+        "ASSUME LET D == [a |-> [n \\in Nat |-> n]] IN D = D",
+        "ASSUME LET D == [k \\in {1, 2} |-> [n \\in Nat |-> n]] IN D = D",
+        "ASSUME LET D == <<[n \\in Nat |-> n]>> IN D \\in {D}",
+        "ASSUME LET D == <<[n \\in Nat |-> n]>> IN D # D => FALSE",
+        "ASSUME LET D == <<{n \\in Nat : n > 2}>> IN D = D",
+        "ASSUME LET D == <<[n \\in Nat |-> n]>> IN Cardinality({D, D}) = 1",
+      ].map(async (assumption) => (await checkModule(assumption)).violation?.message),
+    );
+    const message = "Attempted to compute the number of elements in the overridden value Nat.";
+    expect(messages).toEqual([
+      ...Array(7).fill(message),
+      "Attempted to enumerate { x \\in S : p(x) } when S:\nNat\nis not enumerable",
+      getJavaError(
+        "value.impl.IntValue tlc2.module.FiniteSets.Cardinality(tlc2.value.impl.Value)",
+        message,
+      ),
+    ]);
+  });
+
+  it("compares the base of a Seq(S) TLC compares with itself", async () => {
+    const messages = await Promise.all(
+      [
+        "ASSUME LET Q == Seq({[n \\in Nat |-> n]}) IN Q = Q",
+        "ASSUME LET Q == <<Seq({[n \\in Nat |-> n]})>> IN Q = Q",
+        "ASSUME LET Q == Seq({[n \\in Nat |-> n]}) IN Q \\in {Q}",
+        "ASSUME LET Q == Seq({[n \\in Nat |-> n]}) IN Q # Q => FALSE",
+        'ASSUME LET Q == {Seq({1, "a"})} IN Q = Q',
+        'ASSUME LET Q == Seq(SUBSET {1, "a"}) IN Q = Q',
+        'ASSUME LET Q == Seq([a : {}, b : {1, "a"}]) IN Q = Q',
+        "ASSUME LET Q == Seq(Nat) IN Q = Q",
+      ].map(async (assumption) => (await checkModule(assumption)).violation?.message),
+    );
+    expect(messages).toEqual([
+      ...Array(4).fill("Attempted to compute the number of elements in the overridden value Nat."),
+      ...Array(2).fill('Attempted to compare string "a" with non-string:\n1'),
+      undefined,
+      undefined,
+    ]);
+  });
+
   it("sorts a TLCEval argument only outside an instance that substitutes", async () => {
     const inner =
       '---- MODULE Inner ----\nEXTENDS TLC\nCONSTANT K\nMixed == 1 \\in TLCEval({1, "a"})\n====';
@@ -2148,6 +2216,17 @@ describe("evaluation errors match TLC", () => {
       expect([result.status, result.violation?.message]).toEqual([status, message]);
     },
   );
+
+  it("prints a function in the order TLC sorts it in as it checks it against a record", async () => {
+    const result = await checkModule(
+      "CONSTANTS C, D\nASSUME (D :> 1) @@ (C :> 2) \\in {[a |-> 1, b |-> 2], <<1, 2>>}",
+      'CONSTANTS C = Mb D = "s"',
+    );
+    expect([result.status, result.violation?.message]).toEqual([
+      "assumption-violation",
+      'Attempted to check equality of record:\n[a |-> 1, b |-> 2]\nwith non-record\n(Mb :> 2 @@ "s" :> 1)',
+    ]);
+  });
 
   it.each(['"a" \\in Nat', "1 \\in STRING", "{} \\in 1..4", "FALSE \\in Int"])(
     "rejects %s",

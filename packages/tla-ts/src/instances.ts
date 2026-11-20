@@ -21,6 +21,7 @@ import {
   getBoundNames,
   getKeyName,
   getPatternNames,
+  hasNoOperands,
   isBefore,
   LOCAL_RESOLUTION,
 } from "./resolve";
@@ -685,6 +686,7 @@ const substituteExpression = (
   rewrite: Rewrite,
   bound: Map<string, string>,
 ): Expression => {
+  if (hasNoOperands(expression)) return expression;
   const recurse = (node: Expression) => substitute(node, rewrite, bound);
   if (expression.kind === "Selection" && [...bound].every((entry) => entry[0] === entry[1])) {
     const selected = expression.expression;

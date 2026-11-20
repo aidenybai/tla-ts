@@ -24,7 +24,7 @@ import {
   type UseOrHide,
 } from "./ast";
 import { formatRange, TlaSyntaxError, type CodedSanyError, type SanyError } from "./errors";
-import { defEntryErrors, getDefEntryBinder, parenthesizedRanges } from "./parser";
+import { defEntryErrors, getAtSteps, getDefEntryBinder, parenthesizedRanges } from "./parser";
 import { formatSanyLocation } from "./sany/nodes";
 import { resolveSynonym } from "./tlc/jar-data";
 
@@ -96,6 +96,7 @@ interface Unit {
   hasLabelScope: boolean;
   isLabelForbidden: boolean;
   isInExcept: boolean;
+  stepAt?: Expression;
   labelParams: string[];
   labels: Set<string>;
   isGenerated: boolean;
@@ -159,6 +160,11 @@ export const isUnresolved = (expression: Expression) => unresolvedExpressions.ha
 // SANY's failed selection is an operator application with no operands.
 const isEmptyExpression = (expression: Expression): boolean =>
   emptyExpressions.has(expression) || findNullError(nullSelections.get(expression)) !== undefined;
+
+export const hasNoOperands = (expression: Expression) =>
+  expression.kind === "Apply" &&
+  generatedArgumentCounts.get(expression) === undefined &&
+  isEmptyExpression(expression);
 
 const findNullSelection = (nulls: NullSelection[] | undefined) =>
   nulls?.find((selection) =>
@@ -561,13 +567,11 @@ const findLabel = (expression: Expression, name: string): LabelExpression | unde
   if (expression.kind === "Label") return expression.name === name ? expression : undefined;
   if (expression.kind === "Lambda" || expression.kind === "Selection") return undefined;
   if (expression.kind === "Let") return findLabel(expression.body, name);
-  const generated = generatedArgumentCounts.get(expression);
-  if (expression.kind === "Apply" && generated === undefined && isEmptyExpression(expression))
-    return undefined;
+  if (hasNoOperands(expression)) return undefined;
   if (expression.kind === "FunctionApplication" && isEmptyExpression(expression))
     return findLabel(expression.function, name);
   return getChildren(expression)
-    .slice(0, generated)
+    .slice(0, generatedArgumentCounts.get(expression))
     .reduce<LabelExpression | undefined>(
       (found, child) => found ?? findLabel(child, name),
       undefined,
@@ -934,6 +938,11 @@ const getSymbolArity = (
       return undefined;
     }
     const range = getSpelledNameRange(expression, name);
+    if (!isOperatorArgument && expression.kind === "Apply") {
+      expression.args.forEach((arg, index) =>
+        matchArgument(arg, instance?.params?.[index] ?? 0, index, name, range, scope, unit),
+      );
+    }
     unit.errors.push({
       location: formatRange({
         ...range,
@@ -1591,7 +1600,7 @@ const resolveExpression = (
     case "String":
       return;
     case "ExceptAt":
-      if (!unit.isInExcept && expression.location.range) {
+      if (!unit.isInExcept && expression !== unit.stepAt && expression.location.range) {
         emptyExpressions.add(expression);
         unit.errors.push({
           location: formatRange(expression.location.range),
@@ -2234,19 +2243,25 @@ const resolveProof = (proof: Proof | undefined, scope: LocalName | undefined, ou
   const unit = outer.hasLabelScope ? { ...outer, hasLabelScope: false } : outer;
   if (proof?.kind === "By") checkUseOrHide(proof, scope, unit);
   if (proof?.kind !== "Steps") return;
-  proof.steps.reduce((current, step) => resolveStep(step, current, unit), scope);
+  const atSteps = getAtSteps(proof.steps);
+  proof.steps.reduce(
+    (current, step) => resolveStep(step, current, unit, atSteps.get(step)?.at),
+    scope,
+  );
 };
+
+export const getInstanceBinding = (instance: Instance): Binding => ({
+  kind: "Instance",
+  arity: instance.params.length,
+  params: instance.params.map((param) => param.arity),
+  range: instance.location.range,
+});
 
 const resolveLocalInstance = (instance: Instance, scope: LocalName | undefined, unit: Unit) => {
   const instanced = resolveInstance(instance, scope, unit);
   return instance.name === undefined
     ? instanced
-    : bindName(
-        instanced,
-        instance.name,
-        { kind: "Instance", arity: instance.params.length, range: instance.location.range },
-        unit,
-      );
+    : bindName(instanced, instance.name, getInstanceBinding(instance), unit);
 };
 
 const getStepGoal = (body: StepBody, location: SourceLocation): Goal | undefined => {
@@ -2295,6 +2310,7 @@ const resolveStep = (
   step: ProofStep,
   scope: LocalName | undefined,
   unit: Unit,
+  stepAt: Expression | undefined,
 ): LocalName | undefined => {
   const body = step.body;
   const stepUnit =
@@ -2333,7 +2349,7 @@ const resolveStep = (
         );
   switch (body.kind) {
     case "Assert": {
-      const assumed = resolveStatement(body.statement, scope, stepUnit);
+      const assumed = resolveStatement(body.statement, scope, { ...stepUnit, stepAt });
       const assertion = {
         statement: body.statement,
         isSuffices: body.isSuffices,
@@ -2750,13 +2766,16 @@ export const resolveSubstitutions = (
     declarations,
     instancer,
     instance.params.reduce<LocalName | undefined>(
-      (parent, param) => ({
-        name: param.name,
-        arity: param.arity,
-        kind: "Parameter",
-        range: param.location?.range,
-        parent,
-      }),
+      (parent, param) =>
+        imported.has(param.name) || lookupLocal(parent, param.name)
+          ? parent
+          : {
+              name: param.name,
+              arity: param.arity,
+              kind: "Parameter",
+              range: param.location?.range,
+              parent,
+            },
       undefined,
     ),
     {
@@ -2997,12 +3016,7 @@ export const resolveModule = (module: Module, unit: ModuleUnit) => {
             .get(instance)
             ?.forEach((symbol, name) => bindModuleName(bindings, name, symbol, inner));
           if (instance.name !== undefined) {
-            bindModuleName(
-              bindings,
-              instance.name,
-              { kind: "Instance", arity: instance.params.length, range: instance.location.range },
-              inner,
-            );
+            bindModuleName(bindings, instance.name, getInstanceBinding(instance), inner);
           }
         }),
       ),
