@@ -1407,6 +1407,24 @@ Spec == Init /\\ [][Next]_x
     },
   );
 
+  it("ends a CASE at the []PROVE after it as SANY does", () => {
+    const getTheoremReport = (statement: string) =>
+      getReport({ M: `---- MODULE M ----\nVARIABLE x\nTHEOREM T == ${statement}\n====\n` });
+    expect(getTheoremReport("[]ASSUME CASE x = 1 -> TRUE [] x = 2 -> TRUE []PROVE TRUE")).toEqual({
+      text: "",
+      isFailed: false,
+    });
+    const report = getTheoremReport("ASSUME CASE x = 1 -> TRUE []PROVE TRUE");
+    expect(report.isFailed).toBe(true);
+    expect(report.text).toContain(
+      joinLines([
+        "line 3, col 14 to line 3, col 19 of module M",
+        "",
+        "ASSUME matched by []PROVE instead of PROVE",
+      ]),
+    );
+  });
+
   it("reports a []ASSUME matched by PROVE in an ASSUME's scope with both errors as SANY does", () => {
     const report = getReport({
       Box: "---- MODULE Box ----\nTHEOREM T == ASSUME NEW J PROVE TRUE\n<1>1 []ASSUME TRUE PROVE TRUE\n<1> QED\n====\n",

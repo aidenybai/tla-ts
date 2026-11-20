@@ -4854,6 +4854,32 @@ describe("name resolution matches SANY", () => {
     );
   });
 
+  it("ends a CASE at the []PROVE after it like SANY", async () => {
+    const result = await check({
+      source:
+        "---- MODULE M ----\nx == 1\nTHEOREM T == []ASSUME CASE x = 1 -> TRUE [] x = 2 -> TRUE []PROVE TRUE\n====",
+      config: "",
+    });
+    expect(result.status).toBe("success");
+  });
+
+  it("reports an ASSUME whose CASE ends at a []PROVE like SANY", async () => {
+    await expect(
+      check({
+        source:
+          "---- MODULE M ----\nx == 1\nTHEOREM T == ASSUME CASE x = 1 -> TRUE []PROVE TRUE\n====",
+        config: "",
+      }),
+    ).rejects.toThrow(
+      createSanyError([
+        {
+          location: "line 3, col 14 to line 3, col 19 of module M",
+          message: "ASSUME matched by []PROVE instead of PROVE",
+        },
+      ]),
+    );
+  });
+
   it("reports DEF clause entries of bracketed, quantified and infix shapes like SANY", async () => {
     await expect(
       check({

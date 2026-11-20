@@ -1276,7 +1276,7 @@ const parse = (
       const condition = parseExpression();
       expect("->");
       arms.push({ condition, body: parseExpression() });
-    } while (accept("[]"));
+    } while (!isBoxAt("PROVE") && accept("[]"));
     return { kind: "Case", arms, other: undefined, location: getLocation(start) };
   };
 
