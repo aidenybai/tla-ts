@@ -906,9 +906,8 @@ const resolveInstance = (
   lookup: Lookup,
   getStandardDefinition: Lookup,
   isGoal: (name: string) => boolean,
-): Instance => ({
-  ...instance,
-  substitutions: instance.substitutions.map((substitution) => ({
+): Instance => {
+  const substitutions = instance.substitutions.map((substitution) => ({
     ...substitution,
     expression: resolveSubexpressions(
       substitution.expression,
@@ -917,8 +916,13 @@ const resolveInstance = (
       isGoal,
       true,
     ),
-  })),
-});
+  }));
+  return substitutions.every(
+    (substitution, index) => substitution.expression === instance.substitutions[index].expression,
+  )
+    ? instance
+    : { ...instance, substitutions };
+};
 
 export const resolveInstanceSubexpressions = (instance: Instance, module: Module): Instance =>
   resolveInstance(

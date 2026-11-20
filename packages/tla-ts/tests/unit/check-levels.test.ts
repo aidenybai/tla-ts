@@ -1721,6 +1721,35 @@ describe("level checking matches SANY", () => {
 
   it.each([
     [
+      "CONSTANT c\nTHEOREM T == ASSUME TRUE PROVE LET K == INSTANCE P IN K!B = {1}",
+      "E == (I3!T!2)'",
+    ],
+    [
+      "CONSTANT c\nTHEOREM T == ASSUME LET K == INSTANCE P IN K!B = {1} PROVE TRUE",
+      "E == (I3!T!1)'",
+    ],
+  ])(
+    "levels a selection through an instance by a LET instance's implicit substitutes, as SANY does: %s",
+    async (instanced, use) => {
+      await expect(
+        check({
+          source: `---- MODULE M ----\nVARIABLE x\n---- MODULE P ----\nCONSTANT c\nB == {c}\n====\nN == INSTANCE P WITH c <- 1\n---- MODULE L ----\n${instanced}\n====\nI3 == INSTANCE L WITH c <- [](x = 1)\n${use}\nInit == x = 0\nNext == x' = x\n====`,
+          config: "INIT Init\nNEXT Next",
+        }),
+      ).rejects.toThrow(
+        createSanyError([
+          { location: "line 13, col 6 to line 13, col 14 of module M", message: primed },
+          {
+            location: "line 12, col 1 to line 12, col 36 of module M",
+            message: getSubstitutedError("c", 2),
+          },
+        ]),
+      );
+    },
+  );
+
+  it.each([
+    [
       "CONSTANT c\nDef == \\A y \\in {1} : <<y, c>> = <<1, 1>>",
       "E == (I3!Def!(y')!1)'",
       "line 8, col 6 to line 8, col 21",
