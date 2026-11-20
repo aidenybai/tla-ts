@@ -432,6 +432,30 @@ describe("INSTANCE matches TLC", () => {
     },
   );
 
+  it.each([
+    ["v <- (x = 1 /\\ x >= 0)", "I!Dv", undefined, "I!Dv"],
+    ["v <- (\\A k \\in {1} : x = k)", "I!Dv", undefined, "I!Dv"],
+    ["v <- One", "I!Dv", undefined, "I!Dv"],
+    ["v <- One", "I!Av", undefined, "line 4, col 7 to line 4, col 7 of module L"],
+    ["v <- One", "I!Kv", undefined, "G"],
+    ["v <- (x = 1)", "I!Dv", 1, "I!Dv"],
+    ["v <- (x = 1)", "I!Kv", 1, "G"],
+  ])(
+    "names a property that reaches the VARIABLE substitute in %s through %s, with coverage %s, as TLC does",
+    async (substitution, property, coverage, name) => {
+      const result = await check({
+        source: `---- MODULE M ----\nEXTENDS Naturals\nVARIABLE x\nInit == x = 0\nNext == x' = (x + 1) % 2\nOne == x = 1\nI == INSTANCE L WITH ${substitution}\nProp == ${property}\n====`,
+        config: "INIT Init\nNEXT Next\nPROPERTY Prop",
+        coverage,
+        loadModule: (module) =>
+          module === "L"
+            ? "---- MODULE L ----\nVARIABLE v\nDv == v\nAv == v /\\ TRUE\nKv == LET G == v IN G\n===="
+            : undefined,
+      });
+      expect(result.violation?.name).toBe(name);
+    },
+  );
+
   // Deviation from TLC: it rejects each row, though it checks [](x \in {0, 1}), [](x = 0) and x = 1 written without the instance this way.
   it.each([
     ["[](x \\in {0, 1})", "success", undefined],
