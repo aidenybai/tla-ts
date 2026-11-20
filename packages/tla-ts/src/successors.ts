@@ -561,10 +561,28 @@ const compileFunctionAction = (
   };
 };
 
-const compileEnabledUnchanged =
-  (expression: Expression, runner: Runner): Runner =>
-  (run, scope, partial, action, isFixed, onComplete) => {
+const compileEnabledUnchanged = (
+  expression: Expression,
+  environment: Environment,
+  runner: Runner,
+): Runner => {
+  const definition =
+    expression.kind === "Identifier" && !isLocallyResolved(expression)
+      ? getZeroArityBody(expression.name, environment)
+      : undefined;
+  return (run, scope, partial, action, isFixed, onComplete) => {
     const index = getRuntimeVariableIndex(expression, scope, partial, run, false);
+    if (index === undefined && definition) {
+      getRunner(getUnchangedWrapper(definition.body), environment, false)(
+        run,
+        undefined,
+        partial,
+        action,
+        isFixed,
+        onComplete,
+      );
+      return;
+    }
     if (index === undefined) {
       runner(run, scope, partial, action, isFixed, onComplete);
       return;
@@ -581,6 +599,7 @@ const compileEnabledUnchanged =
     }
     onComplete(partial, action);
   };
+};
 
 const compileUnchanged = (expression: Expression, environment: Environment): Runner => {
   const unchanged = getUnchangedWrapper(expression);
@@ -646,7 +665,7 @@ const compileUnchanged = (expression: Expression, environment: Environment): Run
     );
   };
   return environment.enabledSubstitutions.has(expression)
-    ? compileEnabledUnchanged(expression, runner)
+    ? compileEnabledUnchanged(expression, environment, runner)
     : runner;
 };
 

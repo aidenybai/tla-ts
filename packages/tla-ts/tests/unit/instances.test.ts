@@ -676,6 +676,30 @@ describe("INSTANCE matches TLC", () => {
 
   it.each([
     [
+      "after the step changes one",
+      "dv == <<d>>\nA == c' = c + 1 /\\ d' = 1 - d /\\ UNCHANGED dv\nCan == ENABLED A",
+      ["invariant-violation", [0], [getChangedWarning("d", "line 7, col 9 to line 7, col 9")]],
+    ],
+    [
+      "nested in another definition",
+      "dv == <<d>>\nboth == <<dv, c>>\nA == c' = c /\\ UNCHANGED both\nCan == ENABLED A",
+      ["success", undefined, []],
+    ],
+    [
+      "before a guard reads one",
+      "dv == <<d>>\nA == c' = c + 1 /\\ UNCHANGED dv /\\ d' > d\nCan == ENABLED A",
+      ["invariant-violation", [0], []],
+    ],
+  ])(
+    "keeps the variables of a definition under UNCHANGED in an instanced ENABLED, as TLC's Tool#enabledUnchanged takes its body, %s",
+    async (_label, inner, outcome) => {
+      expect(await getInstancedEnabledOutcome(inner, "x", undefined)).toEqual(outcome);
+      expect(await getInstancedEnabledOutcome(inner, "x", 1_000_000)).toEqual(outcome);
+    },
+  );
+
+  it.each([
+    [
       "A == c' = c + 1 /\\ UNCHANGED (LET k == <<d>> IN k)\nCan == ENABLED <<A>>_<<c, d>>",
       [
         "Line 10, column 9 to line 10, column 22 in M",
