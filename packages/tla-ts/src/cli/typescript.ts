@@ -124,7 +124,7 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
   const siteTexts = new Map(
     throws.flatMap((statement, index) =>
       !isModule
-        ? [[index + 1, `\n${getNodeLocation(statement, false)}\n`] as const]
+        ? [[index + 1, `\n${getNodeLocation(statement)}\n`] as const]
         : ts.findAncestor(statement, ts.isFunctionLike) === undefined
           ? [[index + 1, `\n${MODULE_UNCAUGHT_LOCATION}\n`] as const]
           : [],
@@ -148,7 +148,7 @@ export const compileTypeScriptFile = async (path: string): Promise<CompiledInput
   collectAwaits(sourceFile);
   const unsettledText =
     awaits.length === 1
-      ? `${UNSETTLED_AWAIT_WARNING}${getNodeLocation(awaits[0], true)}`
+      ? `${UNSETTLED_AWAIT_WARNING}${getNodeLocation(awaits[0])}`
       : undefined;
   const isScriptFile = isScript(sourceFile);
   const model = isScriptFile ? undefined : compileModelToEscore(source, path, runtime);
