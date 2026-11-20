@@ -1753,31 +1753,26 @@ export const compileArgumentScope = (
     };
   }
   const params = closure.params;
-  const binders = args.map((arg, index) =>
-    params[index].arity > 0 ? undefined : compileArgumentBinder(arg, environment),
-  );
-  // An operator argument that names a global definition resolves here, once, to a closure whose
-  // code site keeps what its calls compile.
-  const operators = args.map((arg, index) => {
-    if (params[index].arity === 0 || arg.kind !== "Identifier" || isLocallyResolved(arg)) {
-      return undefined;
-    }
+  const binders = args.map((arg, index): ArgumentBinder | undefined => {
+    if (params[index].arity === 0) return compileArgumentBinder(arg, environment);
+    if (arg.kind !== "Identifier" || isLocallyResolved(arg)) return undefined;
+    // An operator argument that names a global definition resolves here, once, to a closure whose
+    // code site keeps what its calls compile.
     const operator = resolveGlobalOperator(arg.name, environment);
-    return operator?.kind === "Closure"
-      ? { ...operator, site: createCodeSite(operator.body) }
-      : undefined;
+    if (operator?.kind !== "Closure") return undefined;
+    const binding: Binding = {
+      kind: "Operator",
+      operator: { ...operator, site: createCodeSite(operator.body) },
+    };
+    return () => binding;
   });
   return (context) => {
     let scope = closure.scope;
     for (let index = 0; index < args.length; index++) {
       const binder = binders[index];
-      const operator = operators[index];
       const binding: Binding = binder
         ? binder(context)
-        : {
-            kind: "Operator",
-            operator: operator ?? evaluateOperatorArgument(args[index], context),
-          };
+        : { kind: "Operator", operator: evaluateOperatorArgument(args[index], context) };
       scope = { name: params[index].name, binding, parent: scope };
     }
     return scope;
