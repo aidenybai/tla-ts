@@ -256,6 +256,42 @@ describe("the model finder, as Z3 5.3.2 cleans up its instantiation sets", () =>
       ")",
     ]);
   });
+
+  it("interprets an array as a lambda of the default weight", () => {
+    expect(
+      run([
+        "(set-option :auto_config false)",
+        "(set-option :smt.mbqi true)",
+        "(declare-fun p (Int) Bool)",
+        "(declare-fun A () (Array Int Int))",
+        "(declare-fun B () (Array Int Bool))",
+        "(assert (forall ((x Int)) (or (p x) (> (select A x) 0) (select B x))))",
+        "(assert (not (p 2)))",
+        "(assert (not (p 7)))",
+        "(assert (< (select A 5) 0))",
+        "(assert (not (select B 4)))",
+        "(check-sat)",
+        "(get-info :rlimit)",
+        "(get-model)",
+      ]),
+    ).toEqual([
+      "sat",
+      "(:rlimit 1702)",
+      "(",
+      "  (define-fun B () (Array Int Bool)",
+      "    ((as const (Array Int Bool)) false))",
+      "  (define-fun A () (Array Int Int)",
+      "    (lambda ((x!1 Int))",
+      "  (let ((a!1 (ite (and (not (= x!1 2)) (= x!1 4)) 11798 (ite (= x!1 2) 1 3))))",
+      "  (let ((a!2 (ite (and (not (= x!1 2)) (not (= x!1 4)) (not (= x!1 5)))",
+      "                  8856",
+      "                  a!1)))",
+      "    (ite (and (not (= x!1 2)) (not (= x!1 4)) (= x!1 5)) (- 1) a!2)))))",
+      "  (define-fun p ((x!0 Int)) Bool",
+      "    (and (not (= x!0 2)) (not (= x!0 4)) (= x!0 5)))",
+      ")",
+    ]);
+  });
 });
 
 describe("e-matching, as Z3 5.3.2 counts its steps", () => {
