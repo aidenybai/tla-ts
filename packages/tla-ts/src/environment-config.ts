@@ -258,23 +258,25 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
         .map((substitution) => [substitution.name, substitution.target]),
     );
   const overrides = getOverrides(undefined);
-  linked.order.getDeclarationOrder("constant").forEach((name) => {
-    const target = overrides.get(name);
-    if (target !== undefined) checkTarget(name, target, overrides, undefined);
-  });
-  const rootDefinitions = linked.order
-    .getDefinitionOrder(undefined)
-    .filter((name) => linked.root.visible.get(name)?.kind === "Definition");
-  rootDefinitions.forEach((name) => {
-    const target = overrides.get(name);
-    if (target !== undefined) {
-      checkTarget(name, target, overrides, linked.root.visible.get(name)?.arity);
-    }
-  });
-  const missing = getHashtableOrder([...overrides.keys()]).find(
-    (name) => !declaredConstants.has(name) && !rootDefinitions.includes(name),
-  );
-  if (missing !== undefined) throw createMissingError(missing);
+  if (overrides.size > 0) {
+    linked.order.getDeclarationOrder("constant").forEach((name) => {
+      const target = overrides.get(name);
+      if (target !== undefined) checkTarget(name, target, overrides, undefined);
+    });
+    const rootDefinitions = linked.order
+      .getDefinitionOrder(undefined)
+      .filter((name) => linked.root.visible.get(name)?.kind === "Definition");
+    rootDefinitions.forEach((name) => {
+      const target = overrides.get(name);
+      if (target !== undefined) {
+        checkTarget(name, target, overrides, linked.root.visible.get(name)?.arity);
+      }
+    });
+    const missing = getHashtableOrder([...overrides.keys()]).find(
+      (name) => !declaredConstants.has(name) && !rootDefinitions.includes(name),
+    );
+    if (missing !== undefined) throw createMissingError(missing);
+  }
   [...linked.moduleSymbols.keys()].forEach((module) => {
     const moduleOverrides = getOverrides(module);
     if (moduleOverrides.size === 0) return;
@@ -309,10 +311,12 @@ export const applyConfig = (config: ModelConfig, linked: LinkedSpecification): A
   };
   const constantOrder = new Set(
     getModuleOrder(linked.root, new Set()).flatMap((module) =>
-      linked.order.getDeclarationOrder(
-        "constant",
-        module === linked.root ? undefined : module.module.name,
-      ),
+      module.constants.length === 0
+        ? []
+        : linked.order.getDeclarationOrder(
+            "constant",
+            module === linked.root ? undefined : module.module.name,
+          ),
     ),
   );
   const isConstant = (item: ConfigName) =>
