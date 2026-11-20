@@ -1871,6 +1871,56 @@ describe("compiles scripts by specializing ESCore", () => {
     });
   });
 
+  describe("compiles a program whose strings run to a million characters", () => {
+    // Escapes in a string's source and characters that a TLA+ string can't hold, so that the
+    // program's source text and the code units of a string are each one long definition.
+    const getSource = (escapes: number, wides: number, expected: number) => `
+      const escaped = "${'ab\\n\\"'.repeat(escapes)}";
+      const wide = "${"é".repeat(wides)}";
+      if (escaped.length + wide.length !== ${expected}) throw new Error(String(escaped.length));
+    `;
+
+    it("agrees with Node", async () => {
+      expect((await checkScript(getSource(300_000, 20_000, 1_220_000))).message).toBeUndefined();
+    }, 600_000);
+
+    it("rejects another result", async () => {
+      expect((await checkScript(getSource(300_000, 20_000, 1_220_001))).message).toContain(THREW);
+    }, 600_000);
+
+    it("compiles it on the stack that test262's runner gives Node", async () => {
+      const compiler = new Worker(
+        `const { register } = require("node:module");
+        const { parentPort, workerData } = require("node:worker_threads");
+        register("data:text/javascript," + encodeURIComponent(\`export const resolve = (specifier, context, next) =>
+          next(specifier, context).catch((error) => (specifier.startsWith(".") ? next(specifier + ".ts", context) : Promise.reject(error)));\`));
+        Promise.all([
+          import(workerData.source + "/typescript/spec/compile.ts"),
+          import(workerData.source + "/typescript/spec/prepare.ts"),
+        ]).then(([compile, prepare]) => {
+          try {
+            compile.compileToEscore(workerData.program, "spec.ts", prepare.prepareRuntime(workerData.directory), false);
+            parentPort.postMessage("compiled");
+          } catch (error) {
+            parentPort.postMessage(error.message);
+          }
+        });`,
+        {
+          eval: true,
+          workerData: {
+            source: pathToFileURL(join(import.meta.dirname, "../../src")).href,
+            directory: join(import.meta.dirname, "../../ecmascript"),
+            program: `"use strict";\n${getSource(300_000, 200_000, 1_400_000)}`,
+          },
+          resourceLimits: { stackSizeMb: 4 },
+        },
+      );
+      const message = await new Promise((resolve) => compiler.once("message", resolve));
+      await compiler.terminate();
+      expect(message).toBe("compiled");
+    }, 600_000);
+  });
+
   describe("checks the names and levels of a program's code", () => {
     it("rejects a definition that names an unknown operator", async () => {
       expect(

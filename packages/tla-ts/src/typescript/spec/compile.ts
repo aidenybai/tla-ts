@@ -50,7 +50,9 @@ interface CodeDefinition {
 // so that a check reads each one once. A sequence of the code units of characters that a TLA+
 // string can hold is that string's units.
 const getStringUnits = (sequence: string) => {
-  const text = getTlaString(String.fromCharCode(...(sequence.match(/\d+/g) ?? []).map(Number)));
+  const text = getTlaString(
+    (sequence.match(/\d+/g) ?? []).map((unit) => String.fromCharCode(Number(unit))).join(""),
+  );
   return text === undefined ? undefined : `StringUnits(${text})`;
 };
 
@@ -73,7 +75,12 @@ const compact = (definitions: readonly CodeDefinition[]) => {
       ...definition,
       text: /^SourceText\d+$/.test(definition.name)
         ? definition.text
-        : rename(definition.text).replace(/<<\d+(?:, \d+)*>>/g, (sequence) => {
+        : // The parts of a long sequence are split rather than matched by a repeated group,
+          // whose backtracking runs out of stack.
+          rename(definition.text).replace(/<<[\d, ]+>>/g, (sequence) => {
+            if (!sequence.slice(2, -2).split(", ").every((part) => /^\d+$/.test(part))) {
+              return sequence;
+            }
             const name = sequences.get(sequence) ?? `Units${sequences.size + 1}`;
             sequences.set(sequence, name);
             return name;
@@ -102,7 +109,7 @@ const sortDefinitions = (definitions: readonly CodeDefinition[]) => {
     // A name inside a string, such as SourceText's, is text rather than a read.
     for (const name of definition.text
       .slice(definition.text.indexOf("=="))
-      .replace(/"(?:[^"\\]|\\.)*"/g, "")
+      .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, "")
       .match(/\b[A-Z]\w*/g) ?? []) {
       const read = byName.get(name);
       if (read === undefined) continue;

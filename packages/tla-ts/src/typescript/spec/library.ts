@@ -55,7 +55,7 @@ export const getDependencies = (text: string) => [
     text
       .slice(text.indexOf("=="))
       .replace(/\\\*.*$/gm, "")
-      .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+      .replace(/"[^"\\]*(?:\\.[^"\\]*)*"/g, '""')
       .match(/\b[A-Z][A-Za-z0-9_]*\b/g) ?? [],
   ),
 ];
