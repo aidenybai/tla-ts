@@ -1,7 +1,6 @@
 import {
   getChildren,
   getDefinitionExpressions,
-  getReferencedName,
   type AssumeProve,
   type Assumption,
   type Declaration,
@@ -50,6 +49,7 @@ import {
   getEnabledVariableName,
   getLetInstanceExpansion,
   getOperatorDefinition,
+  mentionsName,
   renameLocals,
   substitutedExpressions,
   withInstanceParams,
@@ -262,14 +262,6 @@ const getSubstitutionFrame = (instance: Instance): Expression => {
   };
 };
 
-const mentionsName = (expression: Expression, names: Set<string>): boolean => {
-  const name = getReferencedName(expression);
-  return (
-    (name !== undefined && names.has(name)) ||
-    getChildren(expression).some((child) => mentionsName(child, names))
-  );
-};
-
 const getVariableIndex = (variables: string[], declared: string[]) => {
   const index = new Map(variables.map((name, position) => [name, position]));
   new Set(declared).forEach((name) => index.set(getEnabledVariableName(name), index.size));
@@ -368,6 +360,7 @@ export const createEnvironment = (
   const warnings: SanyError[] = [];
   const instanceCopies = new WeakMap<Definition, InstanceCopy>();
   const letInstances = new Map<string, LetInstance>();
+  const locallyInstantiated = new Set<string>();
   const recursiveSections = new WeakMap<Definition, SectionMember[]>();
   const checkedNodes = new WeakMap<Expression, boolean>();
   const statementLevels = new Map<Expression | AssumeProve, LevelData>();
@@ -398,7 +391,7 @@ export const createEnvironment = (
     module: string,
     substitutes: InstanceSubstitutes,
   ): InstanceCopy | undefined => {
-    const source = definitions.get(sourceKey);
+    const source = getLinkedDefinition(sourceKey);
     return source && { ...substitutes, source, module };
   };
   const getInstanceSubstitutes = (instance: Instance) => {
@@ -1373,6 +1366,7 @@ export const createEnvironment = (
       imported: visible,
       linkTheorem: getLinkedDefinition,
       getInstance: (instance) => {
+        locallyInstantiated.add(instance.module);
         const nested = getLetModule(instance);
         const standardSymbols = nested ? undefined : getStandardSymbols(instance.module);
         if (standardSymbols) {
@@ -1892,25 +1886,53 @@ export const createEnvironment = (
     }
   });
   if (runtime.version !== "1.7.4") runtime.isStarted = true;
-  const instantiated = new Set(
-    linkOrder.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
+  const instantiated = new Set([
+    ...linkOrder.flatMap((linked) => linked.module.instances.map((instance) => instance.module)),
+    ...locallyInstantiated,
+  ]);
+  const isProcessedAtStartup = (linked: LinkedModule) =>
+    !instantiated.has(linked.module.name) || linked.declarations.length === 0;
+  const getModuleName = (linked: LinkedModule) =>
+    linked === linkedRoot ? undefined : linked.module.name;
+  const getStartupModules = (linked: LinkedModule): LinkedModule[] => [
+    linked,
+    ...order.getInnerModuleOrder(getModuleName(linked)).flatMap((name) => {
+      const nested = linked.modules.get(name);
+      return nested ? getStartupModules(nested) : [];
+    }),
+  ];
+  const nestedModules = new Set(linkOrder.flatMap((linked) => [...linked.modules.values()]));
+  const getDefinitionKey = (linked: LinkedModule, name: string) =>
+    linked.visible.get(name)?.key ?? name;
+  const getOwnDefinitionOrder = order.createDefinitionOrder();
+  const origins = new Map(
+    linkOrder.flatMap((linked) =>
+      getOwnDefinitionOrder(getModuleName(linked)).map((name) => [
+        getDefinitionKey(linked, name),
+        linked,
+      ]),
+    ),
   );
-  const getDefinitionOrder = order.createDefinitionOrder();
   return {
     environment,
     assumptions,
     variableLocations: linkedRoot.variableLocations,
     instanceActions,
+    // TLC's SpecProcessor#processConstantDefns walks a module's whole context, inherited definitions too, and skips each by the module it comes from.
     startupDefinitions: linkOrder
-      .filter((linked) => !instantiated.has(linked.module.name) || linked.declarations.length === 0)
+      .filter((linked) => !nestedModules.has(linked) && isProcessedAtStartup(linked))
+      .flatMap(getStartupModules)
       .flatMap((linked) =>
-        getDefinitionOrder(linked === linkedRoot ? undefined : linked.module.name).flatMap(
-          (name) => {
-            const key = linked.visible.get(name)?.key ?? name;
-            const definition = definitions.get(key);
-            return definition && !constants.has(key) && !substitutions.has(key) ? [definition] : [];
-          },
-        ),
+        order.getDefinitionOrder(getModuleName(linked)).flatMap((name) => {
+          const key = getDefinitionKey(linked, name);
+          const definition = definitions.get(key);
+          return definition &&
+            isProcessedAtStartup(origins.get(key) ?? linked) &&
+            !constants.has(key) &&
+            !substitutions.has(key)
+            ? [definition]
+            : [];
+        }),
       ),
     javaOverrides: linkOrder.flatMap((linked) => javaOverrides.get(linked.module.name) ?? []),
     moduleOperators,

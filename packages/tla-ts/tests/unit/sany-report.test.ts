@@ -784,6 +784,51 @@ Spec == Init /\\ [][Next]_x
     );
   });
 
+  // Deviation from SANY: it reports only the first row, since ThmOrAssumpDefNode#levelCheck never sets a theorem's weights.
+  it.each([
+    ["D == c = 1", "ASSUME I(x)!D", "line 8, col 1 to line 8, col 13"],
+    ["THEOREM T == ASSUME c = 1 PROVE TRUE", "ASSUME I(x)!T", "line 8, col 1 to line 8, col 13"],
+    ["THEOREM T == c = 1", "ASSUME I(x)!T", "line 8, col 1 to line 8, col 13"],
+    [
+      "THEOREM T == ASSUME NEW z, c = 1 PROVE z = z",
+      "ASSUME I(x)!T",
+      "line 8, col 1 to line 8, col 13",
+    ],
+    [
+      "THEOREM T == ASSUME c = 1, NEW z PROVE z = z",
+      "ASSUME I(x)!T",
+      "line 8, col 1 to line 8, col 13",
+    ],
+    [
+      "THEOREM T == ASSUME c = 1 PROVE TRUE",
+      "D == I(x)!T\nASSUME D",
+      "line 9, col 1 to line 9, col 8",
+    ],
+  ])(
+    "levels %j applied through a parameterized instance by its argument in %j",
+    (lines, use, range) => {
+      expect(
+        getReport({
+          M: `---- MODULE M ----\nVARIABLE x\n---- MODULE L ----\nCONSTANT c\n${lines}\n====\nI(p) == INSTANCE L WITH c <- p\n${use}\nInit == x = 0\nNext == x' = x\n====\n`,
+        }),
+      ).toEqual({
+        text: joinLines([
+          "Semantic errors:",
+          "",
+          "*** Errors: 1",
+          "",
+          `${range} of module M`,
+          "",
+          "Level error: assumptions must be level 0 (Constant), ",
+          "but this one has level 1.",
+          "",
+          "",
+        ]),
+        isFailed: true,
+      });
+    },
+  );
+
   it("parses a module once the module that names it reaches it, though another loaded it", () => {
     const report = getReport(
       {
