@@ -493,6 +493,14 @@ describe("checks a module's exported functions as a model on ESCore", () => {
       ]);
       expect(getCounts(result)).toEqual(["success", 2, 2]);
     });
+
+    it("keeps the initial states that hold each @initially check", async () => {
+      const result = await checkModel(source, "spec.ts", "canonical", [
+        "InitialHolds(m) ==\n  ",
+        "InitialHolds(m) ==\n  TRUE \\/ ",
+      ]);
+      expect(getCounts(result)).toEqual(["success", 3, 5]);
+    });
   });
 
   describe("runs a lowered model's functions natively, as ESCore runs them", () => {

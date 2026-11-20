@@ -1183,8 +1183,10 @@ export const compileModelToEscore = (
   // A lowered model's initial states each convert the choice's values in ModelBase and lower
   // them, with the values that ModelBase's module gave the other bindings.
   const isChoiceLowered = choose.every((choice) => choice.lowered !== undefined);
+  // The lowered initial states are the set of each choice's lowered state, which TLC and tla-ts make
+  // and sort at once, filtered by the @initially checks.
   const loweredInitialSteps = [
-    `InitialChoice(a) ==\n  LET s0 == ModelBase${choose
+    `InitialModel(a) ==\n  LET s0 == ModelBase${choose
       .map((choice, index) =>
         isChoiceLowered
           ? `\n      l${index + 1} == [v |-> ${choice.lowered}(a[${index + 2}])]`
@@ -1192,7 +1194,8 @@ export const compileModelToEscore = (
       )
       .join(
         "",
-      )}\n      m == ${choose.length === 0 ? "ModelInitial" : `[ModelInitial EXCEPT ${choose.map((choice, index) => `!.${choice.name} = l${index + 1}.v`).join(", ")}]`}\n  IN IF ${
+      )}\n      m == ${choose.length === 0 ? "ModelInitial" : `[ModelInitial EXCEPT ${choose.map((choice, index) => `!.${choice.name} = l${index + 1}.v`).join(", ")}]`}\n  IN m`,
+    `InitialHolds(m) ==\n  ${
       initially.length === 0
         ? "TRUE"
         : initially
@@ -1203,7 +1206,8 @@ export const compileModelToEscore = (
                 : `(LET n == ${call} IN IF n.type = "bail" THEN HoldsOf(ModelState(m), ${getUnits(name)}, <<>>) ELSE n.v = True)`;
             })
             .join(" /\\ ")
-    } THEN {m} ELSE {}`,
+    }`,
+    `InitialStates(s) ==\n  {m \\in {ApplyTo(InitialModel, <<s${choose.map((choice) => `, ${choice.bound}`).join("")}>>) : ${choose.length === 0 ? "x \\in {0}" : choose.map((choice) => `${choice.bound} \\in ${choice.set}`).join(", ")}} : ApplyTo(InitialHolds, m)}`,
   ];
   const initialSteps = [
     `InitialChoice(a) ==\n  LET s0 == a[1]${choose
@@ -1230,7 +1234,7 @@ export const compileModelToEscore = (
         ]
       : lowered === undefined
         ? initialSteps
-        : [...loweredInitialSteps, ...initialSteps.slice(1)]),
+        : [...loweredInitialSteps, ...initialSteps.slice(2)]),
   );
   if (rewrittenNext !== undefined) {
     // A @terminating function's state, where Next stutters, which isn't a deadlock.
