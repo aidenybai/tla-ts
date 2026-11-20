@@ -1275,8 +1275,9 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(getSource(expected))).message).toContain(THREW);
     });
 
-    it("stops where a call without new chains an instance, as Intl's legacy symbol does", async () => {
-      const source = "Intl.DateTimeFormat.call(new Intl.DateTimeFormat());";
+    it("stops at a format of a date that the host's table leaves out", async () => {
+      const source =
+        'new Intl.DateTimeFormat("de", { timeZone: "UTC" }).format(Date.UTC([2024].length));';
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });
@@ -1337,6 +1338,43 @@ describe("compiles scripts by specializing ESCore", () => {
       expect((await checkScript(source)).message).toContain("tla-ts can't");
     });
   });
+
+  describe.runIf(Reflect.has(globalThis, "Temporal"))(
+    "formats dates that a program computes and chains legacy Intl objects",
+    () => {
+      const getSource = (expected: string) => `
+      const format = new Intl.DateTimeFormat("en", { hour: "numeric", dayPeriod: "long" });
+      const hours: string[] = [];
+      for (let hour = 9; hour < 24; hour += 6) hours.push(format.format(Date.UTC(2017, 11, 12, hour)));
+      const chained = Intl.NumberFormat.call(Object.create(Intl.NumberFormat.prototype));
+      const symbol = Object.getOwnPropertySymbols(chained)[0];
+      const result = [
+        hours.join(","),
+        symbol.description,
+        Intl.NumberFormat.prototype.resolvedOptions.call(chained).locale,
+      ].join("|");
+      if (result !== "${expected}") throw new Error(result);
+    `;
+
+      it("agrees with Node", async () => {
+        const expected =
+          "9 in the morning,3 in the afternoon,9 at night|IntlLegacyConstructedSymbol|en-US";
+        expect((await checkScript(getSource(expected))).message).toBeUndefined();
+      });
+
+      it("rejects another result", async () => {
+        const expected =
+          "9 in the morning,3 in the afternoon,9 in the evening|IntlLegacyConstructedSymbol|en-US";
+        expect((await checkScript(getSource(expected))).message).toContain(THREW);
+      });
+
+      it("stops at a format of the time now", async () => {
+        expect((await checkScript("new Intl.DateTimeFormat().format();")).message).toContain(
+          "tla-ts can't",
+        );
+      });
+    },
+  );
 
   describe.runIf(Reflect.has(globalThis, "Temporal"))(
     "runs the locale-sensitive methods of arrays and strings as ECMA-402 does",

@@ -99,12 +99,14 @@ const GATED_GROUPS = [
 
 // String methods that make regular expressions, the methods of collections and arrays that give
 // iterators, whose helpers, such as every and map, a program may call, the methods that format
-// through Intl, and Intl's DurationFormat, which reads a duration as Temporal does.
+// through Intl, Intl's DurationFormat, which reads a duration as Temporal does, and its
+// DateTimeFormat, which formats a time value through Temporal's patterns and Date's fields.
 const EXTRA_TRIGGERS = new Map([
   ["83-regexp", ["match", "matchAll", "replace", "replaceAll", "search", "split"]],
   ["81-iterator.tla", ["values", "keys", "entries"]],
   ["90-intl.tla", ["toLocaleString", "localeCompare", "toLocaleLowerCase", "toLocaleUpperCase"]],
-  ["89", ["DurationFormat"]],
+  ["89", ["DurationFormat", "DateTimeFormat"]],
+  ["82-date.tla", ["DateTimeFormat"]],
 ]);
 
 export const createLibrary = (directory: string): Library => {

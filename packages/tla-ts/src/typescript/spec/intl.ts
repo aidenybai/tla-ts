@@ -462,6 +462,10 @@ const getAnswer = (answer: () => string | undefined) => {
 
 const getNumbers = (literals: Literals) => [...literals.numbers.values()];
 
+// TimeClip, whose -0 is +0, as a DateTimeFormat reads a time value.
+const getTimeClip = (time: number) =>
+  !Number.isFinite(time) || Math.abs(time) > 8.64e15 ? Number.NaN : Math.trunc(time) + 0;
+
 // The resolved options of a NumberFormat but for its locale and its numbering system, in the order
 // that resolvedOptions gives them, and of a PluralRules but for its locale and its categories.
 const NUMBER_FORMAT_SLOTS = [
@@ -773,10 +777,9 @@ const SERVICES: Service[] = [
       // ESCore's local time zone is UTC, which the host's must be for a format without one.
       if (new Intl.DateTimeFormat().resolvedOptions().timeZone !== "UTC") return new Map();
       const values = [
-        ...[...new Set([...getNumbers(literals), ...literals.times])].map((time) => ({
-          key: getNumberArgument(time),
-          value: time as unknown,
-        })),
+        ...[...new Set([...getNumbers(literals), ...literals.times].map(getTimeClip))]
+          .filter((time) => !Number.isNaN(time))
+          .map((time) => ({ key: getNumberArgument(time), value: time as unknown })),
         ...[...literals.temporals].map(([key, value]) => ({ key, value: value as unknown })),
       ];
       if (words.has("format") || words.has("formatToParts")) {

@@ -1596,18 +1596,18 @@ export const getHostTimeZone = (text: string) => {
 
 // The program's HostDateFormat: the English patterns of Temporal's toLocaleString that Node 26
 // recorded (date-formats.ts) for the kinds of object the program names, where it formats a Temporal
-// object, and the host's default locale and time zone are the table's, English and UTC. Any other
-// key may be one that the host formats and the table leaves out.
+// object, and of an Intl.DateTimeFormat's format, where it formats with one, and the host's default
+// locale and time zone are the table's, English and UTC. Any other key may be one that the host
+// formats and the table leaves out.
 export const getHostDateFormat = (words: ReadonlySet<string>) => {
   const defaults = new Intl.DateTimeFormat().resolvedOptions();
+  const isTemporal = words.has("Temporal") && words.has("toLocaleString");
+  const isFormat = words.has("DateTimeFormat") && words.has("format");
   const entries =
-    words.has("Temporal") &&
-    words.has("toLocaleString") &&
-    defaults.locale === "en-US" &&
-    defaults.timeZone === "UTC"
+    defaults.locale === "en-US" && defaults.timeZone === "UTC"
       ? Object.entries(DATE_FORMATS).filter(([key]) => {
           const kind = key.slice(0, key.indexOf("|"));
-          return kind !== "DateTimeFormat" && words.has(kind);
+          return kind === "DateTimeFormat" ? isFormat : isTemporal && words.has(kind);
         })
       : [];
   const getEntry = (format: (typeof DATE_FORMATS)[string]) =>

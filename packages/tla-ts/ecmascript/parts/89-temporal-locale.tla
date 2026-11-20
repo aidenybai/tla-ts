@@ -67,7 +67,8 @@ DateFormatKey(kind, calendar, hour12, values) ==
         [] values.fractionalSecondDigits = 1 -> "|fractionalSecondDigits=1"
         [] values.fractionalSecondDigits = 2 -> "|fractionalSecondDigits=2"
         [] OTHER -> "|fractionalSecondDigits=3") \o
-     DateFormatEntry(values, "dateStyle") \o DateFormatEntry(values, "timeStyle")
+     DateFormatEntry(values, "dateStyle") \o DateFormatEntry(values, "timeStyle") \o
+     (IF "dayPeriod" \in DOMAIN values THEN DateFormatEntry(values, "dayPeriod") ELSE "")
 
 \* The text of a field of a pattern for a date [year, month, day] and a time [hour, minute, second,
 \* millisecond], where an hour's style is its cycle and width, as "h12 numeric", and a fraction's

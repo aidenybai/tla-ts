@@ -644,7 +644,33 @@ DateTimeFormattableKey(s, value) ==
   IF value = Undefined THEN Unsupported(s, N("Unsupported: the time now"))
   ELSE IF IsObject(value) /\ O(s, value).class \in DOMAIN TemporalKinds THEN
     Ok(s, TemporalFormatKey(TemporalKinds[O(s, value).class], O(s, value).slots))
-  ELSE LET n == ToNumber(s, value) IN IF IsAbrupt(n) THEN n ELSE Ok(n.s, IntlNumberKey(Val(n).value))
+  ELSE LET n == ToNumber(s, value) IN IF IsAbrupt(n) THEN n ELSE Ok(n.s, IntlNumberKey(IntlTimeClip(Val(n).value)))
+
+\* TimeClip (§21.4.1.31), whose -0 is +0, as FormatDateTime reads a Number.
+IntlTimeClip(x) == LET t == TimeClip(x) IN IF NumIsZero(t) THEN NumFromInt(0) ELSE t
+
+\* The text of a DateTimeFormat's format of a time value, through the host's recorded English
+\* pattern (HostDateFormat) for the options it read, where they are ones the table records:
+\* English, the Gregorian calendar, Latin digits, and UTC, which is ESCore's local time zone, of a
+\* year from 1583 to 9999. Else Empty.
+DateTimeFormatReadIndex ==
+  [calendar |-> 2, numberingSystem |-> 3, hour12 |-> 4, hourCycle |-> 5, timeZone |-> 6, weekday |-> 7, era |-> 8,
+   year |-> 9, month |-> 10, day |-> 11, dayPeriod |-> 12, hour |-> 13, minute |-> 14, second |-> 15,
+   fractionalSecondDigits |-> 16, timeZoneName |-> 17, formatMatcher |-> 18, dateStyle |-> 19, timeStyle |-> 20]
+DateTimeFormatRead(config, name) == config[2][DateTimeFormatReadIndex[name]]
+DateTimeFormatPatternText(config, key) ==
+  LET read(name) == DateTimeFormatRead(config, name)
+      fields == DateFields(StringToNumber(key[2]))
+      names == {"hourCycle", "weekday", "era", "year", "month", "day", "hour", "minute", "second",
+                "fractionalSecondDigits", "dateStyle", "timeStyle", "dayPeriod"}
+      values == [n \in names |-> read(n)]
+      format == HostDateFormat(DateFormatKey("DateTimeFormat", "gregory", read("hour12"), values))
+  IN IF config[1] \notin {<<>>, <<N("en")>>, <<N("en-US")>>} \/ read("calendar") # Empty \/ read("numberingSystem") # Empty \/
+        ~(read("timeZone") \in {Empty, N("UTC")}) \/ read("timeZoneName") # Empty \/ read("formatMatcher") = N("basic") \/
+        key[1] # "number" \/ format.found # "format" \/ fields.year < 1583 \/ fields.year > 9999
+     THEN Empty
+     ELSE LocaleText(format, 1, [year |-> fields.year, month |-> fields.month + 1, day |-> fields.date],
+                     <<fields.hour, fields.minute, fields.second, fields.ms>>)
 
 \* The methods of an Intl.DateTimeFormat, dtf, whose format is a function bound to it.
 DateTimeFormatMethods ==
@@ -660,14 +686,20 @@ DateTimeFormatMethod(s, m, dtf, args) ==
          LET bound == CreateBuiltinFunction(s, <<"Intl", "DateTimeFormat.boundFormat">>, 1, <<>>, dtf) IN
          Ok(SetSlots(bound.s, dtf, [boundFormat |-> Val(bound)]), Val(bound))
     [] m \in {"DateTimeFormat.boundFormat", "DateTimeFormat.formatToParts"} ->
-         LET x == DateTimeFormattableKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
+         LET x == DateTimeFormattableKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x
+         \* FormatDateTime's RangeError for a time value that TimeClip makes NaN.
+         ELSE IF Val(x)[1] = "number" /\ Val(x)[2] = N("NaN") THEN ThrowError(x.s, "RangeError") ELSE
          LET method == IF m = "DateTimeFormat.boundFormat" THEN "format" ELSE "formatToParts"
-             answer == IntlAnswer(x.s, "DateTimeFormat", config, "formatToParts", <<Val(x)>>)
-         IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
+             answer == HostIntl(<<"DateTimeFormat", config, "formatToParts", <<Val(x)>>>>)
+             text == IF method = "format" /\ answer.found \notin {"parts", "error"} THEN DateTimeFormatPatternText(config, Val(x)) ELSE Empty
+         IN IF text # Empty THEN Ok(x.s, Str(text)) ELSE
+            LET found == IntlAnswer(x.s, "DateTimeFormat", config, "formatToParts", <<Val(x)>>) IN
+            IF IsAbrupt(found) THEN found ELSE IntlResult(found.s, method, Val(found))
     [] OTHER ->
          IF Arg(args, 1) = Undefined \/ Arg(args, 2) = Undefined THEN ThrowTypeError(s) ELSE
          LET x == DateTimeFormattableKey(s, Arg(args, 1)) IN IF IsAbrupt(x) THEN x ELSE
-         LET y == DateTimeFormattableKey(x.s, Arg(args, 2)) IN IF IsAbrupt(y) THEN y ELSE
+         LET y == DateTimeFormattableKey(x.s, Arg(args, 2)) IN IF IsAbrupt(y) THEN y
+         ELSE IF \E key \in {Val(x), Val(y)} : key[1] = "number" /\ key[2] = N("NaN") THEN ThrowError(y.s, "RangeError") ELSE
          LET method == IF m = "DateTimeFormat.formatRange" THEN "formatRange" ELSE "formatRangeToParts"
              answer == IntlAnswer(y.s, "DateTimeFormat", config, "formatRangeToParts", <<Val(x), Val(y)>>)
          IN IF IsAbrupt(answer) THEN answer ELSE IntlResult(answer.s, method, Val(answer))
@@ -968,7 +1000,10 @@ IntlBuiltin(s, f, m, this, args, nt) ==
            \* ChainDateTimeFormat and ChainNumberFormat, which define %Intl%.[[FallbackSymbol]] on an
            \* instance that a call without new receives.
            LET inherits == OrdinaryHasInstance(o.s, f, this) IN IF IsAbrupt(inherits) THEN inherits
-           ELSE IF Val(inherits) = True THEN Unsupported(inherits.s, N("Unsupported: Intl's legacy constructed symbol"))
+           ELSE IF Val(inherits) = True THEN
+             LET symbol == IntlFallbackSymbol(inherits.s)
+                 defined == DefinePropertyOrThrow(symbol.s, this, symbol.v, DataDesc(Val(o), FALSE, FALSE, FALSE))
+             IN IF IsAbrupt(defined) THEN defined ELSE Ok(defined.s, this)
            ELSE Ok(inherits.s, Val(o))
          ELSE Unsupported(s, N("Unsupported: an Intl constructor, which reads locale data"))
     [] m = "getCanonicalLocales" ->
@@ -996,8 +1031,15 @@ IntlBuiltin(s, f, m, this, args, nt) ==
     [] m \in DOMAIN IntlUnwrappingMethods ->
          IF ~IsObject(this) THEN ThrowTypeError(s) ELSE
          LET inherits == OrdinaryHasInstance(s, Intrinsic(s, IntlUnwrappingMethods[m]), this) IN IF IsAbrupt(inherits) THEN inherits
-         ELSE IF Val(inherits) = True THEN Unsupported(inherits.s, N("Unsupported: an object that Intl unwraps"))
-         ELSE ThrowTypeError(inherits.s)
+         ELSE IF Val(inherits) = False THEN ThrowTypeError(inherits.s) ELSE
+         \* UnwrapNumberFormat and UnwrapDateTimeFormat, through %Intl%.[[FallbackSymbol]].
+         LET symbol == IntlFallbackSymbol(inherits.s)
+             unwrapped == Get(symbol.s, this, symbol.v)
+             class == IF IntlUnwrappingMethods[m] = "IntlNumberFormat" THEN "intlNumberFormat" ELSE "intlDateTimeFormat"
+         IN IF IsAbrupt(unwrapped) THEN unwrapped
+            ELSE IF ~IsObject(Val(unwrapped)) \/ O(unwrapped.s, Val(unwrapped)).class # class THEN ThrowTypeError(unwrapped.s)
+            ELSE IF class = "intlNumberFormat" THEN NumberFormatMethod(unwrapped.s, f, m, Val(unwrapped), args)
+            ELSE DateTimeFormatMethod(unwrapped.s, m, Val(unwrapped), args)
     [] IsObject(this) /\ O(s, this).class = "intl" \o IntlMethodServices[m] ->
          Unsupported(s, N("Unsupported: an Intl object's method, which reads locale data"))
     [] OTHER -> ThrowTypeError(s)
